@@ -20,6 +20,7 @@ import {
   type WorkflowInteractionRecord,
   type WorkflowInteractionStore,
 } from './workflow-interaction-store';
+import { INTERACTION_INVALID } from './workflow-interaction-records';
 import {
   replayInteractionResult,
 } from './workflow-interaction-results';
@@ -165,6 +166,43 @@ export class WorkflowInteractionService {
 
   /** Authorize and validate an idempotent response; exactly one valid response wins. */
   async submit(input: SubmitWorkflowInteractionInput): Promise<WorkflowInteractionSubmissionResult> {
+    if (input.channel === 'event' || input.submissionId.startsWith('event:')) {
+      throw new WorkflowError(
+        'The workflow event response namespace is reserved for internal delivery',
+        INTERACTION_INVALID,
+        422,
+      );
+    }
+    return this.submitAuthorized(input, false);
+  }
+
+  /** Submit one runtime-claimed event through the interaction decision pipeline. */
+  async submitClaimedEvent(input: {
+    interactionId: string;
+    eventId: string;
+    actor: WorkflowInteractionActor;
+    payload: unknown;
+  }): Promise<WorkflowInteractionSubmissionResult> {
+    if (!input.eventId || input.eventId.startsWith('event:')) {
+      throw new WorkflowError(
+        'Workflow event identity is invalid',
+        INTERACTION_INVALID,
+        500,
+      );
+    }
+    return this.submitAuthorized({
+      interactionId: input.interactionId,
+      submissionId: `event:${input.eventId}`,
+      actor: input.actor,
+      payload: input.payload,
+      channel: 'event',
+    }, true);
+  }
+
+  private async submitAuthorized(
+    input: SubmitWorkflowInteractionInput,
+    internalEvent: boolean,
+  ): Promise<WorkflowInteractionSubmissionResult> {
     this.assertAvailable();
     const interaction = this.requireInteraction(input.interactionId);
     const definition = this.store.getPrivateDefinition(input.interactionId);
@@ -208,6 +246,7 @@ export class WorkflowInteractionService {
       payloadJson,
       payloadHash,
       signal: controller.signal,
+      internalEvent,
     });
     this.tracker.track(
       interaction.instanceId,
@@ -252,6 +291,11 @@ export class WorkflowInteractionService {
   /** Server-only downstream access to the accepted, normalized response value. */
   getAcceptedValue(interactionId: string): WorkflowJsonValue | null {
     return this.store.getAcceptedValue(interactionId);
+  }
+
+  /** Server-only correlation for atomically settling an accepted event wait. */
+  getAcceptedEventId(interactionId: string): string | null {
+    return this.store.getAcceptedEventId(interactionId);
   }
 
   /** Server-only request passed to configured delivery activities. */

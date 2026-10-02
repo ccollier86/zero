@@ -196,7 +196,7 @@ export class WorkflowDefinitionManager {
     return this.run(() => this.versions.drafts.require(draftId));
   }
 
-  deleteDraft(draftId: string, expectedRevision?: number): boolean {
+  deleteDraft(draftId: string, expectedRevision: number): boolean {
     return this.run(() => this.versions.drafts.delete(draftId, expectedRevision));
   }
 
@@ -240,6 +240,14 @@ export class WorkflowDefinitionManager {
     input: DatabaseWorkflowDraftInput,
     actorId: string,
   ): ResolvedWorkflowDefinitionDraft {
+    const updating = input.draftId !== undefined;
+    if (updating !== (input.expectedRevision !== undefined)) {
+      throw new WorkflowError(
+        'Existing workflow draft updates require draftId and expectedRevision together',
+        'WORKFLOW_REQUEST_INVALID',
+        422,
+      );
+    }
     const catalog = this.versions.listCatalogs()
       .find((candidate) => candidate.definition_id === input.definitionId);
     if (!catalog) throw workflowHidden();
@@ -251,10 +259,8 @@ export class WorkflowDefinitionManager {
       );
     }
     const compiled = this.compile(input);
-    return this.run(() => this.versions.drafts.save({
+    const persistence = {
       definitionId: input.definitionId,
-      draftId: input.draftId,
-      baseVersionId: input.baseVersionId,
       source: 'database',
       graphFormat: compiled.format,
       schemaVersion: compiled.graph.schemaVersion,
@@ -263,28 +269,70 @@ export class WorkflowDefinitionManager {
       accessPolicy: compiled.access,
       editorMetadata: input.editorMetadata,
       actorId,
-      expectedRevision: input.expectedRevision,
-    }));
+      ...(input.baseVersionId === undefined ? {} : { baseVersionId: input.baseVersionId }),
+    } as const;
+    return this.run(() => this.versions.drafts.save(input.draftId === undefined
+      ? persistence
+      : {
+        ...persistence,
+        draftId: input.draftId,
+        expectedRevision: input.expectedRevision!,
+      }));
   }
 
   publishDraft(
     draftId: string,
     actorId: string,
-    options: { version?: number; activate?: boolean; expectedActiveVersionId?: string | null } = {},
+    options: {
+      expectedRevision: number;
+      version?: number;
+      activate?: boolean;
+      expectedActiveVersionId?: string | null;
+    },
   ): PublishWorkflowDefinitionVersionResult {
+    if (!Number.isSafeInteger(options.expectedRevision) || options.expectedRevision < 1) {
+      throw new WorkflowError(
+        'Workflow draft publication requires a positive expected revision',
+        'WORKFLOW_REQUEST_INVALID',
+        422,
+      );
+    }
     const draft = this.run(() => this.versions.drafts.require(draftId));
     const catalog = this.versions.listCatalogs()
       .find((candidate) => candidate.definition_id === draft.draft.definition_id);
     if (!catalog) throw workflowHidden();
-    return this.publish({
+    const compiled = this.compile({
       name: catalog.name,
       graph: draft.graph as WorkflowGraphIR,
       ...(draft.inputSchema === null ? {} : { inputSchema: draft.inputSchema }),
       ...(draft.accessPolicy === null
         ? {}
         : { access: draft.accessPolicy as WorkflowDefinitionAccessPolicy }),
-      ...options,
-    }, actorId);
+      ...(options.version === undefined ? {} : { version: options.version }),
+      ...(options.activate === undefined ? {} : { activate: options.activate }),
+    });
+    return this.run(() => this.versions.publishDraft({
+      draftId,
+      definitionId: draft.draft.definition_id,
+      expectedRevision: options.expectedRevision,
+      expectedDraftFingerprint: draft.draft.fingerprint,
+      publication: {
+        name: compiled.name,
+        graph: compiled.graph,
+        source: 'database',
+        graphFormat: compiled.format,
+        schemaVersion: compiled.graph.schemaVersion,
+        inputSchema: compiled.inputSchema,
+        accessPolicy: compiled.access,
+        version: compiled.version,
+        activate: compiled.activate,
+        actorId,
+        ...(Object.prototype.hasOwnProperty.call(options, 'expectedActiveVersionId')
+          ? { expectedActiveVersionId: options.expectedActiveVersionId }
+          : {}),
+        expectedFingerprint: compiled.fingerprint,
+      },
+    }));
   }
 
   activate(definitionId: string, versionId: string, actorId: string) {
@@ -400,6 +448,8 @@ function mapVersionError(error: WorkflowDefinitionVersionStoreError): WorkflowEr
           ? 'WORKFLOW_DEFINITION_GRAPH_INVALID'
           : error.code === 'WORKFLOW_DEFINITION_DRAFT_CONFLICT'
             ? 'WORKFLOW_DRAFT_CONFLICT'
+            : error.code === 'WORKFLOW_DEFINITION_DRAFT_INVALID'
+              ? 'WORKFLOW_REQUEST_INVALID'
             : error.code === 'WORKFLOW_DEFINITION_SCOPE_CONFLICT'
               ? 'WORKFLOW_VERSION_SCOPE_CONFLICT'
               : 'WORKFLOW_VERSION_SOURCE_CONFLICT';

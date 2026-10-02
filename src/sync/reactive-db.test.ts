@@ -594,6 +594,28 @@ describe('transactions', () => {
     expect(changes[1].rowId).toBe('2');
   });
 
+  test('queues reentrant listener writes behind the complete committed batch', () => {
+    const firstListener: number[] = [];
+    const secondListener: number[] = [];
+
+    db.onChange((change) => {
+      firstListener.push(change.seq);
+      if (change.rowId === '1') {
+        db.insert('todos', { id: '3', title: 'Reentrant', done: 0 });
+      }
+    });
+    db.onChange((change) => secondListener.push(change.seq));
+
+    db.transaction(() => {
+      db.insert('todos', { id: '1', title: 'First', done: 0 });
+      db.insert('todos', { id: '2', title: 'Second', done: 0 });
+    });
+
+    expect(firstListener).toEqual([1, 2, 3]);
+    expect(secondListener).toEqual([1, 2, 3]);
+    expect(db.getChangesAfter(0)?.map((change) => change.seq)).toEqual([1, 2, 3]);
+  });
+
   test('failed transaction does not emit changes', () => {
     const changes: Change[] = [];
     db.onChange((c) => changes.push(c));
@@ -624,6 +646,64 @@ describe('transactions', () => {
     }
 
     expect(db.currentSeq).toBe(initialSeq);
+  });
+
+  test('rolls back domain writes when durable change allocation fails', () => {
+    db.insert('todos', { id: 'seed', title: 'Seed', done: 0 });
+    const raw = db.getRawDatabase();
+    const exhaustSequence = () => raw.prepare(
+      'UPDATE _change_sequence SET seq = ? WHERE singleton = 1',
+    ).run(Number.MAX_SAFE_INTEGER);
+    const restoreSequence = () => raw.prepare(
+      'UPDATE _change_sequence SET seq = 1 WHERE singleton = 1',
+    ).run();
+
+    exhaustSequence();
+    expect(() => db.insert('todos', { id: 'inserted', title: 'No', done: 0 }))
+      .toThrow('durable change sequence');
+    expect(db.queryOne('todos', 'inserted')).toBeNull();
+
+    restoreSequence();
+    exhaustSequence();
+    expect(() => db.update('todos', 'seed', { title: 'Changed' }))
+      .toThrow('durable change sequence');
+    expect(db.queryOne('todos', 'seed')?.title).toBe('Seed');
+
+    restoreSequence();
+    exhaustSequence();
+    expect(() => db.delete('todos', 'seed')).toThrow('durable change sequence');
+    expect(db.queryOne('todos', 'seed')?.title).toBe('Seed');
+  });
+
+  test('keeps a transaction rollback-only when a tracked-write error is caught', () => {
+    db.getRawDatabase().prepare(
+      'UPDATE _change_sequence SET seq = ? WHERE singleton = 1',
+    ).run(Number.MAX_SAFE_INTEGER);
+
+    expect(() => db.transaction(() => {
+      try {
+        db.insert('todos', { id: 'caught', title: 'Must roll back', done: 0 });
+      } catch {
+        // An application catch cannot commit the untracked domain write.
+      }
+    })).toThrow('rollback-only');
+    expect(db.queryOne('todos', 'caught')).toBeNull();
+  });
+
+  test('rejects async transactions and poisons their awaited continuation', async () => {
+    let continuation!: Promise<void>;
+    expect(() => db.transaction(() => {
+      db.insert('todos', { id: 'before-await', title: 'Rollback', done: 0 });
+      continuation = (async () => {
+        await Promise.resolve();
+        db.insert('todos', { id: 'after-await', title: 'Never commit', done: 0 });
+      })();
+      return continuation;
+    })).toThrow('must be synchronous');
+
+    await expect(continuation).rejects.toThrow('rollback-only');
+    expect(db.queryOne('todos', 'before-await')).toBeNull();
+    expect(db.queryOne('todos', 'after-await')).toBeNull();
   });
 
   test('transaction returns the function result', () => {
@@ -661,6 +741,40 @@ describe('transactions', () => {
     expect(changes).toHaveLength(2);
     expect(changes![0].rowId).toBe('1');
     expect(changes![1].rowId).toBe('2');
+  });
+
+  test('runs afterCommit callbacks after change delivery in registration order', () => {
+    const order: string[] = [];
+    db.onChange(() => order.push('change'));
+
+    db.transaction(() => {
+      db.insert('todos', { id: '1', title: 'Committed', done: 0 });
+      db.afterCommit(() => order.push('first'));
+      db.transaction(() => db.afterCommit(() => order.push('nested')));
+    });
+
+    expect(order).toEqual(['change', 'first', 'nested']);
+  });
+
+  test('discards afterCommit callbacks on rollback and requires a transaction', () => {
+    const callbacks: string[] = [];
+    expect(() => db.afterCommit(() => undefined)).toThrow('active transaction');
+
+    expect(() => db.transaction(() => {
+      db.afterCommit(() => callbacks.push('unexpected'));
+      throw new Error('rollback');
+    })).toThrow('rollback');
+
+    expect(callbacks).toEqual([]);
+  });
+
+  test('contains an afterCommit failure and continues later callbacks', () => {
+    const callbacks: string[] = [];
+    expect(() => db.transaction(() => {
+      db.afterCommit(() => { throw new Error('notification failed'); });
+      db.afterCommit(() => callbacks.push('continued'));
+    })).not.toThrow();
+    expect(callbacks).toEqual(['continued']);
   });
 });
 
@@ -756,7 +870,7 @@ describe('multi-table', () => {
 // ─── File mode ────────────────────────────────────────────────────────────
 
 describe('file mode', () => {
-  test('persists data to disk and truncates _changes on restart', () => {
+  test('persists data and continues the durable change sequence on restart', () => {
     const path = `/tmp/test-reactive-db-${Date.now()}.db`;
 
     // First instance: write some data
@@ -767,7 +881,7 @@ describe('file mode', () => {
     expect(db1.getChangesAfter(0)).toHaveLength(1);
     db1.dispose();
 
-    // Second instance: data persists, but _changes is truncated
+    // Second instance: data and reconnect replay state both persist.
     const db2 = createReactiveDB({ mode: path });
     db2.defineTable('items', { id: 'text primary key', name: 'text' });
     expect(db2.syncEpoch).not.toBe(firstEpoch);
@@ -775,9 +889,10 @@ describe('file mode', () => {
     // Data still there
     expect(db2.queryOne('items', '1')).toEqual({ id: '1', name: 'Widget' });
 
-    // Ring buffer was truncated on restart — seq starts at 0
-    expect(db2.getChangesAfter(0)).toEqual([]);
-    expect(db2.currentSeq).toBe(0);
+    expect(db2.getChangesAfter(0)?.map((change) => change.seq)).toEqual([1]);
+    expect(db2.currentSeq).toBe(1);
+    const second = db2.insert('items', { id: '2', name: 'Second' });
+    expect(second.seq).toBe(2);
 
     db2.dispose();
 
@@ -789,6 +904,97 @@ describe('file mode', () => {
       fs.unlinkSync(`${path}-shm`);
     } catch {
       // Files may not exist
+    }
+  });
+
+  test('allocates unique monotonic sequences across independent handles', () => {
+    const path = `/tmp/test-reactive-db-multi-handle-${Date.now()}.db`;
+    const first = createReactiveDB({ mode: path });
+    const second = createReactiveDB({ mode: path });
+
+    try {
+      for (const handle of [first, second]) {
+        handle.defineTable('items', { id: 'text primary key', name: 'text' });
+      }
+
+      const changes = [
+        first.insert('items', { id: '1', name: 'first' }),
+        second.insert('items', { id: '2', name: 'second' }),
+        first.insert('items', { id: '3', name: 'third' }),
+        second.insert('items', { id: '4', name: 'fourth' }),
+      ];
+
+      expect(changes.map((change) => change.seq)).toEqual([1, 2, 3, 4]);
+      expect(first.currentSeq).toBe(4);
+      expect(second.currentSeq).toBe(4);
+      expect(second.getChangesAfter(0)?.map((change) => change.seq)).toEqual([1, 2, 3, 4]);
+    } finally {
+      first.dispose();
+      second.dispose();
+      try {
+        const fs = require('fs');
+        fs.unlinkSync(path);
+        fs.unlinkSync(`${path}-wal`);
+        fs.unlinkSync(`${path}-shm`);
+      } catch {
+        // Files may not exist.
+      }
+    }
+  });
+
+  test('retains the allocator high-water mark after ring pruning', () => {
+    const path = `/tmp/test-reactive-db-pruned-sequence-${Date.now()}.db`;
+    const first = createReactiveDB({ mode: path, ringBufferDepth: 2 });
+    try {
+      first.defineTable('items', { id: 'text primary key', name: 'text' });
+      for (let index = 1; index <= 5; index += 1) {
+        first.insert('items', { id: String(index), name: `item-${index}` });
+      }
+      expect(first.getChangesAfter(0)?.map((change) => change.seq)).toEqual([4, 5]);
+    } finally {
+      first.dispose();
+    }
+
+    const second = createReactiveDB({ mode: path, ringBufferDepth: 2 });
+    try {
+      second.defineTable('items', { id: 'text primary key', name: 'text' });
+      expect(second.insert('items', { id: '6', name: 'item-6' }).seq).toBe(6);
+    } finally {
+      second.dispose();
+      try {
+        const fs = require('fs');
+        fs.unlinkSync(path);
+        fs.unlinkSync(`${path}-wal`);
+        fs.unlinkSync(`${path}-shm`);
+      } catch {
+        // Files may not exist.
+      }
+    }
+  });
+
+  test('supports an explicit isolated legacy ring reset', () => {
+    const path = `/tmp/test-reactive-db-explicit-reset-${Date.now()}.db`;
+    const first = createReactiveDB({ mode: path });
+    first.defineTable('items', { id: 'text primary key', name: 'text' });
+    first.insert('items', { id: '1', name: 'first' });
+    first.dispose();
+
+    const second = createReactiveDB({ mode: path, clearChangesOnStart: true });
+    try {
+      second.defineTable('items', { id: 'text primary key', name: 'text' });
+      expect(second.getChangesAfter(0)).toEqual([]);
+      expect(second.currentSeq).toBe(0);
+      expect(second.insert('items', { id: '2', name: 'second' }).seq).toBe(1);
+    } finally {
+      second.dispose();
+      try {
+        const fs = require('fs');
+        fs.unlinkSync(path);
+        fs.unlinkSync(`${path}-wal`);
+        fs.unlinkSync(`${path}-shm`);
+      } catch {
+        // Files may not exist.
+      }
     }
   });
 });

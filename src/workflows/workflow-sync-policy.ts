@@ -19,6 +19,7 @@ import type {
 import { WORKFLOW_SERVER_TABLE_NAMES } from './types';
 import {
   toPublicWorkflowEvent,
+  toPublicWorkflowInteraction,
   toPublicWorkflowInstance,
   toPublicWorkflowStep,
 } from './workflow-public-record';
@@ -129,9 +130,7 @@ function createOwnershipFilter(
           return toPublicWorkflowStep(
             row,
             instance?.steps_json,
-            // An orphan child is corrupted state, never evidence that it is a
-            // legacy row whose execution payload may be exposed.
-            instance ? instance.graph_json : '',
+            instance,
           );
         }
       : table === 'workflow_events'
@@ -140,8 +139,10 @@ function createOwnershipFilter(
           const instance = instanceId
             ? getDB()?.queryOne('workflow_instances', instanceId)
             : null;
-          return toPublicWorkflowEvent(row, instance ? instance.graph_json : '');
+          return toPublicWorkflowEvent(row, instance);
         }
+      : table === 'workflow_interactions'
+        ? (row: Row): Row => toPublicWorkflowInteraction(row)
     : undefined;
   if (auth?.role === 'admin') return {
     matches(row) {

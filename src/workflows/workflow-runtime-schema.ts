@@ -54,7 +54,8 @@ export function ensureWorkflowRuntimeSchema(db: RuntimeSchemaDatabase): void {
     db.exec(`UPDATE _workflow_event_usage SET revision = COALESCE((
       SELECT COUNT(*)
         + COALESCE(SUM(CASE WHEN delivery.claimed_by_step_id IS NOT NULL THEN 1 ELSE 0 END), 0)
-        + COALESCE(SUM(CASE WHEN delivery.claimed_by_step_id LIKE 'consumed:%' THEN 1 ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN delivery.claimed_by_step_id LIKE 'consumed:%'
+          OR delivery.claimed_by_step_id LIKE 'discarded:%' THEN 1 ELSE 0 END), 0)
       FROM _workflow_event_delivery AS delivery
       WHERE delivery.instance_id = _workflow_event_usage.instance_id
     ), 0)`);
@@ -70,7 +71,8 @@ export function ensureWorkflowRuntimeSchema(db: RuntimeSchemaDatabase): void {
     BEGIN
       SELECT RAISE(ABORT, 'workflow event delivery identity mismatch');
     END`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS trg_workflow_event_delivery_identity_update
+  db.exec('DROP TRIGGER IF EXISTS trg_workflow_event_delivery_identity_update');
+  db.exec(`CREATE TRIGGER trg_workflow_event_delivery_identity_update
     BEFORE UPDATE OF event_id, instance_id, event_name, claimed_by_step_id
       ON _workflow_event_delivery
     WHEN NOT EXISTS (
@@ -80,12 +82,19 @@ export function ensureWorkflowRuntimeSchema(db: RuntimeSchemaDatabase): void {
         AND event.event_name = NEW.event_name
     ) OR (
       NEW.claimed_by_step_id IS NOT NULL
-      AND NEW.claimed_by_step_id NOT LIKE 'consumed:%'
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_steps AS step
-        WHERE step.step_id = NEW.claimed_by_step_id
-          AND step.instance_id = NEW.instance_id
-          AND (step.wait_event IS NULL OR step.wait_event = NEW.event_name)
+      AND (
+        (NEW.claimed_by_step_id LIKE 'consumed:%'
+          AND NEW.claimed_by_step_id != ('consumed:' || NEW.event_id))
+        OR (NEW.claimed_by_step_id LIKE 'discarded:%'
+          AND NEW.claimed_by_step_id != ('discarded:' || NEW.event_id))
+        OR (NEW.claimed_by_step_id NOT LIKE 'consumed:%'
+          AND NEW.claimed_by_step_id NOT LIKE 'discarded:%'
+          AND NOT EXISTS (
+            SELECT 1 FROM workflow_steps AS step
+            WHERE step.step_id = NEW.claimed_by_step_id
+              AND step.instance_id = NEW.instance_id
+              AND (step.wait_event IS NULL OR step.wait_event = NEW.event_name)
+          ))
       )
     )
     BEGIN
@@ -154,14 +163,18 @@ function backfillEventUsage(db: RuntimeSchemaDatabase): void {
       COUNT(delivery.event_id), COALESCE(SUM(delivery.payload_bytes + delivery.actor_bytes), 0),
       COALESCE(SUM(CASE WHEN delivery.event_id IS NOT NULL
         AND (delivery.claimed_by_step_id IS NULL
-          OR delivery.claimed_by_step_id NOT LIKE 'consumed:%') THEN 1 ELSE 0 END), 0),
+          OR (delivery.claimed_by_step_id NOT LIKE 'consumed:%'
+            AND delivery.claimed_by_step_id NOT LIKE 'discarded:%'))
+        THEN 1 ELSE 0 END), 0),
       COALESCE(SUM(CASE WHEN delivery.event_id IS NOT NULL
         AND (delivery.claimed_by_step_id IS NULL
-          OR delivery.claimed_by_step_id NOT LIKE 'consumed:%')
+          OR (delivery.claimed_by_step_id NOT LIKE 'consumed:%'
+            AND delivery.claimed_by_step_id NOT LIKE 'discarded:%'))
         THEN delivery.payload_bytes + delivery.actor_bytes ELSE 0 END), 0),
       COUNT(delivery.event_id)
         + COALESCE(SUM(CASE WHEN delivery.claimed_by_step_id IS NOT NULL THEN 1 ELSE 0 END), 0)
-        + COALESCE(SUM(CASE WHEN delivery.claimed_by_step_id LIKE 'consumed:%' THEN 1 ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN delivery.claimed_by_step_id LIKE 'consumed:%'
+          OR delivery.claimed_by_step_id LIKE 'discarded:%' THEN 1 ELSE 0 END), 0)
     FROM workflow_instances AS instance
     LEFT JOIN _workflow_event_delivery AS delivery
       ON delivery.instance_id = instance.instance_id

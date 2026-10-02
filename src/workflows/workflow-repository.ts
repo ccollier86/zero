@@ -14,6 +14,10 @@ import type {
 } from './types';
 import { WorkflowEventCapacityStore } from './workflow-event-capacity-store';
 import { WorkflowRuntimeValueBudget } from './workflow-runtime-budget';
+import {
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
 
 export interface WorkflowInstanceListFilter {
   status?: string;
@@ -31,6 +35,7 @@ export interface PersistedWorkflowDefinitionInput {
 
 type WorkflowRow = Record<string, unknown>;
 type PreparedStatement = ReturnType<ReactiveDB['prepare']>;
+const repositoryDatabases = new WeakMap<WorkflowRepository, ReactiveDB>();
 
 export class WorkflowRepository {
   private readonly budget: WorkflowRuntimeValueBudget;
@@ -47,7 +52,11 @@ export class WorkflowRepository {
   private readonly runningStepsForDisposal: PreparedStatement;
   private readonly listStatements = new Map<number, PreparedStatement>();
 
-  constructor(private readonly db: ReactiveDB) {
+  constructor(
+    private readonly db: ReactiveDB,
+    private readonly runtimeFence: WorkflowRuntimeFence | null = null,
+  ) {
+    repositoryDatabases.set(this, db);
     this.budget = new WorkflowRuntimeValueBudget(db);
     this.eventCapacity = new WorkflowEventCapacityStore(db);
     this.instanceById = db.prepare(`
@@ -135,7 +144,7 @@ export class WorkflowRepository {
   }
 
   transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn);
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, fn);
   }
 
   getInstance(instanceId: string): WorkflowInstanceRecord | null {
@@ -220,7 +229,7 @@ export class WorkflowRepository {
   }
 
   persistDefinition(input: PersistedWorkflowDefinitionInput): string {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const existing = this.findDefinition(input.name);
       if (existing) {
         if (existing.steps_json !== input.stepsJson
@@ -250,7 +259,7 @@ export class WorkflowRepository {
   }
 
   createInstance(instance: WorkflowRow, steps: WorkflowRow[]): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       const instanceId = String(instance.instance_id ?? '');
       if (!instanceId || this.getInstance(instanceId)) {
         throw new Error(`Workflow instance "${instanceId}" already exists`);
@@ -265,7 +274,7 @@ export class WorkflowRepository {
   }
 
   insertInstance(row: WorkflowRow): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertNewInstance(row);
       this.eventCapacity.initializeInstance(String(row.instance_id ?? ''));
       this.db.insert('workflow_instances', row);
@@ -273,7 +282,7 @@ export class WorkflowRepository {
   }
 
   insertStep(row: WorkflowRow): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertNewStep(row);
       this.db.insert('workflow_steps', row);
     });
@@ -288,14 +297,14 @@ export class WorkflowRepository {
   }
 
   updateInstance(instanceId: string, changes: WorkflowRow): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertInstanceChange(instanceId, changes);
       this.db.update('workflow_instances', instanceId, changes);
     });
   }
 
   updateStep(stepId: string, changes: WorkflowRow): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertStepChange(stepId, changes);
       this.db.update('workflow_steps', stepId, changes);
     });
@@ -305,4 +314,12 @@ export class WorkflowRepository {
   validateRuntimeBudget(instanceId: string): void {
     this.budget.validateInstance(instanceId);
   }
+}
+
+/** @internal Validate low-level collaborator composition without exposing its database. */
+export function workflowRepositoryUsesDatabase(
+  repository: WorkflowRepository,
+  db: ReactiveDB,
+): boolean {
+  return repositoryDatabases.get(repository) === db;
 }

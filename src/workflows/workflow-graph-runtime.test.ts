@@ -941,6 +941,20 @@ describe('workflow graph execution', () => {
     await started;
   });
 
+  test('propagates collaborator failures after draining every shutdown path', async () => {
+    const service = createService(new WorkflowRegistry());
+    const graph = service.getGraphRuntime();
+    const originalDispose = graph.interactions.dispose.bind(graph.interactions);
+    const cleanupError = new Error('interaction cleanup failed');
+    graph.interactions.dispose = async () => {
+      await originalDispose();
+      throw cleanupError;
+    };
+
+    await expect(service.dispose()).rejects.toBe(cleanupError);
+    expect(service.dispose()).toBe(service.dispose());
+  });
+
   test('aborts and fences interaction validators on cancellation', async () => {
     const registry = new WorkflowRegistry();
     const entered = deferred<void>();

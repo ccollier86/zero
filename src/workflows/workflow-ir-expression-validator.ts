@@ -72,7 +72,7 @@ function expressionUses(graph: WorkflowGraphIR, allowItemScopes: boolean): Expre
       }
       for (const invocation of node.interaction.delivery ?? []) {
         if (invocation.input) {
-          uses.push({ expression: invocation.input, consumer: node.id, itemScopes: true });
+          uses.push({ expression: invocation.input, consumer: node.id, itemScopes: false });
         }
       }
     }

@@ -11,7 +11,8 @@ import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
 import {
-  WorkflowExecutor,
+  createOwnerFencedWorkflowExecutor,
+  type WorkflowExecutor,
   type WorkflowClock,
 } from './workflow-executor';
 import { WorkflowError, workflowNotFound } from './workflow-error';
@@ -47,6 +48,10 @@ import {
   WorkflowWakeCoordinator,
   type WorkflowWakeTimer,
 } from './workflow-wake-coordinator';
+import {
+  WorkflowRuntimeOwnerLease,
+  type WorkflowRuntimeOwnershipOptions,
+} from './workflow-runtime-owner-lease';
 
 const systemClock: WorkflowClock = { now: () => new Date() };
 
@@ -62,6 +67,8 @@ export interface WorkflowServiceOptions {
   shutdownGraceMs?: number;
   /** Optional Guardian/app policy adapter for graph interaction responses. */
   interactionAuthority?: WorkflowInteractionAuthority;
+  /** Durable single-owner lease configuration; defaults are production-safe. */
+  runtimeOwnership?: WorkflowRuntimeOwnershipOptions;
 }
 
 export class WorkflowService {
@@ -75,6 +82,7 @@ export class WorkflowService {
   private readonly wakes: WorkflowWakeCoordinator;
   private readonly graph: WorkflowGraphRuntime;
   private readonly clock: WorkflowClock;
+  private readonly ownerLease: WorkflowRuntimeOwnerLease;
   private disposed = false;
   private disposalPromise: Promise<void> | null = null;
 
@@ -84,59 +92,74 @@ export class WorkflowService {
     options: WorkflowServiceOptions = {},
   ) {
     this.clock = options.clock ?? systemClock;
-    const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
-    const wakeTimer = options.wakeTimer === undefined
-      ? (options.clock ? false : createNativeWorkflowWakeTimer())
-      : options.wakeTimer;
-    this.runtime = options.runtime ?? new WorkflowRuntimeStore(db);
-    this.graph = new WorkflowGraphRuntime(db, registry, {
-      now: () => this.clock.now(),
-      shutdownGraceMs,
-      interactionAuthority: options.interactionAuthority,
-      wakeTimer,
-    });
-    this.repository = new WorkflowRepository(db);
-    this.wakes = new WorkflowWakeCoordinator(this.clock, wakeTimer, {
-      retry: (wake) => this.dispatchAdvance(wake.instanceId, 'retry'),
-      timeout: (wake) => this.lifecycle.handleTimeoutWake(wake),
-    });
-    this.executor = new WorkflowExecutor(
-      db,
-      registry,
-      this.runtime,
-      this.clock,
-      this.repository,
-      this.wakes,
-      shutdownGraceMs,
-    );
-    this.lifecycle = new WorkflowLifecycleCoordinator(
-      this.repository,
-      registry,
-      this.runtime,
-      this.executor,
-      this.clock,
-      this.wakes,
-    );
-    this.transitions = new WorkflowTransitionController(
-      this.repository,
-      this.runtime,
-      this.executor,
-      this.lifecycle,
-      this.clock,
-      this.wakes,
-    );
-    this.instanceFactory = new WorkflowInstanceFactory(
-      registry,
-      this.repository,
-      this.clock,
-    );
-    this.frontier = new WorkflowFrontierPump(
-      this.repository,
-      this.runtime,
-      this.executor,
-      this.clock,
-      this.wakes,
-    );
+    this.ownerLease = new WorkflowRuntimeOwnerLease(db, options.runtimeOwnership);
+    try {
+      const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
+      const wakeTimer = options.wakeTimer === undefined
+        ? (options.clock ? false : createNativeWorkflowWakeTimer())
+        : options.wakeTimer;
+      this.runtime = WorkflowRuntimeStore.createOwnerFenced(
+        db,
+        this.ownerLease,
+        options.runtime,
+        () => this.clock.now(),
+      );
+      this.graph = new WorkflowGraphRuntime(db, registry, {
+        now: () => this.clock.now(),
+        shutdownGraceMs,
+        interactionAuthority: options.interactionAuthority,
+        wakeTimer,
+        runtime: this.runtime,
+        runtimeFence: this.ownerLease,
+      });
+      this.repository = new WorkflowRepository(db, this.ownerLease);
+      this.wakes = new WorkflowWakeCoordinator(this.clock, wakeTimer, {
+        retry: (wake) => this.dispatchAdvance(wake.instanceId, 'retry'),
+        timeout: (wake) => this.lifecycle.handleTimeoutWake(wake),
+      });
+      this.executor = createOwnerFencedWorkflowExecutor(
+        db,
+        registry,
+        this.runtime,
+        this.clock,
+        this.repository,
+        this.wakes,
+        shutdownGraceMs,
+        this.ownerLease,
+      );
+      this.lifecycle = new WorkflowLifecycleCoordinator(
+        this.repository,
+        registry,
+        this.runtime,
+        this.executor,
+        this.clock,
+        this.wakes,
+      );
+      this.transitions = new WorkflowTransitionController(
+        this.repository,
+        this.runtime,
+        this.executor,
+        this.lifecycle,
+        this.clock,
+        this.wakes,
+      );
+      this.instanceFactory = new WorkflowInstanceFactory(
+        registry,
+        this.repository,
+        this.clock,
+      );
+      this.frontier = new WorkflowFrontierPump(
+        this.repository,
+        this.runtime,
+        this.executor,
+        this.clock,
+        this.wakes,
+      );
+      this.ownerLease.onLost((error) => this.quiesceAfterOwnershipLoss(error));
+    } catch (error) {
+      this.ownerLease.release();
+      throw error;
+    }
   }
 
   /** Create an instance and drive its first legal frontier. */
@@ -179,6 +202,7 @@ export class WorkflowService {
   /** Coalesce concurrent triggers into one per-instance frontier pump. */
   async advance(instanceId: string): Promise<void> {
     if (this.disposed) return;
+    this.ownerLease.assertCurrent();
     this.markOperationStarted();
     if (this.graph.isGraphInstance(instanceId)) return this.graph.advance(instanceId);
     return this.frontier.advance(instanceId, () => this.advance(instanceId));
@@ -297,6 +321,7 @@ export class WorkflowService {
   /** Discover due instances; the normal frontier pump performs every retry. */
   async pollRetries(): Promise<number> {
     if (this.disposed) return 0;
+    this.ownerLease.assertCurrent();
     const legacy = this.lifecycle.pollRetries((instanceId, phase) => {
       this.dispatchAdvance(instanceId, phase);
     });
@@ -306,6 +331,7 @@ export class WorkflowService {
   /** Expire only a still-current deadline after a transactional reread. */
   pollTimeouts(): number {
     if (this.disposed) return 0;
+    this.ownerLease.assertCurrent();
     return this.lifecycle.pollTimeouts() + this.graph.pollTimeouts();
   }
 
@@ -329,23 +355,32 @@ export class WorkflowService {
     this.disposed = true;
     this.frontier.stop();
     this.disposalPromise = (async () => {
-      let lifecycleError: unknown;
+      const failures: unknown[] = [];
       try {
-        await this.lifecycle.dispose();
+        if (this.ownerLease.isCurrent()) await this.lifecycle.dispose();
+        else await this.lifecycle.disposeWithoutPersistence();
       } catch (error) {
-        lifecycleError = error;
+        failures.push(error);
       }
-      await this.frontier.drain();
+      try {
+        await this.frontier.drain();
+      } catch (error) {
+        failures.push(error);
+      }
       try {
         await this.graph.dispose();
       } catch (error) {
-        if (lifecycleError === undefined) lifecycleError = error;
-        else lifecycleError = new AggregateError(
-          [lifecycleError, error],
-          'Workflow runtimes failed to dispose',
-        );
+        failures.push(error);
       }
-      if (lifecycleError !== undefined) throw lifecycleError;
+      try {
+        this.ownerLease.release();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'Workflow runtimes failed to dispose');
+      }
     })();
     return this.disposalPromise;
   }
@@ -402,9 +437,28 @@ export class WorkflowService {
         503,
       );
     }
+    this.ownerLease.assertCurrent();
   }
 
   private markOperationStarted(): void {
     this.lifecycle.markOperationStarted();
+  }
+
+  private quiesceAfterOwnershipLoss(error: WorkflowError): void {
+    if (this.disposed) return;
+    this.frontier.stop();
+    void Promise.allSettled([
+      this.lifecycle.disposeWithoutPersistence(),
+      this.frontier.drain(),
+      this.graph.dispose(),
+    ]).then((settlements) => {
+      for (const settlement of settlements) {
+        if (settlement.status !== 'rejected') continue;
+        emitPlatformCode(OBS_CODES.WORKFLOW_ADVANCE_FAILED, {
+          error: settlement.reason,
+          metadata: { phase: 'ownership-loss-quiescence', cause: error.code },
+        });
+      }
+    });
   }
 }

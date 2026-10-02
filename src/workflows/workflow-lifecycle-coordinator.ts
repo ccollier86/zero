@@ -219,6 +219,12 @@ export class WorkflowLifecycleCoordinator {
     }
   }
 
+  /** Drain local handlers after ownership loss without touching durable rows. */
+  async disposeWithoutPersistence(): Promise<void> {
+    this.wakes.dispose();
+    await this.executor.dispose();
+  }
+
   failTimedOutStep(
     instanceId: string,
     step: WorkflowStepRecord,
@@ -239,6 +245,7 @@ export class WorkflowLifecycleCoordinator {
       updated_at: now,
       completed_at: now,
     });
+    this.runtime.discardInstanceQueue(instanceId, now);
   }
 
   emitTimeout(step: WorkflowStepRecord): void {

@@ -60,16 +60,16 @@ describe('workflow sync policy', () => {
       db.queryOne('workflow_instances', 'owned')!,
     );
     expect(projected).not.toHaveProperty('steps_json');
-    expect(projected.input).toBe('{"legacy":"input"}');
-    expect(projected.output).toBe('{"legacy":"output"}');
-    expect(projected.error).toBe('legacy error');
+    expect(projected.input).toBeNull();
+    expect(projected.output).toBeNull();
+    expect(projected.error).toBeNull();
     const stepFilter = access.rowFilters.get('workflow_steps')!;
     const projectedStep = stepFilter.project!(db.queryOne('workflow_steps', 'step-owned')!);
     expect(projectedStep.step_name).toBe('Public step');
     expect(projectedStep).not.toHaveProperty('wait_event');
-    expect(projectedStep.input).toBe('{"legacy":"step-input"}');
-    expect(projectedStep.output).toBe('{"legacy":"step-output"}');
-    expect(projectedStep.error).toBe('legacy step error');
+    expect(projectedStep.input).toBeNull();
+    expect(projectedStep.output).toBeNull();
+    expect(projectedStep.error).toBeNull();
   });
 
   test('lets global admins inspect runtime rows while retaining delegate denials and predicates', async () => {

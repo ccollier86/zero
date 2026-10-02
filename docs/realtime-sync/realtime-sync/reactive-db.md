@@ -252,7 +252,12 @@ const unsub = db.onChange(listener);
 unsub();
 ```
 
-Listeners fire synchronously after every write, in registration order. For transactions, listeners are called once per change, after the transaction commits — not during.
+Listeners fire synchronously after every write, in registration order. For
+transactions, listeners are called once per change, after the transaction
+commits — not during. A complete committed batch is queued before delivery
+begins, so a listener-triggered write follows the batch instead of interleaving
+with it. Live delivery and durable `_changes` replay therefore observe the same
+sequence order.
 
 **Error isolation:** If a listener throws, the error is caught and logged — it does not propagate to the writer or prevent subsequent listeners from being called. The write has already committed to SQLite; a broken listener cannot roll it back. This matches the broadcast pattern in `src/server/session-orchestrator.ts` where a broken client connection doesn't fail the broadcast loop.
 
@@ -340,9 +345,13 @@ db.transaction(() => {
 
 **Behavior:**
 - All writes succeed or none do (SQLite ACID)
-- Each write increments `seq` and records in `_changes` normally
+- Each domain write, durable sequence allocation, and `_changes` record commits
+  in the same transaction
 - Change listeners are **deferred** — accumulated during the transaction, fired after commit
 - If the transaction fails, no changes are emitted and `seq` increments are rolled back
+- The callback must be synchronous. Returning a Promise/thenable aborts the
+  transaction, and its asynchronous continuation remains poisoned against
+  later ReactiveDB mutation.
 
 **Implementation pattern:** Same as `src/persistence/sqlite-hot-store.ts` `clearSession()` — uses `this.db.transaction()` from bun:sqlite:
 

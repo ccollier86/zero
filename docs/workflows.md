@@ -1,13 +1,13 @@
-# Durable Workflows
+# Torrent Durable Workflows
 
 **Source:** `src/workflows/`
 
-Zero workflows are durable, versioned execution graphs backed by SQLite and
-ReactiveDB. A workflow can run ordinary activities, choose a branch, execute
-parallel branches, fan out over an array, wait for an event, or pause for a
-human or external-system response. Runtime progress is projected through
-owner-scoped ReactiveDB Sync, so an authorized browser can render a live run
-without polling.
+**Torrent** is Zero's durable workflow subsystem: versioned execution graphs
+backed by SQLite and ReactiveDB. A workflow can run ordinary activities,
+choose a branch, execute parallel branches, fan out over an array, wait for an
+event, or pause for a human or external-system response. Runtime progress is
+projected through owner-scoped ReactiveDB Sync, so an authorized browser can
+render a live run without polling.
 
 New graph definitions share one canonical execution model across several
 authoring surfaces:
@@ -22,6 +22,10 @@ authoring surfaces:
 Activities are trusted server functions. Graphs contain only serializable
 data and version-pinned activity references; persisted definitions never
 contain closures or executable source strings.
+
+Torrent is the subsystem name, not a new application API. Existing
+`workflows` configuration, `zero.workflows`, HTTP routes, imports, and database
+table names remain unchanged.
 
 ## Enable And Register
 
@@ -646,6 +650,12 @@ identity. A bounded private actor snapshot travels with the durable inbox claim,
 so the same responder context is available after restart. Unauthorized or
 anonymous event responses are consumed and recorded as safe rejection telemetry
 rather than bypassing the responder policy or blocking a later valid response.
+The `event` response channel and `event:` submission-ID prefix are reserved for
+this trusted internal bridge. Public response submission rejects either form;
+applications should use their own audit-only channel label and an ordinary
+stable submission ID. When an event response is accepted, its exact delivery
+claim and inbox accounting settle in the same transaction as wait completion,
+including after recovery from a crash between response acceptance and settling.
 
 Submission IDs are idempotent and bound to both the authenticated actor and
 payload hash. Reusing one with the same actor and payload returns the recorded
@@ -1033,7 +1043,9 @@ Stable `WorkflowError` codes include:
 
 - readiness/lifecycle: `WORKFLOW_NOT_READY`, `WORKFLOW_DRAINING`,
   `WORKFLOW_STATE_INVALID`, `WORKFLOW_CONFIG_INVALID`,
-  `WORKFLOW_STARTUP_FAILED`;
+  `WORKFLOW_STARTUP_FAILED`, `WORKFLOW_RUNTIME_OWNED`, and
+  `WORKFLOW_RUNTIME_LEASE_LOST`; `OWNED` rejects a competing live runtime,
+  while `LEASE_LOST` fences a generation that was superseded or expired;
 - lookup/validation: `WORKFLOW_NOT_FOUND`, `WORKFLOW_DEFINITION_NOT_FOUND`,
   `WORKFLOW_INPUT_INVALID`, `WORKFLOW_OUTPUT_INVALID`,
   `WORKFLOW_EVENT_INVALID`, `WORKFLOW_GRAPH_INVALID`;
@@ -1067,7 +1079,7 @@ thrown error remains the event's raw `error`; configured sinks own external
 serialization/redaction, so application errors must not embed secrets or
 sensitive records in their message, stack, or custom fields.
 
-## Storage And Migration 030
+## Storage And Migrations 030, 032, And 033
 
 Migration `030_workflow_graph_runtime` adds immutable graph versions, graph
 coordination, scratch memory, and interaction state without dropping existing
@@ -1099,6 +1111,38 @@ is additive and idempotent; startup also ensures the graph schema for direct
 plugin/test composition. Additive-column migration backfills runtime, event,
 and interaction usage counters once for existing rows. Active execution and
 recovery then require exact counter integrity and never silently rewrite drift.
+
+Migration `032_workflow_runtime_ownership` adds one private generation lease
+per workflow database. A `WorkflowService` acquires an exact owner/generation,
+and every durable mutation rechecks that generation inside its writer
+transaction. A stale service cannot commit after takeover. Standalone
+low-level stores and `WorkflowExecutor` remain compatible while no managed
+service owns the database; once one does, their next mutation fails with
+retryable `WORKFLOW_RUNTIME_OWNED`. Injected executor collaborators must belong
+to the executor's own ReactiveDB.
+
+Migration `033_torrent_integrity_hardening` adds database-level fences for
+definition/source/scope/status values, active-version ownership, version
+retirement, draft source/base relationships, and exact `consumed:<event-id>`
+or `discarded:<event-id>` terminal markers. It is deliberately neutral to the
+database topology: on Zero 1.3 it protects the single-database event-delivery
+shape, and on a later multi-tenant release it also preserves event authority.
+Both migrations are additive and repair-safe.
+
+### Zero 1.3.1 compatibility boundary
+
+Zero 1.3.1 includes Torrent's generic correctness and security fixes without
+Guardian multi-tenancy, ReactiveDB Fabric, tenant columns, or the
+system/application database split. Existing 1.3 applications keep their
+single-database auth and data topology; running the normal migrations adds only
+Torrent's graph/runtime tables, ownership lease, and integrity triggers.
+
+An eventual upgrade from 1.3.1 to the combined 2.0 platform is supported. The
+2.0 migrator applies the missing Guardian/Fabric migrations and tenant-integrity
+migration `031`; the already-recorded `032` and `033` migrations are not rerun.
+Migration `031` reconstructs the multi-tenant workflow relations while
+reinstalling the same final `033` definition, draft, version, terminal-event,
+and authority guarantees.
 
 ## Legacy Sequential Compatibility
 
@@ -1142,4 +1186,4 @@ for client compatibility.
 | Legacy compatibility | `workflow-frontier-pump.ts`, `workflow-attempt-coordinator.ts`, `workflow-transition-controller.ts`, `workflow-lifecycle-coordinator.ts`, `workflow-executor.ts` |
 | Auth, HTTP, and Sync | `workflow-access.ts`, `workflow-http.plugin.ts`, `workflow-public-record.ts`, `workflow-sync-policy.ts` |
 | React | `src/frontend/client/workflow-hooks.ts`, `src/frontend/client/workflow-run-hooks.ts` |
-| Schema snapshots, storage schema, and migration | `workflow-schema-snapshot.ts`, `workflow-schema.ts`, `workflow-graph-schema.ts`, `workflow-runtime-schema.ts`, `src/migrations/definitions/030_workflow_graph_runtime.ts` |
+| Schema snapshots, storage schema, and migrations | `workflow-schema-snapshot.ts`, `workflow-schema.ts`, `workflow-graph-schema.ts`, `workflow-runtime-schema.ts`, `workflow-runtime-lease-schema.ts`, `workflow-runtime-lease-store.ts`, `workflow-runtime-owner-lease.ts`, migrations `030`, `032`, and `033` |

@@ -143,10 +143,10 @@ describe('Sync mutation receipts', () => {
     await mutate(secondSocket, secondDb, secondReceipts, {
       ...message, epoch: oldEpoch, attempt: 2,
     });
-    expect(secondDb.currentSeq).toBe(0);
+    expect(secondDb.currentSeq).toBe(1);
     expect(secondDb.get('todos', '1')).toEqual({ id: '1', title: 'Exactly once' });
     expect(secondSocket.messages.at(-1)).toMatchObject({
-      ok: true, ref: 'durable-ref', seq: 0,
+      ok: true, ref: 'durable-ref', seq: 1,
       change: { table: 'todos', rowId: '1', row: { title: 'Exactly once' } },
     });
 
@@ -172,7 +172,7 @@ describe('Sync mutation receipts', () => {
     expect(secondSocket.messages.at(-1)).toMatchObject({
       ok: false, error: 'Mutation outcome unavailable; retry as new work',
     });
-    expect(secondDb.currentSeq).toBe(0);
+    expect(secondDb.currentSeq).toBe(1);
     secondDb.dispose();
     await rm(directory, { recursive: true, force: true });
   });

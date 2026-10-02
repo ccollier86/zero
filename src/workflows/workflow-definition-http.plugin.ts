@@ -10,6 +10,7 @@ import type { WorkflowDefinitionAccessPolicy } from './types';
 import { WorkflowDefinitionManager } from './workflow-definition-manager';
 import { WorkflowError } from './workflow-error';
 import type { WorkflowGraphIR } from './workflow-ir';
+import { MAX_WORKFLOW_DEFINITION_NAME_LENGTH } from './workflow-definition-identifiers';
 import type { WorkflowHttpPluginDependencies } from './workflow-http.plugin';
 
 /** Database definitions remain an admin surface until Guardian supplies policy. */
@@ -29,11 +30,21 @@ export function createWorkflowDefinitionAdminHttpPlugin(
       if (error instanceof WorkflowError) {
         set.status = error.status;
         if (error.status >= 500) emitFailure(error, request, error.status);
-        return { error: error.message, code: error.code };
+        return {
+          error: error.status >= 500
+            ? 'Workflow definition request failed'
+            : error.message,
+          code: error.code,
+          ...(error.retryable ? { retryable: true } : {}),
+        };
       }
       if (error instanceof AuthError) {
         set.status = error.status;
-        return { error: error.message, code: error.code };
+        if (error.status >= 500) emitFailure(error, request, error.status);
+        return {
+          error: error.status >= 500 ? 'Authentication service unavailable' : error.message,
+          code: error.code,
+        };
       }
       if (code === 'VALIDATION') {
         set.status = 422;
@@ -90,7 +101,15 @@ export function createWorkflowDefinitionAdminHttpPlugin(
     }, { body: publishBody() })
     .put('/drafts', ({ requireAdmin, body }) => {
       const auth = requireAdmin();
-      const result = manager(dependencies).saveDraft({
+      const updating = body.draftId !== undefined;
+      if (updating !== (body.expectedRevision !== undefined)) {
+        throw new WorkflowError(
+          'Existing workflow draft updates require draftId and expectedRevision together',
+          'WORKFLOW_REQUEST_INVALID',
+          422,
+        );
+      }
+      const common = {
         definitionId: body.definitionId.trim(),
         name: body.name.trim(),
         graph: body.graph as WorkflowGraphIR,
@@ -98,17 +117,20 @@ export function createWorkflowDefinitionAdminHttpPlugin(
         ...(body.access === undefined
           ? {}
           : { access: body.access as WorkflowDefinitionAccessPolicy }),
-        ...(body.draftId === undefined ? {} : { draftId: body.draftId.trim() }),
         ...(body.baseVersionId === undefined
           ? {}
           : { baseVersionId: body.baseVersionId }),
-        ...(body.expectedRevision === undefined
-          ? {}
-          : { expectedRevision: body.expectedRevision }),
         ...(body.editorMetadata === undefined
           ? {}
           : { editorMetadata: body.editorMetadata }),
-      }, auth.userId);
+      };
+      const result = manager(dependencies).saveDraft(updating
+        ? {
+          ...common,
+          draftId: body.draftId!.trim(),
+          expectedRevision: body.expectedRevision!,
+        }
+        : common, auth.userId);
       return publicDraft(result);
     }, { body: draftBody() })
     .get('/drafts/:draftId', ({ requireAdmin, params }) => {
@@ -126,7 +148,7 @@ export function createWorkflowDefinitionAdminHttpPlugin(
     }, {
       params: t.Object({ draftId: nonBlankString() }),
       query: t.Object({
-        expectedRevision: t.Optional(t.Numeric({ minimum: 0 })),
+        expectedRevision: t.Numeric({ minimum: 1 }),
       }),
     })
     .post('/drafts/:draftId/publish', ({ requireAdmin, params, body }) => {
@@ -135,6 +157,7 @@ export function createWorkflowDefinitionAdminHttpPlugin(
         params.draftId.trim(),
         auth.userId,
         {
+          expectedRevision: body.expectedRevision,
           ...(body.version === undefined ? {} : { version: body.version }),
           ...(body.activate === undefined ? {} : { activate: body.activate }),
           ...(body.expectedActiveVersionId === undefined
@@ -145,7 +168,7 @@ export function createWorkflowDefinitionAdminHttpPlugin(
       return publicPublication(result);
     }, {
       params: t.Object({ draftId: nonBlankString() }),
-      body: publicationOptionsBody(),
+      body: draftPublicationBody(),
     })
     .post('/:definitionId/versions/:versionId/activate', ({
       requireAdmin,
@@ -181,7 +204,7 @@ function manager(dependencies: WorkflowHttpPluginDependencies): WorkflowDefiniti
 
 function publishBody() {
   return t.Object({
-    name: nonBlankString(),
+    name: workflowDefinitionName(),
     graph: t.Unknown(),
     inputSchema: t.Optional(t.Unknown()),
     access: t.Optional(t.Unknown()),
@@ -192,19 +215,26 @@ function publishBody() {
 function draftBody() {
   return t.Object({
     definitionId: nonBlankString(),
-    name: nonBlankString(),
+    name: workflowDefinitionName(),
     graph: t.Unknown(),
     inputSchema: t.Optional(t.Unknown()),
     access: t.Optional(t.Unknown()),
     draftId: t.Optional(nonBlankString()),
     baseVersionId: t.Optional(t.Union([nonBlankString(), t.Null()])),
-    expectedRevision: t.Optional(t.Integer({ minimum: 0 })),
+    expectedRevision: t.Optional(t.Integer({ minimum: 1 })),
     editorMetadata: t.Optional(t.Unknown()),
   });
 }
 
 function publicationOptionsBody() {
   return t.Object(publicationOptionProperties());
+}
+
+function draftPublicationBody() {
+  return t.Object({
+    expectedRevision: t.Integer({ minimum: 1 }),
+    ...publicationOptionProperties(),
+  });
 }
 
 function publicationOptionProperties() {
@@ -230,6 +260,14 @@ function versionParams() {
 
 function nonBlankString() {
   return t.String({ minLength: 1, pattern: '\\S' });
+}
+
+function workflowDefinitionName() {
+  return t.String({
+    minLength: 1,
+    maxLength: MAX_WORKFLOW_DEFINITION_NAME_LENGTH,
+    pattern: '\\S',
+  });
 }
 
 function publicPublication(result: ReturnType<WorkflowDefinitionManager['publish']>) {

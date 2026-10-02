@@ -13,6 +13,7 @@ import { emitWorkflowDefinitionCode } from './workflow-definition-version-observ
 import { resolveWorkflowDefinitionVersionRecord } from './workflow-definition-version-resolution';
 import { ensureWorkflowGraphSchema } from './workflow-graph-schema';
 import type {
+  PublishWorkflowDefinitionDraftInput,
   PublishWorkflowDefinitionVersionInput,
   PublishWorkflowDefinitionVersionResult,
   ResolveWorkflowDefinitionVersionInput,
@@ -26,13 +27,18 @@ import {
   normalizeWorkflowDefinitionScope as normalizeScope,
   requireWorkflowDefinitionName as requireName,
   canonicalizeWorkflowVersionContent,
+  assertWorkflowDefinitionSourceScope,
   assertWorkflowDefinitionSource,
   assertWorkflowExpectedActiveVersion,
   workflowVersionConflict as conflict,
   workflowVersionNotFound as versionNotFound,
 } from './workflow-definition-version-validation';
+import {
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
 
-type VersionDatabase = Pick<ReactiveDB, 'exec' | 'prepare' | 'transaction'>;
+type VersionDatabase = Pick<ReactiveDB, 'afterCommit' | 'exec' | 'prepare' | 'transaction'>;
 
 /** Durable immutable-version catalog used by code and database definitions. */
 export class WorkflowDefinitionVersionStore {
@@ -41,9 +47,38 @@ export class WorkflowDefinitionVersionStore {
   constructor(
     private readonly db: VersionDatabase,
     private readonly clock: () => string = () => new Date().toISOString(),
+    private readonly runtimeFence: WorkflowRuntimeFence | null = null,
   ) {
     ensureWorkflowGraphSchema(db);
-    this.drafts = new WorkflowDefinitionDraftStore(db, clock);
+    this.drafts = new WorkflowDefinitionDraftStore(db, clock, runtimeFence);
+  }
+
+  /** Publish only the exact draft revision compiled by the caller. */
+  publishDraft(
+    input: PublishWorkflowDefinitionDraftInput,
+  ): PublishWorkflowDefinitionVersionResult {
+    return this.transaction(() => {
+      if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+        throw draftInvalid('Workflow draft publication requires a positive expected revision');
+      }
+      const draft = this.drafts.require(input.draftId).draft;
+      if (draft.definition_id !== input.definitionId
+        || draft.source !== input.publication.source
+        || draft.revision !== input.expectedRevision
+        || draft.fingerprint !== input.expectedDraftFingerprint
+        || input.publication.expectedFingerprint !== draft.fingerprint) {
+        throw draftConflict('Workflow draft changed before it could be published');
+      }
+      const catalog = this.requireCatalog(input.definitionId);
+      const scope = normalizeScope(input.publication.scope);
+      if (catalog.name !== requireName(input.publication.name)
+        || catalog.source !== input.publication.source
+        || catalog.scope_type !== scope.type
+        || catalog.scope_id !== scope.id) {
+        throw draftConflict('Workflow draft publication identity changed');
+      }
+      return this.publish(input.publication);
+    });
   }
 
   /**
@@ -57,6 +92,7 @@ export class WorkflowDefinitionVersionStore {
   ): PublishWorkflowDefinitionVersionResult {
     const name = requireName(input.name);
     const scope = normalizeScope(input.scope);
+    assertWorkflowDefinitionSourceScope(input.source, scope);
     const content = canonicalizeWorkflowVersionContent(input);
     if (input.expectedFingerprint && input.expectedFingerprint !== content.fingerprint) {
       throw conflict('Compiler and persistence fingerprints do not match');
@@ -67,7 +103,7 @@ export class WorkflowDefinitionVersionStore {
     }
 
     let activatedNow = false;
-    const result = this.db.transaction(() => {
+    const result = this.transaction(() => {
       let catalog = this.findCatalogByName(name, scope);
       if (!catalog) catalog = this.createCatalog(input, name, scope, content);
       assertWorkflowDefinitionSource(catalog, input.source);
@@ -119,19 +155,33 @@ export class WorkflowDefinitionVersionStore {
         activatedNow = true;
       }
 
-      return { ...resolveWorkflowDefinitionVersionRecord(catalog, version), created, activated };
+      const resolved = {
+        ...resolveWorkflowDefinitionVersionRecord(catalog, version),
+        created,
+        activated,
+      };
+      if (created) this.db.afterCommit(() => {
+        emitWorkflowDefinitionCode(
+          OBS_CODES.WORKFLOW_DEFINITION_PUBLISHED,
+          resolved,
+          input.actorId,
+        );
+      });
+      if (activatedNow) this.db.afterCommit(() => {
+        emitWorkflowDefinitionCode(
+          OBS_CODES.WORKFLOW_DEFINITION_ACTIVATED,
+          resolved,
+          input.actorId,
+        );
+      });
+      return resolved;
     });
-    if (result.created) {
-      emitWorkflowDefinitionCode(OBS_CODES.WORKFLOW_DEFINITION_PUBLISHED, result, input.actorId);
-    }
-    if (activatedNow) {
-      emitWorkflowDefinitionCode(OBS_CODES.WORKFLOW_DEFINITION_ACTIVATED, result, input.actorId);
-    }
     return result;
   }
 
   /** Resolve an active, numbered, or explicitly identified immutable version. */
   resolve(input: ResolveWorkflowDefinitionVersionInput): ResolvedWorkflowDefinitionVersion {
+    this.runtimeFence?.assertCurrent();
     const catalog = this.resolveCatalog(input);
     let version: WorkflowDefinitionVersionRecord | null;
     if (input.versionId) version = this.findVersionId(input.versionId);
@@ -154,7 +204,7 @@ export class WorkflowDefinitionVersionStore {
     actorId: string | null = null,
   ): ResolvedWorkflowDefinitionVersion {
     let activatedNow = false;
-    const result = this.db.transaction(() => {
+    const result = this.transaction(() => {
       const catalog = this.requireCatalog(definitionId);
       const version = this.requireOwnedVersion(definitionId, versionId);
       if (version.status === 'retired') {
@@ -165,11 +215,19 @@ export class WorkflowDefinitionVersionStore {
         this.activateRecord(catalog, version, actorId);
         activatedNow = true;
       }
-      return resolveWorkflowDefinitionVersionRecord(this.requireCatalog(definitionId), version);
+      const resolved = resolveWorkflowDefinitionVersionRecord(
+        this.requireCatalog(definitionId),
+        version,
+      );
+      if (activatedNow) this.db.afterCommit(() => {
+        emitWorkflowDefinitionCode(
+          OBS_CODES.WORKFLOW_DEFINITION_ACTIVATED,
+          resolved,
+          actorId,
+        );
+      });
+      return resolved;
     });
-    if (activatedNow) {
-      emitWorkflowDefinitionCode(OBS_CODES.WORKFLOW_DEFINITION_ACTIVATED, result, actorId);
-    }
     return result;
   }
 
@@ -180,34 +238,40 @@ export class WorkflowDefinitionVersionStore {
     actorId: string | null = null,
   ): ResolvedWorkflowDefinitionVersion {
     let retiredNow = false;
-    const result = this.db.transaction(() => {
+    const result = this.transaction(() => {
       let catalog = this.requireCatalog(definitionId);
       let version = this.requireOwnedVersion(definitionId, versionId);
       resolveWorkflowDefinitionVersionRecord(catalog, version);
       if (version.status !== 'retired') {
         retiredNow = true;
         const now = this.clock();
-        this.db.prepare(`UPDATE workflow_definition_versions
-          SET status = 'retired', retired_by = ?, retired_at = ? WHERE version_id = ?`)
-          .run(actorId, now, versionId);
         if (catalog.active_version_id === versionId) {
           this.db.prepare(`UPDATE workflow_definitions SET active_version_id = NULL,
             status = 'retired', updated_by = ?, updated_at = ? WHERE definition_id = ?`)
             .run(actorId, now, definitionId);
         }
+        this.db.prepare(`UPDATE workflow_definition_versions
+          SET status = 'retired', retired_by = ?, retired_at = ? WHERE version_id = ?`)
+          .run(actorId, now, versionId);
         catalog = this.requireCatalog(definitionId);
         version = this.requireOwnedVersion(definitionId, versionId);
       }
-      return resolveWorkflowDefinitionVersionRecord(catalog, version);
+      const resolved = resolveWorkflowDefinitionVersionRecord(catalog, version);
+      if (retiredNow) this.db.afterCommit(() => {
+        emitWorkflowDefinitionCode(
+          OBS_CODES.WORKFLOW_DEFINITION_RETIRED,
+          resolved,
+          actorId,
+        );
+      });
+      return resolved;
     });
-    if (retiredNow) {
-      emitWorkflowDefinitionCode(OBS_CODES.WORKFLOW_DEFINITION_RETIRED, result, actorId);
-    }
     return result;
   }
 
   /** List immutable version metadata newest first; content remains server-only. */
   listVersions(definitionId: string): WorkflowDefinitionVersionRecord[] {
+    this.runtimeFence?.assertCurrent();
     this.requireCatalog(definitionId);
     return this.db.prepare(`SELECT * FROM workflow_definition_versions
       WHERE definition_id = ? ORDER BY version_number DESC`)
@@ -216,6 +280,7 @@ export class WorkflowDefinitionVersionStore {
 
   /** List definition catalog metadata without exposing executable graph JSON. */
   listCatalogs(scope?: WorkflowDefinitionScope): WorkflowDefinitionCatalogRecord[] {
+    this.runtimeFence?.assertCurrent();
     if (!scope) {
       return this.db.prepare(`SELECT * FROM workflow_definitions
         ORDER BY name ASC, definition_id ASC`)
@@ -392,4 +457,24 @@ export class WorkflowDefinitionVersionStore {
     return version;
   }
 
+  private transaction<T>(operation: () => T): T {
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
+  }
+
+}
+
+function draftInvalid(message: string): WorkflowDefinitionVersionStoreError {
+  return new WorkflowDefinitionVersionStoreError(
+    message,
+    'WORKFLOW_DEFINITION_DRAFT_INVALID',
+    422,
+  );
+}
+
+function draftConflict(message: string): WorkflowDefinitionVersionStoreError {
+  return new WorkflowDefinitionVersionStoreError(
+    message,
+    'WORKFLOW_DEFINITION_DRAFT_CONFLICT',
+    409,
+  );
 }

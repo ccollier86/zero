@@ -333,7 +333,7 @@ export class WorkflowGraphActivityExecutor {
         instanceId: prepared.instance.instance_id,
         stepId: prepared.step.step_id,
         nodeId: prepared.node.id,
-        ...(prepared.item ? { itemKey: prepared.item.key } : {}),
+        ...(prepared.item ? { itemIndex: prepared.item.index } : {}),
         result,
         cause,
       });
@@ -412,5 +412,6 @@ export class WorkflowGraphActivityExecutor {
       completed_at: now,
       updated_at: now,
     });
+    this.runtime.discardInstanceQueue(instance.instance_id, now);
   }
 }

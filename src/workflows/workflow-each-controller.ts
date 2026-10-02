@@ -21,6 +21,7 @@ import {
 import type { WorkflowEachItemRecord, WorkflowGraphStore } from './workflow-graph-store';
 import type { WorkflowEachNode, WorkflowGraphIR } from './workflow-ir';
 import type { WorkflowMemoryStore } from './workflow-memory-store';
+import type { WorkflowRuntimeStore } from './workflow-runtime-store';
 import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
 import { WorkflowError } from './workflow-error';
 import { validateWorkflowSchemaValue } from './workflow-schema-snapshot';
@@ -34,6 +35,7 @@ export class WorkflowEachController {
     private readonly store: WorkflowGraphStore,
     private readonly executor: WorkflowGraphActivityExecutor,
     private readonly memory: WorkflowMemoryStore,
+    private readonly runtime: WorkflowRuntimeStore,
     private readonly now: () => Date = () => new Date(),
   ) {
     this.items = new WorkflowEachItemCoordinator(store, now);
@@ -79,7 +81,7 @@ export class WorkflowEachController {
     if (!Array.isArray(source)) {
       throw new WorkflowError(
         `Workflow each node "${node.id}" source is not an array`,
-        'WORKFLOW_GRAPH_INVALID',
+        'WORKFLOW_ACTIVITY_INPUT_INVALID',
         422,
       );
     }
@@ -93,13 +95,13 @@ export class WorkflowEachController {
         422,
       );
     }
-    const body = requireEachBodyActivity(node);
+    const body = this.requireBody(node);
     const prepared = source.map((value, index) => this.prepareItem(node, value, index));
     const duplicate = firstDuplicateWorkflowEachKey(prepared.map((item) => item.key));
     if (duplicate) {
       throw new WorkflowError(
         `Workflow each node produced duplicate item key "${duplicate}"`,
-        'WORKFLOW_GRAPH_INVALID',
+        'WORKFLOW_ACTIVITY_INPUT_INVALID',
         422,
       );
     }
@@ -172,7 +174,7 @@ export class WorkflowEachController {
     node: WorkflowEachNode,
     parentStepId: string,
   ): Promise<'completed' | 'blocked' | 'failed'> {
-    const body = requireEachBodyActivity(node);
+    const body = this.requireBody(node);
     if (this.store.getInstance(instance.instance_id)?.status !== 'running') return 'blocked';
     const snapshot = this.items.snapshot(instance.instance_id, node.id, parentStepId, body);
     const items = [...snapshot.items];
@@ -248,17 +250,37 @@ export class WorkflowEachController {
       ? String(keyValue)
       : '';
     if (!key || key.length > 256) {
-      throw new WorkflowError('Workflow each item key is invalid', 'WORKFLOW_GRAPH_INVALID', 422);
+      throw new WorkflowError(
+        'Workflow each item key is invalid',
+        'WORKFLOW_ACTIVITY_INPUT_INVALID',
+        422,
+      );
     }
     let valid = true;
     if (node.itemSchema !== undefined) {
       try {
         valid = validateWorkflowSchemaValue(node.itemSchema, value);
       } catch {
-        throw new WorkflowError('Workflow each item schema is invalid', 'WORKFLOW_GRAPH_INVALID', 500);
+        throw new WorkflowError(
+          'Persisted workflow each item schema is invalid',
+          'WORKFLOW_STATE_INVALID',
+          500,
+        );
       }
     }
     return { value, index, key, valid };
+  }
+
+  private requireBody(node: WorkflowEachNode) {
+    try {
+      return requireEachBodyActivity(node);
+    } catch {
+      throw new WorkflowError(
+        'Persisted workflow each body is invalid',
+        'WORKFLOW_STATE_INVALID',
+        500,
+      );
+    }
   }
 
   private completeParent(
@@ -304,6 +326,7 @@ export class WorkflowEachController {
       this.store.updateInstance(instance.instance_id, {
         status: 'failed', error, completed_at: now, updated_at: now,
       });
+      this.runtime.discardInstanceQueue(instance.instance_id, now);
       return true;
     });
     if (!failed) return;

@@ -356,7 +356,7 @@ startup is lazy and process-wide; each render receives an isolated context.
 
 ---
 
-## System 5: Workflows
+## System 5: Torrent Workflows
 
 **What:** Durable, immutable-versioned workflow graphs with trusted activities,
 safe serializable expressions, persisted choices, concurrent branches and
@@ -416,6 +416,10 @@ exact wakes, pause/resume, cancellation, crash recovery, and live safe state.
 | `src/workflows/workflow-persisted-state.ts` | Fail-closed validation of durable run rows/topology |
 | `src/workflows/workflow-runtime-store.ts` | Durable internal event claims, attempt fences, and pause boundaries |
 | `src/workflows/workflow-runtime-schema.ts` | Internal coordination DDL shared by runtime and migration 030 |
+| `src/workflows/workflow-runtime-fence.ts` | Transaction-time managed/unmanaged runtime ownership boundary |
+| `src/workflows/workflow-runtime-lease-schema.ts` | Private durable runtime generation lease DDL |
+| `src/workflows/workflow-runtime-lease-store.ts` | Atomic generation acquire, renew, release, and unmanaged exclusion |
+| `src/workflows/workflow-runtime-owner-lease.ts` | Managed service heartbeat, loss notification, and exact-generation fence |
 | `src/workflows/workflow-runtime-json.ts` | JSON serialization and per-value durable runtime byte boundary |
 | `src/workflows/workflow-runtime-budget.ts` | O(1), transactional per-instance aggregate runtime-value accounting |
 | `src/workflows/workflow-persisted-state-values.ts` | Strict bounded JSON/scalar/timestamp recovery primitives |
@@ -433,6 +437,7 @@ exact wakes, pause/resume, cancellation, crash recovery, and live safe state.
 | `src/workflows/workflow-scheduler-owner.ts` | Owned retry/timeout job registration and cleanup |
 | `src/workflows/workflow-plugin-runtime.ts` | Registration/recovery barrier and safe service publication |
 | `src/workflows/workflow-runtime-owner-store.ts` | Process-local ownership unit for composed registry/service/shutdown state |
+| `src/workflows/workflow-terminal-event-queue.ts` | Atomic terminal-run event discard and accounting cleanup |
 | `src/workflows/workflow-http.plugin.ts` | Protected runtime/interaction routes and stable HTTP errors |
 | `src/workflows/workflow.plugin.ts` | Thin Elysia composition facade |
 | `src/workflows/index.ts` | Barrel exports |

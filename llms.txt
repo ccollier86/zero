@@ -2029,10 +2029,11 @@ reference docs confirm the behavior is implemented.
   warnings, errors, and lifecycle events should flow.
 - [Observability Audit](docs/observability-audit.md): audit of existing logging
   and events, gaps, and improvement notes.
-- [Durable Workflow System](docs/workflows.md): code DSL and canonical IR,
+- [Torrent Durable Workflow System](docs/workflows.md): code DSL and canonical IR,
   trusted versioned activities, immutable code/database definitions and drafts,
   choices/parallel/fan-out, memory, event and human waits, recovery,
-  authorization/privacy, real-time hooks, APIs, migration, and observability.
+  exact single-owner runtime generations, authorization/privacy, real-time
+  hooks, APIs, 1.3.1 compatibility migrations, and observability.
 - [Webhooks Plan](docs/webhooks.md): planned inbound/outbound webhook system,
   signatures, workflow/table triggers, webhook delivery, and future API shape.
 

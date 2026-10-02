@@ -54,9 +54,18 @@ export function validateWorkflowGraphPersistedState(
     if (matches.length !== 1) invalid(`node "${node.id}" does not have exactly one root step`);
     const step = matches[0]!;
     validateStep(step, snapshot.instance, true);
+    const expectedRetries = node.kind === 'activity'
+      ? Math.max(1, node.retries ?? 3)
+      : 1;
+    const expectedWaitEvent = node.kind === 'wait'
+      ? node.event
+      : node.kind === 'activity' ? node.legacyWaitFor ?? null : null;
     if (step.node_kind !== node.kind || step.step_index !== index
       || step.node_path !== node.id
-      || step.branch_key !== (metadata.get(node.id)?.branchKey ?? null)) {
+      || step.branch_key !== (metadata.get(node.id)?.branchKey ?? null)
+      || step.step_name !== (node.label ?? node.id)
+      || step.max_retries !== expectedRetries
+      || step.wait_event !== expectedWaitEvent) {
       invalid(`node "${node.id}" step metadata does not match graph`);
     }
     if (step.status === 'waiting' && node.kind !== 'wait' && node.kind !== 'each') {
@@ -303,6 +312,10 @@ function validateEachChild(
     || step.activation_key !== step.item_key
     || step.node_id !== body.id
     || step.node_path !== `${parent.node_path}/${body.id}`
+    || step.step_index !== parent.step_index
+    || step.step_name !== (body.label ?? body.id)
+    || step.branch_key !== null
+    || step.wait_event !== null
     || step.max_retries !== Math.max(1, body.retries ?? 3)) {
     invalid(`each node "${node.id}" has an invalid child step`);
   }
@@ -321,6 +334,10 @@ function validateDeliveryChild(
     || step.item_index !== null
     || step.node_id !== `${node.id}/delivery/${index}`
     || step.node_path !== `${parent.node_path}/delivery/${index}`
+    || step.step_index !== parent.step_index
+    || step.step_name !== `Deliver ${parent.step_name}`
+    || step.branch_key !== null
+    || step.wait_event !== null
     || step.max_retries !== 3) {
     invalid(`wait node "${node.id}" has an invalid delivery step`);
   }

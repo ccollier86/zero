@@ -10,15 +10,33 @@ import type { StepContext } from './types';
 import { WorkflowAttemptCoordinator } from './workflow-attempt-coordinator';
 import { WorkflowExecutionTracker } from './workflow-execution-tracker';
 import { formatWorkflowError, WorkflowError } from './workflow-error';
-import { WorkflowRepository } from './workflow-repository';
+import {
+  WorkflowRepository,
+  workflowRepositoryUsesDatabase,
+} from './workflow-repository';
 import type { WorkflowRegistry } from './workflow-registry';
-import { WorkflowRuntimeStore } from './workflow-runtime-store';
+import {
+  WorkflowRuntimeStore,
+  workflowRuntimeStoreUsesDatabase,
+} from './workflow-runtime-store';
 import {
   DEFAULT_WORKFLOW_SHUTDOWN_GRACE_MS,
   resolveWorkflowShutdownGraceMs,
 } from './workflow-shutdown-policy';
 import { WorkflowWakeCoordinator } from './workflow-wake-coordinator';
 import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
+import {
+  createUnmanagedWorkflowRuntimeFence,
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
+
+const OWNER_FENCED_EXECUTOR_CONSTRUCTION = Symbol('owner-fenced-workflow-executor');
+
+interface OwnerFencedExecutorConstruction {
+  readonly capability: typeof OWNER_FENCED_EXECUTOR_CONSTRUCTION;
+  readonly runtimeFence: WorkflowRuntimeFence;
+}
 
 export interface WorkflowClock {
   now(): Date;
@@ -38,21 +56,46 @@ export type WorkflowExecutionResult =
 export class WorkflowExecutor {
   private readonly attempts: WorkflowAttemptCoordinator;
   private readonly executions: WorkflowExecutionTracker;
+  private readonly repository: WorkflowRepository;
+  private readonly runtimeFence: WorkflowRuntimeFence;
   private disposed = false;
 
   constructor(
     db: ReactiveDB,
+    registry: WorkflowRegistry,
+    runtime?: WorkflowRuntimeStore,
+    clock?: WorkflowClock,
+    repository?: WorkflowRepository,
+    wakes?: WorkflowWakeCoordinator,
+    shutdownGraceMs?: number,
+  );
+  constructor(
+    private readonly db: ReactiveDB,
     private readonly registry: WorkflowRegistry,
-    runtime = new WorkflowRuntimeStore(db),
+    runtime: WorkflowRuntimeStore | undefined = undefined,
     clock: WorkflowClock = systemClock,
-    private readonly repository = new WorkflowRepository(db),
+    repository: WorkflowRepository | undefined = undefined,
     wakes = new WorkflowWakeCoordinator(clock, false, {
       retry: () => undefined,
       timeout: () => undefined,
     }),
     shutdownGraceMs = DEFAULT_WORKFLOW_SHUTDOWN_GRACE_MS,
+    internal?: OwnerFencedExecutorConstruction,
   ) {
-    this.attempts = new WorkflowAttemptCoordinator(repository, runtime, clock, wakes);
+    assertExecutorCollaboratorDatabases(db, runtime, repository);
+    // Public construction is always unmanaged. Only WorkflowService can
+    // install its exact durable owner generation through the private symbol.
+    this.runtimeFence = internal?.capability === OWNER_FENCED_EXECUTOR_CONSTRUCTION
+      ? internal.runtimeFence
+      : createUnmanagedWorkflowRuntimeFence(db);
+    this.repository = repository ?? new WorkflowRepository(db, this.runtimeFence);
+    const ownedRuntime = runtime ?? new WorkflowRuntimeStore(db, this.runtimeFence);
+    this.attempts = new WorkflowAttemptCoordinator(
+      this.repository,
+      ownedRuntime,
+      clock,
+      wakes,
+    );
     this.executions = new WorkflowExecutionTracker(
       resolveWorkflowShutdownGraceMs(shutdownGraceMs),
     );
@@ -70,7 +113,7 @@ export class WorkflowExecutor {
     // A pause/cancel aborts the logical attempt immediately, but a handler can
     // ignore its signal. Never overlap a replacement with that physical call.
     if (this.executions.isStepActive(stepId)) return 'stale';
-    const preparation = this.attempts.prepare(instanceId, stepId);
+    const preparation = this.transaction(() => this.attempts.prepare(instanceId, stepId));
     if (preparation.kind !== 'execute') {
       if (preparation.kind === 'timed-out') {
         this.attempts.emitTimeout(instanceId, stepId);
@@ -87,7 +130,7 @@ export class WorkflowExecutor {
     const prepared = preparation.prepared;
     const handler = this.registry.getHandler(prepared.handlerName);
     if (!handler) {
-      this.attempts.release(prepared);
+      this.transaction(() => this.attempts.release(prepared));
       emitPlatformCode(OBS_CODES.WORKFLOW_HANDLER_MISSING, {
         metadata: {
           instanceId,
@@ -103,12 +146,12 @@ export class WorkflowExecutor {
       );
     }
     if (this.disposed) {
-      this.attempts.release(prepared);
+      this.transaction(() => this.attempts.release(prepared));
       return 'stale';
     }
     // ReactiveDB listeners run synchronously as prepare commits. A listener
     // can pause/cancel/timeout before this attempt is registered in memory.
-    if (!this.attempts.isCurrent(prepared)) return 'stale';
+    if (!this.transaction(() => this.attempts.isCurrent(prepared))) return 'stale';
     const controller = new AbortController();
 
     const context: StepContext = Object.freeze({
@@ -156,14 +199,14 @@ export class WorkflowExecutor {
           limitStatus: 500,
         });
       } catch (error) {
-        return this.attempts.commitFailure(
+        return this.transaction(() => this.attempts.commitFailure(
           prepared,
           formatWorkflowError(error),
           false,
           error,
-        );
+        ));
       }
-      const result = this.attempts.commitSuccess(prepared, serialized);
+      const result = this.transaction(() => this.attempts.commitSuccess(prepared, serialized));
       if (result === 'timed-out') this.attempts.emitTimeout(instanceId, stepId);
       return result;
     } catch (error) {
@@ -171,12 +214,12 @@ export class WorkflowExecutor {
       // invocation remains observed by the tracker, but must never touch the
       // repository after the teardown boundary begins.
       if (this.disposed) return 'stale';
-      const result = this.attempts.commitFailure(
+      const result = this.transaction(() => this.attempts.commitFailure(
         prepared,
         formatWorkflowError(error),
         true,
         error,
-      );
+      ));
       if (result === 'timed-out') this.attempts.emitTimeout(instanceId, stepId);
       return result;
     }
@@ -198,6 +241,54 @@ export class WorkflowExecutor {
     this.disposed = true;
     return this.executions.dispose();
   }
+
+  private transaction<T>(operation: () => T): T {
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
+  }
+}
+
+function assertExecutorCollaboratorDatabases(
+  db: ReactiveDB,
+  runtime: WorkflowRuntimeStore | undefined,
+  repository: WorkflowRepository | undefined,
+): void {
+  const mismatch = runtime && !workflowRuntimeStoreUsesDatabase(runtime, db)
+    ? 'runtime store'
+    : repository && !workflowRepositoryUsesDatabase(repository, db)
+      ? 'repository'
+      : null;
+  if (!mismatch) return;
+  throw new WorkflowError(
+    `Injected workflow ${mismatch} must use the executor database`,
+    'WORKFLOW_CONFIG_INVALID',
+    500,
+  );
+}
+
+/** @internal Construct the executor sharing one WorkflowService generation. */
+export function createOwnerFencedWorkflowExecutor(
+  db: ReactiveDB,
+  registry: WorkflowRegistry,
+  runtime: WorkflowRuntimeStore,
+  clock: WorkflowClock,
+  repository: WorkflowRepository,
+  wakes: WorkflowWakeCoordinator,
+  shutdownGraceMs: number,
+  runtimeFence: WorkflowRuntimeFence,
+): WorkflowExecutor {
+  return Reflect.construct(WorkflowExecutor, [
+    db,
+    registry,
+    runtime,
+    clock,
+    repository,
+    wakes,
+    shutdownGraceMs,
+    {
+      capability: OWNER_FENCED_EXECUTOR_CONSTRUCTION,
+      runtimeFence,
+    } satisfies OwnerFencedExecutorConstruction,
+  ]) as WorkflowExecutor;
 }
 
 async function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

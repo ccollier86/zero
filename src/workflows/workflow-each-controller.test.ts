@@ -9,6 +9,7 @@ import type {
 import type { WorkflowGraphActivityExecutor } from './workflow-graph-activity-executor';
 import type { WorkflowEachNode, WorkflowGraphIR } from './workflow-ir';
 import type { WorkflowMemoryStore } from './workflow-memory-store';
+import type { WorkflowRuntimeStore } from './workflow-runtime-store';
 import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
 
 const ITEM_COUNT = 10_000;
@@ -21,6 +22,7 @@ describe('workflow each execution database work', () => {
       fixture.store as unknown as WorkflowGraphStore,
       fixture.executor as unknown as WorkflowGraphActivityExecutor,
       {} as WorkflowMemoryStore,
+      { discardInstanceQueue: () => undefined } as unknown as WorkflowRuntimeStore,
       () => new Date(NOW),
     );
 
@@ -39,7 +41,108 @@ describe('workflow each execution database work', () => {
     expect(fixture.executions()).toBe(ITEM_COUNT);
     expect(fixture.parent.status).toBe('completed');
   });
+
+  test('classifies dynamic source and item-key failures as invalid activity input', async () => {
+    const source = controllerFixture({
+      source: { type: 'literal', value: 'not-an-array' },
+    });
+    await expect(source.controller.advance(source.instance, source.graph, source.node))
+      .rejects.toMatchObject({ code: 'WORKFLOW_ACTIVITY_INPUT_INVALID', status: 422 });
+
+    const duplicate = controllerFixture({
+      source: { type: 'literal', value: [{ id: 1 }, { id: 2 }] },
+      itemKey: { type: 'literal', value: 'same-key' },
+    });
+    await expect(duplicate.controller.advance(
+      duplicate.instance,
+      duplicate.graph,
+      duplicate.node,
+    )).rejects.toMatchObject({ code: 'WORKFLOW_ACTIVITY_INPUT_INVALID', status: 422 });
+
+    const invalidKey = controllerFixture({
+      source: { type: 'literal', value: [{ id: 1 }] },
+      itemKey: { type: 'literal', value: '' },
+    });
+    await expect(invalidKey.controller.advance(
+      invalidKey.instance,
+      invalidKey.graph,
+      invalidKey.node,
+    )).rejects.toMatchObject({ code: 'WORKFLOW_ACTIVITY_INPUT_INVALID', status: 422 });
+  });
+
+  test('separates invalid runtime items from corrupt persisted each definitions', async () => {
+    const invalidItem = controllerFixture({
+      source: { type: 'literal', value: ['wrong-type'] },
+      itemSchema: { type: 'number' },
+      onInvalid: 'fail',
+    });
+    await expect(invalidItem.controller.advance(
+      invalidItem.instance,
+      invalidItem.graph,
+      invalidItem.node,
+    )).rejects.toMatchObject({ code: 'WORKFLOW_ACTIVITY_INPUT_INVALID', status: 422 });
+
+    const corruptSchema = controllerFixture({
+      source: { type: 'literal', value: [1] },
+      itemSchema: 'not-a-schema' as never,
+    });
+    await expect(corruptSchema.controller.advance(
+      corruptSchema.instance,
+      corruptSchema.graph,
+      corruptSchema.node,
+    )).rejects.toMatchObject({ code: 'WORKFLOW_STATE_INVALID', status: 500 });
+
+    const corruptBody = controllerFixture({
+      source: { type: 'literal', value: [] },
+      body: { schemaVersion: 1, entry: 'missing', nodes: [], edges: [] },
+    });
+    await expect(corruptBody.controller.advance(
+      corruptBody.instance,
+      corruptBody.graph,
+      corruptBody.node,
+    )).rejects.toMatchObject({ code: 'WORKFLOW_STATE_INVALID', status: 500 });
+  });
 });
+
+function controllerFixture(overrides: Partial<WorkflowEachNode>) {
+  const instance: WorkflowInstanceRecord = {
+    instance_id: 'fixture-instance', definition_id: 'fixture-definition',
+    name: 'fixture', status: 'running', current_step: 0, input: '{}',
+    output: null, error: null, started_by: 'owner', steps_json: null,
+    created_at: NOW, updated_at: NOW, completed_at: null,
+  };
+  const parent = stepRecord({
+    step_id: 'fixture-parent', instance_id: instance.instance_id,
+    node_id: 'fanout', node_kind: 'each', node_path: 'fanout', status: 'pending',
+  });
+  const body = {
+    id: 'work', kind: 'activity' as const, activity: { name: 'noop' }, retries: 1,
+  };
+  const node: WorkflowEachNode = {
+    id: 'fanout', kind: 'each', source: { type: 'literal', value: [] },
+    concurrency: 1, onInvalid: 'fail', onError: 'fail',
+    body: { schemaVersion: 1, entry: body.id, nodes: [body], edges: [] },
+    ...overrides,
+  };
+  const graph: WorkflowGraphIR = {
+    schemaVersion: 1, entry: node.id, nodes: [node], edges: [],
+  };
+  const store = {
+    getNodeStep: () => parent,
+    listRootSteps: () => [parent],
+    listEdges: () => [],
+    listDecisions: () => [],
+    transaction: <T>(operation: () => T) => operation(),
+  };
+  const controller = new WorkflowEachController(
+    store as unknown as WorkflowGraphStore,
+    {} as WorkflowGraphActivityExecutor,
+    { list: () => [] } as unknown as WorkflowMemoryStore,
+    { discardInstanceQueue: () => undefined } as unknown as WorkflowRuntimeStore,
+    () => new Date(NOW),
+  );
+  return { controller, instance, node, graph };
+}
 
 function largeFanoutFixture(itemCount: number) {
   const instance: WorkflowInstanceRecord = {

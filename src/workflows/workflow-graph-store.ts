@@ -12,6 +12,10 @@ import { WorkflowEventCapacityStore } from './workflow-event-capacity-store';
 import type { WorkflowGraphIR, WorkflowIRNode, WorkflowIREdge } from './workflow-ir';
 import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
 import { WorkflowRuntimeValueBudget } from './workflow-runtime-budget';
+import {
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
 
 export interface CreateGraphInstanceInput {
   instanceId: string;
@@ -119,17 +123,20 @@ export class WorkflowGraphStore {
   private readonly budget: WorkflowRuntimeValueBudget;
   private readonly eventCapacity: WorkflowEventCapacityStore;
 
-  constructor(private readonly db: ReactiveDB) {
+  constructor(
+    private readonly db: ReactiveDB,
+    private readonly runtimeFence: WorkflowRuntimeFence | null = null,
+  ) {
     this.budget = new WorkflowRuntimeValueBudget(db);
     this.eventCapacity = new WorkflowEventCapacityStore(db);
   }
 
   transaction<T>(operation: () => T): T {
-    return this.db.transaction(operation);
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
   }
 
   createInstance(input: CreateGraphInstanceInput): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       const metadata = deriveWorkflowGraphNodeMetadata(input.graph);
       const instanceRow = {
         instance_id: input.instanceId,
@@ -302,7 +309,7 @@ export class WorkflowGraphStore {
   }
 
   insertEachItem(row: WorkflowEachItemRecord): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertNewEachItem(row as unknown as Record<string, unknown>);
       this.db.prepare(`
         INSERT INTO _workflow_each_items (
@@ -333,28 +340,28 @@ export class WorkflowGraphStore {
   }
 
   updateEachItem(itemId: string, changes: Record<string, unknown>): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertEachItemChange(itemId, changes);
       updateInternalRow(this.db, '_workflow_each_items', 'item_id', itemId, changes);
     });
   }
 
   updateInstance(instanceId: string, changes: Record<string, unknown>): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertInstanceChange(instanceId, changes);
       this.db.update('workflow_instances', instanceId, changes);
     });
   }
 
   updateStep(stepId: string, changes: Record<string, unknown>): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertStepChange(stepId, changes);
       this.db.update('workflow_steps', stepId, changes);
     });
   }
 
   insertStep(row: Record<string, unknown>): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.budget.assertNewStep(row);
       this.db.insert('workflow_steps', row);
     });

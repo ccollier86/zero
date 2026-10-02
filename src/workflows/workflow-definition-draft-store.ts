@@ -18,6 +18,10 @@ import type {
 } from './workflow-definition-version-types';
 import { WorkflowDefinitionVersionStoreError } from './workflow-definition-version-types';
 import {
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
+import {
   canonicalizeWorkflowVersionContent,
   canonicalizeWorkflowVersionValue,
 } from './workflow-definition-version-validation';
@@ -29,16 +33,31 @@ export class WorkflowDefinitionDraftStore {
   constructor(
     private readonly db: DraftDatabase,
     private readonly clock: () => string = () => new Date().toISOString(),
+    private readonly runtimeFence: WorkflowRuntimeFence | null = null,
   ) {}
 
-  /** Create or replace a draft when the caller's expected revision is current. */
+  /** Create a server-identified draft or update one at its exact current revision. */
   save(input: SaveWorkflowDefinitionDraftInput): ResolvedWorkflowDefinitionDraft {
     const content = canonicalizeWorkflowVersionContent(input);
     const metadataJson = input.editorMetadata === undefined || input.editorMetadata === null
       ? null
       : canonicalizeWorkflowVersionValue(input.editorMetadata, 'Workflow draft editor metadata');
 
-    return this.db.transaction(() => {
+    return this.transaction(() => {
+      const updating = input.draftId !== undefined;
+      if (updating
+        && (typeof input.draftId !== 'string'
+          || !input.draftId.trim()
+          || input.draftId !== input.draftId.trim()
+          || !Number.isSafeInteger(input.expectedRevision)
+          || Number(input.expectedRevision) < 1)) {
+        throw draftInvalid(
+          'Existing workflow draft updates require a valid id and positive expected revision',
+        );
+      }
+      if (!updating && input.expectedRevision !== undefined) {
+        throw draftInvalid('New workflow drafts cannot declare an expected revision');
+      }
       const catalog = this.getCatalog(input.definitionId);
       if (catalog.source !== input.source) {
         throw new WorkflowDefinitionVersionStoreError(
@@ -51,11 +70,13 @@ export class WorkflowDefinitionDraftStore {
 
       const draftId = input.draftId ?? crypto.randomUUID();
       const existing = this.getRecord(draftId);
+      if (updating && !existing) {
+        throw draftConflict('Workflow draft was changed or removed by another editor');
+      }
       if (existing && existing.definition_id !== input.definitionId) {
         throw draftConflict('Workflow draft belongs to another definition');
       }
-      if (input.expectedRevision !== undefined
-        && (existing?.revision ?? 0) !== input.expectedRevision) {
+      if (updating && existing!.revision !== input.expectedRevision) {
         throw draftConflict('Workflow draft was changed by another editor');
       }
 
@@ -110,6 +131,7 @@ export class WorkflowDefinitionDraftStore {
 
   /** Read and integrity-check one draft. */
   get(draftId: string): ResolvedWorkflowDefinitionDraft | null {
+    this.runtimeFence?.assertCurrent();
     const record = this.getRecord(draftId);
     return record ? resolveDraft(record) : null;
   }
@@ -127,12 +149,15 @@ export class WorkflowDefinitionDraftStore {
     return draft;
   }
 
-  /** Delete a mutable draft with optional revision fencing. */
-  delete(draftId: string, expectedRevision?: number): boolean {
-    return this.db.transaction(() => {
+  /** Delete a mutable draft only when its exact positive revision is current. */
+  delete(draftId: string, expectedRevision: number): boolean {
+    return this.transaction(() => {
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+        throw draftInvalid('Workflow draft deletion requires a positive expected revision');
+      }
       const existing = this.getRecord(draftId);
       if (!existing) return false;
-      if (expectedRevision !== undefined && existing.revision !== expectedRevision) {
+      if (existing.revision !== expectedRevision) {
         throw draftConflict('Workflow draft was changed by another editor');
       }
       this.db.prepare('DELETE FROM _workflow_definition_drafts WHERE draft_id = ?').run(draftId);
@@ -151,6 +176,10 @@ export class WorkflowDefinitionDraftStore {
       );
     }
     return row;
+  }
+
+  private transaction<T>(operation: () => T): T {
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
   }
 
   private assertBaseVersion(definitionId: string, versionId: string): void {
@@ -203,5 +232,13 @@ function draftConflict(message: string): WorkflowDefinitionVersionStoreError {
     message,
     'WORKFLOW_DEFINITION_DRAFT_CONFLICT',
     409,
+  );
+}
+
+function draftInvalid(message: string): WorkflowDefinitionVersionStoreError {
+  return new WorkflowDefinitionVersionStoreError(
+    message,
+    'WORKFLOW_DEFINITION_DRAFT_INVALID',
+    422,
   );
 }

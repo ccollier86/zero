@@ -38,6 +38,7 @@ export class WorkflowInteractionSubmissionProcessor {
     payloadJson: string;
     payloadHash: string;
     signal: AbortSignal;
+    internalEvent: boolean;
   }): Promise<WorkflowInteractionSubmissionResult> {
     const { submission, interaction, signal } = input;
     this.assertRunning(submission.interactionId);
@@ -67,6 +68,7 @@ export class WorkflowInteractionSubmissionProcessor {
     payloadJson: string;
     payloadHash: string;
     signal: AbortSignal;
+    internalEvent: boolean;
   }): Promise<WorkflowInteractionSubmissionResult> {
     const { submission, signal } = input;
     const response = this.store.beginSubmission({
@@ -109,7 +111,7 @@ export class WorkflowInteractionSubmissionProcessor {
       emitDecision(decided.outcome, decided.interaction);
       return toPublicInteractionResult(decided);
     } catch (error) {
-      if (submission.channel !== 'event') {
+      if (!input.internalEvent) {
         this.store.releaseProcessingSubmission(
           submission.interactionId,
           submission.submissionId,

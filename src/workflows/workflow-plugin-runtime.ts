@@ -21,6 +21,7 @@ import {
 import { createWorkflowSchedulerOwner } from './workflow-scheduler-owner';
 import { defineWorkflowTables } from './workflow-schema';
 import { WorkflowService } from './workflow-service';
+import type { WorkflowRuntimeOwnershipOptions } from './workflow-runtime-owner-lease';
 
 export interface WorkflowPluginConfig {
   db: ReactiveDB;
@@ -34,6 +35,8 @@ export interface WorkflowPluginConfig {
   shutdownGraceMs?: number;
   /** Guardian/app policy adapter for graph interaction responders. */
   interactionAuthority?: WorkflowInteractionAuthority;
+  /** Durable single-owner lease configuration. Intended chiefly for deterministic tests. */
+  runtimeOwnership?: WorkflowRuntimeOwnershipOptions;
 }
 
 export type WorkflowPluginLifecycleOptions =
@@ -176,6 +179,7 @@ export function createWorkflowPluginRuntimeOwner(
       const recoveringService = new WorkflowService(config.db, registry, {
         shutdownGraceMs: config.shutdownGraceMs,
         interactionAuthority: config.interactionAuthority,
+        runtimeOwnership: config.runtimeOwnership,
       });
       created = recoveringService;
       startingService = recoveringService;

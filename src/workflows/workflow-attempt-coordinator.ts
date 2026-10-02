@@ -3,7 +3,7 @@
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { compileWorkflowCondition } from './workflow-condition';
-import { formatWorkflowError } from './workflow-error';
+import { formatWorkflowError, WorkflowError } from './workflow-error';
 import type { WorkflowClock, WorkflowExecutionResult } from './workflow-executor';
 import { validateWorkflowPersistedState } from './workflow-persisted-state';
 import type { WorkflowRepository } from './workflow-repository';
@@ -221,6 +221,7 @@ export class WorkflowAttemptCoordinator {
         timeout_at: null,
         error: null,
       });
+      this.consumeClaimedWaitEvent(current.step.step_id);
       this.runtime.finishAttempt(current.step.step_id, prepared.attemptId);
       return 'completed';
     });
@@ -343,6 +344,7 @@ export class WorkflowAttemptCoordinator {
   }
 
   private commitTimeout(instanceId: string, step: WorkflowStepRecord, now: string): void {
+    this.consumeClaimedWaitEvent(step.step_id);
     this.runtime.finishAttempt(step.step_id);
     this.repository.updateStep(step.step_id, {
       status: 'failed',
@@ -358,6 +360,7 @@ export class WorkflowAttemptCoordinator {
       updated_at: now,
       completed_at: now,
     });
+    this.runtime.discardInstanceQueue(instanceId, now);
   }
 
   private failStepAndInstance(
@@ -367,6 +370,7 @@ export class WorkflowAttemptCoordinator {
     now: string,
     retries = step.retries,
   ): void {
+    this.consumeClaimedWaitEvent(step.step_id);
     this.runtime.finishAttempt(step.step_id);
     this.repository.updateStep(step.step_id, {
       status: 'failed',
@@ -383,6 +387,19 @@ export class WorkflowAttemptCoordinator {
       updated_at: now,
       completed_at: now,
     });
+    this.runtime.discardInstanceQueue(instanceId, now);
+  }
+
+  private consumeClaimedWaitEvent(stepId: string): void {
+    const event = this.runtime.claimedEvent(stepId);
+    if (!event) return;
+    if (!this.runtime.consumeClaimedEvent(stepId, event.eventId)) {
+      throw new WorkflowError(
+        'Workflow wait event could not be consumed atomically',
+        'WORKFLOW_STATE_INVALID',
+        500,
+      );
+    }
   }
 }
 

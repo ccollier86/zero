@@ -79,6 +79,15 @@ export interface PublishWorkflowDefinitionVersionResult
   activated: boolean;
 }
 
+/** Exact mutable-draft snapshot that may become one immutable version. */
+export interface PublishWorkflowDefinitionDraftInput {
+  draftId: string;
+  definitionId: string;
+  expectedRevision: number;
+  expectedDraftFingerprint: string;
+  publication: PublishWorkflowDefinitionVersionInput;
+}
+
 export interface ResolveWorkflowDefinitionVersionInput {
   name?: string;
   definitionId?: string;
@@ -88,9 +97,8 @@ export interface ResolveWorkflowDefinitionVersionInput {
   includeRetired?: boolean;
 }
 
-export interface SaveWorkflowDefinitionDraftInput {
+interface SaveWorkflowDefinitionDraftBase {
   definitionId: string;
-  draftId?: string;
   baseVersionId?: string | null;
   source: WorkflowDefinitionAuthoringSource;
   graphFormat: string;
@@ -100,8 +108,13 @@ export interface SaveWorkflowDefinitionDraftInput {
   accessPolicy?: unknown;
   editorMetadata?: unknown;
   actorId?: string | null;
-  expectedRevision?: number;
 }
+
+/** New drafts receive a server id; existing drafts require an exact revision fence. */
+export type SaveWorkflowDefinitionDraftInput = SaveWorkflowDefinitionDraftBase & (
+  | { draftId?: never; expectedRevision?: never }
+  | { draftId: string; expectedRevision: number }
+);
 
 export interface WorkflowDefinitionDraftRecord {
   draft_id: string;
@@ -137,6 +150,7 @@ export type WorkflowDefinitionVersionStoreErrorCode =
   | 'WORKFLOW_DEFINITION_SCOPE_CONFLICT'
   | 'WORKFLOW_DEFINITION_HISTORY_INVALID'
   | 'WORKFLOW_DEFINITION_GRAPH_INVALID'
+  | 'WORKFLOW_DEFINITION_DRAFT_INVALID'
   | 'WORKFLOW_DEFINITION_DRAFT_CONFLICT';
 
 /** Stable persistence error mapped to the public WorkflowError by services. */

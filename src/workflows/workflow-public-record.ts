@@ -20,89 +20,142 @@ export type PublicWorkflowStepProjection<T extends object> = Omit<
   & NullableFieldIfPresent<T, 'output'>
   & NullableFieldIfPresent<T, 'error'>;
 
-/** Remove executable topology and internal catalog identity from a runtime instance. */
+export type WorkflowRunProjectionKind = 'legacy' | 'graph' | 'ambiguous';
+
+const INSTANCE_FIELDS = [
+  'instance_id', 'definition_id', 'name', 'status', 'current_step',
+  'input', 'output', 'error', 'started_by', 'definition_version',
+  'graph_fingerprint', 'created_at', 'updated_at', 'completed_at',
+] as const;
+
+const STEP_FIELDS = [
+  'step_id', 'instance_id', 'step_index', 'step_name', 'status',
+  'input', 'output', 'error', 'retries', 'max_retries', 'retry_at', 'timeout_at',
+  'started_at', 'completed_at', 'created_at', 'node_id', 'node_kind', 'node_path',
+  'parent_step_id', 'branch_key', 'item_key', 'item_index', 'activation_key',
+  'updated_at',
+] as const;
+
+const EVENT_FIELDS = [
+  'event_id', 'instance_id', 'event_name', 'payload', 'sent_by', 'created_at',
+] as const;
+
+const INTERACTION_FIELDS = [
+  'interaction_id', 'instance_id', 'node_id', 'step_id', 'safe_label',
+  'status', 'opened_at', 'expires_at', 'accepted_at', 'accepted_by',
+  'rejection_count', 'max_rejections', 'created_at', 'updated_at',
+] as const;
+
+/** Positively classify legacy rows; partial graph identity always fails private. */
+export function classifyWorkflowRunProjection(instance: unknown): WorkflowRunProjectionKind {
+  if (!isRecord(instance)) return 'ambiguous';
+  const versionId = instance.definition_version_id;
+  const version = instance.definition_version;
+  const fingerprint = instance.graph_fingerprint;
+  const graphJson = instance.graph_json;
+  const graphSignal = [versionId, version, fingerprint, graphJson]
+    .some((value) => value !== null && value !== undefined);
+  const completeGraphIdentity = nonBlank(versionId)
+    && typeof version === 'number'
+    && Number.isSafeInteger(version)
+    && version > 0
+    && nonBlank(fingerprint)
+    && typeof graphJson === 'string'
+    && graphJson.length > 0;
+  if (completeGraphIdentity) return 'graph';
+  if (graphSignal) return 'ambiguous';
+  return typeof instance.steps_json === 'string' ? 'legacy' : 'ambiguous';
+}
+
+/** Publish metadata-only run progress for every workflow format. */
 export function toPublicWorkflowInstance<T extends object>(
   instance: T,
 ): PublicWorkflowInstanceProjection<T> {
-  const record = instance as T & {
-    steps_json?: unknown;
-    graph_json?: unknown;
-    definition_version_id?: unknown;
-    input?: unknown;
-    output?: unknown;
-    error?: unknown;
-  };
-  const {
-    steps_json: _stepsJson,
-    graph_json: _graphJson,
-    definition_version_id: _definitionVersionId,
-    ...publicInstance
-  } = record;
-  const graphRun = typeof record.graph_json === 'string';
-  return {
-    ...publicInstance,
-    // Realtime rows are an operational projection. Graph inputs, results, and
-    // raw handler messages may contain credentials, PHI, or interaction data;
-    // explicit result APIs can apply a narrower authorization contract later.
-    ...(graphRun ? { input: null, output: null, error: null } : {}),
-  } as PublicWorkflowInstanceProjection<T>;
+  const projected = pick(instance as Record<string, unknown>, INSTANCE_FIELDS);
+  projected.input = null;
+  projected.output = null;
+  projected.error = null;
+  return projected as PublicWorkflowInstanceProjection<T>;
 }
 
-/**
- * Publish a human step label without trusting legacy `step_name` rows, which
- * stored executable handler keys in Zero 1.3. Missing snapshots use a stable
- * generic label rather than leaking that legacy key.
- */
+/** Publish a human label and fixed progress fields without private run data. */
 export function toPublicWorkflowStep<T extends object>(
   step: T,
   stepsJson: unknown,
-  graphJson?: unknown,
+  owner: unknown,
 ): PublicWorkflowStepProjection<T> {
-  const record = step as T & {
-    step_index?: unknown;
-    step_name?: unknown;
-    node_id?: unknown;
-    input?: unknown;
-    output?: unknown;
-    error?: unknown;
-    wait_event?: unknown;
-  };
+  const record = step as Record<string, unknown>;
+  const kind = classifyWorkflowRunProjection(owner);
   const index = typeof record.step_index === 'number'
     && Number.isSafeInteger(record.step_index)
     && record.step_index >= 0
     ? record.step_index
     : null;
-  const definition = index === null
-    ? undefined
-    : parseWorkflowStepDefinitions(stepsJson)[index];
-  const graphLabel = typeof graphJson === 'string'
-    && typeof record.node_id === 'string'
-    && record.node_id.length > 0
-    && typeof record.step_name === 'string'
-    && record.step_name.trim().length > 0
+  const graphLabel = kind === 'graph'
+    && nonBlank(record.node_id)
+    && nonBlank(record.step_name)
     ? record.step_name.trim()
     : null;
   const label = graphLabel
-    ?? (typeof definition?.name === 'string' && definition.name.trim()
-      ? definition.name
+    ?? (kind === 'legacy'
+      ? publicLegacyWorkflowStepLabel(record, stepsJson)
       : index === null ? 'Workflow step' : `Step ${index + 1}`);
-  const { wait_event: _waitEvent, ...publicStep } = record;
-  // Graph activity inputs can contain accepted interaction/event values and
-  // outputs or raw errors can carry application secrets. Keep every graph
-  // node's execution data server-side while exposing only live progress.
-  const graphStep = typeof graphJson === 'string';
-  return {
-    ...publicStep,
-    step_name: label,
-    ...(graphStep ? { input: null, output: null, error: null } : {}),
-  } as unknown as PublicWorkflowStepProjection<T>;
+  const projected = pick(record, STEP_FIELDS);
+  projected.step_name = label;
+  if (kind === 'legacy' && nonBlank(record.step_id)) projected.node_path = record.step_id;
+  projected.input = null;
+  projected.output = null;
+  projected.error = null;
+  projected.item_key = null;
+  projected.activation_key = null;
+  return projected as unknown as PublicWorkflowStepProjection<T>;
 }
 
-/** Hide graph-event payloads while retaining their realtime audit metadata. */
-export function toPublicWorkflowEvent<T extends object>(
-  event: T,
-  graphJson: unknown,
-): T {
-  if (typeof graphJson !== 'string') return event;
-  return { ...event, payload: null };
+/** Resolve only the human definition label; never expose a legacy handler key. */
+export function publicLegacyWorkflowStepLabel(
+  step: Record<string, unknown>,
+  stepsJson: unknown,
+): string {
+  const index = typeof step.step_index === 'number'
+    && Number.isSafeInteger(step.step_index)
+    && step.step_index >= 0
+    ? step.step_index
+    : null;
+  const definition = index === null
+    ? undefined
+    : parseWorkflowStepDefinitions(stepsJson)[index];
+  return typeof definition?.name === 'string' && definition.name.trim()
+    ? definition.name.trim()
+    : index === null ? 'Workflow step' : `Step ${index + 1}`;
+}
+
+/** Publish event audit metadata without its payload for every run format. */
+export function toPublicWorkflowEvent<T extends object>(event: T, _owner: unknown): T {
+  const projected = pick(event as Record<string, unknown>, EVENT_FIELDS);
+  projected.payload = null;
+  return projected as T;
+}
+
+/** Fixed safe progress projection for human/agent interactions. */
+export function toPublicWorkflowInteraction<T extends object>(interaction: T): T {
+  return pick(interaction as Record<string, unknown>, INTERACTION_FIELDS) as T;
+}
+
+function pick(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(record, field)) projected[field] = record[field];
+  }
+  return projected;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function nonBlank(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }

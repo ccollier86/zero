@@ -136,7 +136,7 @@ package. Start with the
   the Chrome MV3 security profile.
 - [PDF Rendering](./docs/pdf.md): secure Chromium HTML/CSS rendering, storage
   composition, runtime setup, limits, and adapter contracts.
-- [Durable Workflows](./docs/workflows.md): code DSL, canonical graph IR,
+- [Torrent Durable Workflows](./docs/workflows.md): code DSL, canonical graph IR,
   immutable code/database versions, trusted activities, memory, interactions,
   recovery, and safe real-time React visualization data.
 - [Component Inventory](./docs/frontend/component-inventory.md): reusable UI,

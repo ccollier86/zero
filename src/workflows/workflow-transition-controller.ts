@@ -51,6 +51,7 @@ export class WorkflowTransitionController {
         updated_at: now,
         completed_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
     });
     this.wakes.disarmInstance(instanceId);
     this.executor.abortInstance(instanceId, 'Workflow cancelled');

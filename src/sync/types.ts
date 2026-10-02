@@ -35,7 +35,8 @@ export interface ReactiveDBConfig extends SQLiteStorageConfig {
   /**
    * Clear the process-local `_changes` ring buffer during startup.
    *
-   * Defaults to true for durable/hot modes and false for ephemeral modes.
+   * Defaults to false. Set true only for an explicitly isolated legacy
+   * process that wants to discard reconnect replay state on startup.
    */
   clearChangesOnStart?: boolean;
 
@@ -160,6 +161,12 @@ export interface ChangeStatements {
 
   /** SELECT MIN(seq) AS min_seq FROM _changes */
   oldest: Statement;
+
+  /** SELECT MAX(seq) AS max_seq FROM _changes */
+  latest: Statement;
+
+  /** Atomically allocate the next durable sequence value. */
+  next: Statement;
 }
 
 /**

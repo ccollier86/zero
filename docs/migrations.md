@@ -52,6 +52,21 @@ export const migration: Migration = {
 Register new migrations in `src/migrations/index.ts` by appending them to the
 `migrations` array. Never reorder or remove old migrations.
 
+### Torrent migrations on the 1.3 compatibility line
+
+Zero 1.3.1 appends Torrent migrations `030`, `032`, and `033` after the original
+`001`–`007` registry. Migration `030` adds the versioned graph/runtime schema,
+`032` adds durable single-owner runtime generations, and `033` adds
+topology-neutral definition, draft, version, and terminal-event integrity.
+Their ledger checksums and migration-local helpers are frozen; repair changed
+behavior with a new migration rather than editing an applied file.
+
+A later upgrade to Zero 2.0 applies the missing `008`–`029` migrations and
+tenant-integrity migration `031`. Applied `032`/`033` ledger entries remain in
+place and are not rerun; `031` preserves/reinstalls their final constraints for
+the tenant-aware workflow topology. See [Torrent Durable Workflows](./workflows.md#zero-131-compatibility-boundary)
+for the application compatibility boundary.
+
 ## Safety Classes
 
 | Safety | Meaning | Default CLI behavior |

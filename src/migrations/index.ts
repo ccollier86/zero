@@ -19,6 +19,8 @@ import { migration as m005 } from './definitions/005_native_app_auth';
 import { migration as m006 } from './definitions/006_native_auth_hardening';
 import { migration as m007 } from './definitions/007_auth_email_outbox';
 import { migration as m030 } from './definitions/030_workflow_graph_runtime';
+import { migration as m032 } from './definitions/032_workflow_runtime_ownership';
+import { migration as m033 } from './definitions/033_torrent_integrity_hardening';
 
 export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
 export type {
@@ -57,4 +59,6 @@ export const migrations: Migration[] = [
   m006,
   m007,
   m030,
+  m032,
+  m033,
 ];

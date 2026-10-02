@@ -48,11 +48,16 @@ import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
 import { WorkflowWaitController } from './workflow-wait-controller';
 import type { WorkflowWakeTimer } from './workflow-wake-coordinator';
 import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
+import type { WorkflowRuntimeFence } from './workflow-runtime-fence';
 export interface WorkflowGraphRuntimeOptions {
   now?: () => Date;
   shutdownGraceMs?: number;
   interactionAuthority?: WorkflowInteractionAuthority;
   wakeTimer?: WorkflowWakeTimer | false;
+  /** Internal runtime generation shared with the service composition root. */
+  runtime?: WorkflowRuntimeStore;
+  /** Internal durable owner-generation fence. */
+  runtimeFence?: WorkflowRuntimeFence;
 }
 export type { StartWorkflowGraphOptions } from './workflow-graph-definition-resolver';
 export class WorkflowGraphRuntime {
@@ -81,12 +86,19 @@ export class WorkflowGraphRuntime {
     options: WorkflowGraphRuntimeOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
-    this.store = new WorkflowGraphStore(db);
-    this.runtime = new WorkflowRuntimeStore(db);
-    this.versions = new WorkflowDefinitionVersionStore(db, () => this.now().toISOString());
+    this.store = new WorkflowGraphStore(db, options.runtimeFence ?? null);
+    this.runtime = options.runtime ?? new WorkflowRuntimeStore(db, options.runtimeFence ?? null);
+    this.versions = new WorkflowDefinitionVersionStore(
+      db,
+      () => this.now().toISOString(),
+      options.runtimeFence ?? null,
+    );
     this.definitions = new WorkflowGraphDefinitionResolver(this.versions, registry);
-    this.memory = new WorkflowMemoryStore(db, { clock: this.now });
-    const interactionStore = new WorkflowInteractionStore(db);
+    this.memory = new WorkflowMemoryStore(db, {
+      clock: this.now,
+      runtimeFence: options.runtimeFence,
+    });
+    const interactionStore = new WorkflowInteractionStore(db, options.runtimeFence ?? null);
     const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
     this.interactionValidator = new WorkflowGraphInteractionValidator(
       registry,
@@ -121,7 +133,13 @@ export class WorkflowGraphRuntime {
       },
     );
     this.structures = new WorkflowStructuralNodeController(this.store, this.memory, this.now);
-    this.each = new WorkflowEachController(this.store, this.activityExecutor, this.memory, this.now);
+    this.each = new WorkflowEachController(
+      this.store,
+      this.activityExecutor,
+      this.memory,
+      this.runtime,
+      this.now,
+    );
     this.waits = new WorkflowWaitController(
       this.store,
       this.runtime,
@@ -298,7 +316,19 @@ export class WorkflowGraphRuntime {
     const executor = this.activityExecutor.dispose();
     const validators = this.interactionValidator.dispose();
     const interactions = this.interactions.dispose();
-    await Promise.allSettled([this.pump.drain(), executor, validators, interactions]);
+    const settlements = await Promise.allSettled([
+      this.pump.drain(),
+      executor,
+      validators,
+      interactions,
+    ]);
+    const failures = settlements.flatMap((settlement) => (
+      settlement.status === 'rejected' ? [settlement.reason] : []
+    ));
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'Workflow graph runtime failed to dispose');
+    }
   }
 
   private async createAndAdvance(
@@ -378,7 +408,11 @@ export class WorkflowGraphRuntime {
       if (before === this.signature(instanceId)) return;
     }
     if (this.disposed) return;
-    throw new WorkflowError('Workflow graph exceeded its transition limit', 'WORKFLOW_GRAPH_INVALID', 500);
+    throw new WorkflowError(
+      'Workflow graph exceeded its transition limit',
+      'WORKFLOW_RUNTIME_LIMIT_EXCEEDED',
+      500,
+    );
   }
 
   private async driveWaiting(instance: WorkflowInstanceRecord, graph: WorkflowGraphIR): Promise<void> {

@@ -13,9 +13,9 @@ import {
   canonicalizeWorkflowDefinition,
   fingerprintStoredWorkflowDefinition,
   type CanonicalWorkflowDefinitionContent,
-} from '../../workflows/workflow-definition-canonical';
-import { ensureWorkflowGraphSchema } from '../../workflows/workflow-graph-schema';
-import { ensureWorkflowRuntimeSchema } from '../../workflows/workflow-runtime-schema';
+} from './030_workflow_definition_canonical';
+import { ensureWorkflowGraphSchema } from './030_workflow_graph_schema';
+import { ensureWorkflowRuntimeSchema } from './030_workflow_runtime_schema';
 import type { Migration } from '../migrator';
 
 interface LegacyDefinitionRow {

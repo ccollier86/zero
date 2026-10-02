@@ -2,6 +2,7 @@
 
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import { WorkflowError } from './workflow-error';
 import type { WorkflowWakeTimer } from './workflow-wake-coordinator';
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -59,9 +60,8 @@ export class WorkflowGraphWakeScheduler {
     stepId: string,
     expectedAt: string,
   ): void {
+    const target = requireWakeTimestamp(expectedAt);
     if (this.disposed || this.timer === false) return;
-    const target = new Date(expectedAt).getTime();
-    if (!Number.isFinite(target)) return;
     const key = `${kind}:${stepId}`;
     const existing = this.wakes.get(key);
     if (existing?.expectedAt === expectedAt && existing.instanceId === instanceId) return;
@@ -118,4 +118,14 @@ export class WorkflowGraphWakeScheduler {
       },
     });
   }
+}
+
+function requireWakeTimestamp(expectedAt: string): number {
+  const target = new Date(expectedAt).getTime();
+  if (Number.isFinite(target) && new Date(target).toISOString() === expectedAt) return target;
+  throw new WorkflowError(
+    'Persisted workflow wake timestamp is invalid',
+    'WORKFLOW_STATE_INVALID',
+    500,
+  );
 }

@@ -95,8 +95,8 @@ export class WorkflowWaitController {
       }
       const validationError = waitPayloadError(node, event.payload);
       if (validationError) {
-        this.failWait(currentInstance, current, validationError, nowIso);
         this.consumeEvent(current.step_id, event.eventId);
+        this.failWait(currentInstance, current, validationError, nowIso);
         result = 'failed';
         return;
       }
@@ -184,12 +184,20 @@ export class WorkflowWaitController {
   ): 'completed' | 'failed' | null {
     if (interaction.status === 'accepted') {
       const accepted = this.interactions.getAcceptedValue(interaction.interactionId);
+      const acceptedEventId = this.interactions.getAcceptedEventId(interaction.interactionId);
       const now = this.now().toISOString();
       this.store.transaction(() => {
         const currentInstance = this.store.getInstance(instance.instance_id);
         const current = this.store.getStep(step.step_id);
         if (!currentInstance || currentInstance.status !== 'running'
           || !current || current.status !== 'waiting') return;
+        if (acceptedEventId) {
+          this.runtime.consumeAcceptedInteractionEvent(
+            current.step_id,
+            currentInstance.instance_id,
+            acceptedEventId,
+          );
+        }
         this.completeWait(current, accepted, now);
       });
       return 'completed';
@@ -351,6 +359,7 @@ export class WorkflowWaitController {
       completed_at: now, updated_at: now,
     });
     this.interactions.cancelForInstance(instance.instance_id);
+    this.runtime.discardInstanceQueue(instance.instance_id, now);
     this.executor.abortInstance(instance.instance_id, error);
     emitPlatformCode(OBS_CODES.WORKFLOW_INSTANCE_FAILED, {
       metadata: { instanceId: instance.instance_id, stepId: step.step_id, reason: 'wait' },

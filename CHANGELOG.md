@@ -4,8 +4,15 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 1.3.1 - 2026-10-02
+
 ### Added
 
+- Named the durable workflow subsystem **Torrent** and backported its generic
+  graph/runtime hardening to the Zero 1.3 compatibility line without importing
+  Guardian multi-tenancy, Fabric, or the system/application database split.
+  Migrations `032` and `033` add exact single-owner runtime generations and
+  topology-neutral definition, draft, version, and terminal-event integrity.
 - Added a safe, configurable web-auth return flow. Apps can set the top-level
   `postLoginPath` option (also available on `AppProvider`) while one validated
   local `redirect` deep link takes precedence after login. Server guards retain
@@ -79,6 +86,19 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Hardened Torrent's sequencing, recovery, cancellation, pause, retry,
+  timeout, wait/event, fan-out, interaction, definition, privacy, and
+  authorization boundaries. One managed runtime now owns a database generation;
+  stale services and preconstructed low-level executors fail closed, malformed
+  persisted graphs use stable internal error contracts, terminal cleanup is
+  atomic, accepted event responses recover without leaking inbox capacity,
+  external callers cannot spoof the reserved event-response namespace, and
+  workflow HTTP 5xx responses no longer disclose internal authentication details.
+- Made ReactiveDB tracked writes atomic with their durable sequence/change-log
+  records, rejected and poisoned asynchronous transaction callbacks, exposed
+  the current durable sequence across handles, and queued reentrant listener
+  writes behind the complete committed batch. Live Sync delivery therefore
+  retains the same sequence order as durable replay.
 - Rebuilt durable workflow execution around a strict sequential frontier and
   crash-safe attempt fencing. Retries can no longer let later steps overtake
   an unfinished predecessor; buffered events, claimed payloads, wait and retry

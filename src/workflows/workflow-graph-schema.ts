@@ -7,6 +7,7 @@
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
+import { createWorkflowDefinitionIntegrityTriggers } from './workflow-definition-integrity';
 
 export type WorkflowSchemaDatabase = Pick<ReactiveDB, 'exec' | 'prepare'>;
 
@@ -312,6 +313,7 @@ function createIndexes(db: WorkflowSchemaDatabase): void {
 }
 
 function createIntegrityTriggers(db: WorkflowSchemaDatabase): void {
+  createWorkflowDefinitionIntegrityTriggers(db);
   db.exec(`CREATE TRIGGER IF NOT EXISTS trg_workflow_definition_scope_immutable
     BEFORE UPDATE OF source, scope_type, scope_id ON workflow_definitions
     WHEN OLD.source IS NOT NEW.source OR OLD.scope_type IS NOT NEW.scope_type

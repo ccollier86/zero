@@ -108,6 +108,12 @@ function validateEnvelope(
     }
     return;
   }
+  if (row.claimed_by_step_id.startsWith('discarded:')) {
+    if (row.claimed_by_step_id !== `discarded:${row.event_id}`) {
+      throw invalidEventState('discarded event marker is invalid');
+    }
+    return;
+  }
   const step = db.prepare(`SELECT instance_id, wait_event FROM workflow_steps
     WHERE step_id = ? LIMIT 1`).get(row.claimed_by_step_id) as {
       instance_id: string;

@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   createIdentityId,
   getIdentityValues,
@@ -31,6 +32,10 @@ interface ReactiveDBRuntime {
   clearChangesOnStart: boolean;
 }
 
+interface TransactionExecutionContext {
+  rollbackOnlyError: Error | null;
+}
+
 /**
  * ReactiveDB — SQLite wrapper that makes every write observable.
  *
@@ -56,10 +61,14 @@ export class ReactiveDB {
   private ringBufferDepth: number;
   private changeStmts: ChangeStatements;
   private disposed = false;
+  private readonly localDeliveryQueue: Change[] = [];
+  private drainingLocalDeliveryQueue = false;
 
   // Transaction support: when true, changes are accumulated and emitted after commit
   private inTransaction = false;
   private deferredChanges: Change[] | null = null;
+  private postCommitCallbacks: Array<() => unknown> | null = null;
+  private readonly transactionExecution = new AsyncLocalStorage<TransactionExecutionContext>();
 
   constructor(config: ReactiveDBConfig) {
     const runtime = createReactiveDBRuntime(config);
@@ -73,12 +82,16 @@ export class ReactiveDB {
     this.createChangesTable();
     this.changeStmts = this.prepareChangeStatements();
 
-    // Truncate stale _changes from previous process (durable/hot modes).
-    // On restart, seq resets to 0 — old entries would have conflicting seq numbers.
-    // All clients must reconnect after restart (WS drops), so they get fresh snapshots.
+    // Explicit legacy reset remains available. By default file-backed handles
+    // retain the ring and continue its durable sequence so rolling Torrent
+    // ownership handoffs cannot collide with another handle's sequence values.
     if (this.clearChangesOnStart) {
-      this.db.run('DELETE FROM _changes');
+      this.db.transaction(() => {
+        this.db.run('DELETE FROM _changes');
+        this.db.run('UPDATE _change_sequence SET seq = 0 WHERE singleton = 1');
+      })();
     }
+    this.seq = this.latestDurableSeq();
   }
 
   // ─── Table Definition ───────────────────────────────────────────────────
@@ -187,41 +200,54 @@ export class ReactiveDB {
    */
   insert(table: string, row: Row): Change {
     this.assertNotDisposed();
-    const def = this.getTableDef(table);
-    const nextRow = this.ensurePrimaryKeyFromIdentity(def, row);
-    const pkValue = nextRow[def.primaryKey];
-    if (pkValue === undefined || pkValue === null || pkValue === '') {
-      throw new Error(`insert('${table}'): row is missing primary key '${def.primaryKey}'`);
+    if (!this.inTransaction) {
+      return this.transaction(() => this.insert(table, row));
     }
-    const pk = String(pkValue);
+    try {
+      const def = this.getTableDef(table);
+      const nextRow = this.ensurePrimaryKeyFromIdentity(def, row);
+      const pkValue = nextRow[def.primaryKey];
+      if (pkValue === undefined || pkValue === null || pkValue === '') {
+        throw new Error(`insert('${table}'): row is missing primary key '${def.primaryKey}'`);
+      }
+      const pk = String(pkValue);
 
-    // Check if row already exists to determine correct op
-    const existing = def.stmts.getOne.get(pk) as Row | null;
-    const op: ChangeOp = existing ? 'UPDATE' : 'INSERT';
-    if (existing) this.assertIdentityUnchanged(def, existing, nextRow);
-    this.assertNoIdentityConflict(def, nextRow, pk);
+      // Check if row already exists to determine correct op
+      const existing = def.stmts.getOne.get(pk) as Row | null;
+      const op: ChangeOp = existing ? 'UPDATE' : 'INSERT';
+      if (existing) this.assertIdentityUnchanged(def, existing, nextRow);
+      this.assertNoIdentityConflict(def, nextRow, pk);
 
-    // Determine which columns are present in the row object.
-    // Columns NOT provided are omitted from the INSERT so SQLite applies defaults.
-    const presentColumns = def.columns.filter((col) => col in nextRow);
-    const values = presentColumns.map((col) => nextRow[col] ?? null);
+      // Determine which columns are present in the row object.
+      // Columns NOT provided are omitted from the INSERT so SQLite applies defaults.
+      const presentColumns = def.columns.filter((col) => col in nextRow);
+      const values = presentColumns.map((col) => nextRow[col] ?? null);
 
-    if (presentColumns.length === def.columns.length) {
-      // All columns provided — use the pre-prepared statement (fast path)
-      def.stmts.insert.run(...values);
-    } else {
-      // Partial columns — build dynamic INSERT to let defaults apply
-      const placeholders = presentColumns.map(() => '?').join(', ');
-      const sql = `INSERT OR REPLACE INTO ${def.name} (${presentColumns.join(', ')}) VALUES (${placeholders})`;
-      this.db.prepare(sql).run(...(values as any[]));
+      if (presentColumns.length === def.columns.length) {
+        // All columns provided — use the pre-prepared statement (fast path)
+        def.stmts.insert.run(...values);
+      } else {
+        // Partial columns — build dynamic INSERT to let defaults apply
+        const placeholders = presentColumns.map(() => '?').join(', ');
+        const sql = `INSERT OR REPLACE INTO ${def.name} (${presentColumns.join(', ')}) VALUES (${placeholders})`;
+        const statement = this.db.prepare(sql);
+        try {
+          statement.run(...(values as any[]));
+        } finally {
+          statement.finalize();
+        }
+      }
+
+      // Read back the full row to get any defaults applied by SQLite
+      const fullRow = def.stmts.getOne.get(pk) as Row;
+
+      const change = this.createChange(table, op, pk, fullRow, existing);
+      this.recordAndEmit(change);
+      return change;
+    } catch (error) {
+      this.markTransactionRollbackOnly(error);
+      throw error;
     }
-
-    // Read back the full row to get any defaults applied by SQLite
-    const fullRow = def.stmts.getOne.get(pk) as Row;
-
-    const change = this.createChange(table, op, pk, fullRow, existing);
-    this.recordAndEmit(change);
-    return change;
   }
 
   /**
@@ -240,33 +266,41 @@ export class ReactiveDB {
    */
   update(table: string, id: string, partial: Partial<Row>): Change | null {
     this.assertNotDisposed();
-    const def = this.getTableDef(table);
-
-    // Read current row
-    const existing = def.stmts.getOne.get(id) as Row | null;
-    if (!existing) return null;
-    this.assertIdentityUnchanged(def, existing, partial);
-
-    // Merge: existing values + partial overrides
-    const merged: Row = { ...existing, ...partial };
-    // Ensure PK hasn't been changed
-    merged[def.primaryKey] = id;
-
-    // Build values for UPDATE SET clause: non-PK columns + PK for WHERE
-    const nonPkColumns = def.columns.filter((c) => c !== def.primaryKey);
-    if (nonPkColumns.length > 0) {
-      const updateValues = nonPkColumns.map((col) => merged[col] ?? null);
-      updateValues.push(id); // WHERE pk = ?
-      def.stmts.update.run(...updateValues);
+    if (!this.inTransaction) {
+      return this.transaction(() => this.update(table, id, partial));
     }
-    // If table only has PK column, nothing to update — but we still emit
+    try {
+      const def = this.getTableDef(table);
 
-    // Read back the full row
-    const fullRow = def.stmts.getOne.get(id) as Row;
+      // Read current row
+      const existing = def.stmts.getOne.get(id) as Row | null;
+      if (!existing) return null;
+      this.assertIdentityUnchanged(def, existing, partial);
 
-    const change = this.createChange(table, 'UPDATE', id, fullRow, existing);
-    this.recordAndEmit(change);
-    return change;
+      // Merge: existing values + partial overrides
+      const merged: Row = { ...existing, ...partial };
+      // Ensure PK hasn't been changed
+      merged[def.primaryKey] = id;
+
+      // Build values for UPDATE SET clause: non-PK columns + PK for WHERE
+      const nonPkColumns = def.columns.filter((c) => c !== def.primaryKey);
+      if (nonPkColumns.length > 0) {
+        const updateValues = nonPkColumns.map((col) => merged[col] ?? null);
+        updateValues.push(id); // WHERE pk = ?
+        def.stmts.update.run(...updateValues);
+      }
+      // If table only has PK column, nothing to update — but we still emit
+
+      // Read back the full row
+      const fullRow = def.stmts.getOne.get(id) as Row;
+
+      const change = this.createChange(table, 'UPDATE', id, fullRow, existing);
+      this.recordAndEmit(change);
+      return change;
+    } catch (error) {
+      this.markTransactionRollbackOnly(error);
+      throw error;
+    }
   }
 
   /**
@@ -275,17 +309,25 @@ export class ReactiveDB {
    */
   delete(table: string, id: string): Change | null {
     this.assertNotDisposed();
-    const def = this.getTableDef(table);
+    if (!this.inTransaction) {
+      return this.transaction(() => this.delete(table, id));
+    }
+    try {
+      const def = this.getTableDef(table);
 
-    // Check existence
-    const existing = def.stmts.getOne.get(id) as Row | null;
-    if (!existing) return null;
+      // Check existence
+      const existing = def.stmts.getOne.get(id) as Row | null;
+      if (!existing) return null;
 
-    def.stmts.delete.run(id);
+      def.stmts.delete.run(id);
 
-    const change = this.createChange(table, 'DELETE', id, null, existing);
-    this.recordAndEmit(change);
-    return change;
+      const change = this.createChange(table, 'DELETE', id, null, existing);
+      this.recordAndEmit(change);
+      return change;
+    } catch (error) {
+      this.markTransactionRollbackOnly(error);
+      throw error;
+    }
   }
 
   // ─── Read Methods ───────────────────────────────────────────────────────
@@ -346,6 +388,9 @@ export class ReactiveDB {
    */
   upsertByIdentity(table: string, row: Row): Change {
     this.assertNotDisposed();
+    if (!this.inTransaction) {
+      return this.transaction(() => this.upsertByIdentity(table, row));
+    }
     const def = this.getTableDef(table);
     this.requireIdentityStatement(def);
 
@@ -365,6 +410,9 @@ export class ReactiveDB {
   /** Update a row by natural identity. Returns null if not found. */
   updateByIdentity(table: string, key: IdentityKey, partial: Partial<Row>): Change | null {
     this.assertNotDisposed();
+    if (!this.inTransaction) {
+      return this.transaction(() => this.updateByIdentity(table, key, partial));
+    }
     const def = this.getTableDef(table);
     this.requireIdentityStatement(def);
 
@@ -376,6 +424,9 @@ export class ReactiveDB {
   /** Delete a row by natural identity. Returns null if not found. */
   deleteByIdentity(table: string, key: IdentityKey): Change | null {
     this.assertNotDisposed();
+    if (!this.inTransaction) {
+      return this.transaction(() => this.deleteByIdentity(table, key));
+    }
     const def = this.getTableDef(table);
     this.requireIdentityStatement(def);
 
@@ -441,6 +492,18 @@ export class ReactiveDB {
 
   // ─── Transactions ───────────────────────────────────────────────────────
 
+  /** Register a synchronous best-effort callback for the active transaction. */
+  afterCommit(callback: () => unknown): void {
+    this.assertNotDisposed();
+    if (!this.inTransaction || this.postCommitCallbacks === null) {
+      throw new Error('ReactiveDB afterCommit callbacks require an active transaction');
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError('ReactiveDB afterCommit callback must be a function');
+    }
+    this.postCommitCallbacks.push(callback);
+  }
+
   /**
    * Execute multiple writes as a single atomic transaction.
    *
@@ -456,32 +519,67 @@ export class ReactiveDB {
     // Nested transactions just run the function — SQLite doesn't support
     // true nested transactions, and the outer transaction handles atomicity.
     if (this.inTransaction) {
-      return fn();
+      try {
+        const result = fn();
+        if (isPromiseLike(result)) {
+          const error = new Error('ReactiveDB transactions must be synchronous');
+          this.markTransactionRollbackOnly(error);
+          void Promise.resolve(result).catch(() => {});
+          throw error;
+        }
+        const rollbackOnlyError = this.transactionExecution.getStore()?.rollbackOnlyError;
+        if (rollbackOnlyError) throw createRollbackOnlyError(rollbackOnlyError);
+        return result;
+      } catch (error) {
+        this.markTransactionRollbackOnly(error);
+        throw error;
+      }
     }
 
     const pendingChanges: Change[] = [];
+    const pendingPostCommitCallbacks: Array<() => unknown> = [];
     this.inTransaction = true;
     this.deferredChanges = pendingChanges;
+    this.postCommitCallbacks = pendingPostCommitCallbacks;
+    const execution: TransactionExecutionContext = { rollbackOnlyError: null };
 
     try {
-      const result = this.db.transaction(() => {
-        return fn();
-      })();
+      const result = this.transactionExecution.run(execution, () => this.db.transaction(() => {
+        const value = fn();
+        if (execution.rollbackOnlyError) {
+          throw createRollbackOnlyError(execution.rollbackOnlyError);
+        }
+        if (isPromiseLike(value)) {
+          const error = new Error('ReactiveDB transactions must be synchronous');
+          execution.rollbackOnlyError = error;
+          // The Promise cannot be cancelled. Poison its AsyncLocalStorage
+          // context so an awaited continuation cannot mutate after rollback.
+          void Promise.resolve(value).catch(() => {});
+          throw error;
+        }
+        return value;
+      })());
 
       // Transaction committed — emit all deferred changes
       this.inTransaction = false;
       this.deferredChanges = null;
+      this.postCommitCallbacks = null;
 
-      for (const change of pendingChanges) {
-        this.emitChange(change);
-      }
+      this.enqueueLocalChanges(pendingChanges);
+      this.runPostCommitCallbacks(pendingPostCommitCallbacks);
 
       return result;
     } catch (err) {
-      // Transaction rolled back — discard deferred changes, rollback seq
-      this.seq -= pendingChanges.length;
+      // Transaction rolled back — discard deferred changes and restore the
+      // durable allocator value. Another handle may have advanced it, so a
+      // local subtraction is not a valid recovery rule.
+      if (!execution.rollbackOnlyError) {
+        execution.rollbackOnlyError = normalizeError(err);
+      }
+      this.seq = this.latestDurableSeq();
       this.inTransaction = false;
       this.deferredChanges = null;
+      this.postCommitCallbacks = null;
       throw err;
     }
   }
@@ -531,7 +629,8 @@ export class ReactiveDB {
    * Get the current sequence number.
    */
   get currentSeq(): number {
-    return this.seq;
+    this.assertNotDisposed();
+    return this.latestDurableSeq();
   }
 
   /** Process-unique cursor epoch used to reject pre-restart client sequences. */
@@ -574,9 +673,13 @@ export class ReactiveDB {
     this.changeStmts.prune.finalize();
     this.changeStmts.after.finalize();
     this.changeStmts.oldest.finalize();
+    this.changeStmts.latest.finalize();
+    this.changeStmts.next.finalize();
 
     this.tables.clear();
     this.listeners.length = 0;
+    this.localDeliveryQueue.length = 0;
+    this.drainingLocalDeliveryQueue = false;
 
     if (this.ownsSQLiteService) {
       this.sqlite?.close();
@@ -613,6 +716,22 @@ export class ReactiveDB {
     if (!columns.some((column) => column.name === 'previous_data')) {
       this.db.run('ALTER TABLE _changes ADD COLUMN previous_data TEXT');
     }
+
+    // This singleton is intentionally separate from the prunable ring. Its
+    // UPDATE ... RETURNING operation is SQLite's serialization boundary for
+    // sequence allocation across independent ReactiveDB handles.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS _change_sequence (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        seq INTEGER NOT NULL CHECK (seq >= 0)
+      )
+    `);
+    this.db.transaction(() => {
+      this.db.run('INSERT OR IGNORE INTO _change_sequence (singleton, seq) VALUES (1, 0)');
+      this.db.run(`UPDATE _change_sequence
+        SET seq = MAX(seq, COALESCE((SELECT MAX(seq) FROM _changes), 0))
+        WHERE singleton = 1`);
+    })();
   }
 
   private prepareChangeStatements(): ChangeStatements {
@@ -623,7 +742,19 @@ export class ReactiveDB {
       prune: this.db.prepare('DELETE FROM _changes WHERE seq <= ?'),
       after: this.db.prepare('SELECT * FROM _changes WHERE seq > ? ORDER BY seq'),
       oldest: this.db.prepare('SELECT MIN(seq) AS min_seq FROM _changes'),
+      latest: this.db.prepare('SELECT seq AS max_seq FROM _change_sequence WHERE singleton = 1'),
+      next: this.db.prepare(`UPDATE _change_sequence SET seq = seq + 1
+        WHERE singleton = 1 RETURNING seq`),
     };
+  }
+
+  private latestDurableSeq(): number {
+    const row = this.changeStmts.latest.get() as { max_seq: number | null } | null;
+    const value = Number(row?.max_seq ?? 0);
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error('ReactiveDB durable change sequence is invalid');
+    }
+    return value;
   }
 
   private getTableDef(table: string): TableDef {
@@ -704,7 +835,13 @@ export class ReactiveDB {
   }
 
   private nextSeq(): number {
-    return ++this.seq;
+    const row = this.changeStmts.next.get() as { seq: number } | null;
+    const value = Number(row?.seq);
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new Error('ReactiveDB could not allocate a durable change sequence');
+    }
+    this.seq = value;
+    return this.seq;
   }
 
   private createChange(
@@ -736,7 +873,7 @@ export class ReactiveDB {
       // Defer emission until transaction commits
       this.deferredChanges.push(change);
     } else {
-      this.emitChange(change);
+      this.enqueueLocalChanges([change]);
     }
   }
 
@@ -810,10 +947,56 @@ export class ReactiveDB {
     }
   }
 
+  /**
+   * Preserve commit order across reentrant local writes. The whole committed
+   * batch is queued before delivery begins, so a listener-triggered commit is
+   * appended behind every earlier sequence instead of interleaving with it.
+   */
+  private enqueueLocalChanges(changes: readonly Change[]): void {
+    if (changes.length === 0) return;
+    this.localDeliveryQueue.push(...changes);
+    if (this.drainingLocalDeliveryQueue) return;
+
+    this.drainingLocalDeliveryQueue = true;
+    let delivered = 0;
+    try {
+      while (delivered < this.localDeliveryQueue.length) {
+        const change = this.localDeliveryQueue[delivered]!;
+        delivered += 1;
+        this.emitChange(change);
+      }
+    } finally {
+      this.localDeliveryQueue.splice(0, delivered);
+      this.drainingLocalDeliveryQueue = false;
+    }
+  }
+
+  private runPostCommitCallbacks(callbacks: readonly (() => unknown)[]): void {
+    for (const callback of callbacks) {
+      try {
+        const result = callback();
+        if (isPromiseLike(result)) {
+          void Promise.resolve(result).catch(() => {});
+          throw new Error('ReactiveDB afterCommit callbacks must be synchronous');
+        }
+      } catch (error) {
+        emitPlatformCode(OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED, { error });
+      }
+    }
+  }
+
   private assertNotDisposed(): void {
+    const rollbackOnlyError = this.transactionExecution.getStore()?.rollbackOnlyError;
+    if (rollbackOnlyError) throw createRollbackOnlyError(rollbackOnlyError);
     if (this.disposed) {
       throw new Error('ReactiveDB is disposed');
     }
+  }
+
+  private markTransactionRollbackOnly(error: unknown): void {
+    const execution = this.transactionExecution.getStore();
+    if (!execution || execution.rollbackOnlyError) return;
+    execution.rollbackOnlyError = normalizeError(error);
   }
 }
 
@@ -833,7 +1016,7 @@ function createReactiveDBRuntime(config: ReactiveDBConfig): ReactiveDBRuntime {
       sqlite: config.sqlite,
       ownsSQLiteService: false,
       ownsDatabase: false,
-      clearChangesOnStart: config.clearChangesOnStart ?? config.sqlite.mode !== 'ephemeral',
+      clearChangesOnStart: config.clearChangesOnStart ?? false,
     };
   }
 
@@ -843,7 +1026,7 @@ function createReactiveDBRuntime(config: ReactiveDBConfig): ReactiveDBRuntime {
       sqlite: null,
       ownsSQLiteService: false,
       ownsDatabase: config.ownsDatabase ?? false,
-      clearChangesOnStart: config.clearChangesOnStart ?? true,
+      clearChangesOnStart: config.clearChangesOnStart ?? false,
     };
   }
 
@@ -855,7 +1038,7 @@ function createReactiveDBRuntime(config: ReactiveDBConfig): ReactiveDBRuntime {
     sqlite,
     ownsSQLiteService: true,
     ownsDatabase: false,
-    clearChangesOnStart: config.clearChangesOnStart ?? sqlite.mode !== 'ephemeral',
+    clearChangesOnStart: config.clearChangesOnStart ?? false,
   };
 }
 
@@ -869,4 +1052,22 @@ function deserializeChangeRow(row: ChangeRow): Change {
     previousRow: row.previous_data ? JSON.parse(row.previous_data) : null,
     ts: row.ts,
   };
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  if (value === null
+    || (typeof value !== 'object' && typeof value !== 'function')) return false;
+  try {
+    return typeof (value as { then?: unknown }).then === 'function';
+  } catch (cause) {
+    throw new Error('ReactiveDB synchronous callback thenable inspection failed', { cause });
+  }
+}
+
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function createRollbackOnlyError(cause: Error): Error {
+  return new Error(`ReactiveDB transaction is rollback-only: ${cause.message}`, { cause });
 }

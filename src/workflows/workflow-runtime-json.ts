@@ -1,6 +1,7 @@
 /** Shared JSON serialization and byte limits for durable workflow runtime values. */
 
 import { WorkflowError, type WorkflowErrorCode } from './workflow-error';
+import { normalizeWorkflowJson } from './workflow-json-value';
 
 export const MAX_WORKFLOW_RUNTIME_JSON_BYTES = 1024 * 1024;
 
@@ -17,13 +18,17 @@ export function serializeWorkflowRuntimeJson(
   options: WorkflowRuntimeJsonOptions,
 ): string | null {
   if (value === undefined) return null;
-  let serialized: string | undefined;
+  let normalized: ReturnType<typeof normalizeWorkflowJson>;
   try {
-    serialized = JSON.stringify(value);
+    normalized = normalizeWorkflowJson(
+      value,
+      options.code,
+      options.invalidStatus ?? 422,
+    );
   } catch {
     throw invalid(options);
   }
-  if (serialized === undefined) throw invalid(options);
+  const serialized = JSON.stringify(normalized);
   if (Buffer.byteLength(serialized, 'utf8') > MAX_WORKFLOW_RUNTIME_JSON_BYTES) {
     throw new WorkflowError(
       `${options.label} exceeds its byte limit`,

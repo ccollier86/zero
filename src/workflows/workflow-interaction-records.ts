@@ -7,12 +7,13 @@
 
 import { WorkflowError, type WorkflowErrorCode } from './workflow-error';
 import {
-  parseWorkflowJson,
+  parseWorkflowRequestJson,
   serializeWorkflowJson,
   workflowJsonBytes,
   type WorkflowJsonValue,
 } from './workflow-json-value';
 import { MAX_WORKFLOW_RUNTIME_JSON_BYTES } from './workflow-runtime-json';
+import { normalizeWorkflowSchemaSnapshot } from './workflow-schema-snapshot';
 
 export const INTERACTION_INVALID = 'WORKFLOW_INTERACTION_INVALID' as WorkflowErrorCode;
 export const MAX_INTERACTION_PAYLOAD_BYTES = MAX_WORKFLOW_RUNTIME_JSON_BYTES;
@@ -200,7 +201,7 @@ export function normalizeOpenWorkflowInteractionInput(
       'Interaction responder policy',
     ),
     responseSchemaJson: serializeBoundedInteractionJson(
-      input.responseSchema ?? null,
+      normalizeInteractionResponseSchema(input.responseSchema),
       'Interaction response schema',
     ),
     requestJson: serializeBoundedInteractionJson(
@@ -209,6 +210,19 @@ export function normalizeOpenWorkflowInteractionInput(
     ),
     validatorActivityId: input.validatorActivityId ?? null,
   };
+}
+
+/** Convert trusted TypeBox metadata into a canonical data-only schema snapshot. */
+function normalizeInteractionResponseSchema(schema: unknown): WorkflowJsonValue {
+  if (schema === undefined || schema === null) return null;
+  try {
+    return normalizeWorkflowSchemaSnapshot(schema);
+  } catch (error) {
+    if (error instanceof WorkflowError && error.code === 'WORKFLOW_GRAPH_INVALID') {
+      throw workflowInteractionInvalid(error.message, 400);
+    }
+    throw error;
+  }
 }
 
 function serializeBoundedInteractionJson(value: unknown, label: string): string {
@@ -231,7 +245,7 @@ export function validateWorkflowInteractionSubmission(
   if (workflowJsonBytes(input.payloadJson) > MAX_INTERACTION_PAYLOAD_BYTES) {
     throw workflowInteractionInvalid('Interaction payload exceeds its byte limit', 413);
   }
-  parseWorkflowJson(input.payloadJson, INTERACTION_INVALID);
+  parseWorkflowRequestJson(input.payloadJson, INTERACTION_INVALID);
 }
 
 export function assertWorkflowInteractionOpen(interaction: WorkflowInteractionRecord): void {

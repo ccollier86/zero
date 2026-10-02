@@ -44,14 +44,18 @@ export class WorkflowInteractionEventBridge {
         continue;
       }
       try {
-        const result = await this.interactions.submit({
+        const result = await this.interactions.submitClaimedEvent({
           interactionId: input.interaction.interactionId,
-          submissionId: `event:${event.eventId}`,
+          eventId: event.eventId,
           actor,
           payload: event.payload,
-          channel: 'event',
         });
-        this.runtime.consumeClaimedEvent(input.stepId, event.eventId);
+        // The accepted event is consumed atomically with wait completion.
+        // Rejected/superseded submissions cannot settle the wait and are
+        // consumed here so the next queued event may be evaluated.
+        if (result.outcome !== 'accepted') {
+          this.runtime.consumeClaimedEvent(input.stepId, event.eventId);
+        }
         current = result.interaction;
       } catch (error) {
         if (!(error instanceof WorkflowError)

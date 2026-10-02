@@ -17,6 +17,12 @@ import type { WorkflowInteractionActor } from './workflow-interaction-authority'
 import { WorkflowError } from './workflow-error';
 import { parseWorkflowEventActor } from './workflow-event-actor';
 import { ensureWorkflowRuntimeSchema } from './workflow-runtime-schema';
+import { WorkflowTerminalEventQueue } from './workflow-terminal-event-queue';
+import {
+  createUnmanagedWorkflowRuntimeFence,
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
 
 export {
   MAX_WORKFLOW_EVENT_NAME_LENGTH,
@@ -40,17 +46,46 @@ interface WorkflowEventRow {
   actor_json: string | null;
 }
 
+const runtimeDatabases = new WeakMap<WorkflowRuntimeStore, ReactiveDB>();
+
 export class WorkflowRuntimeStore {
   private readonly eventCapacity: WorkflowEventCapacityStore;
+  private readonly runtimeFence: WorkflowRuntimeFence;
+  private readonly terminalQueue: WorkflowTerminalEventQueue;
 
-  constructor(private readonly db: ReactiveDB) {
+  constructor(
+    private readonly db: ReactiveDB,
+    runtimeFence: WorkflowRuntimeFence | null = null,
+    now: () => Date = () => new Date(),
+  ) {
+    runtimeDatabases.set(this, db);
+    this.runtimeFence = runtimeFence ?? createUnmanagedWorkflowRuntimeFence(db);
     this.defineTables();
     this.eventCapacity = new WorkflowEventCapacityStore(db);
+    this.terminalQueue = new WorkflowTerminalEventQueue(db);
+    this.transaction(() => this.terminalQueue.reconcileTerminalInstances(now().toISOString()));
+  }
+
+  /** Build stores closed over one exact managed owner generation. */
+  static createOwnerFenced(
+    db: ReactiveDB,
+    runtimeFence: WorkflowRuntimeFence,
+    template?: WorkflowRuntimeStore,
+    now: () => Date = () => new Date(),
+  ): WorkflowRuntimeStore {
+    if (template && runtimeDatabases.get(template) !== db) {
+      throw new WorkflowError(
+        'Injected workflow runtime must use the WorkflowService database',
+        'WORKFLOW_CONFIG_INVALID',
+        500,
+      );
+    }
+    return new WorkflowRuntimeStore(db, runtimeFence, now);
   }
 
   /** Ensure internal tables exist for both migrated and pre-migration apps. */
   defineTables(): void {
-    ensureWorkflowRuntimeSchema(this.db);
+    this.transaction(() => ensureWorkflowRuntimeSchema(this.db));
   }
 
   recordDeliverableEvent(
@@ -74,7 +109,7 @@ export class WorkflowRuntimeStore {
       throw new WorkflowError('Workflow event byte accounting is invalid', 'WORKFLOW_STATE_INVALID', 500);
     }
     const nextBytes = payloadBytes + actorBytes;
-    this.db.transaction(() => {
+    this.transaction(() => {
       this.eventCapacity.reserve(instanceId, nextBytes);
       this.db.prepare(`
         INSERT INTO _workflow_event_delivery (
@@ -95,7 +130,10 @@ export class WorkflowRuntimeStore {
     if (existing) return existing;
 
     this.assertPendingEventIdentity(instanceId, eventName);
-    return this.db.transaction(() => {
+    const claim = this.transaction<
+      | { ok: true; event: ClaimedWorkflowEvent | null }
+      | { ok: false; error: unknown }
+    >(() => {
       const candidate = this.db.prepare(`
         SELECT e.event_id, e.event_name, e.payload, delivery.actor_json
         FROM _workflow_event_delivery AS delivery
@@ -108,20 +146,34 @@ export class WorkflowRuntimeStore {
         ORDER BY delivery.created_at ASC, delivery.rowid ASC
         LIMIT 1
       `).get(instanceId, eventName) as WorkflowEventRow | null;
-      if (!candidate) return null;
+      if (!candidate) return { ok: true, event: null };
+
+      // Decode before mutating delivery/accounting state. A caller may catch
+      // this error inside a wider workflow transaction to persist a terminal
+      // failure, so throwing from a nested transaction after claiming would
+      // otherwise leave a poisoned or partially claimed envelope.
+      let event: ClaimedWorkflowEvent;
+      try {
+        event = deserializeEvent(candidate);
+      } catch (error) {
+        return { ok: false, error };
+      }
 
       const result = this.db.prepare(`
         UPDATE _workflow_event_delivery
         SET claimed_by_step_id = ?, claimed_at = ?
         WHERE event_id = ? AND claimed_by_step_id IS NULL
       `).run(stepId, claimedAt, candidate.event_id);
-      if (result.changes !== 1) return null;
+      if (result.changes !== 1) return { ok: true, event: null };
       this.eventCapacity.markClaimed(instanceId);
-      return deserializeEvent(candidate);
+      return { ok: true, event };
     });
+    if (!claim.ok) throw claim.error;
+    return claim.event;
   }
 
   claimedEvent(stepId: string): ClaimedWorkflowEvent | null {
+    this.assertCurrent();
     const row = this.db.prepare(`
       SELECT e.event_id, e.event_name, e.payload, delivery.actor_json
       FROM _workflow_event_delivery AS delivery
@@ -145,17 +197,19 @@ export class WorkflowRuntimeStore {
   }
 
   isEventClaimed(eventId: string): boolean {
+    this.assertCurrent();
     const row = this.db.prepare(`
       SELECT claimed_by_step_id
       FROM _workflow_event_delivery
       WHERE event_id = ?
     `).get(eventId) as { claimed_by_step_id: string | null } | null;
-    return Boolean(row?.claimed_by_step_id);
+    return Boolean(row?.claimed_by_step_id
+      && !row.claimed_by_step_id.startsWith('discarded:'));
   }
 
   /** Consume one interaction-event claim after its idempotent submission is durable. */
   consumeClaimedEvent(stepId: string, eventId: string): boolean {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const row = this.db.prepare(`SELECT instance_id, payload_bytes, actor_bytes
         FROM _workflow_event_delivery
         WHERE event_id = ? AND claimed_by_step_id = ? LIMIT 1`)
@@ -174,8 +228,53 @@ export class WorkflowRuntimeStore {
     });
   }
 
+  /**
+   * Recover or finish the event half of an accepted interaction response.
+   * This is called inside the wait-completion transaction so a crash can
+   * leave neither an unconsumed accepted event nor a completed wait without
+   * its exact event-accounting transition.
+   */
+  consumeAcceptedInteractionEvent(
+    stepId: string,
+    instanceId: string,
+    eventId: string,
+  ): void {
+    this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT delivery.instance_id, delivery.event_name,
+          delivery.claimed_by_step_id, delivery.payload_bytes, delivery.actor_bytes
+        FROM _workflow_event_delivery AS delivery
+        INNER JOIN workflow_events AS event
+          ON event.event_id = delivery.event_id
+          AND event.instance_id = delivery.instance_id
+          AND event.event_name = delivery.event_name
+        WHERE delivery.event_id = ?
+        LIMIT 1
+      `).get(eventId) as {
+        instance_id: string;
+        event_name: string;
+        claimed_by_step_id: string | null;
+        payload_bytes: number;
+        actor_bytes: number;
+      } | null;
+      if (!row || row.instance_id !== instanceId) throw invalidEventDelivery();
+      if (row.claimed_by_step_id === `consumed:${eventId}`) return;
+      if (row.claimed_by_step_id !== stepId) throw invalidEventDelivery();
+      const result = this.db.prepare(`UPDATE _workflow_event_delivery
+        SET claimed_by_step_id = ?
+        WHERE event_id = ? AND instance_id = ? AND claimed_by_step_id = ?`)
+        .run(`consumed:${eventId}`, eventId, instanceId, stepId);
+      if (result.changes !== 1) throw invalidEventDelivery();
+      this.eventCapacity.markConsumed(
+        instanceId,
+        Number(row.payload_bytes) + Number(row.actor_bytes),
+      );
+    });
+  }
+
   /** Read the authenticated actor identifier attached to one event, if any. */
   getEventSender(eventId: string): string | null {
+    this.assertCurrent();
     const row = this.db.prepare(`
       SELECT sent_by FROM workflow_events WHERE event_id = ? LIMIT 1
     `).get(eventId) as { sent_by: string | null } | null;
@@ -183,6 +282,7 @@ export class WorkflowRuntimeStore {
   }
 
   isInstanceRunning(instanceId: string): boolean {
+    this.assertCurrent();
     const row = this.db.prepare(`
       SELECT status FROM workflow_instances WHERE instance_id = ? LIMIT 1
     `).get(instanceId) as { status: string } | null;
@@ -191,17 +291,25 @@ export class WorkflowRuntimeStore {
 
   /** Include private delivery progress in the graph pump's lost-wakeup fence. */
   eventDeliverySignature(instanceId: string): string {
+    this.assertCurrent();
     return this.eventCapacity.signature(instanceId);
   }
 
   /** Recovery-only integrity check for O(1) event-capacity accounting. */
   validateEventUsage(instanceId: string): void {
+    this.assertCurrent();
     this.eventCapacity.validate(instanceId);
   }
 
   /** Recovery-only graph audit/private envelope integrity check. */
   validateGraphEventState(instanceId: string): void {
+    this.assertCurrent();
     validateWorkflowGraphEventState(this.db, instanceId);
+  }
+
+  /** Atomically make every remaining inbox and interaction row terminal. */
+  discardInstanceQueue(instanceId: string, terminalAt: string): void {
+    this.transaction(() => this.terminalQueue.discardInstanceQueue(instanceId, terminalAt));
   }
 
   beginAttempt(
@@ -210,14 +318,17 @@ export class WorkflowRuntimeStore {
     attemptId: string,
     startedAt: string,
   ): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO _workflow_step_attempts (
-        step_id, instance_id, attempt_id, started_at
-      ) VALUES (?, ?, ?, ?)
-    `).run(stepId, instanceId, attemptId, startedAt);
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT OR REPLACE INTO _workflow_step_attempts (
+          step_id, instance_id, attempt_id, started_at
+        ) VALUES (?, ?, ?, ?)
+      `).run(stepId, instanceId, attemptId, startedAt);
+    });
   }
 
   isCurrentAttempt(stepId: string, attemptId: string): boolean {
+    this.assertCurrent();
     const row = this.db.prepare(`
       SELECT attempt_id FROM _workflow_step_attempts WHERE step_id = ?
     `).get(stepId) as { attempt_id: string } | null;
@@ -225,43 +336,55 @@ export class WorkflowRuntimeStore {
   }
 
   finishAttempt(stepId: string, attemptId?: string): boolean {
-    const result = attemptId
-      ? this.db.prepare(`
-          DELETE FROM _workflow_step_attempts WHERE step_id = ? AND attempt_id = ?
-        `).run(stepId, attemptId)
-      : this.db.prepare(`
-          DELETE FROM _workflow_step_attempts WHERE step_id = ?
-        `).run(stepId);
-    return result.changes > 0;
+    return this.transaction(() => {
+      const result = attemptId
+        ? this.db.prepare(`
+            DELETE FROM _workflow_step_attempts WHERE step_id = ? AND attempt_id = ?
+          `).run(stepId, attemptId)
+        : this.db.prepare(`
+            DELETE FROM _workflow_step_attempts WHERE step_id = ?
+          `).run(stepId);
+      return result.changes > 0;
+    });
   }
 
   finishInstanceAttempts(instanceId: string): void {
-    this.db.prepare(`
-      DELETE FROM _workflow_step_attempts WHERE instance_id = ?
-    `).run(instanceId);
+    this.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM _workflow_step_attempts WHERE instance_id = ?
+      `).run(instanceId);
+    });
   }
 
   clearAllAttempts(): void {
-    this.db.prepare('DELETE FROM _workflow_step_attempts').run();
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM _workflow_step_attempts').run();
+    });
   }
 
   markPaused(instanceId: string, pausedAt: string): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO _workflow_pauses (instance_id, paused_at)
-      VALUES (?, ?)
-    `).run(instanceId, pausedAt);
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT OR REPLACE INTO _workflow_pauses (instance_id, paused_at)
+        VALUES (?, ?)
+      `).run(instanceId, pausedAt);
+    });
   }
 
   takePausedAt(instanceId: string): string | null {
-    const row = this.db.prepare(`
-      SELECT paused_at FROM _workflow_pauses WHERE instance_id = ?
-    `).get(instanceId) as { paused_at: string } | null;
-    this.db.prepare('DELETE FROM _workflow_pauses WHERE instance_id = ?').run(instanceId);
-    return row?.paused_at ?? null;
+    return this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT paused_at FROM _workflow_pauses WHERE instance_id = ?
+      `).get(instanceId) as { paused_at: string } | null;
+      this.db.prepare('DELETE FROM _workflow_pauses WHERE instance_id = ?').run(instanceId);
+      return row?.paused_at ?? null;
+    });
   }
 
   clearPause(instanceId: string): void {
-    this.db.prepare('DELETE FROM _workflow_pauses WHERE instance_id = ?').run(instanceId);
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM _workflow_pauses WHERE instance_id = ?').run(instanceId);
+    });
   }
 
   private assertPendingEventIdentity(instanceId: string, eventName: string): void {
@@ -280,6 +403,22 @@ export class WorkflowRuntimeStore {
     if (corrupt) throw invalidEventDelivery();
   }
 
+  private assertCurrent(): void {
+    this.runtimeFence.assertCurrent();
+  }
+
+  private transaction<T>(operation: () => T): T {
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
+  }
+
+}
+
+/** @internal Validate low-level collaborator composition without exposing its database. */
+export function workflowRuntimeStoreUsesDatabase(
+  runtime: WorkflowRuntimeStore,
+  db: ReactiveDB,
+): boolean {
+  return runtimeDatabases.get(runtime) === db;
 }
 
 function invalidEventDelivery(): WorkflowError {

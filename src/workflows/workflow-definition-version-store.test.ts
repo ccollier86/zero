@@ -187,9 +187,84 @@ describe('WorkflowDefinitionVersionStore', () => {
         definitionId: published.catalog.definition_id,
         draftId: first.draft.draft_id,
         source: 'code', graphFormat: 'graph', schemaVersion: 1,
+        graph: GRAPH_ONE,
+      } as never))).toMatchObject({
+        code: 'WORKFLOW_DEFINITION_DRAFT_INVALID',
+        status: 422,
+      });
+      expect(captureError(() => fixture.store.drafts.save({
+        definitionId: published.catalog.definition_id,
+        draftId: first.draft.draft_id,
+        source: 'code', graphFormat: 'graph', schemaVersion: 1,
         graph: GRAPH_ONE, expectedRevision: 1,
       }))).toMatchObject({ code: 'WORKFLOW_DEFINITION_DRAFT_CONFLICT' });
+      expect(captureError(() => fixture.store.drafts.delete(
+        first.draft.draft_id,
+        1,
+      ))).toMatchObject({ code: 'WORKFLOW_DEFINITION_DRAFT_CONFLICT' });
+      expect(captureError(() => fixture.store.drafts.delete(
+        first.draft.draft_id,
+        0,
+      ))).toMatchObject({
+        code: 'WORKFLOW_DEFINITION_DRAFT_INVALID',
+        status: 422,
+      });
+      expect(captureError(() => fixture.store.publishDraft({
+        draftId: first.draft.draft_id,
+        definitionId: published.catalog.definition_id,
+        expectedDraftFingerprint: updated.draft.fingerprint,
+        publication: {
+          ...publishInput({ ...GRAPH_ONE, entry: 'updated' }),
+          expectedFingerprint: updated.draft.fingerprint,
+        },
+      } as never))).toMatchObject({
+        code: 'WORKFLOW_DEFINITION_DRAFT_INVALID',
+        status: 422,
+      });
       expect(fixture.store.drafts.delete(first.draft.draft_id, 2)).toBe(true);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test('publishes only the exact reviewed draft revision in one writer transaction', () => {
+    const fixture = createStore();
+    try {
+      const published = fixture.store.publish(publishInput(GRAPH_ONE));
+      const draft = fixture.store.drafts.save({
+        definitionId: published.catalog.definition_id,
+        source: 'code', graphFormat: 'graph', schemaVersion: 1,
+        graph: { ...GRAPH_ONE, entry: 'reviewed' },
+      });
+      const reviewed = fixture.store.drafts.save({
+        definitionId: published.catalog.definition_id,
+        draftId: draft.draft.draft_id,
+        source: 'code', graphFormat: 'graph', schemaVersion: 1,
+        graph: { ...GRAPH_ONE, entry: 'reviewed' },
+        expectedRevision: 1,
+      });
+      fixture.store.drafts.save({
+        definitionId: published.catalog.definition_id,
+        draftId: draft.draft.draft_id,
+        source: 'code', graphFormat: 'graph', schemaVersion: 1,
+        graph: { ...GRAPH_ONE, entry: 'changed-after-review' },
+        expectedRevision: 2,
+      });
+
+      expect(captureError(() => fixture.store.publishDraft({
+        draftId: reviewed.draft.draft_id,
+        definitionId: published.catalog.definition_id,
+        expectedRevision: reviewed.draft.revision,
+        expectedDraftFingerprint: reviewed.draft.fingerprint,
+        publication: {
+          ...publishInput(reviewed.graph),
+          expectedFingerprint: reviewed.draft.fingerprint,
+        },
+      }))).toMatchObject({
+        code: 'WORKFLOW_DEFINITION_DRAFT_CONFLICT',
+        status: 409,
+      });
+      expect(fixture.store.listVersions(published.catalog.definition_id)).toHaveLength(1);
     } finally {
       fixture.dispose();
     }

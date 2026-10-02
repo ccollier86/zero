@@ -8,8 +8,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import { flow, parallel, requestAndWait, step, waitFor } from './workflow-dsl';
+import { validateWorkflowGraphEventState } from './workflow-event-persisted-state';
 import type { WorkflowClock } from './workflow-executor';
 import { WorkflowRegistry } from './workflow-registry';
+import { WorkflowRuntimeStore } from './workflow-runtime-store';
 import { defineWorkflowTables } from './workflow-schema';
 import { WorkflowService } from './workflow-service';
 import type { StepContext } from './types';
@@ -31,6 +34,86 @@ afterEach(async () => {
 });
 
 describe('workflow event delivery matrix', () => {
+  test('recovers an accepted interaction event and completes its wait atomically', async () => {
+    const registry = new WorkflowRegistry();
+    registry.create({
+      name: 'accepted-event-recovery',
+      flow: flow(
+        requestAndWait('approval', 'approval.responded'),
+        waitFor('later', 'later.event'),
+      ),
+    });
+    const first = track(new WorkflowService(db, registry));
+    const instanceId = await first.start('accepted-event-recovery', {}, 'owner');
+    const approval = first.getSteps(instanceId).find((row) => row.node_id === 'approval')!;
+    const runtime = (first as unknown as { runtime: WorkflowRuntimeStore }).runtime;
+    const interaction = first.getGraphRuntime().listInteractions(instanceId)[0]!;
+    const eventId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify({ approved: true });
+    const actorJson = JSON.stringify({ actorId: 'owner' });
+    db.transaction(() => {
+      db.insert('workflow_events', {
+        event_id: eventId,
+        instance_id: instanceId,
+        event_name: 'approval.responded',
+        payload,
+        sent_by: 'owner',
+        created_at: createdAt,
+      });
+      runtime.recordDeliverableEvent(
+        eventId,
+        instanceId,
+        'approval.responded',
+        createdAt,
+        actorJson,
+        Buffer.byteLength(payload),
+        Buffer.byteLength(actorJson),
+      );
+    });
+    expect(runtime.claimEvent(
+      instanceId,
+      approval.step_id,
+      'approval.responded',
+      createdAt,
+    )?.eventId).toBe(eventId);
+    await expect(first.getGraphRuntime().interactions.submitClaimedEvent({
+      interactionId: interaction.interactionId,
+      eventId,
+      actor: { actorId: 'owner' },
+      payload: { approved: true },
+    })).resolves.toMatchObject({ outcome: 'accepted' });
+
+    expect(db.query('workflow_interactions')[0]?.status).toBe('accepted');
+    expect(first.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('waiting');
+    const deliveryBefore = db.prepare(`SELECT event_id, claimed_by_step_id
+      FROM _workflow_event_delivery WHERE event_id = ?`).get(eventId) as {
+        event_id: string; claimed_by_step_id: string | null;
+      };
+    expect(deliveryBefore.claimed_by_step_id).toBe(approval.step_id);
+    expect(db.prepare(`SELECT queued_count FROM _workflow_event_usage
+      WHERE instance_id = ?`).get(instanceId)).toEqual({ queued_count: 1 });
+
+    await first.dispose();
+    const second = track(new WorkflowService(db, registry));
+    await second.recoverInFlight();
+    await second.advance(instanceId);
+
+    expect(second.get(instanceId)?.status).toBe('running');
+    expect(second.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('completed');
+    expect(second.getSteps(instanceId).find((row) => row.node_id === 'later')?.status)
+      .toBe('waiting');
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(deliveryBefore.event_id)).toEqual({
+      claimed_by_step_id: `consumed:${deliveryBefore.event_id}`,
+    });
+    expect(db.prepare(`SELECT queued_count FROM _workflow_event_usage
+      WHERE instance_id = ?`).get(instanceId)).toEqual({ queued_count: 0 });
+    expect(() => validateWorkflowGraphEventState(db, instanceId)).not.toThrow();
+  });
+
   test('keeps an event buffered while paused and claims it only after resume', async () => {
     const registry = new WorkflowRegistry();
     let received: StepContext['waitEvent'];
@@ -48,7 +131,6 @@ describe('workflow event delivery matrix', () => {
     });
     const service = track(new WorkflowService(db, registry));
     const instanceId = await service.start('paused-event');
-    const stepId = service.getSteps(instanceId)[0]!.step_id;
 
     service.pause(instanceId);
     expect(await service.sendEvent(instanceId, 'continue', { value: 42 })).toBe(false);
@@ -66,7 +148,7 @@ describe('workflow event delivery matrix', () => {
     expect(service.get(instanceId)?.status).toBe('completed');
     expect(deliveryRows()).toEqual([{
       event_name: 'continue',
-      claimed_by_step_id: stepId,
+      claimed_by_step_id: expect.stringMatching(/^consumed:/),
     }]);
   });
 
@@ -87,7 +169,6 @@ describe('workflow event delivery matrix', () => {
     });
     const service = track(new WorkflowService(db, registry));
     const instanceId = await service.start('matching-event');
-    const stepId = service.getSteps(instanceId)[0]!.step_id;
 
     expect(await service.sendEvent(instanceId, 'beta', { sequence: 1 })).toBe(false);
     expect(service.get(instanceId)?.status).toBe('running');
@@ -97,9 +178,10 @@ describe('workflow event delivery matrix', () => {
     expect(received).toMatchObject({ name: 'alpha', payload: { sequence: 2 } });
     expect(service.get(instanceId)?.status).toBe('completed');
     expect(deliveryRows()).toEqual([
-      { event_name: 'beta', claimed_by_step_id: null },
-      { event_name: 'alpha', claimed_by_step_id: stepId },
+      { event_name: 'beta', claimed_by_step_id: expect.stringMatching(/^discarded:/) },
+      { event_name: 'alpha', claimed_by_step_id: expect.stringMatching(/^consumed:/) },
     ]);
+    expect(() => validateWorkflowGraphEventState(db, instanceId)).not.toThrow();
   });
 
   test('rejects terminal-instance events without partially inserting either durable row', async () => {
@@ -152,7 +234,6 @@ describe('workflow event delivery matrix', () => {
     });
     const service = track(new WorkflowService(db, registry));
     const instanceId = await service.start('invalid-event-payload');
-    const stepId = service.getSteps(instanceId)[0]!.step_id;
     const unsubscribe = db.onChange((change) => {
       if (change.table === 'workflow_events' && change.op === 'INSERT') {
         db.update('workflow_events', change.rowId, { payload: '{bad json' });
@@ -161,7 +242,7 @@ describe('workflow event delivery matrix', () => {
 
     try {
       expect(await service.sendEvent(instanceId, 'continue', { valid: 'before hook' }))
-        .toBe(true);
+        .toBe(false);
     } finally {
       unsubscribe();
     }
@@ -177,12 +258,173 @@ describe('workflow event delivery matrix', () => {
       .toContain('Workflow event payload is invalid');
     expect(deliveryRows()).toEqual([{
       event_name: 'continue',
-      claimed_by_step_id: stepId,
+      claimed_by_step_id: expect.stringMatching(/^discarded:/),
     }]);
   });
 });
 
 describe('workflow cancellation matrix', () => {
+  test('supersedes external processing responses atomically at cancellation', async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const registry = new WorkflowRegistry();
+    registry.registerActivity({
+      name: 'slow-terminal-validator',
+      handler: async () => {
+        entered.resolve();
+        await release.promise;
+        return true;
+      },
+    });
+    registry.create({
+      name: 'terminal-processing-response',
+      flow: flow(requestAndWait('approval', 'approval.response', {
+        validator: { name: 'slow-terminal-validator' },
+      })),
+    });
+    const service = track(new WorkflowService(db, registry));
+    const instanceId = await service.start('terminal-processing-response', {}, 'owner');
+    const interaction = service.getGraphRuntime().listInteractions(instanceId)[0]!;
+    const pending = service.getGraphRuntime().submitInteraction({
+      interactionId: interaction.interactionId,
+      submissionId: 'slow-web-response',
+      actor: { actorId: 'owner' },
+      payload: { approved: true },
+      channel: 'web',
+    });
+    await entered.promise;
+
+    service.cancel(instanceId);
+    expect(db.prepare(`SELECT status FROM _workflow_interaction_responses
+      WHERE interaction_id = ? AND submission_id = ?`).get(
+      interaction.interactionId,
+      'slow-web-response',
+    )).toEqual({ status: 'superseded' });
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM _workflow_interaction_responses
+      WHERE interaction_id = ? AND status = 'processing'`).get(interaction.interactionId))
+      .toEqual({ count: 0 });
+
+    release.resolve();
+    await expect(pending).rejects.toThrow('Workflow cancelled');
+  });
+
+  test('releases in-flight event responses and their byte accounting atomically', async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const registry = new WorkflowRegistry();
+    registry.registerActivity({
+      name: 'slow-event-validator',
+      handler: async () => {
+        entered.resolve();
+        await release.promise;
+        return true;
+      },
+    });
+    registry.create({
+      name: 'terminal-event-response',
+      flow: flow(requestAndWait('approval', 'approval.responded', {
+        validator: { name: 'slow-event-validator' },
+      })),
+    });
+    const service = track(new WorkflowService(db, registry));
+    const instanceId = await service.start('terminal-event-response', {}, 'owner');
+    const interaction = service.getGraphRuntime().listInteractions(instanceId)[0]!;
+    const pending = service.sendEvent(
+      instanceId,
+      'approval.responded',
+      { approved: true },
+      'owner',
+      { actorId: 'owner' },
+    );
+    await entered.promise;
+    expect(interactionUsage(interaction.interactionId).response_count).toBe(1);
+
+    service.cancel(instanceId);
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM _workflow_interaction_responses
+      WHERE interaction_id = ?`).get(interaction.interactionId)).toEqual({ count: 0 });
+    expect(interactionUsage(interaction.interactionId)).toEqual({
+      response_count: 0,
+      response_bytes: 0,
+    });
+    expect(deliveryRows()).toEqual([{
+      event_name: 'approval.responded',
+      claimed_by_step_id: expect.stringMatching(/^consumed:/),
+    }]);
+
+    release.resolve();
+    // The event was durably accepted for the then-running workflow even though
+    // cancellation won the later validation race and discarded its response.
+    await expect(pending).resolves.toBe(true);
+  });
+
+  test('reconciles orphaned terminal interactions through tracked updates', async () => {
+    const registry = new WorkflowRegistry();
+    registry.create({
+      name: 'terminal-reconciliation',
+      flow: flow(requestAndWait('approval', 'approval.responded')),
+    });
+    const service = track(new WorkflowService(db, registry));
+    const instanceId = await service.start('terminal-reconciliation');
+    expect(db.query('workflow_interactions')[0]?.status).toBe('open');
+
+    await service.dispose();
+    db.prepare(`UPDATE workflow_instances
+      SET status = 'failed', error = 'simulated terminal orphan'
+      WHERE instance_id = ?`).run(instanceId);
+    const interactionChanges: Array<{ op: string; status: unknown }> = [];
+    const unsubscribe = db.onChange((change) => {
+      if (change.table !== 'workflow_interactions') return;
+      interactionChanges.push({ op: change.op, status: change.row?.status });
+    });
+
+    try {
+      new WorkflowRuntimeStore(db);
+      expect(db.query('workflow_interactions')[0]?.status).toBe('cancelled');
+      expect(interactionChanges).toEqual([{ op: 'UPDATE', status: 'cancelled' }]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test('publishes a tracked interaction cancellation when a parallel branch fails', async () => {
+    const registry = new WorkflowRegistry();
+    const releaseFailure = deferred<void>();
+    registry.registerActivity({
+      name: 'terminal-failure',
+      handler: async () => {
+        await releaseFailure.promise;
+        throw new Error('parallel failure');
+      },
+    });
+    registry.create({
+      name: 'tracked-terminal-interaction',
+      flow: flow(parallel('terminal-race', {
+        approval: [requestAndWait('approval', 'approval.responded')],
+        failure: [step('fail', 'terminal-failure', { retries: 1 })],
+      })),
+    });
+    const service = track(new WorkflowService(db, registry));
+    const interactionChanges: Array<{ op: string; status: unknown }> = [];
+    const unsubscribe = db.onChange((change) => {
+      if (change.table !== 'workflow_interactions') return;
+      interactionChanges.push({ op: change.op, status: change.row?.status });
+    });
+
+    try {
+      const starting = service.start('tracked-terminal-interaction');
+      await eventually(() => db.query('workflow_interactions').length === 1);
+      interactionChanges.length = 0;
+      releaseFailure.resolve();
+      const instanceId = await starting;
+
+      expect(service.get(instanceId)?.status).toBe('failed');
+      expect(db.query('workflow_interactions')[0]?.status).toBe('cancelled');
+      expect(interactionChanges).toEqual([{ op: 'UPDATE', status: 'cancelled' }]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   test('cancels a waiting step and clears its deadline', async () => {
     const clock = new ManualClock();
     const registry = new WorkflowRegistry();
@@ -311,6 +553,17 @@ function eventCounts(): { events: number; deliveries: number } {
   return { events: Number(events.count), deliveries: Number(deliveries.count) };
 }
 
+function interactionUsage(interactionId: string): {
+  response_count: number;
+  response_bytes: number;
+} {
+  return db.prepare(`SELECT response_count, response_bytes
+    FROM _workflow_interaction_details WHERE interaction_id = ?`).get(interactionId) as {
+    response_count: number;
+    response_bytes: number;
+  };
+}
+
 function track(service: WorkflowService): WorkflowService {
   services.push(service);
   return service;
@@ -330,4 +583,22 @@ class ManualClock implements WorkflowClock {
   advance(milliseconds: number): void {
     this.value += milliseconds;
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+async function eventually(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await Bun.sleep(1);
+  }
+  throw new Error('condition was not reached');
 }

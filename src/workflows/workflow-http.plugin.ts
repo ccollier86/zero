@@ -56,7 +56,13 @@ export function createWorkflowHttpPlugin(
       }
       if (error instanceof AuthError) {
         set.status = error.status;
-        return { error: error.message, code: error.code };
+        if (error.status >= 500) {
+          emitWorkflowRequestFailure(error, request, error.status);
+        }
+        return {
+          error: error.status >= 500 ? 'Authentication service unavailable' : error.message,
+          code: error.code,
+        };
       }
       if (code === 'VALIDATION') {
         set.status = 422;
@@ -154,7 +160,7 @@ export function createWorkflowHttpPlugin(
         .map((step) => toPublicWorkflowStep(
           step,
           instance.steps_json,
-          instance.graph_json,
+          instance,
         ));
     }, idParams())
     .get('/:id/events', ({ requireAuth, params }) => {
@@ -163,7 +169,7 @@ export function createWorkflowHttpPlugin(
       const instanceId = params.id.trim();
       const instance = requireWorkflowAccess(workflowService, instanceId, auth);
       return workflowService.getEvents(instanceId)
-        .map((event) => toPublicWorkflowEvent(event, instance.graph_json));
+        .map((event) => toPublicWorkflowEvent(event, instance));
     }, idParams())
     .get('/:id/interactions', ({ requireAuth, params }) => {
       const auth = requireAuth();

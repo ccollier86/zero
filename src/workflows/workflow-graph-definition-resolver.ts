@@ -105,7 +105,7 @@ export class WorkflowGraphDefinitionResolver {
       throw new TypeError('Workflow graph snapshot does not match its immutable version');
     }
     const graph = resolved.graph as WorkflowGraphIR;
-    validateWorkflowGraphIR(graph);
+    validateStoredGraph(graph);
     this.validateActivities(graph, resolved.version.source === 'database');
     return graph;
   }
@@ -117,7 +117,7 @@ export class WorkflowGraphDefinitionResolver {
   ): void {
     validateInput(resolved.catalog.name, resolved.inputSchema, input);
     const graph = resolved.graph as WorkflowGraphIR;
-    validateWorkflowGraphIR(graph);
+    validateStoredGraph(graph);
     this.validateActivities(graph, requireDatabaseSource);
   }
 
@@ -159,6 +159,21 @@ export class WorkflowGraphDefinitionResolver {
   ): void {
     if (database) this.registry.activities.resolveDatabaseCallable(reference);
     else this.registry.activities.resolve(reference);
+  }
+}
+
+function validateStoredGraph(graph: WorkflowGraphIR): void {
+  try {
+    validateWorkflowGraphIR(graph);
+  } catch (error) {
+    if (!(error instanceof WorkflowError) || error.code !== 'WORKFLOW_GRAPH_INVALID') {
+      throw error;
+    }
+    throw new WorkflowError(
+      'Stored workflow definition graph failed validation',
+      'WORKFLOW_DEFINITION_GRAPH_INVALID',
+      500,
+    );
   }
 }
 

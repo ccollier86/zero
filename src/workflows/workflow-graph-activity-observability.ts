@@ -7,14 +7,14 @@ export function emitWorkflowGraphActivityFailure(input: {
   instanceId: string;
   stepId: string;
   nodeId: string;
-  itemKey?: string;
+  itemIndex?: number;
   result: 'failed' | 'timed-out';
   cause: unknown;
 }): void {
   if (input.result === 'timed-out') emitPlatformCode(OBS_CODES.WORKFLOW_STEP_TIMED_OUT, {
     metadata: { instanceId: input.instanceId, stepId: input.stepId, nodeId: input.nodeId },
   });
-  emitPlatformCode(input.itemKey === undefined
+  emitPlatformCode(input.itemIndex === undefined
     ? OBS_CODES.WORKFLOW_INSTANCE_FAILED
     : OBS_CODES.WORKFLOW_EACH_ITEM_FAILED, {
     error: input.cause,
@@ -22,7 +22,7 @@ export function emitWorkflowGraphActivityFailure(input: {
       instanceId: input.instanceId,
       stepId: input.stepId,
       nodeId: input.nodeId,
-      ...(input.itemKey === undefined ? {} : { itemKey: input.itemKey }),
+      ...(input.itemIndex === undefined ? {} : { itemIndex: input.itemIndex }),
       reason: input.result === 'timed-out' ? 'timeout' : 'activity',
     },
   });

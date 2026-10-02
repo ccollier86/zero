@@ -18,22 +18,24 @@ export type WorkflowJsonValue =
   | { [key: string]: WorkflowJsonValue };
 
 const MAX_JSON_DEPTH = 64;
-const BLOCKED_KEYS = new Set(['__proto__', 'prototype']);
+const BLOCKED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 /** Validate and detach a value before it crosses a durable JSON boundary. */
 export function normalizeWorkflowJson(
   value: unknown,
   code: WorkflowErrorCode = 'WORKFLOW_STATE_INVALID',
+  status = defaultNormalizationStatus(code),
 ): WorkflowJsonValue {
-  return normalize(value, new Set<object>(), 0, code);
+  return normalize(value, new Set<object>(), 0, code, status);
 }
 
 /** Serialize validated JSON with stable object-key ordering. */
 export function serializeWorkflowJson(
   value: unknown,
   code: WorkflowErrorCode = 'WORKFLOW_STATE_INVALID',
+  status = defaultNormalizationStatus(code),
 ): string {
-  return JSON.stringify(sortJson(normalizeWorkflowJson(value, code)));
+  return JSON.stringify(sortJson(normalizeWorkflowJson(value, code, status)));
 }
 
 /** Parse persisted JSON and apply the same strict data-only validation. */
@@ -41,11 +43,28 @@ export function parseWorkflowJson(
   text: string,
   code: WorkflowErrorCode = 'WORKFLOW_STATE_INVALID',
 ): WorkflowJsonValue {
+  return parseJson(text, code, 500, 'Persisted workflow JSON is malformed');
+}
+
+/** Parse caller-controlled JSON while preserving a safe client-error boundary. */
+export function parseWorkflowRequestJson(
+  text: string,
+  code: WorkflowErrorCode = 'WORKFLOW_REQUEST_PARSE_FAILED',
+): WorkflowJsonValue {
+  return parseJson(text, code, 400, 'Workflow request JSON is malformed');
+}
+
+function parseJson(
+  text: string,
+  code: WorkflowErrorCode,
+  status: number,
+  malformedMessage: string,
+): WorkflowJsonValue {
   try {
-    return normalizeWorkflowJson(JSON.parse(text), code);
+    return normalize(JSON.parse(text), new Set<object>(), 0, code, status);
   } catch (error) {
     if (error instanceof WorkflowError) throw error;
-    throw workflowJsonError('Persisted workflow JSON is malformed', code);
+    throw workflowJsonError(malformedMessage, code, status);
   }
 }
 
@@ -64,52 +83,65 @@ function normalize(
   ancestors: Set<object>,
   depth: number,
   code: WorkflowErrorCode,
+  status: number,
 ): WorkflowJsonValue {
   if (depth > MAX_JSON_DEPTH) {
-    throw workflowJsonError(`Workflow JSON exceeds ${MAX_JSON_DEPTH} levels`, code);
+    throw workflowJsonError(`Workflow JSON exceeds ${MAX_JSON_DEPTH} levels`, code, status);
   }
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return value;
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {
-      throw workflowJsonError('Workflow JSON numbers must be finite', code);
+      throw workflowJsonError('Workflow JSON numbers must be finite', code, status);
     }
     return Object.is(value, -0) ? 0 : value;
   }
   if (typeof value !== 'object') {
-    throw workflowJsonError('Workflow state accepts JSON values only', code);
+    throw workflowJsonError('Workflow state accepts JSON values only', code, status);
   }
   if (ancestors.has(value)) {
-    throw workflowJsonError('Workflow JSON must not contain cycles', code);
+    throw workflowJsonError('Workflow JSON must not contain cycles', code, status);
   }
 
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
       const result: WorkflowJsonValue[] = [];
+      const descriptors = Object.getOwnPropertyDescriptors(value);
+      if (Reflect.ownKeys(value).some((key) => typeof key === 'symbol'
+        || (key !== 'length' && !isArrayIndexKey(key, value.length)))) {
+        throw workflowJsonError(
+          'Workflow JSON arrays cannot contain named or symbol members',
+          code,
+          status,
+        );
+      }
       for (let index = 0; index < value.length; index += 1) {
-        if (!Object.prototype.hasOwnProperty.call(value, index)) {
-          throw workflowJsonError('Workflow JSON arrays must not be sparse', code);
+        const descriptor = descriptors[index];
+        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+          throw workflowJsonError('Workflow JSON arrays must not be sparse', code, status);
         }
-        result.push(normalize(value[index], ancestors, depth + 1, code));
+        result.push(normalize(descriptor.value, ancestors, depth + 1, code, status));
       }
       return result;
     }
 
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
-      throw workflowJsonError('Workflow JSON objects must be plain objects', code);
+      throw workflowJsonError('Workflow JSON objects must be plain objects', code, status);
     }
     const result: Record<string, WorkflowJsonValue> = Object.create(null);
-    for (const [key, descriptor] of Object.entries(
-      Object.getOwnPropertyDescriptors(value),
-    )) {
-      if (!descriptor.enumerable) continue;
-      if (BLOCKED_KEYS.has(key) || !('value' in descriptor)) {
-        throw workflowJsonError('Workflow JSON contains an unsafe object member', code);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key === 'symbol') {
+        throw workflowJsonError('Workflow JSON contains an unsafe object member', code, status);
       }
-      result[key] = normalize(descriptor.value, ancestors, depth + 1, code);
+      const descriptor = descriptors[key];
+      if (BLOCKED_KEYS.has(key) || !descriptor?.enumerable || !('value' in descriptor)) {
+        throw workflowJsonError('Workflow JSON contains an unsafe object member', code, status);
+      }
+      result[key] = normalize(descriptor.value, ancestors, depth + 1, code, status);
     }
     return result;
   } finally {
@@ -125,6 +157,20 @@ function sortJson(value: WorkflowJsonValue): WorkflowJsonValue {
   return sorted;
 }
 
-function workflowJsonError(message: string, code: WorkflowErrorCode): WorkflowError {
-  return new WorkflowError(message, code, 400);
+function workflowJsonError(
+  message: string,
+  code: WorkflowErrorCode,
+  status: number,
+): WorkflowError {
+  return new WorkflowError(message, code, status);
+}
+
+function defaultNormalizationStatus(code: WorkflowErrorCode): number {
+  return code === 'WORKFLOW_STATE_INVALID' ? 500 : 400;
+}
+
+function isArrayIndexKey(key: string, length: number): boolean {
+  if (!/^(0|[1-9]\d*)$/u.test(key)) return false;
+  const index = Number(key);
+  return Number.isSafeInteger(index) && index >= 0 && index < length && String(index) === key;
 }

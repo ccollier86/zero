@@ -13,6 +13,7 @@ import {
   WorkflowDefinitionCanonicalError,
   type WorkflowDefinitionFingerprintInput,
 } from './workflow-definition-canonical';
+import { MAX_WORKFLOW_DEFINITION_NAME_LENGTH } from './workflow-definition-identifiers';
 
 /** Canonicalize untrusted publish/draft content with a stable 422 boundary. */
 export function canonicalizeWorkflowVersionContent(
@@ -53,15 +54,51 @@ export function canonicalizeWorkflowVersionValue(value: unknown, label: string):
 export function normalizeWorkflowDefinitionScope(
   scope?: WorkflowDefinitionScope,
 ): Required<WorkflowDefinitionScope> {
-  return {
-    type: scope?.type?.trim() || 'application',
-    id: scope?.id?.trim() || '',
-  };
+  if (scope === undefined) return { type: 'application', id: '' };
+  const type = (scope as { type?: unknown }).type;
+  const rawId = (scope as { id?: unknown }).id;
+  if (type === 'application') {
+    if (rawId !== undefined && rawId !== null
+      && (typeof rawId !== 'string' || rawId.trim() !== '')) {
+      throw invalidScope('Application workflow definition scope must not have an id');
+    }
+    return { type, id: '' };
+  }
+  if (type === 'tenant') {
+    const id = typeof rawId === 'string' ? rawId.trim() : '';
+    if (!id || id.length > 256) {
+      throw invalidScope('Tenant workflow definition scope requires a valid tenant id');
+    }
+    return { type, id };
+  }
+  throw invalidScope('Workflow definition scope type is invalid');
+}
+
+/** Code-authored workflows are application code and cannot be tenant-owned. */
+export function assertWorkflowDefinitionSourceScope(
+  source: PublishWorkflowDefinitionVersionInput['source'],
+  scope: Required<WorkflowDefinitionScope>,
+): void {
+  if (source !== 'code' || scope.type === 'application') return;
+  throw invalidScope('Code-authored workflow definitions must use application scope');
+}
+
+function invalidScope(message: string): WorkflowDefinitionVersionStoreError {
+  return new WorkflowDefinitionVersionStoreError(
+    message,
+    'WORKFLOW_DEFINITION_SCOPE_CONFLICT',
+    422,
+  );
 }
 
 export function requireWorkflowDefinitionName(value: string): string {
   const name = value.trim();
   if (!name) throw workflowVersionConflict('Workflow definition name must not be empty');
+  if (name.length > MAX_WORKFLOW_DEFINITION_NAME_LENGTH) {
+    throw workflowVersionConflict(
+      `Workflow definition name must be at most ${MAX_WORKFLOW_DEFINITION_NAME_LENGTH} characters`,
+    );
+  }
   return name;
 }
 

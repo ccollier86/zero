@@ -154,6 +154,7 @@ export class WorkflowFrontierPump {
         completed_at: now,
         updated_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
       return true;
     });
   }
@@ -177,6 +178,7 @@ export class WorkflowFrontierPump {
         completed_at: now,
         updated_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
       return true;
     });
     if (changed) {
@@ -215,6 +217,7 @@ export class WorkflowFrontierPump {
         updated_at: now,
         completed_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
       return true;
     });
     if (changed) {

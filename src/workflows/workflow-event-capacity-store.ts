@@ -132,14 +132,18 @@ export class WorkflowEventCapacityStore {
   private calculate(instanceId: string): WorkflowEventUsage {
     return this.db.prepare(`SELECT COUNT(*) AS total_count,
       COALESCE(SUM(payload_bytes + actor_bytes), 0) AS total_bytes,
-      COALESCE(SUM(CASE WHEN claimed_by_step_id IS NULL
-        OR claimed_by_step_id NOT LIKE 'consumed:%' THEN 1 ELSE 0 END), 0) AS queued_count,
-      COALESCE(SUM(CASE WHEN claimed_by_step_id IS NULL
-        OR claimed_by_step_id NOT LIKE 'consumed:%'
+      COALESCE(SUM(CASE WHEN claimed_by_step_id IS NULL OR (
+        claimed_by_step_id NOT LIKE 'consumed:%'
+          AND claimed_by_step_id NOT LIKE 'discarded:%'
+      ) THEN 1 ELSE 0 END), 0) AS queued_count,
+      COALESCE(SUM(CASE WHEN claimed_by_step_id IS NULL OR (
+        claimed_by_step_id NOT LIKE 'consumed:%'
+          AND claimed_by_step_id NOT LIKE 'discarded:%')
         THEN payload_bytes + actor_bytes ELSE 0 END), 0) AS queued_bytes,
       COUNT(*)
         + COALESCE(SUM(CASE WHEN claimed_by_step_id IS NOT NULL THEN 1 ELSE 0 END), 0)
-        + COALESCE(SUM(CASE WHEN claimed_by_step_id LIKE 'consumed:%' THEN 1 ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN claimed_by_step_id LIKE 'consumed:%'
+          OR claimed_by_step_id LIKE 'discarded:%' THEN 1 ELSE 0 END), 0)
         AS revision
       FROM _workflow_event_delivery WHERE instance_id = ?`)
       .get(instanceId) as WorkflowEventUsage;

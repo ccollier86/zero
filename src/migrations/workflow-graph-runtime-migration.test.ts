@@ -247,6 +247,10 @@ describe('workflow graph runtime migration 030', () => {
     try {
       initial.up(db);
       ensureWorkflowGraphSchema(db);
+      // This fixture deliberately constructs pre-hardening cross-source rows
+      // to prove migration 030 never reuses them. Runtime schema repair now
+      // installs the 1.3.1 source fence, so remove only that fence here.
+      db.exec('DROP TRIGGER trg_workflow_version_source_valid');
       const now = '2026-01-01T00:00:00.000Z';
       const stepsJson = '[{"name":"One","handler":"noop"}]';
       const canonical = canonicalizeWorkflowDefinition({
@@ -267,10 +271,10 @@ describe('workflow graph runtime migration 030', () => {
         db.prepare(`INSERT INTO workflow_definition_versions (
           version_id, definition_id, version_number, source, graph_format,
           schema_version, graph_json, input_schema_json, access_policy_json,
-          fingerprint, status, created_by, created_at
-        ) VALUES (?, ?, 4, ?, 'legacy', 0, ?, NULL, NULL, ?, ?, NULL, ?)`).run(
+          fingerprint, status, created_by, created_at, retired_at
+        ) VALUES (?, ?, 4, ?, 'legacy', 0, ?, NULL, NULL, ?, ?, NULL, ?, ?)`).run(
           `${suffix}-v4`, definitionId, source, canonical.graphJson,
-          canonical.fingerprint, status, now,
+          canonical.fingerprint, status, now, status === 'retired' ? now : null,
         );
       }
 

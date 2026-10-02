@@ -321,7 +321,7 @@ describe('private graph persisted-state integrity', () => {
     })).toThrow();
 
     const oversized = 'x'.repeat(MAX_INTERACTION_PAYLOAD_BYTES + 1);
-    for (const field of ['responderPolicy', 'responseSchema', 'request'] as const) {
+    for (const field of ['responderPolicy', 'request'] as const) {
       expect(() => normalizeOpenWorkflowInteractionInput({
         instanceId: 'instance',
         nodeId: 'node',
@@ -334,6 +334,14 @@ describe('private graph persisted-state integrity', () => {
         status: 413,
       }));
     }
+    expect(() => normalizeOpenWorkflowInteractionInput({
+      instanceId: 'instance', nodeId: 'node', stepId: 'step', safeLabel: 'Wait',
+      openedAt: '2030-01-01T00:00:00.000Z',
+      responseSchema: { type: 'object', description: oversized },
+    })).toThrow(expect.objectContaining({
+      code: 'WORKFLOW_INTERACTION_INVALID',
+      status: 413,
+    }));
     expect(() => normalizeOpenWorkflowInteractionInput({
       instanceId: 'instance', nodeId: 'node', stepId: 'step', safeLabel: 'Wait',
       openedAt: '2030-01-01',

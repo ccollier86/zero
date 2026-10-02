@@ -167,6 +167,37 @@ describe('durable workflow interactions', () => {
     `).get(interaction.interactionId)).toEqual({ count: 1 });
   });
 
+  test('reserves internal event channels and submission identities', async () => {
+    const interaction = service.open({
+      ...openInput(), responseSchema: Type.String(),
+    });
+    await expect(service.submit({
+      interactionId: interaction.interactionId,
+      submissionId: 'external-channel-spoof',
+      actor: ACTOR,
+      payload: 'spoofed',
+      channel: 'event',
+    })).rejects.toMatchObject({
+      code: 'WORKFLOW_INTERACTION_INVALID', status: 422,
+    });
+    await expect(service.submit({
+      interactionId: interaction.interactionId,
+      submissionId: 'event:external-id-spoof',
+      actor: ACTOR,
+      payload: 'spoofed',
+      channel: 'web',
+    })).rejects.toMatchObject({
+      code: 'WORKFLOW_INTERACTION_INVALID', status: 422,
+    });
+    expect(db.prepare(`SELECT COUNT(*) AS count
+      FROM _workflow_interaction_responses WHERE interaction_id = ?`)
+      .get(interaction.interactionId)).toEqual({ count: 0 });
+    expect(interactionResponseUsage(interaction.interactionId)).toEqual({
+      response_count: 0,
+      response_bytes: 0,
+    });
+  });
+
   test('binds an in-flight submission ID to its original actor', async () => {
     const authorized = deferred<void>();
     let authorityCalls = 0;

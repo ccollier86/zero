@@ -49,6 +49,7 @@ export class WorkflowGraphTransitionController {
       this.store.updateInstance(instanceId, {
         status: 'cancelled', completed_at: now, updated_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
     });
     this.interactions.cancelForInstance(instanceId);
     this.wakes.disarmInstance(instanceId);

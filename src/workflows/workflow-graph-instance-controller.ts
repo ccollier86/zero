@@ -90,6 +90,7 @@ export class WorkflowGraphInstanceController {
         }),
         error: null, completed_at: now, updated_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
       return true;
     });
     if (completed) {
@@ -126,6 +127,7 @@ export class WorkflowGraphInstanceController {
         status: 'failed', error: 'Workflow step timed out',
         current_step: step.step_index, completed_at: now, updated_at: now,
       });
+      if (!isolated) this.runtime.discardInstanceQueue(instanceId, now);
       expired = true;
     });
     if (!expired) return;
@@ -167,6 +169,7 @@ export class WorkflowGraphInstanceController {
       this.store.updateInstance(instanceId, {
         status: 'failed', error, completed_at: now, updated_at: now,
       });
+      this.runtime.discardInstanceQueue(instanceId, now);
       return true;
     });
     if (!changed) return;
@@ -220,6 +223,7 @@ export class WorkflowGraphInstanceController {
   }
 
   private finishTerminal(instanceId: string): void {
+    this.runtime.discardInstanceQueue(instanceId, this.now().toISOString());
     this.interactions.abortInstance(instanceId, new WorkflowError(
       'Workflow interaction cannot be processed after its workflow stopped',
       'WORKFLOW_STATE_INVALID',

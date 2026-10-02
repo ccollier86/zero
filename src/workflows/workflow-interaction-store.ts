@@ -10,6 +10,10 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import { WorkflowError } from './workflow-error';
 import { WorkflowRuntimeValueBudget } from './workflow-runtime-budget';
 import {
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
+import {
   parseWorkflowJson,
   serializeWorkflowJson,
   workflowJsonBytes,
@@ -60,14 +64,17 @@ export const MAX_WORKFLOW_INTERACTION_RESPONSE_BYTES = 16 * 1024 * 1024;
 export class WorkflowInteractionStore {
   private readonly runtimeBudget: WorkflowRuntimeValueBudget;
 
-  constructor(private readonly db: ReactiveDB) {
+  constructor(
+    private readonly db: ReactiveDB,
+    private readonly runtimeFence: WorkflowRuntimeFence | null = null,
+  ) {
     this.runtimeBudget = new WorkflowRuntimeValueBudget(db);
   }
 
   /** Create a cryptographically random wait and persist it before delivery. */
   open(input: OpenWorkflowInteractionInput): WorkflowInteractionRecord {
     const normalized = normalizeOpenWorkflowInteractionInput(input);
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const existing = this.getByStep(normalized.instanceId, normalized.stepId);
       if (existing) return existing;
       this.runtimeBudget.reserveInteractionBytes(
@@ -146,21 +153,23 @@ export class WorkflowInteractionStore {
       throw workflowInteractionInvalid('Interaction pause duration is invalid', 500);
     }
     if (milliseconds === 0) return;
-    const rows = this.db.prepare(`
-      SELECT interaction_id, expires_at FROM workflow_interactions
-      WHERE instance_id = ? AND status = 'open' AND expires_at IS NOT NULL
-      ORDER BY rowid ASC
-    `).all(instanceId) as Array<{ interaction_id: string; expires_at: string }>;
-    for (const row of rows) {
-      const shifted = new Date(new Date(row.expires_at).getTime() + milliseconds);
-      if (!Number.isFinite(shifted.getTime())) {
-        throw workflowInteractionInvalid('Interaction expiry cannot be shifted safely', 500);
+    this.transaction(() => {
+      const rows = this.db.prepare(`
+        SELECT interaction_id, expires_at FROM workflow_interactions
+        WHERE instance_id = ? AND status = 'open' AND expires_at IS NOT NULL
+        ORDER BY rowid ASC
+      `).all(instanceId) as Array<{ interaction_id: string; expires_at: string }>;
+      for (const row of rows) {
+        const shifted = new Date(new Date(row.expires_at).getTime() + milliseconds);
+        if (!Number.isFinite(shifted.getTime())) {
+          throw workflowInteractionInvalid('Interaction expiry cannot be shifted safely', 500);
+        }
+        this.db.update('workflow_interactions', row.interaction_id, {
+          expires_at: shifted.toISOString(),
+          updated_at: now,
+        });
       }
-      this.db.update('workflow_interactions', row.interaction_id, {
-        expires_at: shifted.toISOString(),
-        updated_at: now,
-      });
-    }
+    });
   }
 
   /** Read the private policy and validation definition for server execution. */
@@ -187,7 +196,7 @@ export class WorkflowInteractionStore {
    */
   beginSubmission(input: BeginWorkflowInteractionSubmissionInput): WorkflowInteractionResponseRecord {
     validateWorkflowInteractionSubmission(input);
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const interaction = this.require(input.interactionId);
       if (input.requireRunningInstance) this.assertInstanceRunning(interaction.instanceId);
       this.expireIfDue(interaction, input.now);
@@ -244,7 +253,7 @@ export class WorkflowInteractionStore {
     now: string,
     requireRunningInstance = false,
   ): WorkflowInteractionDecisionResult {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       let interaction = this.require(interactionId);
       if (requireRunningInstance) this.assertInstanceRunning(interaction.instanceId);
       const response = this.requireResponse(interactionId, submissionId);
@@ -297,7 +306,7 @@ export class WorkflowInteractionStore {
 
   /** Mark one due open interaction expired. */
   expire(interactionId: string, now: string): WorkflowInteractionRecord {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const interaction = this.require(interactionId);
       if (interaction.status !== 'open') return interaction;
       if (this.isInstancePaused(interaction.instanceId)) return interaction;
@@ -328,7 +337,7 @@ export class WorkflowInteractionStore {
 
   /** Cancel every still-open wait when its workflow reaches a terminal state. */
   cancelForInstance(instanceId: string, now: string): WorkflowInteractionRecord[] {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const rows = this.db.prepare(`
         SELECT interaction_id FROM workflow_interactions
         WHERE instance_id = ? AND status = 'open'
@@ -357,6 +366,31 @@ export class WorkflowInteractionStore {
     return row ? parseWorkflowJson(row.accepted_value_json) : null;
   }
 
+  /** Return the exact internal event accepted by this interaction, if any. */
+  getAcceptedEventId(interactionId: string): string | null {
+    const row = this.db.prepare(`
+      SELECT response.channel, response.submission_id
+      FROM _workflow_interaction_details AS detail
+      INNER JOIN _workflow_interaction_responses AS response
+        ON response.response_id = detail.accepted_response_id
+      WHERE detail.interaction_id = ? AND response.status = 'accepted'
+      LIMIT 1
+    `).get(interactionId) as { channel: string | null; submission_id: string } | null;
+    if (!row) return null;
+    const hasEventChannel = row.channel === 'event';
+    const hasEventIdentity = row.submission_id.startsWith('event:');
+    if (!hasEventChannel && !hasEventIdentity) return null;
+    const eventId = hasEventIdentity ? row.submission_id.slice('event:'.length) : '';
+    if (!hasEventChannel || !hasEventIdentity || !eventId || eventId.startsWith('event:')) {
+      throw new WorkflowError(
+        'Accepted workflow interaction event identity is invalid',
+        'WORKFLOW_STATE_INVALID',
+        500,
+      );
+    }
+    return eventId;
+  }
+
   /** Read one private submission for idempotent service replay. */
   findResponse(interactionId: string, submissionId: string): WorkflowInteractionResponseRecord | null {
     const row = this.db.prepare(`
@@ -372,7 +406,7 @@ export class WorkflowInteractionStore {
     submissionId: string,
     now: string,
   ): boolean {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const row = this.db.prepare(`SELECT response.payload_json, interaction.instance_id
         FROM _workflow_interaction_responses AS response
         INNER JOIN workflow_interactions AS interaction
@@ -511,6 +545,10 @@ export class WorkflowInteractionStore {
       'WORKFLOW_STATE_INVALID',
       409,
     );
+  }
+
+  private transaction<T>(operation: () => T): T {
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
   }
 
   private require(interactionId: string): WorkflowInteractionRecord {

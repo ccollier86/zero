@@ -36,6 +36,10 @@ import {
   type WorkflowMemoryScope,
 } from './workflow-memory-policy';
 import { WorkflowRuntimeValueBudget } from './workflow-runtime-budget';
+import {
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
 
 export type {
   WorkflowAttemptFence,
@@ -98,6 +102,8 @@ interface WorkflowMemoryRow {
 export interface WorkflowMemoryStoreOptions {
   limits?: Partial<WorkflowMemoryLimits>;
   clock?: () => Date;
+  /** Internal generation fence for a managed Torrent runtime. */
+  runtimeFence?: WorkflowRuntimeFence;
 }
 
 /** Private durable store for workflow memory; underscore rows never enter Sync. */
@@ -105,6 +111,7 @@ export class WorkflowMemoryStore {
   readonly limits: Readonly<WorkflowMemoryLimits>;
   private readonly clock: () => Date;
   private readonly runtimeBudget: WorkflowRuntimeValueBudget;
+  private readonly runtimeFence: WorkflowRuntimeFence | null;
 
   constructor(
     private readonly db: ReactiveDB,
@@ -112,11 +119,13 @@ export class WorkflowMemoryStore {
   ) {
     this.limits = Object.freeze(resolveWorkflowMemoryLimits(options.limits));
     this.clock = options.clock ?? (() => new Date());
+    this.runtimeFence = options.runtimeFence ?? null;
     this.runtimeBudget = new WorkflowRuntimeValueBudget(db);
   }
 
   /** Read one detached entry from an instance or each-item namespace. */
   get(scope: WorkflowMemoryScope, key: string): WorkflowMemoryEntry | null {
+    this.runtimeFence?.assertCurrent();
     return this.readEntry(
       normalizeWorkflowMemoryScope(scope),
       validateWorkflowMemoryKey(key, this.limits),
@@ -125,6 +134,7 @@ export class WorkflowMemoryStore {
 
   /** List one namespace in stable key order. */
   list(scope: WorkflowMemoryScope): WorkflowMemoryEntry[] {
+    this.runtimeFence?.assertCurrent();
     return this.readEntries(normalizeWorkflowMemoryScope(scope));
   }
 
@@ -173,7 +183,7 @@ export class WorkflowMemoryStore {
     const normalized = normalizeWorkflowMemoryScope(scope);
     validateWorkflowMemoryMetadata(metadata);
     try {
-      return this.db.transaction(() => {
+      return workflowRuntimeTransaction(this.db, this.runtimeFence, () => {
         assertWorkflowAttemptFence(fence);
         const transaction = new MemoryTransaction(
           this.db,
