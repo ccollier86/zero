@@ -2486,8 +2486,9 @@ reference docs confirm the behavior is implemented.
   platform work; verify against current implementation before relying on it.
 - [Bootstrap Prompt](docs/bootstrap-prompt.md): prompt text for orienting a new
   assistant on the codebase.
-- [Platform Roadmap](docs/platform-roadmap.md): product/build roadmap and future
-  platform ideas.
+- [Zero Product Roadmap](docs/platform-roadmap.md): living, unordered,
+  non-contract product direction and capability backlog. Unchecked entries do
+  not establish an API, implementation, priority, or release promise.
 - [Platform Hardening Plan](docs/platform-hardening-plan.md): historical
   hardening plan for backend, frontend, docs, performance, and security.
 - [Stabilization Plan](docs/stabilization-plan.md): historical package-mode

@@ -18,6 +18,10 @@ agent-assisted app development, give the agent [llms.txt](../llms.txt) before
 it starts planning so it reaches for Zero surfaces before rebuilding existing
 pieces.
 
+For future product direction, use the
+[Zero Product Roadmap](./platform-roadmap.md). It is a living, unordered idea
+and capability backlog, not a current API contract or release checklist.
+
 New reusable platform logs, warnings, caught errors, and lifecycle events should
 go through the observability boundary. When touching code that bypasses it,
 correct that path if it is in scope.

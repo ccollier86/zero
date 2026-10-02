@@ -256,6 +256,9 @@ apps. Start with the
   from live string streams, caller-owned progressive output, or demos.
 - [Frontend Router](./docs/frontend/router.md): layouts, route groups, auth
   boundaries, sitemap, and file-router behavior.
+- [Zero Product Roadmap](./docs/platform-roadmap.md): living, unordered product
+  direction and candidate work; unchecked items are not current APIs or release
+  promises.
 - [Releasing Zero](./docs/releasing.md): versioning and verification checklist.
 - [llms.txt](./llms.txt): comprehensive agent-facing framework documentation
   with the main usage guide and full docs catalog.

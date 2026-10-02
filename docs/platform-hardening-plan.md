@@ -692,24 +692,11 @@ and `migrate:plan` draft generation. See `docs/migrations.md`.
 
 ## 10. Planned Feature Review
 
-After hardening, revisit roadmap docs and decide what still matters.
-
-Candidate areas from existing docs:
-
-1. Auth metadata, access-control policies, tenancy-aware row scoping, adaptive
-   admin UI, and storage-backed avatars. See
-   `docs/auth/metadata-access-avatar-plan.md`.
-2. Storage API completion and SDK polish.
-3. Vector search.
-4. Webhooks outbound and inbound.
-5. Observability: warning/error/log sinks, analytics drains, and OpenTelemetry-
-   style export where it fits the backend and frontend runtime.
-6. Platform knowledge package.
-7. MCP/CLI enhancement tools.
-8. Sketch-to-app assembly system.
-9. Serverless-style functions.
-10. Better audit/activity tracking.
-11. Route-level guards and richer middleware.
+This section's original candidate list has been reconciled with shipped systems
+and current product ideas. Use the
+[Zero Product Roadmap](./platform-roadmap.md) as the single living, unordered
+backlog. Do not infer current APIs or priority from this historical hardening
+plan.
 
 ## 11. Current Verification Snapshot
 

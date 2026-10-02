@@ -6,14 +6,21 @@ This document maps every system to its files, explains how the documentation is 
 
 ## Documentation Structure
 
-```
-docs/
-  platform-overview.md     <- What the platform does, all features, DX examples
-  system-map.md            <- THIS FILE — where everything lives, how to navigate
-  bootstrap-prompt.md      <- Prompt to give Claude in a new conversation
-```
+- [Start Here](./start-here.md) is the main documentation entry point.
+- [Platform Overview](./platform-overview.md) explains current product systems
+  and developer experience.
+- [System Map](./system-map.md) maps those systems to source and documentation.
+- [SDK Reference](./sdk-reference.md) documents current public surfaces.
+- [Engineering Standards](./engineering-standards.md) defines implementation
+  and review rules.
+- [Zero Product Roadmap](./platform-roadmap.md) records unordered future
+  direction; unchecked items are not implemented contracts.
+- [Releasing Zero](./releasing.md) defines release verification and support
+  boundaries.
+- [`llms.txt`](../llms.txt) is the comprehensive agent-facing guide.
 
-The codebase itself is the source of truth. These docs provide orientation — read them first, then dive into the code.
+The codebase itself is the source of truth. Use these documents for orientation,
+then inspect the implementation and tests before changing a system.
 
 ---
 
