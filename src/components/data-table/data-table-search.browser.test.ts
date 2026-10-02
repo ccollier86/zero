@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { chromium, type Browser, type Page } from 'playwright';
 
+import { buildPlatformStyles } from '../../frontend/server/style-bundle';
+
 const browserAvailable = existsSync(chromium.executablePath());
 const browserTest = browserAvailable ? test : test.skip;
 // Launching and driving a real Chromium process can be CPU-starved when Bun
@@ -21,6 +23,7 @@ const BROWSER_TEST_TIMEOUT_MS = 60_000;
 let browser: Browser | undefined;
 let buildDir: string | undefined;
 let bundlePath: string | undefined;
+let stylesheetPath: string | undefined;
 
 beforeAll(async () => {
   if (!browserAvailable) return;
@@ -44,6 +47,9 @@ beforeAll(async () => {
   if (!result.success) {
     throw new Error(result.logs.map((log) => log.message).join('\n'));
   }
+  stylesheetPath = (
+    await buildPlatformStyles(buildDir, join(buildDir, 'missing-app'))
+  ).cssPath;
 
   browser = await chromium.launch({ headless: true });
 }, BROWSER_HOOK_TIMEOUT_MS);
@@ -154,6 +160,30 @@ describe('DataTableSearch browser lifecycle', () => {
       await closePage(page);
     }
   }, BROWSER_TEST_TIMEOUT_MS);
+
+  browserTest('uses the native card palette in light and dark themes', async () => {
+    const page = await openHarness();
+    try {
+      const light = await readSearchThemeColors(page);
+
+      expect(light.colorScheme).toBe('light');
+      expect(light.surface).toBe(light.expectedSurface);
+      expect(light.foreground).toBe(light.expectedForeground);
+      expect(light.placeholder).toBe(light.expectedPlaceholder);
+
+      await page.evaluate(() => document.documentElement.classList.add('dark'));
+      const dark = await readSearchThemeColors(page);
+
+      expect(dark.colorScheme).toBe('dark');
+      expect(dark.surface).toBe(dark.expectedSurface);
+      expect(dark.foreground).toBe(dark.expectedForeground);
+      expect(dark.placeholder).toBe(dark.expectedPlaceholder);
+      expect(dark.surface).not.toBe(light.surface);
+      expect(dark.foreground).not.toBe(light.foreground);
+    } finally {
+      await closePage(page);
+    }
+  }, BROWSER_TEST_TIMEOUT_MS);
 });
 
 async function openHarness(): Promise<Page> {
@@ -187,10 +217,51 @@ function isAlreadyDisposedContextError(error: unknown): boolean {
 }
 
 async function mountHarness(page: Page): Promise<void> {
-  if (!bundlePath) throw new Error('DataTableSearch browser bundle was not initialized');
+  if (!bundlePath || !stylesheetPath) {
+    throw new Error('DataTableSearch browser harness was not initialized');
+  }
   await page.setContent('<div id="root"></div>');
+  await page.addStyleTag({ path: stylesheetPath });
   await page.addScriptTag({ path: bundlePath });
   await page.waitForFunction(() => typeof window.__tableSearchHarness === 'object');
+}
+
+async function readSearchThemeColors(page: Page): Promise<{
+  colorScheme: string;
+  surface: string;
+  foreground: string;
+  placeholder: string;
+  expectedSurface: string;
+  expectedForeground: string;
+  expectedPlaceholder: string;
+}> {
+  return page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('[role="searchbox"]');
+    const surface = input?.parentElement;
+    if (!input || !surface) throw new Error('Expected the table search surface');
+
+    const tokenProbe = document.createElement('span');
+    tokenProbe.style.backgroundColor = 'var(--card)';
+    tokenProbe.style.color = 'var(--card-foreground)';
+    tokenProbe.style.borderColor = 'var(--muted-foreground)';
+    document.body.append(tokenProbe);
+
+    const rootStyle = getComputedStyle(document.documentElement);
+    const surfaceStyle = getComputedStyle(surface);
+    const probeStyle = getComputedStyle(tokenProbe);
+    const values = {
+      colorScheme: rootStyle.colorScheme,
+      surface: surfaceStyle.backgroundColor,
+      foreground: surfaceStyle.color,
+      placeholder: getComputedStyle(input, '::placeholder').color,
+      expectedSurface: probeStyle.backgroundColor,
+      expectedForeground: probeStyle.color,
+      expectedPlaceholder: probeStyle.borderColor,
+    };
+
+    tokenProbe.remove();
+    return values;
+  });
 }
 
 async function waitForOpen(page: Page, open: boolean): Promise<void> {
