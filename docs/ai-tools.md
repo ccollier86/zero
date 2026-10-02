@@ -69,9 +69,9 @@ Zero validates provider capability before the provider call. If the selected
 provider is active but does not advertise tool support, the call fails before
 sending the request.
 
-## Workflows And Jobs
+## Torrent Workflows And Jobs
 
-Workflow activities and scheduled jobs can use the same server-side AI service
+Torrent activities and scheduled jobs can use the same server-side AI service
 directly, or use `createAIWorkflowHandler()` for common one-activity calls.
 Register the examples below inside
 `AppConfig.workflows.register(registry)` so registration finishes before
@@ -126,7 +126,7 @@ the workflow cancellation signal with a configured AI abort signal and calls
 `ctx.assertCurrentAuthority()` immediately before the provider request.
 Workflow handlers are recovered with at-least-once semantics; pass
 `ctx.idempotencyKey` to separate external effects that must be deduplicated.
-See [Durable Workflows](./workflows.md) for activity schemas/versioning, graph
+See [Torrent: Durable Workflows](./workflows.md) for activity schemas/versioning, graph
 authoring, retry/deadline/recovery, memory, and authorization contracts.
 
 ## Tool Failures

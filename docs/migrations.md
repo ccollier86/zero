@@ -193,11 +193,12 @@ security boundaries rather than application schema conveniences: follow the
 and [authorization registry deployment contract](./platform-configuration.md#authorization-registry-and-static-roles)
 instead of editing their private rows directly.
 
-Migration `030` is the immutable historical release that introduced versioned
-workflow graphs, scratch memory, interactions, and runtime coordination.
-Migration `031` is the appended upgrade: it scopes workflow interactions to
-their owning tenant, gives definitions a per-scope name namespace, installs
-parent/tenant immutability checks, and transactionally rebuilds the affected
+Migration `030` is the immutable historical release that introduced Torrent's
+versioned workflow graphs, scratch memory, interactions, and runtime
+coordination. Migration `031` is the appended Torrent upgrade: it scopes
+workflow interactions to their owning tenant, gives definitions a per-scope
+name namespace, installs parent/tenant immutability checks, and transactionally
+rebuilds the affected
 workflow relations without `ON DELETE CASCADE`. It also adds the private,
 event-bound authority seals and explicit actor/system/legacy-untrusted event
 classification used by delayed interaction responses, plus immutable response
@@ -212,13 +213,26 @@ File-backed `031` upgrades require the normal migration backup before the
 transactional rebuild begins.
 
 Migration `032` appends the private `_workflow_runtime_owner_lease` singleton
-used to elect one live workflow runtime generation per physical database. The
+used to elect one live Torrent runtime generation per physical database. The
 migration is additive and does not claim ownership. Runtime startup performs
 the first atomic acquire; heartbeat renewal, graceful exact-generation release,
 and expired-generation takeover happen through the workflow service. The table
-is internal coordination state and remains outside app schemas and Sync. Fresh
-installs and upgrades now converge on the current workflow schema through
-`032`.
+is internal coordination state and remains outside app schemas and Sync.
+
+Migration `033` appends topology-independent SQLite integrity triggers for
+Torrent's definition catalog, immutable definition/version source relation,
+active-version ownership and status, retirement transitions, and draft source
+and base-version ownership. It also validates exact consumed/discarded terminal
+event markers, coherent claimed wait steps, and—when present—the sealed event
+authority kind. Its definition is byte-identical on Zero 2.0 and the maintained
+1.3 compatibility line and references neither Guardian nor Fabric. Fresh
+installs and upgrades converge on the current Torrent workflow schema through
+`033`.
+
+For package-versus-database responsibilities, registration timing, the
+maintained 1.3 patch path, the offline 1.3-to-2.0 database split, live-run
+authority boundary, and rollback procedure, follow the
+[Torrent upgrade guide](./workflows.md#upgrading-existing-torrent-applications).
 
 ## Schema Module Shape
 
@@ -342,13 +356,14 @@ version-named frozen helper back to the historical symbol name without
 rewriting the function body. Two independent test guards protect this contract:
 
 - `migration-checksum-compatibility.test.ts` pins the canonical exported
-  migration checksums for `001`–`028`, covering metadata plus the serialized
+  migration checksums for `001`–`033`, covering metadata plus the serialized
   `up()`/`down()` function bodies stored in the ledger contract.
 - `migration-definition-immutability.test.ts` rejects value imports from
   mutable runtime implementations; pins normalized full-source SHA-256 hashes
   for every numbered definition and every version-local helper; asserts the
-  exact discovered definition set; and verifies that the registry order is
-  `001` through `028`. The full-definition and helper hashes are necessary
+  exact discovered definition set; and verifies that the registry follows its
+  complete strictly increasing `001` through `033` release chain. The
+  full-definition and helper hashes are necessary
   because `migration.up.toString()` cannot see module-local constants or an
   imported helper's body.
 

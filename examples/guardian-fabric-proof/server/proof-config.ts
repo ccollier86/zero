@@ -17,6 +17,7 @@ import {
   TASK_ROLE_REGISTRY,
 } from '../shared/task-access';
 import { tasksResource } from './resources/tasks';
+import { registerTorrentProof } from './torrent-proof';
 
 export interface GuardianFabricProofPaths {
   readonly applicationDatabase: string;
@@ -55,7 +56,7 @@ const DEFAULT_PATHS: GuardianFabricProofPaths = Object.freeze({
 const DEFAULT_ACTOR_ENTRYPOINT = fileURLToPath(new URL('../app/server.ts', import.meta.url));
 
 /**
- * Build the exact Guardian + Fabric proof contract without reading process
+ * Build the exact Guardian + Fabric + Torrent proof contract without reading process
  * state or opening files. Callers must inject environment-derived values.
  */
 export function createGuardianFabricProofConfig(
@@ -72,7 +73,7 @@ export function createGuardianFabricProofConfig(
 
   return defineZeroConfig({
     app: {
-      name: 'Guardian + Fabric Proof',
+      name: 'Guardian + Fabric + Torrent Proof',
       publicUrl: options.publicUrl ?? `http://localhost:${port}`,
     },
     port,
@@ -162,6 +163,9 @@ export function createGuardianFabricProofConfig(
     pdf: false,
     kv: false,
     sitemap: false,
+    workflows: {
+      register: registerTorrentProof,
+    },
     appDir: paths.app,
     resources: [tasksResource],
     serverResourcesDir: false,
@@ -187,7 +191,7 @@ export function createGuardianFabricProofConfig(
 
 function validPort(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1 || value > 65_535) {
-    throw new TypeError('Guardian + Fabric proof port must be an integer from 1 through 65535.');
+    throw new TypeError('Guardian + Fabric + Torrent proof port must be an integer from 1 through 65535.');
   }
   return value;
 }
@@ -198,7 +202,7 @@ function proofPaths(
   const paths = { ...DEFAULT_PATHS, ...overrides };
   for (const [name, value] of Object.entries(paths)) {
     if (typeof value !== 'string' || value.trim().length === 0) {
-      throw new TypeError(`Guardian + Fabric proof path "${name}" must be non-empty.`);
+      throw new TypeError(`Guardian + Fabric + Torrent proof path "${name}" must be non-empty.`);
     }
   }
   return Object.freeze(paths);

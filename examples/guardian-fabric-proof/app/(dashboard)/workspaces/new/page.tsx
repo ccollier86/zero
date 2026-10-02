@@ -8,7 +8,7 @@ import {
 import { useRouter } from '@zero/framework/react/hooks';
 
 export const meta = {
-  title: 'Create workspace | Guardian + Fabric Proof',
+  title: 'Create workspace | Guardian + Fabric + Torrent Proof',
   description: 'Create and activate a physically isolated customer workspace.',
 };
 

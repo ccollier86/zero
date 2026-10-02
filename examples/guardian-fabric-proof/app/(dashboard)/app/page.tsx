@@ -1,8 +1,8 @@
 import { ProofOverview } from '../../components/proof-overview';
 
 export const meta = {
-  title: 'Proof center | Guardian + Fabric Proof',
-  description: 'Live Guardian authority, Fabric readiness, ReactiveDB health, and guided acceptance paths.',
+  title: 'Proof center | Guardian + Fabric + Torrent Proof',
+  description: 'Live Guardian authority, Fabric readiness, Torrent runs, ReactiveDB health, and guided acceptance paths.',
 };
 
 /** Scope-adaptive landing page for platform and customer authorities. */

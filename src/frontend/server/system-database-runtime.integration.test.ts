@@ -103,7 +103,7 @@ describe('createApp system database runtime', () => {
     }
   }, 20_000);
 
-  test('accepts current workflow migration 032 when startup migration is disabled', async () => {
+  test('accepts workflow migration 032 with runtime integrity repair', async () => {
     const root = await mkdtemp(join(tmpdir(), 'zero-system-workflow-032-'));
     roots.push(root);
     const appDir = join(root, 'app');

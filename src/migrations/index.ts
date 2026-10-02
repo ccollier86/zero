@@ -43,6 +43,7 @@ import { migration as m029 } from './definitions/029_guardian_api_keys';
 import { migration as m030 } from './definitions/030_workflow_graph_runtime';
 import { migration as m031 } from './definitions/031_workflow_graph_tenant_integrity';
 import { migration as m032 } from './definitions/032_workflow_runtime_ownership';
+import { migration as m033 } from './definitions/033_torrent_integrity_hardening';
 
 export {
   createMigrationRegistry,
@@ -111,4 +112,5 @@ export const migrations: Migration[] = [
   m030,
   m031,
   m032,
+  m033,
 ];

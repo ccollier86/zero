@@ -149,6 +149,15 @@ export class WorkflowRuntimeStore {
     return this.events.consumeClaimedEvent(stepId, eventId);
   }
 
+  /** Atomically settle the exact event claim behind an accepted interaction. */
+  consumeAcceptedInteractionEvent(
+    stepId: string,
+    instanceId: string,
+    eventId: string,
+  ): void {
+    this.events.consumeAcceptedInteractionEvent(stepId, instanceId, eventId);
+  }
+
   getEventSender(eventId: string): string | null {
     return this.events.getEventSender(eventId);
   }

@@ -1,5 +1,5 @@
 /**
- * Shared application schema for the Guardian + Fabric proof app.
+ * Shared application schema for the Guardian + Fabric + Torrent proof app.
  *
  * There is deliberately no tenant_id column. Fabric derives the tenant from
  * live Guardian authority and selects the physical tenant database instead.

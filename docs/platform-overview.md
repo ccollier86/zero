@@ -84,10 +84,11 @@ protected `/api/_zero/observability/events` endpoint. See
 
 ### ReactiveDB Fabric: isolated multi-database runtime
 
-ReactiveDB Fabric is an active, unreleased release-candidate implementation. It
+ReactiveDB Fabric is Zero 2.0's supported isolated multi-database runtime. It
 extends the pinned application database while identity, sessions, memberships,
-and Zero internals stay in the separate pinned system database. Selected
-application resources can live in separately actor-owned databases.
+Torrent state, and other Zero internals stay in the separate pinned system
+database. Selected application resources can live in separately actor-owned
+databases.
 
 In physical tenant mode, the server derives an opaque, pseudonymous database
 reference from the authenticated tenant scope. A URL, body, header, WebSocket
@@ -128,8 +129,9 @@ snapshot sessions.
 
 This is not a distributed SQLite service. One app coordinator and its child
 actors exclusively own one local Fabric root. Fleet migration/lifecycle,
-operator-grade backup/restore, online placement changes, and the supported
-package/OS matrix remain explicit release work. Read the
+operator-grade fleet backup/restore, online placement changes, and distributed
+root ownership remain deliberately excluded from the supported local-root
+contract. Read the
 [Fabric architecture](./framework/multi-database-architecture.md) and
 [SDK reference](./sdk-reference.md#reactivedb-fabric-actor-backed-multi-database-tenancy)
 before configuring it.
@@ -597,7 +599,13 @@ is mounted. See [PDF Rendering](./pdf.md).
 
 ---
 
-## Workflows — Durable Versioned Graphs
+## Torrent — Durable Versioned Workflows
+
+**Torrent** is Zero's durable, versioned workflow and orchestration system.
+The name is product/documentation vocabulary: configuration and application
+code continue to use `workflows`, `@zero/framework/workflows`,
+`zero.workflows`, `/workflows/*`, and the existing `Workflow*`,
+`useWorkflow*`, `WORKFLOW_*`, and `workflows.*` contracts.
 
 Register trusted, versioned activities and code definitions with
 `AppConfig.workflows.register`. The small TypeScript DSL covers ordered steps,
@@ -694,7 +702,7 @@ time without polling. Executable graph JSON, memory, interaction bodies, and
 other coordination state stay server-only; event payloads and all workflow
 instance/step input, output, and raw error values are redacted from browser
 projections. See
-[Durable Workflows](./workflows.md).
+[Torrent: Durable Workflows](./workflows.md).
 
 `useWorkflow()` orders those payload-redacted event audit rows and reports
 parallel execution only for concurrent root nodes or concurrent children of
@@ -823,10 +831,18 @@ sources. See the full guide in [DataTableView](./frontend/data-table.md).
   schema={todoSchema}
   collection="todos"
   editable={['title', 'done', 'priority']}
-  searchable
+  searchable={{ placeholder: 'Find todos…', ariaLabel: 'Search todos' }}
   sortable
   filterable
   paginated={{ pageSize: 25 }}
+  toolbarLabel="Todo table controls"
+  toolbarSlots={{
+    actions: ({ selectedRowIds, selectedRowCount }) => (
+      <Button disabled={!selectedRowCount} onClick={() => archive(selectedRowIds)}>
+        Archive selected ({selectedRowCount})
+      </Button>
+    ),
+  }}
   actions={[
     { label: 'Delete', variant: 'destructive', onClick: (row) => remove(row.todo_id) },
   ]}
@@ -866,12 +882,31 @@ Caller-owned data stays simple:
 />
 ```
 
+The compact search is table-only: it expands on focus or while populated,
+handles Escape/Enter without leaking form behavior, and respects reduced
+motion. `toolbarSlots.controls`, `toolbarSlots.actions`, and
+`toolbarSlots.supplemental` can be React nodes or render functions receiving
+the table, search/filter state, `clearAll`, and current selection. The toolbar
+wraps on narrow screens and uses the shared Zero surface, border, foreground,
+muted, and focus-ring tokens. All slots are optional. Existing boolean
+`searchable` and `toolbarActions` call sites remain source-compatible without a
+database migration or page rewrite; new code should use
+`toolbarSlots.actions`.
+
+Toolbar search and column filters refine the rows already loaded into TanStack.
+They do not change lazy `filters` or `source.filters`; those are separate
+server-side `/api/data` query inputs. `CrudPage` and MasterDetail wrappers
+forward table slots through `tableToolbarSlots` and the accessible toolbar name
+through `tableToolbarLabel`. Generated discrete, numeric, and date filters
+match exact values, text filters use contains matching, and multi-value filters
+match an included value.
+
 **Features:**
 - **Live binding:** Point it at a collection name, it auto-updates as data changes
 - **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for eligible `/api/data` tables with resource policy enforcement; registered resources must permit HTTP, and lazy Sync resources use `exposure: 'all'`
 - **Inline editing:** Click a cell, edit in-place, Tab to next — changes sync instantly
 - **Sorting/filtering:** Column headers with sort toggles and filter inputs
-- **Composable toolbar:** Search, filters, export, column visibility, and app actions can be shown independently
+- **Composable toolbar:** Compact search, filters, arbitrary controls, selection-aware bulk actions, supplemental content, export, and column visibility can be shown independently
 - **Row actions:** Dropdown menu per row with custom actions
 - **Selection:** Checkbox selection with `onSelectionChange` callback
 - **Pagination:** Configurable page size
@@ -971,7 +1006,10 @@ Full shadcn/ui set plus domain-specific components:
 Zero's platform stylesheet is generated by `createApp()` and linked into SSR
 HTML automatically. The default token contract supports light, dark, and system
 themes through `ThemeProvider`, and `ThemeTogglerButton` provides the animated
-mode switch.
+mode switch. Its single SVG rotates and reshapes between sun and moon states;
+supporting browsers also reveal the next page theme in a circle originating at
+the activated control. The component falls back cleanly and honors reduced-
+motion preferences.
 
 The browser client entry and route manifest are generated into `.zero/generated`
 before bundling. This keeps app-owned route glue outside framework source and is

@@ -196,7 +196,7 @@ createApp({
 });
 ```
 
-### ReactiveDB Fabric topology (unreleased candidate)
+### ReactiveDB Fabric topology
 
 `databaseTopology` is the typed configuration surface for Fabric. Omitting it,
 or using `{ mode: 'single' }`, keeps one pinned application database alongside
@@ -343,10 +343,47 @@ main, WAL, SHM, and rollback-journal filenames. Existing apps or custom roots
 must apply equivalent source-control exclusions; tenant database files and
 sidecars are runtime data, never application assets.
 
-This surface is an unreleased candidate. Its exact options,
-durability semantics, error contract, deployment requirements, and remaining
-release gates are authoritative in
+This is a supported Zero 2.0 surface. Its exact options, durability semantics,
+error contract, deployment requirements, and deliberate exclusions are
+authoritative in
 [ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md).
+
+### Torrent workflow configuration
+
+**Torrent** is Zero's durable workflow and orchestration system. The product
+name does not rename the established `workflows` configuration or any
+`Workflow*`, `/workflows/*`, `WORKFLOW_*`, or `workflows.*` contract.
+
+Set `workflows: false` to omit Torrent. With Auth enabled, omitting the option
+installs the managed runtime. Use an object to configure application startup,
+shutdown, and interaction authority:
+
+```ts
+export default defineZeroConfig({
+  // db, systemDb, tables, auth...
+  workflows: {
+    async register(registry) {
+      registry.registerActivity({
+        name: 'records.refresh',
+        version: '1',
+        handler: async (ctx) => refreshRecord(ctx.input, ctx.signal),
+      });
+    },
+    shutdownGraceMs: 30_000,
+    interactionAuthority,
+  },
+});
+```
+
+| Option | Contract |
+| --- | --- |
+| `register` | Registers trusted activity implementations and code-authored definitions during composition. Zero awaits it before recovery or service publication. |
+| `shutdownGraceMs` | Maximum wait for handlers that ignore cooperative cancellation. Defaults to 30,000 ms; use `0` only when immediate shutdown fencing is intentional. |
+| `interactionAuthority` | Fail-closed Guardian/application policy adapter for human or agent responses. Async allows require the revision-aware commit lease documented in the Torrent guide. |
+
+See [Torrent: Durable Workflows](./workflows.md) for the DSL, database-defined
+graphs, versioning, memory, interactions, recovery, Fabric activity data,
+real-time monitoring, error contract, and external-effect idempotency rules.
 
 ### File-storage capability signing
 
@@ -389,9 +426,9 @@ omitting them still resolves to `single/simple`.
 | Tenancy | Authorization | Implemented foundation | Deployment status |
 | --- | --- | --- | --- |
 | `single` | `simple` | Existing global user/admin runtime plus compatibility kernel scope | Supported current runtime |
-| `single` | `advanced` | Validated registry, durable additive application assignments, protected owner, live HTTP/Sync expansion, `/auth/application`, typed SDK/hook, and packaged access UI | Implemented in this unreleased tree; final cross-cutting release verification remains |
-| `multi` | `simple` | Protected Administration Organization bootstrap, tenant/membership persistence, bound browser/native sessions, selection/switching, customer-tenant creation/directory/lifecycle/member administration, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant/platform controls | Implemented in this unreleased tree; exact pre-024 administration-tenant reconciliation is available, while final release gates remain |
-| `multi` | `advanced` | Multi/simple foundation plus durable additive membership assignments, administration-only application roles, protected owners, live permission expansion, optimistic role revisions, permission-aware tenant/platform UI, and authorized audit review | Implemented in this unreleased tree; the same remaining multi release gates apply |
+| `single` | `advanced` | Validated registry, durable additive application assignments, protected owner, live HTTP/Sync expansion, `/auth/application`, typed SDK/hook, and packaged access UI | Supported in Zero 2.0 |
+| `multi` | `simple` | Protected Administration Organization bootstrap, tenant/membership persistence, bound browser/native sessions, selection/switching, customer-tenant creation/directory/lifecycle/member administration, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant/platform controls | Supported in Zero 2.0; exact pre-024 administration-tenant reconciliation is available |
+| `multi` | `advanced` | Multi/simple foundation plus durable additive membership assignments, administration-only application roles, protected owners, live permission expansion, optimistic role revisions, permission-aware tenant/platform UI, and authorized audit review | Supported in Zero 2.0 |
 
 Multi-mode selection includes the protected Administration Organization and
 bounded customer-organization lifecycle described in

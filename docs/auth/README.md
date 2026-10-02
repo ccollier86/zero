@@ -58,8 +58,9 @@ Runtime startup, invariant, native-protocol, email-delivery, and browser
 control-plane failures follow the privacy-safe contract in
 [Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
 
-This is an unreleased candidate, not a claim that every planned control has
-landed. The protected Administration Organization and bounded
+Guardian's four profiles and the boundaries documented here are supported in
+Zero 2.0; that does not imply every planned enterprise control has landed. The
+protected Administration Organization and bounded
 customer-organization lifecycle UI are implemented. Upstream enterprise SSO, break-glass,
 tenant-custom roles, broader populated-app discovery/migration tooling, and
 verified-domain autojoin/aliases/direct transfer remain deferred. The narrow,
@@ -73,7 +74,8 @@ sockets. Multi-mode startup
 validates actual non-partial tenant-leading indexes, tenant-scoped business
 uniqueness, and composite tenant consistency for foreign keys between
 registered tenant resources.
-The implementation checklist is the authoritative release gate.
+The implementation checklist records shipped evidence, public-package gates,
+and deliberately deferred capabilities.
 
 The capability vocabulary is available now so configuration can be explicit:
 

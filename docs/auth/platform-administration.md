@@ -1,6 +1,6 @@
 # Platform Administration Organization
 
-> Status: implemented in the unreleased multi-tenant auth candidate
+> Status: supported Zero 2.0 Guardian contract
 >
 > Last reviewed: 2026-10-01
 

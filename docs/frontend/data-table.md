@@ -182,17 +182,56 @@ Override options:
 
 ## Toolbar
 
-The toolbar is composable. It can show search, field filters, column
-visibility, CSV export, and caller-provided actions independently.
+The toolbar is a responsive, table-scoped control plane. It can compose the
+compact search, generated field filters, arbitrary app controls, bulk actions,
+column visibility, CSV export, active-filter feedback, and supplemental status
+content without requiring a custom table wrapper.
+
+### Upgrade Compatibility
+
+Existing DataTable call sites do not need to be rewritten for this toolbar
+upgrade. The existing `DataTable` alias, `searchable` boolean,
+`toolbarActions`, `showToolbar`, `showExport`, and `showColumnVisibility`
+contracts remain supported. `toolbarSlots` and `toolbarLabel` are optional
+additions: an app that does not pass them does not need placeholder values or
+new wrapper code. No database or schema migration is involved.
+
+When an existing table already uses `searchable`, it keeps the same client-side
+global-filter behavior and receives the compact table-only presentation. When
+it already uses `toolbarActions`, that content stays in the right-side action
+group. Apps can adopt slots incrementally; if `toolbarSlots.actions` and
+`toolbarActions` are both present, the slot renders first and the existing
+outlet follows it before the built-in Columns and Export buttons.
+
+Two upgrade details are worth reviewing:
+
+1. Generated boolean, select, enum, numeric, date, and datetime filters now use
+   exact scalar matching. This fixes the prior numeric scalar/range mismatch.
+   An app that deliberately passes TanStack range tuples should compose
+   `useDataTable()` directly for that custom range behavior.
+2. An app that previously copied the table implementation with
+   `zero add components/data-table` owns that local source. Updating the
+   framework package intentionally does not overwrite it. Keep the local
+   implementation, port the desired toolbar files manually, or review local
+   changes before running `zero add components/data-table --force`; `--force`
+   replaces the copied component files.
 
 ```tsx
 <DataTableView
   schema={clientTable.schema}
   collection="clients"
-  searchable
+  searchable={{
+    placeholder: 'Find clients…',
+    ariaLabel: 'Search clients',
+    collapsedWidth: 128,
+    expandedWidth: 260,
+  }}
   filterable
   filterColumns={['status', 'department']}
-  toolbarActions={<Button onClick={openCreate}>New Client</Button>}
+  toolbarLabel="Client table controls"
+  toolbarSlots={{
+    actions: <Button onClick={openCreate}>New Client</Button>,
+  }}
   exportFilename="clients.csv"
 />
 ```
@@ -201,16 +240,225 @@ Toolbar behavior:
 
 | Prop | Behavior |
 | --- | --- |
-| `searchable` | Shows the global search input |
-| `filterable` | Shows schema-aware per-column filter controls |
+| `searchable` | `true` shows the compact table search; an options object customizes it; omitted/`false` hides it |
+| `filterable` | Shows schema-aware, client-side per-column filter controls |
 | `filterColumns` | Limits generated filters to specific columns |
-| `toolbarActions` | Renders app-provided controls in the toolbar |
+| `toolbarSlots` | Adds `controls`, `actions`, and `supplemental` content as nodes or table-aware render functions |
+| `toolbarLabel` | Sets the accessible name for the toolbar control group; defaults to `Table controls` |
+| `toolbarActions` | Existing right-side action outlet; remains supported with no rewrite; prefer `toolbarSlots.actions` in new code |
 | `showToolbar` | Forces toolbar rendering when only export/columns/actions are needed |
 | `showExport` | Shows or hides the CSV export action |
 | `showColumnVisibility` | Shows or hides the column visibility dropdown |
 
-Generated filters understand common field types such as boolean, select, enum,
-combobox, number, date, and text.
+Generated filters understand common field types and apply these client-side
+TanStack matching rules:
+
+| Schema field | Generated match |
+| --- | --- |
+| `boolean`, `select`, `enum`, single-value `combobox` | Exact value |
+| `number`, `date`, `datetime` | Exact value |
+| `multiSelect`, `tags`, multiple `combobox` | Row array includes the selected/filter value |
+| Text and other fallback fields | Contains text |
+
+Search, generated filters, and any non-empty toolbar slot make the toolbar
+render automatically. `showToolbar` is still useful when the table should
+expose only the built-in Columns or Export controls.
+
+### Compact Table Search
+
+`searchable` accepts `true` or `DataTableSearchOptions`:
+
+```ts
+interface DataTableSearchOptions {
+  placeholder?: string;
+  ariaLabel?: string;
+  collapsedWidth?: number;
+  expandedWidth?: number;
+  disabled?: boolean;
+}
+```
+
+The control expands when focused and remains expanded while it contains a
+query. Its icon and input use a gooey joined-surface animation. It is
+deliberately local to DataTable; it does not change Zero's normal `Input`,
+admin search fields, auth controls, or other app search experiences.
+
+- `Escape` clears a populated query. Pressing it again while the query is
+  empty blurs and collapses the control.
+- `Enter` is consumed by the searchbox so a table search nested in a form does
+  not accidentally submit that form.
+- The input remains a labeled `searchbox`, exposes a dedicated clear button,
+  and keeps the standard Zero focus ring.
+- Users who prefer reduced motion get an immediate geometry change instead of
+  the spring transition.
+- Custom widths are pixel values. The control still caps itself at the
+  available width, and the surrounding toolbar wraps on narrow screens.
+
+Use `DataTableSearch` directly only when composing a low-level custom table
+toolbar. `DataTableView` owns its value and filtering behavior when configured
+through `searchable`. `DataTableView` defaults search off; the low-level
+`DataTableToolbar` defaults its own `searchable` prop on.
+
+The direct component is controlled: pass `value` and `onValueChange`. Its
+presentation props are `label`, `placeholder`, `collapsedWidth`,
+`expandedWidth`, `disabled`, and `className`; `onOpenChange` observes whether
+focus or a non-empty value has expanded it. Standard input accessibility and
+event props are forwarded. The `searchable` options object intentionally calls
+the accessible-name field `ariaLabel`, which DataTable maps to the direct
+component's `label` prop.
+
+### Toolbar Slots And Context
+
+`toolbarSlots` has three stable insertion points:
+
+| Slot | Placement and intended use |
+| --- | --- |
+| `controls` | Beside search and generated filters; selects, filter popovers, or view controls |
+| `actions` | Before the built-in Columns and Export buttons; create, bulk, or table-level actions |
+| `supplemental` | Full-width row below the primary controls; selection summaries or contextual help |
+
+Every slot accepts a React node or a render function. Render functions receive
+the same table-local context:
+
+| Context field | Meaning |
+| --- | --- |
+| `table` | TanStack `Table<TData>` instance for advanced table controls |
+| `query` / `setQuery` | Current global search query and its setter |
+| `columnFilters` | Current TanStack column-filter state |
+| `activeFilterCount` | Number of active column filters, excluding global search |
+| `hasActiveFilters` | Whether at least one column filter is active |
+| `hasActiveSearch` | Whether the global search query is non-empty |
+| `clearAll` | Clears global search and all client-side column filters |
+| `selectedRowIds` | IDs of the currently selected TanStack rows |
+| `selectedRows` | Original values for the currently selected rows |
+| `selectedRowCount` | Number of selected rows |
+
+All three slots are optional and independent. Use a plain node when the control
+does not need table state, and a render function only when it needs the context.
+Passing `toolbarSlots={{}}` does not render a toolbar by itself.
+
+When composing `DataTableToolbar` directly, pass the same object as `slots`
+and the accessible group name as `ariaLabel`. `DataTableView` exposes those
+low-level props as `toolbarSlots` and `toolbarLabel`.
+
+This example uses Zero's official Select, the public Popover path, and a bulk
+action driven by the live selection context:
+
+```tsx
+import {
+  Button,
+  DataTableView,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@zero/framework/react';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@zero/framework/components/popover';
+
+<DataTableView<ClientRow>
+  schema={clientTable.schema}
+  collection="clients"
+  selectable
+  searchable={{ ariaLabel: 'Search clients' }}
+  toolbarLabel="Client table controls"
+  toolbarSlots={{
+    controls: ({ table }) => {
+      const department = table.getColumn('department');
+      return (
+        <>
+          <Select
+            value={String(department?.getFilterValue() ?? 'all')}
+            onValueChange={(value) => {
+              department?.setFilterValue(value === 'all' ? undefined : value);
+            }}
+          >
+            <SelectTrigger className="h-8 w-40" aria-label="Department">
+              <SelectValue placeholder="Department" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All departments</SelectItem>
+              <SelectItem value="clinical">Clinical</SelectItem>
+              <SelectItem value="billing">Billing</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm">
+                More filters
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Focus this view on records that need review.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  table.getColumn('needs_review')?.setFilterValue(true);
+                }}
+              >
+                Needs review
+              </Button>
+            </PopoverContent>
+          </Popover>
+        </>
+      );
+    },
+    actions: ({ selectedRowIds, selectedRowCount }) => (
+      <Button
+        type="button"
+        size="sm"
+        disabled={selectedRowCount === 0}
+        onClick={() => archiveClients([...selectedRowIds])}
+      >
+        Archive selected ({selectedRowCount})
+      </Button>
+    ),
+    supplemental: ({ selectedRowCount }) => selectedRowCount > 0 ? (
+      <span className="text-sm text-muted-foreground" aria-live="polite">
+        {selectedRowCount} selected
+      </span>
+    ) : null,
+  }}
+/>
+```
+
+The toolbar stacks its control and action groups on small screens and lets each
+group wrap before returning to a single aligned row at the `sm` breakpoint.
+Keep custom controls labeled, use `type="button"` for non-submit actions, and
+use token classes such as `background`, `foreground`, `muted-foreground`,
+`border`, and `ring` rather than fixed light/dark colors.
+
+### Client Toolbar Filters Versus Server Filters
+
+Toolbar search, generated filters, and slot controls that call TanStack column
+APIs filter the rows already resolved into the table. They do not rewrite or
+refetch a lazy source. `clearAll` likewise clears only the global search and
+client-side column filters.
+
+By contrast, `filters` on a lazy DataTable and `source.filters` on a
+`source={{ type: 'lazy' }}` object are sent to `/api/data` and bound the server
+query. For large or security-sensitive result sets, keep the server-filter
+state in the parent, pass it into the lazy source, and let a `controls` slot
+update that state. Use toolbar filters for refining the rows that have already
+been loaded; use lazy source filters for deciding which rows are loaded at all.
+
+### Wrapper Components
+
+`CrudPage`, `MasterDetailView`, and `MasterDetailPage` accept
+`tableToolbarSlots` and forward it to their generated DataTable. Set
+`tableToolbarLabel` when the default `Table controls` accessible name is not
+specific enough. Their `searchable` prop also accepts the same
+`boolean | DataTableSearchOptions` contract. `CrudPage.toolbar` remains
+page-header content beside its Create action; it is not a table-toolbar slot.
+Both wrapper props are optional, so existing wrapper call sites remain valid.
 
 ## Selection And Row Actions
 
@@ -274,6 +522,7 @@ directly.
 import {
   DataTableView,
   DataTable,
+  DataTableSearch,
   DataTableToolbar,
   DataTablePagination,
   DataTableRowActions,
@@ -296,6 +545,12 @@ import type {
   DataTableColumnOverrides,
   DataTableInitialState,
   DataTableFilters,
+  DataTableSearchOptions,
+  DataTableSearchProps,
+  DataTableToolbarContext,
+  DataTableToolbarProps,
+  DataTableToolbarSlot,
+  DataTableToolbarSlots,
   RowAction,
 } from '@zero/framework/react';
 ```

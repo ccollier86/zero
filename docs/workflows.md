@@ -1,4 +1,4 @@
-# Durable Workflows
+# Torrent: Durable Workflows
 
 **Source:** `src/workflows/`
 
@@ -7,12 +7,18 @@
 `src/frontend/client/workflow-topology-hooks.ts`, and
 `src/frontend/server/app-factory.ts`
 
-Zero workflows are durable, versioned execution graphs backed by SQLite and
-ReactiveDB. A workflow can run ordinary activities, choose a branch, execute
-parallel branches, fan out over an array, wait for an event, or pause for a
-human or external-system response. Runtime progress is projected through
-owner-scoped ReactiveDB Sync, so an authorized browser can render a live run
-without polling.
+**Torrent** is Zero's durable workflow system: versioned execution graphs
+backed by SQLite and ReactiveDB. A workflow can run ordinary activities,
+choose a branch, execute parallel branches, fan out over an array, wait for an
+event, or pause for a human or external-system response. Runtime progress is
+projected through owner-scoped ReactiveDB Sync, so an authorized browser can
+render a live run without polling.
+
+Torrent is the product and documentation name. The established public API
+vocabulary remains `workflows`: configuration stays under
+`AppConfig.workflows`, imports stay under `@zero/framework/workflows`, HTTP
+routes stay under `/workflows`, and existing table names, error codes, and
+observability codes do not change.
 
 New graph definitions share one canonical execution model across several
 authoring surfaces:
@@ -30,9 +36,9 @@ contain closures or executable source strings.
 
 ## Enable And Register
 
-Workflows are enabled by default when auth is enabled. Set `workflows: false`
-to omit the subsystem. Register activities and code-authored definitions in
-the application configuration callback:
+Torrent is enabled by default when auth is enabled. Set `workflows: false` to
+omit the workflow subsystem. Register activities and code-authored definitions
+in the application configuration callback:
 
 ```ts
 import { t } from 'elysia';
@@ -171,6 +177,18 @@ export default defineZeroConfig({
 });
 ```
 
+`AppWorkflowsConfig` has three optional settings:
+
+| Option | Default | Contract |
+| --- | --- | --- |
+| `register` | No callback | Registers trusted activities and code-authored definitions during app composition. Zero awaits synchronous or asynchronous registration before recovery and service publication. |
+| `shutdownGraceMs` | `30_000` | Maximum time to wait for physical handlers to settle after cancellation during shutdown. It must be a safe integer from `0` through `2_147_483_647`. |
+| `interactionAuthority` | Built-in starter-only authority | Replaces Torrent's default human/agent response policy with one fail-closed Guardian/app `WorkflowInteractionAuthority`. It does not grant run inspection or lifecycle authority. |
+
+Omitting `workflows` is equivalent to the enabled default when auth is on;
+`workflows: {}` accepts all defaults. `workflows: false` is the explicit
+opt-out. These are app-composition settings, not per-definition graph options.
+
 Register each activity before definitions that reference it. Registration and
 compilation reject malformed graphs, unknown options, missing activities,
 unsafe expressions, invalid limits, cycles, ambiguous fan-out, unreachable
@@ -189,6 +207,165 @@ managed app, prefer `workflows.register`; Zero awaits that callback before
 recovery. Direct plugin composition can use `getWorkflowRegistry()` after
 composition and before `listen()`. Do not register definitions or activities
 from request handlers or after the server starts.
+
+## Upgrading Existing Torrent Applications
+
+Existing sequential workflow definitions do **not** need to be rewritten to
+use Torrent. The `steps` shape and `registerHandler()` remain supported, and an
+application can convert one definition at a time to `flow` later. An upgrade
+does, however, have two separate operator actions:
+
+1. update the `@zero/framework` package; and
+2. apply the pending framework migrations to the database that owns Torrent.
+
+`zero update` performs only the first action. It does not run migration
+commands, rewrite application source, or move database rows. Managed
+`createApp()` runs pending framework migrations for a non-ephemeral database
+when `migrate` is left at its default `true`, but a production upgrade should
+still be planned, backed up, and applied while traffic is stopped. An app with
+`migrate: false` must run the migration command explicitly before startup.
+
+### Compatibility at a glance
+
+| Upgrade | Workflow-definition rewrite | Database action | Application action |
+| --- | --- | --- | --- |
+| Zero 1.3.x to 1.3.3 | No; existing sequential and graph definitions remain valid | Apply any missing `030`, `032`, and `033` to the existing combined application database | Register handlers and activities before recovery; keep one Torrent owner for the database |
+| Zero 1.3.x to 2.0 | No all-at-once rewrite; `steps` remains supported | Perform the app-specific offline system/application split, then apply the 2.0 framework registry to `systemDb` | Adopt Guardian/Fabric configuration, update managed raw start call sites to actor/system authority, and retain every implementation required by a recoverable run |
+| One definition from `steps` to `flow` | Optional, definition by definition | No special migration beyond the installed Torrent schema | Publish a new immutable version; do not rewrite a version used by an existing run |
+
+### Staying on the maintained 1.3 line
+
+Use this path when the application must retain its combined database and does
+not yet want Guardian, Fabric, or the 2.0 database split:
+
+1. Stop every process that can use the database. Do not introduce the runtime
+   ownership generation while an older Torrent runtime can still write.
+2. Capture a restorable SQLite backup, including committed WAL content, and
+   preserve the current package, lockfile, configuration, and environment.
+3. Check out the exact `v1.3.3` source (or the maintained `release/1.3`
+   branch), then preview and install it through the explicit local path. Do not
+   use the main-branch `zero-update` wrapper for an app that is staying on 1.3.
+4. Against the exact configured combined database, inspect status, apply the
+   pending registry, and inspect status again. Use the app's existing scripts;
+   pass `--db` when they do not already pin the path.
+5. Start one runtime, let registration and recovery finish, and verify
+   nonterminal runs before admitting traffic.
+
+```bash
+# Run from the Zero 1.3.3 checkout.
+bun run zero update --project /path/to/app --local /path/to/zero-1.3 --dry-run
+bun run zero update --project /path/to/app --local /path/to/zero-1.3 --check
+
+# Run from the application. Keep this path equal to AppConfig.db.
+bun run migrate:status -- --db /absolute/path/to/app.db
+bun run migrate -- --db /absolute/path/to/app.db
+bun run migrate:status -- --db /absolute/path/to/app.db
+```
+
+An app already on 1.3.1 or 1.3.2 may have no pending Torrent migration;
+1.3.2's interaction-event recovery fix and 1.3.3's reusable frontend additions
+do not add another numbered migration. Trust the status command and ledger,
+not an assumed starting version. Never edit or re-checksum an applied
+migration.
+
+### Moving from 1.3 to 2.0
+
+This is a breaking topology adoption, not the next step of the 1.3 patch
+procedure. Zero 2.0 stores all Guardian and Torrent state in `systemDb`; `db`
+contains application-owned data. Startup detects a legacy combined layout and
+fails closed. It does not split that database automatically.
+
+Use this sequence:
+
+1. Prefer first reaching 1.3.3 and proving its migrations and recovery. This
+   is a staging recommendation, not permission to skip the 2.0 split.
+2. Drain, complete, or deliberately cancel every nonterminal 1.3 workflow.
+   A 1.3 run has no 2.0 Guardian execution-authority seal. Migration `014`
+   creates the authority tables but does not invent authority for an existing
+   run; managed 2.0 recovery fails a nonterminal run with missing or invalid
+   authority rather than dispatching it under guessed privilege.
+3. Stop all old runtimes and take one consistent backup of the combined
+   database and every related storage asset.
+4. Follow the app-specific offline split in
+   [System and Application Database Planes](./framework/system-database.md#existing-application-upgrade).
+   Preserve the migration ledger and the complete Zero/Guardian/Torrent state
+   in the new system plane, retain business tables in the application plane,
+   and seed the documented ID-only identity anchors needed by application
+   foreign keys. Do not point `db` and `systemDb` at the same file.
+5. Configure a durable `systemDb` explicitly. Run the framework migration
+   status and migration commands against that system database only. Run app
+   schema Doctor/plan separately against the application database.
+6. Complete the applicable Guardian profile and Administration Organization
+   adoption steps before admitting traffic. Follow the
+   [installed auth-profile upgrade contract](./platform-configuration.md#installed-auth-profile-and-mode-upgrades)
+   and, where applicable, the
+   [Administration Organization adoption procedure](./auth/platform-administration.md#adopting-the-administration-organization-on-a-pre-024-installation).
+   A package change or migration cannot infer tenant ownership, application
+   roles, or the administration organization for a populated app.
+7. Register all handlers, activity versions, and code definitions before
+   recovery, then start one Torrent owner and verify status, definition
+   versions, completed history, and new actor/system starts.
+
+The 2.0 registry applies missing migrations `008` through `029` and guarded
+migration `031`. If the extracted ledger already records `030`, `032`, and
+`033`, those versions are not rerun. Migration `031` rebuilds the affected
+workflow relations for tenant integrity and reinstalls the final `033`
+constraints. Its file-backed migration requires the normal backup. Do not
+delete ledger rows to force an already-applied migration to run again.
+
+Managed request code should start work through the scope-closed
+`zero.workflows` facade. A plugin or trusted job holding the raw 2.0 service
+must replace a managed raw `start()`/`run()` call with `runAsActor()` or the
+explicitly privileged `runAsSystem()`. This is a caller-authority change, not a
+rewrite of the workflow definition.
+
+### Definitions, versions, and recovery
+
+- Keep every `registerHandler()` key needed by a nonterminal sequential run.
+  Keep every exact registered activity version referenced by a nonterminal
+  graph or database definition. Recovery validates the complete set before it
+  publishes the service.
+- Move registration into `workflows.register` if it currently happens in an
+  `onStart` hook, request handler, or after `listen()`. Managed Zero awaits the
+  callback before recovery. Direct plugin composition must finish registration
+  after composition and before `listen()`.
+- Migration `030` backfills an immutable version only when the legacy snapshot
+  can be canonicalized and matched. Ambiguous history remains on the proven
+  sequential path; the migrator does not guess.
+- Published code and database versions are append-only. Existing runs remain
+  pinned. Publish and activate a new version for changed behavior instead of
+  editing graph JSON, fingerprints, or active-version rows directly.
+- Database-defined versions and drafts remain durable database state; no JSON
+  re-entry is required for a 1.3 patch. A 2.0 split must transfer them with the
+  rest of Torrent's system state. Migration `031` preserves and validates the
+  stored scope tuple rather than guessing a new tenant assignment.
+- Database-authored definitions remain data, not executable source. Every
+  referenced implementation must still be registered in application code with
+  `databaseCallable: true`, including interaction delivery, validation, and
+  `each` activities.
+- Exactly one live `WorkflowService` generation may own a physical workflow
+  database. A second owner receives retryable `WORKFLOW_RUNTIME_OWNED`; it must
+  not be treated as a cue to bypass or delete the lease.
+
+### Backup and rollback
+
+Treat package code, configuration, the migration ledger, and database files as
+one release unit. A package downgrade does not undo schema changes.
+
+- For a failed 1.3 patch upgrade, stop all writers and restore both the old
+  package/lockfile and the pre-migration combined-database backup. Older
+  migrators can refuse a database whose ledger contains unknown newer
+  versions.
+- For a failed 2.0 adoption, restore the complete pre-cutover asset set, or the
+  complete verified post-split system/application set. Do not try to recombine
+  planes or restore only one file while writes continue.
+- `--down-to` is not a substitute for a data backup. A `down()` migration can
+  restore only what it explicitly implements; it cannot recreate lost rows,
+  execution authority, or an earlier database topology.
+
+See [Migrations](./migrations.md) for ledger, status, backup, checksum, and
+rollback contracts, and [Releasing Zero](./releasing.md#maintained-13-compatibility-line)
+for the maintained 1.3 package-update boundary.
 
 ### Execution authority and race guarantees
 
@@ -221,9 +398,9 @@ exposed through a normal managed workflow context. For an app-owned external
 effect, call `ctx.assertCurrentAuthority()` immediately before the effect and
 use `ctx.idempotencyKey` to make it idempotent.
 
-### Workflow state and Fabric data planes
+### Torrent state and Fabric data planes
 
-Managed workflow persistence always belongs to Zero's system ReactiveDB. This
+Managed Torrent persistence always belongs to Zero's system ReactiveDB. This
 includes public run, step, event, and interaction rows as well as private
 authority seals, graph state, event delivery, attempt leases, scratch memory,
 and runtime ownership. Enabling Fabric does not copy those tables into the
@@ -1016,15 +1193,18 @@ anonymous, legacy-untrusted, or seal-invalid event responses are consumed and
 recorded as safe rejection telemetry rather than bypassing responder policy or
 blocking a later valid response.
 
-The final response decision and claimed-event consumption commit in one
-ReactiveDB transaction. A forbidden response similarly releases any durable
-submission reservation and consumes the claim atomically. Recovery also
-reconciles a finalized event-channel submission with a crash-left claim before
-claiming later events, so a restart cannot apply the same response twice or
-leave the queue permanently blocked. Ordinary `waitFor` keeps the compatibility
-contract above: it may consume a `legacy-untrusted` inbox row because the
-workflow's own sealed execution authority still governs the downstream node;
-only interaction-responder identity requires the per-event actor/system seal.
+An accepted event response durably binds its private `origin` and exact event
+ID while retaining the inbox claim. Exact-claim consumption, queue accounting,
+and wait completion then commit together in one ReactiveDB transaction.
+Rejected, superseded, forbidden, and externally superseded event responses
+release any matching processing reservation and consume their claim atomically.
+Recovery reconciles either form before claiming later events, so a restart or
+response race cannot apply the same response twice, steal a later wait's event,
+or leave queue capacity permanently occupied. Ordinary `waitFor` keeps the
+compatibility contract above: it may consume a `legacy-untrusted` inbox row
+because the workflow's own sealed execution authority still governs the
+downstream node; only interaction-responder identity requires the per-event
+actor/system seal.
 
 The event bridge persists a private `origin = 'event'` plus the exact event ID;
 cleanup and recovery never infer internal origin from caller-provided strings.
@@ -1692,7 +1872,7 @@ thrown error remains the event's raw `error`; configured sinks own external
 serialization/redaction, so application errors must not embed secrets or
 sensitive records in their message, stack, or custom fields.
 
-## Storage And Migrations 030–032
+## Storage And Migrations 030–033
 
 Migration `030_workflow_graph_runtime` adds immutable graph versions, graph
 coordination, scratch memory, and interaction state without dropping existing
@@ -1764,8 +1944,16 @@ row used for generation takeover and heartbeat fencing. It is additive,
 idempotent, and safe; it does not invent an owner during migration. The first
 runtime to start after upgrade acquires generation one. Existing `030`
 databases advance through `031` and `032` without losing graph, version, draft,
-interaction, or run data, and a fresh runtime converges on the same current
-schema.
+interaction, or run data.
+
+Migration `033_torrent_integrity_hardening` adds database-level definition,
+version, retirement, active-version, draft-base/source, and terminal-event
+delivery integrity fences. It accepts only exact consumed/discarded markers or
+a coherent claimed wait step and adapts the same rule when the 2.0 authority
+kind is present. It is topology-independent and byte-identical on the
+maintained 1.3 line; it does not import or assume Guardian, Fabric, or the
+system/application database split. Fresh runtimes and both supported upgrade
+paths converge on the same current integrity contract through `033`.
 
 ## Legacy Sequential Compatibility
 
@@ -1844,4 +2032,4 @@ auth: {
 | Auth, HTTP, Sync, and observability | `workflow-access.ts`, `workflow-execution-authority.ts`, `auth-workflow-execution-authority.ts`, `workflow-scope-boundary.ts`, `workflow-http.plugin.ts`, `workflow-public-record.ts`, `workflow-sync-policy.ts`, `workflow-observability.ts` |
 | Managed server composition | `src/frontend/server/app-factory.ts`, `src/frontend/server/workflow-execution-services.ts` |
 | React | `src/frontend/client/workflow-hooks.ts`, `src/frontend/client/workflow-run-hooks.ts`, `src/frontend/client/workflow-topology-hooks.ts` |
-| Schema snapshots, storage schema, and migrations | `workflow-schema-snapshot.ts`, `workflow-schema.ts`, `workflow-graph-schema.ts`, `workflow-graph-schema-database.ts`, `workflow-graph-schema-tables.ts`, `workflow-graph-schema-integrity.ts`, `workflow-graph-schema-compatibility.ts`, `workflow-runtime-schema.ts`, `workflow-runtime-lease-schema.ts`, `src/migrations/definitions/030_workflow_graph_runtime.ts`, `src/migrations/definitions/031_workflow_graph_tenant_integrity.ts`, `src/migrations/definitions/032_workflow_runtime_ownership.ts` |
+| Schema snapshots, storage schema, and migrations | `workflow-schema-snapshot.ts`, `workflow-schema.ts`, `workflow-graph-schema.ts`, `workflow-graph-schema-database.ts`, `workflow-graph-schema-tables.ts`, `workflow-graph-schema-integrity.ts`, `workflow-graph-schema-compatibility.ts`, `workflow-runtime-schema.ts`, `workflow-runtime-lease-schema.ts`, `src/migrations/definitions/030_workflow_graph_runtime.ts`, `src/migrations/definitions/031_workflow_graph_tenant_integrity.ts`, `src/migrations/definitions/032_workflow_runtime_ownership.ts`, `src/migrations/definitions/033_torrent_integrity_hardening.ts` |

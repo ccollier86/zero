@@ -3,7 +3,7 @@
 Zero exposes two hook layers from `@zero/framework/react`:
 
 1. Generic React hooks for common UI state and browser behavior.
-2. Platform hooks that compose Zero auth, sync, storage, notifications, rooms, workflows, router, and server state.
+2. Platform hooks that compose Zero auth, sync, storage, notifications, rooms, Torrent workflows, router, and server state.
 
 Generic hooks live under `src/hooks`. Platform hooks live under `src/frontend/client` and delegate transport to the SDK client. Do not add `fetch()`, token reads, WebSocket protocol code, or backend authorization decisions to hooks.
 
@@ -196,7 +196,7 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 | Rooms/presence | `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator` |
 | Ephemeral KV | `useEphemeral`, `useEphemeralTopic` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions` |
-| Workflows | `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun` |
+| Torrent workflows | `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun` |
 | Components | `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers` |
 
 Zero keeps existing platform hooks as canonical instead of adding duplicate
@@ -510,11 +510,26 @@ const clients = useDataPage<ClientRow>('clients', {
 });
 
 return (
-  <DataTableView
-    data={clients.rows}
-    loading={clients.loading}
-    onNextPage={clients.hasMore ? clients.nextPage : undefined}
-  />
+  <>
+    <DataTableView
+      schema={clientTable.schema}
+      source={{
+        type: 'data',
+        data: clients.rows,
+        isLoading: clients.loading,
+        error: clients.error,
+        refresh: clients.refresh,
+      }}
+    />
+    <div className="flex gap-2">
+      <Button disabled={clients.page === 1} onClick={clients.previousPage}>
+        Previous
+      </Button>
+      <Button disabled={!clients.hasMore} onClick={clients.nextPage}>
+        Next
+      </Button>
+    </div>
+  </>
 );
 ```
 
@@ -567,11 +582,21 @@ function Tickets() {
   });
 
   return (
-    <DataTableView
-      data={tickets.rows}
-      loading={tickets.loading}
-      onNextPage={tickets.hasMore ? tickets.nextPage : undefined}
-    />
+    <>
+      <DataTableView
+        schema={ticketTable.schema}
+        source={{
+          type: 'data',
+          data: tickets.rows,
+          isLoading: tickets.loading,
+          error: tickets.error,
+          refresh: tickets.refresh,
+        }}
+      />
+      <Button disabled={!tickets.hasMore} onClick={tickets.nextPage}>
+        Next page
+      </Button>
+    </>
   );
 }
 
@@ -601,11 +626,20 @@ const selection = useDataSelection(clients.rows, {
 });
 
 return (
-  <DataTableView
-    data={clients.rows}
-    selectedIds={selection.selectedIds}
-    onRowClick={selection.toggle}
-  />
+  <>
+    <DataTableView
+      schema={clientTable.schema}
+      data={clients.rows}
+      selectable
+      onSelectionChange={selection.setSelectedIds}
+    />
+    <Button
+      disabled={!selection.hasSelection}
+      onClick={() => archiveClients(selection.selectedItems)}
+    >
+      Archive selected ({selection.count})
+    </Button>
+  </>
 );
 ```
 
@@ -790,7 +824,10 @@ argument alone cannot authorize it.
 Typing state is never persisted. It requires `AppProvider`/`SyncProvider` and
 the underlying sync connection.
 
-### Workflow Runs
+### Torrent Workflow Runs
+
+Torrent is Zero's durable workflow system. The product name does not change
+the established `useWorkflow*` hook names or `client.api.workflows` transport.
 
 `useWorkflowRun(name, { instanceId?, version? })` starts or selects a workflow
 and watches its live synced node/interaction progress. `version` pins new
@@ -880,7 +917,7 @@ Event rows expose audit metadata with payloads redacted. Interaction rows
 expose safe status/timestamps and rejection counts, not prompts, policies,
 schemas, or response payloads. Workflow tables are read-only over Sync, and
 actions go through `client.api.workflows`. See
-[Durable Workflows](../workflows.md).
+[Torrent: Durable Workflows](../workflows.md).
 
 ### User Properties
 

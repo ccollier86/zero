@@ -11,7 +11,7 @@ import { useRouter } from '@zero/framework/react/hooks';
 import { ControlPlaneTabs } from '../../components/control-plane-tabs';
 
 export const meta = {
-  title: 'Members & access | Guardian + Fabric Proof',
+  title: 'Members & access | Guardian + Fabric + Torrent Proof',
   description: 'Adaptive people and access controls for the active customer workspace.',
 };
 

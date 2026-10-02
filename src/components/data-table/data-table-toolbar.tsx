@@ -1,58 +1,99 @@
 /**
  * data-table-toolbar.tsx
  *
- * Renders DataTable search, generated field filters, column visibility, export,
- * and caller-provided toolbar actions. This file owns toolbar UI only; it does
- * not fetch data or mutate table rows.
+ * Composes DataTable search, generated filters, active-filter feedback,
+ * caller-provided control slots, column visibility, and export actions. This
+ * file owns toolbar layout only; filter controls, search interaction, export
+ * mechanics, and table state remain in their dedicated modules.
  */
 
 'use client';
 
 import * as React from 'react';
-import type { Column, Table } from '@tanstack/react-table';
-import { X, Columns3 } from 'lucide-react';
-import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
-import { Search } from '#zero/components/animate-ui/icons/search';
+import type { ColumnFiltersState, Table } from '@tanstack/react-table';
+import { Columns3, X } from 'lucide-react';
+
 import { Download } from '#zero/components/animate-ui/icons/download';
-import { Input } from '#zero/components/ui/input';
-import { Button } from '#zero/components/ui/button';
-import { Badge } from '#zero/components/ui/badge';
-import type { FieldMeta } from '../../schema/field-types';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
 import {
   DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
   DropdownMenuCheckboxItem,
+  DropdownMenuContent,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '#zero/components/animate-ui/components/radix/dropdown-menu';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '#zero/components/ui/select';
+import { Badge } from '#zero/components/ui/badge';
+import { Button } from '#zero/components/ui/button';
 import { cn } from '#zero/lib/utils';
+import {
+  DataTableColumnFilter,
+  getDataTableColumnLabel,
+} from './data-table-column-filter';
+import { exportDataTableCsv } from './data-table-export';
+import {
+  DataTableSearch,
+  type DataTableSearchOptions,
+} from './data-table-search';
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+export interface DataTableToolbarContext<TData> {
+  /** TanStack instance for advanced, table-aware controls. */
+  table: Table<TData>;
+  /** Current global search query. */
+  query: string;
+  /** Update the global search query. */
+  setQuery: (value: string) => void;
+  /** Active TanStack column filters. */
+  columnFilters: ColumnFiltersState;
+  /** Number of active column filters, excluding global search. */
+  activeFilterCount: number;
+  /** Whether one or more column filters are active. */
+  hasActiveFilters: boolean;
+  /** Whether the global search query is non-empty. */
+  hasActiveSearch: boolean;
+  /** Clear global search and every client-side column filter. */
+  clearAll: () => void;
+  /** IDs of rows currently selected by TanStack. */
+  selectedRowIds: readonly string[];
+  /** Original row values currently selected by TanStack. */
+  selectedRows: readonly TData[];
+  /** Number of currently selected rows. */
+  selectedRowCount: number;
+}
+
+export type DataTableToolbarSlot<TData> =
+  | React.ReactNode
+  | ((context: DataTableToolbarContext<TData>) => React.ReactNode);
+
+/** Flexible insertion points around the built-in table controls. */
+export interface DataTableToolbarSlots<TData> {
+  /** Controls beside search and generated schema filters. */
+  controls?: DataTableToolbarSlot<TData>;
+  /** Actions before the built-in Columns and Export buttons. */
+  actions?: DataTableToolbarSlot<TData>;
+  /** Full-width content below the primary toolbar row. */
+  supplemental?: DataTableToolbarSlot<TData>;
+}
 
 export interface DataTableToolbarProps<TData> {
   table: Table<TData>;
   globalFilter: string;
   onGlobalFilterChange: (value: string) => void;
-  searchable?: boolean;
+  searchable?: boolean | DataTableSearchOptions;
   filterable?: boolean;
   filterColumns?: string[];
   showColumnVisibility?: boolean;
   showExport?: boolean;
   exportFilename?: string;
-  actions?: React.ReactNode;
+  /** Legacy right-side action outlet. Prefer `slots.actions` for new code. */
+  actions?: DataTableToolbarSlot<TData>;
+  slots?: DataTableToolbarSlots<TData>;
+  /** Accessible name for this group of table controls. */
+  ariaLabel?: string;
   className?: string;
 }
 
-// ─── Component ──────────────────────────────────────────────────────────────
-
+/** Render a responsive, composable control plane for a DataTable. */
 export function DataTableToolbar<TData>({
   table,
   globalFilter,
@@ -64,10 +105,11 @@ export function DataTableToolbar<TData>({
   showExport = true,
   exportFilename = 'export.csv',
   actions,
+  slots,
+  ariaLabel = 'Table controls',
   className,
 }: DataTableToolbarProps<TData>) {
   const activeFilters = table.getState().columnFilters;
-  const hasFilters = activeFilters.length > 0 || globalFilter.length > 0;
   const filterColumnSet = React.useMemo(
     () => filterColumns ? new Set(filterColumns) : null,
     [filterColumns],
@@ -76,72 +118,75 @@ export function DataTableToolbar<TData>({
     .getAllLeafColumns()
     .filter((column) => column.getCanFilter())
     .filter((column) => !filterColumnSet || filterColumnSet.has(column.id));
+  const clearAll = React.useCallback(() => {
+    table.resetColumnFilters(true);
+    onGlobalFilterChange('');
+  }, [onGlobalFilterChange, table]);
+  const selectedRows = table.getSelectedRowModel().rows;
+  const context = React.useMemo<DataTableToolbarContext<TData>>(() => ({
+    table,
+    query: globalFilter,
+    setQuery: onGlobalFilterChange,
+    columnFilters: activeFilters,
+    activeFilterCount: activeFilters.length,
+    hasActiveFilters: activeFilters.length > 0,
+    hasActiveSearch: globalFilter.length > 0,
+    clearAll,
+    selectedRowIds: selectedRows.map((row) => row.id),
+    selectedRows: selectedRows.map((row) => row.original),
+    selectedRowCount: selectedRows.length,
+  }), [activeFilters, clearAll, globalFilter, onGlobalFilterChange, selectedRows, table]);
+  const controlsSlot = resolveToolbarSlot(slots?.controls, context);
+  const actionsSlot = resolveToolbarSlot(slots?.actions, context);
+  const legacyActions = resolveToolbarSlot(actions, context);
+  const supplementalSlot = resolveToolbarSlot(slots?.supplemental, context);
+  const searchOptions = typeof searchable === 'object' ? searchable : undefined;
+  const showSearch = searchable !== false;
+  const showSecondary = supplementalSlot != null || activeFilters.length > 0;
 
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          {searchable && (
-            <div className="relative">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
-                <Search size={16} />
-              </span>
-              <Input
-                placeholder="Search..."
-                value={globalFilter}
-                onChange={(event) => onGlobalFilterChange(event.target.value)}
-                className="h-8 w-[min(18rem,100%)] pl-8"
-              />
-              {globalFilter && (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  onClick={() => onGlobalFilterChange('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="size-3.5" />
-                </button>
-              )}
-            </div>
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      data-slot="data-table-toolbar"
+      className={cn('flex flex-col gap-2', className)}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          data-slot="data-table-toolbar-left"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+        >
+          {showSearch && (
+            <DataTableSearch
+              value={globalFilter}
+              onValueChange={onGlobalFilterChange}
+              placeholder={searchOptions?.placeholder}
+              label={searchOptions?.ariaLabel}
+              collapsedWidth={searchOptions?.collapsedWidth}
+              expandedWidth={searchOptions?.expandedWidth}
+              disabled={searchOptions?.disabled}
+            />
           )}
 
-          {activeFilters.map((filter) => (
-            <Badge key={filter.id} variant="secondary" className="gap-1">
-              {getColumnLabel(table.getColumn(filter.id), filter.id)}: {String(filter.value)}
-              <button
-                type="button"
-                aria-label={`Clear ${filter.id} filter`}
-                onClick={() => table.getColumn(filter.id)?.setFilterValue(undefined)}
-                className="ml-0.5 hover:text-foreground"
-              >
-                <X className="size-3" />
-              </button>
-            </Badge>
+          {filterable && filterableColumns.map((column) => (
+            <DataTableColumnFilter key={column.id} column={column} />
           ))}
 
-          {hasFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                table.resetColumnFilters();
-                onGlobalFilterChange('');
-              }}
-              className="h-7 text-xs"
-            >
-              Clear
-            </Button>
-          )}
+          {controlsSlot}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          {actions}
+        <div
+          data-slot="data-table-toolbar-right"
+          className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end"
+        >
+          {actionsSlot}
+          {legacyActions}
 
           {showColumnVisibility && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 gap-1">
-                  <Columns3 className="size-3.5" />
+                <Button type="button" variant="outline" size="sm" className="h-8 gap-1">
+                  <Columns3 className="size-3.5" aria-hidden="true" />
                   Columns
                 </Button>
               </DropdownMenuTrigger>
@@ -157,7 +202,7 @@ export function DataTableToolbar<TData>({
                       checked={column.getIsVisible()}
                       onCheckedChange={(value) => column.toggleVisibility(!!value)}
                     >
-                      {getColumnLabel(column, column.id)}
+                      {getDataTableColumnLabel(column, column.id)}
                     </DropdownMenuCheckboxItem>
                   ))}
               </DropdownMenuContent>
@@ -166,159 +211,75 @@ export function DataTableToolbar<TData>({
 
           {showExport && (
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="h-8 gap-1"
-              onClick={() => exportCsv(table, exportFilename)}
+              onClick={() => exportDataTableCsv(table, exportFilename)}
             >
-              <AnimateIcon animateOnHover><Download size={14} /></AnimateIcon>
+              <AnimateIcon animateOnHover>
+                <Download size={14} />
+              </AnimateIcon>
               Export
             </Button>
           )}
         </div>
       </div>
 
-      {filterable && filterableColumns.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          {filterableColumns.map((column) => (
-            <ColumnFilter key={column.id} column={column} />
-          ))}
+      {showSecondary && (
+        <div
+          data-slot="data-table-toolbar-below"
+          className="flex min-w-0 flex-wrap items-center gap-2"
+        >
+          {supplementalSlot}
+
+          {activeFilters.map((filter) => {
+            const label = getDataTableColumnLabel(
+              table.getColumn(filter.id),
+              filter.id,
+            );
+            return (
+              <Badge key={filter.id} variant="secondary" className="gap-1">
+                {label}: {formatFilterValue(filter.value)}
+                <button
+                  type="button"
+                  aria-label={`Clear ${label} filter`}
+                  onClick={() => table.getColumn(filter.id)?.setFilterValue(undefined)}
+                  className="ml-0.5 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              </Badge>
+            );
+          })}
+
+          {(activeFilters.length > 0 || globalFilter.length > 0) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={clearAll}
+              className="h-7 text-xs"
+            >
+              Clear all
+            </Button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// ─── Filter Controls ────────────────────────────────────────────────────────
-
-function ColumnFilter<TData>({ column }: { column: Column<TData, unknown> }) {
-  const meta = (column.columnDef.meta as { fieldMeta?: FieldMeta } | undefined)?.fieldMeta;
-  const label = getColumnLabel(column, column.id);
-  const value = column.getFilterValue();
-
-  if (meta?.type === 'boolean') {
-    return (
-      <Select
-        value={value === undefined ? '__all' : String(value)}
-        onValueChange={(next) => {
-          column.setFilterValue(next === '__all' ? undefined : next === 'true');
-        }}
-      >
-        <SelectTrigger className="h-8 w-[9rem]">
-          <SelectValue placeholder={label} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__all">{label}: All</SelectItem>
-          <SelectItem value="true">{label}: Yes</SelectItem>
-          <SelectItem value="false">{label}: No</SelectItem>
-        </SelectContent>
-      </Select>
-    );
-  }
-
-  if ((meta?.type === 'select' || meta?.type === 'enum' || meta?.type === 'combobox') && meta.options) {
-    return (
-      <Select
-        value={typeof value === 'string' ? value : '__all'}
-        onValueChange={(next) => {
-          column.setFilterValue(next === '__all' ? undefined : next);
-        }}
-      >
-        <SelectTrigger className="h-8 w-[12rem]">
-          <SelectValue placeholder={label} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__all">{label}: All</SelectItem>
-          {meta.options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    );
-  }
-
-  if (meta?.type === 'number') {
-    return (
-      <Input
-        type="number"
-        value={value == null ? '' : String(value)}
-        placeholder={label}
-        onChange={(event) => {
-          const next = event.target.value;
-          column.setFilterValue(next === '' ? undefined : Number(next));
-        }}
-        className="h-8 w-[10rem]"
-      />
-    );
-  }
-
-  if (meta?.type === 'date' || meta?.type === 'datetime') {
-    return (
-      <Input
-        type="date"
-        value={typeof value === 'string' ? value : ''}
-        placeholder={label}
-        onChange={(event) => {
-          column.setFilterValue(event.target.value || undefined);
-        }}
-        className="h-8 w-[10rem]"
-      />
-    );
-  }
-
-  return (
-    <Input
-      value={value == null ? '' : String(value)}
-      placeholder={label}
-      onChange={(event) => {
-        column.setFilterValue(event.target.value || undefined);
-      }}
-      className="h-8 w-[12rem]"
-    />
-  );
+function resolveToolbarSlot<TData>(
+  slot: DataTableToolbarSlot<TData> | undefined,
+  context: DataTableToolbarContext<TData>,
+): React.ReactNode {
+  return typeof slot === 'function' ? slot(context) : slot;
 }
 
-function getColumnLabel<TData>(
-  column: Column<TData, unknown> | undefined,
-  fallback: string,
-): string {
-  if (!column) return fallback;
-  return typeof column.columnDef.header === 'string'
-    ? column.columnDef.header
-    : fallback;
-}
-
-// ─── CSV Export ─────────────────────────────────────────────────────────────
-
-function exportCsv<TData>(table: Table<TData>, filename: string) {
-  const headers = table
-    .getVisibleFlatColumns()
-    .map((column) =>
-      typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id,
-    );
-
-  const rows = table.getFilteredRowModel().rows.map((row) =>
-    table.getVisibleFlatColumns().map((column) => {
-      const value = row.getValue(column.id);
-      return escapeCsv(String(value ?? ''));
-    }),
-  );
-
-  const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-function escapeCsv(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
+function formatFilterValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join(', ');
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return String(value ?? '');
 }

@@ -206,6 +206,54 @@ export class WorkflowInteractionResponseStore {
     return row ? parseWorkflowJson(row.accepted_value_json) : null;
   }
 
+  /** Return the exact trusted event accepted by this interaction, if any. */
+  getAcceptedEventId(interactionId: string): string | null {
+    const row = this.db.prepare(`
+      SELECT response.origin, response.event_id, response.channel,
+        response.submission_id,
+        interaction.instance_id AS interaction_instance_id,
+        interaction.tenant_id AS interaction_tenant_id,
+        event.instance_id AS event_instance_id,
+        event.tenant_id AS event_tenant_id
+      FROM _workflow_interaction_details AS detail
+      INNER JOIN workflow_interactions AS interaction
+        ON interaction.interaction_id = detail.interaction_id
+      INNER JOIN _workflow_interaction_responses AS response
+        ON response.response_id = detail.accepted_response_id
+        AND response.interaction_id = detail.interaction_id
+      LEFT JOIN workflow_events AS event ON event.event_id = response.event_id
+      WHERE detail.interaction_id = ? AND response.status = 'accepted'
+      LIMIT 1
+    `).get(interactionId) as {
+      origin: string;
+      event_id: string | null;
+      channel: string | null;
+      submission_id: string;
+      interaction_instance_id: string;
+      interaction_tenant_id: string | null;
+      event_instance_id: string | null;
+      event_tenant_id: string | null;
+    } | null;
+    if (!row) return null;
+    if (row.origin === 'external') {
+      if (row.event_id !== null
+        || row.channel?.toLowerCase() === 'event'
+        || /^event:/iu.test(row.submission_id)) {
+        throw acceptedEventIdentityInvalid();
+      }
+      return null;
+    }
+    if (row.origin !== 'event'
+      || !row.event_id
+      || row.channel !== 'event'
+      || row.submission_id !== `event:${row.event_id}`
+      || row.event_instance_id !== row.interaction_instance_id
+      || row.event_tenant_id !== row.interaction_tenant_id) {
+      throw acceptedEventIdentityInvalid();
+    }
+    return row.event_id;
+  }
+
   findResponse(interactionId: string, submissionId: string): WorkflowInteractionResponseRecord | null {
     const row = this.db.prepare(`
       SELECT * FROM _workflow_interaction_responses
@@ -222,7 +270,9 @@ export class WorkflowInteractionResponseStore {
     expectedEventId?: string,
   ): boolean {
     return this.transaction(() => {
-      const row = this.db.prepare(`SELECT response.payload_json, interaction.instance_id
+      const row = this.db.prepare(`SELECT response.payload_json, interaction.instance_id,
+          interaction.status AS interaction_status,
+          interaction.updated_at AS interaction_updated_at
         FROM _workflow_interaction_responses AS response
         INNER JOIN workflow_interactions AS interaction
           ON interaction.interaction_id = response.interaction_id
@@ -231,7 +281,10 @@ export class WorkflowInteractionResponseStore {
           AND (? IS NULL OR (response.origin = 'event' AND response.event_id = ?))
         LIMIT 1`)
         .get(interactionId, submissionId, expectedEventId ?? null, expectedEventId ?? null) as {
-          payload_json: string; instance_id: string;
+          payload_json: string;
+          instance_id: string;
+          interaction_status: string;
+          interaction_updated_at: string;
         } | null;
       if (!row) {
         afterRelease?.();
@@ -247,12 +300,18 @@ export class WorkflowInteractionResponseStore {
         );
       }
       this.reserveResponseBytes(row.instance_id, -bytes);
+      // A terminal interaction's public timestamp is part of its accepted,
+      // expired, or rejection-limit integrity linkage. Removing a reservation
+      // that lost the race must not rewrite that lifecycle timestamp.
+      const detailUpdatedAt = row.interaction_status === 'open'
+        ? now
+        : row.interaction_updated_at;
       const adjusted = this.db.prepare(`UPDATE _workflow_interaction_details SET
         response_count = response_count - 1,
         response_bytes = response_bytes - ?,
         updated_at = ?
         WHERE interaction_id = ? AND response_count = ? AND response_bytes = ?`)
-        .run(bytes, now, interactionId,
+        .run(bytes, detailUpdatedAt, interactionId,
           usage.response_count, usage.response_bytes);
       if (adjusted.changes !== 1) throw interactionSubmissionLimit();
       const result = this.db.prepare(`DELETE FROM _workflow_interaction_responses
@@ -352,5 +411,13 @@ function interactionSubmissionLimit(): WorkflowError {
     'Workflow interaction submission capacity was reached',
     'WORKFLOW_INTERACTION_SUBMISSION_LIMIT',
     429,
+  );
+}
+
+function acceptedEventIdentityInvalid(): WorkflowError {
+  return new WorkflowError(
+    'Accepted workflow interaction event identity is invalid',
+    'WORKFLOW_STATE_INVALID',
+    500,
   );
 }

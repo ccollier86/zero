@@ -134,6 +134,11 @@ export class WorkflowInteractionStore {
     return this.responses.getAcceptedValue(interactionId);
   }
 
+  /** Correlate an accepted response with its trusted event command, if any. */
+  getAcceptedEventId(interactionId: string): string | null {
+    return this.responses.getAcceptedEventId(interactionId);
+  }
+
   /** Read one private submission for idempotent service replay. */
   findResponse(
     interactionId: string,

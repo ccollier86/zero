@@ -4,7 +4,43 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.0.0 - 2026-10-02
+
+Major platform release unifying Zero's three named foundations: **Guardian**
+for identity, tenancy, and authorization; **ReactiveDB Fabric** for isolated
+multi-database application data; and **Torrent** for durable, versioned
+workflow orchestration. These are product/documentation names—the established
+`auth`, `databaseTopology`, and `workflows` APIs remain stable.
+
+This release intentionally separates Zero/Guardian/Torrent system state from
+application data. Fresh applications receive the split automatically. Legacy
+combined databases must follow the documented backed-up, offline,
+application-specific split procedure; Zero fails closed instead of moving
+authority data silently. Applications that must remain on the legacy 1.3
+database topology can use the maintained `release/1.3` Torrent compatibility
+line without adopting Guardian/Fabric 2.0.
+
 ### Added
+
+- Added a responsive DataTable toolbar contract with compact, table-only
+  animated search; accessible Escape/Enter and reduced-motion behavior;
+  configurable search widths and labels; arbitrary `controls`, `actions`, and
+  `supplemental` slots; table/search/filter/selection render context; and
+  wrapper forwarding through optional `tableToolbarSlots`. Existing boolean
+  `searchable` and `toolbarActions` call sites remain source-compatible and
+  require no migration, while the new public Popover
+  package path supports first-class filter and action compositions.
+- Upgraded `ThemeTogglerButton` with one inline SVG that rotates and reshapes
+  between sun and moon states, a click-origin circular View Transition for the
+  full page, keyboard-centered activation, resolved system-theme rendering,
+  reduced-motion handling, and immediate fallbacks for unsupported browsers.
+- Added the MIT-licensed Mischief UI `StreamingText` component as a first-class
+  Zero surface for static, caller-owned progressive, replayed, and live async
+  string output. It includes a semantic-token cursor, reduced-motion behavior,
+  sentence-level polite announcements, source replacement fencing, callbacks,
+  root and narrow package exports, `zero add` support, and browser lifecycle
+  coverage. The package retains the immutable upstream source and license
+  notice in `THIRD_PARTY_NOTICES.md`.
 
 - Added a safe-by-default installation bootstrap ceremony at `auth.bootstrap`.
   Fresh authenticated apps now require an operator-held secret of at least 32
@@ -157,7 +193,7 @@ All notable Zero Platform changes are tracked here.
   onboarding, verified domains, upstream SSO, Elysia integration, packaged
   control UI, installed clients, and the server-only schema-adjacent table-
   security direction.
-- Documented the candidate boundary explicitly: the protected Administration
+- Documented the Zero 2.0 boundary explicitly: the protected Administration
   Organization and bounded platform tenant lifecycle UI are implemented;
   upstream enterprise SSO, break-glass, tenant-custom roles, broader
   populated-app discovery/migration tooling beyond exact pre-024
@@ -186,8 +222,9 @@ All notable Zero Platform changes are tracked here.
   receipt, queue, binding, snapshot-session, payload, and transfer work all
   have explicit limits. Added the declarative `databaseTopology`/actor-realm
   surface, Doctor findings, package exports, deployment constraints, and the
-  full Fabric architecture and SDK documentation. This remains an unreleased
-  candidate pending combined-app and supported deployment acceptance.
+  full Fabric architecture and SDK documentation. Zero 2.0 supports this
+  inside the documented single-coordinator, exclusively owned local-root
+  deployment boundary.
 - Added always-separate pinned system and application database planes. `db`
   remains the application-facing `zero.db`/`zero.sql` plane; `systemDb` owns
   Guardian authority and Zero service state behind the privileged
@@ -243,11 +280,13 @@ All notable Zero Platform changes are tracked here.
   source record only after local rollback without allowing observer failures
   to interrupt Sync progress.
 - Added the runnable `examples/guardian-fabric-proof` application as the
-  combined acceptance fixture for the Administration Organization, customer
-  workspaces, advanced RBAC, user API-key lifecycle, ID-only Guardian anchors,
-  physical tenant task databases, and multiplexed realtime Sync. Its tests use
-  the same pure configuration factory as the runnable server so fixture-only
-  policy cannot drift from the documented example.
+  combined Guardian/Fabric/Torrent acceptance fixture for the Administration
+  Organization, customer workspaces, advanced RBAC, user API-key lifecycle,
+  ID-only Guardian anchors, physical tenant task databases, multiplexed
+  realtime Sync, and a versioned human-review workflow whose approved branch
+  writes through its actor-scoped Fabric capability. Its tests use the same
+  pure configuration factory as the runnable server so fixture-only policy
+  cannot drift from the documented example.
 - Added a safe, configurable web-auth return flow. Apps can set the top-level
   `postLoginPath` option (also available on `AppProvider`) while one validated
   local `redirect` deep link takes precedence after login. Server guards retain
@@ -297,7 +336,7 @@ All notable Zero Platform changes are tracked here.
 - Added `zero pdf install` and `zero pdf status`, generated-app convenience
   scripts, Platform Doctor PDF checks, deployment configuration, real Chromium
   integration coverage, and comprehensive PDF documentation.
-- Added the versioned workflow graph engine. The code DSL and canonical
+- Added **Torrent**, Zero's durable versioned workflow graph engine. The code DSL and canonical
   JSON-safe IR now support trusted versioned activities, persisted choices,
   concurrent branches with deterministic joins, bounded keyed array fan-out,
   channel-neutral human/external interactions, and ReactiveDB-backed private
@@ -353,6 +392,12 @@ All notable Zero Platform changes are tracked here.
   workflow database; heartbeat expiry permits takeover, while exact-generation
   commit fences reject late legacy, graph, fan-out, interaction, authority,
   event/pause, and definition/draft writes from a former owner.
+- Added migration `033`, a topology-independent Torrent integrity layer shared
+  byte-for-byte with the maintained 1.3 compatibility line. SQLite now rejects
+  malformed definition catalog values, cross-source active versions, invalid
+  retirement transitions, drafts whose source or base version does not belong
+  to their definition, and incoherent claimed/consumed/discarded event-delivery
+  markers on either legacy or authority-sealed schemas.
 
 ### Fixed
 
@@ -373,6 +418,11 @@ All notable Zero Platform changes are tracked here.
   run/progress actions, indexed repository queries, immutable ownership/parent
   guards, deterministic restart/concurrency/lifecycle coverage, and complete
   registration, recovery, authorization, hooks, and Zero 1.3 upgrade docs.
+- Made event-delivered interaction acceptance crash-consistent. Accepted
+  responses retain their exact claimed event until claim consumption, queue
+  accounting, and wait completion commit together; restart and competing
+  external-response races now atomically discard losing reservations and
+  claims without reapplying a response or stranding queue capacity.
 - Hardened workflow composition boundaries: app Sync filter projections are
   composed with Zero redaction across snapshot, catch-up, and live delivery and
   fail closed if they change row identity; managed workflow observability
@@ -496,7 +546,7 @@ All notable Zero Platform changes are tracked here.
 - Updated the Elysia, validation, file detection, Tailwind/Vite/PostCSS, and
   synchronized AI SDK dependency families within their supported major lines,
   eliminating all advisories reported by `bun audit`. Dependency auditing is
-  now an explicit candidate and clean-checkout release gate.
+  now an explicit release and clean-checkout gate.
 - Bound authenticated browser fetches to the configured Zero server origin.
   Cross-origin targets now fail locally with
   `AUTH_REQUEST_ORIGIN_MISMATCH` before restoration or credential access, while
@@ -734,6 +784,84 @@ All notable Zero Platform changes are tracked here.
 - Expanded package regression coverage to install a packed framework in a
   temporary outside-tree app, verify packaged docs, typecheck, and render SSR.
 - Increased the package integration-test timeout for slower mounted filesystems.
+
+## 1.3.3 - 2026-10-02
+
+Maintained compatibility release for applications that must remain on Zero's
+legacy single-database 1.3 topology. Use the exact `v1.3.3` tag or the
+maintained `release/1.3` branch; the normal stable update wrapper follows 2.0.
+
+### Added
+
+- Added a public token-aware Popover subpath for composing table filter menus
+  and other app controls without importing internal Animate UI files.
+- Added the MIT-licensed Mischief UI `StreamingText` component as a first-class
+  Zero export for AI, agent, and live text output. It supports async string
+  sources, caller-owned progressive text, known-text replay, semantic-token
+  cursor styling, reduced motion, and sentence-level screen-reader
+  announcements. The package, source-copy registry, docs, tests, and required
+  Tinkerers Labs notice are included together.
+
+### Improved
+
+- Upgraded DataTable's toolbar into a responsive control plane with a compact,
+  table-only animated search, schema-aware exact/contains/array filters,
+  selection-aware `controls`/`actions`/`supplemental` slots, accessible
+  pagination, wrapper forwarding, and packed-package coverage. The existing
+  `toolbarActions` outlet remains backwards compatible.
+- Reworked the theme control around one masked sun/moon SVG and a native View
+  Transition that reveals the new theme in a circle from the activated toggle.
+  Keyboard users receive a control-centered reveal, reduced-motion preferences
+  switch immediately, unsupported browsers retain a safe fallback, and
+  multiple toggles use independent hydration-safe SVG masks.
+
+### Fixed
+
+- Updated the maintained 1.3 line's coordinated AI SDK 6 provider family
+  within its existing major versions so fresh 1.3.3 installs resolve the
+  patched `@ai-sdk/provider-utils` cohort. The 1.3 line now commits its Bun
+  lockfile so release verification is reproducible.
+
+## 1.3.2 - 2026-10-02
+
+Maintained compatibility patch for applications that must remain on Zero's
+legacy single-database 1.3 topology. Use the exact `v1.3.2` tag or the
+maintained `release/1.3` branch; the normal stable update wrapper follows 2.0.
+
+### Fixed
+
+- Made event-delivered interaction acceptance crash- and race-consistent.
+  Accepted responses retain their exact claim until claim consumption, queue
+  accounting, and wait completion commit together. A direct response that wins
+  while event policy is pending now atomically releases the losing reservation
+  and claim, including after restart, without stealing a later wait's event.
+
+## 1.3.1 - 2026-10-02
+
+Compatibility release for applications that must remain on Zero's legacy
+single-database 1.3 topology. It names and hardens the **Torrent** workflow
+subsystem without importing Guardian multi-tenancy, ReactiveDB Fabric, or the
+2.0 system/application database split. This initial compatibility tag is
+superseded by `v1.3.2` and should not be selected for new updates.
+
+### Added
+
+- Added the versioned workflow graph engine, database definitions and drafts,
+  durable interactions, conditional/parallel/fan-out nodes, private scratch
+  memory, owner-scoped real-time projections, and migrations `030`, `032`, and
+  topology-neutral `033`.
+
+### Fixed
+
+- Hardened Torrent sequencing, retry/recovery, cancellation, pause, timeout,
+  event/wait delivery, fan-out, definition integrity, privacy, authorization,
+  single-owner runtime fencing, and accepted-event crash recovery.
+- Made ReactiveDB tracked writes and durable sequence records atomic across
+  handles, rejected asynchronous transaction callbacks, and preserved commit
+  order for reentrant listeners and live Sync delivery.
+- Included the maintained 1.3 line's KV concurrency/durability, authenticated
+  multipart transport, auth-navigation, native-auth, Sync recovery, PDF,
+  packaging, security, and lifecycle fixes accumulated since 1.3.0.
 
 ## 1.3.0 - 2026-07-06
 

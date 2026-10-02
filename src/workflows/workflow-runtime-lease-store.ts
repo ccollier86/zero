@@ -39,54 +39,57 @@ export class WorkflowRuntimeLeaseStore {
   /** Acquire a fresh generation or fail while another unexpired owner exists. */
   acquire(ownerId: string, now: number, leaseMs: number): WorkflowRuntimeLeaseToken {
     return this.db.transaction(() => {
-      const current = this.read();
       const expiresAt = exactExpiry(now, leaseMs);
-      if (!current) {
-        this.db.prepare(`INSERT INTO _workflow_runtime_owner_lease (
+      validateOwnerId(ownerId);
+      const acquired = this.db.prepare(`INSERT INTO _workflow_runtime_owner_lease (
           lease_key, owner_id, generation, acquired_at, heartbeat_at, expires_at, released_at
-        ) VALUES (?, ?, 1, ?, ?, ?, NULL)`).run(
+        ) VALUES (?, ?, 1, ?, ?, ?, NULL)
+        ON CONFLICT(lease_key) DO UPDATE SET
+          owner_id = excluded.owner_id,
+          generation = _workflow_runtime_owner_lease.generation + 1,
+          acquired_at = excluded.acquired_at,
+          heartbeat_at = excluded.heartbeat_at,
+          expires_at = excluded.expires_at,
+          released_at = NULL
+        WHERE (_workflow_runtime_owner_lease.released_at IS NOT NULL
+            OR _workflow_runtime_owner_lease.expires_at <= ?)
+          AND _workflow_runtime_owner_lease.generation < ?
+        RETURNING owner_id, generation, acquired_at, expires_at`).get(
           WORKFLOW_RUNTIME_LEASE_KEY,
           ownerId,
           now,
           now,
           expiresAt,
-        );
-        return Object.freeze({ ownerId, generation: 1, acquiredAt: now, expiresAt });
+          now,
+          MAX_GENERATION,
+        ) as Pick<WorkflowRuntimeLeaseRow,
+          'owner_id' | 'generation' | 'acquired_at' | 'expires_at'> | null;
+      if (acquired) {
+        return Object.freeze({
+          ownerId: acquired.owner_id,
+          generation: acquired.generation,
+          acquiredAt: acquired.acquired_at,
+          expiresAt: acquired.expires_at,
+        });
       }
+
+      const current = this.read();
+      if (!current) throw ownershipConflict();
       validateLeaseRow(current);
-      if (current.released_at === null && current.expires_at > now) {
-        throw new WorkflowError(
-          'Workflow runtime is already owned by another live service',
-          'WORKFLOW_RUNTIME_OWNED',
-          503,
-          true,
-        );
-      }
-      if (current.generation >= MAX_GENERATION) {
+      if (current.generation >= MAX_GENERATION
+        && (current.released_at !== null || current.expires_at <= now)) {
         throw new WorkflowError(
           'Workflow runtime ownership generation is exhausted',
           'WORKFLOW_STATE_INVALID',
           500,
         );
       }
-      const generation = current.generation + 1;
-      const result = this.db.prepare(`UPDATE _workflow_runtime_owner_lease SET
-        owner_id = ?, generation = ?, acquired_at = ?, heartbeat_at = ?,
-        expires_at = ?, released_at = NULL
-        WHERE lease_key = ? AND generation = ?
-          AND (released_at IS NOT NULL OR expires_at <= ?)`)
-        .run(
-          ownerId,
-          generation,
-          now,
-          now,
-          expiresAt,
-          WORKFLOW_RUNTIME_LEASE_KEY,
-          current.generation,
-          now,
-        );
-      if (result.changes !== 1) throw ownershipConflict();
-      return Object.freeze({ ownerId, generation, acquiredAt: now, expiresAt });
+      throw new WorkflowError(
+        'Workflow runtime is already owned by another live service',
+        'WORKFLOW_RUNTIME_OWNED',
+        503,
+        true,
+      );
     });
   }
 
@@ -196,6 +199,16 @@ function validateLeaseTime(now: number): void {
   if (!Number.isSafeInteger(now) || now < 0) {
     throw new WorkflowError(
       'Workflow runtime lease timing is invalid',
+      'WORKFLOW_CONFIG_INVALID',
+      500,
+    );
+  }
+}
+
+function validateOwnerId(ownerId: string): void {
+  if (typeof ownerId !== 'string' || ownerId.length < 1 || ownerId.length > 200) {
+    throw new WorkflowError(
+      'Workflow runtime owner id must be between 1 and 200 characters',
       'WORKFLOW_CONFIG_INVALID',
       500,
     );

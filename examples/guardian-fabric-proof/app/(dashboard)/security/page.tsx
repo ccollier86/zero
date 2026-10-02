@@ -13,7 +13,7 @@ import {
 import { WorkspaceApiKeyControls } from '../../components/workspace-api-key-controls';
 
 export const meta = {
-  title: 'Security | Guardian + Fabric Proof',
+  title: 'Security | Guardian + Fabric + Torrent Proof',
   description: 'Manage API keys for the current customer-workspace authority.',
 };
 

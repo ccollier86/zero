@@ -97,6 +97,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Public text effects for Hero titles and landing-page copy.',
   },
   {
+    id: 'components/streaming-text',
+    sourceRel: 'components/streaming-text',
+    description: 'Accessible streamed text for AI responses and live output.',
+  },
+  {
     id: 'hooks',
     sourceRel: 'hooks',
     description: 'Generic React hooks provided by Zero.',

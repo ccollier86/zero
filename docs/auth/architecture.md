@@ -138,7 +138,7 @@ Authenticated HTTP plugins derive a branded `ServiceDataScope` from the live req
 application scope, while `multi` requires a complete, live tenant membership and fails
 closed for application/selection sessions.
 
-Notifications and receipts, rooms and members, workflow
+Notifications and receipts, rooms and members, Torrent workflow
 instances/steps/events/interactions, and Storage drives/objects/permissions
 persist the nullable discriminator added by migration `008`. Child rows copy
 the parent's discriminator directly. Default framework Sync row filters
@@ -147,10 +147,10 @@ catch-up, and live delivery. Durable state and ephemeral topics use the same
 scope in internal principal/namespace keys so the same user may safely use the
 same logical key or topic in two tenants.
 
-Trusted workflow activities and code-authored definitions are application
+Trusted Torrent activities and code-authored definitions are application
 configuration. Database-authored definitions belong to an exact application
 or tenant namespace; a tenant definition can shadow a same-name code definition
-only in that tenant. Notification expiry cleanup, workflow polling/recovery,
+only in that tenant. Notification expiry cleanup, Torrent polling/recovery,
 and the Storage content-addressed blob pool are system-global scans; they do not
 create workflow authority. Migration `014` keeps each workflow's original
 actor/session/scope generations (or an explicit audited system principal) in a
@@ -164,8 +164,8 @@ to one drive/path, not ambient tenant membership.
 The immutable multi-tenant permission registry includes `workflows:manage`,
 `notifications:manage`, and `rooms:manage`. Tenant `owner`, any live tenant
 scope with `allPermissions`, and app-defined roles assigned the matching
-permission may administer that service in the active tenant. Workflow managers
-may view and control peer workflows, notification managers may create targeted
+permission may administer that service in the active tenant. Torrent workflow
+managers may view and control peer workflows, notification managers may create targeted
 notifications and inspect/delete them, and room managers may delete peer-owned
 rooms. Ordinary workflow ownership, notification audience/receipt actions, and
 room creator/member operations keep their narrower self-service semantics.
@@ -293,7 +293,7 @@ The kernel owns no request, persistence, token, Elysia, tenant lifecycle, or
 data-plane state. Installed adapters hydrate it from live durable authority for
 the named Elysia request access facade, file routing, resources/data queries,
 Sync, browser/page/native credentials, built-in services, and authorized
-workflow execution. Raw application SQL and deliberately unsafe platform
+Torrent workflow execution. Raw application SQL and deliberately unsafe platform
 handles remain trusted server-code escape hatches, and an unregistered app
 table is not made tenant-safe by evaluating the pure kernel alone.
 
@@ -1027,8 +1027,8 @@ plugin's explicit temporary compatibility option and is disabled by default.
 The sync engine's policy mechanism (see [Subscription And Mutation Policy](../realtime-sync/realtime-sync/README.md#subscription-and-mutation-policy)) uses the verified WebSocket identity when policy callbacks need user context. Auth provides `{ userId, email, role }`; sync derives readable tables through `SyncPolicy.canReadTable` and checks direct `sync.mutate` writes through `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete`.
 
 `createApp()` composes deny-wins platform defaults with app policy. `users`,
-workflow definitions, and Storage metadata are private to generic Sync.
-Notifications/receipts, rooms/members, and workflow instances/steps/events use
+Torrent workflow definitions, and Storage metadata are private to generic Sync.
+Notifications/receipts, rooms/members, and Torrent workflow instances/steps/events use
 target, membership, or owner row filters across snapshot, catch-up, and live
 delivery. Framework-owned tables are also protected from direct Sync mutation;
 their purpose-built HTTP/service APIs remain the supported write path.

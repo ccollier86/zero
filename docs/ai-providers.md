@@ -268,8 +268,8 @@ Zero does not hard-code every provider model name. The provider id must match
 this table, and the model id after the slash must be valid for that provider
 account.
 
-Provider/model selection is always per call. Tools, workflows, jobs, and route
-handlers all use the same request shape:
+Provider/model selection is always per call. Tools, Torrent workflows, jobs,
+and route handlers all use the same request shape:
 
 ```ts
 await ai.generateConversation({

@@ -15,7 +15,7 @@ modern browser and support:
 - Chromium header/footer templates
 
 PDF is internal server infrastructure. Zero does not mount a public PDF API
-route. App routes, workflows, jobs, or services decide who may generate a
+route. App routes, Torrent workflows, jobs, or services decide who may generate a
 document and what HTML reaches the renderer.
 
 ## Browser Installation
@@ -234,9 +234,9 @@ authenticated users. `render()` works without auth; `renderToStorage()` fails
 with `PDF_STORAGE_UNAVAILABLE` when storage is not mounted. A custom
 `PdfStorageWriter` can replace that boundary for another object store.
 
-## Workflows And Jobs
+## Torrent Workflows And Jobs
 
-PDF uses the same process-wide service in workflow activities and scheduled
+PDF uses the same process-wide service in Torrent activities and scheduled
 jobs. Register this activity inside `AppConfig.workflows.register(registry)`:
 
 ```ts
@@ -270,7 +270,7 @@ Return storage metadata from durable workflow steps, not raw `Uint8Array`
 bytes. This keeps workflow state small and JSON-safe. A workflow may be
 re-driven after a crash, so use a deterministic object path and an explicit
 overwrite/deduplication policy when duplicate rendering would be unsafe.
-See [Durable Workflows](./workflows.md) for registration timing, cancellation,
+See [Torrent: Durable Workflows](./workflows.md) for registration timing, cancellation,
 deadlines, retries, and recovery semantics.
 
 ## Resource Security

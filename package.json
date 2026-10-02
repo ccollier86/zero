@@ -1,12 +1,20 @@
 {
   "name": "@zero/framework",
-  "version": "1.3.0",
-  "description": "Bun/Elysia full-stack app framework with integrated backend services, reactive data, and reusable React UI.",
+  "version": "2.0.0",
+  "description": "Bun/Elysia full-stack app framework with Guardian auth, ReactiveDB Fabric, Torrent workflow orchestration, reactive data, and reusable React UI.",
   "type": "module",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "packageManager": "bun@1.3.14",
   "keywords": [
     "bun",
     "elysia",
     "react",
+    "sqlite",
+    "multi-tenant",
+    "workflow",
+    "workflow-engine",
     "full-stack",
     "framework",
     "reactive-data",
@@ -155,6 +163,7 @@
   },
   "files": [
     "src",
+    "THIRD_PARTY_NOTICES.md",
     "examples/guardian-fabric-proof/.env.example",
     "examples/guardian-fabric-proof/README.md",
     "examples/guardian-fabric-proof/app",
@@ -348,6 +357,10 @@
       "types": "./src/components/dropdown-menu/index.ts",
       "import": "./src/components/dropdown-menu/index.ts"
     },
+    "./components/popover": {
+      "types": "./src/components/popover/index.ts",
+      "import": "./src/components/popover/index.ts"
+    },
     "./components/expandable-card": {
       "types": "./src/components/expandable-card/index.ts",
       "import": "./src/components/expandable-card/index.ts"
@@ -395,6 +408,10 @@
     "./components/text-effects": {
       "types": "./src/components/text-effects/index.ts",
       "import": "./src/components/text-effects/index.ts"
+    },
+    "./components/streaming-text": {
+      "types": "./src/components/streaming-text/index.ts",
+      "import": "./src/components/streaming-text/index.ts"
     },
     "./components/tooltip": {
       "types": "./src/components/tooltip/index.ts",

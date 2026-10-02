@@ -848,6 +848,12 @@ export const serverSymbols = {
 `;
 
 const clientSmokeSource = `
+import { StreamingText as StreamingTextRoot } from '@zero/framework';
+import type {
+  StreamSource as StreamSourceRoot,
+  StreamingTextProps as StreamingTextPropsRoot,
+  StreamingTextStatus as StreamingTextStatusRoot,
+} from '@zero/framework';
 import {
   AdministrationScopeGate as AdministrationScopeGateSubpath,
   ApiKeyManagement as ApiKeyManagementSubpath,
@@ -892,8 +898,30 @@ import { BentoGrid as BentoGridSubpath } from '@zero/framework/components/bento-
 import { CodeBlock as CodeBlockSubpath } from '@zero/framework/components/code-block';
 import { CtaSection as CtaSectionSubpath } from '@zero/framework/components/cta';
 import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
-import { DataTableView } from '@zero/framework/components/data-table';
+import {
+  DataTableSearch as DataTableSearchSubpath,
+  DataTableToolbar as DataTableToolbarSubpath,
+  DataTableView,
+} from '@zero/framework/components/data-table';
+import type {
+  DataTableSearchOptions as DataTableSearchOptionsSubpath,
+  DataTableSearchProps as DataTableSearchPropsSubpath,
+  DataTableToolbarContext as DataTableToolbarContextSubpath,
+  DataTableToolbarProps as DataTableToolbarPropsSubpath,
+  DataTableToolbarSlot as DataTableToolbarSlotSubpath,
+  DataTableToolbarSlots as DataTableToolbarSlotsSubpath,
+} from '@zero/framework/components/data-table';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
+import {
+  Popover as PopoverSubpath,
+  PopoverContent as PopoverContentSubpath,
+  PopoverTrigger as PopoverTriggerSubpath,
+} from '@zero/framework/components/popover';
+import type {
+  PopoverContentProps as PopoverContentPropsSubpath,
+  PopoverProps as PopoverPropsSubpath,
+  PopoverTriggerProps as PopoverTriggerPropsSubpath,
+} from '@zero/framework/components/popover';
 import { ExpandableCards as ExpandableCardsSubpath } from '@zero/framework/components/expandable-card';
 import { Faq as FaqSubpath } from '@zero/framework/components/faq';
 import { FeaturesSection as FeaturesSectionSubpath } from '@zero/framework/components/features';
@@ -917,6 +945,12 @@ import {
 } from '@zero/framework/components/ui/radio-group';
 import { ThemeProvider as ThemeProviderSubpath } from '@zero/framework/components/ui/theme-provider';
 import { Toaster } from '@zero/framework/components/ui/sonner';
+import { StreamingText as StreamingTextSubpath } from '@zero/framework/components/streaming-text';
+import type {
+  StreamSource as StreamSourceSubpath,
+  StreamingTextProps as StreamingTextPropsSubpath,
+  StreamingTextStatus as StreamingTextStatusSubpath,
+} from '@zero/framework/components/streaming-text';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Check } from '@zero/framework/icons';
 import { ModalManager } from '@zero/framework/modals';
@@ -983,6 +1017,8 @@ import {
   CtaSection,
   Collapsible,
   DataTable,
+  DataTableSearch,
+  DataTableToolbar,
   defineResourceFields,
   DropdownMenu,
   ExpandableCards,
@@ -998,6 +1034,9 @@ import {
   PlatformApiKeyManagement,
   PlatformWorkspaceManagement,
   PlatformUserManagement,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   PermissionGate,
   PlatformAdminGate,
   normalizeAbsoluteLocalPath,
@@ -1009,6 +1048,7 @@ import {
   projectKanbanMove,
   StickToBottom,
   SelfApiKeyManagement,
+  StreamingText,
   TextGenerateEffect,
   ThemeTogglerButton,
   ThemeProvider,
@@ -1091,6 +1131,12 @@ import type {
   ControlPlaneAuditViewerProps,
   DataRealmReadinessSnapshot,
   DataRealmReadyGateProps,
+  DataTableSearchOptions,
+  DataTableSearchProps,
+  DataTableToolbarContext,
+  DataTableToolbarProps,
+  DataTableToolbarSlot,
+  DataTableToolbarSlots,
   AuthAuthorizationState,
   AuthState,
   AuthConfigState,
@@ -1104,10 +1150,16 @@ import type {
   Client,
   IssuedAuthApiKey,
 	  SyncMutationRejection,
-	  LoginFormProps,
+  LoginFormProps,
+  StreamSource,
+  StreamingTextProps,
+  StreamingTextStatus,
   PlatformUserManagementProps,
   PlatformApiKeyManagementProps,
   PlatformWorkspaceManagementProps,
+  PopoverContentProps,
+  PopoverProps,
+  PopoverTriggerProps,
   TenantCreationFormProps,
   TenantMemberApiKeyManagementProps,
   TenantMemberManagementProps,
@@ -1131,6 +1183,42 @@ import type {
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
+	type StreamingTextPublicTypes = readonly [
+	  StreamSourceRoot,
+	  StreamingTextPropsRoot,
+	  StreamingTextStatusRoot,
+	  StreamSource,
+	  StreamingTextProps,
+	  StreamingTextStatus,
+	  StreamSourceSubpath,
+	  StreamingTextPropsSubpath,
+	  StreamingTextStatusSubpath,
+	];
+	const streamingTextPublicTypes = null as unknown as StreamingTextPublicTypes;
+	type DataTablePublicTypes = readonly [
+	  DataTableSearchOptions,
+	  DataTableSearchProps,
+	  DataTableToolbarContext<Row>,
+	  DataTableToolbarProps<Row>,
+	  DataTableToolbarSlot<Row>,
+	  DataTableToolbarSlots<Row>,
+	  DataTableSearchOptionsSubpath,
+	  DataTableSearchPropsSubpath,
+	  DataTableToolbarContextSubpath<Row>,
+	  DataTableToolbarPropsSubpath<Row>,
+	  DataTableToolbarSlotSubpath<Row>,
+	  DataTableToolbarSlotsSubpath<Row>,
+	];
+	const dataTablePublicTypes = null as unknown as DataTablePublicTypes;
+	type PopoverPublicTypes = readonly [
+	  PopoverProps,
+	  PopoverTriggerProps,
+	  PopoverContentProps,
+	  PopoverPropsSubpath,
+	  PopoverTriggerPropsSubpath,
+	  PopoverContentPropsSubpath,
+	];
+	const popoverPublicTypes = null as unknown as PopoverPublicTypes;
 	const administrationScopeGateProps = {} as AdministrationScopeGateProps;
 	const authConfigState = {} as AuthConfigState;
 	const authConfigStatus = 'ready' as AuthConfigStatus;
@@ -1294,7 +1382,12 @@ export const clientSymbols = {
 	  clientMutationRejection,
 	  clientSubpathMutationRejection,
 	  clientResourceFields,
+	  dataTablePublicTypes,
 	  DataTable,
+  DataTableSearch,
+  DataTableSearchSubpath,
+  DataTableToolbar,
+  DataTableToolbarSubpath,
   DataTableView,
   DropdownMenu,
   DropdownMenuSubpath,
@@ -1323,6 +1416,13 @@ export const clientSymbols = {
 	  platformUserManagementProps,
   PermissionGate,
   PermissionGateSubpath,
+  Popover,
+  PopoverContent,
+  PopoverContentSubpath,
+  popoverPublicTypes,
+  PopoverSubpath,
+  PopoverTrigger,
+  PopoverTriggerSubpath,
   PlatformAdminGate,
   PlatformAdminGateSubpath,
   LoginForm,
@@ -1368,6 +1468,10 @@ export const clientSymbols = {
   SelfApiKeyManagementSubpath,
   StickToBottom,
   StorageManagement,
+  StreamingTextRoot,
+  StreamingText,
+  StreamingTextSubpath,
+  streamingTextPublicTypes,
   TextGenerateEffect,
   TextGenerateEffectSubpath,
   ThemeProvider,

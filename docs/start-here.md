@@ -1,8 +1,9 @@
 # Start Here
 
 Zero is a Bun/Elysia full-stack app platform. The goal is fast data-driven app
-development without wiring separate backend services for auth, storage, sync,
-workflows, notifications, state, platform tokens, PDF rendering, or email
+development without wiring separate backend services for Guardian auth,
+storage, sync, Torrent workflows, notifications, state, platform tokens, PDF
+rendering, or email
 account flows.
 
 Before platform work, read:
@@ -36,6 +37,10 @@ user-bound API keys, and packaged access controls, use
 canonical subsystem index. It routes to the focused configuration, RBAC,
 onboarding, audit, browser, and installed-app guides without duplicating their
 contracts here.
+For durable orchestration, **Torrent** is Zero's workflow system. Torrent is
+product/documentation vocabulary; application code continues to use
+`workflows`, `@zero/framework/workflows`, `zero.workflows`, and the existing
+`useWorkflow*` hooks documented in [Torrent: Durable Workflows](./workflows.md).
 For the exact opt-in user-key configuration, per-route credential admission,
 live-authority lifecycle, SDK, and packaged management controls, read
 [Guardian User API Keys](./auth/api-keys.md).
@@ -69,14 +74,14 @@ building dashboard/work-queue style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
 sync, Guardian auth/authorization, email, storage,
-[durable workflows](./workflows.md), notifications,
+[Torrent durable workflows](./workflows.md), notifications,
 AI, vector storage, [PDF rendering](./pdf.md), and
 [platform tokens](./tokens.md) for one-time actions plus resumable public
 flows.
 
 ReactiveDB Fabric—Zero's multi-database routing, isolation, actor, and
-lifecycle layer—is an active unreleased candidate rather than a
-released app contract. Its compatibility, subprocess execution, WAL reader,
+lifecycle layer—is a supported Zero 2.0 app contract. Its compatibility,
+subprocess execution, WAL reader,
 Resource CRUD, multiplexed ReactiveDB realtime, tenant-authority, and bounded
 hybrid-placement contracts are tracked in the
 [Multi-Database Architecture](./framework/multi-database-architecture.md).
@@ -176,6 +181,11 @@ use `bun run zero update --project .`; add `--latest` only when you intentionall
 want the newest published release. If the installed framework predates this
 command, bootstrap it with
 `bunx --package @zero/framework@latest zero update --project .`.
+
+With Zero 2.0 on `main`, an application intentionally remaining on the legacy
+combined-database 1.3 line must not use the `zero-update` stable wrapper. Use an
+exact `v1.3.3`/`release/1.3` checkout through `zero update --local` as documented
+in [Releasing Zero](./releasing.md#maintained-13-compatibility-line).
 
 For deliberate testing of an unreleased working checkout, bypass the stable
 wrapper explicitly:
@@ -646,6 +656,13 @@ Zero components before copying external snippets:
 `CodeBlock`, or custom React visual slot. Their usage contract is documented in
 [Public Components](./frontend/public-components.md).
 
+For AI answers, agent output, and text that actually arrives in chunks, use
+`StreamingText` from `@zero/framework/components/streaming-text`. It accepts an
+`AsyncIterable<string>`, a `ReadableStream<string>`, or caller-owned progressive
+text, and provides a tokenized cursor plus sentence-level screen-reader
+announcements. Do not use a decorative typewriter effect to delay a real
+provider stream. See [Streaming Text](./frontend/streaming-text.md).
+
 Run the platform doctor against an exported config module:
 
 ```txt
@@ -713,6 +730,7 @@ generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/components/navbar`, and
 `@zero/framework/components/hero`, and
 `@zero/framework/components/text-effects`,
+`@zero/framework/components/streaming-text`,
 `@zero/framework/components/faq`,
 `@zero/framework/components/features`,
 `@zero/framework/components/code-block`,
@@ -741,6 +759,7 @@ zero add components/hero
 zero add components/kanban
 zero add components/navbar
 zero add components/text-effects
+zero add components/streaming-text
 zero add hooks modals --dry-run
 ```
 
@@ -869,15 +888,15 @@ Zero includes these backend capabilities out of the box:
 | State Sync | Server-persisted reactive key/value state isolated per authorized-scope user. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
-| Workflows | [Versioned durable graphs](./workflows.md), trusted activities, choices, parallel joins, bounded array fan-out, event and human waits, private scratch memory, crash recovery, and owner-scoped live visualization. |
+| Torrent | [Versioned durable workflows](./workflows.md), trusted activities, choices, parallel joins, bounded array fan-out, event and human waits, private scratch memory, crash recovery, and owner-scoped live visualization. The product name does not rename the existing `workflows` APIs. |
 | Migrations | Explicit migration files, ledger, schema history, rollback, backups, doctor, draft plans. |
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
 | AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |
 | Vector Store | Local zvec-backed vector persistence/search with scoped filters and AI embedding bridge helpers. |
 | PDF | Secure browser-grade HTML/CSS-to-PDF rendering with bounded concurrency, strict resource policy, storage composition, and a replaceable renderer adapter. |
 
-Current development boundary: this unreleased tree implements `single/simple`,
-`single/advanced`, `multi/simple`, and `multi/advanced`, including scoped
+Zero 2.0's supported boundary includes `single/simple`, `single/advanced`,
+`multi/simple`, and `multi/advanced`, including scoped
 resources, Sync, managed services, tenant onboarding/control surfaces, and
 browser authorization state, including opt-in verified-company-domain request
 onboarding and the bounded durable authorization/control-plane audit. Multi
@@ -898,9 +917,10 @@ keys between registered tenant Resources. Physical tenant isolation validates
 the actor realm instead.
 Default `createApp()` installs framework-table and managed ephemeral-topic
 policy, while direct `createSyncPlugin()` composition needs explicit
-auth/policy. See [Releasing Zero](./releasing.md)
-and the [auth implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
-for the complete supported-versus-preview boundary.
+auth/policy. See [Releasing Zero](./releasing.md) for the complete
+supported-versus-preview boundary and the
+[auth implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
+for Guardian's shipped evidence and deliberately deferred features.
 See [Platform Administration Organization](./auth/platform-administration.md)
 for the multi-mode bootstrap, exact pre-024 adoption procedure, SDK, hooks,
 routes, and packaged operator UI.

@@ -87,7 +87,7 @@ commands replace scaffold targets.
 | `@zero/framework/server` | Composition root, `createApp()`, `createServerRoute()`, backend service getters, plugins, config types. |
 | `@zero/framework/react` | Client-safe components, hooks, SDK helpers, auth UI, storage UI. |
 | `@zero/framework/react/app-provider` | Narrow AppProvider import for package-mode layouts. |
-| `@zero/framework/react/hooks` | Narrow app-facing platform hooks such as `useCollection()`, `useLazyCollection()`, `useAuth()`, rooms, notifications, and workflow hooks. |
+| `@zero/framework/react/hooks` | Narrow app-facing platform hooks such as `useCollection()`, `useLazyCollection()`, `useAuth()`, rooms, notifications, and Torrent workflow hooks. |
 | `@zero/framework/schema` | Data model/table DSL. |
 | `@zero/framework/icons` | Default Animate UI icon pack. |
 | `@zero/framework/styles.css` | Packaged Zero stylesheet for app entrypoints that need explicit CSS import. |
@@ -108,7 +108,7 @@ commands replace scaffold targets.
 | `@zero/framework/sync` | ReactiveDB and sync server contracts. |
 | `@zero/framework/sync/client` | Lower-level WebSocket sync client primitives. Prefer `react` hooks in browser UI. |
 | `@zero/framework/vector` | Vector store contracts when importing the vector layer directly. |
-| `@zero/framework/workflows` | Workflow DSL, canonical IR/expressions, activity catalog, graph validation, and durable TypeBox schema-snapshot helpers. React workflow hooks come from `react`. |
+| `@zero/framework/workflows` | Torrent's workflow DSL, canonical IR/expressions, activity catalog, graph validation, and durable TypeBox schema-snapshot helpers. React workflow hooks come from `react`. |
 | `@zero/framework/hooks` | Generic React hook library when importing hooks without the full React barrel. |
 | `@zero/framework/modals` | Modal manager primitives when importing without the full React barrel. |
 | `@zero/framework/components/auth` | Auth UI blocks and gates. Also exported from `react`. |
@@ -128,6 +128,7 @@ commands replace scaffold targets.
 | `@zero/framework/components/navbar` | Public-page resizable navbar. Also exported from `react`. |
 | `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
 | `@zero/framework/components/text-effects` | Public text effects for Hero titles and landing copy. Also exported from `react`. |
+| `@zero/framework/components/streaming-text` | Accessible live/replayed text for AI, agents, and async string output. Also exported from `react`. |
 | `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
 
 Rule of thumb:
@@ -244,7 +245,7 @@ SQLite's file/WAL path.
 | --- | --- |
 | ReactiveDB | Always created by sync plugin; app tables come from `tables`. |
 | System ReactiveDB | Always separate from app data; owns Guardian and Zero state. Trusted server setup can reach the privileged `zero.system` facade. |
-| ReactiveDB Fabric | With `databaseTopology.mode: 'multiple'`, keeps the shared application database pinned and routes named or physical-tenant Resources through bounded subprocess actors. Unreleased release-candidate surface. |
+| ReactiveDB Fabric | With `databaseTopology.mode: 'multiple'`, keeps the shared application database pinned and routes named or physical-tenant Resources through bounded subprocess actors inside Zero 2.0's supported local-root boundary. |
 | Application SQL | Always created before plugins; app-owned backend routes can use `zero.sql`/`zero.sqlite` for backend-only application SQL. |
 | WebSocket sync | Always mounted at `/sync`. Auth-aware and resource-policy-aware when auth/resources are enabled. |
 | Auth | Mounted when `auth !== false`; adds `/auth/*`, request helpers, and protected page redirects. |
@@ -256,7 +257,7 @@ SQLite's file/WAL path.
 | Scheduler | Always mounted for platform jobs. |
 | Notifications | Mounted when auth is enabled. |
 | Rooms | Mounted when auth is enabled. |
-| Workflows | Mounted when auth is enabled. |
+| Torrent workflows | Mounted when auth is enabled. Public configuration and API vocabulary remain `workflows`. |
 | Storage | Mounted when auth is enabled. |
 | Sitemap | Mounted when `sitemap` is enabled; discovers public static file-router pages and omits protected, API, and dynamic routes unless explicitly listed. |
 | `/api/data` | Mounted for lazy tables and guarded by sync policy, auth, and registered resource `list` policy. |
@@ -275,9 +276,9 @@ Because source-mode actors re-enter the application executable, a Fabric app
 must call `runDatabaseActorIfRequested({ realm })` before `createApp()`. Keep
 the realm in a side-effect-free shared module and point `actors.launch` to that
 server entry. Omitting `databaseTopology` preserves the ordinary composition
-shown above. See [Platform Configuration](./platform-configuration.md#reactivedb-fabric-topology-unreleased-candidate)
+shown above. See [Platform Configuration](./platform-configuration.md#reactivedb-fabric-topology)
 and the [Fabric architecture](./framework/multi-database-architecture.md) for
-the complete, currently unreleased contract.
+the complete supported contract and its deliberate exclusions.
 
 ## Data Models And ReactiveDB
 
@@ -304,23 +305,21 @@ export const customers = defineTable(
 export const tables = { customers };
 ```
 
-Frontend code uses the SDK/hooks:
+Frontend code can bind the shared schema directly to the live collection:
 
 ```tsx
 'use client';
 
-import { useCollection } from '@zero/framework/react/hooks';
-import { DataTable } from '@zero/framework/components/data-table';
+import { DataTableView } from '@zero/framework/components/data-table';
+import { customers } from '@/lib/schema';
 
 export default function CustomersPage() {
-  const customers = useCollection('customers');
-
   return (
-    <DataTable
-      data={customers.data}
-      columns={[
-        { accessorKey: 'name', header: 'Name' },
-      ]}
+    <DataTableView
+      schema={customers.schema}
+      collection="customers"
+      columns={['name', 'created_at']}
+      searchable={{ ariaLabel: 'Search customers' }}
     />
   );
 }
@@ -468,7 +467,7 @@ server code:
 | `zero.storage` | Storage service, when enabled. |
 | `zero.notifications` | Notification service, when enabled. |
 | `zero.scheduler` | Scheduler service, when mounted. |
-| `zero.workflows` | Workflow service, when enabled. |
+| `zero.workflows` | Torrent workflow service, when enabled. |
 | `zero.observability` | Event emitters plus runtime/sink/store inspection. |
 
 ### Multi-tenant request boundary
@@ -1062,9 +1061,11 @@ const grant = await storage?.uploads.create('drv_private_uploads', {
 The browser sends the file to `PUT /storage/upload-grants/:token`. The object
 is private by default and normal storage read permissions still apply.
 
-## Workflows And Scheduler
+## Torrent Workflows And Scheduler
 
-Workflows mount by default when auth is enabled. Register trusted activities
+Torrent is Zero's durable workflow system. It mounts by default when auth is
+enabled while retaining the established `workflows` configuration, import,
+route, table, and error-code vocabulary. Register trusted activities
 and definitions through `AppConfig.workflows.register`; Zero awaits
 registration before activity preflight and crash recovery, and publishes the
 service only after recovery succeeds:
@@ -1285,7 +1286,7 @@ discovery.
 Framework adapters that must close an admission-to-commit authority race may
 pass a synchronous assertion as the optional fifth `runAsActor()` argument, or
 use the raw service's captured-actor/mutation fence contracts. That surface is
-documented in [Durable Workflows](./workflows.md#actor-and-system-starts) and is
+documented in [Torrent: Durable Workflows](./workflows.md#actor-and-system-starts) and is
 not needed by ordinary app code using scoped `zero.workflows`.
 
 Authorized runtime state is projected through ReactiveDB Sync. Hooks expose
@@ -1299,7 +1300,7 @@ raw error values are redacted from HTTP and Sync while safe status, timing, and
 topology labels stay live. The scheduler's minute retry/timeout jobs are a
 persisted-state safety sweep; exact in-process timers handle normal deadlines.
 See
-[Durable Workflows](./workflows.md) for the full DSL, IR, version, lifecycle,
+[Torrent: Durable Workflows](./workflows.md) for the full DSL, IR, version, lifecycle,
 authorization, HTTP, and React contracts. A public cron/job registration
 convention for app code is a future package-mode slice.
 
@@ -1365,6 +1366,7 @@ import {
   PlatformUserManagement,
   QRCode,
   ResizableNavbar,
+  StreamingText,
   TextGenerateEffect,
   useAuth,
   useDataPage,
@@ -1407,6 +1409,7 @@ import { KanbanBoard } from '@zero/framework/components/kanban';
 import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { ResizableNavbar } from '@zero/framework/components/navbar';
 import { TextGenerateEffect } from '@zero/framework/components/text-effects';
+import { StreamingText } from '@zero/framework/components/streaming-text';
 import {
   LoginForm,
   MFAEnrollmentForm,
@@ -1442,6 +1445,7 @@ zero add components/hero
 zero add components/kanban
 zero add components/navbar
 zero add components/text-effects
+zero add components/streaming-text
 zero add hooks modals --dry-run
 zero add components/storage --target ./my-app
 ```
@@ -1467,6 +1471,7 @@ Supported source-copy targets:
 | `components/navbar` | Resizable public-page navbar and its animated icon/button dependencies. |
 | `components/storage` | Storage management, file browser, drive list, dropzone, and dependencies. |
 | `components/text-effects` | Public text effects for Hero titles, landing copy, and docs/content headings. |
+| `components/streaming-text` | Accessible live, caller-owned, and replayed text plus the shared class-name helper. |
 | `hooks` | Generic React hook library. |
 | `modals` | Modal manager primitives. |
 

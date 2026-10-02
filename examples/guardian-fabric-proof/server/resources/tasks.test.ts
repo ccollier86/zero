@@ -9,7 +9,7 @@ import { getPolicyOwnerFields } from '@zero/framework/server';
 import { tasks } from '../../db/schema';
 import { tasksResource } from './tasks';
 
-describe('Guardian + Fabric proof task model', () => {
+describe('Guardian + Fabric + Torrent proof task model', () => {
   test('declares the canonical local identity anchors required by its foreign keys', () => {
     expect(getGuardianAnchorRequirements(tasks.serverTable)).toEqual(['user', 'membership']);
     expect(getGuardianTableReferences(tasks.serverTable)).toEqual([

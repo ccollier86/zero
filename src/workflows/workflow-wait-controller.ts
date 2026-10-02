@@ -217,6 +217,16 @@ export class WorkflowWaitController {
         if (!currentInstance || currentInstance.status !== 'running'
           || !current || current.status !== 'waiting') return;
         if (!this.authority.validateInstance(instance.instance_id)) return;
+        const acceptedEventId = this.interactions.getAcceptedEventId(
+          interaction.interactionId,
+        );
+        if (acceptedEventId) {
+          this.runtime.consumeAcceptedInteractionEvent(
+            current.step_id,
+            currentInstance.instance_id,
+            acceptedEventId,
+          );
+        }
         this.completeWait(current, accepted, now);
       });
       return 'completed';

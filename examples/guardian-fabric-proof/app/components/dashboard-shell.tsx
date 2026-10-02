@@ -72,8 +72,8 @@ export function DashboardShell({ children }: DashboardShellProps) {
     <AppShell
       preset="auth-dashboard"
       brand={{
-        name: 'Guardian + Fabric',
-        subtitle: 'Physical tenant proof',
+        name: 'Guardian + Fabric + Torrent',
+        subtitle: 'Authority, data, and orchestration proof',
         icon: 'layers',
         href: '/app',
       }}
@@ -129,6 +129,7 @@ export function dashboardNavigation(
       { id: 'proof-center', label: 'Proof center', href: '/app', icon: 'layers' },
       ...(kind === 'organization' ? [
         { id: 'tasks', label: 'Realtime tasks', href: '/tasks', icon: 'clipboard' as const },
+        { id: 'workflows', label: 'Torrent workflows', href: '/workflows', icon: 'radio' as const },
         { id: 'organization', label: 'Members & access', href: '/organization', icon: 'users' as const },
         { id: 'security', label: 'Security', href: '/security', icon: 'key' as const },
       ] : []),
@@ -170,6 +171,12 @@ function pagePresentation(pathname: string): { title: string; subtitle: string }
       subtitle: 'Live actor-owned rows from the active physical workspace database.',
     };
   }
+  if (pathname === '/workflows') {
+    return {
+      title: 'Torrent workflow lab',
+      subtitle: 'Durable human review, conditional execution, and tenant-scoped Fabric effects.',
+    };
+  }
   if (pathname === '/security') {
     return {
       title: 'Security',
@@ -195,7 +202,7 @@ function pagePresentation(pathname: string): { title: string; subtitle: string }
     };
   }
   return {
-    title: 'Guardian + Fabric proof center',
-    subtitle: 'Live authority, realm readiness, realtime health, and guided acceptance.',
+    title: 'Guardian + Fabric + Torrent proof center',
+    subtitle: 'Live authority, realm readiness, orchestration, realtime health, and guided acceptance.',
   };
 }

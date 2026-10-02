@@ -1,10 +1,10 @@
 # Multi-tenant Auth Implementation Checklist
 
-> Status: **the four-profile implementation is present in this unreleased
-> candidate; final release verification and the open gates below are not yet
-> complete**
+> Status: **the four Guardian profiles are supported in Zero 2.0's
+> source/local release channel; public npm, expanded deployment, and preview
+> client gates remain explicitly tracked below**
 >
-> Last reviewed: 2026-09-29
+> Last reviewed: 2026-10-02
 >
 > Scope: Zero core auth, Elysia integration, sessions, RBAC, data isolation,
 > Sync, managed services, onboarding, packaged control UI, installed clients,
@@ -19,7 +19,7 @@ names the enforcement owner, scope source, evidence, and trusted escape hatch
 for every official access-surface family.
 
 A checked item means implementation and focused evidence exist in this tree.
-It does not mean a package has been released or that the final aggregate suite
+It does not by itself mean the public npm or expanded-platform release suite
 has passed. Unchecked items are real work or verification gates. The final
 section lists deliberately deferred capabilities so they cannot be mistaken
 for silent behavior.
@@ -270,12 +270,15 @@ for silent behavior.
   storage/callback/lifecycle behavior, and complete an independent security
   review.
 
-## 6. Final release verification
+## 6. Public npm and expanded deployment verification
 
-Do not convert this candidate into a public support claim until every
-applicable item below is complete.
+Zero 2.0's committed source/local channel is the supported boundary used by
+checkout-local applications. Do not publish it to npm or widen its declared
+platform matrix until every applicable item below is complete.
 
-- [ ] Resolve and encode the project license and minimum supported Bun version.
+- [ ] Select and encode the project license. Bun 1.3.14 is the encoded minimum
+  for the source/local release; broader runtime qualification remains part of
+  the deployment matrix.
 - [x] Finish the resource index/constraint contract above with actual SQLite
   startup validation, static Doctor guidance, focused unsafe/safe index,
   uniqueness, and foreign-key evidence, and matching public documentation.
@@ -288,14 +291,14 @@ applicable item below is complete.
 - [ ] Audit the documentation against the final public SDK/auth contracts and
   run deterministic local-link, GitHub-style anchor, and code-fence checks from
   that same tree.
-- [ ] Pack and install the frozen candidate outside the repository; migrate a fresh
-  package-mode database through the latest numbered migration and smoke all
-  four auth profiles. The installed-tarball smoke must apply migrations `001`
-  through `027` to fresh file databases, verify the complete six-flow public
-  auth-admission schema and installed-profile authority triggers, then boot and
-  bootstrap every
+- [ ] Pack and install the frozen release outside the repository; migrate a
+  fresh package-mode database through the latest registered migration and
+  smoke all four auth profiles. The installed-tarball smoke must apply the
+  complete numbered migration registry to fresh file databases, verify the
+  complete six-flow public-auth-admission schema and installed-profile
+  authority triggers, then boot and bootstrap every
   `single|multi` by `simple|advanced` combination, verify its live
-  authorization scope, and reopens the database to prove the profile state
+  authorization scope, and reopen the database to prove the profile state
   persisted.
 - [ ] Repeat package verification from a clean checkout so untracked files
   cannot make the tarball pass accidentally.
@@ -336,19 +339,21 @@ trusted application code and must apply their own projection and write rules.
   still need an explicit external coordination contract.
 - [ ] **General populated-app adoption tooling.** Fresh multi-mode installs and
   the exact pre-024 Administration Organization reconciliation path are
-  supported by the candidate; existing production data still needs an explicit
+  supported by Zero 2.0; existing production data still needs an explicit
   backup/dry-run/backfill/validation/cutover workflow before enabling multi or
   changing the tenancy axis.
 - [ ] **Verified-domain autojoin, aliases/wildcards/subdomain inheritance, and
   direct transfer.** Current admission is exact-domain request-to-join; release
   plus quarantine and a new proof is not transfer.
-- [ ] **Tenant-per-database storage.** Per-tenant SQLite/Turso-style isolation
-  is future persistence work, not part of this auth release candidate.
+- [x] **Tenant-per-database storage.** ReactiveDB Fabric provides the supported
+  local-root physical-tenant database mode with server-derived routing,
+  Guardian authority fencing, generated Resource CRUD, and multiplexed Sync.
+  Distributed roots and online fleet migration remain separate capabilities.
 
 ## Definition of shipped
 
-The implementation documented here is an unreleased candidate. A profile is
-shipped only after the applicable unchecked release gates pass, maintainers
-freeze its documented boundary, the exact release commit passes clean-checkout
-package verification, and a version is published. Source presence, a checked
-focused feature box, or a local green test is not by itself a release.
+The implementation documented here is shipped in Zero 2.0's source/local
+release boundary after the exact release commit passes its clean-checkout and
+packaged verification. Public npm publication and claims beyond the qualified
+runtime/deployment boundary remain governed by the unchecked gates above.
+Source presence or a focused green test alone is never sufficient evidence.

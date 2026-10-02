@@ -2,7 +2,7 @@
 
 > Status: authoritative product and security direction
 >
-> Implementation status: this unreleased tree implements the `single/simple`,
+> Implementation status: Zero 2.0 supports the `single/simple`,
 > `single/advanced`, `multi/simple`, and `multi/advanced` profiles, including
 > tenant-bound sessions, registered-resource and managed-service isolation,
 > scoped role assignments, invitations/join requests, control-plane clients,
@@ -11,7 +11,7 @@
 > `single/advanced`, or the protected Administration Organization, its owner,
 > a tenant-bound session, and platform administrator in `multi`.
 > Opt-in verified-company-domain request admission and the bounded append-only
-> authorization/control-plane audit are implemented in this candidate. The
+> authorization/control-plane audit are included in this release. The
 > protected Administration Organization, its SDK/hooks/UI, and the bounded
 > customer-tenant directory/lifecycle/member control plane are implemented.
 > Break-glass support,
@@ -277,7 +277,7 @@ Applications should author that security declaration next to the table, but in
 a server-only resource module. Shared `defineTable()`/`schema()` definitions
 remain safe inputs for browser validation and generated UI; they are not an
 authorization boundary and must not carry executable policy or secrets. The
-current candidate implements those boundaries through typed or string-based,
+Zero 2.0 implements those boundaries through typed or string-based,
 server-only `defineResource()` declarations and one immutable registry.
 `exposure` independently allows neither managed transport (`internal`), HTTP
 resource/data only (`http`), Sync only (`sync`), or both (`all`). Omission
@@ -377,7 +377,7 @@ Zero's product model keeps three visibly separate control surfaces:
 - tenant membership, invitations, domains, roles, and audit controls; and
 - platform identity, recovery, and control-plane operations.
 
-The current candidate packages global identity management, single/advanced
+Zero 2.0 packages global identity management, single/advanced
 application access, active-tenant member/onboarding/domain/audit controls,
 current-user continuation and switching UI, protected Administration
 Organization people/invitations, and a bounded customer-tenant

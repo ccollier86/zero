@@ -14,7 +14,14 @@ import { PdfService } from './pdf-service';
 // runs alongside the rest of the suite and can be CPU-starved on CI hosts.
 // Keep a bounded timeout without making the full suite flaky under contention.
 test('Chromium renders print CSS and CSS page sizing', async () => {
-  const config = resolvePdfConfig({ resources: { allowDataUrls: false } }, {});
+  const config = resolvePdfConfig({
+    browser: { launchTimeoutMs: 60_000 },
+    resources: { allowDataUrls: false },
+    // The production default remains 30 seconds. This real-browser integration
+    // gate runs beside CPU-heavy package and database tests, so give Chromium a
+    // test-only budget that still fails in bounded time under CI contention.
+    limits: { timeoutMs: 90_000 },
+  }, {});
   if (config === false) throw new Error('Expected PDF config.');
   const service = new PdfService(config);
 
@@ -46,4 +53,4 @@ test('Chromium renders print CSS and CSS page sizing', async () => {
   } finally {
     await service.close();
   }
-}, 60_000);
+}, 120_000);

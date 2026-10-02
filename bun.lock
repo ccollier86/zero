@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@platform/core",
+      "name": "@zero/framework",
       "dependencies": {
         "@ai-sdk/anthropic": "3.0.123",
         "@ai-sdk/cohere": "3.0.65",

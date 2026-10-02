@@ -11,7 +11,7 @@
 > **Historical-state warning:** the audit passages below intentionally preserve
 > the pre-implementation evidence and therefore use statements such as “no
 > tenant-bound session exists” or “multi must add.” Those are not the current
-> runtime contract. The unreleased feature branch now implements all four
+> runtime contract. Zero 2.0 now implements all four
 > `single|multi` x `simple|advanced` profiles, durable browser and native tenant
 > sessions, tenant switching, scoped assignments, registered-resource and
 > managed-service isolation, invitations/join requests, and packaged control
@@ -145,7 +145,7 @@ The feature branch applies the focused hardening slice as follows:
    timing-safe secret verification, pre-hash rejection, transactional recheck,
    durable completion, packaged setup-key UI, safe config discovery, upgrade
    sealing, Doctor findings, and race/replay tests.
-9. **Implemented in the unreleased tree:** all four capability profiles
+9. **Implemented in Zero 2.0:** all four capability profiles
    normalize, the authorization kernel is installed across managed surfaces,
    and multi bootstrap creates the initial organization/membership/session
    context. Doctor still blocks unsafe or unclassified multi-mode application
@@ -3398,7 +3398,7 @@ migrated apps may choose single-tenant permissions, multi-tenant coarse roles,
 or multi-tenant advanced authorization without replacing the global identity
 and account-security lifecycle.
 
-This unreleased branch now carries the durable tenant/session/assignment
+Zero 2.0 now carries the durable tenant/session/assignment
 boundary through managed routes, resources, Sync, framework services, browser
 switching, native sessions, and packaged application/tenant controls. The
 authoritative checklist still gates release evidence and deliberately leaves

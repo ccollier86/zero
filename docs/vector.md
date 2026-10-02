@@ -283,10 +283,10 @@ await docs.embedAndUpsert({
 The bridge does not persist chat threads or create a gateway. It only calls
 `ai.embed()` and forwards records/queries to the vector service.
 
-## Workflows And Jobs
+## Torrent Workflows And Jobs
 
-The vector plugin mounts before scheduler and workflow plugins, so jobs and
-workflow activities can use it directly. Register this activity inside
+The vector plugin mounts before scheduler and Torrent workflow plugins, so jobs and
+Torrent activities can use it directly. Register this activity inside
 `AppConfig.workflows.register(registry)`:
 
 ```ts
@@ -364,6 +364,6 @@ when you want the bridge to use a specific embedding alias by default.
 
 - [AI](./ai.md)
 - [AI Providers](./ai-providers.md)
-- [Workflows](./workflows.md)
+- [Torrent: Durable Workflows](./workflows.md)
 - zvec docs: [Quickstart](https://zvec.org/en/docs/db/quickstart/) and
   [Conditional Filtering](https://zvec.org/en/docs/db/data-operations/query/filter/)

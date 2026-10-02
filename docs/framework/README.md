@@ -133,7 +133,7 @@ Zero.
 - [Platform KV/cache](../kv.md): Zero-owned memory-first KV/cache service,
   journal/checkpoint recovery, app-facing `zero.kv`, counters, limiters, and
   `createApp()` defaults.
-- [Durable Workflows](../workflows.md): trusted versioned activities, code DSL,
+- [Torrent: Durable Workflows](../workflows.md): trusted versioned activities, code DSL,
   canonical graph IR, database versions/drafts, graph execution, memory,
   interactions, recovery, and live React monitoring.
 - [PDF Rendering](../pdf.md): browser installation, secure Chromium rendering,

@@ -16,6 +16,11 @@ interface PackageJson {
 
 const packageJson = await Bun.file('package.json').json() as PackageJson;
 
+// This test scans the complete TypeScript source tree. It normally completes
+// in well under a second, but parallel package/build tests can temporarily
+// saturate filesystem I/O on CI runners.
+const SOURCE_IMPORT_CONTRACT_TIMEOUT_MS = 30_000;
+
 function scriptEntrypoints(scriptName: string): string[] {
   const script = packageJson.scripts?.[scriptName];
   if (!script) throw new Error(`Missing package script: ${scriptName}`);
@@ -79,5 +84,5 @@ describe('package build scripts', () => {
       expect(target).toMatch(/^\.\/src\/.+\.tsx?$/);
       expect(await Bun.file(target!).exists()).toBe(true);
     }
-  });
+  }, SOURCE_IMPORT_CONTRACT_TIMEOUT_MS);
 });

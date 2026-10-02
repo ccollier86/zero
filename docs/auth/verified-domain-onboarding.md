@@ -1,6 +1,6 @@
 # Verified Company-Domain Onboarding
 
-> Status: implemented end to end in this unreleased candidate. The server
+> Status: supported end to end in Zero 2.0. The server
 > routes, SQLite migration/runtime schema, bounded DNS verification worker,
 > durable mailbox delivery, browser SDK/hooks, and packaged UI share the
 > contract below. The capability is opt-in and is advertised only when its

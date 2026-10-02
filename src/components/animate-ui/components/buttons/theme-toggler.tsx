@@ -10,7 +10,6 @@
 
 import * as React from 'react';
 import { useTheme } from 'next-themes';
-import { Monitor, Moon, Sun } from 'lucide-react';
 import { VariantProps } from 'class-variance-authority';
 
 import {
@@ -20,22 +19,10 @@ import {
   type Resolved,
 } from '#zero/components/animate-ui/primitives/effects/theme-toggler';
 import { buttonVariants } from '#zero/components/animate-ui/components/buttons/icon';
+import { ThemeMorphIcon, ThemeMorphIconStyles } from './theme-morph-icon';
 import { cn } from '#zero/lib/utils';
 
-const getIcon = (
-  effective: ThemeSelection,
-  resolved: Resolved,
-  modes: ThemeSelection[],
-) => {
-  const theme = modes.includes('system') ? effective : resolved;
-  return theme === 'system' ? (
-    <Monitor />
-  ) : theme === 'dark' ? (
-    <Moon />
-  ) : (
-    <Sun />
-  );
-};
+const DEFAULT_MODES: ThemeSelection[] = ['light', 'dark', 'system'];
 
 const getNextTheme = (
   effective: ThemeSelection,
@@ -62,39 +49,78 @@ function ThemeTogglerButton({
   onClick,
   className,
   type = 'button',
+  disabled,
   title,
   'aria-label': ariaLabel,
+  'aria-busy': ariaBusy,
   ...props
 }: ThemeTogglerButtonProps) {
   const { theme, resolvedTheme, setTheme } = useTheme();
-  const currentTheme = resolveCurrentTheme(theme, resolvedTheme, modes);
+  const availableModes = modes.length > 0 ? modes : DEFAULT_MODES;
+  const resolved = resolveTheme(resolvedTheme);
+  const currentTheme = resolveCurrentTheme(theme, resolved, availableModes);
+  const previousResolved = React.useRef(resolved);
+  const [animateIcon, setAnimateIcon] = React.useState(false);
+
+  React.useEffect(() => {
+    if (previousResolved.current !== resolved) setAnimateIcon(true);
+    previousResolved.current = resolved;
+  }, [resolved]);
 
   return (
     <ThemeTogglerPrimitive
       theme={currentTheme}
-      resolvedTheme={resolvedTheme as Resolved}
+      resolvedTheme={resolved}
       setTheme={setTheme}
       direction={direction}
       onImmediateChange={onImmediateChange}
     >
-      {({ effective, resolved, toggleTheme }) => (
-        <button
-          data-slot="theme-toggler-button"
-          className={cn(buttonVariants({ variant, size, className }))}
-          type={type}
-          title={title ?? 'Switch theme'}
-          aria-label={ariaLabel ?? `Switch theme from ${effective}`}
-          onClick={(e) => {
-            onClick?.(e);
-            toggleTheme(getNextTheme(effective, modes));
-          }}
-          {...props}
-        >
-          {getIcon(effective, resolved, modes)}
-        </button>
-      )}
+      {({ effective, resolved, transitioning, toggleTheme }) => {
+        const nextTheme = getNextTheme(effective, availableModes);
+
+        const actionLabel = `Switch to ${nextTheme} theme`;
+
+        return (
+          <>
+            <button
+              data-slot="theme-toggler-button"
+              data-theme={resolved}
+              data-state={transitioning ? 'transitioning' : 'idle'}
+              className={cn(buttonVariants({ variant, size, className }))}
+              type={type}
+              disabled={disabled || transitioning}
+              title={title ?? actionLabel}
+              aria-label={ariaLabel ?? actionLabel}
+              aria-busy={ariaBusy ?? (transitioning || undefined)}
+              onClick={(event) => {
+                onClick?.(event);
+                if (event.defaultPrevented) return;
+                void toggleTheme(nextTheme, getTransitionOrigin(event));
+              }}
+              {...props}
+            >
+              <ThemeMorphIcon resolved={resolved} animate={animateIcon} />
+            </button>
+            <ThemeMorphIconStyles />
+          </>
+        );
+      }}
     </ThemeTogglerPrimitive>
   );
+}
+
+function getTransitionOrigin(
+  event: React.MouseEvent<HTMLButtonElement>,
+): { x: number; y: number; source: HTMLButtonElement } {
+  const source = event.currentTarget;
+  const bounds = source.getBoundingClientRect();
+  const fromKeyboard = event.detail === 0;
+
+  return {
+    x: fromKeyboard ? bounds.left + bounds.width / 2 : event.clientX,
+    y: fromKeyboard ? bounds.top + bounds.height / 2 : event.clientY,
+    source,
+  };
 }
 
 function resolveCurrentTheme(
@@ -106,6 +132,10 @@ function resolveCurrentTheme(
   if (theme === 'light' || theme === 'dark') return theme;
   if (resolvedTheme === 'dark') return 'dark';
   return 'light';
+}
+
+function resolveTheme(resolvedTheme: string | undefined): Resolved {
+  return resolvedTheme === 'dark' ? 'dark' : 'light';
 }
 
 export { ThemeTogglerButton, type ThemeTogglerButtonProps };

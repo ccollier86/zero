@@ -2227,7 +2227,7 @@ by responsibility:
 App code should still import from `@zero/framework/react`. Use the lower-level
 files only when working inside the platform source. See [Frontend Hooks](./hooks.md).
 
-Workflow actions use the generated authenticated `client.api.workflows`
+Torrent workflow actions use the generated authenticated `client.api.workflows`
 surface, while `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, and
 `useWorkflowRun` compose the safe owner-scoped ReactiveDB projection;
 `useWorkflowTopology` adds the sanitized pinned topology over authenticated
@@ -2242,7 +2242,7 @@ to a privacy-safe `WorkflowInteractionSubmissionResult` with the decision
 response value. Named events can buffer
 while a run is paused, but a direct interaction response fails with retryable
 HTTP `409` `WORKFLOW_DRAINING`; reuse its stable submission ID after resume. See
-[Durable Workflows](../workflows.md).
+[Torrent: Durable Workflows](../workflows.md).
 
 For a visual monitor, join topology `nodes[].path` to live `steps[].node_path`.
 Legacy rows normalize that path to `step_id`; fan-out rows share their
@@ -3180,17 +3180,17 @@ generated resource routes, storage, route auth, sitemap, migrations,
 observability, Sync policy, and the five app-owned server discovery directory
 options. `stateSync: true` requires auth. Omitted capability values resolve to
 `single/simple`; all four `single|multi` by `simple|advanced` profiles now
-normalize. In this unreleased tree, `multi` installs tenant/membership
+normalize. In Zero 2.0, `multi` installs tenant/membership
 persistence, browser and native tenant sessions, creation/onboarding,
 registered-resource and managed-service isolation, invitations/join requests,
 the protected Administration Organization, the customer-organization
 directory/lifecycle, and packaged tenant/platform controls. `advanced` installs the validated static
 registry, durable application/tenant assignments, live kernel expansion, and
 packaged role administration. Doctor blocks concrete unsafe configuration and
-unclassified boundaries; the release checklist still governs production
-readiness rather than blanket-disabling either profile.
+unclassified boundaries; the documented source/local support boundary does not
+imply the still-gated public npm or wider deployment matrix.
 
-The candidate does not include upstream enterprise SSO, break-glass,
+Zero 2.0 does not include upstream enterprise SSO, break-glass,
 tenant-custom roles, broader populated-app discovery/migration tooling beyond
 exact pre-024 administration reconciliation, or verified-domain
 autojoin/aliases/direct transfer. The Administration Organization and bounded
@@ -3230,7 +3230,7 @@ tables: {
 | 2 | Auth plugin (when enabled) | Routes under `/auth`, including `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`, and `/auth/jwks`; auth tables on the shared DB |
 | 3 | Auth middleware (when enabled) | `authContext` plus `requireAuth()`/`requireAdmin()` on downstream server routes |
 | 4 | Observability plugin | Stable event codes, default console + memory store, protected `/api/_zero/observability/events`, frontend ingest |
-| 5 | Scheduler/domain plugins | Scheduler always; notifications, rooms, workflows, and storage when auth is enabled |
+| 5 | Scheduler/domain plugins | Scheduler always; notifications, rooms, Torrent workflows, and storage when auth is enabled |
 | 6 | Data query plugin | `/api/data` for lazy synced tables with sync read policy |
 | 7 | Router plugin | File routing from `appDir`; streaming for server-only chains and browser mounting for `'use client'` chains |
 | 8 | Client bundle | `Bun.build()` on startup |

@@ -253,6 +253,82 @@ export class WorkflowEventDeliveryStore {
     });
   }
 
+  /**
+   * Recover or finish the event half of an accepted interaction response.
+   * The caller completes the owning wait in the same outer transaction, so
+   * the exact claim and its queue accounting cannot diverge from that step.
+   */
+  consumeAcceptedInteractionEvent(
+    stepId: string,
+    instanceId: string,
+    eventId: string,
+  ): void {
+    this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT delivery.instance_id, delivery.event_name,
+          delivery.claimed_by_step_id, delivery.claimed_at,
+          delivery.payload_bytes, delivery.actor_bytes,
+          event.instance_id AS event_instance_id,
+          event.event_name AS event_event_name,
+          event.tenant_id AS event_tenant_id,
+          instance.tenant_id AS instance_tenant_id,
+          step.instance_id AS step_instance_id,
+          step.wait_event AS step_wait_event,
+          step.status AS step_status
+        FROM _workflow_event_delivery AS delivery
+        INNER JOIN workflow_events AS event
+          ON event.event_id = delivery.event_id
+          AND event.instance_id = delivery.instance_id
+          AND event.event_name = delivery.event_name
+        INNER JOIN workflow_instances AS instance
+          ON instance.instance_id = delivery.instance_id
+        INNER JOIN workflow_steps AS step ON step.step_id = ?
+        WHERE delivery.event_id = ?
+        LIMIT 1
+      `).get(stepId, eventId) as {
+        instance_id: string;
+        event_name: string;
+        claimed_by_step_id: string | null;
+        claimed_at: string | null;
+        payload_bytes: number;
+        actor_bytes: number;
+        event_instance_id: string;
+        event_event_name: string;
+        event_tenant_id: string | null;
+        instance_tenant_id: string | null;
+        step_instance_id: string;
+        step_wait_event: string | null;
+        step_status: string;
+      } | null;
+      const payloadBytes = Number(row?.payload_bytes);
+      const actorBytes = Number(row?.actor_bytes);
+      if (!row
+        || row.instance_id !== instanceId
+        || row.event_instance_id !== instanceId
+        || row.event_event_name !== row.event_name
+        || row.event_tenant_id !== row.instance_tenant_id
+        || row.step_instance_id !== instanceId
+        || (row.step_wait_event !== null && row.step_wait_event !== row.event_name)
+        || row.step_status !== 'waiting'
+        || row.claimed_at === null
+        || !Number.isSafeInteger(payloadBytes)
+        || payloadBytes < 0
+        || !Number.isSafeInteger(actorBytes)
+        || actorBytes < 0) {
+        throw invalidEventDelivery();
+      }
+      if (row.claimed_by_step_id === `consumed:${eventId}`) return;
+      if (row.claimed_by_step_id !== stepId) throw invalidEventDelivery();
+      const result = this.db.prepare(`UPDATE _workflow_event_delivery
+        SET claimed_by_step_id = ?
+        WHERE event_id = ? AND instance_id = ? AND event_name = ?
+          AND claimed_by_step_id = ?`)
+        .run(`consumed:${eventId}`, eventId, instanceId, row.event_name, stepId);
+      if (result.changes !== 1) throw invalidEventDelivery();
+      this.capacity.markConsumed(instanceId, payloadBytes + actorBytes);
+    });
+  }
+
   /** Read the authenticated actor identifier attached to one event, if any. */
   getEventSender(eventId: string): string | null {
     this.runtimeFence?.assertCurrent();

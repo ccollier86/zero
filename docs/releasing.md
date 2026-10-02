@@ -24,20 +24,22 @@ Before publishing to npm, verify the package `files` allowlist includes:
 - `llm.txt`
 - `llms.txt`
 - `CHANGELOG.md`
+- `THIRD_PARTY_NOTICES.md`
 - `LICENSE` (after the maintainers choose it)
 - `tsconfig.json`
 
-For the first public release, two package contracts must be chosen rather than
-inferred from a developer machine:
+Before the first public npm release, the package contracts below must be
+explicit rather than inferred from a developer machine:
 
 - choose the project license, add the matching `LICENSE` file and
   `package.json.license`, and confirm the license is present in the tarball;
-- choose and test the minimum supported Bun version, then encode it in package
-  metadata (`engines` and, where appropriate, `packageManager`) and state it in
-  the README.
+- retain Bun 1.3.14 as the encoded minimum or qualify and deliberately change
+  it, then repeat the declared OS/architecture/filesystem matrix.
 
-Neither decision is currently encoded in the repository. Do not publish until
-the maintainers make both choices explicitly.
+Zero 2.0 encodes Bun 1.3.14 for the source/local release channel. The project
+license and broader public deployment matrix remain unresolved; do not publish
+to npm until maintainers choose them explicitly and the exact tagged package
+passes their qualification.
 
 A later publish-hardening pass can move exports/bins to `dist`, but that should
 be deliberate and covered by package-mode smoke tests.
@@ -48,10 +50,10 @@ proves every required source and recipe was committed. Always repeat the
 package test from the release commit before tagging, and verify the proof-app
 paths plus every linked canonical document exist in that clean checkout.
 
-## Current Public Boundary
+## Current Supported Boundary
 
 Release notes and package docs must distinguish supported runtime behavior from
-the roadmap. For this unreleased candidate:
+the roadmap. Zero 2.0's source/local release boundary is:
 
 - Auth implements `single/simple`, `single/advanced`, `multi/simple`, and
   `multi/advanced` through one app-local runtime and authorization kernel.
@@ -83,8 +85,8 @@ the roadmap. For this unreleased candidate:
   runtimes to share the same file-mode SQLite database. `hot`, `ephemeral`,
   separate-database, cross-host message fanout, and ephemeral-topic replication
   are not provided by this mechanism.
-- ReactiveDB Fabric is an implemented, unreleased candidate topology separate
-  from shared-file replica polling. It keeps the
+- ReactiveDB Fabric is the supported local-root multi-database topology,
+  separate from shared-file replica polling. It keeps the
   shared application database pinned, keeps Zero/Guardian state in its
   separate system database, and routes named or physical-tenant
   application Resources through bounded Bun subprocess actors with independent
@@ -93,10 +95,10 @@ the roadmap. For this unreleased candidate:
   immutable image binding, and parent-crash liveness fencing. It is not a
   distributed database service: one app coordinator and its children own one
   local Fabric root. Fleet lifecycle/migration tooling, operator-grade
-  backup/restore, online placement changes, and the supported package/OS matrix
-  remain outside this candidate boundary. Do not present Fabric as released
-  until the architecture document's gates, the checks below, and a combined
-  multi-tenant acceptance app pass.
+  coordinated fleet backup/restore, online placement changes, and distributed
+  root ownership remain outside this boundary. Public npm and a wider
+  package/OS matrix require the additional gates below; they do not make the
+  documented local-root contract provisional.
 - The system/application database split is a breaking upgrade for legacy
   combined layouts. Runtime and Doctor detect that layout read-only and fail
   closed with `requiredAction: 'split-system-database'`; they do not move data.
@@ -111,8 +113,8 @@ the roadmap. For this unreleased candidate:
 - TypeScript native auth is in the framework. The Rust/Tauri and Chrome auth
   repositories are functional, independently versioned `0.0.0` private
   previews and must not be presented as released framework packages.
-- Verified-company-domain request admission is implemented in this unreleased
-  tree but remains subject to the same release gates below. Migration `021`
+- Verified-company-domain request admission is supported in Zero 2.0.
+  Migration `021`
   binds domain evidence to the exact join-request revision, and approve/deny
   mutations require the reviewer to echo that loaded revision. Migration `022`
   makes the durable public-auth admission enum match all six runtime flows
@@ -136,7 +138,10 @@ the roadmap. For this unreleased candidate:
   upgrades that graph storage to tenant-safe interactions, per-scope definition
   names, immutable parent scope, and non-cascading observable relations.
   Migration `032` adds the private durable workflow-runtime owner generation
-  used to exclude overlapping recovery and fence expired owners. The
+  used to exclude overlapping recovery and fence expired owners. Migration
+  `033` adds topology-independent definition/version/draft and terminal-event
+  delivery integrity triggers and is kept byte-identical on the maintained
+  1.3 line. The
   managed registry belongs only to `systemDb`; application and Fabric tenant
   schemas use their own explicit provisioning path.
   break-glass, tenant-custom roles, broader populated-app discovery/migration
@@ -151,12 +156,23 @@ the roadmap. For this unreleased candidate:
   physical tenant isolation validates the actor realm instead.
   Physical tenant storage is supplied only when the separate Fabric topology
   is explicitly configured; multi-tenant auth by itself remains shared-row.
+- **Torrent** is Zero's supported durable, versioned workflow and orchestration
+  system. The name is documentation vocabulary; `workflows` configuration,
+  `/workflows/*`, `@zero/framework/workflows`, `zero.workflows`, `Workflow*`,
+  `useWorkflow*`, `workflow_*`, `WORKFLOW_*`, and `workflows.*` remain the
+  stable contracts. Code DSL and canonical IR definitions share immutable
+  versions; database drafts are revision-fenced; recovery is guarded by one
+  durable runtime owner generation per physical workflow database. Guardian
+  authority is revalidated across dispatch and commit, Fabric activity data is
+  projected through the scoped `ctx.zero.data` capability, and safe topology
+  plus live ReactiveDB state supports visual monitoring. External activity
+  effects remain at-least-once and must deduplicate `ctx.idempotencyKey`. Zero
+  does not bundle a generic graph canvas/editor.
 
-Do not describe the four auth profiles or Fabric as released merely because
-their code is present in these branches. They become the public boundary only
-after the auth implementation checklist, Fabric architecture gates,
-cross-surface suite, combined acceptance app, package smoke test, clean-clone
-verification, license choice, and minimum-Bun decision all pass.
+Guardian, Fabric, and Torrent are released together in Zero 2.0's committed
+source/local channel after its frozen-tree checks pass. Do not widen that claim
+to public npm, preview native packages, distributed Fabric, or unqualified
+platforms merely because their neighboring code or design documents exist.
 
 ### Pre-024 Administration Organization adoption
 
@@ -259,6 +275,32 @@ records the same provenance in `zero-release.json`. Existing apps keep their
 own package until explicitly updated. Failed publication retains the last
 saved package, and missing/corrupt archives fail closed.
 
+### Maintained 1.3 compatibility line
+
+`release/1.3` is the maintained compatibility line for applications that must
+retain the legacy combined-database topology. Its 1.3.3 patch carries the
+topology-independent Torrent correctness, privacy, migration, and durable
+runtime-ownership fixes plus the reusable theme, streaming-text, and table
+surfaces without Guardian multi-tenancy, ReactiveDB Fabric, or the Zero 2.0
+system/application database split.
+
+The `zero-update` wrapper intentionally follows committed `main`, so it will
+install Zero 2.0 after this release. Do not use that stable wrapper for an app
+that is staying on 1.3. Instead, check out the exact `v1.3.3` tag (or the
+maintained `release/1.3` branch), inspect the plan, and use the explicit local
+source path:
+
+```txt
+bun run zero update --project /path/to/legacy-app --local /path/to/zero-1.3 --dry-run
+bun run zero update --project /path/to/legacy-app --local /path/to/zero-1.3 --check
+```
+
+This is a compatibility patch, not an automatic migration to 2.0. Keep the
+legacy app on the 1.3 line until its database split and Guardian/Fabric adoption
+have been deliberately designed, backed up, rehearsed, and verified. Follow the
+[Torrent upgrade guide](./workflows.md#upgrading-existing-torrent-applications)
+for the exact package, migration, registration, split, and rollback sequence.
+
 For deliberate testing of an unreleased checkout, use
 `zero update --project /path/to/test-app --local /path/to/zero-platform` instead.
 The test app must already have a text `bun.lock`, including for the dry-run, so
@@ -286,12 +328,16 @@ commands regenerate scaffold targets and are not updaters.
 ## Release Checklist
 
 1. Freeze the supported/preview/roadmap boundary above. Audit README, Start
-   Here, SDK/reference, auth, Fabric, resource, Sync, and generated-app docs for
+   Here, SDK/reference, Guardian, Fabric, Torrent, resource, Sync, and
+   generated-app docs for
    the same wording; examples must not rely on client filters as authorization
    or caller-provided tenant/database selectors as physical routing authority.
-2. Resolve the license and supported-Bun decisions in **Package State**, and
-   update `CHANGELOG.md` with the release date and notable changes, including
-   compatibility or migration requirements.
+2. Confirm the release version and encoded Bun requirement, then update
+   `CHANGELOG.md` with the release date and notable changes, including
+   compatibility or migration requirements. A public npm release must also
+   resolve the license and wider platform qualification in **Package State**;
+   an explicitly local/source release must keep those public-package gates
+   visible instead of pretending they passed.
    For an authorization-registry semantic change, review the manifest diff,
    increment `auth.authorization.registryVersion`, verify retired-role
    assignments were explicitly removed/replaced, and plan a coordinated
@@ -328,6 +374,13 @@ git diff --check
    receipt replay and permanent capacity; process crash/restart fencing; and
    an authenticated combined app with two tenants whose rows and realtime
    streams cannot cross.
+
+   For a candidate containing Torrent, run the complete workflow suite plus
+   durable owner/takeover, retry/deadline collision, pause/cancel/event,
+   database-definition revision-race, restart recovery, Guardian authority,
+   Fabric tenant-data, live-monitor, Sync redaction, and package-export tests.
+   Exercise at least one authenticated tenant workflow end to end in the
+   packaged Guardian/Fabric/Torrent proof application.
 
 5. Commit the release:
 
@@ -367,6 +420,12 @@ changelog entry still match:
 git show --no-patch --decorate "v${ZERO_RELEASE_VERSION}"
 bun -e 'console.log((await Bun.file("package.json").json()).version)'
 ```
+
+For a source/local release, fast-forward `main` to the verified release commit,
+push the maintained release branch and `main`, push the annotated tag, then
+refresh the committed-main stable package with `zero-release`. This publishes
+the exact Git checkpoint used by `zero-new` and `zero-update`; it does not make
+an npm-publication or wider-platform support claim.
 
 ## npm Publication
 
@@ -420,9 +479,10 @@ bun run doctor
 bun run build
 ```
 
-Only after registry verification and the post-publish smoke test should the
-release commit and annotated tag be pushed together and release notes be
-published. The shorter `bunx create-zero` spelling is valid only if a separate
+Only after registry verification and the post-publish smoke test should npm
+release notes be published. If the commit and annotated tag were not already
+pushed as a source/local release, push those exact objects now; never retag a
+different commit. The shorter `bunx create-zero` spelling is valid only if a separate
 registry package owns that name; the scoped framework package itself requires
 `bunx -p @zero/framework create-zero`.
 

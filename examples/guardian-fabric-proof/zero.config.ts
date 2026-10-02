@@ -1,4 +1,4 @@
-/** Environment adapter for the pure Guardian + Fabric proof configuration. */
+/** Environment adapter for the pure Guardian + Fabric + Torrent proof configuration. */
 
 import { createGuardianFabricProofConfig } from './server/proof-config';
 

@@ -36,7 +36,7 @@ import {
 } from './components/proof-status-grid';
 import { TASK_COLUMNS, TASK_READ_PERMISSIONS } from './tasks/task-types';
 
-describe('Guardian + Fabric proof UI contract', () => {
+describe('Guardian + Fabric + Torrent proof UI contract', () => {
   test('admits either declared task-read permission before mounting Sync', () => {
     expect(TASK_READ_PERMISSIONS).toEqual(['tasks:read:any', 'tasks:read']);
   });
@@ -61,6 +61,7 @@ describe('Guardian + Fabric proof UI contract', () => {
     const organizationLinks = dashboardNavigation('organization')
       .flatMap((group) => group.items.map((item) => item.href));
     expect(organizationLinks).toContain('/tasks');
+    expect(organizationLinks).toContain('/workflows');
     expect(organizationLinks).toContain('/organization');
     expect(organizationLinks).toContain('/security');
     expect(organizationLinks).not.toContain('/platform');
@@ -69,6 +70,7 @@ describe('Guardian + Fabric proof UI contract', () => {
       .flatMap((group) => group.items.map((item) => item.href));
     expect(administrationLinks).toContain('/platform');
     expect(administrationLinks).not.toContain('/tasks');
+    expect(administrationLinks).not.toContain('/workflows');
     expect(administrationLinks).not.toContain('/organization');
     expect(administrationLinks).not.toContain('/security');
 
@@ -92,6 +94,7 @@ describe('Guardian + Fabric proof UI contract', () => {
     expect(Object.keys(TASK_ROLE_REGISTRY)).toEqual(['viewer', 'editor', 'manager']);
     expect(ADMINISTRATION_STEPS.map((step) => step.href)).toContain('/platform');
     expect(CUSTOMER_STEPS.map((step) => step.href)).toContain('/tasks');
+    expect(CUSTOMER_STEPS.map((step) => step.href)).toContain('/workflows');
   });
 
   test('keeps every promised Guardian control reachable from a rendered route mode', async () => {
@@ -108,6 +111,22 @@ describe('Guardian + Fabric proof UI contract', () => {
     expect(organization).toContain('TenantOnboardingManagement');
     expect(organization).toContain('ControlPlaneAuditViewer');
     expect(security).toContain('WorkspaceApiKeyControls');
+  });
+
+  test('renders the Torrent proof through the public workflow hooks', async () => {
+    const [page, panel, monitor] = await Promise.all([
+      Bun.file(new URL('./(dashboard)/workflows/page.tsx', import.meta.url)).text(),
+      Bun.file(new URL('./workflows/torrent-proof-panel.tsx', import.meta.url)).text(),
+      Bun.file(new URL('./workflows/torrent-run-monitor.tsx', import.meta.url)).text(),
+    ]);
+
+    expect(page).toContain('DataRealmReadyGate');
+    expect(panel).toContain('useWorkflowActions');
+    expect(panel).toContain('useWorkflowList');
+    expect(monitor).toContain('useWorkflowRun');
+    expect(monitor).toContain('useWorkflowTopology');
+    expect(monitor).toContain('submitResponse');
+    expect(monitor).toContain("run.instance?.started_by === auth.user?.userId");
   });
 
   test('scrubs one-time invitation material and normalizes workspace hints', () => {

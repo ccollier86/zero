@@ -28,7 +28,7 @@ interface JourneyStep {
   readonly action: string;
 }
 
-/** Scope-adaptive launchpad for exercising Guardian, Fabric, and ReactiveDB. */
+/** Scope-adaptive launchpad for exercising Guardian, Fabric, Torrent, and ReactiveDB. */
 export function ProofOverview() {
   const auth = useAuth();
   const authorization = useAuthorization();
@@ -50,8 +50,8 @@ export function ProofOverview() {
               </h1>
               <p className="max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
                 This control center exposes the safe runtime state needed to test the complete
-                Guardian and ReactiveDB Fabric path without leaking database filenames, secrets,
-                or internal actor identifiers.
+                Guardian, ReactiveDB Fabric, and Torrent path without leaking database filenames,
+                workflow payloads, secrets, or internal actor identifiers.
               </p>
             </div>
           </div>
@@ -249,6 +249,12 @@ export const CUSTOMER_STEPS: readonly JourneyStep[] = Object.freeze([
     description: 'Create and move actor-owned tasks while another browser receives live changes.',
     href: '/tasks',
     action: 'Open tasks',
+  },
+  {
+    title: 'Orchestrate durably',
+    description: 'Start a human review, watch the conditional graph live, and approve a tenant-scoped Fabric write.',
+    href: '/workflows',
+    action: 'Open Torrent lab',
   },
   {
     title: 'Exercise RBAC',

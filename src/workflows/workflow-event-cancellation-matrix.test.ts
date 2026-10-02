@@ -6,15 +6,22 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 
+import { applicationServiceDataScope } from '../auth/service-data-scope';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { flow, parallel, requestAndWait, step, waitFor } from './workflow-dsl';
+import { createSystemAuthority } from './workflow-execution-authority';
 import type { WorkflowClock } from './workflow-executor';
+import { serializeWorkflowEventActor } from './workflow-event-actor';
+import { WorkflowInteractionEventBridge } from './workflow-interaction-event-bridge';
 import { validateWorkflowGraphEventState } from './workflow-event-persisted-state';
+import { WorkflowInteractionAuthority } from './workflow-interaction-authority';
+import type { WorkflowInteractionStore } from './workflow-interaction-store';
 import { WorkflowRegistry } from './workflow-registry';
-import { WorkflowRuntimeStore } from './workflow-runtime-store';
+import { WorkflowRuntimeStore, workflowSystemEventActorId } from './workflow-runtime-store';
 import { defineWorkflowTables } from './workflow-schema';
-import { WorkflowService } from './workflow-service';
+import { getWorkflowGraphRuntime, WorkflowService } from './workflow-service';
 import type { StepContext } from './types';
 
 const START = Date.parse('2035-04-05T06:07:08.000Z');
@@ -34,6 +41,419 @@ afterEach(async () => {
 });
 
 describe('workflow event delivery matrix', () => {
+  test('recovers an accepted interaction event and completes its wait atomically', async () => {
+    const registry = new WorkflowRegistry();
+    registry.create({
+      name: 'accepted-event-recovery',
+      flow: flow(
+        requestAndWait('approval', 'approval.responded'),
+        waitFor('later', 'later.event'),
+      ),
+    });
+    const first = track(new WorkflowService(db, registry));
+    const instanceId = await first.start('accepted-event-recovery', {}, 'owner');
+    const approval = first.getSteps(instanceId).find((row) => row.node_id === 'approval')!;
+    const runtime = (first as unknown as { runtime: WorkflowRuntimeStore }).runtime;
+    const graph = getWorkflowGraphRuntime(first);
+    const interaction = graph.listInteractions(instanceId)[0]!;
+    const eventId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify({ approved: true });
+    const actorJson = JSON.stringify({ actorId: 'owner' });
+    db.transaction(() => {
+      db.insert('workflow_events', {
+        event_id: eventId,
+        tenant_id: null,
+        instance_id: instanceId,
+        event_name: 'approval.responded',
+        payload,
+        sent_by: 'owner',
+        created_at: createdAt,
+      });
+      runtime.recordDeliverableEvent(
+        eventId,
+        instanceId,
+        'approval.responded',
+        createdAt,
+        null,
+        payload,
+        'owner',
+        actorJson,
+        Buffer.byteLength(payload),
+        Buffer.byteLength(actorJson),
+      );
+    });
+    expect(runtime.claimEvent(
+      instanceId,
+      approval.step_id,
+      'approval.responded',
+      createdAt,
+    )?.eventId).toBe(eventId);
+    await expect(graph.interactions.submitEvent({
+      interactionId: interaction.interactionId,
+      eventId,
+      actor: { actorId: 'owner' },
+      payload: { approved: true },
+    })).resolves.toMatchObject({ outcome: 'accepted' });
+
+    expect(db.query('workflow_interactions')[0]?.status).toBe('accepted');
+    expect(first.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('waiting');
+    expect(db.prepare(`SELECT origin, event_id, status
+      FROM _workflow_interaction_responses WHERE event_id = ?`).get(eventId)).toEqual({
+      origin: 'event',
+      event_id: eventId,
+      status: 'accepted',
+    });
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({
+      claimed_by_step_id: approval.step_id,
+    });
+    const queuedBytes = Buffer.byteLength(payload) + Buffer.byteLength(actorJson);
+    const usageBefore = db.prepare(`SELECT queued_count, queued_bytes, revision
+      FROM _workflow_event_usage WHERE instance_id = ?`).get(instanceId);
+    expect(usageBefore).toEqual({
+      queued_count: 1,
+      queued_bytes: queuedBytes,
+      revision: 2,
+    });
+
+    db.exec(`CREATE TRIGGER test_reject_accepted_wait_completion
+      BEFORE UPDATE OF status ON workflow_steps
+      WHEN NEW.step_id = '${approval.step_id}' AND NEW.status = 'completed'
+      BEGIN SELECT RAISE(ABORT, 'simulated accepted wait completion failure'); END`);
+    try {
+      expect(() => db.transaction(() => {
+        runtime.consumeAcceptedInteractionEvent(
+          approval.step_id,
+          instanceId,
+          eventId,
+        );
+        db.update('workflow_steps', approval.step_id, { status: 'completed' });
+      })).toThrow('simulated accepted wait completion failure');
+    } finally {
+      db.exec('DROP TRIGGER test_reject_accepted_wait_completion');
+    }
+    expect(first.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('waiting');
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({
+      claimed_by_step_id: approval.step_id,
+    });
+    expect(db.prepare(`SELECT queued_count, queued_bytes, revision
+      FROM _workflow_event_usage WHERE instance_id = ?`).get(instanceId))
+      .toEqual(usageBefore);
+
+    await first.dispose();
+    const second = track(new WorkflowService(db, registry));
+    await second.recoverInFlight();
+    await second.advance(instanceId);
+
+    expect(second.get(instanceId)?.status).toBe('running');
+    expect(second.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('completed');
+    expect(second.getSteps(instanceId).find((row) => row.node_id === 'later')?.status)
+      .toBe('waiting');
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({
+      claimed_by_step_id: `consumed:${eventId}`,
+    });
+    expect(db.prepare(`SELECT queued_count, queued_bytes, revision
+      FROM _workflow_event_usage WHERE instance_id = ?`).get(instanceId)).toEqual({
+      queued_count: 0,
+      queued_bytes: 0,
+      revision: 3,
+    });
+    expect(() => validateWorkflowGraphEventState(db, instanceId)).not.toThrow();
+  });
+
+  test('reconciles a claimed event when an external response wins an async authority race', async () => {
+    const eventAuthorityEntered = deferred<void>();
+    const releaseEventAuthority = deferred<void>();
+    const systemPrincipal = 'interaction-event-race';
+    const systemActorId = workflowSystemEventActorId(systemPrincipal);
+    const interactionAuthority = new WorkflowInteractionAuthority(({ actor }) => {
+      if (actor.actorId !== systemActorId) return true;
+      eventAuthorityEntered.resolve();
+      return releaseEventAuthority.promise.then(() => ({
+        allowed: true,
+        revision: 'event-authority-v1',
+        assertCurrent: () => true,
+      }));
+    });
+    const registry = new WorkflowRegistry();
+    registry.create({
+      name: 'external-response-race',
+      flow: flow(
+        requestAndWait('approval', 'approval.responded'),
+        waitFor('later', 'later.event'),
+      ),
+    });
+    const service = track(new WorkflowService(db, registry, { interactionAuthority }));
+    const instanceId = await service.start('external-response-race', {}, 'owner');
+    const approval = service.getSteps(instanceId).find((row) => row.node_id === 'approval')!;
+    const runtime = (service as unknown as { runtime: WorkflowRuntimeStore }).runtime;
+    const graph = getWorkflowGraphRuntime(service);
+    const interaction = graph.listInteractions(instanceId)[0]!;
+    const eventId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify({ approved: 'event' });
+    const actor = { actorId: systemActorId, tenantId: null, roles: [] as const };
+    const actorJson = serializeWorkflowEventActor(actor);
+    if (actorJson === null) throw new Error('Expected a persisted system event actor');
+    const eventAuthority = createSystemAuthority({
+      principal: systemPrincipal,
+      reason: 'Exercise the interaction response authority race',
+      scope: applicationServiceDataScope(),
+      legacyCompatibility: true,
+    });
+    db.transaction(() => {
+      db.insert('workflow_events', {
+        event_id: eventId,
+        tenant_id: null,
+        instance_id: instanceId,
+        event_name: 'approval.responded',
+        payload,
+        sent_by: systemActorId,
+        created_at: createdAt,
+      });
+      runtime.recordDeliverableEvent(
+        eventId,
+        instanceId,
+        'approval.responded',
+        createdAt,
+        null,
+        payload,
+        systemActorId,
+        actorJson,
+        Buffer.byteLength(payload),
+        Buffer.byteLength(actorJson),
+        eventAuthority,
+      );
+    });
+
+    const advancing = service.advance(instanceId);
+    await eventAuthorityEntered.promise;
+    await expect(graph.interactions.submit({
+      interactionId: interaction.interactionId,
+      submissionId: 'external-winner',
+      actor: { actorId: 'owner' },
+      payload: { approved: 'external' },
+      channel: 'web',
+    })).resolves.toMatchObject({ outcome: 'accepted' });
+    releaseEventAuthority.resolve();
+    await expect(advancing).resolves.toBeUndefined();
+
+    expect(service.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('completed');
+    expect(service.getSteps(instanceId).find((row) => row.node_id === 'later')?.status)
+      .toBe('waiting');
+    expect(graph.interactions.getSubmission(
+      interaction.interactionId,
+      `event:${eventId}`,
+    )).toBeNull();
+    expect(graph.interactions.getSubmission(
+      interaction.interactionId,
+      'external-winner',
+    )).toMatchObject({ origin: 'external', status: 'accepted' });
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({
+      claimed_by_step_id: `consumed:${eventId}`,
+    });
+    expect(db.prepare(`SELECT queued_count, queued_bytes FROM _workflow_event_usage
+      WHERE instance_id = ?`).get(instanceId)).toEqual({
+      queued_count: 0,
+      queued_bytes: 0,
+    });
+    expect(() => validateWorkflowGraphEventState(db, instanceId)).not.toThrow();
+  });
+
+  test('releases a crash-left processing event response after an external winner', async () => {
+    const registry = new WorkflowRegistry();
+    registry.create({
+      name: 'processing-event-recovery',
+      flow: flow(
+        requestAndWait('approval', 'approval.responded'),
+        waitFor('later', 'later.event'),
+      ),
+    });
+    const service = track(new WorkflowService(db, registry));
+    const instanceId = await service.start('processing-event-recovery', {}, 'owner');
+    const approval = service.getSteps(instanceId).find((row) => row.node_id === 'approval')!;
+    const runtime = (service as unknown as { runtime: WorkflowRuntimeStore }).runtime;
+    const graph = getWorkflowGraphRuntime(service);
+    const interaction = graph.listInteractions(instanceId)[0]!;
+    const store = (graph.interactions as unknown as {
+      store: WorkflowInteractionStore;
+    }).store;
+    const eventId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify({ approved: 'event' });
+    const actorJson = JSON.stringify({ actorId: 'owner' });
+    db.transaction(() => {
+      db.insert('workflow_events', {
+        event_id: eventId,
+        tenant_id: null,
+        instance_id: instanceId,
+        event_name: 'approval.responded',
+        payload,
+        sent_by: 'owner',
+        created_at: createdAt,
+      });
+      runtime.recordDeliverableEvent(
+        eventId,
+        instanceId,
+        'approval.responded',
+        createdAt,
+        null,
+        payload,
+        'owner',
+        actorJson,
+        Buffer.byteLength(payload),
+        Buffer.byteLength(actorJson),
+      );
+    });
+    expect(runtime.claimEvent(
+      instanceId,
+      approval.step_id,
+      'approval.responded',
+      createdAt,
+    )?.eventId).toBe(eventId);
+    expect(store.beginSubmission({
+      interactionId: interaction.interactionId,
+      submissionId: `event:${eventId}`,
+      actorId: 'owner',
+      channel: 'event',
+      origin: 'event',
+      eventId,
+      payloadHash: createHash('sha256').update(payload).digest('hex'),
+      payloadJson: payload,
+      now: createdAt,
+      requireRunningInstance: true,
+    })).toMatchObject({ status: 'processing', origin: 'event', eventId });
+    await expect(graph.interactions.submit({
+      interactionId: interaction.interactionId,
+      submissionId: 'external-after-crash',
+      actor: { actorId: 'owner' },
+      payload: { approved: 'external' },
+      channel: 'web',
+    })).resolves.toMatchObject({ outcome: 'accepted' });
+    expect(db.prepare(`SELECT response_count FROM _workflow_interaction_details
+      WHERE interaction_id = ?`).get(interaction.interactionId)).toEqual({ response_count: 2 });
+
+    await service.advance(instanceId);
+
+    expect(service.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('completed');
+    expect(service.getSteps(instanceId).find((row) => row.node_id === 'later')?.status)
+      .toBe('waiting');
+    expect(graph.interactions.getSubmission(
+      interaction.interactionId,
+      `event:${eventId}`,
+    )).toBeNull();
+    expect(db.prepare(`SELECT response_count FROM _workflow_interaction_details
+      WHERE interaction_id = ?`).get(interaction.interactionId)).toEqual({ response_count: 1 });
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({
+      claimed_by_step_id: `consumed:${eventId}`,
+    });
+    expect(db.prepare(`SELECT queued_count, queued_bytes FROM _workflow_event_usage
+      WHERE instance_id = ?`).get(instanceId)).toEqual({
+      queued_count: 0,
+      queued_bytes: 0,
+    });
+    expect(() => validateWorkflowGraphEventState(db, instanceId)).not.toThrow();
+  });
+
+  test('does not claim a later event from a stale open interaction snapshot', async () => {
+    const registry = new WorkflowRegistry();
+    registry.create({
+      name: 'stale-open-interaction',
+      flow: flow(
+        requestAndWait('approval', 'approval.responded'),
+        waitFor('later', 'approval.responded'),
+      ),
+    });
+    const service = track(new WorkflowService(db, registry));
+    const instanceId = await service.start('stale-open-interaction', {}, 'owner');
+    const approval = service.getSteps(instanceId).find((row) => row.node_id === 'approval')!;
+    const runtime = (service as unknown as { runtime: WorkflowRuntimeStore }).runtime;
+    const graph = getWorkflowGraphRuntime(service);
+    const staleOpenInteraction = graph.listInteractions(instanceId)[0]!;
+    await expect(graph.interactions.submit({
+      interactionId: staleOpenInteraction.interactionId,
+      submissionId: 'external-before-later-event',
+      actor: { actorId: 'owner' },
+      payload: { approved: true },
+      channel: 'web',
+    })).resolves.toMatchObject({ outcome: 'accepted' });
+
+    const principal = 'stale-interaction-event';
+    const actorId = workflowSystemEventActorId(principal);
+    const actor = { actorId, tenantId: null, roles: [] as const };
+    const actorJson = serializeWorkflowEventActor(actor);
+    if (actorJson === null) throw new Error('Expected a persisted system event actor');
+    const eventId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const payload = JSON.stringify({ for: 'later' });
+    db.transaction(() => {
+      db.insert('workflow_events', {
+        event_id: eventId,
+        tenant_id: null,
+        instance_id: instanceId,
+        event_name: 'approval.responded',
+        payload,
+        sent_by: actorId,
+        created_at: createdAt,
+      });
+      runtime.recordDeliverableEvent(
+        eventId,
+        instanceId,
+        'approval.responded',
+        createdAt,
+        null,
+        payload,
+        actorId,
+        actorJson,
+        Buffer.byteLength(payload),
+        Buffer.byteLength(actorJson),
+        createSystemAuthority({
+          principal,
+          reason: 'Prove a stale interaction cannot steal a later event',
+          scope: applicationServiceDataScope(),
+          legacyCompatibility: true,
+        }),
+      );
+    });
+
+    const bridge = new WorkflowInteractionEventBridge(runtime, graph.interactions, {
+      assertActorCurrent: () => undefined,
+      assertSystemCurrent: () => undefined,
+    });
+    await expect(bridge.consume({
+      instanceId,
+      nodeId: 'approval',
+      stepId: approval.step_id,
+      eventName: 'approval.responded',
+      interaction: staleOpenInteraction,
+    })).resolves.toMatchObject({ status: 'accepted' });
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({ claimed_by_step_id: null });
+
+    await service.advance(instanceId);
+
+    expect(service.get(instanceId)?.status).toBe('completed');
+    expect(service.getSteps(instanceId).find((row) => row.node_id === 'approval')?.status)
+      .toBe('completed');
+    expect(service.getSteps(instanceId).find((row) => row.node_id === 'later')?.status)
+      .toBe('completed');
+    expect(db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE event_id = ?`).get(eventId)).toEqual({
+      claimed_by_step_id: `consumed:${eventId}`,
+    });
+    expect(() => validateWorkflowGraphEventState(db, instanceId)).not.toThrow();
+  });
+
   test('keeps an event buffered while paused and claims it only after resume', async () => {
     const registry = new WorkflowRegistry();
     let received: StepContext['waitEvent'];

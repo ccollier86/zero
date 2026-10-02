@@ -39,7 +39,7 @@ src/
   doctor/                  <- Pure config/source diagnostics and Doctor CLI
   rooms/                   <- Rooms, presence
   scheduler/               <- Cron job scheduler
-  workflows/               <- Durable workflow engine
+  workflows/               <- Torrent durable workflow engine (public APIs retain workflow naming)
   schema/                  <- Schema definition system (defineSchema, field types)
   hooks/                   <- Utility React hooks (useForm, useHotkey, useConfirm, etc.)
   components/
@@ -149,7 +149,7 @@ the authoritative ownership and upgrade contract.
 | `src/schema/guardian-references.ts` | Server-only metadata behind `field.guardianUser()` and `field.guardianMembership()` |
 | `src/doctor/platform-doctor-system-database.ts` | Read-only plane collision, durability, legacy-layout, anchor, and projection-health diagnostics |
 
-### ReactiveDB Fabric (unreleased candidate)
+### ReactiveDB Fabric
 
 **What:** Bounded multi-database routing around independently reactive SQLite
 databases. The shared application database remains in-process, Zero/Guardian
@@ -158,7 +158,7 @@ application databases run in isolated Bun
 subprocess actors with one FIFO writer lane per database and optional file/WAL
 reader actors. See
 [ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md)
-for the authoritative contract and release boundary.
+for the authoritative Zero 2.0 contract and deliberate exclusions.
 
 | File | Purpose |
 |------|---------|
@@ -550,7 +550,11 @@ startup is lazy and process-wide; each render receives an isolated context.
 
 ---
 
-## System 5: Workflows
+## System 5: Torrent Workflows
+
+**Torrent** is the product name for this durable orchestration system. Source,
+configuration, routes, tables, TypeScript types, errors, observability, and
+React hooks retain their established `workflow`/`workflows` names.
 
 **What:** Durable, immutable-versioned workflow graphs with trusted activities,
 safe serializable expressions, persisted choices, concurrent branches and
@@ -670,6 +674,7 @@ state.
 | `src/migrations/definitions/030_workflow_graph_runtime.ts` | Frozen historical workflow graph migration |
 | `src/migrations/definitions/031_workflow_graph_tenant_integrity.ts` | Current tenant-integrity and observable-relation upgrade |
 | `src/migrations/definitions/032_workflow_runtime_ownership.ts` | Durable workflow runtime ownership-generation lease |
+| `src/migrations/definitions/033_torrent_integrity_hardening.ts` | Topology-independent Torrent definition/version/draft and terminal-event integrity fences |
 | `src/workflows/index.ts` | Barrel exports |
 
 **Client:**
@@ -716,7 +721,7 @@ error values are redacted; safe node/branch/parent/item-index identity, event au
 metadata, and interaction progress let React hooks and a future graph UI
 animate runs in real time without polling. Browser actions use
 `client.api.workflows`. See
-[Durable Workflows](./workflows.md).
+[Torrent: Durable Workflows](./workflows.md).
 
 Authenticated starts use `runAsActor()` and derive tenant scope only from the
 live Guardian credential—session or explicitly admitted user API key.
@@ -795,7 +800,10 @@ safety sweep and restart fallback.
 | `src/components/data-table/use-data-table.ts` | `useDataTable()` — TanStack Table wrapper |
 | `src/components/data-table/data-table-source.ts` | `useDataTableSource()` — static/full-sync/lazy data-source resolver |
 | `src/components/data-table/data-table-column-header.tsx` | Sortable/filterable column headers |
-| `src/components/data-table/data-table-toolbar.tsx` | Search, generated filters, column visibility, and export toolbar |
+| `src/components/data-table/data-table-search.tsx` | Compact, table-only animated search with accessible keyboard and reduced-motion behavior |
+| `src/components/data-table/data-table-column-filter.tsx` | Schema-aware client-side column-filter controls |
+| `src/components/data-table/data-table-toolbar.tsx` | Responsive search/filter control plane with selection-aware `controls`, `actions`, and `supplemental` slots, column visibility, and export |
+| `src/components/data-table/data-table-export.ts` | CSV export projection and download helper |
 | `src/components/data-table/data-table-pagination.tsx` | Pagination controls |
 | `src/components/data-table/data-table-row-actions.tsx` | Row action dropdown |
 | `src/components/data-table/editable-cell.tsx` | Inline cell editing |
@@ -814,6 +822,7 @@ safety sweep and restart fallback.
 | `src/components/text-effects/text-generate-effect.tsx` | Public word-by-word text reveal component |
 | `src/components/text-effects/typewriter-effect.tsx` | Public segmented typewriter text effect |
 | `src/components/text-effects/flip-words.tsx` | Public rotating inline word effect |
+| `src/components/streaming-text/streaming-text.tsx` | Accessible static, replayed, and live string-stream renderer for AI/agent output |
 | `src/components/faq/faq.tsx` | Public FAQ accordion with optional generated answer text |
 | `src/components/expandable-card/expandable-card.tsx` | Public shared-layout expandable card gallery |
 | `src/components/bento-grid/bento-grid.tsx` | Public bento grid layout, item, and skeleton components |
@@ -821,6 +830,17 @@ safety sweep and restart fallback.
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
 | `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |
+
+`DataTableView` exposes the toolbar through `searchable`, `toolbarLabel`, and
+`toolbarSlots`; CrudPage and MasterDetail wrappers forward slots as
+`tableToolbarSlots` and its accessible name as `tableToolbarLabel`. Toolbar
+filters are TanStack/client filters over resolved rows. Discrete, numeric, and
+date controls match exactly, text controls use contains matching, and
+multi-value controls match an included value. Lazy `filters`/`source.filters`
+remain `/api/data` inputs and are owned by the source layer rather than the
+toolbar. The slot and label props are optional additions: existing boolean
+`searchable` and `toolbarActions` integrations require no rewrite or database
+migration.
 
 ---
 

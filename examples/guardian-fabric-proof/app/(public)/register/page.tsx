@@ -4,7 +4,7 @@ import { AuthLayout, RegisterForm } from '@zero/framework/components/auth';
 import { useRouter } from '@zero/framework/react/hooks';
 
 export const meta = {
-  title: 'Create account | Guardian + Fabric Proof',
+  title: 'Create account | Guardian + Fabric + Torrent Proof',
   description: 'Bootstrap or join the Guardian multi-tenant proof application.',
 };
 
@@ -13,7 +13,7 @@ export default function RegisterPage() {
   const router = useRouter();
 
   return (
-    <AuthLayout appName="Guardian + Fabric Proof">
+    <AuthLayout appName="Guardian + Fabric + Torrent Proof">
       <RegisterForm
         fields={['email', 'firstName', 'lastName', 'password']}
         loginHref="/login"

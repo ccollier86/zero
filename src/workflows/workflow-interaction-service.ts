@@ -352,6 +352,11 @@ export class WorkflowInteractionService {
     return this.store.getAcceptedValue(interactionId);
   }
 
+  /** Server-only correlation for atomically settling an accepted event wait. */
+  getAcceptedEventId(interactionId: string): string | null {
+    return this.store.getAcceptedEventId(interactionId);
+  }
+
   /** Server-only request passed to configured delivery activities. */
   getRequestValue(interactionId: string): WorkflowJsonValue {
     return this.store.getPrivateDefinition(interactionId).request;

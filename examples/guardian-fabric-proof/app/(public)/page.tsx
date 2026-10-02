@@ -11,8 +11,8 @@ import {
 import { FeaturesSection, Hero, ResizableNavbar } from '@zero/framework/react';
 
 export const meta = {
-  title: 'Guardian + Fabric Proof',
-  description: 'Guardian authority, physically isolated tenant data, and realtime task collaboration.',
+  title: 'Guardian + Fabric + Torrent Proof',
+  description: 'Guardian authority, isolated tenant data, realtime collaboration, and durable workflows.',
 };
 
 const guarantees = [
@@ -34,6 +34,12 @@ const guarantees = [
     title: 'Realtime by default',
     description: 'The task board subscribes through ReactiveDB Sync while writes travel through policy-protected Resource actions.',
   },
+  {
+    id: 'torrent',
+    iconName: 'radio' as const,
+    title: 'Durable orchestration',
+    description: 'Torrent persists versioned graphs and human interactions while a bound activity writes only to the authorized tenant data plane.',
+  },
 ] as const;
 
 /** Public product and architecture overview. */
@@ -42,7 +48,7 @@ export default function LandingPage() {
     <div className="zero-public-page bg-public-background" data-zero-page="public">
       <ResizableNavbar
         brand={{
-          label: 'Guardian + Fabric',
+          label: 'Guardian + Fabric + Torrent',
           href: '/',
           mark: (
             <span className="grid size-9 place-items-center rounded-lg bg-public-accent text-public-accent-foreground shadow-[var(--public-shadow-floating)]">
@@ -65,7 +71,7 @@ export default function LandingPage() {
       <Hero
         align="left"
         title="Live collaboration with a physical tenant boundary."
-        description="Guardian multi-tenant authority, advanced RBAC, user-bound API keys, ReactiveDB realtime state, and one actor-owned SQLite database per customer workspace—all composed through Zero's public APIs."
+        description="Guardian multi-tenant authority, advanced RBAC, user-bound API keys, ReactiveDB realtime state, Torrent workflows, and one actor-owned SQLite database per customer workspace—all composed through Zero's public APIs."
         actions={[
           {
             label: 'Start the proof',
@@ -85,7 +91,7 @@ export default function LandingPage() {
 
       <FeaturesSection
         id="architecture"
-        eyebrow="Guardian + ReactiveDB Fabric"
+        eyebrow="Guardian + ReactiveDB Fabric + Torrent"
         title="Every boundary is explicit and independently enforced."
         description="The example stays declarative at the application layer while Zero resolves live authority, database placement, identity projection, and realtime delivery."
         features={guarantees}
@@ -104,7 +110,7 @@ export default function LandingPage() {
             <CardDescription className="mx-auto max-w-2xl text-base leading-7 text-public-muted-foreground">
               Bootstrap the Administration Organization, create two customer workspaces,
               exercise invitations and join requests, change roles, manage finite API keys,
-              and watch isolated task data update live across browsers.
+              approve a durable workflow, and watch isolated task data update live across browsers.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap justify-center gap-3 pb-7">
@@ -124,7 +130,7 @@ export default function LandingPage() {
 
 function StoragePlanePreview() {
   const planes = [
-    ['System', 'Guardian credentials, authority, audit, and provisioning'],
+    ['System', 'Guardian authority plus Torrent definitions, runs, and interactions'],
     ['Application', 'A clean pinned database for app-global data'],
     ['Tenant', 'Tasks, shallow anchors, receipts, and Sync state'],
   ] as const;

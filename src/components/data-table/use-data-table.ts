@@ -12,6 +12,7 @@ import {
   type RowSelectionState,
   type PaginationState,
   type Table,
+  type FilterFnOption,
 } from '@tanstack/react-table';
 import type { ReactNode } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
@@ -132,6 +133,7 @@ export function useDataTable<T extends Row>(
     return fieldNames.map((name) => {
       const meta = schema.fields.get(name);
       const override = columnOverrides?.[name];
+      const filterFn = getSchemaFilterFn<T>(meta);
       return {
         id: name,
         accessorFn: (row) => meta ? decodeFieldValue(meta, row[name]) : row[name],
@@ -146,6 +148,7 @@ export function useDataTable<T extends Row>(
         } : {}),
         enableSorting: override?.sortable ?? meta?.sortable !== false,
         enableColumnFilter: override?.filterable ?? meta?.filterable !== false,
+        ...(filterFn ? { filterFn } : {}),
         size: override?.width ?? meta?.columnWidth,
         meta: {
           fieldMeta: meta,
@@ -207,4 +210,26 @@ function formatLabel(name: string): string {
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, (s) => s.toUpperCase())
     .trim();
+}
+
+/** Keep schema-backed discrete controls exact and scalar numeric filters safe. */
+function getSchemaFilterFn<T extends Row>(
+  meta: FieldMeta | undefined,
+): FilterFnOption<T> | undefined {
+  switch (meta?.type) {
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'enum':
+    case 'number':
+    case 'select':
+      return 'equals';
+    case 'combobox':
+      return meta.multiple ? 'arrIncludes' : 'equals';
+    case 'multiSelect':
+    case 'tags':
+      return 'arrIncludes';
+    default:
+      return undefined;
+  }
 }

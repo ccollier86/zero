@@ -1,7 +1,7 @@
 # AI
 
 Zero includes an opt-in server-side AI layer for app code, loaders, jobs,
-workflows, and plugins.
+Torrent workflows, and plugins.
 
 The AI layer is internal by default. It does not expose public OpenAI-compatible
 routes unless a future app/plugin deliberately adds them.
@@ -129,9 +129,9 @@ already ships its own SDK.
 With `DEEPGRAM_API_KEY` set, the default `speech` alias resolves to
 `deepgram/aura-2-helena-en`.
 
-## Workflows And Jobs
+## Torrent Workflows And Jobs
 
-The AI plugin mounts before the scheduler and workflow plugins, so workflow
+The AI plugin mounts before the scheduler and Torrent workflow plugins, so workflow
 activities and scheduled jobs can use the same server-side service. Put workflow
 registration inside `AppConfig.workflows.register`:
 
@@ -192,7 +192,7 @@ revalidates `ctx.assertCurrentAuthority()` immediately before the provider
 request. Workflow execution is at-least-once after a crash, so use
 `ctx.idempotencyKey` for any separate nontransactional effect that must not
 happen twice.
-See [Durable Workflows](./workflows.md) for activity versions and schemas,
+See [Torrent: Durable Workflows](./workflows.md) for activity versions and schemas,
 graph authoring, retry/deadline/recovery semantics, and owner-scoped live state.
 
 For repeated server-side calls that should carry previous user and assistant

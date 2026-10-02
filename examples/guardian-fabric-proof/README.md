@@ -1,17 +1,18 @@
-# Guardian + ReactiveDB Fabric proof
+# Guardian + ReactiveDB Fabric + Torrent proof
 
 This example is an end-to-end proof that Zero can combine Guardian's live
 multi-tenant authority with ReactiveDB Fabric's actor-backed physical database
-isolation. It includes a public landing page, Guardian registration and login,
-workspace switching, a live proof center, a realtime task board,
+isolation and Torrent's durable workflow runtime. It includes a public landing
+page, Guardian registration and login, workspace switching, a live proof center,
+a realtime task board, a human-in-the-loop workflow lab,
 customer-workspace management, self-service and administrator-issued API keys,
 exact-email invitations, retained join requests, and protected
 platform-administration surfaces.
 
-The example exercises the active, unreleased Guardian + Fabric release
-candidate. It is useful for integration review and local acceptance testing;
-it is not a statement that Fabric's remaining fleet operations, deployment
-matrix, backup/restore, or online placement migration work is release-complete.
+The example exercises Zero 2.0's supported local-root Guardian, Fabric, and
+Torrent contracts. It is useful for integration review and local acceptance
+testing; it does not claim distributed Fabric root ownership, fleet operations,
+managed backup/restore, or online placement migration.
 
 ## What this proves
 
@@ -45,6 +46,18 @@ matrix, backup/restore, or online placement migration work is release-complete.
   commits against authority changes.
 - Guardian control-plane management stays session-only even though the task
   Resource explicitly admits both sessions and API keys.
+- Torrent pins version 1 of `proof.task-review`, persists its run and human
+  interaction in the system plane, and exposes only owner-scoped, payload-safe
+  live progress to the browser.
+- The workflow waits for its starter's approve/decline response and then follows
+  a persisted conditional branch. Declining completes without touching app
+  data. Approving invokes a trusted activity with the sealed Guardian actor and
+  the scope-closed `ctx.zero.data` capability.
+- The approved activity writes to the active physical tenant file without a
+  tenant selector. It stamps the task with the workflow actor's user and
+  membership IDs and uses the step's stable idempotency key. The task then
+  appears on the realtime board through the tenant Sync plane while workflow
+  progress arrives through the system Sync plane.
 
 ## Storage architecture, honestly
 
@@ -53,7 +66,7 @@ plane, and Fabric tenant application planes physically distinct:
 
 | Plane | Location | Current contents |
 | --- | --- | --- |
-| Privileged Zero system database | `data/system.db` | Guardian identities, password/session state, tenants, memberships, role assignments, invitations, retained join requests, API-key digests and lifecycle metadata, control-plane audit events, provisioning state, and other Zero-owned system data. |
+| Privileged Zero system database | `data/system.db` | Guardian identities, password/session state, tenants, memberships, role assignments, invitations, retained join requests, API-key digests and lifecycle metadata, control-plane audit events, provisioning state, and Torrent definitions, runs, interactions, execution authority, scratch state, and leases. |
 | Pinned application database | `data/application.db` | The app plane required by Zero's topology. It is intentionally empty/minimal in this proof because every customer `tasks` realm is a tenant file. It never receives Guardian credentials, sessions, RBAC, or other system records. |
 | Fabric tenant databases | `data/tenant-databases/db-*.sqlite` | The `tasks` table, ID-only `users` and `tenant_memberships` anchors required by its foreign keys, ReactiveDB change state, and Fabric mutation receipts for one physically bound tenant scope per database. |
 
@@ -87,12 +100,48 @@ while holding a shared lease on Zero's file-backed authority sidecar. Different
 tenant writers retain concurrent commits; a Guardian authority change takes
 the exclusive side and cannot interleave that boundary.
 
+## Torrent proof contract
+
+`server/torrent-proof.ts` registers three versioned code activities and one
+immutable versioned definition:
+
+1. `proof.task.prepare` validates the requested ID and title, trims the title,
+   and captures a server timestamp as durable output. That stable output keeps
+   a later retried Fabric mutation byte-for-byte idempotent.
+2. `review-task` opens a `requestAndWait()` interaction. The packaged default
+   responder policy accepts only the workflow starter; another tenant or the
+   Administration Organization receives the same not-found boundary as an
+   unknown run.
+3. `route-decision` persists the approve/decline choice. The declined lane has
+   no data capability. The approved lane invokes `proof.task.create`.
+4. `proof.task.create` requires a live actor, membership, workflow idempotency
+   key, and bound Fabric client. It reasserts current authority, then creates the
+   fully attributed task in the current tenant database.
+
+The workflow start policy admits `editor` and `manager`; a tenant owner remains
+an administrator of the scope. `viewer`, `editor`, and `manager` may discover
+the definition, while run rows and controls remain owner-scoped unless the live
+actor manages workflows in that tenant. These declarative checks are server
+authority—not UI gates.
+
+The browser's **Torrent workflows** page composes `useWorkflowList()`,
+`useWorkflowRun()`, and `useWorkflowTopology()`. It can start and select runs,
+approve or decline the open interaction, pause/resume/cancel execution, and
+join the immutable presentation topology to live node states. It never receives
+the persisted request, response, activity inputs/outputs, executable graph, or
+private authority seal.
+
+Torrent's system-plane commit and the Fabric tenant-file commit are deliberately
+not presented as one distributed SQL transaction. The activity's stable input
+and idempotency key make replay safe, while live Guardian and attempt fences
+prevent a stale queued write from being admitted.
+
 ## Run locally
 
 Prerequisites:
 
 - the repository dependencies installed with `bun install`;
-- the candidate's validated Bun runtime; and
+- Bun 1.3.14 or newer, matching Zero 2.0's encoded runtime floor; and
 - `openssl` (or another cryptographically secure generator) for the one-time
   bootstrap secret.
 
@@ -176,35 +225,41 @@ replace another profile's cookie or browser session:
    leak. To prove identical primary keys physically coexist, issue one key in
    each workspace and run the fixed `api-proof-task` create command shown on
    **Security** in each scope.
-5. In A, open **Members & access** and issue a manual exact-email invitation.
+5. In A, open **Torrent workflows**, start a review, and keep a second task-board
+   window visible. Confirm the live graph stops at **Review task**. Pause and
+   resume it once, approve it, and confirm the run completes while the new task
+   appears on the board. Start another review and decline it; the run should
+   complete with no new task. Switch to B and confirm neither A's run nor its
+   resulting task is visible.
+6. In A, open **Members & access** and issue a manual exact-email invitation.
    In Profile B, open `/accept-invitation`, paste the once-revealed token, and
    complete the existing-account path. Repeat in Profile C with an email that
    has no account to exercise invited-account creation. The route removes token
    material from the URL and keeps a bounded current-tab handoff only when a
    sign-in round trip is required.
-6. In Profile C, open `/request-access`, submit B's exact slug, and observe the
+7. In Profile C, open `/request-access`, submit B's exact slug, and observe the
    deliberately non-enumerating receipt. In Profile A, open **Members & access
    → Onboarding** to review and approve or deny the retained request. After approval,
    switch Profile C into B and wait for its Fabric realm before opening tasks.
-7. Assign Profile B `viewer`; confirm the board is realtime and read-only.
+8. Assign Profile B `viewer`; confirm the board is realtime and read-only.
    Promote it to `editor`; confirm it can create and move only tasks stamped to
    that exact user and membership. Promote it to `manager`; confirm it can read,
    move, and delete every task. Demote it again and verify stale authority does
    not authorize a later write.
-8. Give Profile B memberships in both A and B, sign out, then sign in again.
+9. Give Profile B memberships in both A and B, sign out, then sign in again.
    Complete Guardian's workspace selector and verify the resulting session,
    proof-center projection, and Fabric realm all match the chosen workspace.
-9. In **Security**, issue a self-service key. Run the list and create commands,
+10. In **Security**, issue a self-service key. Run the list and create commands,
    observe the created row arrive in both live task windows, rotate the key and
    prove the old secret fails, then revoke the replacement and prove it fails.
    Under **Security → Member credentials**, issue a member key as the owner and
    confirm a viewer cannot do so. Back in the Administration Organization, open
    **Platform operations → Credentials**, select an active customer and member,
    and exercise platform-authorized issuance plus the global key directory.
-10. From **Platform operations**, suspend A. Confirm its browser data access,
+11. From **Platform operations**, suspend A. Confirm its browser data access,
     Sync, and existing API key all fail closed. Reactivate A, switch or sign in
     again as required, and confirm the original task data returns unchanged.
-11. Inside a customer scope, transfer the current owner's authority and confirm
+12. Inside a customer scope, transfer the current owner's authority and confirm
     the packaged control clears that invalidated session and returns directly
     to sign-in. Separately, transfer a customer's ownership from the
     Administration Organization and confirm the platform actor stays signed in
@@ -373,6 +428,8 @@ From the repository root, run the focused real-app integration test:
 ```sh
 bun test \
   examples/guardian-fabric-proof/server/resources/tasks.test.ts \
+  examples/guardian-fabric-proof/server/torrent-proof.test.ts \
+  examples/guardian-fabric-proof/server/torrent-proof.integration.test.ts \
   examples/guardian-fabric-proof/app/proof-ui-contract.test.ts \
   src/frontend/server/guardian-fabric-proof-fixture.test.ts \
   src/frontend/server/guardian-fabric.integration.test.ts \
@@ -381,7 +438,11 @@ bun test \
 
 The example-local contract tests check the Guardian-reference schema,
 server-owned field boundaries, role matrix, guided journeys, scope-aware
-navigation, onboarding input and current-tab handoff, and semantic Sync states.
+navigation, onboarding input and current-tab handoff, semantic Sync states,
+the pinned Torrent graph, and the exact approved Fabric mutation. The focused
+Torrent integration test starts the real managed app, provisions a tenant
+realm, denies a foreign responder, accepts the starter's response, verifies the
+owner-attributed tenant task, and proves the declined branch writes no task.
 The fixture test checks the Resource realm/exposure plus its declared
 credential, permission, and customer-tenant branches, runs Doctor against this
 exact configuration, and bundles this exact server entrypoint through Zero's
@@ -425,6 +486,9 @@ drift from the test. Real actor subprocesses and Sync clients verify:
 - removing the second membership does not erase its ID-only user/membership
   anchors, preserving historical foreign-key attribution without retaining
   profile or credential data.
+- a versioned Torrent interaction remains owner/tenant scoped, an accepted
+  approval completes the workflow and writes through its bound Fabric client,
+  and a decline completes through the no-write branch.
 
 A separate focused `todos` Resource scenario—not the shipped task Resource—is
 retained to exercise two lower-level policy edges: a session-only action rejects
@@ -459,13 +523,18 @@ responsibilities beyond this proof's UI.
 | `db/schema.ts` | Shared `tasks` contract with declarative Guardian user/membership references and intentionally no `tenant_id`. |
 | `db/tenant-realm.ts` | Side-effect-free schema installed in every physical tenant database. |
 | `shared/task-access.ts` | Isomorphic permission/role registry shared by config, UI explanation, and contract tests. |
-| `server/proof-config.ts` | Pure shared Guardian/RBAC/API-key/Fabric configuration factory with explicit disposable-runtime overrides. |
+| `shared/torrent-proof.ts` | Browser-safe workflow name, event, input, and response contract. |
+| `server/proof-config.ts` | Pure shared Guardian/RBAC/API-key/Fabric/Torrent configuration factory with explicit disposable-runtime overrides. |
+| `server/torrent-proof.ts` | Versioned activities and durable review/branch/Fabric-write workflow definition. |
+| `server/torrent-proof.test.ts` | Compiler, schema, capability, attribution, and exact mutation contract tests. |
+| `server/torrent-proof.integration.test.ts` | Real managed-app proof of provisioning, workflow authority, response, completion, and tenant data effects. |
 | `server/resources/tasks.ts` | Resource field policy, title normalization, RBAC branches, trusted chronology/actor stamping, immutable ownership, HTTP CRUD, and Sync authorization. |
 | `app/server.ts` | Same-entry parent startup and Fabric actor bootstrap. |
 | `app/layout.tsx` | One `ThemeProvider`, `AppProvider`, invitation-expiry guard, `ConfirmProvider`, and `Toaster`. |
 | `app/auth-route-query.ts` | Pure invitation/slug validation, clean-URL projection, and bounded current-tab invitation handoff. |
 | `app/(public)/` | Landing, login, registration, manual invitation acceptance, and retained access-request routes. |
-| `app/(dashboard)/` | Auth-required proof center, tasks, member/security/platform controls, workspace creation, and route-owned shell. |
+| `app/(dashboard)/` | Auth-required proof center, tasks, Torrent lab, member/security/platform controls, workspace creation, and route-owned shell. |
 | `app/components/` | Scope-aware shell, compact control-plane modes, live proof/status/access panels, API-key guide, invitation-expiry guard, and tenant/platform credential selectors composed around packaged Guardian controls. |
 | `app/tasks/` | Realtime collection orchestration, exact access summary, cards, and Resource-backed board actions. |
+| `app/workflows/` | Workflow start/history orchestration plus live interaction, lifecycle, progress, and topology controls. |
 | `app/proof-ui-contract.test.ts` | Pure UI/security contract coverage for scopes, journeys, onboarding handoff, role matrix, fields, and Sync states. |

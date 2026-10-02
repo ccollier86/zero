@@ -5,15 +5,22 @@
  * package-mode starter files required by create-zero after publication.
  */
 
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
+import { LOCAL_FRAMEWORK_DEPENDENCY } from './create-zero/local-framework-package';
+import { runCreateZeroCli } from './create-zero/run';
+
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 32 },
+  { length: 33 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
+const PACKAGE_RUNTIME_SMOKE_TIMEOUT_MS = 180_000;
+const PACKAGE_RUNTIME_SMOKE_REAP_TIMEOUT_MS = 10_000;
+const PACKAGE_RUNTIME_SMOKE_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+const PACKAGE_RUNTIME_SMOKE_SUCCESS = '[zero-package-runtime] complete';
 
 describe('package distribution', () => {
   // Packing, installing, typechecking, and booting a fresh consumer is a
@@ -22,25 +29,24 @@ describe('package distribution', () => {
   // parallel-run budget rather than treating host contention as a failure.
   test('packed package creates a reusable app with docs and working SSR', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'zero-pack-'));
-    const packDir = join(rootDir, 'pack');
+    const localAppDir = join(rootDir, 'local-app');
     const extractDir = join(rootDir, 'extract');
     const appDir = join(rootDir, 'generated-app');
 
     try {
-      await mkdir(packDir, { recursive: true });
       await mkdir(extractDir, { recursive: true });
 
-      await spawnChecked([
-        'bun',
-        'pm',
-        'pack',
-        '--destination',
-        packDir,
-        '--ignore-scripts',
-        '--quiet',
-      ]);
+      expect(await runCreateZeroCli([localAppDir, '--local'])).toBe(0);
 
-      const tarball = await findPackedTarball(packDir);
+      const localPackageJson = JSON.parse(
+        await readFile(join(localAppDir, 'package.json'), 'utf8')
+      ) as { dependencies: Record<string, string> };
+      expect(localPackageJson.dependencies['@zero/framework']).toBe(
+        LOCAL_FRAMEWORK_DEPENDENCY,
+      );
+
+      const tarball = join(localAppDir, '.zero/framework/zero-framework.tgz');
+      await expect(stat(tarball).then((value) => value.isFile())).resolves.toBe(true);
       const contents = await spawnText(['tar', '-tzf', tarball]);
       const packagedFiles = contents.split('\n');
       expect(contents).toContain('package/src/create-zero/run.ts');
@@ -87,12 +93,29 @@ describe('package distribution', () => {
       expect(contents).toContain('package/examples/guardian-fabric-proof/.env.example');
       expect(contents).toContain('package/examples/guardian-fabric-proof/README.md');
       expect(contents).toContain('package/examples/guardian-fabric-proof/app/server.ts');
+      expect(contents).toContain(
+        'package/examples/guardian-fabric-proof/app/(dashboard)/workflows/page.tsx',
+      );
+      expect(contents).toContain(
+        'package/examples/guardian-fabric-proof/app/workflows/torrent-proof-panel.tsx',
+      );
+      expect(contents).toContain(
+        'package/examples/guardian-fabric-proof/app/workflows/torrent-run-monitor.tsx',
+      );
+      expect(contents).toContain(
+        'package/examples/guardian-fabric-proof/server/torrent-proof.ts',
+      );
       expect(contents).toContain('package/examples/guardian-fabric-proof/server/resources/tasks.ts');
+      expect(contents).toContain(
+        'package/examples/guardian-fabric-proof/shared/torrent-proof.ts',
+      );
       expect(contents).toContain('package/examples/guardian-fabric-proof/zero.config.ts');
       expect(contents).toContain('package/scripts/install-local-tools.sh');
       expect(packagedFiles).toContain('package/.env.example');
       expect(contents).toContain('package/README.md');
       expect(contents).toContain('package/llms.txt');
+      expect(contents).toContain('package/THIRD_PARTY_NOTICES.md');
+      expect(contents).toContain('package/src/components/streaming-text/streaming-text.tsx');
       expect(contents).toContain('package/docs/start-here.md');
       expect(contents).toContain('package/docs/auth/native-app-auth.md');
       expect(contents).toContain('package/tsconfig.json');
@@ -177,6 +200,10 @@ describe('package distribution', () => {
         stat(join(appDir, 'node_modules/@zero/framework/llms.txt')).then((value) => value.isFile())
       ).resolves.toBe(true);
       await expect(
+        stat(join(appDir, 'node_modules/@zero/framework/THIRD_PARTY_NOTICES.md'))
+          .then((value) => value.isFile())
+      ).resolves.toBe(true);
+      await expect(
         stat(join(appDir, 'node_modules/@zero/framework/examples/native-auth/desktop.ts'))
           .then((value) => value.isFile())
       ).resolves.toBe(true);
@@ -200,7 +227,7 @@ describe('package distribution', () => {
         join(appDir, 'package-runtime-smoke.tsconfig.json'),
       ], appDir);
       await spawnChecked(['bun', 'run', 'typecheck'], appDir);
-      await spawnChecked(['bun', 'package-runtime-smoke.ts'], appDir);
+      await runPackageRuntimeSmoke(appDir);
       await spawnChecked(['bun', 'package-release-smoke.ts'], appDir);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
@@ -211,13 +238,6 @@ describe('package distribution', () => {
   // subprocess budget rather than terminating a healthy compiler.
   }, 600_000);
 });
-
-async function findPackedTarball(packDir: string): Promise<string> {
-  const entries = await readdir(packDir);
-  const tarball = entries.find((entry) => entry.endsWith('.tgz'));
-  if (!tarball) throw new Error(`No package tarball was written to ${packDir}`);
-  return join(packDir, tarball);
-}
 
 async function pathExists(pathname: string): Promise<boolean> {
   return stat(pathname).then(() => true, () => false);
@@ -241,6 +261,124 @@ async function spawnChecked(cmd: string[], cwd = process.cwd()): Promise<void> {
   if (exitCode !== 0) {
     throw new Error(`Command failed (${cmd.join(' ')}):\n${stdout}\n${stderr}`);
   }
+}
+
+/**
+ * Run the installed-package runtime smoke with a deadline below the enclosing
+ * release gate. File-backed output avoids a pipe-drain deadlock obscuring the
+ * child deadline, while the final phase marker proves graceful app teardown.
+ */
+async function runPackageRuntimeSmoke(appDir: string): Promise<void> {
+  const stdoutPath = join(appDir, '.package-runtime-smoke.stdout.log');
+  const stderrPath = join(appDir, '.package-runtime-smoke.stderr.log');
+  const [stdoutFile, stderrFile] = await Promise.all([
+    open(stdoutPath, 'w'),
+    open(stderrPath, 'w'),
+  ]);
+  const startedAt = Date.now();
+  const proc = Bun.spawn({
+    cmd: [process.execPath, 'package-runtime-smoke.ts'],
+    cwd: appDir,
+    stdin: 'ignore',
+    stdout: stdoutFile.fd,
+    stderr: stderrFile.fd,
+    env: {
+      ...Bun.env,
+      NODE_ENV: 'test',
+      PORT: '3000',
+      APP_NAME: 'Zero Package Runtime Smoke',
+      APP_PUBLIC_URL: 'http://localhost:3000',
+      DB_MODE: 'ephemeral',
+      SYSTEM_DB_MODE: 'ephemeral',
+      ZERO_AUTH_ENABLED: 'false',
+      ZERO_PDF_ENABLED: 'false',
+      ZERO_VECTOR_ENABLED: 'false',
+      RESEND_API_KEY: '',
+      OPENAI_API_KEY: '',
+      ANTHROPIC_API_KEY: '',
+      GEMINI_API_KEY: '',
+      GOOGLE_API_KEY: '',
+      GROQ_API_KEY: '',
+      XAI_API_KEY: '',
+      COHERE_API_KEY: '',
+      META_LLAMA_API_KEY: '',
+      LLAMA_API_KEY: '',
+      DEEPSEEK_API_KEY: '',
+      PERPLEXITY_API_KEY: '',
+      VOYAGE_API_KEY: '',
+      DEEPGRAM_API_KEY: '',
+    },
+  });
+
+  let timedOut = false;
+  let reaped = true;
+  try {
+    if (!await processSettledWithin(proc, PACKAGE_RUNTIME_SMOKE_TIMEOUT_MS)) {
+      timedOut = true;
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // The child may have exited between the deadline and the signal.
+      }
+      reaped = await processSettledWithin(proc, PACKAGE_RUNTIME_SMOKE_REAP_TIMEOUT_MS);
+    }
+  } finally {
+    await Promise.allSettled([stdoutFile.close(), stderrFile.close()]);
+  }
+
+  const [stdout, stderr] = await Promise.all([
+    readDiagnosticOutput(stdoutPath),
+    readDiagnosticOutput(stderrPath),
+  ]);
+  const lastPhase = [...stdout.matchAll(/^\[zero-package-runtime\] (.+)$/gm)].at(-1)?.[1]
+    ?? 'child did not report a phase';
+  const details = [
+    `command: ${process.execPath} package-runtime-smoke.ts`,
+    `duration: ${Date.now() - startedAt}ms`,
+    `exit: ${String(proc.exitCode)}`,
+    `signal: ${String(proc.signalCode)}`,
+    `last phase: ${lastPhase}`,
+    `reaped: ${String(reaped)}`,
+    stdout.trim() ? `stdout:\n${stdout.trim()}` : '',
+    stderr.trim() ? `stderr:\n${stderr.trim()}` : '',
+  ].filter(Boolean).join('\n');
+
+  if (timedOut) {
+    throw new Error(`Installed-package runtime smoke timed out.\n${details}`);
+  }
+  if (proc.exitCode !== 0 || proc.signalCode !== null) {
+    throw new Error(`Installed-package runtime smoke failed.\n${details}`);
+  }
+  if (!stdout.includes(PACKAGE_RUNTIME_SMOKE_SUCCESS)) {
+    throw new Error(`Installed-package runtime smoke omitted its success marker.\n${details}`);
+  }
+}
+
+async function processSettledWithin(
+  proc: Bun.Subprocess,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      proc.exited.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function readDiagnosticOutput(pathname: string): Promise<string> {
+  const output = await readFile(pathname);
+  const truncated = output.byteLength > PACKAGE_RUNTIME_SMOKE_OUTPUT_LIMIT_BYTES;
+  const visible = truncated
+    ? output.subarray(output.byteLength - PACKAGE_RUNTIME_SMOKE_OUTPUT_LIMIT_BYTES)
+    : output;
+  const text = new TextDecoder().decode(visible);
+  return truncated ? `[earlier output truncated]\n${text}` : text;
 }
 
 async function buildInstalledNativeRecipes(appDir: string): Promise<void> {
@@ -622,24 +760,98 @@ function assertPackagedNativeContract(options: ZeroNativeAuthOptions) {
 }
 void assertPackagedNativeContract;
 
+function phase(name: string): void {
+  console.log(\`[zero-package-runtime] \${name}\`);
+}
+
+async function readText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return '';
+  }
+}
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+phase('create-app:start');
 const app = await createApp({
   ...config,
+  app: {
+    ...config.app,
+    name: 'Zero Package Runtime Smoke',
+    publicUrl: 'http://localhost:3000',
+  },
   db: { mode: 'ephemeral' },
+  systemDb: { mode: 'ephemeral' },
   auth: false,
   stateSync: false,
   email: false,
   ai: false,
   vector: false,
+  pdf: false,
+  kv: false,
+  observability: false,
   migrate: false,
+  outDir: './custom-build',
+  generatedDir: './.zero/generated',
+  port: 3000,
 });
+phase('create-app:complete');
 
-const health = await app.handle(new Request('http://localhost/api/health'));
-if (health.status !== 200) throw new Error(\`health failed with status \${health.status}\`);
+try {
+  phase('health:start');
+  const health = await app.handle(new Request('http://localhost/api/health'));
+  if (health.status !== 200) {
+    throw new Error(\`health failed: \${health.status} \${await readText(health)}\`);
+  }
+  phase('health:complete');
 
-const page = await app.handle(new Request('http://localhost/'));
-const html = await page.text();
-if (page.status !== 200) throw new Error(\`page failed with status \${page.status}: \${html}\`);
-if (!html.includes('Build your app from here')) throw new Error('starter SSR content missing');
+  phase('page:start');
+  const page = await app.handle(new Request('http://localhost/'));
+  const html = await page.text();
+  assert(page.status === 200, \`page failed: \${page.status} \${html}\`);
+  assert(html.includes('Build your app from here'), 'starter SSR content missing');
+  assert(html.includes('/_build/platform.'), 'platform stylesheet was not linked into SSR HTML');
+  phase('page:complete');
+
+  phase('sitemap:start');
+  const sitemap = await app.handle(new Request('http://localhost/sitemap.xml'));
+  const sitemapXml = await sitemap.text();
+  assert(sitemap.status === 200, \`sitemap failed: \${sitemap.status} \${sitemapXml}\`);
+  assert(sitemap.headers.get('content-type')?.includes('application/xml'), 'sitemap content type missing');
+  assert(sitemapXml.includes('<loc>http://localhost:3000/</loc>'), 'sitemap root route missing');
+  phase('sitemap:complete');
+
+  phase('artifacts:start');
+  const jsFiles = [...new Bun.Glob('client.*.js').scanSync({ cwd: './custom-build' })];
+  const cssFiles = [...new Bun.Glob('platform.*.css').scanSync({ cwd: './custom-build' })];
+  assert(jsFiles.length > 0, 'client bundle missing from custom outDir');
+  assert(cssFiles.length > 0, 'platform stylesheet missing from custom outDir');
+  assert(
+    await Bun.file('./.zero/generated/client-entry.tsx').exists(),
+    'generated client entry missing',
+  );
+  phase('artifacts:complete');
+
+  phase('js-asset:start');
+  const jsAsset = await app.handle(new Request(\`http://localhost/_build/\${jsFiles[0]}\`));
+  assert(jsAsset.status === 200, \`custom outDir JS asset failed: \${jsAsset.status}\`);
+  phase('js-asset:complete');
+
+  phase('css-asset:start');
+  const cssAsset = await app.handle(new Request(\`http://localhost/_build/\${cssFiles[0]}\`));
+  assert(cssAsset.status === 200, \`custom outDir CSS asset failed: \${cssAsset.status}\`);
+  phase('css-asset:complete');
+} finally {
+  phase('stop:start');
+  await app.stop(true);
+  phase('stop:complete');
+}
+
+phase('complete');
 `;
 
   await Promise.all([

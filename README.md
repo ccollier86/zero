@@ -2,7 +2,8 @@
 
 Zero is a Bun/Elysia full-stack app framework for building data-heavy web apps
 quickly from one integrated platform. It ships backend services, frontend
-components, routing, auth, storage, sync, workflows, notifications, AI, vector
+components, routing, Guardian auth, storage, sync, Torrent workflows,
+notifications, AI, vector
 storage, browser-grade PDF rendering, migrations, observability, and app-ready
 hooks so new apps do not start by rebuilding the same foundation.
 
@@ -11,9 +12,16 @@ called **Guardian**. This is a documentation/product name; its established
 `auth.*` configuration, `/auth/*` routes, and `@zero/framework/auth` API remain
 unchanged.
 
-ReactiveDB Fabric is an active, unreleased release-candidate implementation
-that extends the pinned shared application database with bounded actor-owned
-application databases. Zero/Guardian authority stays in the always-separate
+Zero's durable, versioned workflow and orchestration system is called
+**Torrent**. Torrent is also a documentation/product name: the established
+`workflows` configuration, `/workflows/*` routes,
+`@zero/framework/workflows`, `zero.workflows`, `useWorkflow*` hooks,
+`Workflow*` TypeScript contracts, `workflow_*` tables, `WORKFLOW_*` errors,
+and `workflows.*` observability codes remain unchanged.
+
+**ReactiveDB Fabric** is Zero's supported multi-database runtime. It extends
+the pinned shared application database with bounded actor-owned application
+databases while Zero/Guardian/Torrent authority stays in the always-separate
 system database.
 Its tenant mode derives a pseudonymous database binding from trusted
 authorization scope, so tenant identity selects the database rather than a
@@ -27,7 +35,7 @@ multiplexed realtime Sync
 use the selected database while preserving server-side policy and commit-time
 authority checks. See the
 [ReactiveDB Fabric architecture](./docs/framework/multi-database-architecture.md)
-for its exact contract and remaining release gates, and see
+for its exact supported contract and deliberate exclusions, and see
 [System and Application Database Planes](./docs/framework/system-database.md)
 for the ownership boundary.
 That boundary is a breaking upgrade for legacy combined databases: startup
@@ -35,7 +43,7 @@ fails closed until the operator completes a backed-up, offline, app-specific
 split. Zero does not silently move authority data or currently ship a generic
 splitter; new separated-plane apps are unaffected.
 
-Current development boundary: Guardian implements all four auth
+Zero 2.0's supported boundary: Guardian implements all four auth
 profiles—`single/simple`, `single/advanced`, `multi/simple`, and
 `multi/advanced`—through one app-local authorization system. Multi-tenant
 sessions, registered resources, Sync, scoped built-in services, tenant
@@ -64,11 +72,11 @@ uniqueness that omits the tenant, and requires tenant-to-tenant foreign keys to
 carry the tenant pair in the same composite constraint.
 Default `createApp()` installs the
 framework-table and managed-topic policies, while direct `createSyncPlugin()`
-composition still requires explicit auth and policy. Treat these additions as
-unreleased until the release checklist and package verification pass. See
-[Releasing Zero](./docs/releasing.md) and the
+composition still requires explicit auth and policy. See
+[Releasing Zero](./docs/releasing.md) for the exact supported-versus-preview
+boundary and the
 [auth implementation checklist](./docs/auth/multi-tenant-auth-implementation-checklist.md)
-for the supported-versus-preview boundary.
+for the evidence behind Guardian's shipped profiles.
 The exact Administration Organization contract is documented in
 [Platform Administration Organization](./docs/auth/platform-administration.md).
 
@@ -141,6 +149,11 @@ present, and package-manager install state. For `zero-update`, the ignored
 `.zero/framework/zero-framework.tgz` cache is copied from the saved stable
 package; the development checkout is never packed. An explicit
 `zero update --local /path/to/checkout` remains available for framework testing.
+With Zero 2.0 on `main`, legacy combined-database apps that are staying on
+the maintained 1.3 line must use that explicit local path from the exact
+`v1.3.3` tag or `release/1.3` checkout; the `zero-update` stable wrapper follows
+`main` and therefore selects 2.0. See
+[Maintained 1.3 compatibility line](./docs/releasing.md#maintained-13-compatibility-line).
 After a clean clone, `.zero/`, `.zero/framework/`, and the archive may
 all be absent; a mutating local update safely creates that managed cache before
 installing Zero. `--dry-run` reports the pending bootstrap without creating
@@ -211,7 +224,7 @@ apps. Start with the
 - [Framework Developer Surface](./docs/framework-developer-surface.md):
   canonical imports and app-owned extension examples.
 - [ReactiveDB Fabric](./docs/framework/multi-database-architecture.md):
-  unreleased multi-database topology, actor isolation, file/WAL and bounded
+  supported multi-database topology, actor isolation, file/WAL and bounded
   hot placement, tenant routing, realtime behavior, capacity, durability, and
   operational boundaries.
 - [Auth System](./docs/auth/README.md): canonical auth index for installation
@@ -234,11 +247,13 @@ apps. Start with the
   capabilities.
 - [PDF Rendering](./docs/pdf.md): secure Chromium HTML/CSS rendering, storage
   composition, runtime setup, limits, and adapter contracts.
-- [Durable Workflows](./docs/workflows.md): code DSL, canonical graph IR,
+- [Torrent: Durable Workflows](./docs/workflows.md): code DSL, canonical graph IR,
   immutable code/database versions, trusted activities, memory, interactions,
   recovery, and safe real-time React visualization data.
 - [Component Inventory](./docs/frontend/component-inventory.md): reusable UI,
   app shells, data organisms, frontend sections, and use-first rules.
+- [Streaming Text](./docs/frontend/streaming-text.md): accessible AI/agent text
+  from live string streams, caller-owned progressive output, or demos.
 - [Frontend Router](./docs/frontend/router.md): layouts, route groups, auth
   boundaries, sitemap, and file-router behavior.
 - [Releasing Zero](./docs/releasing.md): versioning and verification checklist.
@@ -270,9 +285,11 @@ backend app code, or grows source files past the responsibility threshold.
 
 ## Current Package State
 
-Zero is currently Bun-first and exports TypeScript source through the package
-export map. That is intentional for local package-mode development. Before npm
-publication, follow the current supported-boundary and verification checklist in
+Zero 2.0 is Bun-first and exports TypeScript source through the package export
+map. Bun 1.3.14 is the minimum encoded runtime for this source/local release.
+That is intentional for package-mode development. Public npm publication also
+requires the maintainers to select the repository license and complete the
+broader supported deployment matrix described in
 [Releasing Zero](./docs/releasing.md). The older
 [stabilization plan](./docs/stabilization-plan.md) is retained as historical
 context, not as the release gate.

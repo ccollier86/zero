@@ -18,7 +18,7 @@ import { TaskBoard } from '../../tasks/task-board';
 import { TASK_READ_PERMISSIONS } from '../../tasks/task-types';
 
 export const meta = {
-  title: 'Realtime tasks | Guardian + Fabric Proof',
+  title: 'Realtime tasks | Guardian + Fabric + Torrent Proof',
   description: 'Realtime tasks from the active physical tenant database.',
 };
 

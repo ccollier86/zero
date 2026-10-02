@@ -44,6 +44,7 @@ const FROZEN_MIGRATION_DEFINITIONS: Readonly<Record<string, string>> = {
   '030_workflow_graph_runtime.ts': '970cad86968c11246c9c9f46f9a0532c3c6e426e02dd4e0b88c976d6dc17b36b',
   '031_workflow_graph_tenant_integrity.ts': '881e85ac0abe870c357f8cee4994765e56fb14f9a8f523eb2ef1a1fe6ae63a51',
   '032_workflow_runtime_ownership.ts': 'dba700eb05587afab3ebfce6ba9119e7af764e3f079edecbfd23e6607ba1cf94',
+  '033_torrent_integrity_hardening.ts': 'f88a844bbc276b41138670fd3e6d1f7c40b9faef1cfa173a15100e58f57e7b56',
 };
 
 /**

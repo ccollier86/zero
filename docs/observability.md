@@ -292,8 +292,9 @@ The first implementation routes these platform paths through the sink:
 
 - app factory client bundle/startup/shutdown messages
 - example app listen message
-- auth, sync, storage, notifications, rooms, scheduler, and workflow lifecycle;
-  workflow coverage includes immutable-version publication, graph nodes,
+- auth, sync, storage, notifications, rooms, scheduler, and Torrent workflow
+  lifecycle;
+  Torrent coverage includes immutable-version publication, graph nodes,
   branch/join/fan-out progress, retries/timeouts, memory conflicts/limits,
   interaction open/accept/reject/expire/delivery plus authority-evaluation
   failures, durable owner acquire/conflict/heartbeat/loss/release, recovery,
@@ -315,9 +316,9 @@ The first implementation routes these platform paths through the sink:
 - vector runtime configuration, index initialization, operation completion,
   and operation/index failures
 
-Workflow event metadata contains bounded identifiers and lifecycle fields, not
-graph definitions, scratch-memory values, event payloads, interaction bodies,
-or delivery content. A failed activity's thrown value is still the event's raw
+Torrent event metadata contains bounded workflow identifiers and lifecycle
+fields, not graph definitions, scratch-memory values, event payloads,
+interaction bodies, or delivery content. A failed activity's thrown value is still the event's raw
 `error`; configured sinks own external serialization/redaction, so application
 errors must not embed secrets or sensitive records in messages, stacks, or
 custom fields.

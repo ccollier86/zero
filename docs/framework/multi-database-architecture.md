@@ -1,8 +1,8 @@
 # ReactiveDB Fabric: Multi-Database Architecture
 
-> **Status:** active, unreleased release-candidate implementation. The
-> file/WAL actor foundation is now
-> implemented with isolated Bun subprocesses, native IPC, bounded per-file
+> **Status:** supported in Zero 2.0's source/local release for one app
+> coordinator and one exclusively owned local Fabric root. The file/WAL actor
+> foundation uses isolated Bun subprocesses, native IPC, bounded per-file
 > writer queues, separate WAL readers, durable idempotency receipts, change
 > replay, generation recovery, root ownership, app-local observability, and
 > deterministic shutdown. `createApp()` validates and owns the topology, the
@@ -19,17 +19,17 @@
 > Bounded file/hot placement is also integrated: placement is selected from a
 > pseudonymous database reference, pinned while the coordinator entry is
 > active, and backed by explicit on-write, periodic, or final-snapshot
-> durability. Fleet
-> migration and lifecycle operations, online placement changes, operator-grade
-> backup/restore, and the full package/OS deployment matrix remain release
-> work. Nothing in this document marks those unfinished slices as release-ready.
+> durability. Distributed root ownership, online placement changes, automatic
+> promotion/spill, and operator-grade fleet migration/backup orchestration are
+> outside this supported boundary; applications own deliberate offline
+> lifecycle procedures for those operations.
 >
 > A minimal two-Web-Worker `bun:sqlite` proof segfaulted on the installed Bun
 > 1.3.14 runtime and later Worker runs showed nondeterministic corruption or
 > failure before termination. Web Workers are not the production backend. The
-> isolated Bun subprocess/native-IPC backend is the qualified production
-> direction; the full application and release acceptance suite remains
-> required before public release.
+> isolated Bun subprocess/native-IPC backend is the supported backend. Public
+> npm publication and any wider OS/architecture/filesystem matrix require
+> separate qualification; Web Workers are not a fallback.
 
 ## Purpose
 
@@ -64,7 +64,7 @@ The implementation has two distinct storage forms:
    readers.
 2. Policy-driven hybrid placement in which appropriate databases can use
    Zero's bounded hot snapshot runtime while others remain file/WAL databases.
-   This placement layer is implemented in the release candidate.
+   This placement layer is part of the supported Zero 2.0 contract.
 
 Hybrid placement does not mean online promotion or demotion. A coordinator
 selects placement synchronously when it creates an entry, pins that decision
@@ -599,8 +599,9 @@ type DatabaseExecutorFactory = (context: {
 The production-default factory launches isolated Bun subprocesses and exchanges
 versioned messages over native IPC. Its core concurrency, graceful-shutdown,
 and compiled self-spawn proof has passed. Process-exit, IPC-disconnect,
-malformed-message, backpressure, fault, soak, and orphan-cleanup behavior still
-belong to the full acceptance gate before public release.
+malformed-message, backpressure, fault, soak, and orphan-cleanup behavior are
+covered by the focused runtime suite; widening the declared deployment matrix
+still requires platform-specific repetition of that evidence.
 
 The subprocess implementation should use Bun-to-Bun IPC with an explicitly
 configured serialization mode. Bun's advanced IPC serialization supports
@@ -626,7 +627,7 @@ Executor selection is explicit and validated at startup:
 
 | Backend | Current status | Allowed use |
 | --- | --- | --- |
-| `subprocess-ipc` | Proof-qualified production direction; full acceptance pending | Default implementation direction; public release requires the complete pinned-runtime and packaging suite |
+| `subprocess-ipc` | Supported Zero 2.0 backend for the documented local-root contract | Default implementation; repeat the pinned-runtime and packaging suite before widening the deployment matrix |
 | `web-worker` | Disqualified on installed Bun 1.3.14 by crashes and nondeterministic failures; Bun API remains experimental | Disabled in production; future opt-in only after pinned-version qualification |
 | Main-thread/in-process | Does not provide the required concurrency | Unit-test helpers and the pinned application/system DBs only; never a named-database fallback |
 
@@ -1877,7 +1878,7 @@ correctness.
 
 ### Phase 0 — Foundations
 
-Status: implemented and covered in the candidate test suite.
+Status: implemented and covered in the Zero 2.0 test suite.
 
 - Opaque ID normalization and safe deterministic file mapping.
 - Root/file containment, symlink, type, and permission checks.
@@ -1886,13 +1887,13 @@ Status: implemented and covered in the candidate test suite.
 - Sync ownership injection for the pinned application ReactiveDB.
 - Separate pinned system/application identity and lifecycle tests.
 
-The foundations remain an unreleased contract until the applicable integration
-and release gates are qualified.
+These foundations are part of the supported source/local release boundary.
 
 ### Phase 1 — Qualified actor data plane
 
 Status: implemented and covered by unit plus real-subprocess integration tests;
-deployment-matrix and package acceptance remain release gates.
+supported as part of Zero 2.0's integrated source/local release. Public npm and
+a wider deployment matrix remain separate qualification work.
 
 - `DatabaseExecutor` and executor-factory boundaries.
 - Bun subprocess/native-IPC concurrency and compiled self-spawn proof: passed.
@@ -1909,15 +1910,15 @@ deployment-matrix and package acceptance remain release gates.
 - Development, package, bundle, and deployment artifacts.
 - Deterministic concurrency and crash tests.
 
-The actor data plane now satisfies the in-repository architecture gate. It is
-not yet independently releasable until package/bundle and supported deployment
-matrix acceptance pass, and it does not by itself complete the tenant-file or
-overall multi-database initiative.
+The actor data plane satisfies the in-repository architecture gate and ships as
+part of Fabric rather than as an independently versioned product. That support
+does not extend Zero into a distributed database service or imply qualification
+on platforms outside the documented source/local boundary.
 
 ### Phase 2 — Realtime execution boundary
 
 Status: implemented with focused server, browser, policy, and actor integration
-coverage; full release/package acceptance remains open.
+coverage and supported inside Zero 2.0's source/local boundary.
 
 - System, default application, and tenant data planes multiplexed on one
   authenticated WebSocket.
@@ -1934,9 +1935,9 @@ coverage; full release/package acceptance remains open.
 
 ### Phase 3 — Auth-derived tenant files
 
-Status: core authenticated request, Resource, lazy-query, and realtime routing
-are implemented in the release candidate. Tenant fleet lifecycle and
-operational administration remain open.
+Status: authenticated request, Resource, lazy-query, and realtime routing are
+supported in Zero 2.0. Tenant fleet lifecycle and operator-grade orchestration
+remain application/operator responsibilities.
 
 - Bind databases only from verified tenant authority. Implemented in the
   manager, ordinary route `zero.data` projection, generated Resource HTTP CRUD,
@@ -1944,22 +1945,25 @@ operational administration remain open.
 - Use the same bearer/session authority boundary for browser, native, mobile,
   extension, HTTP, WebSocket, and trusted background-service projections.
   Ordinary transports never accept a database or tenant selector.
-- Add the authority mutation gate to every relevant control-plane mutation.
-  The ReactiveDB final-commit fence and tenant actor commit fence are
-  implemented; the complete managed-auth write-path audit remains a release
-  gate.
-- Adapt remaining built-in services which currently assume one synchronous
-  ReactiveDB. Ordinary route data, generated Resource HTTP, lazy data-query,
-  and WebSocket Sync are adapted; each additional service must use the trusted
-  service-data scope instead of selecting a database directly.
-- Add tenant lifecycle, suspension, deletion, export, backup, and restore
-  behavior.
-- Add admin/tenant diagnostics and operational controls.
+- Every current control-plane mutation uses the authority mutation gate. The
+  ReactiveDB final-commit fence and tenant actor commit fence are
+  implemented. Managed Guardian mutations retain their own authority-revision
+  fences in the system plane. Any future write surface must join the same
+  commit-boundary contract before it is exposed.
+- Ordinary route data, generated Resource HTTP, lazy data-query, and WebSocket
+  Sync use the trusted service-data scope. Future built-in services must use
+  that scope rather than selecting a tenant database from caller input.
+- Guardian tenant lifecycle and suspension prevent new tenant data access.
+  Fleet-wide export, backup, restore, retention, and physical-file disposal are
+  deliberate operator workflows outside the local-root runtime contract.
+- Doctor, actor health, quarantine state, and scoped administration surfaces
+  provide the current diagnostics and operational controls.
 
 ### Phase 4 — Hybrid hot/file placement
 
-Status: bounded placement and durability are implemented in the release
-candidate; full release/package acceptance remains open.
+Status: bounded placement and durability are supported in Zero 2.0's
+source/local channel; any broader public package platform matrix remains a
+separate qualification step.
 
 - File, hot shorthand, and synchronous opaque-ref hybrid policy.
 - Per-entry placement pinning with clean-eviction re-evaluation.
@@ -1970,8 +1974,9 @@ candidate; full release/package acceptance remains open.
 
 Online promotion/demotion and automatic heat/spill policy are not part of this
 phase. Operator-grade migration, backup/restore, fleet administration, and the
-supported package/OS matrix remain release gaps, so the broader initiative is
-not yet a released platform claim.
+wider package/OS matrix are explicit exclusions from the 2.0 source/local
+contract. They require separate qualification before Zero makes broader public
+npm or distributed-service claims.
 
 ### Phase 5 — Realm expansion
 
@@ -2108,7 +2113,7 @@ subprocesses; the assertion remains part of pinned-runtime qualification.
 
 ### Hybrid placement acceptance
 
-The release candidate must retain deterministic coverage for:
+The supported runtime must retain deterministic coverage for:
 
 - shorthand and explicit policy normalization, invalid selector results, and
   opaque-ref helper matching;
@@ -2129,9 +2134,9 @@ placement-aware fleet backup/restore are explicit non-goals of the implemented
 runtime. They require separate operator design and must not be inferred from a
 selector changing after an entry has already opened.
 
-## Implemented Candidate Surface and Remaining Work
+## Supported Surface and Deliberate Exclusions
 
-The release candidate composes the following production-shaped boundaries:
+Zero 2.0 composes the following supported boundaries:
 
 - validated pseudonymous-reference file resolution, private root ownership,
   and one writer owner per physical database;
@@ -2152,29 +2157,29 @@ The release candidate composes the following production-shaped boundaries:
 - app-local structured errors and observability, bounded queues, generation
   recovery, deterministic shutdown, and focused real-subprocess tests.
 
-Publication still requires the complete supported-platform package/bundle/
-deployment matrix, operator-grade tenant fleet migration and lifecycle tools,
-backup/restore and suspension/deletion workflows, and production acceptance of
-the implemented placement policies. Distributed root ownership, online
-placement migration, automatic promotion/spill, and separation of additional
-Zero-owned service realms beyond the system/application split are not
-implemented. Those remaining gates do not make Resource, tenant Sync, or
-bounded hybrid routing "pending"; they constrain the narrower release claims
-that may be made about the candidate.
+Public npm publication or a wider deployment matrix still requires the
+corresponding package/bundle/platform evidence. Operator-grade tenant fleet
+migration, coordinated backup/restore and suspension/deletion tooling,
+distributed root ownership, online placement migration, automatic
+promotion/spill, and separation of additional Zero-owned service realms beyond
+the system/application split are not included. Their absence does not make
+Resource routing, tenant Sync, or bounded hybrid placement provisional; those
+features are supported inside the explicitly narrower local-root contract.
 
 ## Release Boundary
 
 The following claims have different completion points and must not be
 collapsed into one status:
 
-| Claim | Required phase | Candidate status |
+| Claim | Required phase | Zero 2.0 status |
 | --- | --- | --- |
 | Multiple isolated SQLite files can be resolved and opened safely | Phase 0 | Implemented |
-| Different files execute writes concurrently and the same file supports WAL readers | Phase 1 | Implemented; release matrix pending |
-| A selected tenant file participates in Zero realtime snapshot, catch-up, mutation, and ordered change delivery | Phase 2 | Implemented; release acceptance pending |
-| Authenticated tenant requests are automatically and safely routed to their file | Phase 3 | Core data paths implemented; fleet lifecycle pending |
-| Multi-database mode supports bounded policy-driven hot and file placement | Phase 4 | Implemented; release acceptance pending |
-| The overall multi-database initiative is a released platform contract | Phases 0–4, documentation, package/OS matrix, and operational acceptance | Not complete |
+| Different files execute writes concurrently and the same file supports WAL readers | Phase 1 | Supported for the documented subprocess/local-root contract |
+| A selected tenant file participates in Zero realtime snapshot, catch-up, mutation, and ordered change delivery | Phase 2 | Supported |
+| Authenticated tenant requests are automatically and safely routed to their file | Phase 3 | Supported; fleet orchestration remains external |
+| Multi-database mode supports bounded policy-driven hot and file placement | Phase 4 | Supported with the documented durability contracts |
+| ReactiveDB Fabric is a released platform contract | Phases 0–4 plus the documented boundaries | Supported in Zero 2.0 source/local releases; public npm and wider platform matrices require separate qualification |
 
-Until the relevant phase passes its tests, Zero's public documentation and
-release notes must use the narrower completed claim.
+Release notes and application documentation must retain this exact boundary
+instead of implying distributed ownership, online migration, or managed fleet
+operations.

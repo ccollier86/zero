@@ -23,7 +23,7 @@ import {
 } from '../../auth-route-query';
 
 export const meta = {
-  title: 'Accept invitation | Guardian + Fabric Proof',
+  title: 'Accept invitation | Guardian + Fabric + Torrent Proof',
   description: 'Join a Guardian workspace through its exact invitation flow.',
 };
 
@@ -108,7 +108,7 @@ export default function AcceptInvitationPage() {
   }, [location]);
 
   return (
-    <AuthLayout appName="Guardian + Fabric Proof">
+    <AuthLayout appName="Guardian + Fabric + Torrent Proof">
       {location === undefined ? (
         <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
           Loading invitation…

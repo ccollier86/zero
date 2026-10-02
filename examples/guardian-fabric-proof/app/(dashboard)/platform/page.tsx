@@ -11,7 +11,7 @@ import { ControlPlaneTabs } from '../../components/control-plane-tabs';
 import { PlatformApiKeyControls } from '../../components/platform-api-key-controls';
 
 export const meta = {
-  title: 'Platform operations | Guardian + Fabric Proof',
+  title: 'Platform operations | Guardian + Fabric + Torrent Proof',
   description: 'Adaptive Administration Organization controls for access, credentials, and audit.',
 };
 

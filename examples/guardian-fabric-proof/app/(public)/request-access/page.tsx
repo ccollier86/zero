@@ -19,7 +19,7 @@ import {
 } from '../../auth-route-query';
 
 export const meta = {
-  title: 'Request workspace access | Guardian + Fabric Proof',
+  title: 'Request workspace access | Guardian + Fabric + Torrent Proof',
   description: 'Submit a retained, non-enumerating Guardian workspace join request.',
 };
 
@@ -65,7 +65,7 @@ export default function RequestAccessPage() {
   }
 
   return (
-    <AuthLayout appName="Guardian + Fabric Proof">
+    <AuthLayout appName="Guardian + Fabric + Torrent Proof">
       <div className="space-y-6">
         <form className="space-y-4" onSubmit={chooseWorkspace}>
           <AuthHeader

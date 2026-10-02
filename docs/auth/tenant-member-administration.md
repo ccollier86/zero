@@ -1,6 +1,6 @@
 # Tenant Member Administration
 
-> Status: implemented in this unreleased candidate
+> Status: supported in Zero 2.0
 >
 > Last reviewed: 2026-10-01
 

@@ -18,7 +18,7 @@ quickly from one integrated platform. It combines:
 - ReactiveDB over SQLite
 - separate pinned system and application ReactiveDB planes
 - ReactiveDB Fabric for bounded actor-owned file/WAL, hot, and hybrid
-  multi-database topologies (unreleased release candidate)
+  multi-database topologies
 - WebSocket sync and lazy `/api/data`
 - generated resource CRUD with server-side policy
 - auth, email, account lifecycle, password reset/setup, email verification,
@@ -26,7 +26,7 @@ quickly from one integrated platform. It combines:
 - installed desktop/mobile/extension OpenID Connect auth with Authorization
   Code + PKCE, with release status varying by client SDK
 - storage, public upload grants, and storage management UI
-- workflows, scheduler, rooms, presence, notifications, state sync
+- Torrent durable workflows, scheduler, rooms, presence, notifications, state sync
 - platform tokens for one-time and resumable public flows
 - observability codes/sinks and protected event routes
 - AI provider layer, tool helpers, conversations, embeddings, speech,
@@ -42,18 +42,23 @@ called **Guardian**. Guardian is documentation/product vocabulary only: keep
 using the established `auth.*` configuration, `/auth/*` routes, and
 `@zero/framework/auth` APIs.
 
+Zero's durable, versioned workflow and orchestration system is called
+**Torrent**. Torrent is documentation/product vocabulary only: keep using the
+established `workflows` configuration, `/workflows/*` routes,
+`@zero/framework/workflows`, `zero.workflows`, `useWorkflow*`, `Workflow*`,
+`workflow_*`, `WORKFLOW_*`, and `workflows.*` contracts.
+
 Zero's app-building rule is simple: **use framework pieces first**. Do not
 recreate auth forms, modal managers, storage browsers, data tables, sidebars,
 app shells, hooks, CRUD/sync plumbing, or backend service wiring unless the
 framework surface is genuinely missing.
 
-Current unreleased-candidate boundary:
+Zero 2.0 supported boundary:
 
-- This unreleased tree implements `single/simple`, `single/advanced`,
+- Guardian implements `single/simple`, `single/advanced`,
   `multi/simple`, and `multi/advanced` through one app-local runtime and
   authorization kernel. Omitted capability axes still resolve to
-  `single/simple`. Treat the new profiles as a release candidate until the
-  implementation and cross-cutting release gates pass.
+  `single/simple`.
 - Auth-enabled `createApp()` installs Bearer-required Sync plus private/scoped
   framework-table policy. Direct `createSyncPlugin()` is a lower-level,
   public/allow-all primitive unless the app explicitly supplies auth and policy.
@@ -68,7 +73,7 @@ Current unreleased-candidate boundary:
   no-argument `get*` helpers are compatibility adapters only and fail when no
   unambiguous runtime exists.
 - Opt-in verified-company-domain request admission and the bounded append-only
-  authorization/control-plane audit are implemented in this unreleased tree.
+  authorization/control-plane audit are supported in Zero 2.0.
   Multi-mode bootstrap also creates a protected Administration Organization;
   strict browser SDK/hooks and packaged controls cover its people and the
   capability-gated customer-organization directory/lifecycle. Break-glass
@@ -87,7 +92,7 @@ Current unreleased-candidate boundary:
   non-partial tenant-leading indexes, tenant-scoped business uniqueness, and
   tenant-consistent composite foreign keys between registered tenant
   resources; physical tenant isolation validates the actor realm instead.
-- ReactiveDB Fabric is an unreleased app contract. `db` is the pinned shared
+- ReactiveDB Fabric is a supported Zero 2.0 app contract. `db` is the pinned shared
   application plane, `systemDb` is the always-separate Guardian/Zero authority
   plane, and Fabric can route physical-tenant Resources to isolated actor-owned
   databases selected only from trusted authorization scope. Generated Resource
@@ -97,7 +102,7 @@ Current unreleased-candidate boundary:
   with explicit durability contracts. Read the architecture and system-database
   documents before using or changing this surface; fleet lifecycle,
   operator-grade backup/restore, online placement migration, and the full
-  package/OS matrix remain outside the candidate's current support boundary.
+  package/OS matrix remain outside the source/local support boundary.
 
 Read [Releasing Zero](docs/releasing.md) before describing a capability as
 publicly supported.
@@ -109,9 +114,12 @@ publicly supported.
 - `docs/framework/README.md`: installed framework/package-mode docs.
 - `docs/framework-developer-surface.md`: canonical imports and app-owned
   extension APIs.
-- `docs/framework/multi-database-architecture.md`: authoritative unreleased
+- `docs/framework/multi-database-architecture.md`: authoritative supported
   ReactiveDB Fabric contract, including topology, isolation, routing,
   concurrency, Sync, capacity, durability, and release boundaries.
+- `docs/workflows.md`: authoritative Torrent workflow DSL, versioning,
+  execution, memory, interaction, recovery, authority, Fabric data, and live
+  visualization contract.
 - `docs/framework/system-database.md`: authoritative system/application plane,
   ID-only identity-anchor projection, data-realm readiness, authority-fence,
   legacy-layout detection, and operational contract.
@@ -149,7 +157,8 @@ publicly supported.
   for the four-profile auth system; it separates implemented and planned
   capability.
 - `docs/auth/multi-tenant-auth-implementation-checklist.md`: authoritative
-  delivery gates for the unreleased multi-tenant/advanced-auth runtime.
+  delivery evidence for Zero 2.0's Guardian profiles plus the remaining public
+  package and wider-deployment gates.
 - `docs/auth/application-access-administration.md`: implemented
   single/advanced application-role administration contract.
 - `docs/auth/tenant-member-administration.md` and
@@ -364,6 +373,7 @@ UI:
 import { AppShell } from '@zero/framework/components/app-shell';
 import { Button } from '@zero/framework/components/ui/button';
 import { DataTableView } from '@zero/framework/components/data-table';
+import { Popover, PopoverContent, PopoverTrigger } from '@zero/framework/components/popover';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
 import { KanbanBoard } from '@zero/framework/components/kanban';
 ```
@@ -535,7 +545,7 @@ app.listen(config.port ?? 3000);
 | State sync | Persisted reactive state isolated per authorized-scope user. |
 | Notifications | Notifications and per-user receipts when auth is enabled. |
 | Rooms/presence | Room membership and presence primitives when auth is enabled. |
-| Workflows | Versioned durable graph engine with trusted activities, branches/joins, fan-out, memory, interactions, crash recovery, and owner-scoped live state. |
+| Torrent | Versioned durable workflow engine with trusted activities, branches/joins, fan-out, memory, interactions, crash recovery, and owner-scoped live state. Public APIs retain their established workflow names. |
 | Scheduler | Platform jobs. |
 | AI | Server-side AI provider registry/service when enabled. |
 | Vector | zvec-backed vector store when enabled. |
@@ -636,7 +646,7 @@ receipts/watermarks, installation binding, post-Guardian-commit target I/O, and
 fail-closed error semantics. See the advanced composition section in the
 system-database document.
 
-### ReactiveDB Fabric (unreleased candidate)
+### ReactiveDB Fabric
 
 Fabric coordinates multiple independently reactive SQLite databases without
 changing the default single-database contract. Configure it only through the
@@ -682,9 +692,10 @@ delay at 1 second, and uses a 5-second half-open cadence after five attempts.
 Waiting operations retain queue timeout/cancellation; the last lease and app
 shutdown cancel pending replacement delays.
 
-This is an active release-candidate implementation, not a released contract.
-Before treating it as supported, follow the remaining gates in
-[ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md).
+This is a supported Zero 2.0 source/local contract for one app coordinator and
+one exclusively owned local Fabric root. Distributed ownership, online
+placement migration, and operator-grade fleet orchestration remain excluded;
+see [ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md).
 
 ## Sync Modes
 
@@ -1444,9 +1455,10 @@ Hooks:
 - `useNotifications`
 - `useUnreadCount`
 
-## Workflows And Scheduler
+## Torrent Workflows And Scheduler
 
-Zero workflows and scheduler are in-process platform services. Workflows are
+Torrent and Scheduler are in-process platform services. Torrent retains the
+existing workflow APIs. Workflows are
 enabled by default with auth unless `workflows: false`. Register trusted
 activities first and definitions second through
 `AppConfig.workflows.register(registry)`. Zero awaits that callback, waits for
@@ -2057,6 +2069,9 @@ Use these before adding new generic hooks.
 - Use `Hero` for public opening sections.
 - Use `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for public
   text motion.
+- Use `StreamingText` for AI responses, agent output, async string streams, and
+  caller-owned progressive text. Do not slow a real stream with a decorative
+  typewriter effect.
 - Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`,
   `ExpandableCards`, `BentoGrid`, and `AnimatedList` for common public
   sections.
@@ -2134,10 +2149,32 @@ Public components:
 - `BentoGrid`
 - `AnimatedList`
 
+Agent/streaming output:
+
+- `StreamingText`
+
+Use the narrow import for AI answers and live string output:
+
+```tsx
+import { StreamingText } from '@zero/framework/components/streaming-text';
+
+<StreamingText source={decodedStringStream} onError={reportError} />
+```
+
+`source` accepts `AsyncIterable<string>` or `ReadableStream<string>`; decode a
+byte-oriented `Response.body` through `TextDecoderStream` first. When an SDK
+already accumulates the response, pass `text={message.text}` and
+`streaming={message.status === 'streaming'}`. The component supplies the
+semantic-token cursor, reduced-motion behavior, and sentence-level polite live
+announcements. Use `announce="off"` only when another surface already announces
+the same content. Use `speed` only for known-text demos, never to delay an
+actual provider stream.
+
 Data organisms:
 
 - `DataTable`
 - `DataTableView`
+- `DataTableSearch`
 - `DataTableToolbar`
 - `DataTablePagination`
 - `DataTableRowActions`
@@ -2197,6 +2234,36 @@ Both should be able to consume app data from:
 Use lazy data for large tables. Use filters/sorting/pagination contracts
 instead of custom ad hoc fetch code.
 
+DataTable's `searchable` prop accepts `true` or
+`DataTableSearchOptions { placeholder, ariaLabel, collapsedWidth,
+expandedWidth, disabled }`. This compact animated search is table-only: it
+expands on focus or while populated, clears then collapses with Escape,
+suppresses ancestor-form submission on Enter, and respects reduced motion.
+Name the toolbar group with `toolbarLabel` when `Table controls` is not
+specific enough.
+
+Use `toolbarSlots { controls, actions, supplemental }` for custom table
+controls and bulk actions. A slot may be a node or a render function receiving
+`table`, `query`, `setQuery`, `columnFilters`, `activeFilterCount`,
+`hasActiveFilters`, `hasActiveSearch`, `clearAll`, `selectedRowIds`,
+`selectedRows`, and `selectedRowCount`. Every slot is optional. Existing
+boolean `searchable` and `toolbarActions` usage remains source-compatible and
+requires no migration or page rewrite; prefer `toolbarSlots.actions` for new
+code. Package updates do not overwrite a table implementation copied with
+`zero add components/data-table`; review local changes before using
+`zero add components/data-table --force`. CrudPage and MasterDetail wrappers
+expose the same contract as `tableToolbarSlots`; use
+`tableToolbarLabel` to replace the forwarded toolbar's default accessible name.
+
+Generated discrete, numeric, and date filters use exact matching, text filters
+use contains matching, and multi-value filters match an included value.
+
+Do not confuse client toolbar filtering with source filtering. Search,
+generated filters, and TanStack column controls filter resolved rows only;
+`clearAll` clears only that client state. Lazy `filters` and `source.filters`
+are server-side `/api/data` query inputs. For a remote filter control, keep its
+state in the parent and have the slot update the lazy source inputs.
+
 ## Kanban
 
 Use `KanbanBoard` for work queues and status boards. Persist actual app state
@@ -2236,6 +2303,7 @@ zero add components/kanban
 zero add components/navbar
 zero add components/hero
 zero add components/text-effects
+zero add components/streaming-text
 zero add hooks modals --dry-run
 ```
 
@@ -2438,7 +2506,7 @@ reference docs confirm the behavior is implemented.
   package imports, generated app shape, composition root, backend extensions,
   resources, package mode, and frontend/backend usage examples.
 - [ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md):
-  authoritative release-candidate contract for actor-owned multi-database
+  authoritative Zero 2.0 contract for actor-owned multi-database
   topology, tenant routing, file/WAL and bounded hot placement, hybrid policy,
   exact tenant Sync, capacity, durability, observability, and release gates.
 - [System And Application Database Planes](docs/framework/system-database.md):
@@ -2504,8 +2572,9 @@ reference docs confirm the behavior is implemented.
   compose workspace switchers, nested menus, groups, actions, footer menus, and
   collapsed/icon mode.
 - [DataTableView](docs/frontend/data-table.md): schema-aware table organism,
-  columns, lazy source contracts, filters, pagination, sorting, row actions,
-  toolbar, and integration with `/api/data`.
+  columns, lazy source contracts, client-versus-server filters, compact search,
+  selection-aware toolbar slots, pagination, sorting, row actions, and
+  integration with `/api/data`.
 - [MasterDetailView](docs/frontend/master-detail.md): master/detail organism,
   list/table/detail composition, selection state, lazy DataTable-compatible
   sources, loading/error state, and row actions.
@@ -2524,6 +2593,9 @@ reference docs confirm the behavior is implemented.
   scroll, magnetic hover, mobile menu, brand/actions, and package import.
 - [Text Effects](docs/frontend/text-effects.md): `TextGenerateEffect`,
   `TypewriterEffect`, `FlipWords`, timing guidance, and public text motion.
+- [Streaming Text](docs/frontend/streaming-text.md): `StreamingText`, live
+  string sources, caller-owned progressive output, replay mode, cursor styling,
+  callbacks, and sentence-level accessibility behavior.
 - [LaunchBoard Reference App](docs/frontend/launchboard.md): reference app
   showing root `zero.config.ts`, thin `app/server.ts`, AppShell, ReactiveDB,
   registered owner resources, row-filtered sync, KanbanBoard, auth bootstrap
@@ -2663,7 +2735,7 @@ reference docs confirm the behavior is implemented.
 - [Observability Audit](docs/observability-audit.md): historical
   pre-observability baseline; use the current Observability guide for runtime
   behavior.
-- [Durable Workflow System](docs/workflows.md): workflow service, workflow
+- [Torrent: Durable Workflow System](docs/workflows.md): workflow service, workflow
   registry, code DSL and canonical IR,
   trusted versioned activities, immutable code/database definitions and drafts,
   choices/parallel/fan-out, memory, event and human waits, recovery,

@@ -1,41 +1,37 @@
 'use client';
 
+/**
+ * Coordinates persisted theme changes with the browser View Transitions API.
+ * The primitive owns transition state; callers own the button affordance and
+ * ThemeProvider owns persistence.
+ */
+
 import * as React from 'react';
 import { flushSync } from 'react-dom';
 
+import {
+  THEME_TRANSITION_STYLES,
+  canAnimateThemeTransition,
+  hasActiveThemeTransition,
+  startCircularThemeTransition,
+  type Direction,
+  type ThemeTransitionOrigin,
+} from './theme-transition';
+
 type ThemeSelection = 'light' | 'dark' | 'system';
 type Resolved = 'light' | 'dark';
-type Direction = 'btt' | 'ttb' | 'ltr' | 'rtl';
 
 type ChildrenRender =
   | React.ReactNode
   | ((state: {
       resolved: Resolved;
       effective: ThemeSelection;
-      toggleTheme: (theme: ThemeSelection) => void;
+      transitioning: boolean;
+      toggleTheme: (
+        theme: ThemeSelection,
+        origin?: ThemeTransitionOrigin,
+      ) => Promise<boolean>;
     }) => React.ReactNode);
-
-function getSystemEffective(): Resolved {
-  if (typeof window === 'undefined') return 'light';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
-    ? 'dark'
-    : 'light';
-}
-
-function getClipKeyframes(direction: Direction): [string, string] {
-  switch (direction) {
-    case 'ltr':
-      return ['inset(0 100% 0 0)', 'inset(0 0 0 0)'];
-    case 'rtl':
-      return ['inset(0 0 0 100%)', 'inset(0 0 0 0)'];
-    case 'ttb':
-      return ['inset(0 0 100% 0)', 'inset(0 0 0 0)'];
-    case 'btt':
-      return ['inset(100% 0 0 0)', 'inset(0 0 0 0)'];
-    default:
-      return ['inset(0 100% 0 0)', 'inset(0 0 0 0)'];
-  }
-}
 
 type ThemeTogglerProps = {
   theme: ThemeSelection;
@@ -46,6 +42,13 @@ type ThemeTogglerProps = {
   children?: ChildrenRender;
 };
 
+function getSystemEffective(): Resolved {
+  if (typeof window === 'undefined') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light';
+}
+
 function ThemeToggler({
   theme,
   resolvedTheme,
@@ -53,19 +56,12 @@ function ThemeToggler({
   onImmediateChange,
   direction = 'ltr',
   children,
-  ...props
 }: ThemeTogglerProps) {
   const [preview, setPreview] = React.useState<null | {
     effective: ThemeSelection;
     resolved: Resolved;
   }>(null);
-  const [current, setCurrent] = React.useState<{
-    effective: ThemeSelection;
-    resolved: Resolved;
-  }>({
-    effective: theme,
-    resolved: resolvedTheme,
-  });
+  const [transitioning, setTransitioning] = React.useState(false);
 
   React.useEffect(() => {
     if (
@@ -77,65 +73,68 @@ function ThemeToggler({
     }
   }, [theme, resolvedTheme, preview]);
 
-  const [fromClip, toClip] = getClipKeyframes(direction);
-
   const toggleTheme = React.useCallback(
-    async (theme: ThemeSelection) => {
-      const resolved = theme === 'system' ? getSystemEffective() : theme;
+    async (
+      nextTheme: ThemeSelection,
+      origin?: ThemeTransitionOrigin,
+    ): Promise<boolean> => {
+      if (hasActiveThemeTransition()) return false;
 
-      setCurrent({ effective: theme, resolved });
-      onImmediateChange?.(theme);
+      const resolved =
+        nextTheme === 'system' ? getSystemEffective() : nextTheme;
+      const next = { effective: nextTheme, resolved };
+      const commitPreview = () => setPreview(next);
 
-      if (theme === 'system' && resolved === resolvedTheme) {
-        setTheme(theme);
-        return;
+      onImmediateChange?.(nextTheme);
+
+      if (resolved === resolvedTheme || !canAnimateThemeTransition()) {
+        flushSync(commitPreview);
+        setTheme(nextTheme);
+        return true;
       }
 
-      if (!document.startViewTransition) {
+      const commitTransition = () => {
         flushSync(() => {
-          setPreview({ effective: theme, resolved });
-        });
-        setTheme(theme);
-        return;
-      }
-
-      await document.startViewTransition(() => {
-        flushSync(() => {
-          setPreview({ effective: theme, resolved });
+          commitPreview();
           document.documentElement.classList.toggle(
             'dark',
             resolved === 'dark',
           );
+          setTheme(nextTheme);
         });
-      }).ready;
+      };
 
-      document.documentElement
-        .animate(
-          { clipPath: [fromClip, toClip] },
-          {
-            duration: 700,
-            easing: 'ease-in-out',
-            pseudoElement: '::view-transition-new(root)',
-          },
-        )
-        .finished.finally(() => {
-          setTheme(theme);
+      setTransitioning(true);
+      try {
+        return await startCircularThemeTransition({
+          direction,
+          origin,
+          commit: commitTransition,
         });
+      } finally {
+        setTransitioning(false);
+      }
     },
-    [onImmediateChange, resolvedTheme, fromClip, toClip, setTheme],
+    [direction, onImmediateChange, resolvedTheme, setTheme],
   );
 
+  const renderedTheme = preview ?? {
+    effective: theme,
+    resolved: resolvedTheme,
+  };
+
   return (
-    <React.Fragment {...props}>
+    <>
       {typeof children === 'function'
         ? children({
-            effective: current.effective,
-            resolved: current.resolved,
+            effective: renderedTheme.effective,
+            resolved: renderedTheme.resolved,
+            transitioning,
             toggleTheme,
           })
         : children}
-      <style>{`::view-transition-old(root), ::view-transition-new(root){animation:none;mix-blend-mode:normal;}`}</style>
-    </React.Fragment>
+      <style>{THEME_TRANSITION_STYLES}</style>
+    </>
   );
 }
 
@@ -143,6 +142,7 @@ export {
   ThemeToggler,
   type ThemeTogglerProps,
   type ThemeSelection,
+  type ThemeTransitionOrigin,
   type Resolved,
   type Direction,
 };
