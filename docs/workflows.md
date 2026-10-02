@@ -653,9 +653,14 @@ rather than bypassing the responder policy or blocking a later valid response.
 The `event` response channel and `event:` submission-ID prefix are reserved for
 this trusted internal bridge. Public response submission rejects either form;
 applications should use their own audit-only channel label and an ordinary
-stable submission ID. When an event response is accepted, its exact delivery
-claim and inbox accounting settle in the same transaction as wait completion,
-including after recovery from a crash between response acceptance and settling.
+stable submission ID. An accepted event response retains its exact delivery
+claim until claim consumption, inbox accounting, and wait completion commit in
+one transaction. Rejected or superseded event responses, forbidden submissions,
+and event submissions that lose to an external response release any matching
+processing reservation and consume the claim atomically. Recovery refreshes the
+durable interaction before claiming another event, so a restart or response
+race cannot apply the same response twice, steal a later same-name wait's event,
+or leave queue capacity occupied.
 
 Submission IDs are idempotent and bound to both the authenticated actor and
 payload hash. Reusing one with the same actor and payload returns the recorded
@@ -1129,7 +1134,7 @@ database topology: on Zero 1.3 it protects the single-database event-delivery
 shape, and on a later multi-tenant release it also preserves event authority.
 Both migrations are additive and repair-safe.
 
-### Zero 1.3.1 compatibility boundary
+### Zero 1.3 compatibility boundary
 
 Zero 1.3.1 includes Torrent's generic correctness and security fixes without
 Guardian multi-tenancy, ReactiveDB Fabric, tenant columns, or the
@@ -1137,12 +1142,16 @@ system/application database split. Existing 1.3 applications keep their
 single-database auth and data topology; running the normal migrations adds only
 Torrent's graph/runtime tables, ownership lease, and integrity triggers.
 
-An eventual upgrade from 1.3.1 to the combined 2.0 platform is supported. The
-2.0 migrator applies the missing Guardian/Fabric migrations and tenant-integrity
-migration `031`; the already-recorded `032` and `033` migrations are not rerun.
-Migration `031` reconstructs the multi-tenant workflow relations while
-reinstalling the same final `033` definition, draft, version, terminal-event,
-and authority guarantees.
+Zero 1.3.2 preserves that exact compatibility boundary and hardens the
+interaction-event recovery race. It adds no Guardian, Fabric, tenant-column,
+or database-topology migration.
+
+An eventual upgrade from 1.3.1 or 1.3.2 to the combined 2.0 platform is
+supported. The 2.0 migrator applies the missing Guardian/Fabric migrations and
+tenant-integrity migration `031`; the already-recorded `032` and `033`
+migrations are not rerun. Migration `031` reconstructs the multi-tenant
+workflow relations while reinstalling the same final `033` definition, draft,
+version, terminal-event, and authority guarantees.
 
 ## Legacy Sequential Compatibility
 

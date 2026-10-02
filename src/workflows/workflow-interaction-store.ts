@@ -252,22 +252,35 @@ export class WorkflowInteractionStore {
     decision: WorkflowInteractionDecision,
     now: string,
     requireRunningInstance = false,
+    afterDecision?: (result: WorkflowInteractionDecisionResult) => void,
   ): WorkflowInteractionDecisionResult {
     return this.transaction(() => {
       let interaction = this.require(interactionId);
       if (requireRunningInstance) this.assertInstanceRunning(interaction.instanceId);
       const response = this.requireResponse(interactionId, submissionId);
       if (response.status !== 'processing') {
-        return { outcome: response.status === 'accepted' ? 'accepted'
-          : response.status === 'rejected' ? 'rejected' : 'superseded', interaction, response };
+        const result: WorkflowInteractionDecisionResult = {
+          outcome: response.status === 'accepted' ? 'accepted'
+            : response.status === 'rejected' ? 'rejected' : 'superseded',
+          interaction,
+          response,
+        };
+        afterDecision?.(result);
+        return result;
       }
       this.expireIfDue(interaction, now);
       interaction = this.require(interactionId);
       if (interaction.status !== 'open') {
         const superseded = this.finishResponse(response, 'superseded', now, null, null);
-        return { outcome: 'superseded', interaction, response: superseded };
+        const result = { outcome: 'superseded' as const, interaction, response: superseded };
+        afterDecision?.(result);
+        return result;
       }
-      if (!decision.accepted) return this.reject(interaction, response, decision, now);
+      if (!decision.accepted) {
+        const result = this.reject(interaction, response, decision, now);
+        afterDecision?.(result);
+        return result;
+      }
 
       const valueJson = serializeWorkflowJson(decision.value, INTERACTION_INVALID);
       if (workflowJsonBytes(valueJson) > MAX_INTERACTION_PAYLOAD_BYTES) {
@@ -280,7 +293,13 @@ export class WorkflowInteractionStore {
       `).run(response.responseId, now, interactionId);
       if (claim.changes !== 1) {
         const superseded = this.finishResponse(response, 'superseded', now, null, null);
-        return { outcome: 'superseded', interaction: this.require(interactionId), response: superseded };
+        const result = {
+          outcome: 'superseded' as const,
+          interaction: this.require(interactionId),
+          response: superseded,
+        };
+        afterDecision?.(result);
+        return result;
       }
       const acceptedBytes = workflowJsonBytes(valueJson);
       const usage = this.responseUsage(interactionId);
@@ -300,7 +319,13 @@ export class WorkflowInteractionStore {
         updated_at: now,
       });
       const accepted = this.finishResponse(response, 'accepted', now, null, null, valueJson);
-      return { outcome: 'accepted', interaction: this.require(interactionId), response: accepted };
+      const result = {
+        outcome: 'accepted' as const,
+        interaction: this.require(interactionId),
+        response: accepted,
+      };
+      afterDecision?.(result);
+      return result;
     });
   }
 
@@ -369,19 +394,33 @@ export class WorkflowInteractionStore {
   /** Return the exact internal event accepted by this interaction, if any. */
   getAcceptedEventId(interactionId: string): string | null {
     const row = this.db.prepare(`
-      SELECT response.channel, response.submission_id
+      SELECT response.channel, response.submission_id,
+        interaction.instance_id AS interaction_instance_id,
+        event.event_id, event.instance_id AS event_instance_id
       FROM _workflow_interaction_details AS detail
+      INNER JOIN workflow_interactions AS interaction
+        ON interaction.interaction_id = detail.interaction_id
       INNER JOIN _workflow_interaction_responses AS response
         ON response.response_id = detail.accepted_response_id
+        AND response.interaction_id = detail.interaction_id
+      LEFT JOIN workflow_events AS event
+        ON event.event_id = substr(response.submission_id, 7)
       WHERE detail.interaction_id = ? AND response.status = 'accepted'
       LIMIT 1
-    `).get(interactionId) as { channel: string | null; submission_id: string } | null;
+    `).get(interactionId) as {
+      channel: string | null;
+      submission_id: string;
+      interaction_instance_id: string;
+      event_id: string | null;
+      event_instance_id: string | null;
+    } | null;
     if (!row) return null;
     const hasEventChannel = row.channel === 'event';
     const hasEventIdentity = row.submission_id.startsWith('event:');
     if (!hasEventChannel && !hasEventIdentity) return null;
     const eventId = hasEventIdentity ? row.submission_id.slice('event:'.length) : '';
-    if (!hasEventChannel || !hasEventIdentity || !eventId || eventId.startsWith('event:')) {
+    if (!hasEventChannel || !hasEventIdentity || !eventId || eventId.startsWith('event:')
+      || row.event_id !== eventId || row.event_instance_id !== row.interaction_instance_id) {
       throw new WorkflowError(
         'Accepted workflow interaction event identity is invalid',
         'WORKFLOW_STATE_INVALID',
@@ -405,18 +444,31 @@ export class WorkflowInteractionStore {
     interactionId: string,
     submissionId: string,
     now: string,
+    afterRelease?: () => void,
+    expectedEventId?: string,
   ): boolean {
     return this.transaction(() => {
-      const row = this.db.prepare(`SELECT response.payload_json, interaction.instance_id
+      const row = this.db.prepare(`SELECT response.payload_json, interaction.instance_id,
+          interaction.status AS interaction_status,
+          interaction.updated_at AS interaction_updated_at
         FROM _workflow_interaction_responses AS response
         INNER JOIN workflow_interactions AS interaction
           ON interaction.interaction_id = response.interaction_id
         WHERE response.interaction_id = ? AND response.submission_id = ?
-          AND response.status = 'processing' LIMIT 1`)
-        .get(interactionId, submissionId) as {
-          payload_json: string; instance_id: string;
+          AND response.status = 'processing'
+          AND (? IS NULL OR (response.channel = 'event'
+            AND response.submission_id = 'event:' || ?))
+        LIMIT 1`)
+        .get(interactionId, submissionId, expectedEventId ?? null, expectedEventId ?? null) as {
+          payload_json: string;
+          instance_id: string;
+          interaction_status: string;
+          interaction_updated_at: string;
         } | null;
-      if (!row) return false;
+      if (!row) {
+        afterRelease?.();
+        return false;
+      }
       const bytes = workflowJsonBytes(row.payload_json);
       const usage = this.responseUsage(interactionId);
       if (usage.response_count < 1 || usage.response_bytes < bytes) {
@@ -427,18 +479,23 @@ export class WorkflowInteractionStore {
         );
       }
       this.reserveResponseBytes(row.instance_id, -bytes);
+      const detailUpdatedAt = row.interaction_status === 'open'
+        ? now
+        : row.interaction_updated_at;
       const adjusted = this.db.prepare(`UPDATE _workflow_interaction_details SET
         response_count = response_count - 1,
         response_bytes = response_bytes - ?,
         updated_at = ?
         WHERE interaction_id = ? AND response_count = ? AND response_bytes = ?`)
-        .run(bytes, now, interactionId,
+        .run(bytes, detailUpdatedAt, interactionId,
           usage.response_count, usage.response_bytes);
       if (adjusted.changes !== 1) throw interactionSubmissionLimit();
       const result = this.db.prepare(`DELETE FROM _workflow_interaction_responses
-        WHERE interaction_id = ? AND submission_id = ? AND status = 'processing'`)
-        .run(interactionId, submissionId);
+        WHERE interaction_id = ? AND submission_id = ? AND status = 'processing'
+          AND (? IS NULL OR (channel = 'event' AND submission_id = 'event:' || ?))`)
+        .run(interactionId, submissionId, expectedEventId ?? null, expectedEventId ?? null);
       if (result.changes !== 1) throw interactionSubmissionLimit();
+      afterRelease?.();
       return true;
     });
   }

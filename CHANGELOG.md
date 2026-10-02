@@ -4,6 +4,17 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 1.3.2 - 2026-10-02
+
+### Fixed
+
+- Made Torrent interaction-event recovery race-safe on the maintained Zero 1.3
+  topology. Accepted event responses retain their exact inbox claim until claim
+  consumption, queue accounting, and wait completion commit together. If an
+  external response wins, recovery now atomically releases the losing event
+  reservation and claim without corrupting response accounting, stealing an
+  event from a later same-name wait, or leaving queue capacity occupied.
+
 ## 1.3.1 - 2026-10-02
 
 ### Added

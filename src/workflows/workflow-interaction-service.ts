@@ -75,6 +75,12 @@ export interface SubmitWorkflowInteractionInput {
   channel?: string;
 }
 
+/** Runtime-only submission hooks; never exposed through the public response API. */
+export interface InternalSubmitWorkflowInteractionInput
+  extends SubmitWorkflowInteractionInput {
+  onDecisionCommit?: (result: WorkflowInteractionSubmissionResult) => void;
+}
+
 /** Privacy-safe response returned to transport adapters. */
 export interface WorkflowInteractionSubmissionResult {
   outcome: 'accepted' | 'rejected' | 'superseded';
@@ -173,7 +179,13 @@ export class WorkflowInteractionService {
         422,
       );
     }
-    return this.submitAuthorized(input, false);
+    return this.submitAuthorized({
+      interactionId: input.interactionId,
+      submissionId: input.submissionId,
+      actor: input.actor,
+      payload: input.payload,
+      channel: input.channel,
+    }, false);
   }
 
   /** Submit one runtime-claimed event through the interaction decision pipeline. */
@@ -182,6 +194,7 @@ export class WorkflowInteractionService {
     eventId: string;
     actor: WorkflowInteractionActor;
     payload: unknown;
+    onDecisionCommit?: (result: WorkflowInteractionSubmissionResult) => void;
   }): Promise<WorkflowInteractionSubmissionResult> {
     if (!input.eventId || input.eventId.startsWith('event:')) {
       throw new WorkflowError(
@@ -196,11 +209,12 @@ export class WorkflowInteractionService {
       actor: input.actor,
       payload: input.payload,
       channel: 'event',
+      onDecisionCommit: input.onDecisionCommit,
     }, true);
   }
 
   private async submitAuthorized(
-    input: SubmitWorkflowInteractionInput,
+    input: InternalSubmitWorkflowInteractionInput,
     internalEvent: boolean,
   ): Promise<WorkflowInteractionSubmissionResult> {
     this.assertAvailable();
@@ -222,7 +236,10 @@ export class WorkflowInteractionService {
         );
       }
       const replay = replayInteractionResult(durable, interaction);
-      if (replay) return replay;
+      if (replay) {
+        input.onDecisionCommit?.(replay);
+        return replay;
+      }
     }
     const existing = this.inflight.get(inflightKey);
     if (existing) {
@@ -261,6 +278,26 @@ export class WorkflowInteractionService {
     } finally {
       if (this.inflight.get(inflightKey)?.promise === promise) this.inflight.delete(inflightKey);
     }
+  }
+
+  /** Atomically release an event reservation and consume its exact claim. */
+  releaseEventSubmission(
+    interactionId: string,
+    eventId: string,
+    consume: () => void,
+  ): boolean {
+    return this.store.releaseProcessingSubmission(
+      interactionId,
+      `event:${eventId}`,
+      this.now(),
+      consume,
+      eventId,
+    );
+  }
+
+  /** Private recovery lookup for a durable event submission. */
+  getSubmission(interactionId: string, submissionId: string) {
+    return this.store.findResponse(interactionId, submissionId);
   }
 
   /** Read safe progress for a delivery or UI adapter. */

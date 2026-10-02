@@ -23,7 +23,7 @@ export class WorkflowInteractionEventBridge {
     eventName: string;
     interaction: WorkflowInteractionRecord;
   }): Promise<WorkflowInteractionRecord> {
-    let current = input.interaction;
+    let current = this.reconcileFinalizedEvent(input);
     for (let index = 0; index < MAX_EVENTS_PER_ADVANCE; index += 1) {
       if (current.status !== 'open' || !this.runtime.isInstanceRunning(input.instanceId)) break;
       const event = this.runtime.claimedEvent(input.stepId)
@@ -49,19 +49,25 @@ export class WorkflowInteractionEventBridge {
           eventId: event.eventId,
           actor,
           payload: event.payload,
+          onDecisionCommit: (decision) => {
+            if (decision.outcome !== 'accepted') {
+              this.consumeOrThrow(input.stepId, event.eventId);
+            }
+          },
         });
-        // The accepted event is consumed atomically with wait completion.
-        // Rejected/superseded submissions cannot settle the wait and are
-        // consumed here so the next queued event may be evaluated.
-        if (result.outcome !== 'accepted') {
-          this.runtime.consumeClaimedEvent(input.stepId, event.eventId);
-        }
         current = result.interaction;
       } catch (error) {
-        if (!(error instanceof WorkflowError)
-          || error.code !== 'WORKFLOW_INTERACTION_FORBIDDEN') throw error;
-        this.consumeRejected(input, event.eventId, 'forbidden');
-        current = this.interactions.get(input.interaction.interactionId)!;
+        if (error instanceof WorkflowError
+          && error.code === 'WORKFLOW_INTERACTION_FORBIDDEN') {
+          this.consumeRejected(input, event.eventId, 'forbidden');
+          current = this.interactions.get(input.interaction.interactionId)!;
+          continue;
+        }
+        const refreshed = this.interactions.get(input.interaction.interactionId);
+        if (!isInteractionClosure(error) || !refreshed || refreshed.status === 'open') {
+          throw error;
+        }
+        current = this.reconcileFinalizedEvent(input);
       }
     }
     return current;
@@ -72,7 +78,11 @@ export class WorkflowInteractionEventBridge {
     eventId: string,
     reason: 'unauthenticated' | 'forbidden',
   ): void {
-    this.runtime.consumeClaimedEvent(input.stepId, eventId);
+    this.interactions.releaseEventSubmission(
+      input.interaction.interactionId,
+      eventId,
+      () => this.consumeOrThrow(input.stepId, eventId),
+    );
     emitPlatformCode(OBS_CODES.WORKFLOW_INTERACTION_SUBMISSION_REJECTED, {
       metadata: {
         interactionId: input.interaction.interactionId,
@@ -83,4 +93,56 @@ export class WorkflowInteractionEventBridge {
       },
     });
   }
+
+  private reconcileFinalizedEvent(input: {
+    interaction: WorkflowInteractionRecord;
+    stepId: string;
+  }): WorkflowInteractionRecord {
+    const current = this.interactions.get(input.interaction.interactionId);
+    if (!current) {
+      throw new WorkflowError(
+        'Workflow interaction event has no durable interaction',
+        'WORKFLOW_STATE_INVALID',
+        500,
+      );
+    }
+    const event = this.runtime.claimedEvent(input.stepId);
+    if (!event) return current;
+    const response = this.interactions.getSubmission(
+      current.interactionId,
+      `event:${event.eventId}`,
+    );
+    const exactEvent = response?.channel === 'event'
+      && response.submissionId === `event:${event.eventId}`;
+    if (exactEvent && response.status === 'accepted') return current;
+    if (current.status !== 'open') {
+      this.interactions.releaseEventSubmission(
+        current.interactionId,
+        event.eventId,
+        () => this.consumeOrThrow(input.stepId, event.eventId),
+      );
+      return current;
+    }
+    if (exactEvent && response.status !== 'processing') {
+      this.consumeOrThrow(input.stepId, event.eventId);
+    }
+    return current;
+  }
+
+  private consumeOrThrow(stepId: string, eventId: string): void {
+    if (this.runtime.consumeClaimedEvent(stepId, eventId)) return;
+    throw new WorkflowError(
+      'Workflow interaction event could not be consumed atomically',
+      'WORKFLOW_STATE_INVALID',
+      500,
+    );
+  }
+}
+
+function isInteractionClosure(error: unknown): boolean {
+  return error instanceof WorkflowError && (
+    error.code === 'WORKFLOW_INTERACTION_CLOSED'
+    || error.code === 'WORKFLOW_INTERACTION_EXPIRED'
+    || error.code === 'WORKFLOW_INTERACTION_REJECTION_LIMIT'
+  );
 }

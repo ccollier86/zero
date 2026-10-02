@@ -12,7 +12,7 @@ import {
 import { parseWorkflowJson, type WorkflowJsonValue } from './workflow-json-value';
 import { validatePersistedInteractionSchema } from './workflow-interaction-schema';
 import type {
-  SubmitWorkflowInteractionInput,
+  InternalSubmitWorkflowInteractionInput,
   WorkflowInteractionServiceOptions,
   WorkflowInteractionSubmissionResult,
   WorkflowInteractionValidationContext,
@@ -30,7 +30,7 @@ export class WorkflowInteractionSubmissionProcessor {
   ) {}
 
   async process(input: {
-    submission: SubmitWorkflowInteractionInput;
+    submission: InternalSubmitWorkflowInteractionInput;
     interaction: WorkflowInteractionRecord;
     responderPolicy: WorkflowJsonValue;
     responseSchema: WorkflowJsonValue;
@@ -61,7 +61,7 @@ export class WorkflowInteractionSubmissionProcessor {
   }
 
   private async reserveAndDecide(input: {
-    submission: SubmitWorkflowInteractionInput;
+    submission: InternalSubmitWorkflowInteractionInput;
     interaction: WorkflowInteractionRecord;
     responseSchema: WorkflowJsonValue;
     validatorActivityId: string | null;
@@ -107,6 +107,7 @@ export class WorkflowInteractionSubmissionProcessor {
         decision,
         this.now(),
         this.options.requireRunningInstance,
+        (result) => submission.onDecisionCommit?.(toPublicInteractionResult(result)),
       );
       emitDecision(decided.outcome, decided.interaction);
       return toPublicInteractionResult(decided);

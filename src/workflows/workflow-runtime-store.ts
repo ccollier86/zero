@@ -242,22 +242,50 @@ export class WorkflowRuntimeStore {
     this.transaction(() => {
       const row = this.db.prepare(`
         SELECT delivery.instance_id, delivery.event_name,
-          delivery.claimed_by_step_id, delivery.payload_bytes, delivery.actor_bytes
+          delivery.claimed_by_step_id, delivery.claimed_at,
+          delivery.payload_bytes, delivery.actor_bytes,
+          event.instance_id AS event_instance_id,
+          event.event_name AS event_event_name,
+          step.instance_id AS step_instance_id,
+          step.wait_event AS step_wait_event,
+          step.status AS step_status
         FROM _workflow_event_delivery AS delivery
         INNER JOIN workflow_events AS event
           ON event.event_id = delivery.event_id
           AND event.instance_id = delivery.instance_id
           AND event.event_name = delivery.event_name
+        INNER JOIN workflow_steps AS step ON step.step_id = ?
         WHERE delivery.event_id = ?
         LIMIT 1
-      `).get(eventId) as {
+      `).get(stepId, eventId) as {
         instance_id: string;
         event_name: string;
         claimed_by_step_id: string | null;
+        claimed_at: string | null;
         payload_bytes: number;
         actor_bytes: number;
+        event_instance_id: string;
+        event_event_name: string;
+        step_instance_id: string;
+        step_wait_event: string | null;
+        step_status: string;
       } | null;
-      if (!row || row.instance_id !== instanceId) throw invalidEventDelivery();
+      const payloadBytes = Number(row?.payload_bytes);
+      const actorBytes = Number(row?.actor_bytes);
+      if (!row
+        || row.instance_id !== instanceId
+        || row.event_instance_id !== instanceId
+        || row.event_event_name !== row.event_name
+        || row.step_instance_id !== instanceId
+        || (row.step_wait_event !== null && row.step_wait_event !== row.event_name)
+        || row.step_status !== 'waiting'
+        || row.claimed_at === null
+        || !Number.isSafeInteger(payloadBytes)
+        || payloadBytes < 0
+        || !Number.isSafeInteger(actorBytes)
+        || actorBytes < 0) {
+        throw invalidEventDelivery();
+      }
       if (row.claimed_by_step_id === `consumed:${eventId}`) return;
       if (row.claimed_by_step_id !== stepId) throw invalidEventDelivery();
       const result = this.db.prepare(`UPDATE _workflow_event_delivery
@@ -267,7 +295,7 @@ export class WorkflowRuntimeStore {
       if (result.changes !== 1) throw invalidEventDelivery();
       this.eventCapacity.markConsumed(
         instanceId,
-        Number(row.payload_bytes) + Number(row.actor_bytes),
+        payloadBytes + actorBytes,
       );
     });
   }
