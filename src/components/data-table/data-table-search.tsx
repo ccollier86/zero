@@ -139,14 +139,14 @@ export const DataTableSearch = React.forwardRef<
         style={{ filter: `url(#${filterId})`, maxWidth: '100%' }}
       >
         <motion.span
-          className="absolute inset-y-0 rounded-full bg-foreground"
+          className="absolute inset-y-0 rounded-full bg-card"
           animate={{ left: inputOffset, width: surfaceWidth }}
           initial={false}
           transition={transition}
           style={{ maxWidth: surfaceMaxWidth }}
         />
         <motion.span
-          className="absolute inset-y-0 left-0 aspect-square rounded-full bg-foreground"
+          className="absolute inset-y-0 left-0 aspect-square rounded-full bg-card"
           animate={{ opacity: open ? 1 : 0, scale: open ? 1 : 0.72 }}
           initial={false}
           transition={transition}
@@ -155,7 +155,7 @@ export const DataTableSearch = React.forwardRef<
 
       <motion.span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 left-0 z-[5] aspect-square rounded-full bg-foreground shadow-sm ring-1 ring-border/50"
+        className="pointer-events-none absolute inset-y-0 left-0 z-[5] aspect-square rounded-full bg-card shadow-sm ring-1 ring-border/50"
         animate={{ opacity: open ? 1 : 0, scale: open ? 1 : 0.72 }}
         initial={false}
         transition={transition}
@@ -163,7 +163,7 @@ export const DataTableSearch = React.forwardRef<
 
       <motion.div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 left-0 z-10 flex aspect-square items-center justify-center text-background"
+        className="pointer-events-none absolute inset-y-0 left-0 z-10 flex aspect-square items-center justify-center text-card-foreground"
         animate={{ scale: open ? 1 : 0.92 }}
         initial={false}
         transition={transition}
@@ -178,7 +178,7 @@ export const DataTableSearch = React.forwardRef<
 
       <motion.div
         className={cn(
-          'absolute inset-y-0 overflow-hidden rounded-full bg-foreground text-background shadow-sm ring-1 ring-border/50',
+          'absolute inset-y-0 overflow-hidden rounded-full bg-card text-card-foreground shadow-sm ring-1 ring-border/50',
           'focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background',
         )}
         animate={{ left: inputOffset, width: surfaceWidth }}
@@ -219,7 +219,7 @@ export const DataTableSearch = React.forwardRef<
           }}
           className={cn(
             'h-full w-full appearance-none bg-transparent py-1 text-sm outline-none',
-            'placeholder:text-background/65 selection:bg-background selection:text-foreground',
+            'placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground',
             '[&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden',
             'disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
             open ? 'pl-3 pr-8' : 'pl-8 pr-3',
@@ -238,8 +238,8 @@ export const DataTableSearch = React.forwardRef<
             }}
             className={cn(
               'absolute right-1.5 top-1/2 z-20 flex size-5 -translate-y-1/2 items-center justify-center rounded-full',
-              'text-background/70 transition-colors hover:bg-background/15 hover:text-background',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background/80',
+              'text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               'disabled:pointer-events-none disabled:opacity-50',
             )}
           >
