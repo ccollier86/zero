@@ -131,9 +131,58 @@ describe('Sync socket authorizer', () => {
       expect(await pending).toBeFalse();
       expect(authorized).toBe(0);
       expect(target.data.authResolved).toBeFalse();
+      expect(target.data.authContext).toBeNull();
+      expect(target.data.authToken).toBeUndefined();
       expect(target.data.allowedTables.size).toBe(0);
       expect(target.closes).toEqual([]);
     } finally {
+      db.dispose();
+    }
+  });
+
+  test('runtime disposal fences a pending identity lookup and future authorization', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    let release!: () => void;
+    let started!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const resolving = new Promise<void>((resolve) => { started = resolve; });
+    let resolutions = 0;
+    const activeSockets = new Set<ServerWebSocket<SyncSocketData>>();
+    const runtime = createSyncSocketAuthRuntime({
+      auth: {
+        required: true,
+        getTokenVerifier: () => ({
+          async resolveAuthContext() {
+            resolutions += 1;
+            started();
+            await barrier;
+            return authContext;
+          },
+          verifyAccessToken: async () => null,
+        }),
+      },
+      db,
+      policy: allowAllSyncPolicy,
+      activeSockets,
+    });
+    const target = socket();
+
+    try {
+      const pending = runtime.authorize(target.value, 'access-token');
+      await resolving;
+      runtime.dispose();
+      release();
+
+      expect(await pending).toBeFalse();
+      expect(await runtime.authorize(target.value, 'access-token')).toBeFalse();
+      expect(resolutions).toBe(1);
+      expect(activeSockets.size).toBe(0);
+      expect(target.data.authResolved).toBeFalse();
+      expect(target.data.authContext).toBeNull();
+      expect(target.data.authToken).toBeUndefined();
+      expect(target.closes).toEqual([]);
+    } finally {
+      runtime.dispose();
       db.dispose();
     }
   });

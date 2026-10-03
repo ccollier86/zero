@@ -6,6 +6,13 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Fixed ReactiveDB Sync WebSocket lifecycle tracking to use Bun's stable raw
+  socket identity across Elysia callbacks. Disconnect and plugin disposal now
+  permanently fence pending identity/access resolution, clear active tracking
+  and handshake/revalidation timers, and prevent late authorization from
+  reactivating a closed connection. Authorization state is committed to a
+  socket only after every asynchronous check succeeds while that socket is
+  still live.
 - Exported `createAuthorityScopedServerServices` and its option/result types
   from `@zero/framework/server` for verified app-owned machine principals.
   The boundary requires both asynchronous and synchronous live Guardian

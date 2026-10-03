@@ -20,6 +20,7 @@ interface SocketAuthorizerOptions {
   additionalTables?: Iterable<string>;
   requireDurableAuthority?: boolean;
   requireComparableReadAuthority?: boolean;
+  isSocketActive?: (socket: ServerWebSocket<SyncSocketData>) => boolean;
   onAuthorized: (
     socket: ServerWebSocket<SyncSocketData>,
     token?: string,
@@ -41,6 +42,7 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
     socket: ServerWebSocket<SyncSocketData>,
     token?: string,
   ): Promise<boolean> {
+    if (!isSocketActive(socket)) return Promise.resolve(false);
     if (socket.data.authResolved) return Promise.resolve(true);
     const existing = pendingBySocket.get(socket);
     if (existing) return existing;
@@ -63,42 +65,41 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
     generation?: number,
   ): Promise<boolean> {
     const auth = await resolveSyncAuthContext(token, options.auth);
-    if (authorizationGeneration.get(socket) !== generation) return false;
+    if (!isCurrent(socket, generation)) return false;
     if (!auth.ok) {
       socket.close(auth.closeCode, auth.reason);
       return false;
     }
 
-    const data = socket.data;
-    data.authContext = auth.authContext;
-    data.authToken = token;
-    data.authAuthorityReference = null;
-    if (token && data.authContext && options.auth) {
+    const authContext = auth.authContext;
+    let authAuthorityReference = null;
+    if (token && authContext && options.auth) {
       const verifier = options.auth.getTokenVerifier();
       try {
         verifier?.assertCurrentProfile?.();
-        const reference = verifier?.captureAuthContextAuthority?.(data.authContext) ?? null;
+        const reference = verifier?.captureAuthContextAuthority?.(authContext) ?? null;
         const canRevalidate = Boolean(verifier?.resolveAuthContextAuthority);
-        if (reference && canRevalidate) data.authAuthorityReference = reference;
+        if (reference && canRevalidate) authAuthorityReference = reference;
       } catch {
+        if (!isCurrent(socket, generation)) return false;
         socket.close(1011, 'Sync authority capture failed');
         return false;
       }
-      if (options.requireDurableAuthority && !data.authAuthorityReference) {
+      if (options.requireDurableAuthority && !authAuthorityReference) {
         socket.close(1011, 'Durable Sync authority unavailable');
         return false;
       }
     }
     try {
-      const access = await resolveSyncSocketAccess(options, data.authContext);
-      if (authorizationGeneration.get(socket) !== generation) return false;
+      const access = await resolveSyncSocketAccess(options, authContext);
+      if (!isCurrent(socket, generation)) return false;
       const verifier = options.auth?.getTokenVerifier();
       verifier?.assertCurrentProfile?.();
-      if (data.authContext && data.authAuthorityReference) {
+      if (authContext && authAuthorityReference) {
         const current = verifier?.resolveAuthContextAuthority?.(
-          data.authAuthorityReference,
+          authAuthorityReference,
         );
-        if (!current || !sameSyncAuthContext(current, data.authContext)) {
+        if (!current || !sameSyncAuthContext(current, authContext)) {
           socket.close(4001, 'Auth context changed');
           return false;
         }
@@ -119,7 +120,7 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
         try {
           const result = validateRead?.call(
             options.resourcePolicy,
-            data.authContext,
+            authContext,
             readFingerprint,
           );
           if (result
@@ -138,21 +139,28 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
           return false;
         }
       }
+      if (!isCurrent(socket, generation)) return false;
+      const data = socket.data;
+      data.authContext = authContext;
+      data.authToken = token;
+      data.authAuthorityReference = authAuthorityReference;
       data.allowedTables = access.allowedTables;
       data.resourceRowFilters = access.rowFilters;
       data.resourceRowProjectors = access.rowProjectors;
       data.authorizationFingerprint = access.fingerprint;
       data.readAuthorizationFingerprint = readFingerprint;
       data.authorizationScope = createSyncAuthorizationScope(
-        data.authContext,
+        authContext,
         access.fingerprint,
       );
     } catch {
+      if (!isCurrent(socket, generation)) return false;
       socket.close(1011, 'Sync access resolution failed');
       return false;
     }
 
-    if (authorizationGeneration.get(socket) !== generation) return false;
+    if (!isCurrent(socket, generation)) return false;
+    const data = socket.data;
     data.authResolved = true;
     options.onAuthorized(socket, token);
     return true;
@@ -164,6 +172,18 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
       (authorizationGeneration.get(socket) ?? 0) + 1,
     );
     pendingBySocket.delete(socket);
+  }
+
+  function isCurrent(
+    socket: ServerWebSocket<SyncSocketData>,
+    generation: number | undefined,
+  ): boolean {
+    return (options.isSocketActive?.(socket) ?? true)
+      && authorizationGeneration.get(socket) === generation;
+  }
+
+  function isSocketActive(socket: ServerWebSocket<SyncSocketData>): boolean {
+    return options.isSocketActive?.(socket) ?? true;
   }
 
   return { authorize, cancel };

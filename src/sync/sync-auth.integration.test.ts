@@ -299,6 +299,82 @@ describe('sync WebSocket auth integration', () => {
     expect(close.reason).toBe('Invalid auth token');
   });
 
+  test('disconnect releases the stable socket identity and stops authorization polling', async () => {
+    let resolutions = 0;
+    const verifier: SyncTokenVerifier = {
+      async resolveAuthContext(token) {
+        resolutions += 1;
+        if (token !== 'disconnect-token') return null;
+        return { userId: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+    };
+    app = createApp(true, verifier, 5);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({
+      type: 'sync.auth',
+      token: 'disconnect-token',
+    }));
+    await conn.waitForMessage((msg) => msg.type === 'sync.auth.ready');
+    await waitForCondition(() => resolutions >= 3);
+
+    conn.close();
+    await conn.waitForClose();
+
+    // A revalidation already in flight at close may finish once. After close
+    // processing settles, no timer keyed by an earlier ElysiaWS facade may
+    // survive and perform more authorization work for this connection.
+    await Bun.sleep(25);
+    const settledResolutions = resolutions;
+    await Bun.sleep(50);
+    expect(resolutions).toBe(settledResolutions);
+  });
+
+  test('authorization completing after disconnect cannot reactivate the socket', async () => {
+    let resolutions = 0;
+    let observeResolution!: () => void;
+    let releaseResolution!: () => void;
+    const resolutionStarted = new Promise<void>((resolve) => {
+      observeResolution = resolve;
+    });
+    const resolutionBlocked = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    const verifier: SyncTokenVerifier = {
+      async resolveAuthContext(token) {
+        resolutions += 1;
+        observeResolution();
+        await resolutionBlocked;
+        if (token !== 'pending-disconnect-token') return null;
+        return { userId: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+    };
+    app = createApp(true, verifier, 10);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({
+      type: 'sync.auth',
+      token: 'pending-disconnect-token',
+    }));
+    await resolutionStarted;
+    conn.close();
+    await conn.waitForClose();
+
+    // Let Elysia's server-side close callback release the raw socket before
+    // the external verifier is allowed to settle.
+    await Bun.sleep(25);
+    releaseResolution();
+    await Bun.sleep(100);
+
+    expect(resolutions).toBe(1);
+  });
+
   test('shared authority revision closes revoked sockets without waiting for periodic revalidation', async () => {
     let active = true;
     let authorityRevision = 1;
@@ -401,3 +477,16 @@ describe('sync WebSocket auth integration', () => {
     expect(resolutions).toBeGreaterThanOrEqual(3);
   });
 });
+
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error('Timed out waiting for Sync test condition.');
+    }
+    await Bun.sleep(5);
+  }
+}

@@ -41,14 +41,21 @@ interface SyncSocketAuthRuntimeOptions {
 export function createSyncSocketAuthRuntime(
   options: SyncSocketAuthRuntimeOptions,
 ) {
+  const closedSockets = new WeakSet<ServerWebSocket<SyncSocketData>>();
+  let disposed = false;
+  const isSocketActive = (
+    socket: ServerWebSocket<SyncSocketData>,
+  ): boolean => !disposed && !closedSockets.has(socket);
+  const lifecycleOptions = { ...options, isSocketActive };
   const handshakeTimers = new Map<
     ServerWebSocket<SyncSocketData>,
     ReturnType<typeof setTimeout>
   >();
-  const revalidation = createSyncSocketRevalidation(options);
+  const revalidation = createSyncSocketRevalidation(lifecycleOptions);
   const authorizer = createSyncSocketAuthorizer({
-    ...options,
+    ...lifecycleOptions,
     onAuthorized(socket, token) {
+      if (!isSocketActive(socket)) return;
       clearHandshake(socket);
       options.activeSockets.add(socket);
       if (token && socket.data.authContext && options.auth) {
@@ -60,9 +67,9 @@ export function createSyncSocketAuthRuntime(
   function waitForRequiredHandshake(
     socket: ServerWebSocket<SyncSocketData>,
   ): void {
-    if (!options.auth?.required) return;
+    if (!options.auth?.required || !isSocketActive(socket)) return;
     const timer = setTimeout(() => {
-      if (!socket.data.authResolved) {
+      if (isSocketActive(socket) && !socket.data.authResolved) {
         authorizer.cancel(socket);
         socket.close(4001, 'Auth handshake timed out');
       }
@@ -71,6 +78,8 @@ export function createSyncSocketAuthRuntime(
   }
 
   function clearSocket(socket: ServerWebSocket<SyncSocketData>): void {
+    closedSockets.add(socket);
+    options.activeSockets.delete(socket);
     clearHandshake(socket);
     authorizer.cancel(socket);
     revalidation.clear(socket);
@@ -83,6 +92,18 @@ export function createSyncSocketAuthRuntime(
   }
 
   function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    for (const socket of handshakeTimers.keys()) {
+      closedSockets.add(socket);
+      authorizer.cancel(socket);
+    }
+    for (const socket of options.activeSockets) {
+      closedSockets.add(socket);
+      authorizer.cancel(socket);
+      revalidation.clear(socket);
+    }
+    options.activeSockets.clear();
     for (const timer of handshakeTimers.values()) clearTimeout(timer);
     handshakeTimers.clear();
     revalidation.dispose();

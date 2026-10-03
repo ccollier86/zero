@@ -8,9 +8,14 @@ import type { createSyncSocketAuthRuntime } from './sync-socket-auth';
 
 const DEFAULT_REVALIDATION_MS = 30_000;
 type Options = Parameters<typeof createSyncSocketAuthRuntime>[0];
+type LifecycleOptions = Options & {
+  readonly isSocketActive?: (
+    socket: ServerWebSocket<SyncSocketData>,
+  ) => boolean;
+};
 
 /** Create current-account and resource-policy revalidation timers. */
-export function createSyncSocketRevalidation(options: Options) {
+export function createSyncSocketRevalidation(options: LifecycleOptions) {
   const timers = new Map<ServerWebSocket<SyncSocketData>, ReturnType<typeof setInterval>>();
   const pending = new WeakMap<ServerWebSocket<SyncSocketData>, Promise<boolean>>();
   const generations = new WeakMap<ServerWebSocket<SyncSocketData>, number>();
@@ -35,19 +40,23 @@ export function createSyncSocketRevalidation(options: Options) {
   };
 
   function start(socket: ServerWebSocket<SyncSocketData>): void {
+    if (disposed || !isSocketActive(socket)) return;
     clear(socket);
+    if (!isSocketActive(socket)) return;
     pollAuthorityRevision();
     const intervalMs = Math.max(
       10,
       options.auth?.revalidateIntervalMs ?? DEFAULT_REVALIDATION_MS,
     );
-    timers.set(socket, setInterval(() => {
+    const timer = setInterval(() => {
       requestSocketRevalidation(socket);
-    }, intervalMs));
+    }, intervalMs);
+    timer.unref?.();
+    timers.set(socket, timer);
   }
 
   function startAuthorityPolling(): void {
-    if (authorityTimer || !options.auth?.invalidationPollIntervalMs) return;
+    if (disposed || authorityTimer || !options.auth?.invalidationPollIntervalMs) return;
     pollAuthorityRevision();
     const intervalMs = Math.max(10, options.auth.invalidationPollIntervalMs);
     authorityTimer = setInterval(pollAuthorityRevision, intervalMs);
@@ -55,7 +64,7 @@ export function createSyncSocketRevalidation(options: Options) {
   }
 
   function pollAuthorityRevision(): void {
-    if (!options.auth) return;
+    if (disposed || !options.auth) return;
     try {
       const verifier = options.auth.getTokenVerifier();
       verifier?.assertCurrentProfile?.();
@@ -150,7 +159,7 @@ export function createSyncSocketRevalidation(options: Options) {
 
   function revalidate(socket: ServerWebSocket<SyncSocketData>): Promise<boolean> {
     const data = socket.data;
-    if (disposed) return Promise.resolve(false);
+    if (disposed || !isSocketActive(socket)) return Promise.resolve(false);
     if (!options.auth) return Promise.resolve(true);
     if (!assertCurrentProfile(socket)) return Promise.resolve(false);
     if (!data.authResolved) return Promise.resolve(false);
@@ -176,6 +185,7 @@ export function createSyncSocketRevalidation(options: Options) {
     expectedContext?: SyncAuthContext,
   ): boolean {
     const data = socket.data;
+    if (disposed || !isSocketActive(socket)) return false;
     if (!options.auth) return true;
     if (!assertCurrentProfile(socket)) return false;
     // `closeAndReset()` clears the context before the WebSocket close callback
@@ -325,7 +335,13 @@ export function createSyncSocketRevalidation(options: Options) {
     socket: ServerWebSocket<SyncSocketData>,
     generation: number,
   ): boolean {
-    return !disposed && (generations.get(socket) ?? 0) === generation;
+    return !disposed
+      && isSocketActive(socket)
+      && (generations.get(socket) ?? 0) === generation;
+  }
+
+  function isSocketActive(socket: ServerWebSocket<SyncSocketData>): boolean {
+    return options.isSocketActive?.(socket) ?? true;
   }
 
   return {
