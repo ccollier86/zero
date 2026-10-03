@@ -36,12 +36,20 @@ export type {
   ResolvedAppMultipleDatabaseTopologyConfig,
   ResolvedAppSingleDatabaseTopologyConfig,
   ResolvedAppStorageConfig,
+  ResolvedStorageStudioConfig,
+  ResolvedStorageStudioLimits,
+  ResolvedStorageStudioPublicAccess,
   ResolvedSitemapConfig,
   ResolvedSyncDefaults,
   ResolvedTableSyncDefault,
   SitemapChangeFrequency,
   SitemapConfig,
   SitemapEntry,
+  StorageStudioConfig,
+  StorageStudioDefaultGrantConfig,
+  StorageStudioIsolation,
+  StorageStudioLimitsConfig,
+  StorageStudioPublicAccessConfig,
   SyncAuthMode,
   SyncDefaultsConfig,
   SystemDatabaseConfig,
@@ -210,8 +218,32 @@ export type {
   ServerRouteOptions,
 } from './server/server-route';
 export type {
+  AuthorityScopedAuthServices,
+  AuthorityScopedObservabilityServices,
+  AuthorityScopedServerServices,
+  CreateAuthorityScopedServerServicesOptions,
+  ScopedNotificationService,
+  ScopedPdfService,
+  ScopedPdfStorageTarget,
+  ScopedRoomService,
+  ScopedStorageDriveApi,
+  ScopedStorageMethods,
+  ScopedStorageObjectApi,
+  ScopedStoragePermissionApi,
+  ScopedStorageService,
+  ScopedStorageUploadData,
+  ScopedStorageUploadGrantApi,
   ScopedWorkflowInstanceListFilter,
   ScopedWorkflowService,
+} from './server/server-request-services';
+/**
+ * Project already-verified machine/background authority into tenant-bound
+ * services. This is a trusted server-only boundary: callers must supply live
+ * asynchronous and synchronous authority fences; never accept a tenant scope
+ * or principal directly from an untrusted request.
+ */
+export {
+  createAuthorityScopedServerServices,
 } from './server/server-request-services';
 export {
   createLazyServerRouteServices,
@@ -822,7 +854,13 @@ export type {
 
 // ─── Storage: Server ────────────────────────────────────────────────────
 export { createStoragePlugin, getStorageService } from '../storage';
-export { StorageService, StorageError, defineStorageTables, LocalStorageAdapter } from '../storage';
+export {
+  StorageService,
+  StorageStudioService,
+  StorageError,
+  defineStorageTables,
+  LocalStorageAdapter,
+} from '../storage';
 export {
   createPresignedToken,
   createUploadGrantToken,
@@ -833,6 +871,9 @@ export {
 export { STORAGE_TABLES } from '../storage';
 export type {
   StorageAdapter,
+  StorageAdapterOperationOptions,
+  StorageBlobWriteResult,
+  StoragePendingBlobPublication,
   StoragePluginConfig,
   DriveRecord,
   FileInfo,
@@ -845,12 +886,31 @@ export type {
   DriveUsage,
   PermissionLevel,
   GrantPermissionParams,
+  CreateDriveRecordInput,
+  StorageActorRoles,
   StorageDriveApi,
   StorageDriveUpdates,
   StorageObjectApi,
   StoragePermissionApi,
   StorageServiceOptions,
   StorageUploadGrantApi,
+  ScopedStorageStudioApi,
+  ScopedStorageStudioDrive,
+  ScopedStorageStudioDriveApi,
+  ScopedStorageStudioObjectApi,
+  ScopedStorageStudioPermissionApi,
+  StorageStudioCapabilities,
+  StorageStudioControlCapabilities,
+  StorageStudioDrive,
+  StorageStudioDriveListRequest,
+  StorageStudioDrivePage,
+  StorageStudioDriveProfileView,
+  StorageStudioDriveUpdateRequest,
+  StorageStudioJobPage,
+  StorageStudioJobView,
+  StorageStudioLifecycleRequest,
+  StorageStudioMutationReceipt,
+  StorageStudioProvisionRequest,
   CreateUploadGrantTokenOptions,
   VerifiedUploadGrant,
 } from '../storage';

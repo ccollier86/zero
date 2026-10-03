@@ -1,18 +1,19 @@
 # Storage Studio And Vector Studio Control-Plane Roadmap
 
-This document plans two separate future organization data control planes:
+This document records the shared direction for two separate organization data
+control planes:
 
-- **Storage Studio** for organization-owned drive provisioning and operations;
+- **Storage Studio**, now shipped as an opt-in managed-drive control plane;
 - **Vector Studio** for organization-owned vector-index provisioning and
-  operations.
+  operations, which remains future work.
 
-Neither Studio is implemented by the current Data Studio work. Zero already
-has a complete Storage service and an opt-in server-side Vector service; the
-planned Studios would add tenant-aware provisioning, lifecycle, policy, jobs,
-and adaptive management UI around those engines. This is a design roadmap, not
-an API contract or evidence that any proposed route, permission, record, or
-component exists. Current behavior remains documented in
-[Storage](./sdk-reference.md#storage) and [Vector Store](./vector.md).
+Neither Studio is part of Data Studio. Zero already had a complete Storage
+service and an opt-in server-side Vector service. Storage Studio now adds
+Guardian-scoped provisioning, ownership, lifecycle, quotas, jobs, browser and
+server SDKs, and adaptive management around Storage. Its current contract is
+documented in [Storage Studio](./storage-studio.md). Vector Studio proposals in
+this file remain design direction, not installed APIs; current vector behavior
+is documented in [Vector Store](./vector.md).
 
 [Data Studio](./data-studio.md)—the current logical-table Studio—is the
 reference for Guardian/Fabric authority, bounded command APIs, agent-friendly
@@ -25,11 +26,11 @@ logical-schema or row model.
 The three Studios should feel like one Zero product family without pretending
 that tables, blobs, and vector indexes have the same lifecycle.
 
-| Surface | Current foundation | Future Studio responsibility |
+| Surface | Engine foundation | Control-plane status |
 | --- | --- | --- |
 | Data Studio | Fixed Fabric realm with logical schemas and rows | Implemented table/schema/row control plane |
-| Storage Studio | Storage drives, objects, policies, grants, signed operations, hooks, and management UI | Organization provisioning, quotas, lifecycle jobs, recovery, and an adaptive operator/tenant control plane |
-| Vector Studio | Configured local zvec indexes, scoped operations, filters, and AI bridge | Organization index catalog, provisioning, access policy, quotas, asynchronous ingestion/reindex work, and an adaptive control plane |
+| Storage Studio | Storage drives, objects, policies, grants, signed operations, hooks, and management UI | Implemented opt-in application/organization/personal drive catalog, provisioning, quotas, lifecycle jobs, recovery, scoped APIs, and adaptive control plane |
+| Vector Studio | Configured local zvec indexes, scoped operations, filters, and AI bridge | Future organization index catalog, provisioning, access policy, quotas, asynchronous ingestion/reindex work, and adaptive control plane |
 
 The Studios may share presentation and control-plane infrastructure. Their
 services, durable records, permission fragments, error codes, migrations,
@@ -37,7 +38,9 @@ quotas, deletion procedures, and recovery logic remain domain-specific.
 
 ## Shared Control-Plane Contract
 
-The following requirements should guide both future designs.
+The following principles describe Storage Studio's shipped direction and guide
+future Vector Studio work. When this roadmap and the current Storage guide
+differ, [Storage Studio](./storage-studio.md) is authoritative.
 
 ### Guardian authority
 
@@ -47,8 +50,11 @@ The following requirements should guide both future designs.
   Fabric database reference, filesystem path, adapter namespace, or vector
   collection path as authority.
 - Platform-administration access is not implicit customer data-plane access.
-  Cross-organization inventory, support, export, or recovery requires an
-  explicit application permission and a separately audited operation.
+  Storage Studio has no ambient cross-organization inventory or recovery
+  surface: an operator must explicitly enter the customer organization and
+  hold that scope's Guardian permission plus the relevant Storage ACL. Any
+  future cross-organization operation would need its own narrow authority and
+  audit contract rather than inheriting platform membership.
 - Packaged UI capability props only remove actions from the presentation. The
   service/router must authorize every read and mutation again.
 - Session and user API-key credentials may be admitted where the owning app
@@ -57,12 +63,13 @@ The following requirements should guide both future designs.
   Do not copy profiles, email addresses, credentials, or mutable roles into
   tenant data.
 
-Each Studio should ship mergeable advanced-authorization permission and role
-fragments. Exact names are intentionally not frozen here. At minimum, the
-final permission model must distinguish catalog/read use, data-plane write
-use, provisioning/policy administration, and destructive lifecycle work where
-the domain needs that separation. Simple-permission installations still need a
-documented, predictable mapping.
+Storage Studio ships mergeable advanced-authorization permission and role
+fragments with the exact names documented in its guide. Vector Studio should
+follow the same compositional pattern while retaining domain-specific
+permissions. A permission model must distinguish catalog/read use, data-plane
+write use, provisioning/policy administration, and destructive lifecycle work
+where the domain needs that separation. Simple-permission installations still
+need a documented, predictable mapping.
 
 ### Fabric and persistence
 
@@ -86,11 +93,10 @@ documented, predictable mapping.
 
 ### Lifecycle and background work
 
-A common lifecycle vocabulary will make the control planes easier to operate.
-Candidate states are `provisioning`, `ready`, `degraded`, `suspended`,
-`deleting`, `failed`, and `deleted`, with an optional `restoring` state where
-recovery is asynchronous. These values are a design starting point, not current
-exported constants.
+A common lifecycle vocabulary makes the control planes easier to operate.
+Storage Studio currently uses `provisioning`, `ready`, `degraded`, `suspended`,
+`deleting`, `deleted`, `restoring`, and `failed`. Vector Studio can begin from
+that vocabulary but must preserve vector-specific generation semantics.
 
 Every lifecycle command should:
 
@@ -167,18 +173,22 @@ table would erase important differences and should not be invented up front.
   realm/plane choices, provider configuration, unsafe shared roots, and
   incompatible limits before the app accepts traffic.
 
-## Storage Studio
+## Storage Studio (shipped)
 
-Storage Studio should extend Zero's existing drive/object system. It should not
-replace the Storage service, duplicate its metadata, or make Data Studio hold
-file records.
+Storage Studio extends Zero's existing drive/object system. It does not replace
+the Storage service, duplicate its metadata, or make Data Studio hold file
+records. This section remains the design record; use the
+[current Storage Studio guide](./storage-studio.md) for exact configuration,
+permissions, routes, TypeScript contracts, compatibility, and upgrade steps.
+Statements below that say "should", "potential", or "eventual" remain roadmap
+ideas rather than claims about the installed package.
 
 ### Resource and persistence model
 
-The design pass must reconcile the current `storage_drives`, object metadata,
-permissions, signed operations, and tenant-aware fields with Fabric physical
-tenant databases. The chosen model should preserve existing applications and
-keep exactly one authoritative drive/object catalog.
+The shipped design reconciles `storage_drives`, object metadata, permissions,
+signed operations, and tenant-aware fields without coupling drive storage to
+Fabric physical tenant databases. It preserves one authoritative drive/object
+catalog and adds private system-plane sidecars.
 
 An organization-owned drive needs, at minimum:
 
@@ -191,28 +201,25 @@ An organization-owned drive needs, at minimum:
 - creator/updater identity-anchor IDs and timestamps;
 - drive policy plus existing user/role/property grants.
 
-Blob bytes remain in the configured Storage adapter. Folder/prefix isolation is
-the sensible default for many deployments; a dedicated root, bucket, volume,
-or provider account can be an explicit application policy when stronger
-physical isolation is required. The browser never supplies the resulting
-physical location.
+Blob bytes remain in the configured Storage adapter. The shipped adapter
+contract is `shared-cas`: managed drives share the content-addressable blob
+pool while drive IDs, metadata, Guardian scope, and ACLs provide logical
+isolation. Physical tenant/drive namespaces are not a configurable Storage
+Studio mode in this release. If a later adapter boundary adds them, their
+physical location must remain server-owned rather than browser input.
 
 ### Provisioning lifecycle
 
-The provisioning operation should be a recoverable saga:
+The shipped shared-CAS path validates Guardian scope, policy, key/name/limit
+rules, and owner drive count; reserves the canonical drive, profile,
+idempotency receipt, and default ACLs in one system-database transaction; then
+publishes the revisioned `ready` profile. Failures use safe failed state and
+outcome metadata. Adapter namespaces are server-derived and never come from a
+request.
 
-1. validate the organization, permission, drive-name rules, provider policy,
-   and drive-count/byte quota;
-2. reserve an opaque drive ID and persist `provisioning` intent;
-3. allocate or verify the server-derived adapter namespace;
-4. install default policy and quota records;
-5. probe the adapter using a bounded, non-public health operation;
-6. publish `ready` with a revision, or record a safe failed state and run
-   idempotent compensation.
-
-Retries after an unknown outcome must reuse the operation ID. A crash between
-adapter allocation and catalog publication must be discoverable as an orphan
-and repairable without guessing from a user-provided path.
+Retries after an unknown outcome reuse the operation ID. Any future physical
+namespace contract would require an explicit adapter I/O boundary and recovery
+design; an adapter capability label alone would not provide that isolation.
 
 ### RBAC and policy
 
@@ -221,9 +228,12 @@ problems:
 
 - catalog/read permission allows seeing organization drive metadata;
 - provision permission allows creating a drive within organization policy;
-- manage permission covers display settings, quota assignment, and grants;
+- manage permission covers control-plane display settings, quota assignment,
+  and non-destructive lifecycle operations;
 - object read/write/admin continues to use the existing drive/object
   capability and permission model;
+- listing or mutating drive/object grants requires the existing Storage
+  `admin` ACL; Studio manage authority alone does not grant data access;
 - destructive permission, if separated, covers archive and permanent delete;
 - explicit platform operations may inspect status or run recovery without
   automatically receiving object read access.
@@ -232,18 +242,18 @@ Permission fragments should compose with app roles such as organization owner,
 storage administrator, contributor, and viewer without forcing those exact
 role names on the app.
 
-### Quotas and accounting
+### Current quotas and further accounting direction
 
-Storage quotas should support policy at application, organization, and drive
-scope with documented precedence. Useful limits include drive count, logical
-bytes, object count, single-upload size, concurrent/in-flight bytes, public
-grant count, and request rate.
+Storage Studio currently supports owner drive counts plus drive bytes, object
+count, single-upload bytes, and concurrent/in-flight bytes. Longer-term quota
+policy may add application/organization precedence, public-grant counts, and
+request rates.
 
 Uploads need reservations so concurrent requests cannot all pass a stale
 usage check. Successful completion converts a reservation to committed usage;
-failure/expiry releases it. A periodic reconciliation job compares metadata to
-adapter reality and reports drift. Soft thresholds drive UI/notifications;
-hard limits reject before accepting bytes with a stable quota error.
+failure/expiry releases it. The current implementation enforces hard limits
+with stable quota errors. Periodic adapter reconciliation and soft-threshold
+notifications remain further direction.
 
 ### Jobs and operations
 
@@ -256,10 +266,14 @@ Each job needs bounded progress, safe counters, cancellation rules, retry
 classification, and ownership. UI should expose job history and actionability
 without leaking object names or paths through broad platform telemetry.
 
-### Deletion and recovery
+### Current lifecycle and further recovery direction
 
-Drive removal should be staged rather than an immediate recursive filesystem
-operation:
+The shipped lifecycle stages and audits suspend, delete, restore, retry, and
+generation invalidation, with durable cleanup work. Broader retention and
+recovery policy remains roadmap work. Under shipped `shared-cas`, deletion
+permanently purges objects and restore reactivates the managed drive identity
+and settings as an empty drive; it is not deleted-file recovery. A future
+removal policy could:
 
 1. suspend new writes and revoke or expire outstanding signed capabilities;
 2. drain or abort uploads and dependent jobs;
@@ -276,22 +290,27 @@ visible.
 
 ### Packaged surface
 
-The eventual control plane should evolve `StorageManagement` rather than ship
-a disconnected competing browser. Its adaptive views should cover:
+The control plane evolves `StorageManagement` rather than shipping a
+disconnected competing browser. `StorageStudioManagement` is the convenience
+wrapper that wires its adaptive controller and inspector slots. Current views
+cover:
 
 - organization drive catalog and create/provision action;
 - drive readiness/health, usage, quotas, and current jobs;
 - file browser and upload/download flows already provided by Storage;
-- settings, visibility, retention, and member/role grants;
-- archive/delete/export/recovery actions gated by capability;
-- a restricted platform-operator view that cannot browse object contents
-  unless separately authorized.
+- settings, visibility, and member/role grants;
+- suspend/delete/restore/retry actions gated by capability;
+- the same current-scope view for a platform operator who explicitly enters a
+  customer organization and holds its required Guardian permissions and
+  Storage ACLs; there is no ambient cross-tenant inventory or byte authority.
 
 The headless surface should accept an already-scoped Storage Studio service so
-Pantheon-like functions and workflows can use an organization drive without
-constructing adapter paths or passing an organization ID through app input.
+Pantheon-like functions and actor-owned workflows can use an organization
+drive without constructing adapter paths or passing an organization ID through
+app input. System-only workflows need an explicit trusted service policy; they
+must not fabricate a Guardian user.
 
-### Storage Studio acceptance gates
+### Storage Studio release contract
 
 - Existing non-Studio Storage apps keep their current behavior.
 - Two organizations cannot list, address, sign, quota, or delete each other's
@@ -299,10 +318,11 @@ constructing adapter paths or passing an organization ID through app input.
 - Concurrent quota reservations cannot over-admit the same hard limit.
 - Provision, delete, and restore survive forced crashes at every persisted
   transition and reconcile orphan adapter state.
-- Platform administration remains useful for health/recovery without becoming
-  implicit customer file access.
-- SDK, hooks, components, Doctor, errors, audit, observability, upgrade, and
-  removal behavior are tested and documented together.
+- Platform administration never becomes implicit customer inventory or file
+  access; an operator must enter the customer scope with explicit authority.
+- SDK, hooks, components, errors, audit, observability, upgrade, and membership
+  authority behavior are documented as one contract. Doctor coverage remains
+  a separate roadmap item in the shared control-plane section above.
 
 ## Vector Studio
 
@@ -449,22 +469,19 @@ logs or security audit payloads.
 The Studios should ship independently. Finishing one is not a release gate for
 the other.
 
-1. Validate Data Studio in a production-shaped organization app and record any
-   shared control-plane lessons without changing its table contract casually.
-2. Inventory current Storage and Vector persistence, routes, adapters,
-   components, compatibility requirements, and failure modes.
-3. Decide each Studio's authoritative catalog plane, lifecycle records,
-   permission vocabulary, quotas, and migration/removal contract.
-4. Implement only proven shared UI/job primitives; keep services and storage
-   domain-specific.
-5. Build and release Storage Studio through its own backend, browser,
-   concurrency/recovery, security, package, and documentation gates.
-6. Build and release Vector Studio separately, including generation/reindex and
-   vector-specific capacity tests.
-7. Exercise each with an organization-owned example in which functions and
-   Torrent workflows use scoped services, then verify platform-operator and
-   tenant-member experiences independently.
+- [x] Inventory and preserve the existing Storage engine and compatibility
+  surface.
+- [x] Select system-plane managed-drive sidecars, Guardian scope, ACL
+  separation, lifecycle, quota, error, and audit contracts.
+- [x] Implement the Storage Studio backend, browser SDK, scoped server surface,
+  adaptive UI, package exports, and documentation as an independent feature.
+- [ ] Exercise Storage Studio in a production-shaped organization app and feed
+  any proven shared control-plane improvements back without collapsing domain
+  boundaries.
+- [ ] Design and release Vector Studio separately, including generation,
+  reindex, vector-specific capacity, and recovery tests.
 
-Until those gates are complete, applications should use today's Storage and
-Vector APIs directly. Documentation and agents must describe Storage Studio and
-Vector Studio as future work, never as installed Data Studio capabilities.
+Applications can use Storage Studio by opting in through `storage.studio`.
+Applications should continue to use today's Vector APIs directly until Vector
+Studio's separate release gates are complete. Neither feature is an installed
+Data Studio capability.

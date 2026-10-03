@@ -17,58 +17,35 @@ import type {
   AuthorizationScopeSnapshot,
   AuthorizationSubjectSnapshot,
 } from '../../auth/authorization-kernel';
-import type { ServiceDataScope } from '../../auth/service-data-scope';
 import { AuthError, type PermissionKey } from '../../auth/types';
-import type { AsyncDatabaseClient } from '../../databases/database-operations';
-import type { NotificationService } from '../../notifications/notification-service';
-import type { ServerObservabilityServices } from './server-services';
-import type { PdfService } from '../../pdf/pdf-service';
-import type { RoomService } from '../../rooms/room-service';
-import type { StorageService } from '../../storage/storage-service';
 import { WorkflowError } from '../../workflows/workflow-error';
 import type {
   WorkflowExecutionServiceProvider,
   WorkflowResolvedExecutionAuthority,
 } from '../../workflows/workflow-execution-authority';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
-import {
-  createAuthorityScopedServerServices,
-  type ScopedWorkflowService,
+import type {
+  AuthorityScopedAuthServices,
+  AuthorityScopedObservabilityServices,
+  AuthorityScopedServerServices,
 } from './server-request-services';
+import { createInternalAuthorityScopedServerServices } from './server-request-services/create-request-services';
 import {
   createLazyServerRouteServices,
-  type ServerAuthServices,
   type ServerRouteServices,
 } from './server-services';
 
 /** Auth capabilities safe to expose inside a sealed workflow step. */
-export type WorkflowExecutionAuthServices = Pick<
-  ServerAuthServices,
-  'authorization' | 'authorizationKernel' | 'getAuthorizationKernel'
->;
+export type WorkflowExecutionAuthServices = AuthorityScopedAuthServices;
 
 /** Observability emitters automatically attributed to the execution scope. */
-export type WorkflowExecutionObservabilityServices = Pick<
-  ServerObservabilityServices,
-  'emitCode' | 'emitEvent' | 'error' | 'info' | 'warn'
->;
+export type WorkflowExecutionObservabilityServices = AuthorityScopedObservabilityServices;
 
 /**
  * Supported managed workflow facade. Capabilities without a scope-safe
  * projection are intentionally absent until Zero provides one.
  */
-export interface WorkflowExecutionServerServices {
-  readonly access: RequestAuthorizationAccess;
-  readonly scope: ServiceDataScope;
-  readonly data: AsyncDatabaseClient | null;
-  readonly auth: WorkflowExecutionAuthServices;
-  readonly storage: StorageService | null;
-  readonly notifications: NotificationService | null;
-  readonly rooms: RoomService | null;
-  readonly workflows: ScopedWorkflowService | null;
-  readonly pdf: PdfService | null;
-  readonly observability: WorkflowExecutionObservabilityServices;
-}
+export type WorkflowExecutionServerServices = AuthorityScopedServerServices;
 
 export interface CreateWorkflowExecutionServiceProviderOptions {
   /** App-local runtime used by managed createApp() composition. */
@@ -91,17 +68,19 @@ export function createWorkflowExecutionServiceProvider(
       const access = authority.identity.kind === 'actor'
         ? createActorExecutionAccess(authority, kernel)
         : createSystemExecutionAccess(kernel);
-      const projected = createAuthorityScopedServerServices({
+      const projected = createInternalAuthorityScopedServerServices({
         access,
         services,
         scope: authority.scope,
         assertCurrentAuthority: async () => { assertCurrentAuthority(); },
         assertCurrentAuthoritySync: assertCurrentAuthority,
+        allowUnsafe: false,
         strict: true,
         privilegedSystem: authority.identity.kind === 'system',
+        auditProvenance: 'system',
         userProperties: authority.userProperties,
       });
-      return projected as unknown as WorkflowExecutionServerServices;
+      return projected;
     },
   };
   return Object.freeze(provider);

@@ -52,6 +52,9 @@ interface ReceiptRow {
 /** One legacy role or the complete additive role set projected by RBAC. */
 export type NotificationAudienceRoles = string | readonly string[];
 
+/** Synchronous authority check executed while the system DB writer lock is held. */
+export type NotificationCommitFence = () => void;
+
 // ─── NotificationService ─────────────────────────────────────────────────────
 
 /**
@@ -107,8 +110,9 @@ export class NotificationService {
     params: CreateNotificationParams,
     senderId?: string,
     scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
   ): NotificationRecord {
-    return this.broadcast(params, senderId, scope);
+    return this.broadcast(params, senderId, scope, commitFence);
   }
 
   /** Broadcast to all users. */
@@ -116,8 +120,9 @@ export class NotificationService {
     params: CreateNotificationParams,
     senderId?: string,
     scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
   ): NotificationRecord {
-    return this.createNotification('all', null, params, senderId, scope);
+    return this.createNotification('all', null, params, senderId, scope, commitFence);
   }
 
   /** Notify a single user. */
@@ -126,8 +131,9 @@ export class NotificationService {
     params: CreateNotificationParams,
     senderId?: string,
     scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
   ): NotificationRecord {
-    return this.createNotification('user', userId, params, senderId, scope);
+    return this.createNotification('user', userId, params, senderId, scope, commitFence);
   }
 
   /** Notify multiple specific users. */
@@ -136,8 +142,16 @@ export class NotificationService {
     params: CreateNotificationParams,
     senderId?: string,
     scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
   ): NotificationRecord {
-    return this.createNotification('users', JSON.stringify(userIds), params, senderId, scope);
+    return this.createNotification(
+      'users',
+      JSON.stringify(userIds),
+      params,
+      senderId,
+      scope,
+      commitFence,
+    );
   }
 
   /** Notify all users with a specific role. */
@@ -146,8 +160,9 @@ export class NotificationService {
     params: CreateNotificationParams,
     senderId?: string,
     scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
   ): NotificationRecord {
-    return this.createNotification('role', role, params, senderId, scope);
+    return this.createNotification('role', role, params, senderId, scope, commitFence);
   }
 
   // ─── Reads ──────────────────────────────────────────────────────────────
@@ -242,88 +257,131 @@ export class NotificationService {
   // ─── Receipt Writes ─────────────────────────────────────────────────────
 
   /** Mark a notification as seen for a user. */
-  markSeen(notificationId: string, userId: string, scope?: ServiceDataScope): void {
+  markSeen(
+    notificationId: string,
+    userId: string,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): void {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
     const receiptId = `r_${notificationId}_${userId}`;
-    const existing = this.stmts.getReceipt.get(notificationId, userId, tenantId) as ReceiptRow | null;
-
-    if (existing) {
-      if (!existing.seen_at) {
-        this.db.update('notification_receipts', receiptId, { seen_at: Date.now() });
+    this.db.transaction(() => {
+      const existing = this.stmts.getReceipt.get(
+        notificationId,
+        userId,
+        tenantId,
+      ) as ReceiptRow | null;
+      if (existing) {
+        if (!existing.seen_at) {
+          commitFence?.();
+          this.db.update('notification_receipts', receiptId, { seen_at: Date.now() });
+        }
+      } else {
+        commitFence?.();
+        this.insertReceipt({
+          receipt_id: receiptId,
+          tenant_id: tenantId,
+          notification_id: notificationId,
+          user_id: userId,
+          seen_at: Date.now(),
+          read_at: null,
+          dismissed_at: null,
+        });
       }
-    } else {
-      this.insertReceipt({
-        receipt_id: receiptId,
-        tenant_id: tenantId,
-        notification_id: notificationId,
-        user_id: userId,
-        seen_at: Date.now(),
-        read_at: null,
-        dismissed_at: null,
-      });
-    }
+    });
   }
 
   /** Mark a notification as read for a user. */
-  markRead(notificationId: string, userId: string, scope?: ServiceDataScope): void {
+  markRead(
+    notificationId: string,
+    userId: string,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): void {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
     const receiptId = `r_${notificationId}_${userId}`;
     const now = Date.now();
-    const existing = this.stmts.getReceipt.get(notificationId, userId, tenantId) as ReceiptRow | null;
-
-    if (existing) {
-      if (!existing.read_at) {
-        this.db.update('notification_receipts', receiptId, {
-          seen_at: existing.seen_at ?? now,
+    this.db.transaction(() => {
+      const existing = this.stmts.getReceipt.get(
+        notificationId,
+        userId,
+        tenantId,
+      ) as ReceiptRow | null;
+      if (existing) {
+        if (!existing.read_at) {
+          commitFence?.();
+          this.db.update('notification_receipts', receiptId, {
+            seen_at: existing.seen_at ?? now,
+            read_at: now,
+          });
+        }
+      } else {
+        commitFence?.();
+        this.insertReceipt({
+          receipt_id: receiptId,
+          tenant_id: tenantId,
+          notification_id: notificationId,
+          user_id: userId,
+          seen_at: now,
           read_at: now,
+          dismissed_at: null,
         });
       }
-    } else {
-      this.insertReceipt({
-        receipt_id: receiptId,
-        tenant_id: tenantId,
-        notification_id: notificationId,
-        user_id: userId,
-        seen_at: now,
-        read_at: now,
-        dismissed_at: null,
-      });
-    }
+    });
   }
 
   /** Dismiss a notification for a user. */
-  dismiss(notificationId: string, userId: string, scope?: ServiceDataScope): void {
+  dismiss(
+    notificationId: string,
+    userId: string,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): void {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
     const receiptId = `r_${notificationId}_${userId}`;
     const now = Date.now();
-    const existing = this.stmts.getReceipt.get(notificationId, userId, tenantId) as ReceiptRow | null;
-
-    if (existing) {
-      this.db.update('notification_receipts', receiptId, { dismissed_at: now });
-    } else {
-      this.insertReceipt({
-        receipt_id: receiptId,
-        tenant_id: tenantId,
-        notification_id: notificationId,
-        user_id: userId,
-        seen_at: now,
-        read_at: null,
-        dismissed_at: now,
-      });
-    }
+    this.db.transaction(() => {
+      const existing = this.stmts.getReceipt.get(
+        notificationId,
+        userId,
+        tenantId,
+      ) as ReceiptRow | null;
+      commitFence?.();
+      if (existing) {
+        this.db.update('notification_receipts', receiptId, { dismissed_at: now });
+      } else {
+        this.insertReceipt({
+          receipt_id: receiptId,
+          tenant_id: tenantId,
+          notification_id: notificationId,
+          user_id: userId,
+          seen_at: now,
+          read_at: null,
+          dismissed_at: now,
+        });
+      }
+    });
   }
 
   /** Mark all notifications as read for a user. */
-  markAllRead(userId: string, userRole: NotificationAudienceRoles, scope?: ServiceDataScope): void {
+  markAllRead(
+    userId: string,
+    userRole: NotificationAudienceRoles,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): void {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
-    const notifications = this.getForUser(userId, userRole, boundary);
     const now = Date.now();
 
     this.db.transaction(() => {
+      const notifications = this.getForUser(userId, userRole, boundary);
+      if (notifications.some((notification) => !notification.receipt?.read_at)) {
+        commitFence?.();
+      }
       for (const n of notifications) {
         if (n.receipt?.read_at) continue;
 
@@ -349,13 +407,21 @@ export class NotificationService {
   }
 
   /** Mark all visible notifications as seen for a user. */
-  markAllSeen(userId: string, userRole: NotificationAudienceRoles, scope?: ServiceDataScope): void {
+  markAllSeen(
+    userId: string,
+    userRole: NotificationAudienceRoles,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): void {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
-    const notifications = this.getForUser(userId, userRole, boundary);
     const now = Date.now();
 
     this.db.transaction(() => {
+      const notifications = this.getForUser(userId, userRole, boundary);
+      if (notifications.some((notification) => !notification.receipt?.seen_at)) {
+        commitFence?.();
+      }
       for (const n of notifications) {
         if (n.receipt?.seen_at) continue;
 
@@ -380,17 +446,24 @@ export class NotificationService {
   // ─── Deletes ────────────────────────────────────────────────────────────
 
   /** Delete a notification and its receipts. */
-  deleteNotification(notificationId: string, scope?: ServiceDataScope): boolean {
+  deleteNotification(
+    notificationId: string,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): boolean {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
-    const existing = this.stmts.getById.get(notificationId, tenantId) as NotificationRow | null;
-    if (!existing) return false;
-    const receipts = this.stmts.getReceiptsByNotification.all(
-      notificationId,
-      tenantId,
-    ) as ReceiptRow[];
-
     return this.db.transaction(() => {
+      const existing = this.stmts.getById.get(
+        notificationId,
+        tenantId,
+      ) as NotificationRow | null;
+      if (!existing) return false;
+      const receipts = this.stmts.getReceiptsByNotification.all(
+        notificationId,
+        tenantId,
+      ) as ReceiptRow[];
+      commitFence?.();
       for (const r of receipts) {
         this.db.delete('notification_receipts', r.receipt_id);
       }
@@ -400,8 +473,12 @@ export class NotificationService {
   }
 
   /** Canonical delete alias for deleteNotification(). */
-  delete(notificationId: string, scope?: ServiceDataScope): boolean {
-    return this.deleteNotification(notificationId, scope);
+  delete(
+    notificationId: string,
+    scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
+  ): boolean {
+    return this.deleteNotification(notificationId, scope, commitFence);
   }
 
   /** Delete all expired notifications. Returns number deleted. */
@@ -443,6 +520,7 @@ export class NotificationService {
     params: CreateNotificationParams,
     senderId?: string,
     scope?: ServiceDataScope,
+    commitFence?: NotificationCommitFence,
   ): NotificationRecord {
     const boundary = this.requireScope(scope);
     const notificationId = `n_${crypto.randomUUID()}`;
@@ -464,7 +542,10 @@ export class NotificationService {
       expires_at: params.expiresAt ?? null,
     };
 
-    this.db.insert('notifications', row as unknown as Row);
+    this.db.transaction(() => {
+      commitFence?.();
+      this.db.insert('notifications', row as unknown as Row);
+    });
     return row;
   }
 

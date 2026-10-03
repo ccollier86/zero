@@ -12,9 +12,14 @@ import type {
   TenantDatabaseBinding,
 } from '../../databases/database-manager';
 import type { AsyncDatabaseClient } from '../../databases/database-operations';
+import { OBS_CODES } from '../../observability/codes';
 import {
   createAuthorityScopedServerServices,
   createServerRequestServices,
+} from './server-request-services';
+import type {
+  AuthorityScopedServerServices,
+  CreateAuthorityScopedServerServicesOptions,
 } from './server-request-services';
 import type { ServerRouteServices } from './server-services';
 
@@ -75,14 +80,13 @@ describe('request tenant-database projection', () => {
       }),
       assertCurrentAuthority: async () => {},
       assertCurrentAuthoritySync: () => {},
-      strict: true,
     });
 
     expect(zero.data).not.toBeNull();
     expect('data' in zero).toBeTrue();
     expect(Object.keys(zero)).toContain('data');
     expect('databases' in zero).toBeFalse();
-    expect(() => zero.databases).toThrow('zero.databases');
+    expect(() => Reflect.get(zero, 'databases')).toThrow('zero.databases');
 
     await zero.data!.get('todos', 'background');
     expect(fixture.binds).toEqual([{
@@ -91,23 +95,145 @@ describe('request tenant-database projection', () => {
     }]);
   });
 
-  test('does not mint background tenant data authority without an explicit sync fence', () => {
+  test('keeps verified-machine projections exact and fences every access decision', () => {
     const fixture = createFixture();
+    const rawServices = fixture.services as ServerRouteServices & {
+      futurePrivilegedService: { readonly secret: string };
+    };
+    Object.assign(rawServices, {
+      futurePrivilegedService: { secret: 'must-not-project' },
+    });
+    Object.assign(rawServices.auth, {
+      futureAuthSecret: 'must-not-project',
+    });
+    Object.assign(rawServices.observability, {
+      futureObservabilitySink: 'must-not-project',
+    });
+    let revoked = false;
+    const assertCurrent = () => {
+      if (revoked) throw new Error('machine authority revoked');
+    };
     const zero = createAuthorityScopedServerServices({
       access: fixture.tenantAccess,
-      services: fixture.services,
+      services: rawServices,
       scope: trustedSystemServiceDataScope({
         scopeKind: 'tenant',
         tenantId: TENANT_ID,
       }),
-      assertCurrentAuthority: async () => {},
-      strict: true,
+      assertCurrentAuthority: async () => assertCurrent(),
+      assertCurrentAuthoritySync: assertCurrent,
     });
 
-    expect(zero.data).toBeNull();
+    expect(new Set(Object.keys(zero))).toEqual(new Set([
+      'access',
+      'scope',
+      'data',
+      'auth',
+      'observability',
+      'storage',
+      'notifications',
+      'rooms',
+      'workflows',
+      'pdf',
+    ]));
+    expect('futurePrivilegedService' in zero).toBeFalse();
+    expect(Object.getOwnPropertyDescriptor(zero, 'futurePrivilegedService')).toBeUndefined();
+    expect(() => Reflect.get(zero, 'futurePrivilegedService')).toThrow(
+      'zero.futurePrivilegedService',
+    );
+    expect('futureAuthSecret' in zero.auth).toBeFalse();
+    expect(Reflect.ownKeys(zero.auth)).not.toContain('futureAuthSecret');
+    expect(() => Reflect.get(zero.auth, 'futureAuthSecret')).toThrow(
+      'zero.auth.futureAuthSecret',
+    );
+    expect('futureObservabilitySink' in zero.observability).toBeFalse();
+    expect(Reflect.ownKeys(zero.observability)).not.toContain('futureObservabilitySink');
+    expect(() => Reflect.get(zero.observability, 'futureObservabilitySink')).toThrow(
+      'zero.observability.futureObservabilitySink',
+    );
+
+    const descriptorEmitter = Object.getOwnPropertyDescriptor(
+      zero.observability,
+      'info',
+    )?.value as typeof zero.observability.info;
+    revoked = true;
+    expect(() => zero.access.requireUser()).toThrow('machine authority revoked');
+    expect(() => zero.access.hasPermission('future:permission')).toThrow(
+      'machine authority revoked',
+    );
+    expect(() => zero.access.context).toThrow('machine authority revoked');
+    expect(() => descriptorEmitter(OBS_CODES.STORAGE_STARTED)).toThrow(
+      'machine authority revoked',
+    );
+  });
+
+  test('rejects authority-scoped services without an explicit synchronous fence', () => {
+    const fixture = createFixture();
+    expect(() => createAuthorityScopedServerServices({
+      access: fixture.tenantAccess,
+      services: fixture.services,
+      scope: trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: TENANT_ID }),
+      assertCurrentAuthority: async () => {},
+    } as Parameters<typeof createAuthorityScopedServerServices>[0])).toThrow(
+      'require live asynchronous and synchronous authority fences',
+    );
     expect(fixture.binds).toHaveLength(0);
   });
 });
+
+function assertAuthorityScopedPublicType(zero: AuthorityScopedServerServices): void {
+  void zero.access;
+  void zero.storage;
+  void zero.observability.info;
+  // @ts-expect-error Raw database managers are not authority-scoped services.
+  void zero.databases;
+  // @ts-expect-error Global KV is unavailable without an audited scoped facade.
+  void zero.kv;
+  // @ts-expect-error Verified machine authority never receives zero.unsafe.
+  void zero.unsafe;
+  // @ts-expect-error Guardian stores and token services are not scope-safe.
+  void zero.auth.store;
+  // @ts-expect-error Observability sinks are not scope-safe.
+  void zero.observability.sink;
+  // @ts-expect-error Global notification retention is outside actor scope.
+  void zero.notifications?.deleteExpired;
+  // @ts-expect-error Authority-scoped PDF callers cannot stop the shared renderer.
+  void zero.pdf?.close;
+  void zero.pdf?.renderToStorage(
+    { html: '<p>unsafe</p>' },
+    // @ts-expect-error Scoped PDF storage derives createdBy from Guardian authority.
+    { driveId: 'drive', path: '/unsafe.pdf', createdBy: 'spoofed-user' },
+  );
+  // @ts-expect-error Scoped Storage callers cannot stop the shared service.
+  void zero.storage?.stop;
+  // @ts-expect-error Raw drive-record mutation is a trusted composition seam.
+  void zero.storage?.createDriveRecord;
+  // @ts-expect-error Scoped drive creation derives its owner from Guardian.
+  void zero.storage?.createDrive('spoofed-user', { name: 'unsafe' });
+  // @ts-expect-error Scoped uploads do not accept a caller-selected actor.
+  void zero.storage?.upload('drive', '/file', new Uint8Array(), 'file', 'spoofed-user');
+  // @ts-expect-error Scoped ACL checks derive roles/properties/scope from Guardian.
+  void zero.storage?.checkAccess('drive', null, 'spoofed-user', [], {}, 'read');
+  // @ts-expect-error Scoped notifications derive the sender from Guardian.
+  void zero.notifications?.create({ title: 'unsafe' }, 'spoofed-user');
+  // @ts-expect-error Scoped rooms derive their creator from Guardian.
+  void zero.rooms?.create('spoofed-user', { name: 'unsafe' });
+  // @ts-expect-error Room membership insertion is not a scoped caller capability.
+  void zero.rooms?.join;
+}
+void assertAuthorityScopedPublicType;
+
+function assertAuthorityScopedPublicOptions(
+  options: CreateAuthorityScopedServerServicesOptions,
+): void {
+  // @ts-expect-error Public machine projections are always strict.
+  void options.strict;
+  // @ts-expect-error Public machine projections never expose zero.unsafe.
+  void options.allowUnsafe;
+  // @ts-expect-error ACL bypass is reserved for internal system continuations.
+  void options.privilegedSystem;
+}
+void assertAuthorityScopedPublicOptions;
 
 const TENANT_ID = 'ten_request_data';
 

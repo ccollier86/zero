@@ -3,51 +3,37 @@
 /**
  * storage-management.tsx
  *
- * Composes Zero's reusable storage management organism. This file owns the
- * high-level drive/file view switch only; drive and file actions live in their
- * dedicated child components.
+ * Composes Zero's reusable Storage Studio organism. Native Studio consumers
+ * provide a transport-free controller; existing apps transparently use the
+ * legacy hook adapter.
  */
 
-import * as React from 'react';
-import { StorageDriveList } from './storage-drive-list';
-import { StorageFileBrowser } from './storage-file-browser';
-import type { StorageManagementProps, StorageManagementView } from './storage-management-types';
+import { LegacyStorageManagementAdapter } from './storage-management-legacy-adapter';
+import type { StorageManagementProps } from './storage-management-types';
+import { StorageStudioWorkspace } from './storage-studio-workspace';
 
 /** Fully wired storage management organism for dashboard embedding. */
 export function StorageManagement({
   initialDriveId = null,
   onDriveChange,
+  controller,
+  inspectorSlots,
   className,
 }: StorageManagementProps) {
-  const [selectedDriveId, setSelectedDriveId] = React.useState<string | null>(initialDriveId);
-  const [view, setView] = React.useState<StorageManagementView>(
-    initialDriveId ? 'files' : 'drives',
-  );
-
-  const browseDrive = React.useCallback(
-    (driveId: string) => {
-      setSelectedDriveId(driveId);
-      setView('files');
-      onDriveChange?.(driveId);
-    },
-    [onDriveChange],
-  );
-
-  const backToDrives = React.useCallback(() => {
-    setSelectedDriveId(null);
-    setView('drives');
-    onDriveChange?.(null);
-  }, [onDriveChange]);
-
-  if (view === 'files' && selectedDriveId) {
+  if (controller) {
     return (
-      <StorageFileBrowser
-        driveId={selectedDriveId}
-        onBack={backToDrives}
+      <StorageStudioWorkspace
+        controller={controller}
+        inspectorSlots={inspectorSlots}
         className={className}
       />
     );
   }
-
-  return <StorageDriveList className={className} onBrowse={browseDrive} />;
+  return (
+    <LegacyStorageManagementAdapter
+      initialDriveId={initialDriveId}
+      onDriveChange={onDriveChange}
+      className={className}
+    />
+  );
 }

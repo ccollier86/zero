@@ -106,7 +106,7 @@ commands replace scaffold targets.
 | `@zero/framework/persistence` | Advanced SQLite persistence foundation: hot snapshot, file/WAL, ephemeral modes, statement cache, transactions, and buffer pool. Most apps should let `createApp()` own this and use `zero.sql` in backend routes. |
 | `@zero/framework/rooms` | Rooms and presence server contracts. React hooks come from `react`. |
 | `@zero/framework/scheduler` | Scheduler service/plugin contracts. |
-| `@zero/framework/storage` | Storage server contracts and adapters. React hooks/components come from `react`. |
+| `@zero/framework/storage` | Storage server contracts and adapters plus Storage Studio configuration, Guardian permission fragments, transport contracts, and scoped server types. React hooks/components come from `react`. |
 | `@zero/framework/sync` | ReactiveDB and sync server contracts. |
 | `@zero/framework/sync/client` | Lower-level WebSocket sync client primitives. Prefer `react` hooks in browser UI. |
 | `@zero/framework/vector` | Vector store contracts when importing the vector layer directly. |
@@ -130,7 +130,7 @@ commands replace scaffold targets.
 | `@zero/framework/components/master-detail` | Master-detail primitives. Also exported from `react`. |
 | `@zero/framework/components/navbar` | Public-page resizable navbar. Also exported from `react`. |
 | `@zero/framework/components/secret-field` | Display-only masked/revealable secret with full-value copy. Also exported from `react`. |
-| `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
+| `@zero/framework/components/storage` | Legacy Storage and adaptive Storage Studio management, controller/workspace pieces, and dropzone UI. Also exported from `react`. |
 | `@zero/framework/components/text-effects` | Public text effects for Hero titles and landing copy. Also exported from `react`. |
 | `@zero/framework/components/streaming-text` | Accessible live/replayed text for AI, agents, and async string output. Also exported from `react`. |
 | `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
@@ -535,7 +535,7 @@ server code:
 | `zero.vector` | Vector service, when enabled. |
 | `zero.pdf` | Browser-grade PDF service, when enabled. |
 | `zero.email` | Email service; noop-backed when email is disabled. |
-| `zero.storage` | Storage service, when enabled. |
+| `zero.storage` | Scope-closed Storage service, when enabled; `zero.storage.studio` is present when Storage Studio is enabled. |
 | `zero.notifications` | Notification service, when enabled. |
 | `zero.scheduler` | Scheduler service, when mounted. |
 | `zero.workflows` | Torrent workflow service, when enabled. |
@@ -570,6 +570,61 @@ whose tenant predicate, actor checks, audit trail, and retry/revalidation rules
 are owned by the application. Single-tenant apps retain the existing direct
 service paths unchanged.
 
+### Verified machine and background authority
+
+An app-owned machine credential is not a browser session and must not fabricate
+one. After the app verifies that credential, resolves its server-owned Guardian
+principal and scope, and captures live revalidation functions, project it
+through the public server-only boundary:
+
+```ts
+import {
+  createAuthorityScopedServerServices,
+  getServerRouteServices,
+} from '@zero/framework/server';
+
+const zero = createAuthorityScopedServerServices({
+  access: binding.access,
+  scope: binding.scope,
+  services: getServerRouteServices(),
+  assertCurrentAuthority: binding.assertCurrentAuthority,
+  assertCurrentAuthoritySync: binding.assertCurrentAuthoritySync,
+  userProperties: binding.userProperties,
+});
+```
+
+`CreateAuthorityScopedServerServicesOptions` requires both asynchronous and
+synchronous live-authority fences. `AuthorityScopedServerServices` exposes the
+same tenant-bound Storage, notifications, rooms, workflows, PDF, database, and
+observability projections used by request handling, without the HTTP-only
+`zero.unsafe` escape. Strict projection is enabled by default, and its public
+type omits every raw service which would fail the strict runtime proxy. Never build `access` or `scope` from a request body,
+header, query tenant selector, or unsigned machine claim. For Storage Studio,
+the resulting service uses `zero.storage?.studio` and keeps adapter namespaces,
+raw provider access, and caller-selected tenant IDs unavailable.
+
+The nested contracts are scope closed too. The verified binding supplies every
+actor and policy attribute; application code supplies only domain input:
+
+```ts
+const drive = zero.storage?.drives.create({ name: 'Machine reports' });
+await zero.storage?.objects.upload(
+  drive!.drive_id,
+  '/reports/latest.json',
+  bytes,
+  'latest.json',
+  { metadata: { source: 'report-job' } },
+);
+zero.notifications?.create({ title: 'Report complete' });
+zero.rooms?.create({ name: 'Report review' });
+```
+
+There are no scoped overloads for a caller-selected owner, sender, room
+creator, tenant, role set, property bag, or commit callback. The exported
+`ScopedStorageDriveApi`, `ScopedStorageObjectApi`,
+`ScopedStoragePermissionApi`, `ScopedNotificationService`, and
+`ScopedRoomService` types preserve that boundary for package consumers.
+
 Compatibility aliases remain available: `zero.syncDB`, `zero.vectors`,
 `zero.workflowRegistry`, and `zero.auth.getTokenService()`. New code should
 prefer the canonical names. Optional services return `null` when disabled or
@@ -590,8 +645,8 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
 | `zero.workflows` | `run()`, `get()`, `list()`, `sendEvent()`, `pause()`, `resume()`, `stop()` |
 | `zero.vector` | `list()`, `search()`, `get()`, `status()` |
-| `zero.pdf` | `render()`, `renderToStorage()`, `status()`, `close()` |
-| `zero.storage` | `drives.*`, `objects.*`, `permissions.*`, and `uploads.*` grouped APIs |
+| `zero.pdf` | `render()`, `renderToStorage()`, `status()` |
+| `zero.storage` | `drives.*`, `objects.*`, `permissions.*`, and `uploads.*`; opt-in managed drives use `studio.capabilities()` and `studio.drives.*` |
 
 Older names remain compatibility aliases. See
 [Phase 4: Service API Smoothing](./framework/phase-4-service-api-smoothing.md)
@@ -952,7 +1007,10 @@ const rendered = await zero.pdf.render({
 returns both render metadata and the stored object. The default policy disables
 JavaScript and denies remote/file/private-network resources. Enable exact
 origins explicitly when a document needs remote images or fonts. Zero mounts
-no PDF HTTP route; the app owns route validation and authorization. See
+no PDF HTTP route; the app owns route validation and authorization. Guardian
+derives the creator for request, verified-machine, and actor-owned Torrent
+facades; their `ScopedPdfStorageTarget` deliberately omits `createdBy`. Shared
+renderer lifecycle remains on the trusted raw `PdfService`, not `zero.pdf`. See
 [PDF Rendering](./pdf.md).
 
 ## Email
@@ -1131,6 +1189,101 @@ const grant = await storage?.uploads.create('drv_private_uploads', {
 
 The browser sends the file to `PUT /storage/upload-grants/:token`. The object
 is private by default and normal storage read permissions still apply.
+
+### Storage Studio
+
+Enable the managed-drive control plane under `storage.studio`. Advanced
+Guardian configurations merge the exported permission and role fragments:
+
+```ts
+import { defineZeroConfig } from '@zero/framework/server';
+import {
+  STORAGE_STUDIO_PERMISSION_REGISTRY,
+  STORAGE_STUDIO_ROLE_FRAGMENTS,
+} from '@zero/framework/storage';
+
+export default defineZeroConfig({
+  // db, systemDb, tables...
+  auth: {
+    tenancy: { mode: 'multi' },
+    authorization: {
+      mode: 'advanced',
+      permissions: { ...STORAGE_STUDIO_PERMISSION_REGISTRY },
+      roles: {
+        owner: { allPermissions: true },
+        'storage-manager': STORAGE_STUDIO_ROLE_FRAGMENTS.manager,
+      },
+    },
+  },
+  storage: {
+    studio: {
+      enabled: true,
+      organizationDrives: true,
+      isolation: 'shared-cas',
+      defaultGrants: [{
+        grantType: 'role',
+        grantValue: 'owner',
+        permission: 'admin',
+      }],
+    },
+  },
+});
+```
+
+Storage Studio is independent of Fabric. It resolves application ownership in
+single mode and active-organization ownership in multi mode, while its private
+profiles, idempotency receipts, quota reservations, and jobs remain in
+`systemDb`. The configured adapter still owns bytes. The built-in local adapter
+supports `shared-cas`, the only accepted Studio isolation value in this
+release. An enabled Studio fails startup when an adapter does not explicitly
+declare that contract.
+
+The fully wired UI is `StorageStudioManagement`:
+
+```tsx
+import { StorageStudioManagement } from '@zero/framework/react';
+
+function ManagedFiles() {
+  return <StorageStudioManagement className="h-[42rem]" />;
+}
+```
+
+It uses `client.storageStudio`, live Guardian capabilities, cursor pagination,
+the existing object hooks, and `useStorageStudioManagement()` to drive the
+adaptive `StorageManagement` workspace. Existing bare `<StorageManagement />`
+usage keeps legacy behavior. Advanced composition can supply a
+`StorageManagementController` plus `inspectorSlots` instead of forking the
+workspace. Studio control permissions govern lifecycle, metadata, and quota;
+the existing Storage `admin` ACL remains the separate requirement for listing
+or editing drive/object grants. Public visibility remains gated by the
+application's Studio public-access policy.
+
+File search is server-backed across the selected folder before cursor paging.
+The packaged object inspector separates editable exact-object grants from
+read-only inherited grants and uses short-lived presigned URLs for safe built-
+in previews. The Storage plugin also owns the durable maintenance loop: it
+recovers expired cleanup leases, retries due work in bounded passes, prunes
+expired operation receipts, and joins an active pass during Elysia shutdown.
+
+Request routes and actor-owned Torrent activities use the scope-closed server
+surface:
+
+```ts
+const drive = zero.storage?.studio?.drives.open('artifacts');
+if (!drive) throw new Error('Storage Studio is unavailable.');
+
+await drive.objects.upload('/reports/output.json', bytes, {
+  contentType: 'application/json',
+});
+```
+
+`zero.storage.studio.drives` provides `list`, `get`, `open`, `provision`,
+`update`, `lifecycle`, and `jobs`. A bound drive provides usage, object,
+permission, and upload-grant APIs without accepting a tenant ID or adapter
+path. Use the verified-machine authority boundary above for a non-HTTP machine
+principal. The complete configuration, browser contract, routes, lifecycle,
+errors, migration, and compatibility behavior is documented in
+[Storage Studio](./storage-studio.md).
 
 ## Torrent Workflows And Scheduler
 

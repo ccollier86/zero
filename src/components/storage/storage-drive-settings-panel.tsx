@@ -33,6 +33,8 @@ export interface StorageDriveSettingsPanelProps {
   drive: StorageDriveRow;
   disabled?: boolean;
   busy?: boolean;
+  /** Permit changing a private drive to public; existing public drives can always be remediated. */
+  allowPublicVisibility?: boolean;
   onSave: (changes: Partial<StorageDriveRow>) => Promise<void> | void;
 }
 
@@ -41,6 +43,7 @@ export function StorageDriveSettingsPanel({
   drive,
   disabled = false,
   busy = false,
+  allowPublicVisibility = true,
   onSave,
 }: StorageDriveSettingsPanelProps) {
   const [name, setName] = React.useState(drive.name);
@@ -66,6 +69,8 @@ export function StorageDriveSettingsPanel({
 
   const readonly = disabled || busy || saving;
   const allowedMimeTypes = mimeTypes.length > 0 ? mimeTypes.join(',') : '*';
+  const driveIsPublic = isStoragePublic(drive.public);
+  const showVisibility = allowPublicVisibility || driveIsPublic;
 
   const handleSubmit = React.useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -83,21 +88,23 @@ export function StorageDriveSettingsPanel({
           max_size_bytes: parseStorageLimit(maxSize) ?? 0,
           max_file_size_bytes: parseStorageLimit(maxFileSize) ?? 0,
           allowed_mime_types: allowedMimeTypes,
-          public: visibility,
+          ...(allowPublicVisibility || (driveIsPublic && visibility === '0')
+            ? { public: visibility }
+            : {}),
         });
       } finally {
         setSaving(false);
       }
     },
-    [allowedMimeTypes, maxFileSize, maxSize, name, onSave, visibility],
+    [allowPublicVisibility, allowedMimeTypes, driveIsPublic, maxFileSize, maxSize, name, onSave, visibility],
   );
 
   return (
     <form className="space-y-5" onSubmit={handleSubmit}>
       {disabled && (
         <div className="rounded-md border border-border/80 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-          You have read access to this drive. Storage admin access is required
-          to change settings or grants.
+          You can read this drive, but control-plane manage authority is required
+          to change its settings. Data ACL admin access is managed separately.
         </div>
       )}
 
@@ -112,17 +119,22 @@ export function StorageDriveSettingsPanel({
           />
         </StorageSettingField>
 
-        <StorageSettingField label="Visibility">
-          <Select value={visibility} onValueChange={setVisibility} disabled={readonly}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="0">Private</SelectItem>
-              <SelectItem value="1">Public read</SelectItem>
-            </SelectContent>
-          </Select>
-        </StorageSettingField>
+        {showVisibility && (
+          <StorageSettingField
+            label="Visibility"
+            hint={allowPublicVisibility ? 'Durable read policy' : 'Public access is disabled by policy'}
+          >
+            <Select value={visibility} onValueChange={setVisibility} disabled={readonly}>
+              <SelectTrigger aria-label="Drive visibility">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">Private</SelectItem>
+                <SelectItem value="1" disabled={!allowPublicVisibility}>Public read</SelectItem>
+              </SelectContent>
+            </Select>
+          </StorageSettingField>
+        )}
 
         <StorageSettingField
           label="Drive limit"

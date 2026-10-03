@@ -11,6 +11,7 @@ import { Elysia } from 'elysia';
 import { createAuthPlugin, getAuthStore, getTokenService } from '../auth/auth.plugin';
 import type { UserRecord } from '../auth/types';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import { StorageDomainError } from './storage-domain-error';
 import { createStoragePlugin, getStorageService } from './storage.plugin';
 import type {
   DriveRecord,
@@ -30,8 +31,16 @@ let baseUrl = '';
 
 function createTestAdapter(): StorageAdapter {
   return {
-    async writeBlob(data) {
+    writeShutdownSafety: 'cooperative',
+    async writeBlob(data, maxSize) {
       const bytes = await readBytes(data);
+      if (maxSize !== undefined && bytes.byteLength > maxSize) {
+        throw new StorageDomainError(
+          'STORAGE_LIMIT_EXCEEDED',
+          'Storage upload exceeds the configured file-size limit.',
+          { outcome: 'not-committed' },
+        );
+      }
       return {
         checksum: `test_${crypto.randomUUID()}`,
         size: bytes.length,
@@ -45,8 +54,9 @@ function createTestAdapter(): StorageAdapter {
       return null;
     },
     async removeBlob() {},
+    removeBlobSync() {},
     async blobExists() {
-      return false;
+      return true;
     },
     async blobSize() {
       return 0;
@@ -401,7 +411,7 @@ describe('storage route auth', () => {
     expect(propertyGrant.status).toBe(200);
     expect(propertyGrant.data.grant_key).toBe('department');
 
-    const untrustedPropertyGrant = await requestJson<{ error: string }>(
+    const untrustedPropertyGrant = await requestJson<{ error: string; code: string }>(
       `/storage/drives/${created.data.drive_id}/permissions`,
       {
         method: 'POST',
@@ -416,7 +426,10 @@ describe('storage route auth', () => {
       owner.token
     );
     expect(untrustedPropertyGrant.status).toBe(400);
-    expect(untrustedPropertyGrant.data.error).toContain('policy-trusted');
+    expect(untrustedPropertyGrant.data).toMatchObject({
+      error: 'Storage input is invalid.',
+      code: 'STORAGE_INPUT_INVALID',
+    });
 
     const permissions = await requestJson<{ permissions: PermissionRecord[] }>(
       `/storage/drives/${created.data.drive_id}/permissions`,
@@ -560,6 +573,65 @@ describe('storage route auth', () => {
     expect(service.permissions.get(grant.data.permission_id)).toBeNull();
   });
 
+  test('updates bounded object metadata through the ACL-checked info resource', async () => {
+    const owner = await createUser();
+    const reader = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Metadata docs' });
+    await service.objects.upload(
+      drive.drive_id,
+      '/records/note.txt',
+      new TextEncoder().encode('note'),
+      'note.txt',
+      owner.user.userId,
+      { metadata: { version: 1 } },
+    );
+    service.permissions.grant(drive.drive_id, {
+      objectPath: '/records/note.txt',
+      grantType: 'user',
+      grantValue: reader.user.userId,
+      permission: 'read',
+    });
+
+    const denied = await requestJson<{ code: string }>(
+      `/storage/drives/${drive.drive_id}/info/records/note.txt`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ metadata: { version: 2 } }),
+      },
+      reader.token,
+    );
+    expect(denied.status).toBe(403);
+    expect(denied.data.code).toBe('STORAGE_AUTHORITY_REQUIRED');
+
+    const updated = await requestJson<FileInfo>(
+      `/storage/drives/${drive.drive_id}/info/records/note.txt`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ metadata: { version: 2, reviewed: true } }),
+      },
+      owner.token,
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.data.metadata).toEqual({ version: 2, reviewed: true });
+
+    const oversized = await requestJson<{ code: string }>(
+      `/storage/drives/${drive.drive_id}/info/records/note.txt`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ metadata: { payload: 'x'.repeat(17 * 1024) } }),
+      },
+      owner.token,
+    );
+    expect(oversized.status).toBe(400);
+    expect(oversized.data.code).toBe('STORAGE_METADATA_INVALID');
+    expect(service.objects.get(drive.drive_id, '/records/note.txt')?.metadata)
+      .toEqual({ version: 2, reviewed: true });
+  });
+
   test('requires destination write authority for copy and move routes', async () => {
     const owner = await createUser();
     const collaborator = await createUser();
@@ -674,6 +746,75 @@ describe('storage route auth', () => {
     expect(folders.status).toBe(200);
     expect(folders.data.total).toBe(1);
     expect(folders.data.items[0]?.name).toBe('zeta-folder');
+  });
+
+  test('searches the complete immediate-child result set with literal wildcard semantics', async () => {
+    const { user, token } = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(user.userId, { name: 'Search docs' });
+
+    service.objects.createFolder(drive.drive_id, '/reports', user.userId);
+    for (const name of ['Invoice One.txt', 'invoice two.txt', 'Case_100%.txt', 'CaseA100X.txt']) {
+      await service.objects.upload(
+        drive.drive_id,
+        `/reports/${name}`,
+        new TextEncoder().encode(name),
+        name,
+        user.userId,
+      );
+    }
+
+    const legacy = await requestJson<ListResult>(
+      `/storage/drives/${drive.drive_id}/list?path=%2Freports&sortBy=name`,
+      {},
+      token,
+    );
+    expect(legacy.status).toBe(200);
+    expect(legacy.data.total).toBe(4);
+
+    const first = await requestJson<ListResult>(
+      `/storage/drives/${drive.drive_id}/list?path=%2Freports&search=INVOICE&limit=1&sortBy=name`,
+      {},
+      token,
+    );
+    expect(first.status).toBe(200);
+    expect(first.data.total).toBe(2);
+    expect(first.data.items).toHaveLength(1);
+    expect(first.data.cursor).toBe('1');
+
+    const second = await requestJson<ListResult>(
+      `/storage/drives/${drive.drive_id}/list?path=%2Freports&search=invoice&limit=1&cursor=${first.data.cursor}`,
+      {},
+      token,
+    );
+    expect(second.status).toBe(200);
+    expect(second.data.total).toBe(2);
+    expect(second.data.items).toHaveLength(1);
+    expect(second.data.cursor).toBeNull();
+
+    const literal = await requestJson<ListResult>(
+      `/storage/drives/${drive.drive_id}/list?path=%2Freports&search=${encodeURIComponent('case_100%')}`,
+      {},
+      token,
+    );
+    expect(literal.status).toBe(200);
+    expect(literal.data.total).toBe(1);
+    expect(literal.data.items[0]?.name).toBe('Case_100%.txt');
+
+    const blank = service.objects.list(drive.drive_id, '/reports', { search: '   ' });
+    expect(blank.total).toBe(4);
+
+    for (const cursor of ['1junk', '-1', '01', '1000000001']) {
+      expect(() => service.objects.list(drive.drive_id, '/reports', { cursor }))
+        .toThrow(expect.objectContaining({ code: 'STORAGE_INPUT_INVALID' }));
+      const invalid = await requestJson<{ code: string }>(
+        `/storage/drives/${drive.drive_id}/list?path=%2Freports&cursor=${cursor}`,
+        {},
+        token,
+      );
+      expect(invalid.status).toBe(400);
+      expect(invalid.data.code).toBe('STORAGE_INPUT_INVALID');
+    }
   });
 
   test('creates scoped upload grants that allow public upload but keep private read policy', async () => {
@@ -826,5 +967,76 @@ describe('storage route auth', () => {
       }
     );
     expect(second.status).toBe(409);
+  });
+
+  test('streams bearer uploads through bounded enforcement and verifies detected MIME', async () => {
+    const { token } = await createUser();
+    const created = await createDrive(token, { name: 'Bounded bearer uploads' });
+    const oversizedGrant = await requestJson<StorageUploadGrant>(
+      `/storage/drives/${created.data.drive_id}/upload-grants`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          path: '/bounded/oversized.txt',
+          expiresIn: 60,
+          maxSize: 5,
+          contentType: 'text/plain',
+        }),
+      },
+      token,
+    );
+    expect(oversizedGrant.status).toBe(200);
+
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('1234'));
+        controller.enqueue(new TextEncoder().encode('5678'));
+        controller.close();
+      },
+    });
+    const overflow = await fetch(
+      `${baseUrl}/storage/upload-grants/${oversizedGrant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'text/plain' },
+        body,
+      },
+    );
+    expect(overflow.status).toBe(413);
+    expect(await overflow.json()).toMatchObject({ code: 'STORAGE_LIMIT_EXCEEDED' });
+    expect(getStorageService()!.getFileInfo(
+      created.data.drive_id,
+      '/bounded/oversized.txt',
+    )).toBeNull();
+
+    const mimeGrant = await requestJson<StorageUploadGrant>(
+      `/storage/drives/${created.data.drive_id}/upload-grants`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          path: '/bounded/spoofed.png',
+          expiresIn: 60,
+          maxSize: 100,
+          contentType: 'image/png',
+        }),
+      },
+      token,
+    );
+    const spoofed = await requestJson<{ code: string }>(
+      `/storage/upload-grants/${mimeGrant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'image/png' },
+        body: 'this is plain text, not a png',
+      },
+    );
+    expect(spoofed.status).toBe(415);
+    expect(spoofed.data.code).toBe('STORAGE_CONTENT_TYPE_UNSUPPORTED');
+    expect(getStorageService()!.getFileInfo(
+      created.data.drive_id,
+      '/bounded/spoofed.png',
+    )).toBeNull();
   });
 });

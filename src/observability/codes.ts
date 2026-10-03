@@ -224,6 +224,18 @@ export const OBS_CODES = {
 
   STORAGE_STARTED: code('storage', 'started', 'info', 'Storage plugin started.'),
   STORAGE_STOPPED: code('storage', 'stopped', 'info', 'Storage plugin stopped.'),
+  STORAGE_BLOB_CLEANUP_COMPLETED: code('storage', 'blob_cleanup.completed', 'debug', 'Physical storage blob cleanup completed.'),
+  STORAGE_BLOB_CLEANUP_FAILED: code('storage', 'blob_cleanup.failed', 'error', 'Physical storage blob cleanup failed and remains eligible for retry.'),
+  STORAGE_ADAPTER_REJECTED: code('storage', 'adapter.rejected', 'error', 'Storage adapter failed startup admission.'),
+  STORAGE_OPERATION_REJECTED: code('storage', 'operation_rejected', 'warn', 'Storage operation was rejected.'),
+  STORAGE_OPERATION_FAILED: code('storage', 'operation_failed', 'error', 'Storage operation failed.'),
+  STORAGE_QUOTA_RESERVATION_RELEASE_FAILED: code('storage', 'quota_reservation.release_failed', 'error', 'Storage upload reservation release failed and will expire automatically.'),
+  STORAGE_MAINTENANCE_STARTED: code('storage', 'maintenance.started', 'info', 'Storage maintenance worker started.'),
+  STORAGE_MAINTENANCE_STOPPED: code('storage', 'maintenance.stopped', 'info', 'Storage maintenance worker stopped.'),
+  STORAGE_MAINTENANCE_FAILED: code('storage', 'maintenance.failed', 'error', 'Storage maintenance pass failed.'),
+  STORAGE_MAINTENANCE_PRUNED: code('storage', 'maintenance.pruned', 'debug', 'Storage maintenance pruned expired terminal receipts.'),
+  STORAGE_STUDIO_OPERATION_REJECTED: code('storage', 'studio.operation_rejected', 'warn', 'Storage Studio operation was rejected.'),
+  STORAGE_STUDIO_OPERATION_FAILED: code('storage', 'studio.operation_failed', 'error', 'Storage Studio operation failed.'),
 
   PERSISTENCE_SQL_OPENED: code('persistence', 'sql.opened', 'info', 'SQLite persistence service opened.'),
   PERSISTENCE_SQL_CLOSED: code('persistence', 'sql.closed', 'info', 'SQLite persistence service closed.'),

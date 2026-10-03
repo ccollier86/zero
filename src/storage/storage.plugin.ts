@@ -10,6 +10,19 @@ import { Elysia, t } from 'elysia';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { LocalStorageAdapter } from './local-adapter';
 import { StorageService, StorageError, defineStorageTables } from './storage-service';
+import { isStorageDomainError } from './storage-domain-error';
+import { StorageDomainError } from './storage-domain-error';
+import { projectStorageHttpFailure } from './storage-http-error';
+import { resolveStorageStudioConfig } from './storage-config';
+import {
+  assertStorageAdapterIsolation,
+  assertStorageAdapterSafety,
+} from './storage-adapter-isolation';
+import { StorageStudioIngressPolicy } from './storage-studio-ingress-policy';
+import { StorageStudioQuotaPolicy } from './storage-studio-quota-policy';
+import { defineStorageStudioTables } from './storage-studio-schema';
+import { StorageStudioService } from './storage-studio-service';
+import { createStorageStudioRouter } from './storage-studio.router';
 import { resolveStorageCapabilitySigningSecret } from './storage-signing-secret';
 import { createPresignedToken, verifyPresignedToken } from './presigned';
 import { verifyUploadGrantToken } from './upload-grant';
@@ -22,11 +35,8 @@ import type {
   PermissionLevel,
 } from './types';
 import { AuthError } from '../auth/types';
-import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
-import { readAuthBearerToken } from '../auth/auth-bearer-token';
-import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
 import {
   createAuthMiddleware,
   createProtectedMultipartRequestGuard,
@@ -50,11 +60,33 @@ import { emitPlatformCode } from '../observability/sink';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_AUDIT_SERVICE,
   ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_STORAGE_SERVICE,
+  ZERO_STORAGE_STUDIO_SERVICE,
 } from '../runtime/service-keys';
+import {
+  createStorageMutationCommitFence,
+  createStorageUploadCommitFence,
+} from './storage-request-authority-fence';
+import {
+  invalidStorageCapability,
+  readStorageContentLength,
+  storageContentTypeMatches,
+  storageContentTypeMatchesAny,
+} from './storage-capability-http';
+import { parseStorageMetadataInput } from './storage-input';
+import { parseStorageHttpByteRange } from './storage-http-range';
+import {
+  readStorageGrantType,
+  readStorageListType,
+  readStoragePermissionLevel,
+  readStorageSortBy,
+  readStorageSortDirection,
+  readStorageWildcardPath,
+} from './storage-http-input';
 
 // ─── MIME types safe to serve inline (no script execution risk) ──────────
 
@@ -108,6 +140,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
   const owner = {};
   let signingSecret: string | null = null;
   const defaultTTL = config.defaultPresignedTTL ?? 3600;
+  const studioConfig = config.studio ?? resolveStorageStudioConfig(undefined, defaultTTL);
   const resolveUserProperties = config.getUserProperties
     ?? (config.runtime
       ? (userId: string) => config.runtime!.get(ZERO_AUTH_STORE)?.getProperties(userId) ?? {}
@@ -119,10 +152,14 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       )
       : (key: string) => getPropertyService()?.isPolicyTrusted(key) === true);
   let service: StorageService | null = null;
+  let studioService: StorageStudioService | null = null;
+  let studioIngressPolicy: StorageStudioIngressPolicy | null = null;
   let registration: ReturnType<typeof storageProviders.register> | null = null;
   config.runtime?.addCleanup(() => registration?.unregister());
   const getAuthorizationKernel = config.authorization?.getAuthorizationKernel
     ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
+  const getAuditService = config.getAuditService
+    ?? (() => config.runtime?.get(ZERO_AUTH_AUDIT_SERVICE) ?? null);
   const getRequestCredentialResolver =
     config.authorization?.getRequestCredentialResolver
     ?? (config.runtime
@@ -135,39 +172,10 @@ export function createStoragePlugin(config: StoragePluginConfig) {
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
     requireRequestServiceDataScope(access, getAuthorizationKernel);
-  const uploadCommitGuard = (request: Request, auth: AuthContext) => {
-    const bearer = readAuthBearerToken(request);
-    const credentials = getRequestCredentialResolver();
-    const requestReference = credentials
-      ? captureStorageRequestAuthority(credentials, auth)
-      : null;
-    const captured = authContextAuthorityFingerprint(
-      auth,
-      resolveUserProperties(auth.userId),
-    );
-    return async () => {
-      const tokens = getStorageTokenService();
-      let current: AuthContext | null = null;
-      try {
-        current = requestReference
-          ? credentials!.resolveAuthority(requestReference)
-          : !credentials && bearer && tokens
-            ? await tokens.resolveAuthContext(bearer)
-            : null;
-      } catch {
-        current = null;
-      }
-      const properties = current
-        ? resolveUserProperties(current.userId)
-        : {};
-      if (authContextAuthorityFingerprint(current, properties) !== captured) {
-        throw new AuthError(
-          'Authorization changed during the upload; retry with the current session',
-          'AUTH_STATE_CHANGED',
-          409,
-        );
-      }
-    };
+  const authorityFences = {
+    getCredentialResolver: getRequestCredentialResolver,
+    getTokenService: getStorageTokenService,
+    getUserProperties: resolveUserProperties,
   };
 
   const requireStorage = (): StorageService => {
@@ -206,9 +214,50 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     access: RequestAuthorizationAccess,
     level: PermissionLevel,
     path?: string,
-  ) => requireDriveAccessForProperties(
-    svc, driveId, auth, scope, access, level, resolveUserProperties, path,
-  );
+  ) => {
+    requireDriveAccessForProperties(
+      svc, driveId, auth, scope, access, level, resolveUserProperties, path,
+    );
+    studioIngressPolicy?.assertObjectAccessAllowed(driveId);
+  };
+  const createAccessCommitFence = (
+    svc: StorageService,
+    auth: AuthContext,
+    scope: ServiceDataScope,
+    access: RequestAuthorizationAccess,
+    checks: readonly Readonly<{
+      driveId: string;
+      level: PermissionLevel;
+      path?: string;
+    }>[],
+  ) => {
+    const authorityFence = createStorageMutationCommitFence(auth, authorityFences);
+    const accessFences = checks.map((check) => svc.captureObjectCommitFence(
+      check.driveId,
+      () => requireDriveAccess(
+        svc,
+        check.driveId,
+        auth,
+        scope,
+        access,
+        check.level,
+        check.path,
+      ),
+    ));
+    return () => {
+      try {
+        authorityFence();
+        for (const fence of accessFences) fence();
+      } catch (cause) {
+        if (cause instanceof StorageDomainError) throw cause;
+        throw new StorageDomainError(
+          'STORAGE_AUTHORITY_CHANGED',
+          'Storage authority changed before commit.',
+          { cause, outcome: 'not-committed' },
+        );
+      }
+    };
+  };
   const requireDriveAccessFromContext = (
     svc: StorageService,
     driveId: string,
@@ -217,9 +266,12 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     access: RequestAuthorizationAccess,
     level: PermissionLevel,
     path?: string,
-  ) => requireDriveAccessFromContextForProperties(
-    svc, driveId, authContext, scope, access, level, resolveUserProperties, path,
-  );
+  ) => {
+    requireDriveAccessFromContextForProperties(
+      svc, driveId, authContext, scope, access, level, resolveUserProperties, path,
+    );
+    studioIngressPolicy?.assertObjectAccessAllowed(driveId);
+  };
 
   return new Elysia({ name: 'storage', prefix: '/storage' })
 
@@ -231,41 +283,128 @@ export function createStoragePlugin(config: StoragePluginConfig) {
 
     // ─── Lifecycle ─────────────────────────────────────
     .onStart(() => {
-      defineStorageTables(config.db);
-      signingSecret = resolveStorageCapabilitySigningSecret(
-        config.db,
-        config.signingSecret,
-      );
-      const created = new StorageService(config.db, adapter, {
-        uploadGrantSecret: signingSecret,
-        defaultPresignedTTL: defaultTTL,
-        isPolicyTrustedProperty,
-        tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
-      });
-      service = created;
-      registration = storageProviders.register(owner, () => service);
+      let created: StorageService | null = null;
+      let createdStudio: StorageStudioService | null = null;
       try {
+        try {
+          assertStorageAdapterSafety(adapter);
+          assertStorageAdapterIsolation(adapter, studioConfig);
+        } catch (error) {
+          const normalized = isStorageDomainError(error)
+            ? error
+            : new StorageDomainError('STORAGE_INTERNAL', 'Storage adapter admission failed.');
+          emitPlatformCode(OBS_CODES.STORAGE_ADAPTER_REJECTED, {
+            error: normalized,
+            metadata: {
+              code: normalized.code,
+              requestedIsolation: studioConfig.isolation,
+            },
+          });
+          throw normalized;
+        }
+        defineStorageTables(config.db);
+        if (studioConfig.enabled) defineStorageStudioTables(config.db);
+        const ingressPolicy = studioConfig.enabled
+          ? new StorageStudioIngressPolicy(config.db, studioConfig)
+          : null;
+        const quotaPolicy = studioConfig.enabled
+          ? new StorageStudioQuotaPolicy(config.db, studioConfig)
+          : undefined;
+        signingSecret = resolveStorageCapabilitySigningSecret(
+          config.db,
+          config.signingSecret,
+        );
+        created = new StorageService(config.db, adapter, {
+          uploadGrantSecret: signingSecret,
+          defaultPresignedTTL: defaultTTL,
+          isPolicyTrustedProperty,
+          tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
+          prepareCapability: ingressPolicy
+            ? (driveId, expiresIn) => ingressPolicy.capabilityForIssue(driveId, expiresIn)
+            : undefined,
+          uploadAdmission: quotaPolicy,
+          managedObjectPolicy: ingressPolicy ?? undefined,
+          aclAudit: getAuditService(),
+        });
+        createdStudio = studioConfig.enabled
+          ? new StorageStudioService({
+              db: config.db,
+              storage: created,
+              config: studioConfig,
+              tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
+              audit: getAuditService(),
+              lifecycleProvider: config.studioLifecycleProvider,
+              lifecycleProviderTimeoutMs: config.studioLifecycleProviderTimeoutMs,
+            })
+          : null;
+        if (createdStudio) created.attachStudioService(createdStudio);
+        service = created;
+        studioService = createdStudio;
+        studioIngressPolicy = ingressPolicy;
+        registration = storageProviders.register(owner, () => service);
         config.runtime?.set(ZERO_STORAGE_SERVICE, created);
+        if (createdStudio) config.runtime?.set(ZERO_STORAGE_STUDIO_SERVICE, createdStudio);
         config.onServiceCreated?.(created);
+        emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
+          metadata: { tablesDefined: true },
+        });
+        createdStudio?.startMaintenance();
       } catch (error) {
-        config.runtime?.clear(ZERO_STORAGE_SERVICE, created);
-        registration.unregister();
+        void createdStudio?.stopMaintenance().catch(() => undefined);
+        if (created && createdStudio) created.detachStudioService(createdStudio);
+        config.runtime?.clear(ZERO_STORAGE_SERVICE, created ?? undefined);
+        config.runtime?.clear(ZERO_STORAGE_STUDIO_SERVICE, createdStudio ?? undefined);
+        registration?.unregister();
         registration = null;
         service = null;
+        studioService = null;
+        studioIngressPolicy = null;
+        signingSecret = null;
+        if (created) created.rollbackFailedStart();
+        else {
+          try {
+            const stopped = adapter.stop?.();
+            if (stopped && typeof stopped.then === 'function') {
+              void stopped.catch(() => undefined);
+            }
+          } catch {
+            // Preserve the original startup failure.
+          }
+        }
         throw error;
       }
-      emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
-        metadata: { tablesDefined: true },
-      });
     })
 
-    .onStop(() => {
-      if (service) config.runtime?.clear(ZERO_STORAGE_SERVICE, service);
+    .onStop(async () => {
+      const stoppingService = service;
+      const stoppingStudio = studioService;
+      const failures: unknown[] = [];
+
+      // Elysia invokes stop hooks synchronously but its raw `app.stop()` does
+      // not join an async hook unless the app stop barrier is installed.
+      // Revoke every published capability before the first await so even a
+      // standalone plugin cannot expose a service whose teardown has begun.
+      if (stoppingService) config.runtime?.clear(ZERO_STORAGE_SERVICE, stoppingService);
+      if (stoppingStudio) {
+        config.runtime?.clear(ZERO_STORAGE_STUDIO_SERVICE, stoppingStudio);
+      }
       registration?.unregister();
       registration = null;
       service = null;
+      studioService = null;
+      studioIngressPolicy = null;
       signingSecret = null;
-      emitPlatformCode(OBS_CODES.STORAGE_STOPPED);
+
+      try {
+        try { await stoppingStudio?.stopMaintenance(); } catch (error) { failures.push(error); }
+        try { await stoppingService?.stop(); } catch (error) { failures.push(error); }
+      } finally {
+        if (stoppingService && stoppingStudio) {
+          stoppingService.detachStudioService(stoppingStudio);
+        }
+        emitPlatformCode(OBS_CODES.STORAGE_STOPPED);
+      }
+      if (failures.length > 0) throw failures[0];
     })
 
     .derive({ as: 'global' }, () => ({
@@ -273,17 +412,49 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     }))
 
     // ─── Error Handler ─────────────────────────────────
-    .onError(({ error, set }) => {
-      if (error instanceof StorageError) {
-        set.status = error.status;
-        return { error: error.message };
-      }
-
+    .onError(({ code, error, request, set }) => {
       if (error instanceof AuthError) {
         set.status = error.status;
         return { error: getPublicAuthErrorMessage(error), code: error.code };
       }
+      const operation = request.method === 'GET' || request.method === 'HEAD'
+        ? 'read'
+        : 'write';
+      const projection = projectStorageHttpFailure(code, error, operation);
+      if (projection) {
+        set.status = projection.failure.status;
+        const studioRequest = new URL(request.url).pathname.startsWith('/storage/studio/');
+        emitPlatformCode(
+          projection.failure.status >= 500
+            ? studioRequest
+              ? OBS_CODES.STORAGE_STUDIO_OPERATION_FAILED
+              : OBS_CODES.STORAGE_OPERATION_FAILED
+            : studioRequest
+              ? OBS_CODES.STORAGE_STUDIO_OPERATION_REJECTED
+              : OBS_CODES.STORAGE_OPERATION_REJECTED,
+          {
+            error: projection.error,
+            metadata: {
+              operation: studioRequest ? 'studio.http' : 'http',
+              code: projection.error.code,
+              retryable: projection.error.retryable,
+              outcome: projection.error.outcome ?? 'none',
+            },
+          },
+        );
+        return projection.failure.body;
+      }
+      return undefined;
     })
+
+    .use(createStorageStudioRouter({
+      config: studioConfig,
+      getService: () => studioService,
+      getAuthorizationKernel,
+      getUserProperties: resolveUserProperties,
+      getTokenService: getStorageTokenService,
+      authorization,
+    }))
 
     // ─── Drives ────────────────────────────────────────
 
@@ -294,13 +465,14 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const auth = access.requireUser();
         const scope = requestScope(access);
         const svc = requireStorage();
+        studioIngressPolicy?.assertLegacyDriveCreationAllowed();
         return svc.createDrive(auth.userId, {
           name: body.name,
           maxSize: body.maxSize,
           maxFileSize: body.maxFileSize,
           allowedMimeTypes: body.allowedMimeTypes,
           public: body.public,
-        }, scope);
+        }, scope, createStorageMutationCommitFence(auth, authorityFences));
       },
       {
         body: t.Object({
@@ -382,12 +554,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const scope = requestScope(access);
         const svc = requireStorage();
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
+        studioIngressPolicy?.assertLegacyDriveControlAllowed(params.driveId);
         return svc.updateDrive(params.driveId, {
           name: body.name,
           max_size_bytes: body.maxSize,
           max_file_size_bytes: body.maxFileSize,
           allowed_mime_types: body.allowedMimeTypes?.join(','),
-        });
+        }, createAccessCommitFence(svc, auth, scope, access, [{
+          driveId: params.driveId, level: 'admin',
+        }]));
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -411,7 +586,10 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const drive = svc.getDriveForScope(params.driveId, scope);
         if (!drive) throw new StorageError(404, 'Drive not found');
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
-        svc.deleteDrive(params.driveId);
+        studioIngressPolicy?.assertLegacyDriveControlAllowed(params.driveId);
+        svc.deleteDrive(params.driveId, createAccessCommitFence(
+          svc, auth, scope, access, [{ driveId: params.driveId, level: 'admin' }],
+        ));
         return { ok: true };
       },
       { params: t.Object({ driveId: t.String() }) }
@@ -441,6 +619,10 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const file = body.file;
         const path = body.path || `/${file.name}`;
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', path);
+        studioIngressPolicy?.assertObjectVisibilityAllowed(
+          params.driveId,
+          body.public === 'true',
+        );
 
         return await svc.upload(
           params.driveId,
@@ -451,10 +633,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
           {
             overwrite: body.overwrite === 'true',
             public: body.public === 'true',
-            metadata: body.metadata ? JSON.parse(body.metadata) : undefined,
+            metadata: body.metadata ? parseStorageMetadataInput(body.metadata) : undefined,
+            contentLength: file.size,
           },
           scope,
-          uploadCommitGuard(request, auth),
+          createStorageUploadCommitFence(request, auth, authorityFences),
+          undefined,
+          createAccessCommitFence(svc, auth, scope, access, [{
+            driveId: params.driveId, level: 'write', path,
+          }]),
         );
       },
       {
@@ -476,7 +663,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       '/drives/:driveId/files/*',
       async ({ params, request, set, authContext, access }) => {
         const svc = requireStorage();
-        const filePath = '/' + (params as any)['*'];
+        const filePath = readStorageWildcardPath(params);
         const scope = authContext ? requestScope(access) : null;
 
         // Check access
@@ -489,6 +676,21 @@ export function createStoragePlugin(config: StoragePluginConfig) {
           'read',
           filePath,
         );
+        const returnFence = authContext && scope
+          ? createAccessCommitFence(svc, authContext, scope, access, [{
+              driveId: params.driveId, level: 'read', path: filePath,
+            }])
+          : svc.captureObjectCommitFence(params.driveId, () => {
+              requireDriveAccessFromContext(
+                svc,
+                params.driveId,
+                authContext,
+                scope,
+                access,
+                'read',
+                filePath,
+              );
+            });
 
         const fileInfo = svc.getFileInfo(params.driveId, filePath);
         if (!fileInfo) throw new StorageError(404, 'File not found');
@@ -513,29 +715,34 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         // Range request support
         const rangeHeader = request.headers.get('range');
         if (rangeHeader && fileInfo.checksum) {
-          const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
-          if (match) {
-            const start = parseInt(match[1], 10);
-            const end = match[2] ? parseInt(match[2], 10) : fileInfo.sizeBytes - 1;
-
-            if (start >= fileInfo.sizeBytes || end >= fileInfo.sizeBytes) {
-              set.status = 416;
-              set.headers['content-range'] = `bytes */${fileInfo.sizeBytes}`;
-              return '';
-            }
-
-            const result = await svc.downloadRange(params.driveId, filePath, start, end);
+          const range = parseStorageHttpByteRange(rangeHeader, fileInfo.sizeBytes);
+          if (!range) {
+            set.status = 416;
+            set.headers['content-range'] = `bytes */${fileInfo.sizeBytes}`;
+            return '';
+          }
+          const { start, end } = range;
+            const result = await svc.downloadRange(
+              params.driveId,
+              filePath,
+              start,
+              end,
+              returnFence,
+            );
             if (!result) throw new StorageError(404, 'File not found');
 
             set.status = 206;
             set.headers['content-range'] = `bytes ${start}-${end}/${fileInfo.sizeBytes}`;
             set.headers['content-length'] = String(end - start + 1);
             return result.stream;
-          }
         }
 
         // Full file download
-        const result = await svc.download(params.driveId, filePath);
+        const result = await svc.download(
+          params.driveId,
+          filePath,
+          returnFence,
+        );
         if (!result) throw new StorageError(404, 'File not found');
 
         set.headers['content-length'] = String(result.info.sizeBytes);
@@ -563,9 +770,10 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         return svc.listFolder(params.driveId, query.path || undefined, {
           limit: query.limit ? parseInt(query.limit, 10) : undefined,
           cursor: query.cursor || undefined,
-          type: query.type as any,
-          sortBy: query.sortBy as any,
-          sortDir: query.sortDir as any,
+          type: readStorageListType(query.type),
+          search: query.search,
+          sortBy: readStorageSortBy(query.sortBy),
+          sortDir: readStorageSortDirection(query.sortDir),
         });
       },
       {
@@ -575,6 +783,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
           limit: t.Optional(t.String()),
           cursor: t.Optional(t.String()),
           type: t.Optional(t.UnionEnum(['file', 'folder', 'all'])),
+          search: t.Optional(t.String({ maxLength: 200 })),
           sortBy: t.Optional(t.UnionEnum(['name', 'size', 'created_at', 'updated_at'])),
           sortDir: t.Optional(t.UnionEnum(['asc', 'desc'])),
         }),
@@ -588,8 +797,20 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const auth = access.requireUser();
         const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write');
-        return svc.createFolder(params.driveId, body.path, auth.userId, body.public);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.path);
+        studioIngressPolicy?.assertObjectVisibilityAllowed(
+          params.driveId,
+          body.public === true,
+        );
+        return svc.createFolder(
+          params.driveId,
+          body.path,
+          auth.userId,
+          body.public,
+          createAccessCommitFence(svc, auth, scope, access, [{
+            driveId: params.driveId, level: 'write', path: body.path,
+          }]),
+        );
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -611,7 +832,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const svc = requireStorage();
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.from);
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.to);
-        return await svc.moveObject(params.driveId, body.from, body.to);
+        return await svc.moveObject(
+          params.driveId,
+          body.from,
+          body.to,
+          createAccessCommitFence(svc, auth, scope, access, [
+            { driveId: params.driveId, level: 'write', path: body.from },
+            { driveId: params.driveId, level: 'write', path: body.to },
+          ]),
+        );
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -631,7 +860,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const svc = requireStorage();
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'read', body.from);
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.to);
-        return await svc.copyObject(params.driveId, body.from, body.to);
+        return await svc.copyObject(
+          params.driveId,
+          body.from,
+          body.to,
+          createAccessCommitFence(svc, auth, scope, access, [
+            { driveId: params.driveId, level: 'read', path: body.from },
+            { driveId: params.driveId, level: 'write', path: body.to },
+          ]),
+        );
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -649,9 +886,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const auth = access.requireUser();
         const scope = requestScope(access);
         const svc = requireStorage();
-        const filePath = '/' + (params as any)['*'];
+        const filePath = readStorageWildcardPath(params);
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', filePath);
-        const deleted = await svc.deleteObject(params.driveId, filePath);
+        const deleted = await svc.deleteObject(
+          params.driveId,
+          filePath,
+          createAccessCommitFence(svc, auth, scope, access, [{
+            driveId: params.driveId, level: 'write', path: filePath,
+          }]),
+        );
         if (!deleted) throw new StorageError(404, 'Not found');
         return { ok: true };
       }
@@ -668,10 +911,28 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const svc = requireStorage();
         if (body.path) {
           requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin', body.path);
-          return svc.setVisibility(params.driveId, body.path, body.public);
+          studioIngressPolicy?.assertObjectVisibilityAllowed(
+            params.driveId,
+            body.public,
+          );
+          return svc.setVisibility(
+            params.driveId,
+            body.path,
+            body.public,
+            createAccessCommitFence(svc, auth, scope, access, [{
+              driveId: params.driveId, level: 'admin', path: body.path,
+            }]),
+          );
         }
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
-        return svc.setDriveVisibility(params.driveId, body.public);
+        studioIngressPolicy?.assertLegacyDriveControlAllowed(params.driveId);
+        return svc.setDriveVisibility(
+          params.driveId,
+          body.public,
+          createAccessCommitFence(svc, auth, scope, access, [{
+            driveId: params.driveId, level: 'admin',
+          }]),
+        );
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -714,19 +975,23 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
         return svc.grantPermission(params.driveId, {
           objectPath: body.objectPath,
-          grantType: body.grantType as any,
+          grantType: readStorageGrantType(body.grantType),
           grantKey: body.grantKey,
           grantValue: body.grantValue,
-          permission: body.permission as any,
-        });
+          permission: readStoragePermissionLevel(body.permission),
+        }, { context: auth, scope }, createAccessCommitFence(
+          svc, auth, scope, access, [{
+            driveId: params.driveId, level: 'admin', path: body.objectPath,
+          }],
+        ));
       },
       {
         params: t.Object({ driveId: t.String() }),
         body: t.Object({
           objectPath: t.Optional(t.String()),
           grantType: t.UnionEnum(['role', 'user', 'property']),
-          grantKey: t.Optional(t.String()),
-          grantValue: t.String({ minLength: 1 }),
+          grantKey: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+          grantValue: t.String({ minLength: 1, maxLength: 200 }),
           permission: t.UnionEnum(['read', 'write', 'admin']),
         }),
       }
@@ -745,7 +1010,13 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         if (!perm) throw new StorageError(404, 'Permission not found');
         requireDriveAccess(svc, perm.drive_id, auth, scope, access, 'admin');
 
-        svc.revokePermission(params.permissionId);
+        svc.revokePermission(
+          params.permissionId,
+          { context: auth, scope },
+          createAccessCommitFence(svc, auth, scope, access, [{
+            driveId: perm.drive_id, level: 'admin',
+          }]),
+        );
         return { ok: true };
       },
       { params: t.Object({ permissionId: t.String() }) }
@@ -757,23 +1028,36 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     .post(
       '/drives/:driveId/presign',
       async ({ params, body, access }) => {
+        access.authorize({ credentials: ['session', 'api-key'] });
         const auth = access.requireUser();
         const scope = requestScope(access);
         const svc = requireStorage();
         const requiredLevel: PermissionLevel = body.method === 'upload' ? 'write' : 'read';
         requireDriveAccess(svc, params.driveId, auth, scope, access, requiredLevel, body.path);
+        const expiresIn = body.expiresIn ?? defaultTTL;
+        const capability = studioIngressPolicy?.capabilityForIssue(
+          params.driveId,
+          expiresIn,
+        );
+        const authorityFence = createAccessCommitFence(svc, auth, scope, access, [{
+          driveId: params.driveId, level: requiredLevel, path: body.path,
+        }]);
 
         const token = await createPresignedToken({
           driveId: params.driveId,
           path: body.path,
           method: body.method ?? 'download',
-          expiresIn: body.expiresIn ?? defaultTTL,
+          expiresIn,
           secret: requireSigningSecret(),
           maxSize: body.maxSize,
           contentType: body.contentType,
+          generation: capability?.generation,
         });
+        // Signing yields. Never detach a bearer capability from authority that
+        // was revoked while the token was being produced.
+        authorityFence();
 
-        return { token, expiresIn: body.expiresIn ?? defaultTTL };
+        return { token, expiresIn };
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -791,12 +1075,20 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     .post(
       '/drives/:driveId/upload-grants',
       async ({ params, body, access }) => {
+        access.authorize({ credentials: ['session', 'api-key'] });
         const auth = access.requireUser();
         const scope = requestScope(access);
         const svc = requireStorage();
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.path);
+        studioIngressPolicy?.assertObjectVisibilityAllowed(
+          params.driveId,
+          body.public === true,
+        );
+        const authorityFence = createAccessCommitFence(svc, auth, scope, access, [{
+          driveId: params.driveId, level: 'write', path: body.path,
+        }]);
 
-        return svc.uploads.create(params.driveId, {
+        const grant = await svc.uploads.create(params.driveId, {
           path: body.path,
           expiresIn: body.expiresIn,
           maxSize: body.maxSize,
@@ -808,6 +1100,8 @@ export function createStoragePlugin(config: StoragePluginConfig) {
           flow: body.flow,
           resource: body.resource,
         });
+        authorityFence();
+        return grant;
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -835,10 +1129,19 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       async ({ params, set }) => {
         const svc = requireStorage();
         const verified = await verifyPresignedToken(params.token, requireSigningSecret());
-        if (!verified) throw new StorageError(403, 'Invalid or expired presigned URL');
-        if (verified.method !== 'GET') throw new StorageError(405, 'Presigned URL is for upload, not download');
+        if (!verified) throw invalidStorageCapability();
+        if (verified.method !== 'GET') throw invalidStorageCapability();
+        studioIngressPolicy?.assertCapabilityCurrent(
+          verified.driveId,
+          verified.generation,
+        );
 
-        const result = await svc.download(verified.driveId, verified.path);
+        const result = await svc.download(
+          verified.driveId,
+          verified.path,
+          undefined,
+          verified.generation,
+        );
         if (!result) throw new StorageError(404, 'File not found');
 
         const mimeType = result.info.mimeType || 'application/octet-stream';
@@ -857,22 +1160,30 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       async ({ params, request, set }) => {
         const svc = requireStorage();
         const verified = await verifyUploadGrantToken(params.token, requireSigningSecret());
-        if (!verified) throw new StorageError(403, 'Invalid or expired upload grant');
+        if (!verified) throw invalidStorageCapability();
+        studioIngressPolicy?.assertCapabilityCurrent(
+          verified.driveId,
+          verified.generation,
+        );
+        studioIngressPolicy?.assertObjectVisibilityAllowed(
+          verified.driveId,
+          verified.public,
+        );
 
-        // Pre-check Content-Length before reading body
+        // Preflight known length; streamed enforcement remains authoritative.
+        const contentLength = readStorageContentLength(request);
         if (verified.maxSize) {
-          const contentLength = request.headers.get('content-length');
-          if (contentLength) {
-            const declaredSize = parseInt(contentLength, 10);
-            if (!isNaN(declaredSize) && declaredSize > verified.maxSize) {
-              throw new StorageError(413, `File exceeds max size: ${verified.maxSize} bytes`);
-            }
+          if (contentLength !== undefined && contentLength > verified.maxSize) {
+            throw new StorageDomainError(
+              'STORAGE_LIMIT_EXCEEDED',
+              'Storage upload exceeds the capability size limit.',
+            );
           }
         }
 
         if (verified.contentTypes?.length) {
           const ct = request.headers.get('content-type');
-          if (!ct || !matchesAnyContentType(ct, verified.contentTypes)) {
+          if (!ct || !storageContentTypeMatchesAny(ct, verified.contentTypes)) {
             throw new StorageError(
               400,
               `Expected content type: ${verified.contentTypes.join(', ')}`
@@ -883,17 +1194,10 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const body = request.body;
         if (!body) throw new StorageError(400, 'No body provided');
 
-        const blob = await request.blob();
-
-        // Double-check actual size after reading
-        if (verified.maxSize && blob.size > verified.maxSize) {
-          throw new StorageError(413, `File exceeds max size: ${verified.maxSize} bytes`);
-        }
-
         const info = await svc.upload(
           verified.driveId,
           verified.path,
-          blob,
+          body,
           verified.path.split('/').pop() || 'upload',
           null,
           {
@@ -910,7 +1214,13 @@ export function createStoragePlugin(config: StoragePluginConfig) {
                   }
                 : {}),
             },
-          }
+            contentLength,
+            maxSize: verified.maxSize,
+            allowedMimeTypes: verified.contentTypes,
+          },
+          undefined,
+          undefined,
+          verified.generation,
         );
 
         set.status = 201;
@@ -925,24 +1235,28 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       async ({ params, request, set }) => {
         const svc = requireStorage();
         const verified = await verifyPresignedToken(params.token, requireSigningSecret());
-        if (!verified) throw new StorageError(403, 'Invalid or expired presigned URL');
-        if (verified.method !== 'PUT') throw new StorageError(405, 'Presigned URL is for download, not upload');
+        if (!verified) throw invalidStorageCapability();
+        if (verified.method !== 'PUT') throw invalidStorageCapability();
+        studioIngressPolicy?.assertCapabilityCurrent(
+          verified.driveId,
+          verified.generation,
+        );
 
-        // Pre-check Content-Length before reading body
+        // Preflight known length; streamed enforcement remains authoritative.
+        const contentLength = readStorageContentLength(request);
         if (verified.maxSize) {
-          const contentLength = request.headers.get('content-length');
-          if (contentLength) {
-            const declaredSize = parseInt(contentLength, 10);
-            if (!isNaN(declaredSize) && declaredSize > verified.maxSize) {
-              throw new StorageError(413, `File exceeds max size: ${verified.maxSize} bytes`);
-            }
+          if (contentLength !== undefined && contentLength > verified.maxSize) {
+            throw new StorageDomainError(
+              'STORAGE_LIMIT_EXCEEDED',
+              'Storage upload exceeds the capability size limit.',
+            );
           }
         }
 
         // Validate content type if specified (parse MIME properly, strip params)
         if (verified.contentType) {
           const ct = request.headers.get('content-type');
-          if (ct && !matchContentType(ct, verified.contentType)) {
+          if (ct && !storageContentTypeMatches(ct, verified.contentType)) {
             throw new StorageError(400, `Expected content type: ${verified.contentType}`);
           }
         }
@@ -950,20 +1264,23 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const body = request.body;
         if (!body) throw new StorageError(400, 'No body provided');
 
-        const blob = await request.blob();
-
-        // Double-check actual size after reading
-        if (verified.maxSize && blob.size > verified.maxSize) {
-          throw new StorageError(413, `File exceeds max size: ${verified.maxSize} bytes`);
-        }
-
         const info = await svc.upload(
           verified.driveId,
           verified.path,
-          blob,
+          body,
           verified.path.split('/').pop() || 'upload',
           null, // No user context for presigned
-          { overwrite: true }
+          {
+            overwrite: true,
+            contentLength,
+            maxSize: verified.maxSize,
+            allowedMimeTypes: verified.contentType
+              ? [verified.contentType]
+              : undefined,
+          },
+          undefined,
+          undefined,
+          verified.generation,
         );
 
         set.status = 201;
@@ -979,7 +1296,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       '/drives/:driveId/info/*',
       ({ params, authContext, access }) => {
         const svc = requireStorage();
-        const filePath = '/' + (params as any)['*'];
+        const filePath = readStorageWildcardPath(params);
         const scope = authContext ? requestScope(access) : null;
         requireDriveAccessFromContext(
           svc,
@@ -994,18 +1311,41 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         if (!info) throw new StorageError(404, 'Not found');
         return info;
       }
-    );
-}
+    )
 
-function captureStorageRequestAuthority(
-  credentials: AuthRequestCredentialResolver,
-  context: AuthContext,
-) {
-  try {
-    return credentials.captureAuthority(context);
-  } catch {
-    return null;
-  }
+    // PATCH /storage/drives/:driveId/info/* — replace object metadata
+    .patch(
+      '/drives/:driveId/info/*',
+      ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
+        const svc = requireStorage();
+        const filePath = readStorageWildcardPath(params);
+        requireDriveAccess(
+          svc,
+          params.driveId,
+          auth,
+          scope,
+          access,
+          'write',
+          filePath,
+        );
+        return svc.updateObjectMetadata(
+          params.driveId,
+          filePath,
+          body.metadata,
+          scope,
+          createAccessCommitFence(svc, auth, scope, access, [{
+            driveId: params.driveId, level: 'write', path: filePath,
+          }]),
+        );
+      },
+      {
+        body: t.Object({
+          metadata: t.Record(t.String(), t.Unknown()),
+        }, { additionalProperties: false }),
+      },
+    );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -1171,22 +1511,4 @@ function storageRoles(
   access: RequestAuthorizationAccess,
 ): readonly string[] {
   return effectiveServiceDataRoles(access, scope);
-}
-
-/**
- * Compare content types properly by stripping parameters (charset, boundary, etc.)
- */
-function matchContentType(actual: string, expected: string): boolean {
-  const actualType = actual.split(';')[0].trim().toLowerCase();
-  const expectedType = expected.split(';')[0].trim().toLowerCase();
-  if (expectedType === '*') return true;
-  if (expectedType.endsWith('/*')) {
-    const prefix = expectedType.slice(0, -2);
-    return actualType.startsWith(`${prefix}/`);
-  }
-  return actualType === expectedType;
-}
-
-function matchesAnyContentType(actual: string, expected: string[]): boolean {
-  return expected.some((item) => matchContentType(actual, item));
 }

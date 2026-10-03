@@ -100,10 +100,12 @@ metadata, and keeps full reads plus revisioned/idempotent mutations on its
 dedicated API. Install its complete server, realm, authorization, and browser
 fragments together; partial installation fails startup.
 
-Data Studio does not provision Storage drives or Vector indexes. Those remain
-separate future control planes described in the
-[Storage Studio and Vector Studio roadmap](./control-plane-roadmap.md); current
-applications continue to use Zero's existing Storage and Vector APIs.
+Data Studio does not provision Storage drives or Vector indexes. Managed file
+drives are provided by the separate opt-in
+[Storage Studio](./storage-studio.md), which extends the existing Storage
+engine with Guardian-scoped ownership, lifecycle, quotas, jobs, SDKs, and an
+adaptive control plane. Vector Studio remains future work in the
+[control-plane roadmap](./control-plane-roadmap.md).
 
 Fabric leaves `db` as the pinned shared application database, while Guardian
 and other Zero authority remain in the separate `systemDb`. It can route each
@@ -911,7 +913,7 @@ Zero includes these backend capabilities out of the box:
 | Sync | WebSocket snapshots, live updates, lazy/auto sync, sync policy hooks. |
 | Data API | `/api/data` reads for lazy tables with pagination, sorting, filtering, limits, and auth/policy integration. |
 | Data Studio | Optional organization-owned logical tables over Guardian permissions and fixed Fabric realm operations, with read-only HTTP/Sync reconciliation metadata plus dedicated bounded reads and command-only mutations. |
-| Storage | Built-in file storage with platform auth boundaries and a reusable management organism. |
+| Storage | Built-in file storage with platform auth boundaries and a reusable management organism; optional Storage Studio adds managed application/organization/personal drives, stable keys, lifecycle, quotas, jobs, and scoped browser/server APIs. |
 | State Sync | Server-persisted reactive key/value state isolated per authorized-scope user. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
@@ -1295,7 +1297,7 @@ enforced by backend policy. Use `MFAManagementPanel` in account settings when
 users should enroll later.
 `UserPropertiesForm` renders only user-editable `auth.userProperties`.
 
-For storage dashboards, embed the reusable organism:
+For existing Storage dashboards, embed the compatibility organism:
 
 ```tsx
 import { StorageManagement } from '@zero/framework/react';
@@ -1310,6 +1312,29 @@ delete confirmation through the platform storage hooks and authenticated SDK
 transport. It also shows effective access, manages role/user/property storage
 grants, filters and sorts folder contents, and uses presigned download links so
 private files can be opened without exposing bearer tokens to plain anchors.
+
+For managed application/organization/personal drives, enable
+`storage.studio` and render the fully wired adaptive control plane:
+
+```tsx
+import { StorageStudioManagement } from '@zero/framework/react';
+
+export function ManagedFilesPanel() {
+  return <StorageStudioManagement className="h-[42rem]" />;
+}
+```
+
+The browser client exposes `client.storageStudio` for capabilities, cursor-
+paginated catalog reads, stable-key lookup, idempotent provisioning/updates,
+lifecycle actions, and job history. App-owned Elysia routes and Torrent
+activities running as a concrete Guardian actor use the scope-closed
+`zero.storage.studio` facade; neither API
+accepts a caller-selected tenant. Existing bare `<StorageManagement />` usage
+keeps the legacy adapter, while `StorageStudioManagement` or
+`useStorageStudioManagement()` supplies the native Studio controller. Read
+[Storage Studio](./storage-studio.md) before enabling it: managed provisioning
+closes the legacy new-drive route, and advanced Guardian roles must merge the
+exported Storage Studio permission fragments.
 
 For focused upload surfaces, use `StorageDropzone` or `useUploadDropzone`:
 

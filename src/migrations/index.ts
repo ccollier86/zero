@@ -44,6 +44,8 @@ import { migration as m030 } from './definitions/030_workflow_graph_runtime';
 import { migration as m031 } from './definitions/031_workflow_graph_tenant_integrity';
 import { migration as m032 } from './definitions/032_workflow_runtime_ownership';
 import { migration as m033 } from './definitions/033_torrent_integrity_hardening';
+import { migration as m034 } from './definitions/034_storage_studio_foundation';
+import { migration as m035 } from './definitions/035_storage_blob_leases';
 
 export {
   createMigrationRegistry,
@@ -113,4 +115,6 @@ export const migrations: Migration[] = [
   m031,
   m032,
   m033,
+  m034,
+  m035,
 ];

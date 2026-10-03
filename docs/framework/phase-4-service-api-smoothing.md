@@ -39,7 +39,7 @@ ambiguous, group by resource first.
 | `zero.ai` | `status()`, `getStatus()` | `status()` |
 | `zero.vector` | `list()`, `search()`, `get()`, `status()`, `getStatus()` | `listIndexes()`, `query()`, `fetch()`, `stats()` |
 | `zero.vector.scope(...)` | `search()`, `get()`, `status()` | `query()`, `fetch()`, `stats()` |
-| `zero.pdf` | `render()`, `renderToStorage()`, `status()`, `close()` | No aliases needed. |
+| scoped `zero.pdf` | `render()`, `renderToStorage()`, `status()` | Shared renderer `close()` remains on the trusted raw service. |
 | `Migrator` | `run()`, `rollback()`, `list()` | `status()` |
 | `zero.email` | `send()` | No alias needed. |
 | `zero.observability` | `emitCode()`, `emitEvent()`, `info()`, `warn()`, `error()` | Existing sink/runtime helpers remain. |
@@ -53,8 +53,8 @@ top-level aliases such as `storage.create()`. Use the grouped APIs:
 const storage = zero.storage;
 if (!storage) throw new Error('Storage is not enabled.');
 
-const drive = storage.drives.create(user.userId, { name: 'Reports' });
-const folder = storage.objects.createFolder(drive.drive_id, '/q2', user.userId);
+const drive = storage.drives.create({ name: 'Reports' });
+const folder = storage.objects.createFolder(drive.drive_id, '/q2');
 
 const permission = storage.permissions.grant(drive.drive_id, {
   grantType: 'role',
@@ -71,6 +71,10 @@ const grant = await storage.uploads.create(drive.drive_id, {
 
 Existing methods such as `createDrive()`, `getFileInfo()`, `listFolder()`,
 `grantPermission()`, and `checkAccess()` remain supported for compatibility.
+On request, verified-machine, and Torrent projections, Guardian supplies the
+actor, roles, trusted properties, and tenant scope. Those scoped methods never
+accept caller-selected authority arguments; use `zero.unsafe.storage` only for
+reviewed application-global composition.
 Upload grants are intentionally only exposed through `storage.uploads` because
 they are capability tokens for public upload into private storage.
 

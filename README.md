@@ -7,6 +7,13 @@ notifications, AI, vector
 storage, browser-grade PDF rendering, migrations, observability, and app-ready
 hooks so new apps do not start by rebuilding the same foundation.
 
+Zero's opt-in managed-drive control plane is **Storage Studio**. It extends the
+existing Storage engine with Guardian-scoped application, organization, and
+personal drive ownership; stable keys; lifecycle and quotas; durable jobs;
+typed browser/server surfaces; and an adaptive control plane. It is independent
+of Fabric and keeps control metadata in the system database while adapters own
+bytes. See [Storage Studio](./docs/storage-studio.md).
+
 Zero's integrated identity, session, tenancy, and authorization subsystem is
 called **Guardian**. This is a documentation/product name; its established
 `auth.*` configuration, `/auth/*` routes, and `@zero/framework/auth` API remain
@@ -230,9 +237,11 @@ apps. Start with the
 - [Data Studio](./docs/data-studio.md): optional organization-owned logical
   tables over fixed Fabric schemas, Guardian permissions, the browser SDK,
   smooth inline editing, and headless function/workflow access.
+- [Storage Studio](./docs/storage-studio.md): opt-in managed-drive ownership,
+  Guardian permissions, configuration, lifecycle, quotas, jobs, browser and
+  scoped-server APIs, adaptive UI, routes, and upgrade behavior.
 - [Storage Studio And Vector Studio Roadmap](./docs/control-plane-roadmap.md):
-  separate future organization control planes around the existing Storage and
-  Vector engines; proposed surfaces are not current APIs.
+  shipped Storage Studio context plus future Vector Studio direction.
 - [Auth System](./docs/auth/README.md): canonical auth index for installation
   bootstrap, all four tenancy/authorization profiles, declarative permissions,
   administration, onboarding, user API keys, browser state, audit, and

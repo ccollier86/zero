@@ -1,10 +1,9 @@
 /**
  * storage-service.ts
  *
- * Storage domain service for drive metadata, object metadata, permission
- * checks, and blob reference bookkeeping. This file owns storage invariants
- * and persistence calls; HTTP routing and auth token verification live in the
- * plugin and auth layers.
+ * Public Storage service facade for drive metadata and object transport. It
+ * coordinates focused validation, ACL, tree-mutation, and blob-lifecycle
+ * modules; HTTP routing and auth token verification stay in plugin/auth layers.
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
@@ -13,7 +12,6 @@ import type {
   StorageAdapter,
   DriveRecord,
   ObjectRecord,
-  BlobRecord,
   CreateDriveParams,
   FileInfo,
   UploadOptions,
@@ -26,7 +24,13 @@ import type {
   PermissionLevel,
   CreateUploadGrantParams,
   StorageUploadGrant,
+  StorageBlobWriteResult,
 } from './types';
+import { assertStorageAdapterSafety } from './storage-adapter-isolation';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
+import type { ScopedStorageStudioApi } from './storage-studio-scoped-api';
+import type { StorageStudioService } from './storage-studio-service';
 import { detectMimeType } from './mime';
 import { createUploadGrantToken } from './upload-grant';
 import {
@@ -36,30 +40,78 @@ import {
   type ServiceDataScope,
 } from '../auth/service-data-scope';
 import { ensureNullableTenantColumn } from '../runtime/tenant-schema';
+import {
+  normalizeStorageActorRoles,
+  type StorageActorRoleInput,
+} from './storage-access';
+import {
+  StorageBlobLifecycle,
+  storageBlobMutationKey,
+  storagePathMutationKeys,
+  type StorageBlobCleanupOptions,
+  type StorageBlobCleanupPass,
+} from './storage-blob-lifecycle';
+import { StorageDomainError, normalizeStorageError } from './storage-domain-error';
+import { StorageError } from './storage-error';
+import {
+  normalizeStorageByteLimit,
+  normalizeStorageDriveId,
+  normalizeStorageMimeTypes,
+  normalizeStorageName,
+  normalizeStoragePath,
+  parseStorageMetadata,
+  serializeStorageMetadata,
+} from './storage-input';
+import { storageMimeTypeAllowed, toStorageFileInfo } from './storage-object-values';
+import {
+  storageObjectListOffset,
+  storageObjectSearchLikePattern,
+} from './storage-object-search';
+import { StorageObjectMutationStore } from './storage-object-mutations';
+import { StoragePermissionService } from './storage-permission-service';
+import {
+  normalizeStorageProviderReadError,
+  normalizeStorageProviderWriteError,
+} from './storage-provider-error';
+import {
+  runWithStorageUploadHeartbeat,
+  type StorageUploadAdmission,
+} from './storage-upload-admission';
+import {
+  StorageUploadOperationTracker,
+  type StorageUploadOperationContext,
+} from './storage-upload-operation-tracker';
+import type { StorageManagedObjectPolicy } from './storage-managed-object-policy';
+import {
+  appendStorageAclAudit,
+  type StorageAclAuditAuthority,
+} from './storage-acl-audit';
+import type { AuthAuditService } from '../auth/auth-audit-service';
+
+export { StorageError } from './storage-error';
 
 // ─── SQL Row Types ──────────────────────────────────────────────────────────
 
 interface SumRow { total: number }
 interface CountRow { count: number }
 
-// ─── Storage Error ──────────────────────────────────────────────────────────
-
-/**
- * Domain error used by storage routes to map service failures to HTTP status.
- */
-export class StorageError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-    this.name = 'StorageError';
-  }
-}
+/** Synchronous legacy deletion remains atomic but never processes an unbounded tree. */
+const LEGACY_ATOMIC_DRIVE_DELETE_OBJECT_LIMIT = 4_096;
 
 export type StorageDriveUpdates = Partial<
   Pick<DriveRecord, 'name' | 'max_size_bytes' | 'max_file_size_bytes' | 'allowed_mime_types'>
 >;
 
 /** One legacy role or the complete effective role set projected by RBAC. */
-export type StorageActorRoles = string | readonly string[] | null;
+export type StorageActorRoles = StorageActorRoleInput;
+
+/** Canonical input for atomically inserting a pre-reserved drive row. */
+export interface CreateDriveRecordInput {
+  readonly driveId: string;
+  readonly ownerId: string | null;
+  readonly params: CreateDriveParams;
+  readonly scope?: ServiceDataScope;
+}
 
 /** Canonical grouped API for storage drive metadata operations. */
 export interface StorageDriveApi {
@@ -98,30 +150,56 @@ export interface StorageObjectApi {
     options?: UploadOptions,
     scope?: ServiceDataScope,
     authorizeCommit?: () => Promise<void>,
+    expectedManagedGeneration?: number,
+    authorizeCommitSync?: () => void,
   ): Promise<FileInfo>;
   /** Download a full file by drive/path. */
-  download(driveId: string, path: string): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null>;
+  download(
+    driveId: string,
+    path: string,
+    authorizeReturn?: () => void,
+    expectedManagedGeneration?: number,
+  ): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null>;
   /** Download a byte range for media/file streaming. */
   downloadRange(
     driveId: string,
     path: string,
     start: number,
-    end: number
+    end: number,
+    authorizeReturn?: () => void,
+    expectedManagedGeneration?: number,
   ): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null>;
   /** Read file or folder metadata by path. */
   get(driveId: string, path: string): FileInfo | null;
   /** List children under a folder path. */
   list(driveId: string, parentPath?: string, options?: ListOptions): ListResult;
   /** Move a file or folder to a new path. */
-  move(driveId: string, fromPath: string, toPath: string): Promise<FileInfo>;
+  move(
+    driveId: string,
+    fromPath: string,
+    toPath: string,
+    authorizeCommit?: () => void,
+  ): Promise<FileInfo>;
   /** Copy a file to a new path. */
-  copy(driveId: string, fromPath: string, toPath: string): Promise<FileInfo>;
+  copy(
+    driveId: string,
+    fromPath: string,
+    toPath: string,
+    authorizeCommit?: () => void,
+  ): Promise<FileInfo>;
   /** Delete a file or folder subtree. */
-  delete(driveId: string, path: string): Promise<boolean>;
+  delete(driveId: string, path: string, authorizeCommit?: () => void): Promise<boolean>;
   /** Create a folder and any missing parent folders. */
   createFolder(driveId: string, path: string, userId: string | null, isPublic?: boolean): FileInfo;
   /** Toggle object-level public read visibility. */
   setVisibility(driveId: string, path: string, isPublic: boolean): FileInfo;
+  /** Replace bounded application metadata on an existing file or folder. */
+  updateMetadata(
+    driveId: string,
+    path: string,
+    metadata: Record<string, unknown>,
+    scope?: ServiceDataScope,
+  ): FileInfo;
 }
 
 /** Canonical grouped API for storage permission operations. */
@@ -168,6 +246,17 @@ export interface StorageServiceOptions {
   isPolicyTrustedProperty?: (key: string) => boolean;
   /** Runtime tenancy profile. Multi mode rejects unscoped drive creation/listing. */
   tenancyMode?: 'single' | 'multi';
+  /** Optional managed-drive capability issuance fence supplied by Studio. */
+  prepareCapability?: (
+    driveId: string,
+    expiresIn: number,
+  ) => Readonly<{ generation?: number }>;
+  /** Optional managed-drive object and concurrent-upload admission policy. */
+  uploadAdmission?: StorageUploadAdmission;
+  /** Optional managed-drive lifecycle and public-object policy fence. */
+  managedObjectPolicy?: StorageManagedObjectPolicy;
+  /** Guardian audit sink used for authority-attributed ACL mutations. */
+  aclAudit?: AuthAuditService | null;
 }
 
 // ─── Table Definitions ──────────────────────────────────────────────────────
@@ -221,6 +310,16 @@ export function defineStorageTables(db: ReactiveDB): void {
       created_at  INTEGER NOT NULL
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _storage_blob_leases (
+      checksum     TEXT PRIMARY KEY,
+      lease_token  TEXT NOT NULL,
+      acquired_at  INTEGER NOT NULL,
+      expires_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_storage_blob_leases_expiry
+      ON _storage_blob_leases(expires_at);
+  `);
 
   // Permissions — internal, no broadcast
   db.exec(`
@@ -268,6 +367,24 @@ export function defineStorageTables(db: ReactiveDB): void {
  */
 export class StorageService {
   private stmts!: ReturnType<typeof this.prepareStatements>;
+  private readonly blobLifecycle: StorageBlobLifecycle;
+  private readonly objectMutations: StorageObjectMutationStore;
+  private readonly permissionService: StoragePermissionService;
+  private readonly uploadOperations = new StorageUploadOperationTracker();
+  private providerShutdown: Promise<void> | null = null;
+  private publicationRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private publicationRecoveryDelayMs = 50;
+  private stopping = false;
+  private studioControl: StorageStudioService | null = null;
+
+  /**
+   * Scope-bound Studio API. The raw service deliberately exposes null; request
+   * and workflow projections replace this getter with a live authority-bound
+   * facade so no caller can supply its own tenant or actor.
+   */
+  get studio(): ScopedStorageStudioApi | null {
+    return null;
+  }
 
   /** Canonical grouped API for drive metadata. */
   readonly drives: StorageDriveApi = {
@@ -284,19 +401,48 @@ export class StorageService {
 
   /** Canonical grouped API for files and folders. */
   readonly objects: StorageObjectApi = {
-    upload: (driveId, path, data, fileName, userId, options = {}) =>
-      this.upload(driveId, path, data, fileName, userId, options),
-    download: (driveId, path) => this.download(driveId, path),
-    downloadRange: (driveId, path, start, end) =>
-      this.downloadRange(driveId, path, start, end),
+    upload: (
+      driveId,
+      path,
+      data,
+      fileName,
+      userId,
+      options = {},
+      scope,
+      authorizeCommit,
+      expectedManagedGeneration,
+      authorizeCommitSync,
+    ) => this.upload(
+      driveId,
+      path,
+      data,
+      fileName,
+      userId,
+      options,
+      scope,
+      authorizeCommit,
+      expectedManagedGeneration,
+      authorizeCommitSync,
+    ),
+    download: (driveId, path, authorizeReturn, expectedManagedGeneration) =>
+      this.download(driveId, path, authorizeReturn, expectedManagedGeneration),
+    downloadRange: (driveId, path, start, end, authorizeReturn, expectedManagedGeneration) =>
+      this.downloadRange(
+        driveId, path, start, end, authorizeReturn, expectedManagedGeneration,
+      ),
     get: (driveId, path) => this.getFileInfo(driveId, path),
     list: (driveId, parentPath, options) => this.listFolder(driveId, parentPath, options),
-    move: (driveId, fromPath, toPath) => this.moveObject(driveId, fromPath, toPath),
-    copy: (driveId, fromPath, toPath) => this.copyObject(driveId, fromPath, toPath),
-    delete: (driveId, path) => this.deleteObject(driveId, path),
+    move: (driveId, fromPath, toPath, authorizeCommit) =>
+      this.moveObject(driveId, fromPath, toPath, authorizeCommit),
+    copy: (driveId, fromPath, toPath, authorizeCommit) =>
+      this.copyObject(driveId, fromPath, toPath, authorizeCommit),
+    delete: (driveId, path, authorizeCommit) =>
+      this.deleteObject(driveId, path, authorizeCommit),
     createFolder: (driveId, path, userId, isPublic = false) =>
       this.createFolder(driveId, path, userId, isPublic),
     setVisibility: (driveId, path, isPublic) => this.setVisibility(driveId, path, isPublic),
+    updateMetadata: (driveId, path, metadata, scope) =>
+      this.updateObjectMetadata(driveId, path, metadata, scope),
   };
 
   /** Canonical grouped API for storage grants and access checks. */
@@ -327,7 +473,85 @@ export class StorageService {
     private adapter: StorageAdapter,
     private options: StorageServiceOptions = {}
   ) {
+    assertStorageAdapterSafety(adapter);
     this.stmts = this.prepareStatements();
+    this.blobLifecycle = new StorageBlobLifecycle(db, adapter);
+    this.objectMutations = new StorageObjectMutationStore(
+      db,
+      this.blobLifecycle,
+      options.uploadAdmission,
+      options.managedObjectPolicy,
+    );
+    this.permissionService = new StoragePermissionService(db, options);
+    const recovered = this.recoverPendingBlobPublications();
+    if (recovered.remaining > 0) this.schedulePublicationRecovery();
+  }
+
+  /** Drain Storage provider mutations before plugin/runtime teardown. */
+  async stop(): Promise<void> {
+    this.stopping = true;
+    if (this.publicationRecoveryTimer) clearTimeout(this.publicationRecoveryTimer);
+    this.publicationRecoveryTimer = null;
+    const drained = await this.uploadOperations.stop();
+    if (!drained) {
+      // A third-party provider may ignore AbortSignal. Keep the adapter and
+      // checksum coordinator alive until that mutation eventually hands off;
+      // plugin shutdown remains bounded and never closes resources underneath
+      // a live write.
+      void this.finishProviderShutdownAfterUploads();
+      return;
+    }
+    await this.stopProviderResources();
+  }
+
+  /** Synchronously fence a service that failed before application startup. */
+  rollbackFailedStart(): void {
+    this.stopping = true;
+    if (this.publicationRecoveryTimer) clearTimeout(this.publicationRecoveryTimer);
+    this.publicationRecoveryTimer = null;
+    void this.uploadOperations.stop().then((drained) => (
+      drained ? this.stopProviderResources() : this.finishProviderShutdownAfterUploads()
+    )).catch(() => undefined);
+  }
+
+  /** Capture managed lifecycle generation into a synchronous mutation fence. */
+  captureObjectCommitFence(driveId: string, fence: () => void): () => void {
+    return this.managedObjectCommitFence(driveId, fence);
+  }
+
+  /** Capture managed lifecycle state for async capability issuance. */
+  captureManagedObjectAccess(driveId: string): Readonly<{ generation?: number }> {
+    return this.options.managedObjectPolicy?.captureObjectAccess(driveId)
+      ?? Object.freeze({});
+  }
+
+  /** Revalidate a previously captured managed lifecycle generation. */
+  assertManagedObjectAccessCurrent(
+    driveId: string,
+    generation: number | undefined,
+  ): void {
+    this.options.managedObjectPolicy?.assertObjectAccessCurrent(driveId, generation);
+  }
+
+  /** Trusted composition seam; never exposed through request-scoped services. */
+  attachStudioService(service: StorageStudioService): void {
+    if (this.studioControl && this.studioControl !== service) {
+      throw new StorageDomainError(
+        'STORAGE_CONFLICT',
+        'A Storage Studio service is already attached.',
+      );
+    }
+    this.studioControl = service;
+  }
+
+  /** Trusted composition seam used only while building a scoped projection. */
+  getAttachedStudioService(): StorageStudioService | null {
+    return this.studioControl;
+  }
+
+  /** Trusted lifecycle seam used when the owning plugin stops. */
+  detachStudioService(service: StorageStudioService): void {
+    if (this.studioControl === service) this.studioControl = null;
   }
 
   private prepareStatements() {
@@ -361,53 +585,6 @@ export class StorageService {
       getDriveFolderCount: this.db.prepare(
         "SELECT COUNT(*) as count FROM storage_objects WHERE drive_id = ? AND type = 'folder'"
       ),
-      getPermissions: this.db.prepare(
-        'SELECT * FROM _storage_permissions WHERE drive_id = ? AND object_id IS NULL'
-      ),
-      getObjectPermissions: this.db.prepare(
-        'SELECT * FROM _storage_permissions WHERE drive_id = ? AND (object_id IS NULL OR object_id = ?)'
-      ),
-      getAllDriveFiles: this.db.prepare(
-        "SELECT * FROM storage_objects WHERE drive_id = ? AND type = 'file'"
-      ),
-      getAllDriveObjects: this.db.prepare(
-        'SELECT * FROM storage_objects WHERE drive_id = ?'
-      ),
-      getChildFiles: this.db.prepare(
-        "SELECT * FROM storage_objects WHERE drive_id = ? AND path LIKE ? AND type = 'file'"
-      ),
-      getAllChildren: this.db.prepare(
-        'SELECT * FROM storage_objects WHERE drive_id = ? AND path LIKE ?'
-      ),
-      // Blob ref counting
-      getBlob: this.db.prepare('SELECT * FROM _storage_blobs WHERE checksum = ?'),
-      incrementBlobRef: this.db.prepare(
-        'UPDATE _storage_blobs SET ref_count = ref_count + 1 WHERE checksum = ?'
-      ),
-      decrementBlobRef: this.db.prepare(
-        'UPDATE _storage_blobs SET ref_count = ref_count - 1 WHERE checksum = ?'
-      ),
-      insertBlob: this.db.prepare(
-        'INSERT OR IGNORE INTO _storage_blobs (checksum, size_bytes, ref_count, created_at) VALUES (?, ?, 1, ?)'
-      ),
-      deleteBlob: this.db.prepare('DELETE FROM _storage_blobs WHERE checksum = ?'),
-      insertPermission: this.db.prepare(
-        `INSERT INTO _storage_permissions
-         (permission_id, tenant_id, drive_id, object_id, grant_type, grant_key, grant_value, permission, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ),
-      deletePermission: this.db.prepare(
-        'DELETE FROM _storage_permissions WHERE permission_id = ?'
-      ),
-      getPermissionById: this.db.prepare(
-        'SELECT * FROM _storage_permissions WHERE permission_id = ?'
-      ),
-      deletePermissionsByObject: this.db.prepare(
-        'DELETE FROM _storage_permissions WHERE object_id = ?'
-      ),
-      deletePermissionsByDrive: this.db.prepare(
-        'DELETE FROM _storage_permissions WHERE drive_id = ?'
-      ),
     };
   }
 
@@ -417,25 +594,71 @@ export class StorageService {
     ownerId: string,
     params: CreateDriveParams,
     scope?: ServiceDataScope,
+    authorizeCommit?: () => void,
   ): DriveRecord {
-    const boundary = this.requireCreationScope(scope);
-    const driveId = `drv_${crypto.randomUUID()}`;
+    this.options.managedObjectPolicy?.assertLegacyDriveCreationAllowed();
+    return this.createDriveRecord({
+      driveId: `drv_${crypto.randomUUID()}`,
+      ownerId,
+      params,
+      scope,
+    }, authorizeCommit);
+  }
+
+  /** Insert a validated canonical drive using a server-reserved identifier. */
+  createDriveRecord(
+    input: CreateDriveRecordInput,
+    authorizeCommit?: () => void,
+  ): DriveRecord {
+    const boundary = this.requireCreationScope(input.scope);
+    const driveId = normalizeStorageDriveId(input.driveId);
+    const maxSize = normalizeStorageByteLimit(input.params.maxSize ?? 0, 'Drive size limit');
+    const maxFileSize = normalizeStorageByteLimit(
+      input.params.maxFileSize ?? 0,
+      'File size limit',
+    );
+    if (maxSize > 0 && maxFileSize > maxSize) {
+      throw new StorageDomainError(
+        'STORAGE_INPUT_INVALID',
+        'File size limit cannot exceed the drive size limit.',
+      );
+    }
+    const allowedMimeTypes = normalizeStorageMimeTypes(
+      input.params.allowedMimeTypes ?? ['*'],
+    );
+    if (this.getDrive(driveId)) {
+      throw new StorageDomainError(
+        'STORAGE_CONFLICT',
+        'Storage drive id is already in use.',
+        { outcome: 'not-committed' },
+      );
+    }
     const now = Date.now();
 
     const drive: DriveRecord = {
       drive_id: driveId,
       tenant_id: serviceDataTenantId(boundary),
-      name: params.name,
-      owner_id: ownerId,
-      max_size_bytes: params.maxSize ?? 0,
-      max_file_size_bytes: params.maxFileSize ?? 0,
-      allowed_mime_types: params.allowedMimeTypes?.join(',') ?? '*',
-      public: params.public ? 1 : 0,
+      name: normalizeStorageName(input.params.name, 'Drive name'),
+      owner_id: input.ownerId,
+      max_size_bytes: maxSize,
+      max_file_size_bytes: maxFileSize,
+      allowed_mime_types: allowedMimeTypes.join(','),
+      public: input.params.public ? 1 : 0,
       created_at: now,
     };
 
-    this.db.insert('storage_drives', drive as unknown as Row);
-    return drive;
+    return this.db.transaction(() => {
+      authorizeCommit?.();
+      if (this.getDrive(driveId)) {
+        throw new StorageDomainError(
+          'STORAGE_CONFLICT',
+          'Storage drive id is already in use.',
+          { outcome: 'not-committed' },
+        );
+      }
+      this.db.insert('storage_drives', drive as unknown as Row);
+      return drive;
+    });
   }
 
   getDrive(driveId: string): DriveRecord | null {
@@ -455,7 +678,20 @@ export class StorageService {
    */
   updateDrive(
     driveId: string,
-    updates: StorageDriveUpdates
+    updates: StorageDriveUpdates,
+    authorizeCommit?: () => void,
+  ): DriveRecord {
+    this.options.managedObjectPolicy?.assertLegacyDriveControlAllowed(driveId);
+    return this.db.transaction(() => {
+      authorizeCommit?.();
+      return this.updateDriveRecord(driveId, updates);
+    });
+  }
+
+  /** Trusted record mutation used by Studio's revisioned control plane. */
+  updateDriveRecord(
+    driveId: string,
+    updates: StorageDriveUpdates,
   ): DriveRecord {
     const drive = this.getDrive(driveId);
     if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
@@ -465,18 +701,35 @@ export class StorageService {
       'name' | 'max_size_bytes' | 'max_file_size_bytes' | 'allowed_mime_types'
     >> = {};
 
-    if (updates.name !== undefined) sanitizedUpdates.name = updates.name;
+    if (updates.name !== undefined) {
+      sanitizedUpdates.name = normalizeStorageName(updates.name, 'Drive name');
+    }
     if (updates.max_size_bytes !== undefined) {
-      sanitizedUpdates.max_size_bytes = updates.max_size_bytes;
+      sanitizedUpdates.max_size_bytes = normalizeStorageByteLimit(
+        updates.max_size_bytes,
+        'Drive size limit',
+      );
     }
     if (updates.max_file_size_bytes !== undefined) {
-      sanitizedUpdates.max_file_size_bytes = updates.max_file_size_bytes;
+      sanitizedUpdates.max_file_size_bytes = normalizeStorageByteLimit(
+        updates.max_file_size_bytes,
+        'File size limit',
+      );
     }
     if (updates.allowed_mime_types !== undefined) {
-      sanitizedUpdates.allowed_mime_types = updates.allowed_mime_types;
+      sanitizedUpdates.allowed_mime_types = normalizeStorageMimeTypes(
+        updates.allowed_mime_types.split(','),
+      ).join(',');
     }
 
     const updated: DriveRecord = { ...drive, ...sanitizedUpdates };
+    if (updated.max_size_bytes > 0
+      && updated.max_file_size_bytes > updated.max_size_bytes) {
+      throw new StorageDomainError(
+        'STORAGE_INPUT_INVALID',
+        'File size limit cannot exceed the drive size limit.',
+      );
+    }
     this.db.update('storage_drives', driveId, updated as unknown as Row);
     return updated;
   }
@@ -506,7 +759,7 @@ export class StorageService {
       // receive an explicit storage grant like every other role.
       if (
         this.options.tenancyMode === 'single'
-        && normalizeActorRoles(userRole).includes('admin')
+        && normalizeStorageActorRoles(userRole).includes('admin')
       ) return true;
       return this.checkAccess(
         drive.drive_id, null, userId, userRole, userProperties, 'read', boundary,
@@ -514,30 +767,69 @@ export class StorageService {
     });
   }
 
-  deleteDrive(driveId: string): boolean {
-    const drive = this.getDrive(driveId);
-    if (!drive) return false;
+  deleteDrive(driveId: string, authorizeCommit?: () => void): boolean {
+    this.options.managedObjectPolicy?.assertLegacyDriveControlAllowed(driveId);
+    return this.deleteDriveRecord(driveId, authorizeCommit);
+  }
 
-    // Get ALL files and ALL objects in one pass each — no double-counting
-    const allFiles = this.stmts.getAllDriveFiles.all(driveId) as ObjectRecord[];
-    const allObjects = this.stmts.getAllDriveObjects.all(driveId) as ObjectRecord[];
-
-    this.db.transaction(() => {
-      // Decrement blob refs for files only (once per file)
-      for (const obj of allFiles) {
-        if (obj.checksum) this.decrementBlobRef(obj.checksum);
+  /** Trusted record deletion for framework-owned lifecycle composition. */
+  deleteDriveRecord(driveId: string, authorizeCommit?: () => void): boolean {
+    return this.db.transaction(() => {
+      authorizeCommit?.();
+      if (!this.getDrive(driveId)) return false;
+      const fileCount = (this.stmts.getDriveFileCount.get(driveId) as CountRow).count;
+      const folderCount = (this.stmts.getDriveFolderCount.get(driveId) as CountRow).count;
+      if (fileCount + folderCount > LEGACY_ATOMIC_DRIVE_DELETE_OBJECT_LIMIT) {
+        throw new StorageDomainError(
+          'STORAGE_LIMIT_EXCEEDED',
+          'Legacy atomic drive deletion exceeds its bounded object limit.',
+          { outcome: 'not-committed' },
+        );
       }
-      // Delete all objects
-      for (const obj of allObjects) {
-        this.db.delete('storage_objects', obj.object_id);
+      while (this.objectMutations.purgeDriveContentsBatchInTransaction(driveId).remaining) {
+        // The preflight bound above caps memory and writer-lock duration.
+        // Managed deletion uses the durable one-batch worker entry point.
       }
-      // Delete permissions
-      this.stmts.deletePermissionsByDrive.run(driveId);
-      // Delete drive
       this.db.delete('storage_drives', driveId);
+      return true;
     });
+  }
 
-    return true;
+  /**
+   * Atomically purge drive objects and grants while retaining its canonical row.
+   *
+   * Storage Studio uses this boundary before retaining a lifecycle tombstone;
+   * zero-reference physical blobs are removed asynchronously and retryably.
+   */
+  async purgeDriveContents(driveId: string): Promise<boolean> {
+    while (true) {
+      const result = await this.purgeDriveContentsBatch(driveId);
+      if (!result.exists) return false;
+      if (!result.remaining) return true;
+      await Bun.sleep(0);
+    }
+  }
+
+  /** Delete one bounded managed-drive batch for durable cleanup workers. */
+  async purgeDriveContentsBatch(
+    driveId: string,
+    limit?: number,
+    authorizeCommit?: () => void,
+    signal?: AbortSignal,
+  ): Promise<{ readonly exists: boolean; readonly remaining: boolean }> {
+    throwIfStorageOperationAborted(signal, 'Storage cleanup was cancelled.');
+    return this.db.transaction(() => {
+      authorizeCommit?.();
+      throwIfStorageOperationAborted(signal, 'Storage cleanup was cancelled.');
+      if (!this.getDrive(driveId)) {
+        return Object.freeze({ exists: false, remaining: false });
+      }
+      const result = this.objectMutations.purgeDriveContentsBatchInTransaction(
+        driveId,
+        { limit, retainDriveGrants: true },
+      );
+      return Object.freeze({ exists: true, remaining: result.remaining });
+    });
   }
 
   getDriveUsage(driveId: string): DriveUsage {
@@ -572,136 +864,197 @@ export class StorageService {
     options: UploadOptions = {},
     scope?: ServiceDataScope,
     authorizeCommit?: () => Promise<void>,
+    expectedManagedGeneration?: number,
+    authorizeCommitSync?: () => void,
   ): Promise<FileInfo> {
-    let drive = scope
+    return this.uploadOperations.run((operationContext) => this.performUpload(
+      driveId,
+      path,
+      data,
+      fileName,
+      userId,
+      options,
+      scope,
+      authorizeCommit,
+      expectedManagedGeneration,
+      authorizeCommitSync,
+      operationContext,
+    ));
+  }
+
+  private async performUpload(
+    driveId: string,
+    path: string,
+    data: ReadableStream<Uint8Array> | Uint8Array | Blob,
+    fileName: string,
+    userId: string | null,
+    options: UploadOptions = {},
+    scope?: ServiceDataScope,
+    authorizeCommit?: () => Promise<void>,
+    expectedManagedGeneration?: number,
+    authorizeCommitSync?: () => void,
+    operationContext?: StorageUploadOperationContext,
+  ): Promise<FileInfo> {
+    const normalizedPath = normalizeStoragePath(path);
+    const normalizedFileName = normalizeStorageName(fileName, 'File name');
+    const suppliedMetadata = options.metadata === undefined
+      ? null
+      : serializeStorageMetadata(options.metadata);
+    const admittedDrive = scope
       ? this.getDriveForScope(driveId, scope)
       : this.getDrive(driveId);
-    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
-
-    // Pass max file size to adapter so streaming rejects early
-    const maxFileSize = drive.max_file_size_bytes > 0
-      ? drive.max_file_size_bytes
-      : undefined;
-
-    // Write blob — adapter returns checksum, size, and head bytes for MIME detection
-    const { checksum, size, headBytes } = await this.adapter.writeBlob(data, maxFileSize);
-
-    // Streaming can outlive the authority that admitted the request. Official
-    // request-scoped callers re-resolve the bearer here, immediately before
-    // any metadata/ref-count mutation. The drive is re-read under the same
-    // tenant boundary so deletion/replacement cannot reuse stale authority.
-    await authorizeCommit?.();
-    if (scope) {
-      const currentDrive = this.getDriveForScope(driveId, scope);
-      if (!currentDrive || currentDrive.created_at !== drive.created_at) {
-        throw new StorageError(409, 'Storage authority changed during upload');
-      }
-      drive = currentDrive;
+    if (!admittedDrive) {
+      throw new StorageError(404, 'Storage drive was not found.', 'STORAGE_DRIVE_NOT_FOUND');
     }
-    if (drive.max_file_size_bytes > 0 && size > drive.max_file_size_bytes) {
-      throw new StorageError(
-        413,
-        `File exceeds maximum size (${size} > ${drive.max_file_size_bytes})`,
+    const managedAccess = this.options.managedObjectPolicy?.captureObjectAccess(driveId);
+    if (expectedManagedGeneration !== undefined) {
+      this.options.managedObjectPolicy?.assertObjectAccessCurrent(
+        driveId,
+        expectedManagedGeneration,
       );
     }
-
-    // Detect MIME type from head bytes (no re-read needed)
-    const detectedMime = detectMimeType(headBytes, fileName);
-
-    // Validate drive capacity
-    if (drive.max_size_bytes > 0) {
-      const { total } = this.stmts.getDriveUsage.get(driveId) as SumRow;
-      if (total + size > drive.max_size_bytes) {
-        throw new StorageError(413,
-          `Upload would exceed drive capacity (${total + size} > ${drive.max_size_bytes})`
-        );
-      }
-    }
-
-    // Validate MIME type
-    if (drive.allowed_mime_types !== '*') {
-      const allowed = drive.allowed_mime_types.split(',');
-      if (!matchesMimeType(detectedMime, allowed)) {
-        throw new StorageError(415,
-          `MIME type '${detectedMime}' not allowed. Allowed: ${drive.allowed_mime_types}`
-        );
-      }
-    }
-
-    // Normalize path (safe against traversal)
-    const normalizedPath = normalizePath(path);
-
-    // Check if exists
-    const existing = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
-    if (existing && !options.overwrite) {
-      throw new StorageError(409,
-        `File already exists: ${normalizedPath}. Use overwrite: true to replace.`
-      );
-    }
-
-    // Ensure parent folders exist
-    const parentId = this.ensureParentFolders(
+    const existingPublic = this.objectMutations.getByPath(driveId, normalizedPath)?.public === 1;
+    this.options.managedObjectPolicy?.assertObjectVisibilityAllowed(
       driveId,
-      normalizedPath,
-      userId,
-      drive.tenant_id,
+      options.public ?? existingPublic,
     );
 
-    // Handle blob ref counting
-    const existingBlob = this.stmts.getBlob.get(checksum) as BlobRecord | null;
-    if (existingBlob) {
-      // Blob already tracked — increment ref if this is a new file (not overwrite of same content)
-      if (!existing || existing.checksum !== checksum) {
-        this.stmts.incrementBlobRef.run(checksum);
+    this.objectMutations.assertUploadPrerequisites(
+      driveId,
+      normalizedPath,
+      options.overwrite === true,
+    );
+
+    const declaredBytes = uploadInputByteLength(data, options.contentLength);
+    const capabilityMaxSize = options.maxSize === undefined
+      ? undefined
+      : normalizeStorageByteLimit(options.maxSize, 'Upload size limit');
+    const reservation = this.options.uploadAdmission?.begin(
+      driveId,
+      declaredBytes,
+    ) ?? null;
+
+    const maxFileSize = minimumPositiveLimit(
+      admittedDrive.max_file_size_bytes,
+      capabilityMaxSize,
+    );
+    if (maxFileSize !== undefined
+      && declaredBytes !== undefined
+      && declaredBytes > maxFileSize) {
+      reservation?.release();
+      throw new StorageDomainError(
+        'STORAGE_LIMIT_EXCEEDED',
+        'Storage upload exceeds the configured file-size limit.',
+        { outcome: 'not-committed' },
+      );
+    }
+    const capabilityMimeTypes = options.allowedMimeTypes === undefined
+      ? null
+      : normalizeStorageMimeTypes(options.allowedMimeTypes);
+    let staged: Awaited<ReturnType<StorageAdapter['writeBlob']>> | null = null;
+    let published = false;
+    try {
+      try {
+        operationContext?.setProviderHandoffSafe(
+          this.adapter.writeShutdownSafety === 'durable-publication',
+        );
+        try {
+          staged = await runWithStorageUploadHeartbeat(
+            reservation,
+            () => this.adapter.writeBlob(data, maxFileSize, {
+              signal: operationContext?.signal,
+            }),
+            30_000,
+            operationContext?.signal,
+          );
+        } finally {
+          operationContext?.setProviderHandoffSafe(false);
+        }
+        throwIfStorageUploadAborted(operationContext?.signal);
+      } catch (cause) {
+        throw normalizeStorageProviderWriteError(cause);
       }
-    } else {
-      // New blob — insert tracking record
-      this.stmts.insertBlob.run(checksum, size, Date.now());
+      reservation?.adjust(staged.size);
+      const detectedMime = detectMimeType(staged.headBytes, normalizedFileName);
+      if (capabilityMimeTypes
+        && !storageMimeTypeAllowed(detectedMime, capabilityMimeTypes)) {
+        throw new StorageDomainError(
+          'STORAGE_CONTENT_TYPE_UNSUPPORTED',
+          'Detected file type is not allowed by the upload capability.',
+          { outcome: 'not-committed' },
+        );
+      }
+
+      const result = await this.blobLifecycle.run(
+        storagePathMutationKeys(driveId, normalizedPath),
+        async () => {
+          const objectBeforeCommit = this.objectMutations.getByPath(driveId, normalizedPath);
+          return this.blobLifecycle.run(
+            [
+              storageBlobMutationKey(staged!.checksum),
+              storageBlobMutationKey(objectBeforeCommit?.checksum),
+            ],
+            async () => {
+              // A failed publication may delete a zero-reference CAS blob while
+              // another same-checksum adapter write is still in flight. The
+              // checksum lease closes that cleanup race, and this final
+              // provider check prevents metadata from committing after the
+              // concurrent cleanup won and removed the bytes.
+              let blobExists = false;
+              try {
+                blobExists = await this.adapter.blobExists(staged!.checksum);
+              } catch (cause) {
+                throw normalizeStorageProviderWriteError(cause);
+              }
+              if (!blobExists) {
+                throw new StorageDomainError(
+                  'STORAGE_PROVIDER_UNAVAILABLE',
+                  'Staged storage bytes are no longer available; retry the upload.',
+                  { retryable: true, outcome: 'not-committed' },
+                );
+              }
+              await authorizeCommit?.();
+              return this.objectMutations.publishUpload({
+                driveId,
+                path: normalizedPath,
+                checksum: staged!.checksum,
+                size: staged!.size,
+                detectedMime,
+                userId,
+                metadata: suppliedMetadata,
+                isPublic: options.public,
+                overwrite: options.overwrite === true,
+                admittedDrive,
+                scope,
+                managedGeneration: expectedManagedGeneration ?? managedAccess?.generation,
+                authorizeCommit: () => {
+                  reservation?.assertCurrent();
+                  authorizeCommitSync?.();
+                },
+                finalizeCommit: () => reservation?.commit(),
+              });
+            },
+          );
+        },
+      );
+      published = true;
+      this.settleBlobPublication(staged);
+      return result;
+    } catch (error) {
+      if (operationContext?.isDetached()) {
+        // The adapter owns a durable publication receipt. Runtime shutdown may
+        // now dispose ReactiveDB; startup reconciliation will decide whether
+        // these bytes gained a reference, so this continuation performs no DB
+        // or receipt mutation.
+        throw error;
+      }
+      if (!published) reservation?.release();
+      if (staged) {
+        await this.blobLifecycle.cleanupUnreferenced(staged.checksum, staged.size);
+        this.settleBlobPublication(staged);
+      }
+      throw error;
     }
-
-    // If overwriting, decrement old blob ref
-    if (existing?.checksum && existing.checksum !== checksum) {
-      this.decrementBlobRef(existing.checksum);
-    }
-
-    const now = Date.now();
-    const objectId = existing?.object_id ?? `obj_${crypto.randomUUID()}`;
-    const objectName = normalizedPath.split('/').pop()!;
-
-    if (existing) {
-      const updated: ObjectRecord = {
-        ...existing,
-        size_bytes: size,
-        mime_type: detectedMime,
-        checksum,
-        metadata: JSON.stringify(options.metadata ?? JSON.parse(existing.metadata)),
-        public: options.public !== undefined ? (options.public ? 1 : 0) : existing.public,
-        updated_at: now,
-      };
-      this.db.update('storage_objects', objectId, updated as unknown as Row);
-      return toFileInfo(updated);
-    }
-
-    const record: ObjectRecord = {
-      object_id: objectId,
-      tenant_id: drive.tenant_id,
-      drive_id: driveId,
-      parent_id: parentId,
-      name: objectName,
-      path: normalizedPath,
-      type: 'file',
-      mime_type: detectedMime,
-      size_bytes: size,
-      checksum,
-      public: options.public ? 1 : 0,
-      metadata: JSON.stringify(options.metadata ?? {}),
-      created_by: userId,
-      created_at: now,
-      updated_at: now,
-    };
-
-    this.db.insert('storage_objects', record as unknown as Row);
-    return toFileInfo(record);
   }
 
   /**
@@ -718,257 +1071,275 @@ export class StorageService {
     }
 
     const expiresIn = params.expiresIn ?? this.options.defaultPresignedTTL ?? 3600;
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    this.options.managedObjectPolicy?.assertObjectVisibilityAllowed(
+      driveId,
+      params.public === true,
+    );
+    const capability = this.options.prepareCapability?.(driveId, expiresIn);
+    const path = normalizeStoragePath(params.path);
+    const metadata = params.metadata === undefined
+      ? undefined
+      : parseStorageMetadata(serializeStorageMetadata(params.metadata));
     return createUploadGrantToken({
       ...params,
+      path,
+      metadata,
       driveId,
       expiresIn,
       secret: this.options.uploadGrantSecret,
+      generation: capability?.generation,
     });
   }
 
   async download(
     driveId: string,
-    path: string
+    path: string,
+    authorizeReturn?: () => void,
+    expectedManagedGeneration?: number,
   ): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null> {
-    const normalizedPath = normalizePath(path);
+    const managedAccess = this.options.managedObjectPolicy?.captureObjectAccess(driveId);
+    if (expectedManagedGeneration !== undefined) {
+      this.options.managedObjectPolicy?.assertObjectAccessCurrent(
+        driveId,
+        expectedManagedGeneration,
+      );
+    }
+    const normalizedPath = normalizeStoragePath(path);
     const obj = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
     if (!obj || obj.type !== 'file' || !obj.checksum) return null;
 
-    const stream = await this.adapter.readBlob(obj.checksum);
+    let stream: ReadableStream<Uint8Array> | null;
+    try {
+      stream = await this.adapter.readBlob(obj.checksum);
+    } catch (cause) {
+      throw normalizeStorageProviderReadError(cause);
+    }
     if (!stream) return null;
+    authorizeReturn?.();
+    this.options.managedObjectPolicy?.assertObjectAccessCurrent(
+      driveId,
+      expectedManagedGeneration ?? managedAccess?.generation,
+    );
 
-    return { stream, info: toFileInfo(obj) };
+    return { stream, info: toStorageFileInfo(obj) };
   }
 
   async downloadRange(
     driveId: string,
     path: string,
     start: number,
-    end: number
+    end: number,
+    authorizeReturn?: () => void,
+    expectedManagedGeneration?: number,
   ): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null> {
-    const normalizedPath = normalizePath(path);
+    const managedAccess = this.options.managedObjectPolicy?.captureObjectAccess(driveId);
+    if (expectedManagedGeneration !== undefined) {
+      this.options.managedObjectPolicy?.assertObjectAccessCurrent(
+        driveId,
+        expectedManagedGeneration,
+      );
+    }
+    const normalizedPath = normalizeStoragePath(path);
     const obj = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
     if (!obj || obj.type !== 'file' || !obj.checksum) return null;
 
-    const stream = await this.adapter.readBlobRange(obj.checksum, start, end);
+    let stream: ReadableStream<Uint8Array> | null;
+    try {
+      stream = await this.adapter.readBlobRange(obj.checksum, start, end);
+    } catch (cause) {
+      throw normalizeStorageProviderReadError(cause);
+    }
     if (!stream) return null;
+    authorizeReturn?.();
+    this.options.managedObjectPolicy?.assertObjectAccessCurrent(
+      driveId,
+      expectedManagedGeneration ?? managedAccess?.generation,
+    );
 
-    return { stream, info: toFileInfo(obj) };
+    return { stream, info: toStorageFileInfo(obj) };
   }
 
   getFileInfo(driveId: string, path: string): FileInfo | null {
-    const normalizedPath = normalizePath(path);
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const normalizedPath = normalizeStoragePath(path);
     const obj = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
     if (!obj) return null;
-    return toFileInfo(obj);
+    return toStorageFileInfo(obj);
   }
 
   listFolder(driveId: string, parentPath?: string, options?: ListOptions): ListResult {
-    const normalizedPath = parentPath ? normalizePath(parentPath) : null;
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const normalizedPath = parentPath
+      ? normalizeStoragePath(parentPath, { allowRoot: true })
+      : null;
     let parentId: string | null = null;
 
-    if (normalizedPath) {
+    if (normalizedPath && normalizedPath !== '/') {
       const parent = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
-      if (!parent) return { items: [], cursor: null, total: 0 };
+      if (!parent || parent.type !== 'folder') return { items: [], cursor: null, total: 0 };
       parentId = parent.object_id;
     }
 
-    const total = this.countFolderRows(driveId, parentId, options?.type);
+    const searchPattern = storageObjectSearchLikePattern(options?.search);
+    const total = this.countFolderRows(
+      driveId,
+      parentId,
+      options?.type,
+      searchPattern,
+    );
     const limit = Math.min(Math.max(options?.limit ?? 100, 1), 500);
-    const parsedCursor = options?.cursor ? parseInt(options.cursor, 10) : 0;
-    const offset = Number.isFinite(parsedCursor) ? Math.max(0, parsedCursor) : 0;
+    const offset = storageObjectListOffset(options?.cursor);
 
-    const rows = this.listFolderRows(driveId, parentId, limit, offset, options);
+    const rows = this.listFolderRows(
+      driveId,
+      parentId,
+      limit,
+      offset,
+      options,
+      searchPattern,
+    );
 
     const nextOffset = offset + rows.length;
     const cursor = nextOffset < total ? String(nextOffset) : null;
 
     return {
-      items: rows.map(toFileInfo),
+      items: rows.map(toStorageFileInfo),
       cursor,
       total,
     };
   }
 
-  async moveObject(driveId: string, fromPath: string, toPath: string): Promise<FileInfo> {
-    const from = normalizePath(fromPath);
-    const to = normalizePath(toPath);
-
-    const obj = this.stmts.getObjectByPath.get(driveId, from) as ObjectRecord | null;
-    if (!obj) throw new StorageError(404, `Not found: ${from}`);
-
-    const existing = this.stmts.getObjectByPath.get(driveId, to) as ObjectRecord | null;
-    if (existing) throw new StorageError(409, `Target already exists: ${to}`);
-
-    const newParentId = this.ensureParentFolders(
-      driveId,
-      to,
-      obj.created_by,
-      obj.tenant_id,
-    );
-    const newName = to.split('/').pop()!;
-
-    const updated: ObjectRecord = {
-      ...obj,
-      path: to,
-      name: newName,
-      parent_id: newParentId,
-      updated_at: Date.now(),
-    };
-    this.db.update('storage_objects', obj.object_id, updated as unknown as Row);
-
-    // If folder, update all children paths
-    if (obj.type === 'folder') {
-      this.updateChildPaths(driveId, from, to);
-    }
-
-    return toFileInfo(updated);
+  async moveObject(
+    driveId: string,
+    fromPath: string,
+    toPath: string,
+    authorizeCommit?: () => void,
+  ): Promise<FileInfo> {
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    const from = normalizeStoragePath(fromPath);
+    const to = normalizeStoragePath(toPath);
+    return this.objectMutations.move(driveId, from, to, commitFence);
   }
 
-  async copyObject(driveId: string, fromPath: string, toPath: string): Promise<FileInfo> {
-    const from = normalizePath(fromPath);
-    const to = normalizePath(toPath);
-
-    const obj = this.stmts.getObjectByPath.get(driveId, from) as ObjectRecord | null;
-    if (!obj || obj.type !== 'file') throw new StorageError(404, `Not found or not a file: ${from}`);
-
-    const existing = this.stmts.getObjectByPath.get(driveId, to) as ObjectRecord | null;
-    if (existing) throw new StorageError(409, `Target already exists: ${to}`);
-
-    // Increment blob ref — same content, new metadata record
-    if (obj.checksum) {
-      this.stmts.incrementBlobRef.run(obj.checksum);
-    }
-
-    const parentId = this.ensureParentFolders(
+  async copyObject(
+    driveId: string,
+    fromPath: string,
+    toPath: string,
+    authorizeCommit?: () => void,
+  ): Promise<FileInfo> {
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    const from = normalizeStoragePath(fromPath);
+    const to = normalizeStoragePath(toPath);
+    const source = this.objectMutations.getByPath(driveId, from);
+    this.options.managedObjectPolicy?.assertObjectVisibilityAllowed(
       driveId,
-      to,
-      obj.created_by,
-      obj.tenant_id,
+      source?.public === 1,
     );
-    const now = Date.now();
 
-    const copy: ObjectRecord = {
-      object_id: `obj_${crypto.randomUUID()}`,
-      tenant_id: obj.tenant_id,
-      drive_id: driveId,
-      parent_id: parentId,
-      name: to.split('/').pop()!,
-      path: to,
-      type: 'file',
-      mime_type: obj.mime_type,
-      size_bytes: obj.size_bytes,
-      checksum: obj.checksum,
-      public: obj.public,
-      metadata: obj.metadata,
-      created_by: obj.created_by,
-      created_at: now,
-      updated_at: now,
-    };
-
-    this.db.insert('storage_objects', copy as unknown as Row);
-    return toFileInfo(copy);
+    return this.objectMutations.copy(driveId, from, to, commitFence);
   }
 
-  async deleteObject(driveId: string, path: string): Promise<boolean> {
-    const normalizedPath = normalizePath(path);
-    const obj = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
-    if (!obj) return false;
-
-    if (obj.type === 'folder') {
-      const children = this.stmts.getChildFiles.all(
-        driveId, `${normalizedPath}/%`
-      ) as ObjectRecord[];
-      const allChildren = this.stmts.getAllChildren.all(
-        driveId, `${normalizedPath}/%`
-      ) as ObjectRecord[];
-
-      this.db.transaction(() => {
-        for (const child of children) {
-          if (child.checksum) this.decrementBlobRef(child.checksum);
-        }
-        for (const child of allChildren) {
-          this.stmts.deletePermissionsByObject.run(child.object_id);
-          this.db.delete('storage_objects', child.object_id);
-        }
-        this.stmts.deletePermissionsByObject.run(obj.object_id);
-        this.db.delete('storage_objects', obj.object_id);
-      });
-    } else {
-      // Wrap file deletion in transaction for atomicity
-      this.db.transaction(() => {
-        if (obj.checksum) this.decrementBlobRef(obj.checksum);
-        this.stmts.deletePermissionsByObject.run(obj.object_id);
-        this.db.delete('storage_objects', obj.object_id);
-      });
-    }
-
-    return true;
+  async deleteObject(
+    driveId: string,
+    path: string,
+    authorizeCommit?: () => void,
+  ): Promise<boolean> {
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    const normalizedPath = normalizeStoragePath(path);
+    return this.objectMutations.delete(driveId, normalizedPath, commitFence);
   }
 
   createFolder(
     driveId: string,
     path: string,
     userId: string | null,
-    isPublic = false
+    isPublic = false,
+    authorizeCommit?: () => void,
   ): FileInfo {
-    const drive = this.getDrive(driveId);
-    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
-    const normalizedPath = normalizePath(path);
-    const existing = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
-    if (existing) {
-      if (existing.type === 'folder') return toFileInfo(existing);
-      throw new StorageError(409, `A file already exists at: ${normalizedPath}`);
-    }
-
-    const parentId = this.ensureParentFolders(
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    this.options.managedObjectPolicy?.assertObjectVisibilityAllowed(driveId, isPublic);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    const normalizedPath = normalizeStoragePath(path);
+    return this.objectMutations.createFolder(
       driveId,
       normalizedPath,
       userId,
-      drive.tenant_id,
+      isPublic,
+      commitFence,
     );
-    const now = Date.now();
-    const folderName = normalizedPath.split('/').pop()!;
-
-    const record: ObjectRecord = {
-      object_id: `obj_${crypto.randomUUID()}`,
-      tenant_id: drive.tenant_id,
-      drive_id: driveId,
-      parent_id: parentId,
-      name: folderName,
-      path: normalizedPath,
-      type: 'folder',
-      mime_type: null,
-      size_bytes: 0,
-      checksum: null,
-      public: isPublic ? 1 : 0,
-      metadata: '{}',
-      created_by: userId,
-      created_at: now,
-      updated_at: now,
-    };
-
-    this.db.insert('storage_objects', record as unknown as Row);
-    return toFileInfo(record);
   }
 
   // ─── Visibility ─────────────────────────────────────────────────────────
 
-  setVisibility(driveId: string, path: string, isPublic: boolean): FileInfo {
-    const normalizedPath = normalizePath(path);
-    const obj = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
-    if (!obj) throw new StorageError(404, `Not found: ${normalizedPath}`);
+  setVisibility(
+    driveId: string,
+    path: string,
+    isPublic: boolean,
+    authorizeCommit?: () => void,
+  ): FileInfo {
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    this.options.managedObjectPolicy?.assertObjectVisibilityAllowed(driveId, isPublic);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    const normalizedPath = normalizeStoragePath(path);
+    return this.db.transaction(() => {
+      commitFence();
+      this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+      this.options.managedObjectPolicy?.assertObjectVisibilityAllowed(driveId, isPublic);
+      const obj = this.stmts.getObjectByPath.get(
+        driveId,
+        normalizedPath,
+      ) as ObjectRecord | null;
+      if (!obj) throw new StorageError(404, `Not found: ${normalizedPath}`);
 
-    const updated: ObjectRecord = {
-      ...obj,
-      public: isPublic ? 1 : 0,
-      updated_at: Date.now(),
-    };
-    this.db.update('storage_objects', obj.object_id, updated as unknown as Row);
-    return toFileInfo(updated);
+      const updated: ObjectRecord = {
+        ...obj,
+        public: isPublic ? 1 : 0,
+        updated_at: Date.now(),
+      };
+      this.db.update('storage_objects', obj.object_id, updated as unknown as Row);
+      return toStorageFileInfo(updated);
+    });
   }
 
-  setDriveVisibility(driveId: string, isPublic: boolean): DriveRecord {
+  /** Replace application metadata without rewriting object bytes. */
+  updateObjectMetadata(
+    driveId: string,
+    path: string,
+    metadata: Record<string, unknown>,
+    scope?: ServiceDataScope,
+    authorizeCommit?: () => void,
+  ): FileInfo {
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    const normalizedPath = normalizeStoragePath(path);
+    const serialized = serializeStorageMetadata(metadata);
+    return this.objectMutations.updateMetadata(
+      driveId,
+      normalizedPath,
+      serialized,
+      scope,
+      commitFence,
+    );
+  }
+
+  setDriveVisibility(
+    driveId: string,
+    isPublic: boolean,
+    authorizeCommit?: () => void,
+  ): DriveRecord {
+    this.options.managedObjectPolicy?.assertLegacyDriveControlAllowed(driveId);
+    return this.db.transaction(() => {
+      authorizeCommit?.();
+      return this.setDriveVisibilityRecord(driveId, isPublic);
+    });
+  }
+
+  /** Trusted visibility mutation used by Studio's revisioned editor. */
+  setDriveVisibilityRecord(driveId: string, isPublic: boolean): DriveRecord {
     const drive = this.getDrive(driveId);
     if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
 
@@ -979,89 +1350,63 @@ export class StorageService {
 
   // ─── Permissions ────────────────────────────────────────────────────────
 
-  grantPermission(driveId: string, params: GrantPermissionParams): PermissionRecord {
-    const drive = this.getDrive(driveId);
-    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
-
-    const propertyKey = params.grantKey?.trim();
-    if (params.grantType === 'property' && !propertyKey) {
-      throw new StorageError(400, 'Property permissions require grantKey');
-    }
-    if (
-      params.grantType === 'property'
-      && !this.options.isPolicyTrustedProperty?.(propertyKey!)
-    ) {
-      throw new StorageError(
-        400,
-        'Property permissions require a policy-trusted grantKey'
+  grantPermission(
+    driveId: string,
+    params: GrantPermissionParams,
+    auditAuthority?: StorageAclAuditAuthority,
+    authorizeCommit?: () => void,
+  ): PermissionRecord {
+    this.options.managedObjectPolicy?.assertObjectAccessAllowed(driveId);
+    const commitFence = this.managedObjectCommitFence(driveId, authorizeCommit);
+    return this.db.transaction(() => {
+      commitFence();
+      const permission = this.permissionService.grant(driveId, params);
+      appendStorageAclAudit(
+        this.options.aclAudit,
+        auditAuthority,
+        'storage.permission-granted',
+        permission,
       );
-    }
-
-    let objectId: string | null = null;
-    if (params.objectPath) {
-      const obj = this.stmts.getObjectByPath.get(
-        driveId, normalizePath(params.objectPath)
-      ) as ObjectRecord | null;
-      if (!obj) throw new StorageError(404, `Object not found: ${params.objectPath}`);
-      objectId = obj.object_id;
-    }
-
-    const permId = `perm_${crypto.randomUUID()}`;
-    const now = Date.now();
-
-    this.stmts.insertPermission.run(
-      permId, drive.tenant_id, driveId, objectId, params.grantType,
-      params.grantType === 'property' ? propertyKey! : null,
-      params.grantValue,
-      params.permission,
-      now
-    );
-
-    return {
-      permission_id: permId,
-      tenant_id: drive.tenant_id,
-      drive_id: driveId,
-      object_id: objectId,
-      grant_type: params.grantType,
-      grant_key: params.grantType === 'property' ? propertyKey! : null,
-      grant_value: params.grantValue,
-      permission: params.permission,
-      created_at: now,
-    };
+      return permission;
+    });
   }
 
   /**
    * List permissions for a drive or the permissions considered for one object.
    */
   listPermissions(driveId: string, options: ListPermissionsOptions = {}): PermissionRecord[] {
-    const drive = this.getDrive(driveId);
-    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
-
-    if (!options.objectPath) {
-      return this.stmts.getPermissions.all(driveId) as PermissionRecord[];
-    }
-
-    const obj = this.stmts.getObjectByPath.get(
-      driveId,
-      normalizePath(options.objectPath),
-    ) as ObjectRecord | null;
-
-    if (!obj) throw new StorageError(404, `Object not found: ${options.objectPath}`);
-
-    return this.stmts.getObjectPermissions.all(
-      driveId,
-      obj.object_id,
-    ) as PermissionRecord[];
+    return this.permissionService.list(driveId, options);
   }
 
   /** Get a permission by ID (for authorization checks before revoke). */
   getPermission(permissionId: string): PermissionRecord | null {
-    return this.stmts.getPermissionById.get(permissionId) as PermissionRecord | null;
+    return this.permissionService.get(permissionId);
   }
 
-  revokePermission(permissionId: string): boolean {
-    this.stmts.deletePermission.run(permissionId);
-    return true;
+  revokePermission(
+    permissionId: string,
+    auditAuthority?: StorageAclAuditAuthority,
+    authorizeCommit?: () => void,
+  ): boolean {
+    const admitted = this.permissionService.get(permissionId);
+    if (admitted) this.options.managedObjectPolicy?.assertObjectAccessAllowed(admitted.drive_id);
+    const commitFence = admitted
+      ? this.managedObjectCommitFence(admitted.drive_id, authorizeCommit)
+      : authorizeCommit;
+    return this.db.transaction(() => {
+      commitFence?.();
+      const permission = this.permissionService.get(permissionId);
+      const revoked = this.permissionService.revoke(permissionId);
+      if (permission) {
+        appendStorageAclAudit(
+          this.options.aclAudit,
+          auditAuthority,
+          'storage.permission-revoked',
+          permission,
+        );
+      }
+      return revoked;
+    });
   }
 
   /**
@@ -1083,108 +1428,27 @@ export class StorageService {
     requiredLevel: PermissionLevel,
     scope?: ServiceDataScope,
   ): boolean {
-    const drive = this.getDrive(driveId);
-    if (!drive) return false;
-
-    // In multi mode an authenticated identity without a validated active
-    // tenant must not acquire owner/role/property authority through this
-    // lower-level API. Anonymous public/capability reads remain available;
-    // signed upload/download routes validate their bearer capability first.
-    if (
-      this.options.tenancyMode === 'multi'
-      && !scope
-      && (
-        userId !== null
-        || normalizeActorRoles(userRole).length > 0
-        || Object.keys(userProperties).length > 0
-      )
-    ) return false;
-
-    // A user's ownership, platform role, tenant role, or explicit grant never
-    // crosses the active tenant boundary. Deliberately public reads remain
-    // public capability-style access even when the caller has another tenant
-    // active.
-    if (scope && !serviceDataScopeMatchesTenant(scope, drive.tenant_id)) {
-      if (requiredLevel !== 'read') return false;
-      if (drive.public) return true;
-      if (path) {
-        const publicObject = this.stmts.getObjectByPath.get(
-          driveId,
-          normalizePath(path),
-        ) as ObjectRecord | null;
-        return publicObject?.public === 1;
-      }
-      return false;
-    }
-
-    // Historical platform admin → full access in single mode only. A
-    // tenant role named `admin` has no magic data-plane meaning in multi.
-    const userRoles = normalizeActorRoles(userRole);
-    if (this.options.tenancyMode === 'single' && userRoles.includes('admin')) return true;
-
-    // Public drive → read access
-    if (drive.public && requiredLevel === 'read') return true;
-
-    // Check object-level public flag
-    if (path && requiredLevel === 'read') {
-      const obj = this.stmts.getObjectByPath.get(driveId, normalizePath(path)) as ObjectRecord | null;
-      if (obj?.public) return true;
-    }
-
-    // Must be authenticated for non-public access
-    if (!userId) return false;
-
-    // Drive owner → full access
-    if (drive.owner_id === userId) return true;
-
-    // Check permission grants
-    let permissions: PermissionRecord[];
-    if (path) {
-      const obj = this.stmts.getObjectByPath.get(driveId, normalizePath(path)) as ObjectRecord | null;
-      permissions = this.stmts.getObjectPermissions.all(
-        driveId, obj?.object_id ?? null
-      ) as PermissionRecord[];
-    } else {
-      permissions = this.stmts.getPermissions.all(driveId) as PermissionRecord[];
-    }
-
-    const levelRank: Record<PermissionLevel, number> = { read: 1, write: 2, admin: 3 };
-    const requiredRank = levelRank[requiredLevel];
-
-    for (const perm of permissions) {
-      const permRank = levelRank[perm.permission as PermissionLevel];
-      if (permRank < requiredRank) continue;
-
-      switch (perm.grant_type) {
-        case 'user':
-          if (perm.grant_value === userId) return true;
-          break;
-        case 'role':
-          if (userRoles.includes(perm.grant_value)) return true;
-          break;
-        case 'property':
-          if (
-            perm.grant_key
-            && this.options.isPolicyTrustedProperty?.(perm.grant_key)
-            && userProperties[perm.grant_key] === perm.grant_value
-          ) return true;
-          break;
-      }
-    }
-
-    return false;
+    return this.permissionService.checkAccess(
+      driveId,
+      path,
+      userId,
+      userRole,
+      userProperties,
+      requiredLevel,
+      scope,
+    );
   }
 
   // ─── Blob Ref Counting ─────────────────────────────────────────────────
 
-  private decrementBlobRef(checksum: string): void {
-    this.stmts.decrementBlobRef.run(checksum);
-    const blob = this.stmts.getBlob.get(checksum) as BlobRecord | null;
-    if (blob && blob.ref_count <= 0) {
-      this.stmts.deleteBlob.run(checksum);
-      // Async cleanup — fire and forget
-      this.adapter.removeBlob(checksum).catch(() => {});
-    }
+  /** Retry one bounded batch of retained zero-reference blob cleanup. */
+  async retryBlobCleanup(options?: StorageBlobCleanupOptions): Promise<StorageBlobCleanupPass> {
+    const publications = this.recoverPendingBlobPublications(options?.batchSize);
+    const blobs = await this.blobLifecycle.retryCleanup(options);
+    return Object.freeze({
+      attempted: publications.attempted + blobs.attempted,
+      remaining: publications.remaining + blobs.remaining,
+    });
   }
 
   // ─── Internal Helpers ───────────────────────────────────────────────────
@@ -1195,105 +1459,56 @@ export class StorageService {
     limit: number,
     offset: number,
     options?: ListOptions,
+    searchPattern: string | null = null,
   ): ObjectRecord[] {
     const sortBy = toStorageSortColumn(options?.sortBy);
     const sortDir = options?.sortDir === 'desc' ? 'DESC' : 'ASC';
+    const clauses = ['drive_id = ?', 'parent_id IS ?'];
+    const parameters: Array<string | number | null> = [driveId, parentId];
     if (options?.type && options.type !== 'all') {
-      return this.db.prepare(
-        `SELECT * FROM storage_objects
-         WHERE drive_id = ? AND parent_id IS ? AND type = ?
-         ORDER BY type DESC, ${sortBy} ${sortDir}
-         LIMIT ? OFFSET ?`,
-      ).all(driveId, parentId, options.type, limit, offset) as ObjectRecord[];
+      clauses.push('type = ?');
+      parameters.push(options.type);
     }
-
+    if (searchPattern) {
+      clauses.push(
+        `(name COLLATE NOCASE LIKE ? ESCAPE '\\'
+          OR path COLLATE NOCASE LIKE ? ESCAPE '\\')`,
+      );
+      parameters.push(searchPattern, searchPattern);
+    }
+    parameters.push(limit, offset);
     return this.db.prepare(
       `SELECT * FROM storage_objects
-       WHERE drive_id = ? AND parent_id IS ?
+       WHERE ${clauses.join(' AND ')}
        ORDER BY type DESC, ${sortBy} ${sortDir}
        LIMIT ? OFFSET ?`,
-    ).all(driveId, parentId, limit, offset) as ObjectRecord[];
+    ).all(...parameters) as ObjectRecord[];
   }
 
   private countFolderRows(
     driveId: string,
     parentId: string | null,
     type: ListOptions['type'] | undefined,
+    searchPattern: string | null,
   ): number {
+    const clauses = ['drive_id = ?', 'parent_id IS ?'];
+    const parameters: Array<string | null> = [driveId, parentId];
     if (type && type !== 'all') {
-      const row = this.db.prepare(
-        `SELECT COUNT(*) as count FROM storage_objects
-         WHERE drive_id = ? AND parent_id IS ? AND type = ?`,
-      ).get(driveId, parentId, type) as CountRow;
-      return row.count;
+      clauses.push('type = ?');
+      parameters.push(type);
     }
-
+    if (searchPattern) {
+      clauses.push(
+        `(name COLLATE NOCASE LIKE ? ESCAPE '\\'
+          OR path COLLATE NOCASE LIKE ? ESCAPE '\\')`,
+      );
+      parameters.push(searchPattern, searchPattern);
+    }
     const row = this.db.prepare(
       `SELECT COUNT(*) as count FROM storage_objects
-       WHERE drive_id = ? AND parent_id IS ?`,
-    ).get(driveId, parentId) as CountRow;
+       WHERE ${clauses.join(' AND ')}`,
+    ).get(...parameters) as CountRow;
     return row.count;
-  }
-
-  private ensureParentFolders(
-    driveId: string,
-    filePath: string,
-    userId: string | null,
-    tenantId: string | null,
-  ): string | null {
-    const parts = filePath.split('/').filter(Boolean);
-    if (parts.length <= 1) return null;
-
-    let currentPath = '';
-    let parentId: string | null = null;
-
-    for (let i = 0; i < parts.length - 1; i++) {
-      currentPath += '/' + parts[i];
-
-      const existing = this.stmts.getObjectByPath.get(driveId, currentPath) as ObjectRecord | null;
-      if (existing) {
-        parentId = existing.object_id;
-        continue;
-      }
-
-      const now = Date.now();
-      const folderId = `obj_${crypto.randomUUID()}`;
-
-      const folder: ObjectRecord = {
-        object_id: folderId,
-        tenant_id: tenantId,
-        drive_id: driveId,
-        parent_id: parentId,
-        name: parts[i],
-        path: currentPath,
-        type: 'folder',
-        mime_type: null,
-        size_bytes: 0,
-        checksum: null,
-        public: 0,
-        metadata: '{}',
-        created_by: userId,
-        created_at: now,
-        updated_at: now,
-      };
-
-      this.db.insert('storage_objects', folder as unknown as Row);
-      parentId = folderId;
-    }
-
-    return parentId;
-  }
-
-  private updateChildPaths(driveId: string, oldPrefix: string, newPrefix: string): void {
-    const children = this.stmts.getAllChildren.all(
-      driveId, `${oldPrefix}/%`
-    ) as ObjectRecord[];
-
-    for (const child of children) {
-      const newPath = newPrefix + child.path.slice(oldPrefix.length);
-      const updated: ObjectRecord = { ...child, path: newPath, updated_at: Date.now() };
-      this.db.update('storage_objects', child.object_id, updated as unknown as Row);
-    }
   }
 
   private requireCreationScope(scope: ServiceDataScope | undefined): ServiceDataScope {
@@ -1303,46 +1518,141 @@ export class StorageService {
     }
     return applicationServiceDataScope();
   }
-}
 
-function normalizeActorRoles(input: StorageActorRoles): readonly string[] {
-  if (Array.isArray(input)) {
-    return [...new Set(input.filter((role) => typeof role === 'string' && role.length > 0))];
+  private managedObjectCommitFence(
+    driveId: string,
+    authorizeCommit?: () => void,
+  ): () => void {
+    const access = this.options.managedObjectPolicy?.captureObjectAccess(driveId);
+    return () => {
+      authorizeCommit?.();
+      this.options.managedObjectPolicy?.assertObjectAccessCurrent(
+        driveId,
+        access?.generation,
+      );
+    };
   }
-  return typeof input === 'string' && input.length > 0 ? [input] : [];
+
+  private recoverPendingBlobPublications(limit = 32): StorageBlobCleanupPass & {
+    readonly settled: number;
+  } {
+    const list = this.adapter.listPendingBlobPublications;
+    const settle = this.adapter.settleBlobPublication;
+    if (!list || !settle) return Object.freeze({ attempted: 0, remaining: 0, settled: 0 });
+    let batch: ReturnType<NonNullable<StorageAdapter['listPendingBlobPublications']>>;
+    try {
+      batch = list.call(this.adapter, limit);
+    } catch (cause) {
+      this.emitPublicationRecoveryFailure(cause);
+      return Object.freeze({ attempted: 0, remaining: 1, settled: 0 });
+    }
+    let retained = batch.remaining ? 1 : 0;
+    let settledCount = 0;
+    for (const publication of batch.items) {
+      try {
+        if (!this.blobLifecycle.recoverPendingPublication(publication)) {
+          retained += 1;
+          continue;
+        }
+        settle.call(this.adapter, publication.publicationId);
+        settledCount += 1;
+      } catch (cause) {
+        retained += 1;
+        this.emitPublicationRecoveryFailure(cause);
+      }
+    }
+    return Object.freeze({
+      attempted: batch.items.length,
+      remaining: retained,
+      settled: settledCount,
+    });
+  }
+
+  private settleBlobPublication(staged: StorageBlobWriteResult): void {
+    if (!staged.publicationId || !this.adapter.settleBlobPublication) return;
+    try {
+      this.adapter.settleBlobPublication(staged.publicationId);
+    } catch (cause) {
+      // Metadata or a zero-reference cleanup row is already durable. Retaining
+      // the receipt is safe and lets startup maintenance retry deterministically.
+      this.emitPublicationRecoveryFailure(cause);
+    }
+  }
+
+  private schedulePublicationRecovery(): void {
+    if (this.stopping || this.publicationRecoveryTimer) return;
+    this.publicationRecoveryTimer = setTimeout(() => {
+      this.publicationRecoveryTimer = null;
+      if (this.stopping) return;
+      const pass = this.recoverPendingBlobPublications();
+      if (pass.settled > 0) this.publicationRecoveryDelayMs = 50;
+      else this.publicationRecoveryDelayMs = Math.min(
+        this.publicationRecoveryDelayMs * 2,
+        30_000,
+      );
+      if (pass.remaining > 0) this.schedulePublicationRecovery();
+    }, this.publicationRecoveryDelayMs);
+    this.publicationRecoveryTimer.unref?.();
+  }
+
+  private emitPublicationRecoveryFailure(cause: unknown): void {
+    const normalized = normalizeStorageError(cause);
+    const error = new StorageDomainError(
+      'STORAGE_PROVIDER_UNAVAILABLE',
+      'Storage publication receipt recovery did not complete.',
+      { retryable: true, outcome: 'not-committed', cause: normalized },
+    );
+    emitPlatformCode(OBS_CODES.STORAGE_BLOB_CLEANUP_FAILED, {
+      error,
+      metadata: { retryable: true, phase: 'publication-receipt' },
+    });
+  }
+
+  private finishProviderShutdownAfterUploads(): Promise<void> {
+    if (this.providerShutdown) return this.providerShutdown;
+    this.providerShutdown = this.uploadOperations.whenDrained()
+      .then(() => this.performProviderStop())
+      .catch((cause) => {
+        this.emitPublicationRecoveryFailure(cause);
+      });
+    return this.providerShutdown;
+  }
+
+  private stopProviderResources(): Promise<void> {
+    if (this.providerShutdown) return this.providerShutdown;
+    const shutdown = this.performProviderStop();
+    this.providerShutdown = shutdown;
+    return shutdown;
+  }
+
+  private async performProviderStop(): Promise<void> {
+    const failures: unknown[] = [];
+    try { await this.blobLifecycle.stop(); } catch (error) { failures.push(error); }
+    try { await this.adapter.stop?.(); } catch (error) { failures.push(error); }
+    if (failures.length > 0) throw failures[0];
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-/**
- * Normalize a file path safely. Resolves `.` and `..` segments
- * without allowing traversal above root.
- */
-function normalizePath(path: string): string {
-  const segments = path.split('/').filter(Boolean);
-  const resolved: string[] = [];
-
-  for (const seg of segments) {
-    if (seg === '..') {
-      resolved.pop(); // Go up — but can't escape root (pop on empty is noop)
-    } else if (seg !== '.') {
-      resolved.push(seg);
-    }
-  }
-
-  return '/' + resolved.join('/');
+function throwIfStorageUploadAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new StorageDomainError(
+    'STORAGE_NOT_READY',
+    'Storage upload was cancelled during shutdown.',
+    { retryable: true, outcome: 'not-committed' },
+  );
 }
 
-function matchesMimeType(mime: string, allowed: string[]): boolean {
-  for (const pattern of allowed) {
-    if (pattern === '*') return true;
-    if (pattern === mime) return true;
-    if (pattern.endsWith('/*')) {
-      const prefix = pattern.slice(0, -2);
-      if (mime.startsWith(prefix + '/')) return true;
-    }
-  }
-  return false;
+function throwIfStorageOperationAborted(signal: AbortSignal | undefined, message: string): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new StorageDomainError(
+    'STORAGE_PROVIDER_UNAVAILABLE',
+    message,
+    { retryable: true, outcome: 'not-committed' },
+  );
 }
 
 function toStorageSortColumn(sortBy: ListOptions['sortBy'] | undefined): string {
@@ -1359,20 +1669,29 @@ function toStorageSortColumn(sortBy: ListOptions['sortBy'] | undefined): string 
   }
 }
 
-function toFileInfo(record: ObjectRecord): FileInfo {
-  return {
-    id: record.object_id,
-    driveId: record.drive_id,
-    name: record.name,
-    path: record.path,
-    type: record.type as 'file' | 'folder',
-    mimeType: record.mime_type,
-    sizeBytes: record.size_bytes,
-    checksum: record.checksum,
-    isPublic: record.public === 1,
-    metadata: JSON.parse(record.metadata || '{}'),
-    createdBy: record.created_by,
-    createdAt: record.created_at,
-    updatedAt: record.updated_at,
-  };
+function uploadInputByteLength(
+  data: ReadableStream<Uint8Array> | Uint8Array | Blob,
+  declared: number | undefined,
+): number | undefined {
+  if (declared !== undefined) {
+    if (!Number.isSafeInteger(declared) || declared < 0) {
+      throw new StorageDomainError(
+        'STORAGE_INPUT_INVALID',
+        'Upload content length is invalid.',
+      );
+    }
+    return declared;
+  }
+  if (data instanceof Uint8Array) return data.byteLength;
+  if (data instanceof Blob) return data.size;
+  return undefined;
+}
+
+function minimumPositiveLimit(
+  driveLimit: number,
+  capabilityLimit: number | undefined,
+): number | undefined {
+  const limits = [driveLimit, capabilityLimit]
+    .filter((value): value is number => value !== undefined && value > 0);
+  return limits.length > 0 ? Math.min(...limits) : undefined;
 }

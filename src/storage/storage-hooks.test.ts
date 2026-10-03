@@ -31,6 +31,7 @@ describe('storage hooks transport contract', () => {
     expect(source).not.toContain('localStorage');
     expect(source).not.toContain('access_token');
     expect(source).not.toContain('getItem');
+    expect(source).toContain("query.set('search', requestedSearch.trim())");
   });
 
   test('runs progress uploads through the SDK auth and scope lifecycle', () => {

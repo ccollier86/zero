@@ -14,54 +14,62 @@ import {
 import {
   StorageError,
   type StorageActorRoles,
-  type StorageDriveApi,
-  type StorageObjectApi,
-  type StoragePermissionApi,
   type StorageService,
-  type StorageUploadGrantApi,
 } from '../../../storage/storage-service';
+import type { StorageAclAuditProvenance } from '../../../storage/storage-acl-audit';
+import {
+  createScopedStorageStudioApi,
+  type ScopedStorageStudioApi,
+} from '../../../storage/storage-studio-scoped-api';
 import type { DriveRecord, PermissionLevel } from '../../../storage/types';
 import type { CompleteServiceMemberInventory } from './restricted-service-proxy';
+import type {
+  ScopedStorageDriveApi,
+  ScopedStorageMethods,
+  ScopedStorageObjectApi,
+  ScopedStoragePermissionApi,
+  ScopedStorageService,
+  ScopedStorageUploadGrantApi,
+} from './scoped-storage-contracts';
+import { createScopedStorageProxy } from './scoped-storage-proxy';
 
-type ScopedStorageMethods = Pick<
-  StorageService,
-  | 'createDrive'
-  | 'getDrive'
-  | 'getDriveForScope'
-  | 'updateDrive'
-  | 'listDrives'
-  | 'listDrivesForUser'
-  | 'deleteDrive'
-  | 'getDriveUsage'
-  | 'upload'
-  | 'createUploadGrant'
-  | 'download'
-  | 'downloadRange'
-  | 'getFileInfo'
-  | 'listFolder'
-  | 'moveObject'
-  | 'copyObject'
-  | 'deleteObject'
-  | 'createFolder'
-  | 'setVisibility'
-  | 'setDriveVisibility'
-  | 'grantPermission'
-  | 'listPermissions'
-  | 'getPermission'
-  | 'revokePermission'
-  | 'checkAccess'
->;
+export type {
+  ScopedStorageDriveApi,
+  ScopedStorageMethods,
+  ScopedStorageObjectApi,
+  ScopedStoragePermissionApi,
+  ScopedStorageService,
+  ScopedStorageUploadData,
+  ScopedStorageUploadGrantApi,
+} from './scoped-storage-contracts';
 
 type ScopedStorageMembers = keyof ScopedStorageMethods
   | 'drives'
   | 'objects'
   | 'permissions'
-  | 'uploads';
+  | 'uploads'
+  | 'studio';
 
 const STORAGE_SERVICE_INVENTORY: CompleteServiceMemberInventory<
   StorageService,
   ScopedStorageMembers,
-  never
+  | 'createDriveRecord'
+  | 'updateDriveRecord'
+  | 'deleteDriveRecord'
+  | 'setDriveVisibilityRecord'
+  | 'purgeDriveContents'
+  | 'purgeDriveContentsBatch'
+  | 'retryBlobCleanup'
+  | 'stop'
+  | 'rollbackFailedStart'
+  | 'attachStudioService'
+  | 'getAttachedStudioService'
+  | 'detachStudioService'
+  | 'captureObjectCommitFence'
+  | 'captureManagedObjectAccess'
+  | 'assertManagedObjectAccessCurrent'
+  | 'getDriveForScope'
+  | 'listDrivesForUser'
 > = true;
 void STORAGE_SERVICE_INVENTORY;
 
@@ -73,7 +81,8 @@ export function createScopedStorageService(
   assertCurrentAuthority: () => Promise<void>,
   assertCurrentAuthoritySync: () => void,
   privilegedSystem: boolean,
-): StorageService {
+  auditProvenance: StorageAclAuditProvenance = 'authenticated-request',
+): ScopedStorageService {
   const auth = access.context;
 
   const actorRoles = (): StorageActorRoles => {
@@ -113,11 +122,29 @@ export function createScopedStorageService(
     return drive;
   };
 
-  const requireActor = (userId: string | null): void => {
-    if (auth && userId !== null && userId !== auth.userId) {
-      throw new StorageError(403, 'Storage actor must match the authenticated user');
-    }
+  const requireActorId = (): string => {
+    assertCurrentAuthoritySync();
+    if (!auth) throw new StorageError(401, 'Storage actor is required');
+    return auth.userId;
   };
+
+  const commitAccess = (
+    driveId: string,
+    requirements: ReadonlyArray<Readonly<{
+      level: PermissionLevel;
+      path?: string | null;
+    }>>,
+  ): (() => void) => service.captureObjectCommitFence(driveId, () => {
+    for (const requirement of requirements) {
+      requireDrive(driveId, requirement.level, requirement.path ?? null);
+    }
+  });
+
+  const commitDriveAccess = (
+    driveId: string,
+    level: PermissionLevel,
+    path: string | null = null,
+  ): (() => void) => commitAccess(driveId, [{ level, path }]);
 
   const listVisibleDrives = (): DriveRecord[] => {
     assertCurrentAuthoritySync();
@@ -127,47 +154,38 @@ export function createScopedStorageService(
   };
 
   const methods: ScopedStorageMethods = {
-    createDrive(ownerId, params) {
-      requireActor(ownerId);
-      assertCurrentAuthoritySync();
-      return service.createDrive(ownerId, params, scope);
+    createDrive(params) {
+      const ownerId = requireActorId();
+      return service.createDrive(ownerId, params, scope, assertCurrentAuthoritySync);
     },
     getDrive(driveId) {
       assertCurrentAuthoritySync();
       const drive = service.getDriveForScope(driveId, scope);
       return drive && canAccess(driveId, 'read') ? drive : null;
     },
-    getDriveForScope(driveId) {
-      assertCurrentAuthoritySync();
-      const drive = service.getDriveForScope(driveId, scope);
-      return drive && canAccess(driveId, 'read') ? drive : null;
-    },
     updateDrive(driveId, updates) {
       requireDrive(driveId, 'admin');
-      assertCurrentAuthoritySync();
-      return service.updateDrive(driveId, updates);
+      const commitFence = commitDriveAccess(driveId, 'admin');
+      return service.updateDrive(driveId, updates, commitFence);
     },
     listDrives() {
       return listVisibleDrives();
     },
-    listDrivesForUser(userId) {
-      requireActor(userId);
-      return listVisibleDrives();
-    },
     deleteDrive(driveId) {
       requireDrive(driveId, 'admin');
-      assertCurrentAuthoritySync();
-      return service.deleteDrive(driveId);
+      const commitFence = commitDriveAccess(driveId, 'admin');
+      return service.deleteDrive(driveId, commitFence);
     },
     getDriveUsage(driveId) {
       requireDrive(driveId, 'read');
       return service.getDriveUsage(driveId);
     },
-    async upload(driveId, path, data, fileName, userId, options) {
-      requireActor(userId);
+    async upload(driveId, path, data, fileName, options) {
+      const userId = requireActorId();
       requireDrive(driveId, 'write', path);
+      const commitFence = commitDriveAccess(driveId, 'write', path);
       await assertCurrentAuthority();
-      const result = await service.upload(
+      return service.upload(
         driveId,
         path,
         data,
@@ -176,30 +194,29 @@ export function createScopedStorageService(
         options,
         scope,
         assertCurrentAuthority,
+        undefined,
+        commitFence,
       );
-      await assertCurrentAuthority();
-      return result;
     },
     async createUploadGrant(driveId, params) {
       requireDrive(driveId, 'write', params.path);
+      const returnFence = commitDriveAccess(driveId, 'write', params.path);
       await assertCurrentAuthority();
       const result = await service.createUploadGrant(driveId, params);
-      await assertCurrentAuthority();
+      returnFence();
       return result;
     },
     async download(driveId, path) {
       requireDrive(driveId, 'read', path);
+      const returnFence = commitDriveAccess(driveId, 'read', path);
       await assertCurrentAuthority();
-      const result = await service.download(driveId, path);
-      await assertCurrentAuthority();
-      return result;
+      return service.download(driveId, path, returnFence);
     },
     async downloadRange(driveId, path, start, end) {
       requireDrive(driveId, 'read', path);
+      const returnFence = commitDriveAccess(driveId, 'read', path);
       await assertCurrentAuthority();
-      const result = await service.downloadRange(driveId, path, start, end);
-      await assertCurrentAuthority();
-      return result;
+      return service.downloadRange(driveId, path, start, end, returnFence);
     },
     getFileInfo(driveId, path) {
       requireDrive(driveId, 'read', path);
@@ -212,46 +229,81 @@ export function createScopedStorageService(
     async moveObject(driveId, fromPath, toPath) {
       requireDrive(driveId, 'write', fromPath);
       requireDrive(driveId, 'write', toPath);
+      const commitFence = commitAccess(driveId, [
+        { level: 'write', path: fromPath },
+        { level: 'write', path: toPath },
+      ]);
       await assertCurrentAuthority();
-      const result = await service.moveObject(driveId, fromPath, toPath);
-      await assertCurrentAuthority();
-      return result;
+      return service.moveObject(
+        driveId,
+        fromPath,
+        toPath,
+        commitFence,
+      );
     },
     async copyObject(driveId, fromPath, toPath) {
       requireDrive(driveId, 'read', fromPath);
       requireDrive(driveId, 'write', toPath);
+      const commitFence = commitAccess(driveId, [
+        { level: 'read', path: fromPath },
+        { level: 'write', path: toPath },
+      ]);
       await assertCurrentAuthority();
-      const result = await service.copyObject(driveId, fromPath, toPath);
-      await assertCurrentAuthority();
-      return result;
+      return service.copyObject(
+        driveId,
+        fromPath,
+        toPath,
+        commitFence,
+      );
     },
     async deleteObject(driveId, path) {
       requireDrive(driveId, 'write', path);
+      const commitFence = commitDriveAccess(driveId, 'write', path);
       await assertCurrentAuthority();
-      const result = await service.deleteObject(driveId, path);
-      await assertCurrentAuthority();
-      return result;
+      return service.deleteObject(driveId, path, commitFence);
     },
-    createFolder(driveId, path, userId, isPublic) {
-      requireActor(userId);
+    createFolder(driveId, path, isPublic) {
+      const userId = requireActorId();
       requireDrive(driveId, 'write', path);
-      assertCurrentAuthoritySync();
-      return service.createFolder(driveId, path, userId, isPublic);
+      const commitFence = commitDriveAccess(driveId, 'write', path);
+      return service.createFolder(
+        driveId, path, userId, isPublic, commitFence,
+      );
     },
     setVisibility(driveId, path, isPublic) {
       requireDrive(driveId, 'admin', path);
-      assertCurrentAuthoritySync();
-      return service.setVisibility(driveId, path, isPublic);
+      const commitFence = commitDriveAccess(driveId, 'admin', path);
+      return service.setVisibility(
+        driveId, path, isPublic, commitFence,
+      );
+    },
+    updateObjectMetadata(driveId, path, metadata) {
+      requireDrive(driveId, 'write', path);
+      const commitFence = commitDriveAccess(driveId, 'write', path);
+      return service.updateObjectMetadata(
+        driveId, path, metadata, scope, commitFence,
+      );
     },
     setDriveVisibility(driveId, isPublic) {
       requireDrive(driveId, 'admin');
-      assertCurrentAuthoritySync();
-      return service.setDriveVisibility(driveId, isPublic);
+      const commitFence = commitDriveAccess(driveId, 'admin');
+      return service.setDriveVisibility(
+        driveId, isPublic, commitFence,
+      );
     },
     grantPermission(driveId, params) {
       requireDrive(driveId, 'admin', params.objectPath ?? null);
-      assertCurrentAuthoritySync();
-      return service.grantPermission(driveId, params);
+      const commitFence = commitDriveAccess(
+        driveId,
+        'admin',
+        params.objectPath ?? null,
+      );
+      return service.grantPermission(
+        driveId,
+        params,
+        { context: auth, scope, provenance: auditProvenance },
+        commitFence,
+      );
     },
     listPermissions(driveId, options) {
       requireDrive(driveId, 'admin', options?.objectPath ?? null);
@@ -267,25 +319,28 @@ export function createScopedStorageService(
     revokePermission(permissionId) {
       const permission = methods.getPermission(permissionId);
       if (!permission) return false;
-      assertCurrentAuthoritySync();
-      return service.revokePermission(permissionId);
+      const commitFence = commitDriveAccess(permission.drive_id, 'admin');
+      return service.revokePermission(
+        permissionId,
+        { context: auth, scope, provenance: auditProvenance },
+        commitFence,
+      );
     },
-    checkAccess(driveId, path, _userId, _userRole, _properties, level) {
+    checkAccess(driveId, path, level) {
       return canAccess(driveId, level, path);
     },
   };
 
-  const drives: StorageDriveApi = {
+  const drives: ScopedStorageDriveApi = {
     create: methods.createDrive,
     get: methods.getDrive,
     update: methods.updateDrive,
     list: methods.listDrives,
-    listForUser: methods.listDrivesForUser,
     delete: methods.deleteDrive,
     usage: methods.getDriveUsage,
     setVisibility: methods.setDriveVisibility,
   };
-  const objects: StorageObjectApi = {
+  const objects: ScopedStorageObjectApi = {
     upload: methods.upload,
     download: methods.download,
     downloadRange: methods.downloadRange,
@@ -296,51 +351,39 @@ export function createScopedStorageService(
     delete: methods.deleteObject,
     createFolder: methods.createFolder,
     setVisibility: methods.setVisibility,
+    updateMetadata: methods.updateObjectMetadata,
   };
-  const permissions: StoragePermissionApi = {
+  const permissions: ScopedStoragePermissionApi = {
     grant: methods.grantPermission,
     list: methods.listPermissions,
     get: methods.getPermission,
     revoke: methods.revokePermission,
     checkAccess: methods.checkAccess,
   };
-  const uploads: StorageUploadGrantApi = { create: methods.createUploadGrant };
+  const uploads: ScopedStorageUploadGrantApi = { create: methods.createUploadGrant };
 
-  return new Proxy(service, {
-    get(target, property) {
-      if (property === 'drives') return drives;
-      if (property === 'objects') return objects;
-      if (property === 'permissions') return permissions;
-      if (property === 'uploads') return uploads;
-      if (typeof property === 'string' && Object.hasOwn(methods, property)) {
-        return Reflect.get(methods, property, methods);
-      }
-      if (typeof property === 'string') {
-        throw new Error(
-          `[server-services] Storage member "${property}" is not available through the request-scoped facade; use zero.unsafe.storage for deliberate privileged access.`,
-        );
-      }
-      return Reflect.get(target, property, target);
-    },
-    has(_target, property) {
-      return typeof property === 'string'
-        && (Object.hasOwn(methods, property)
-          || property === 'drives'
-          || property === 'objects'
-          || property === 'permissions'
-          || property === 'uploads');
-    },
-    ownKeys() {
-      return ['drives', 'objects', 'permissions', 'uploads', ...Object.keys(methods)];
-    },
-    getOwnPropertyDescriptor(_target, property) {
-      if (typeof property !== 'string') return undefined;
-      const visible = Object.hasOwn(methods, property)
-        || property === 'drives'
-        || property === 'objects'
-        || property === 'permissions'
-        || property === 'uploads';
-      return visible ? { configurable: true, enumerable: true } : undefined;
-    },
+  let scopedProxy!: ScopedStorageService;
+  const attachedStudio = service.getAttachedStudioService();
+  const studio: ScopedStorageStudioApi | null = attachedStudio
+    ? createScopedStorageStudioApi({
+        studio: attachedStudio,
+        access,
+        scope,
+        getUserProperties: getProperties,
+        getStorage: () => scopedProxy,
+        assertCurrentAuthority,
+        assertCurrentAuthoritySync,
+      })
+    : null;
+
+  scopedProxy = createScopedStorageProxy({
+    service,
+    methods,
+    drives,
+    objects,
+    permissions,
+    uploads,
+    studio,
   });
+  return scopedProxy;
 }

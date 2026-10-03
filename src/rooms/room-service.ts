@@ -43,6 +43,9 @@ export class RoomOwnerCannotLeaveError extends Error {
   }
 }
 
+/** Synchronous authority check executed while the system DB writer lock is held. */
+export type RoomCommitFence = () => void;
+
 // ─── RoomService ────────────────────────────────────────────────────────────
 
 export class RoomService {
@@ -85,6 +88,7 @@ export class RoomService {
     createdBy: string,
     params: CreateRoomParams,
     scope?: ServiceDataScope,
+    commitFence?: RoomCommitFence,
   ): RoomRecord {
     const boundary = this.requireScope(scope);
     const roomId = `room_${crypto.randomUUID()}`;
@@ -102,6 +106,7 @@ export class RoomService {
     };
 
     this.db.transaction(() => {
+      commitFence?.();
       this.db.insert('rooms', room as unknown as Row);
 
       // Auto-join creator as owner
@@ -159,23 +164,31 @@ export class RoomService {
   }
 
   /** Leave a room. Returns true if the user was a member. */
-  leave(roomId: string, userId: string, scope?: ServiceDataScope): boolean {
+  leave(
+    roomId: string,
+    userId: string,
+    scope?: ServiceDataScope,
+    commitFence?: RoomCommitFence,
+  ): boolean {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
-    const member = this.stmts.getMemberByRoomUser.get(
-      roomId,
-      userId,
-      tenantId,
-    ) as MemberRow | null;
-    if (!member) return false;
+    return this.db.transaction(() => {
+      const member = this.stmts.getMemberByRoomUser.get(
+        roomId,
+        userId,
+        tenantId,
+      ) as MemberRow | null;
+      if (!member) return false;
 
-    const room = this.stmts.getRoom.get(roomId, tenantId) as RoomRow | null;
-    if (member.role === 'owner' || room?.created_by === userId) {
-      throw new RoomOwnerCannotLeaveError();
-    }
+      const room = this.stmts.getRoom.get(roomId, tenantId) as RoomRow | null;
+      if (member.role === 'owner' || room?.created_by === userId) {
+        throw new RoomOwnerCannotLeaveError();
+      }
 
-    this.db.delete('room_members', member.member_id);
-    return true;
+      commitFence?.();
+      this.db.delete('room_members', member.member_id);
+      return true;
+    });
   }
 
   /** Get room by ID. */
@@ -225,22 +238,24 @@ export class RoomService {
   }
 
   /** Delete a room and all its members. */
-  delete(roomId: string, scope?: ServiceDataScope): boolean {
+  delete(
+    roomId: string,
+    scope?: ServiceDataScope,
+    commitFence?: RoomCommitFence,
+  ): boolean {
     const boundary = this.requireScope(scope);
     const tenantId = serviceDataTenantId(boundary);
-    const room = this.stmts.getRoom.get(roomId, tenantId) as RoomRow | null;
-    if (!room) return false;
-
-    const members = this.stmts.getMembersByRoom.all(roomId, tenantId) as MemberRow[];
-
-    this.db.transaction(() => {
+    return this.db.transaction(() => {
+      const room = this.stmts.getRoom.get(roomId, tenantId) as RoomRow | null;
+      if (!room) return false;
+      const members = this.stmts.getMembersByRoom.all(roomId, tenantId) as MemberRow[];
+      commitFence?.();
       for (const m of members) {
         this.db.delete('room_members', m.member_id);
       }
       this.db.delete('rooms', roomId);
+      return true;
     });
-
-    return true;
   }
 
   private requireScope(scope: ServiceDataScope | undefined): ServiceDataScope {

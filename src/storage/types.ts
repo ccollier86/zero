@@ -1,4 +1,9 @@
 import type { ClientTableDef } from '../schema/define-schema';
+import type { AuthAuditService } from '../auth/auth-audit-service';
+import type {
+  ResolvedStorageStudioConfig,
+  StorageStudioIsolation,
+} from './storage-config';
 
 // ─── Drive Types ──────────────────────────────────────────────────────────
 
@@ -97,6 +102,21 @@ export interface BlobRecord {
   created_at: number;
 }
 
+/** Durable local/provider receipt for bytes published before metadata commit. */
+export interface StoragePendingBlobPublication {
+  readonly publicationId: string;
+  readonly checksum: string;
+  readonly size: number;
+}
+
+export interface StorageBlobWriteResult {
+  readonly checksum: string;
+  readonly size: number;
+  readonly headBytes: Uint8Array;
+  /** Opaque adapter receipt settled only after metadata or cleanup is durable. */
+  readonly publicationId?: string;
+}
+
 // ─── Permissions ──────────────────────────────────────────────────────────
 
 export type GrantType = 'role' | 'user' | 'property';
@@ -142,6 +162,15 @@ export interface UploadOptions {
   metadata?: Record<string, unknown>;
   /** Make file publicly accessible. */
   public?: boolean;
+  /**
+   * Declared body size used for concurrent managed-upload admission. Blob and
+   * Uint8Array inputs infer this automatically; streaming callers should set it.
+   */
+  contentLength?: number;
+  /** Optional caller/capability byte ceiling, combined with the drive limit. */
+  maxSize?: number;
+  /** Optional caller/capability MIME allowlist checked against detected bytes. */
+  allowedMimeTypes?: string[];
 }
 
 export interface PresignedUrlOptions {
@@ -219,6 +248,8 @@ export interface StorageUploadGrant {
 export interface ListOptions {
   /** Only list files, folders, or both. Default: 'all'. */
   type?: 'file' | 'folder' | 'all';
+  /** Case-insensitive literal substring matched against immediate-child name/path. */
+  search?: string;
   /** Pagination cursor. */
   cursor?: string;
   /** Max items per page. Default: 100. */
@@ -257,21 +288,65 @@ export interface DriveUsage {
  * The adapter handles reading/writing the actual bytes.
  */
 export interface StorageAdapter {
+  /**
+   * Shutdown contract implemented by provider writes.
+   *
+   * `cooperative` means every write observes the supplied AbortSignal and
+   * settles promptly. `durable-publication` additionally permits bounded
+   * handoff because every published blob has a restart-recoverable receipt.
+   */
+  readonly writeShutdownSafety?: 'cooperative' | 'durable-publication';
+  /**
+   * Physical isolation contracts this adapter actually implements.
+   *
+   * Storage Studio fails closed when its configured isolation mode is absent
+   * from this list. Legacy Storage remains compatible with adapters that omit
+   * the declaration while Studio is disabled.
+   */
+  readonly supportedStudioIsolation?: readonly StorageStudioIsolation[];
   /** Write bytes, returning the SHA-256 checksum + head bytes for MIME detection. If blob already exists, returns checksum without rewriting. */
   writeBlob(
     data: ReadableStream<Uint8Array> | Uint8Array | Blob,
-    maxSize?: number
-  ): Promise<{ checksum: string; size: number; headBytes: Uint8Array }>;
+    maxSize?: number,
+    options?: StorageAdapterOperationOptions,
+  ): Promise<StorageBlobWriteResult>;
   /** Read blob by checksum. Returns null if not found. */
   readBlob(checksum: string): Promise<ReadableStream<Uint8Array> | null>;
   /** Read a byte range of a blob (for Range requests). */
   readBlobRange(checksum: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | null>;
-  /** Delete blob bytes from storage. Only called when ref_count reaches 0. */
-  removeBlob(checksum: string): Promise<void>;
+  /**
+   * Legacy asynchronous deletion hook.
+   *
+   * It is retained for source compatibility, but the shared-CAS engine never
+   * invokes it: an arbitrary awaited delete cannot be fenced against a second
+   * runtime publishing a new reference after a lease expires. Adapters that
+   * want automatic zero-reference cleanup must implement `removeBlobSync`.
+   */
+  removeBlob(checksum: string, options?: StorageAdapterOperationOptions): Promise<void>;
+  /**
+   * Synchronous deletion boundary used by shared-CAS Studio replicas. The
+   * service invokes this while holding SQLite's writer lock, making lease
+   * validation and physical deletion one non-yielding fenced operation.
+   */
+  removeBlobSync?(checksum: string): void;
   /** Check if a blob exists in storage. */
   blobExists(checksum: string): Promise<boolean>;
   /** Get the size of a blob on disk. Returns 0 if not found. */
   blobSize(checksum: string): Promise<number>;
+  /** Bounded crash receipts awaiting metadata/reference reconciliation. */
+  listPendingBlobPublications?(limit?: number): {
+    readonly items: readonly StoragePendingBlobPublication[];
+    readonly remaining: boolean;
+  };
+  /** Settle one opaque crash receipt after durable reference reconciliation. */
+  settleBlobPublication?(publicationId: string): void;
+  /** Release adapter-owned runtime resources after all service work drains. */
+  stop?(): void | Promise<void>;
+}
+
+/** Cooperative cancellation supplied to provider I/O owned by Storage. */
+export interface StorageAdapterOperationOptions {
+  readonly signal?: AbortSignal;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────
@@ -290,6 +365,8 @@ export interface StoragePluginConfig {
   signingSecret?: string;
   /** Default presigned URL expiry in seconds. Default: 3600. */
   defaultPresignedTTL?: number;
+  /** Normalized, opt-in Storage Studio policy. Disabled when omitted. */
+  studio?: ResolvedStorageStudioConfig;
   /** App-local runtime used by managed createApp() composition. */
   runtime?: import('../runtime/zero-app-runtime').ZeroAppRuntime;
   /** Explicit auth dependency; defaults to the legacy compatibility getter. */
@@ -300,6 +377,12 @@ export interface StoragePluginConfig {
   getUserProperties?: (userId: string) => Record<string, string>;
   /** Validate property keys admitted into storage authorization policy. */
   isPolicyTrustedProperty?: (key: string) => boolean;
+  /** Resolve Guardian's app-local append-only audit service. */
+  getAuditService?: () => AuthAuditService | null;
+  /** Advanced idempotent hooks for an external Storage lifecycle provider. */
+  studioLifecycleProvider?: import('./storage-studio-recovery-coordinator').StorageStudioLifecycleProvider;
+  /** Deadline for one external lifecycle-provider continuation. */
+  studioLifecycleProviderTimeoutMs?: number;
   /** Composition callback for app factories and advanced integrations. */
   onServiceCreated?: (service: import('./storage-service').StorageService) => void;
 }

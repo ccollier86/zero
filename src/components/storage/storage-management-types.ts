@@ -8,6 +8,10 @@
 
 import type { Row } from '../../sync/types';
 import type { StorageAccessCapabilities } from '../../storage/types';
+import type {
+  StorageManagementController,
+  StorageStudioInspectorSlots,
+} from './storage-management-controller';
 
 /** Storage drive row shape consumed by master-detail UI components. */
 export interface StorageDriveRow extends Row {
@@ -22,7 +26,7 @@ export interface StorageDriveRow extends Row {
 }
 
 /** Top-level storage management view. */
-export type StorageManagementView = 'drives' | 'files';
+export type { StorageManagementView } from './storage-management-controller';
 
 /** Props for the reusable storage management organism. */
 export interface StorageManagementProps {
@@ -30,5 +34,12 @@ export interface StorageManagementProps {
   initialDriveId?: string | null;
   /** Called whenever the selected drive changes. */
   onDriveChange?: (driveId: string | null) => void;
+  /**
+   * Optional transport-free Studio controller. Omit it to retain the existing
+   * hook-backed storage behavior.
+   */
+  controller?: StorageManagementController;
+  /** Optional inspector content for app-specific access, sharing, and jobs. */
+  inspectorSlots?: StorageStudioInspectorSlots;
   className?: string;
 }

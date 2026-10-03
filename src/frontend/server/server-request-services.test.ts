@@ -25,6 +25,7 @@ import { WorkflowExecutionAuthorityStore } from '../../workflows/workflow-execut
 import { defineWorkflowTables } from '../../workflows/workflow.plugin';
 import { OBS_CODES } from '../../observability/codes';
 import {
+  createAuthorityScopedServerServices,
   createServerRequestServices,
 } from './server-request-services';
 import {
@@ -53,8 +54,8 @@ describe('request-bound server services', () => {
     try {
       const alpha = fixture.forToken('alpha');
       const beta = fixture.forToken('beta');
-      const driveA = alpha.storage!.createDrive(USER_ID, { name: 'Alpha' });
-      const driveB = beta.storage!.createDrive(USER_ID, { name: 'Beta' });
+      const driveA = alpha.storage!.createDrive({ name: 'Alpha' });
+      const driveB = beta.storage!.createDrive({ name: 'Beta' });
 
       expect(driveA.tenant_id).toBe(TENANT_A);
       expect(driveB.tenant_id).toBe(TENANT_B);
@@ -68,6 +69,48 @@ describe('request-bound server services', () => {
 
       expect(alpha.unsafe.storage).toBe(fixture.storage);
       expect(alpha.unsafe.storage!.getDrive(driveB.drive_id)).toEqual(driveB);
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
+  test('snapshots verified machine properties when creating scoped services', () => {
+    const fixture = createFixture();
+    try {
+      const context = fixture.contexts.get('alpha')!;
+      const access = createRequestAuthorizationAccess({
+        authContext: context,
+        kernel: fixture.kernel,
+        propertyStore: fixture.store,
+      });
+      const scope = trustedSystemServiceDataScope({
+        scopeKind: 'tenant',
+        tenantId: TENANT_A,
+      });
+      const drive = fixture.storage.createDrive(
+        'peer-owner',
+        { name: 'Property-bound drive' },
+        scope,
+      );
+      fixture.storage.grantPermission(drive.drive_id, {
+        grantType: 'property',
+        grantKey: 'department',
+        grantValue: 'finance',
+        permission: 'read',
+      });
+      const properties: Record<string, string> = { department: 'finance' };
+      const zero = createAuthorityScopedServerServices({
+        access,
+        scope,
+        services: fixture.services,
+        userProperties: properties,
+        assertCurrentAuthority: async () => {},
+        assertCurrentAuthoritySync: () => {},
+      });
+
+      properties.department = 'engineering';
+
+      expect(zero.storage!.getDrive(drive.drive_id)).toEqual(drive);
     } finally {
       fixture.db.dispose();
     }
@@ -286,12 +329,12 @@ describe('request-bound server services', () => {
       const beta = fixture.forToken('beta');
       const notificationA = alpha.notifications!.create({
         title: 'Alpha notice',
-      }, USER_ID);
+      });
       const notificationB = beta.notifications!.create({
         title: 'Beta notice',
-      }, USER_ID);
-      const roomA = alpha.rooms!.create(USER_ID, { name: 'Alpha room' });
-      const roomB = beta.rooms!.create(USER_ID, { name: 'Beta room' });
+      });
+      const roomA = alpha.rooms!.create({ name: 'Alpha room' });
+      const roomB = beta.rooms!.create({ name: 'Beta room' });
       const workflowA = await alpha.workflows!.run('proof', {}, USER_ID);
       const workflowB = await beta.workflows!.run('proof', {}, USER_ID);
 
@@ -309,7 +352,10 @@ describe('request-bound server services', () => {
         USER_ID,
         trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: TENANT_B }),
       )).rejects.toMatchObject({ code: 'WORKFLOW_REQUEST_INVALID' });
-      expect(() => alpha.notifications!.deleteExpired()).toThrow('not available');
+      const deniedNotifications = alpha.notifications as unknown as {
+        deleteExpired(): number;
+      };
+      expect(() => deniedNotifications.deleteExpired()).toThrow('not available');
       const deniedWorkflow = alpha.workflows as unknown as {
         getGraphRuntime(): unknown;
         dispose(): Promise<void>;
@@ -396,6 +442,24 @@ describe('request-bound server services', () => {
     }
   });
 
+  test('does not hide room storage failures as missing rooms', () => {
+    const fixture = createFixture();
+    try {
+      const alpha = fixture.forToken('alpha');
+      const storageFailure = new Error('room storage unavailable');
+      const getRoom = fixture.rooms.getRoom;
+      fixture.rooms.getRoom = () => {
+        throw storageFailure;
+      };
+
+      expect(() => alpha.rooms!.getRoom('room_failure')).toThrow(storageFailure);
+
+      fixture.rooms.getRoom = getRoom;
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
   test('keeps notification and room management identical to the HTTP tenant policy', () => {
     const fixture = createFixture();
     try {
@@ -405,13 +469,11 @@ describe('request-bound server services', () => {
       const roomManager = fixture.forToken('tenant-room-manager');
       const notification = owner.notifications!.broadcast(
         { title: 'Owner notice' },
-        USER_ID,
       );
-      const room = owner.rooms!.create(USER_ID, { name: 'Owner room' });
+      const room = owner.rooms!.create({ name: 'Owner room' });
 
       expect(() => platformAdmin.notifications!.broadcast(
         { title: 'Platform-only privilege' },
-        'platform_admin',
       )).toThrow('Notification management is not permitted');
       expect(() => platformAdmin.notifications!.delete(notification.notification_id))
         .toThrow('Notification management is not permitted');
@@ -420,7 +482,6 @@ describe('request-bound server services', () => {
 
       const managed = notificationManager.notifications!.broadcast(
         { title: 'Explicit manager' },
-        'notification_manager',
       );
       expect(managed.tenant_id).toBe(TENANT_A);
       expect(notificationManager.notifications!.delete(notification.notification_id))
@@ -436,13 +497,12 @@ describe('request-bound server services', () => {
     const fixture = createFixture(gatedStorageAdapter(gate.promise));
     try {
       const alpha = fixture.forToken('alpha');
-      const drive = alpha.storage!.createDrive(USER_ID, { name: 'Alpha' });
+      const drive = alpha.storage!.createDrive({ name: 'Alpha' });
       const upload = alpha.storage!.upload(
         drive.drive_id,
         '/report.txt',
         new Uint8Array([104, 105]),
         'report.txt',
-        USER_ID,
       );
 
       await waitFor(() => fixture.adapterStarted.value);
@@ -515,7 +575,7 @@ describe('request-bound server services', () => {
 
       active = false;
 
-      expect(() => zero.storage!.createDrive(context.userId, { name: 'stale' }))
+      expect(() => zero.storage!.createDrive({ name: 'stale' }))
         .toThrow(expect.objectContaining({
           code: 'AUTH_STATE_CHANGED',
           status: 409,
@@ -531,8 +591,17 @@ describe('request-bound server services', () => {
     try {
       const alphaRequest = fixture.forToken('alpha');
       const betaRequest = fixture.forToken('beta');
-      const driveA = alphaRequest.storage!.createDrive(USER_ID, { name: 'Alpha' });
-      const driveB = betaRequest.storage!.createDrive(USER_ID, { name: 'Beta' });
+      const driveA = alphaRequest.storage!.createDrive({ name: 'Alpha' });
+      const driveB = betaRequest.storage!.createDrive({ name: 'Beta' });
+      const grantPermission = fixture.storage.grantPermission.bind(fixture.storage);
+      let aclAuditAuthority:
+        Parameters<StorageService['grantPermission']>[2] = undefined;
+      fixture.storage.grantPermission = (
+        ...args: Parameters<StorageService['grantPermission']>
+      ) => {
+        aclAuditAuthority = args[2];
+        return grantPermission(...args);
+      };
       const authority = fixture.captureWorkflowAuthority('alpha');
       const provider = createWorkflowExecutionServiceProvider({
         services: fixture.services,
@@ -557,10 +626,20 @@ describe('request-bound server services', () => {
       expect(zero.storage!.getDrive(driveB.drive_id)).toBeNull();
       expect(() => zero.storage!.updateDrive(driveB.drive_id, { name: 'stolen' }))
         .toThrow('Drive not found');
+      zero.storage!.permissions.grant(driveA.drive_id, {
+        grantType: 'role',
+        grantValue: 'auditor',
+        permission: 'read',
+      });
+      expect(aclAuditAuthority).toMatchObject({
+        provenance: 'system',
+        context: { userId: USER_ID, membershipId: 'mem_a' },
+        scope: { scopeKind: 'tenant', tenantId: TENANT_A },
+      });
 
-      const notification = zero.notifications!.create({ title: 'Workflow' }, USER_ID);
+      const notification = zero.notifications!.create({ title: 'Workflow' });
       expect(notification.tenant_id).toBe(TENANT_A);
-      expect(zero.rooms!.create(USER_ID, { name: 'Workflow room' }).tenant_id)
+      expect(zero.rooms!.create({ name: 'Workflow room' }).tenant_id)
         .toBe(TENANT_A);
 
       expect(() => (zero as any).unsafe).toThrow('zero.unsafe');
@@ -602,11 +681,11 @@ describe('request-bound server services', () => {
       await Promise.resolve();
       fixture.contexts.set('alpha', tenantContext(TENANT_A, 'mem_a', 1));
 
-      expect(() => zero.storage!.createDrive(USER_ID, { name: 'stale' }))
+      expect(() => zero.storage!.createDrive({ name: 'stale' }))
         .toThrow('Workflow execution authority is no longer valid');
-      expect(() => zero.notifications!.create({ title: 'stale' }, USER_ID))
+      expect(() => zero.notifications!.create({ title: 'stale' }))
         .toThrow('Workflow execution authority is no longer valid');
-      expect(() => zero.rooms!.create(USER_ID, { name: 'stale' }))
+      expect(() => zero.rooms!.create({ name: 'stale' }))
         .toThrow('Workflow execution authority is no longer valid');
       expect(fixture.storage.listDrives()).toHaveLength(driveCount);
       expect(fixture.notifications.getForUser(
@@ -668,9 +747,9 @@ describe('request-bound server services', () => {
         authority: fixture.resolveWorkflowAuthority(authority),
         assertCurrentAuthority: () => fixture.assertWorkflowAuthority(authority),
       });
-      const drive = zero.storage!.createDrive(USER_ID, { name: 'Private drive' });
-      const notification = zero.notifications!.create({ title: 'Private notice' }, USER_ID);
-      const room = zero.rooms!.create(USER_ID, { name: 'Private room' });
+      const drive = zero.storage!.createDrive({ name: 'Private drive' });
+      const notification = zero.notifications!.create({ title: 'Private notice' });
+      const room = zero.rooms!.create({ name: 'Private room' });
       const workflow = await zero.workflows!.run('proof', {}, USER_ID);
 
       // Simulate an arbitrary await followed by session/membership revocation.
@@ -682,11 +761,11 @@ describe('request-bound server services', () => {
       expect(() => zero.storage!.listDrives()).toThrow(revoked);
       expect(() => zero.storage!.getDriveUsage(drive.drive_id)).toThrow(revoked);
       expect(() => zero.notifications!.getById(notification.notification_id)).toThrow(revoked);
-      expect(() => zero.notifications!.list(USER_ID, [])).toThrow(revoked);
+      expect(() => zero.notifications!.list()).toThrow(revoked);
       expect(() => zero.notifications!.getReceipts(notification.notification_id)).toThrow(revoked);
       expect(() => zero.rooms!.getRoom(room.room_id)).toThrow(revoked);
       expect(() => zero.rooms!.getMembers(room.room_id)).toThrow(revoked);
-      expect(() => zero.rooms!.getRoomsForUser(USER_ID)).toThrow(revoked);
+      expect(() => zero.rooms!.getRoomsForUser()).toThrow(revoked);
       expect(() => zero.workflows!.getInstance(workflow)).toThrow(revoked);
       expect(() => zero.workflows!.get(workflow)).toThrow(revoked);
       expect(() => zero.workflows!.getSteps(workflow)).toThrow(revoked);
@@ -717,7 +796,10 @@ function createFixture(
   defineNotificationTables(db);
   defineRoomTables(db);
   defineWorkflowTables(db);
-  const storage = new StorageService(db, adapter, { tenancyMode });
+  const storage = new StorageService(db, adapter, {
+    tenancyMode,
+    isPolicyTrustedProperty: (key) => key === 'department',
+  });
   const notifications = new NotificationService(db, tenancyMode);
   const rooms = new RoomService(db, tenancyMode);
   const kernel = createAuthorizationKernel(resolveAuthBehaviorConfig(
@@ -862,6 +944,7 @@ function createFixture(
     kernel,
     notifications,
     observabilityEvents,
+    rooms,
     storage,
     store,
     workflows,
@@ -998,19 +1081,23 @@ function authorityReferenceMatches(
 }
 
 function memoryStorageAdapter(): StorageAdapter {
+  let exists = false;
   return {
+    writeShutdownSafety: 'cooperative',
     async writeBlob(data) {
       const bytes = data instanceof Uint8Array
         ? data
         : data instanceof Blob
           ? new Uint8Array(await data.arrayBuffer())
           : new Uint8Array(await new Response(data).arrayBuffer());
+      exists = true;
       return { checksum: 'sha256:test', size: bytes.byteLength, headBytes: bytes };
     },
     async readBlob() { return null; },
     async readBlobRange() { return null; },
-    async removeBlob() {},
-    async blobExists() { return false; },
+    async removeBlob() { exists = false; },
+    removeBlobSync() { exists = false; },
+    async blobExists() { return exists; },
     async blobSize() { return 0; },
   };
 }

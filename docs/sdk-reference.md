@@ -2980,7 +2980,7 @@ flow/resource metadata to the stored object.
 The older method names such as `createDrive()`, `listFolder()`, and
 `grantPermission()` remain supported.
 
-### Storage Management Component
+### Legacy-compatible Storage Management
 
 For admin or owner dashboards, Zero exports an embeddable storage organism:
 
@@ -3002,6 +3002,115 @@ when the backend says the user lacks capability, manages role/user/property
 permission grants, filters/sorts folder contents, uploads through
 `StorageDropzone`, and creates presigned download links for private files.
 
+The no-prop call above deliberately retains the established Storage contract.
+`StorageManagement` also accepts a transport-free
+`StorageManagementController` and `inspectorSlots`, so the same list/detail
+workspace can render a native Storage Studio controller or an app-specific
+integration without duplicating the shell.
+
+Native Studio controllers also project `currentPathAccess`; Upload and New
+Folder are gated by the open folder's effective ACL. Custom/legacy controllers
+may omit that field to retain drive-level fallback behavior.
+
+### Storage Studio
+
+Storage Studio is the opt-in managed-drive layer around the same Storage
+engine. Enable it with `storage.studio.enabled`, merge
+`STORAGE_STUDIO_PERMISSION_REGISTRY` and the desired
+`STORAGE_STUDIO_ROLE_FRAGMENTS` into advanced Guardian authorization, and use
+an adapter that explicitly declares `shared-cas`, the only accepted Studio
+isolation contract in this release. The built-in local adapter supports it.
+
+All Zero 2 Storage adapters, including adapters used through direct
+`StorageService` construction, must also implement the engine mutation-safety
+contract: synchronous `removeBlobSync()` plus either cooperative cancellable
+writes (`writeShutdownSafety: 'cooperative'`) or durably journaled publication
+(`'durable-publication'` with pending-publication listing and settlement).
+Unsafe adapters fail closed during admission. The built-in local adapter is
+durably journaled; custom adapter authors should follow the full contract and
+upgrade notes in [Storage Studio](./storage-studio.md).
+
+```tsx
+import { StorageStudioManagement } from '@zero/framework/react';
+
+function OrganizationStorage() {
+  return <StorageStudioManagement className="h-[42rem]" />;
+}
+```
+
+`StorageStudioManagement` calls `useStorageStudioManagement()` and supplies
+the resulting controller plus inspector slots to the adaptive workspace. It
+adds managed-drive search/filters, cursor pagination, provision and lifecycle
+actions, object browsing/uploads, usage, access/settings panels, inline safe
+metadata editing, and safe job history. It must be rendered under
+`AppProvider` or `ClientProvider`.
+
+The controller uses server-backed, case-insensitive literal search across the
+current folder's complete immediate-child result set, not only the loaded
+page. Its exact-object ACL editor keeps inherited drive/ancestor grants
+read-only. `StorageFilePreview` and `useStorageFilePreview` obtain short-lived
+presigned URLs for raster image, audio, video, sandboxed PDF, and bounded
+escaped-text previews; an inspector `filePreview` slot can replace the built-in
+renderer.
+
+Studio control permissions cover managed lifecycle, metadata, and quota. They
+do not grant object bytes or ACL administration: the existing Storage ACL must
+resolve `admin` for the drive or exact object before grants can be listed,
+added, or revoked. Public drive/object visibility also remains disabled unless
+the server's Studio public-access policy permits it.
+
+Every browser `Client` also exposes the authenticated
+`client.storageStudio` surface:
+
+| Method | Result |
+| --- | --- |
+| `getCapabilities(options?)` | Live Guardian capabilities and safe configured policy. |
+| `listDrives(request?, options?)` | Cursor page filtered by owner, lifecycle, or search. |
+| `getDrive(driveId, options?)` | One visible managed drive. |
+| `getDriveByKey(key, owner?, options?)` | Resolve an immutable stable key in the active scope. |
+| `listDriveJobs(driveId, page?, options?)` | Safe cursor-paginated job history. |
+| `provisionDrive(input, options?)` | Idempotent provision receipt. |
+| `updateDrive(driveId, input, options?)` | Revisioned/idempotent update receipt. |
+| `changeDriveLifecycle(driveId, input, options?)` | Revisioned/idempotent lifecycle receipt. |
+
+`setScope(scopeKey)` and `clear()` are available for low-level integrations
+that own the Guardian scope lifecycle. Packaged hooks call them for you.
+
+The packaged hook calls `setScope()` from the current
+`useAuthorizationScopeBoundary()` and aborts/discards stale responses across
+login, logout, and tenant changes. A custom direct integration must maintain
+that scope key itself.
+
+Mutation methods generate an operation ID unless
+`StorageStudioMutationOptions.operationId` is supplied. On failure,
+`StorageStudioMutationError.operationId` preserves it. When
+`requiresSameIdempotencyKey` is true or the outcome is `unknown`, retry the
+same input with that exact ID. A Guardian scope change after dispatch is
+treated as an ambiguous mutation—not a plain discarded read—so the same ID is
+still available for safe replay.
+
+App-owned Elysia routes and actor-owned Torrent activities receive the same
+live, scope-closed surface at `zero.storage.studio`:
+
+```ts
+const artifacts = zero.storage?.studio?.drives.open('artifacts');
+if (!artifacts) throw new Error('Storage Studio is disabled.');
+
+await artifacts.objects.upload('/exports/result.json', bytes, {
+  contentType: 'application/json',
+});
+```
+
+`drives` provides `list`, `get`, `open`, `provision`, `update`, `lifecycle`,
+and `jobs`. The bound-drive API provides `usage`, `objects`, `permissions`, and
+`createUploadGrant()` without accepting a tenant selector or adapter path. A
+verified non-HTTP machine principal can use the public server-only
+`createAuthorityScopedServerServices()` helper, but must supply server-derived
+`access`/`scope` plus mandatory live asynchronous and synchronous authority
+fences. `runAsSystem()` does not fabricate the concrete Guardian user required
+by Studio. See [Storage Studio](./storage-studio.md) for configuration, ownership,
+Guardian permissions, lifecycle, quotas, errors, migration, and upgrade rules.
+
 ### REST API
 
 All routes are prefixed with `/storage`.
@@ -3017,7 +3126,7 @@ All routes are prefixed with `/storage`.
 | `GET` | `/drives/:driveId/usage` | read | Drive usage stats |
 | `POST` | `/drives/:driveId/upload` | write | Multipart file upload |
 | `GET` | `/drives/:driveId/files/*` | read/public | Download file, with Range and ETag support |
-| `GET` | `/drives/:driveId/list` | read | List folder contents |
+| `GET` | `/drives/:driveId/list` | read | List one folder with cursor, type, literal search, and sort controls |
 | `POST` | `/drives/:driveId/folders` | write | Create folder |
 | `POST` | `/drives/:driveId/move` | write | Move or rename file/folder |
 | `POST` | `/drives/:driveId/copy` | write | Copy a file |
@@ -3032,6 +3141,27 @@ All routes are prefixed with `/storage`.
 | `POST` | `/drives/:driveId/upload-grants` | write | Create a scoped public upload grant |
 | `PUT` | `/upload-grants/:token` | token | Execute a scoped public upload grant |
 | `GET` | `/drives/:driveId/info/*` | read/public | Get file/folder metadata |
+| `PATCH` | `/drives/:driveId/info/*` | write | Replace application metadata for one file/folder |
+
+When Storage Studio is enabled, its routes are prefixed with
+`/storage/studio`. They admit explicitly configured Guardian sessions and user
+API keys and always derive application/organization scope on the server.
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/storage/studio/capabilities` | Guardian user | Live Studio capabilities and safe policy. |
+| `GET` | `/storage/studio/drives` | catalog/personal | Cursor-paginated managed-drive catalog. |
+| `POST` | `/storage/studio/drives` | provision | Idempotently provision a managed drive. |
+| `GET` | `/storage/studio/drives/by-key/:key` | visible | Resolve an owner-scoped stable key. |
+| `GET` | `/storage/studio/drives/:driveId` | visible | Get one managed drive. |
+| `PATCH` | `/storage/studio/drives/:driveId` | manage/owner | Revisioned, idempotent update. |
+| `POST` | `/storage/studio/drives/:driveId/lifecycle` | capability | Suspend, resume, delete, restore, or retry. |
+| `GET` | `/storage/studio/drives/:driveId/jobs` | visible | Safe cursor-paginated job history. |
+
+Enabling Studio closes legacy `POST /storage/drives` so unmanaged creation
+cannot bypass provisioning. Existing unprofiled drives remain legacy; managed
+drive updates/deletion must use Studio, while ordinary object routes also
+enforce managed lifecycle, capability generation, public policy, and quotas.
 
 ### Standalone Server Mount
 
@@ -4991,20 +5121,30 @@ generated or exhaustive inventory; use TypeScript autocomplete and the package
 barrel for the exact installed-version surface.
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `ResourceMutationError`, `DataStudioMutationError`, `createDataStudioOperationId`, `dataStudioRowValuesByKey`, `dataStudioCellValue`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
+`createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `ResourceMutationError`, `DataStudioMutationError`, `createDataStudioOperationId`, `StorageStudioMutationError`, `createStorageStudioOperationId`, `createStorageStudioSdkSurface`, `dataStudioRowValuesByKey`, `dataStudioCellValue`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApiKeyManagement`, `SelfApiKeyManagement`, `ApplicationUserApiKeyManagement`, `TenantMemberApiKeyManagement`, `PlatformApiKeyManagement`, `PlatformWorkspaceManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `AdministrationScopeGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `SecretField`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableSearch`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioInlineCell`, `DataStudioFilterControl`, `DataStudioInspector`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `IdentityUserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApiKeyManagement`, `SelfApiKeyManagement`, `ApplicationUserApiKeyManagement`, `TenantMemberApiKeyManagement`, `PlatformApiKeyManagement`, `PlatformWorkspaceManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `AdministrationScopeGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `SecretField`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableSearch`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioInlineCell`, `DataStudioFilterControl`, `DataStudioInspector`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `IdentityUserManagement`, `StorageManagement`, `StorageStudioManagement`, `StorageStudioWorkspace`, `StorageStudioToolbar`, `StorageStudioList`, `StorageStudioInspector`, `StorageStudioActionBar`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 Realm-readiness additions: `DataRealmReadyGate`, `DataRealmReadinessNotice`.
 
+Additional Storage Studio component exports are
+`StorageStudioPaginationControls`, `StorageObjectPermissionsPanel`, and
+`StorageFilePreview`.
+
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataStudio`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantInvitationAction`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataStudio`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantInvitationAction`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useStorageStudioManagement`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 Realm-readiness hook: `useDataRealmReadiness`.
 
 ### Constants
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
+
+Storage Studio authorization constants come from `@zero/framework/storage`:
+`STORAGE_STUDIO_PERMISSION_REGISTRY`, `STORAGE_STUDIO_ROLE_FRAGMENTS`,
+`STORAGE_CATALOG_READ_PERMISSION`, `STORAGE_DRIVES_PROVISION_PERMISSION`,
+`STORAGE_DRIVES_MANAGE_PERMISSION`, `STORAGE_DRIVES_DELETE_PERMISSION`, and
+`STORAGE_PERSONAL_DRIVES_PROVISION_PERMISSION`.
 
 Data Studio's side-effect-free browser table fragment is exported as
 `DATA_STUDIO_CLIENT_TABLES` from `@zero/framework/data-studio`, not from the
@@ -5029,9 +5169,30 @@ and `PlatformApiKeyManagementProps`.
 Additional Guardian control-plane prop types in the browser-safe barrel:
 `TenantMemberManagementProps` and `TenantOnboardingManagementProps`.
 
+Storage Studio browser-safe additions include
+`StorageStudioSdkSurface`, `StorageStudioRequestOptions`,
+`StorageStudioMutationOptions`, `StorageStudioCapabilities`,
+`StorageStudioDrive`, `StorageStudioDrivePage`,
+`StorageStudioDriveListRequest`, `StorageStudioProvisionRequest`,
+`StorageStudioDriveUpdateRequest`, `StorageStudioLifecycleRequest`,
+`StorageStudioMutationReceipt`, `StorageStudioJobPage`,
+`StorageStudioJobView`, `StorageStudioJobPresentation`,
+`StorageStudioManagementProps`, `StorageManagementController`,
+`StorageStudioInspectorSlots`, `StorageStudioOperations`,
+`StorageStudioPagination`, `StorageObjectPermissionsPanelProps`,
+`StorageFilePreviewProps`, `StorageFilePreviewKind`,
+`StorageFilePreviewState`, `UseStorageStudioManagementOptions`, and
+`UseStorageStudioManagementResult`.
+
 `StorageUploadGrantResource` is a server/storage contract rather than a React
 barrel export. Import it from `@zero/framework/storage` or
 `@zero/framework/server`.
+
+Storage Studio's server/storage barrel exports `StorageStudioConfig`, resolved
+configuration types, `StorageStudioService`, the `ScopedStorageStudio*`
+interfaces, transport contracts, `STORAGE_STUDIO_PERMISSION_REGISTRY`,
+`STORAGE_STUDIO_ROLE_FRAGMENTS`, individual permission constants, stable
+`STORAGE_ERROR_CODES`, and Storage domain/HTTP error contracts.
 
 Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `createZeroNativeAuthBroker`, `createNativeAuthClient`,
@@ -5050,6 +5211,28 @@ Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `NativeSyncAuthConfig`, `NativeIdTokenClaims`, and `NativeOidcMetadata`.
 
 Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `AppStorageConfig`, `ResolvedConfig`, `ResolvedAppStorageConfig`, `AppDatabaseTopologyConfig`, `AppSingleDatabaseTopologyConfig`, `AppMultipleDatabaseTopologyConfig`, `AppDatabaseActorConfig`, `AppDatabaseHotPlacementConfig`, `AppDatabasePlacementConfig`, `AppDatabasePlacementPolicyConfig`, `AppTenantDataIsolation`, `ResolvedAppDatabaseTopologyConfig`, `ResolvedAppSingleDatabaseTopologyConfig`, `ResolvedAppMultipleDatabaseTopologyConfig`, `DatabaseCoordinatorRestartPolicy`, `NormalizedDatabaseCoordinatorRestartPolicy`, `DatabaseRealm`, `DatabaseRealmDefinition`, `DatabaseReadQueryConnection`, `DatabaseReadQueryContext`, `DatabaseReadQueryStatement`, `DatabaseActorLaunch`, `DatabaseActorSourceLaunch`, `DatabaseActorBundleLaunch`, `DatabaseActorCommandPrefixLaunch`, `DatabaseActorExecutorPolicy`, `DatabaseActorSQLiteConfig`, `RunDatabaseActorIfRequestedOptions`, `AsyncDatabaseClient`, `DatabaseOperationRow`, `DatabaseSerializableValue`, `DatabaseListPage`, `DatabaseListPageOptions`, `DatabaseFindInput`, `DatabaseFindRows`, `DatabaseFindFilter`, `DatabaseFindFieldFilter`, `DatabaseFindFilterGroup`, `DatabaseFindFilterOperator`, `DatabaseFindOrder`, `DatabaseMutation`, `DatabaseMutationOptions`, `DatabaseAssertion`, `DatabaseBatchInput`, `DatabaseReadOptions`, `DatabaseReadConsistency`, `DatabaseReadResult`, `DatabaseCommitResult`, `DatabaseSequenceToken`, `DatabaseTenantSyncSnapshotPage`, `DatabaseTenantSyncSnapshotSession`, `DatabaseError`, `DatabaseErrorCode`, `DatabaseRef`, `DatabasePlacement`, `DatabasePlacementPolicy`, `DatabasePlacementSelector`, `DatabasePlacementSelectorContext`, `DatabaseHotDurability`, `DatabaseHotPlacementConfig`, `DATABASE_ACTOR_CHILD_FLAG`, `DATABASE_HOT_DEFAULT_DURABILITY`, `DATABASE_HOT_DEFAULT_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_SHORTHAND_MAX_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS`, `DATABASE_WRITER_MAX_RECEIPT_KEYS`, `DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES`, `DATABASE_WRITER_MAX_RECEIPTS`, `DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES`, `defaultDatabaseHotSnapshotTimeoutMs`, `createDatabaseRef`, `createNamedDatabaseRef`, `createTenantDatabaseRef`, `AuthPluginConfig`, `AuthTenancyMode`, `AuthTenancyConfig`, `AuthTenancyOptions`, `ResolvedAuthTenancyConfig`, `AuthAuthorizationMode`, `AuthAuthorizationConfig`, `AuthAuthorizationOptions`, `AuthPermissionConfig`, `ResolvedAuthPermissionConfig`, `AuthRoleTemplateConfig`, `ResolvedAuthRoleTemplateConfig`, `ResolvedAuthAuthorizationConfig`, `NormalizedAuthBehaviorConfig`, `ResolvedAuthBehaviorConfig`, `PermissionKey`, `AuthorizationKernel`, `AuthorizationKernelConfig`, `AccessRequirement`, `StructuredAccessRequirement`, `CompiledAccessRequirement`, `AuthorizationSubjectSnapshot`, `AuthorizationScopeSnapshot`, `AuthorizationDecision`, `ProtectedMultipartRequestGuardOptions`, `ZeroElysiaAuthRequirement`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineDatabaseRealm`, `runDatabaseActorIfRequested`, `defineAuthConfig`, `resolveAuthBehaviorConfig`, `createAuthorizationKernel`, `compileAccessRequirement`, `mergeAccessRequirements`, `validateAuthorizationRegistry`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `createProtectedMultipartRequestGuard`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
+
+The Storage subpath and server barrel also export
+`StorageAdapterOperationOptions`, `StorageBlobWriteResult`, and
+`StoragePendingBlobPublication` for custom adapters implementing the required
+shutdown and durable-publication contract.
+
+The server barrel also exports the trusted verified-machine projection
+`createAuthorityScopedServerServices` and its
+`CreateAuthorityScopedServerServicesOptions` /
+`AuthorityScopedServerServices` types. Both live authority fences are
+mandatory; strict projection is the default, and the returned type exposes
+only audited scope-safe services. `AuthorityScopedAuthServices` and
+`AuthorityScopedObservabilityServices` describe the narrowed nested facades.
+Storage additionally exports `ScopedStorageService`,
+`ScopedStorageDriveApi`, `ScopedStorageObjectApi`,
+`ScopedStoragePermissionApi`, and `ScopedStorageUploadGrantApi`. Their methods
+derive the owner/actor, tenant, roles, trusted properties, and live commit
+fences from the verified authority; those values are never call arguments.
+PDF exports `ScopedPdfService` and `ScopedPdfStorageTarget`; the scoped target
+omits `createdBy` because Guardian supplies the current actor to Storage.
+This helper is not a tenant-selector or
+browser-session factory.
 
 The server-only Fabric realm contracts also export
 `DatabaseReadQueryHandler`, `DatabaseReadQueryRegistry`,

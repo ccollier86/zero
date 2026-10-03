@@ -100,6 +100,19 @@ export type {
   DataStudioValue,
 } from './client/data-studio-client';
 export {
+  STORAGE_STUDIO_API_PREFIX,
+  StorageStudioMutationError,
+  createStorageStudioOperationId,
+  createStorageStudioSdkSurface,
+  isStorageStudioMutationError,
+} from './client/storage-studio-client';
+export type {
+  StorageStudioMutationFailureBody,
+  StorageStudioMutationOptions,
+  StorageStudioRequestOptions,
+  StorageStudioSdkSurface,
+} from './client/storage-studio-client';
+export {
   DATA_REALM_READINESS_DEFAULT_POLL_MS,
   DATA_REALM_READINESS_MAX_POLL_MS,
   DATA_REALM_READINESS_MIN_POLL_MS,
@@ -883,6 +896,15 @@ export type {
   NavigationAction,
   RecordPrimaryAction,
 } from '../components/ui/record-navigation-bar';
+export {
+  InlineEditText,
+  resolveInlineEditTextKeyAction,
+} from '../components/ui/inline-edit-text';
+export type {
+  InlineEditTextKeyAction,
+  InlineEditTextProps,
+  InlineEditTextState,
+} from '../components/ui/inline-edit-text';
 
 // ─── Auth Blocks ────────────────────────────────────────────────────────
 export {
@@ -1122,6 +1144,20 @@ export type {
   GrantType,
   PermissionLevel,
 } from '../storage/types';
+export type {
+  StorageStudioCapabilities,
+  StorageStudioControlCapabilities,
+  StorageStudioDrive,
+  StorageStudioDriveListRequest,
+  StorageStudioDrivePage,
+  StorageStudioDriveProfileView,
+  StorageStudioDriveUpdateRequest,
+  StorageStudioJobPage,
+  StorageStudioJobView,
+  StorageStudioLifecycleRequest,
+  StorageStudioMutationReceipt,
+  StorageStudioProvisionRequest,
+} from '../storage/storage-studio-contracts';
 
 // ─── Admin Components ───────────────────────────────────────────────────
 export {
@@ -1143,27 +1179,59 @@ export type {
 } from '../components/admin/users';
 export {
   StorageManagement,
+  StorageStudioManagement,
   StorageDriveList,
   StorageDriveDetail,
   StorageDrivePermissionsPanel,
+  StorageObjectPermissionsPanel,
   StorageDriveSettingsPanel,
   StorageDropzone,
   StorageFileBrowser,
   StorageDriveDetailHeader,
   StorageFileDetailPanel,
+  StorageFilePreview,
+  StorageStudioWorkspace,
+  StorageStudioToolbar,
+  StorageStudioList,
+  StorageStudioInspector,
+  StorageStudioActionBar,
+  StorageStudioPaginationControls,
+  useStorageStudioManagement,
+  useStorageFilePreview,
 } from '../components/storage';
 export type {
   StorageManagementProps,
+  StorageStudioManagementProps,
   StorageManagementView,
   StorageDriveRow,
   StorageDriveListProps,
   StorageDriveDetailProps,
   StorageDrivePermissionsPanelProps,
+  StorageObjectPermissionsPanelProps,
   StorageDriveSettingsPanelProps,
   StorageDropzoneProps,
   StorageFileBrowserProps,
   StorageDriveDetailHeaderProps,
   StorageFileDetailPanelProps,
+  StorageFilePreviewProps,
+  StorageFilePreviewKind,
+  StorageFilePreviewState,
+  StorageStudioWorkspaceProps,
+  StorageStudioToolbarProps,
+  StorageStudioListProps,
+  StorageStudioInspectorProps,
+  StorageStudioActionBarProps,
+  StorageManagementController,
+  StorageStudioBreadcrumb,
+  StorageStudioFilters,
+  StorageStudioInspectorSlots,
+  StorageStudioJobPresentation,
+  StorageStudioLifecycleFilter,
+  StorageStudioOperations,
+  StorageStudioOwnerFilter,
+  StorageStudioPagination,
+  UseStorageStudioManagementOptions,
+  UseStorageStudioManagementResult,
 } from '../components/storage';
 
 // ─── Hooks ──────────────────────────────────────────────────────────────

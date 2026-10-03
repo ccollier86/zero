@@ -52,6 +52,7 @@ async function expectSafeAuthErrorBoundary(
 }
 
 const storageAdapter: StorageAdapter = {
+  writeShutdownSafety: 'cooperative',
   async writeBlob() {
     return { checksum: 'unused', size: 0, headBytes: new Uint8Array() };
   },
@@ -62,6 +63,7 @@ const storageAdapter: StorageAdapter = {
     return null;
   },
   async removeBlob() {},
+  removeBlobSync() {},
   async blobExists() {
     return false;
   },

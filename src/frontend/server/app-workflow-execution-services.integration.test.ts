@@ -32,7 +32,7 @@ describe('managed workflow execution services', () => {
       '      try { void services.unsafe; } catch { unsafeBlocked = true; }',
       '      try { void services.db; } catch { dbBlocked = true; }',
       "      if (!unsafeBlocked || !dbBlocked) throw new Error('unsafe workflow service escape');",
-      '      const drive = services.storage.createDrive(context.execution.userId, {',
+      '      const drive = services.storage.drives.create({',
       "        name: 'Workflow drive',",
       '      });',
       '      const notice = services.notifications.create({',

@@ -63,6 +63,22 @@ const MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES = new Set<PropertyKey>([
   'getStore',
 ]);
 
+/** Exact Guardian surface admitted into trusted machine/workflow projections. */
+const AUTHORITY_SCOPED_AUTH_SERVICES = new Set<PropertyKey>([
+  'authorization',
+  'authorizationKernel',
+  'getAuthorizationKernel',
+]);
+
+/** Exact observability surface admitted into trusted machine/workflow projections. */
+const AUTHORITY_SCOPED_OBSERVABILITY_SERVICES = new Set<PropertyKey>([
+  'emitCode',
+  'emitEvent',
+  'error',
+  'info',
+  'warn',
+]);
+
 /** Raised when multi-tenant request code reaches for an unscoped raw service. */
 export class UnsafeServerServiceAccessError extends Error {
   readonly code = 'ZERO_UNSAFE_SERVICE_REQUIRED';
@@ -86,27 +102,93 @@ export function isMultiTenantRequest(
     || access.context?.membershipId !== undefined;
 }
 
+/** Fence every authorization read/decision exposed to durable or machine work. */
+export function createAuthorityScopedAuthorizationAccess(
+  access: RequestAuthorizationAccess,
+  assertCurrentAuthority: () => void,
+): RequestAuthorizationAccess {
+  return Object.freeze({
+    get context() {
+      assertCurrentAuthority();
+      return access.context;
+    },
+    get authorization() {
+      assertCurrentAuthority();
+      return access.authorization;
+    },
+    get applicationAuthorization() {
+      assertCurrentAuthority();
+      return access.applicationAuthorization;
+    },
+    authorize(requirement: Parameters<RequestAuthorizationAccess['authorize']>[0]) {
+      assertCurrentAuthority();
+      return access.authorize(requirement);
+    },
+    requireUser() {
+      assertCurrentAuthority();
+      return access.requireUser();
+    },
+    requirePlatformAdmin() {
+      assertCurrentAuthority();
+      return access.requirePlatformAdmin();
+    },
+    requireAuthorizationScope() {
+      assertCurrentAuthority();
+      return access.requireAuthorizationScope();
+    },
+    requireApplicationAuthorization() {
+      assertCurrentAuthority();
+      return access.requireApplicationAuthorization();
+    },
+    requireTenant() {
+      assertCurrentAuthority();
+      return access.requireTenant();
+    },
+    hasPermission(permission: Parameters<RequestAuthorizationAccess['hasPermission']>[0]) {
+      assertCurrentAuthority();
+      return access.hasPermission(permission);
+    },
+    requirePermission(permission: Parameters<RequestAuthorizationAccess['requirePermission']>[0]) {
+      assertCurrentAuthority();
+      return access.requirePermission(permission);
+    },
+    requireAnyPermission(
+      permissions: Parameters<RequestAuthorizationAccess['requireAnyPermission']>[0],
+    ) {
+      assertCurrentAuthority();
+      return access.requireAnyPermission(permissions);
+    },
+  });
+}
+
 export function createRequestAuthServices(
   services: ServerAuthServices,
+  exact = false,
 ): ServerAuthServices {
   return new Proxy(services, {
     get(target, property, receiver) {
+      if (exact && !AUTHORITY_SCOPED_AUTH_SERVICES.has(property)) {
+        throw unsafeService(`auth.${String(property)}`);
+      }
       if (MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property)) {
         throw unsafeService(`auth.${String(property)}`);
       }
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
-      return !MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property)
+      return (!exact || AUTHORITY_SCOPED_AUTH_SERVICES.has(property))
+        && !MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property)
         && Reflect.has(target, property);
     },
     ownKeys(target) {
       return Reflect.ownKeys(target).filter(
-        (property) => !MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property),
+        (property) => (!exact || AUTHORITY_SCOPED_AUTH_SERVICES.has(property))
+          && !MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property),
       );
     },
     getOwnPropertyDescriptor(target, property) {
-      if (MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property)) return undefined;
+      if ((exact && !AUTHORITY_SCOPED_AUTH_SERVICES.has(property))
+        || MULTI_TENANT_UNSAFE_AUTH_SERVICES.has(property)) return undefined;
       return Reflect.getOwnPropertyDescriptor(target, property);
     },
   });
@@ -118,6 +200,7 @@ export function createRequestObservabilityServices(
   access: RequestAuthorizationAccess,
   request: Request | null,
   assertCurrentAuthority: () => void = () => {},
+  exact = false,
 ): ServerObservabilityServices {
   const authorityMetadata = Object.freeze({
     zeroScopeKind: scope?.scopeKind ?? 'identity',
@@ -163,23 +246,41 @@ export function createRequestObservabilityServices(
 
   return new Proxy(services, {
     get(target, property, receiver) {
-      if (Reflect.has(emitters, property)) return Reflect.get(emitters, property);
+      if (exact && !AUTHORITY_SCOPED_OBSERVABILITY_SERVICES.has(property)) {
+        throw unsafeService(`observability.${String(property)}`);
+      }
+      if (Object.hasOwn(emitters, property)) return Reflect.get(emitters, property);
       if (MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES.has(property)) {
         throw unsafeService(`observability.${String(property)}`);
       }
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
+      if (exact && !AUTHORITY_SCOPED_OBSERVABILITY_SERVICES.has(property)) return false;
+      if (Object.hasOwn(emitters, property)) return true;
       return !MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES.has(property)
         && Reflect.has(target, property);
     },
     ownKeys(target) {
-      return Reflect.ownKeys(target).filter(
-        (property) => !MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES.has(property),
-      );
+      return [...new Set([
+        ...Reflect.ownKeys(target),
+        ...Reflect.ownKeys(emitters),
+      ])].filter((property) => (
+        (!exact || AUTHORITY_SCOPED_OBSERVABILITY_SERVICES.has(property))
+          && !MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES.has(property)
+      ));
     },
     getOwnPropertyDescriptor(target, property) {
-      if (MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES.has(property)) return undefined;
+      if ((exact && !AUTHORITY_SCOPED_OBSERVABILITY_SERVICES.has(property))
+        || MULTI_TENANT_UNSAFE_OBSERVABILITY_SERVICES.has(property)) return undefined;
+      if (Object.hasOwn(emitters, property)) {
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: false,
+          value: Reflect.get(emitters, property),
+        };
+      }
       return Reflect.getOwnPropertyDescriptor(target, property);
     },
   });

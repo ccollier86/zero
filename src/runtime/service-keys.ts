@@ -18,6 +18,7 @@ import type { TokenService } from '../auth/token-service';
 import type { EmailRuntime } from '../email/types';
 import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { StorageService } from '../storage/storage-service';
+import type { StorageStudioService } from '../storage/storage-studio-service';
 import type { TenancyService } from '../auth/tenancy';
 import type { AuthSessionService } from '../auth/auth-session-service';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
@@ -118,4 +119,8 @@ export const ZERO_WORKFLOW_SERVICE = createZeroRuntimeServiceKey<WorkflowService
 
 export const ZERO_STORAGE_SERVICE = createZeroRuntimeServiceKey<StorageService>(
   'Storage service',
+);
+
+export const ZERO_STORAGE_STUDIO_SERVICE = createZeroRuntimeServiceKey<StorageStudioService>(
+  'Storage Studio control-plane service',
 );

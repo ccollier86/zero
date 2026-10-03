@@ -29,6 +29,7 @@ interface UploadGrantPayload extends Record<string, unknown> {
   f?: string; // app flow tag
   rt?: string; // linked resource type
   ri?: string; // linked resource id
+  n?: number; // managed drive generation
 }
 
 export interface CreateUploadGrantTokenOptions extends CreateUploadGrantParams {
@@ -36,6 +37,8 @@ export interface CreateUploadGrantTokenOptions extends CreateUploadGrantParams {
   expiresIn: number;
   secret: string;
   grantId?: string;
+  /** Captured Storage Studio generation for managed drives. */
+  generation?: number;
 }
 
 export interface VerifiedUploadGrant {
@@ -49,6 +52,7 @@ export interface VerifiedUploadGrant {
   metadata?: Record<string, unknown>;
   flow?: string;
   resource?: StorageUploadGrantResource;
+  generation?: number;
 }
 
 /**
@@ -79,6 +83,7 @@ export async function createUploadGrantToken(
     payload.rt = opts.resource.type;
     payload.ri = opts.resource.id;
   }
+  if (opts.generation !== undefined) payload.n = opts.generation;
 
   const token = await createSignedStorageToken(payload, opts.secret);
   return {
@@ -124,6 +129,7 @@ export async function verifyUploadGrantToken(
     resource: typeof payload.rt === 'string' && typeof payload.ri === 'string'
       ? { type: payload.rt, id: payload.ri }
       : undefined,
+    generation: typeof payload.n === 'number' ? payload.n : undefined,
   };
 }
 

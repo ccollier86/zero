@@ -356,12 +356,14 @@ async function json<T = Record<string, unknown>>(
 
 function emptyStorageAdapter(): StorageAdapter {
   return {
+    writeShutdownSafety: 'cooperative',
     async writeBlob() {
       return { checksum: 'unused', size: 0, headBytes: new Uint8Array() };
     },
     async readBlob() { return null; },
     async readBlobRange() { return null; },
     async removeBlob() {},
+    removeBlobSync() {},
     async blobExists() { return false; },
     async blobSize() { return 0; },
   };

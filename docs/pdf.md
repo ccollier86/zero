@@ -218,7 +218,6 @@ return zero.pdf?.renderToStorage(
   {
     driveId: 'patient-documents',
     path: `/intakes/${intakeId}/consent.pdf`,
-    createdBy: user.userId,
     overwrite: true,
     public: false,
     metadata: {
@@ -229,10 +228,14 @@ return zero.pdf?.renderToStorage(
 );
 ```
 
-Platform storage currently mounts with auth because its permission model needs
-authenticated users. `render()` works without auth; `renderToStorage()` fails
-with `PDF_STORAGE_UNAVAILABLE` when storage is not mounted. A custom
-`PdfStorageWriter` can replace that boundary for another object store.
+On request, verified-machine, and actor-owned Torrent facades, Guardian derives
+the object creator and tenant scope. `ScopedPdfStorageTarget` intentionally has
+no `createdBy` field, so application input cannot attribute a stored document
+to another user. `render()` remains available on public/anonymous routes, but
+scoped `renderToStorage()` requires a committed application or tenant authority
+with write access to the destination. The raw trusted `PdfService` still accepts
+an optional `createdBy` for reviewed platform composition, and a custom
+`PdfStorageWriter` can replace its storage boundary.
 
 ## Torrent Workflows And Jobs
 
@@ -240,15 +243,14 @@ PDF uses the same process-wide service in Torrent activities and scheduled
 jobs. Register this activity inside `AppConfig.workflows.register(registry)`:
 
 ```ts
-import { requirePdfService } from '@zero/framework/pdf';
-
 registry.registerActivity({
   name: 'pdf.generate-consent',
   version: '1',
   handler: async (ctx) => {
     ctx.signal?.throwIfAborted();
+    if (!ctx.zero?.pdf) throw new Error('PDF rendering is disabled.');
     const input = ctx.input as { intakeId: string; driveId: string; html: string };
-    const result = await requirePdfService().renderToStorage(
+    const result = await ctx.zero.pdf.renderToStorage(
       { html: input.html, css: '@page { size: Letter; margin: 0.5in; }' },
       {
         driveId: input.driveId,
@@ -265,6 +267,11 @@ registry.registerActivity({
   },
 });
 ```
+
+The example is actor-owned, so `ctx.zero.pdf` uses the same revalidated
+Guardian authority and scope-closed Storage facade as the rest of the step.
+Use the raw `requirePdfService()` only for reviewed platform composition that
+owns its own storage authorization and creator attribution.
 
 Return storage metadata from durable workflow steps, not raw `Uint8Array`
 bytes. This keeps workflow state small and JSON-safe. A workflow may be

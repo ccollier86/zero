@@ -22,6 +22,7 @@ import { createObservabilityPlugin } from '../../observability';
 import { createPdfPlugin } from '../../pdf';
 import { createRoomPlugin } from '../../rooms/room.plugin';
 import {
+  ZERO_AUTH_AUDIT_SERVICE,
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
   ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
@@ -181,10 +182,12 @@ export async function mountPlatformServices({
       localDir: config.storageDir,
       signingSecret: config.storage.signingSecret,
       defaultPresignedTTL: config.storage.defaultPresignedTTL,
+      studio: config.storage.studio,
       runtime,
       getTokenService,
       authorization,
       getUserProperties: (userId) => getAuthStore()?.getProperties(userId) ?? {},
+      getAuditService: () => runtime.get(ZERO_AUTH_AUDIT_SERVICE),
       isPolicyTrustedProperty: (key) => {
         const field = resourceAuthConfig.userProperties[key];
         return field ? isPolicyTrustedUserProperty(field) : false;

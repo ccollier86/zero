@@ -111,6 +111,7 @@ function executeGrant(app: AnyElysia, token: string, body: string): Promise<Resp
 function createMemoryAdapter(): StorageAdapter {
   const blobs = new Map<string, Uint8Array>();
   return {
+    writeShutdownSafety: 'cooperative',
     async writeBlob(data, maxSize) {
       const bytes = await readBytes(data);
       if (maxSize !== undefined && bytes.byteLength > maxSize) {
@@ -133,6 +134,9 @@ function createMemoryAdapter(): StorageAdapter {
       return bytes ? streamBytes(bytes.slice(start, end + 1)) : null;
     },
     async removeBlob(checksum) {
+      blobs.delete(checksum);
+    },
+    removeBlobSync(checksum) {
       blobs.delete(checksum);
     },
     async blobExists(checksum) {

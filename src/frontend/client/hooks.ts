@@ -196,6 +196,17 @@ export type {
   UseDataStudioResult,
 } from './data-studio-hooks';
 
+export { useStorageStudioManagement } from '../../components/storage/use-storage-studio-management';
+export type {
+  UseStorageStudioManagementOptions,
+  UseStorageStudioManagementResult,
+} from '../../components/storage/use-storage-studio-management';
+export { useStorageFilePreview } from '../../components/storage/use-storage-file-preview';
+export type {
+  StorageFilePreviewKind,
+  StorageFilePreviewState,
+} from '../../components/storage/use-storage-file-preview';
+
 export { useMutation } from './mutation-hooks';
 export type { UseMutationOptions, UseMutationReturn } from './mutation-hooks';
 

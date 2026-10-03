@@ -59,8 +59,25 @@ import {
   resolveSystemDatabaseOwnedPaths,
   type SystemDatabaseConfig,
 } from './system-database-config';
+import {
+  resolveAppStorageConfig,
+  type AppStorageConfig,
+  type ResolvedAppStorageConfig,
+} from '../../storage/storage-config';
 
 export type { SystemDatabaseConfig } from './system-database-config';
+export type {
+  AppStorageConfig,
+  ResolvedAppStorageConfig,
+  ResolvedStorageStudioConfig,
+  ResolvedStorageStudioLimits,
+  ResolvedStorageStudioPublicAccess,
+  StorageStudioConfig,
+  StorageStudioDefaultGrantConfig,
+  StorageStudioIsolation,
+  StorageStudioLimitsConfig,
+  StorageStudioPublicAccessConfig,
+} from '../../storage/storage-config';
 
 export type {
   AppDatabaseActorConfig,
@@ -166,24 +183,6 @@ export interface AppDoctorConfig {
    * Keys are table names; values are indexed column names.
    */
   indexedFields?: Record<string, readonly string[]>;
-}
-
-/** Built-in authenticated file-storage settings used by createApp(). */
-export interface AppStorageConfig {
-  /**
-   * HMAC secret for presigned URLs and upload grants. Explicit config wins
-   * over ZERO_STORAGE_SIGNING_SECRET. When both are omitted, Zero persists a
-   * random key in the durable system database during storage startup.
-   */
-  signingSecret?: string;
-  /** Default capability expiry in seconds. Default: 3600. */
-  defaultPresignedTTL?: number;
-}
-
-/** Normalized server-only storage settings. */
-export interface ResolvedAppStorageConfig {
-  signingSecret?: string;
-  defaultPresignedTTL: number;
 }
 
 /** Normalized sitemap config consumed by the router plugin. */
@@ -788,32 +787,6 @@ function validateAuthTokenTTL(value: unknown, field: string): void {
     throw new Error(`[auth] ${field} must be a duration string.`);
   }
   parseTokenTTL(value, field);
-}
-
-/** Normalize built-in file-storage settings without exposing them client-side. */
-function resolveAppStorageConfig(
-  config: AppStorageConfig | undefined,
-  env: Record<string, string | undefined> = Bun.env,
-): ResolvedAppStorageConfig {
-  if (config !== undefined && (!config || typeof config !== 'object' || Array.isArray(config))) {
-    throw new Error('[app] storage must be an object when configured.');
-  }
-
-  const configuredSecret = config?.signingSecret;
-  if (configuredSecret !== undefined && (
-    typeof configuredSecret !== 'string' || configuredSecret.trim().length === 0
-  )) {
-    throw new Error('[app] storage.signingSecret must be a non-empty string.');
-  }
-  const envSecret = env.ZERO_STORAGE_SIGNING_SECRET;
-  const signingSecret = configuredSecret
-    ?? (typeof envSecret === 'string' && envSecret.trim().length > 0 ? envSecret : undefined);
-  const defaultPresignedTTL = config?.defaultPresignedTTL ?? 3600;
-  if (!Number.isInteger(defaultPresignedTTL) || defaultPresignedTTL < 1) {
-    throw new Error('[app] storage.defaultPresignedTTL must be a positive integer.');
-  }
-
-  return { signingSecret, defaultPresignedTTL };
 }
 
 function defaultPublicPaths(

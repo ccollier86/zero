@@ -7,6 +7,8 @@
  */
 
 export type {
+  AuthorityScopedAuthServices,
+  AuthorityScopedObservabilityServices,
   AuthorityScopedServerServices,
   CreateAuthorityScopedServerServicesOptions,
   CreateServerRequestServicesOptions,
@@ -16,6 +18,21 @@ export type {
   ScopedWorkflowInstanceListFilter,
   ScopedWorkflowService,
 } from './server-request-services/scoped-workflow-service';
+export type { ScopedNotificationService } from './server-request-services/scoped-notification-service';
+export type {
+  ScopedPdfService,
+  ScopedPdfStorageTarget,
+} from './server-request-services/request-pdf-service';
+export type { ScopedRoomService } from './server-request-services/scoped-room-service';
+export type {
+  ScopedStorageDriveApi,
+  ScopedStorageMethods,
+  ScopedStorageObjectApi,
+  ScopedStoragePermissionApi,
+  ScopedStorageService,
+  ScopedStorageUploadData,
+  ScopedStorageUploadGrantApi,
+} from './server-request-services/scoped-storage-service';
 
 export {
   createAuthorityScopedServerServices,

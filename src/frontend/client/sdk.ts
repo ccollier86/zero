@@ -126,6 +126,10 @@ import {
   type DataStudioSdkSurface,
 } from './data-studio-client';
 import { subscribeToDataStudioSync } from './data-studio-sync';
+import {
+  createStorageStudioSdkSurface,
+  type StorageStudioSdkSurface,
+} from './storage-studio-client';
 
 /**
  * All platform-internal tables that hooks depend on.
@@ -416,6 +420,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Organization-scoped logical tables, schemas, and rows. */
   readonly dataStudio: DataStudioSdkSurface;
+
+  /** Guardian-scoped managed storage drives and lifecycle controls. */
+  readonly storageStudio: StorageStudioSdkSurface;
 
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
@@ -874,6 +881,7 @@ export function createClient(config: ClientConfig): Client {
   let stateClient: StateClient | null = null;
   let ephemeralClient!: EphemeralClient;
   let dataStudio!: DataStudioSdkSurface;
+  let storageStudio!: StorageStudioSdkSurface;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -894,6 +902,7 @@ export function createClient(config: ClientConfig): Client {
     authorizationScopeEpoch += 1;
     cancelAuthorizationScopeRequests();
     dataStudio?.clear();
+    storageStudio?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -911,6 +920,7 @@ export function createClient(config: ClientConfig): Client {
     authorizationScopeEpoch += 1;
     cancelAuthorizationScopeRequests();
     dataStudio?.clear();
+    storageStudio?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();
@@ -1120,6 +1130,7 @@ export function createClient(config: ClientConfig): Client {
       }, callback);
     },
   });
+  storageStudio = createStorageStudioSdkSurface(clientFetch);
 
   let previousAuthToken = currentAuthToken();
   let previousAuthorizationScope = readAuthorizationScope(previousAuthToken);
@@ -1140,6 +1151,7 @@ export function createClient(config: ClientConfig): Client {
       authorizationScopeEpoch += 1;
       cancelAuthorizationScopeRequests();
       dataStudio.clear();
+      storageStudio.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1247,6 +1259,7 @@ export function createClient(config: ClientConfig): Client {
     get platformAdmin() { return requireAuthClient().platformAdmin; },
     get dataRealm() { return dataRealm; },
     get dataStudio() { return dataStudio; },
+    get storageStudio() { return storageStudio; },
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },
@@ -1482,6 +1495,7 @@ export function createClient(config: ClientConfig): Client {
       collections.clear();
       resourceClients.clear();
       dataStudio.clear();
+      storageStudio.clear();
       _instance = null;
     },
   };

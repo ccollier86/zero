@@ -18,6 +18,7 @@ interface PresignedPayload {
   e: number;  // expires (unix ms)
   s?: number; // maxSize (bytes)
   c?: string; // contentType
+  g?: number; // managed drive generation
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ export interface CreatePresignedOptions {
   secret: string;
   maxSize?: number;
   contentType?: string;
+  /** Captured Storage Studio generation for managed drives. */
+  generation?: number;
 }
 
 /**
@@ -45,6 +48,7 @@ export async function createPresignedToken(opts: CreatePresignedOptions): Promis
   };
   if (opts.maxSize) payload.s = opts.maxSize;
   if (opts.contentType) payload.c = opts.contentType;
+  if (opts.generation !== undefined) payload.g = opts.generation;
 
   return createSignedStorageToken(payload as unknown as Record<string, unknown>, opts.secret);
 }
@@ -55,6 +59,7 @@ export interface VerifiedPresigned {
   method: 'GET' | 'PUT';
   maxSize?: number;
   contentType?: string;
+  generation?: number;
 }
 
 /**
@@ -80,5 +85,6 @@ export async function verifyPresignedToken(
     method: payload.m,
     maxSize: payload.s,
     contentType: payload.c,
+    generation: typeof payload.g === 'number' ? payload.g : undefined,
   };
 }

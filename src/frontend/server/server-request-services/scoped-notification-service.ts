@@ -12,6 +12,11 @@ import {
   notificationAudienceRoles,
 } from '../../../notifications/notification-access';
 import type { NotificationService } from '../../../notifications/notification-service';
+import type {
+  CreateNotificationParams,
+  NotificationReceiptRecord,
+  NotificationRecord,
+} from '../../../notifications/types';
 import {
   forbidden,
   notFound,
@@ -19,40 +24,44 @@ import {
   type CompleteServiceMemberInventory,
 } from './restricted-service-proxy';
 
-type ScopedNotificationMethods = Pick<
-  NotificationService,
-  | 'create'
-  | 'broadcast'
-  | 'notify'
-  | 'notifyUsers'
-  | 'notifyRole'
-  | 'getById'
-  | 'getByIdForUser'
-  | 'get'
-  | 'getForUser'
-  | 'list'
-  | 'getUnreadCount'
-  | 'getReceipts'
-  | 'markSeen'
-  | 'markRead'
-  | 'dismiss'
-  | 'markAllRead'
-  | 'markAllSeen'
-  | 'deleteNotification'
-  | 'delete'
->;
+export type ScopedNotificationRecord = NotificationRecord & {
+  readonly receipt: NotificationReceiptRecord | null;
+};
 
-type DeniedNotificationMember = 'deleteExpired';
+/** Notification operations sealed to the current actor and data scope. */
+export interface ScopedNotificationService {
+  create(params: CreateNotificationParams): NotificationRecord;
+  broadcast(params: CreateNotificationParams): NotificationRecord;
+  notify(userId: string, params: CreateNotificationParams): NotificationRecord;
+  notifyUsers(userIds: string[], params: CreateNotificationParams): NotificationRecord;
+  notifyRole(role: string, params: CreateNotificationParams): NotificationRecord;
+  getById(notificationId: string): NotificationRecord | null;
+  get(notificationId: string): NotificationRecord | null;
+  getForUser(): ScopedNotificationRecord[];
+  list(): ScopedNotificationRecord[];
+  getUnreadCount(): number;
+  getReceipts(notificationId: string): NotificationReceiptRecord[];
+  markSeen(notificationId: string): void;
+  markRead(notificationId: string): void;
+  dismiss(notificationId: string): void;
+  markAllRead(): void;
+  markAllSeen(): void;
+  deleteNotification(notificationId: string): boolean;
+  delete(notificationId: string): boolean;
+}
+
+type DeniedNotificationMember = 'deleteExpired' | 'getByIdForUser';
 
 const NOTIFICATION_SERVICE_INVENTORY: CompleteServiceMemberInventory<
   NotificationService,
-  keyof ScopedNotificationMethods,
+  keyof ScopedNotificationService,
   DeniedNotificationMember
 > = true;
 void NOTIFICATION_SERVICE_INVENTORY;
 
 const DENIED_NOTIFICATION_MEMBERS: ReadonlySet<DeniedNotificationMember> = new Set([
   'deleteExpired',
+  'getByIdForUser',
 ]);
 
 export function createScopedNotificationService(
@@ -61,14 +70,10 @@ export function createScopedNotificationService(
   access: RequestAuthorizationAccess,
   assertCurrentAuthoritySync: () => void,
   privilegedSystem: boolean,
-): ScopedNotificationMethods {
+): ScopedNotificationService {
   const auth = access.context;
   const roles = notificationAudienceRoles(access, scope);
   const canManage = canManageNotificationScope(access, scope, privilegedSystem);
-  const requireActor = (userId: string): void => {
-    if (privilegedSystem) return;
-    if (!auth || userId !== auth.userId) throw forbidden('Notification user mismatch');
-  };
   const actorNotification = (id: string) => {
     assertCurrentAuthoritySync();
     if (!auth) return service.getById(id, scope);
@@ -94,53 +99,41 @@ export function createScopedNotificationService(
   const requireCreateAuthority = (): void => {
     if (!canManage) throw forbidden('Notification management is not permitted');
   };
-  const methods: ScopedNotificationMethods = {
-    create(params, senderId) {
+  const methods: ScopedNotificationService = {
+    create(params) {
       requireCreateAuthority();
-      if (senderId) requireActor(senderId);
       assertCurrentAuthoritySync();
-      return service.create(params, senderId ?? auth?.userId, scope);
+      return service.create(params, auth?.userId, scope, assertCurrentAuthoritySync);
     },
-    broadcast(params, senderId) {
+    broadcast(params) {
       requireCreateAuthority();
-      if (senderId) requireActor(senderId);
       assertCurrentAuthoritySync();
-      return service.broadcast(params, senderId ?? auth?.userId, scope);
+      return service.broadcast(params, auth?.userId, scope, assertCurrentAuthoritySync);
     },
-    notify(userId, params, senderId) {
+    notify(userId, params) {
       requireCreateAuthority();
-      if (senderId) requireActor(senderId);
       assertCurrentAuthoritySync();
-      return service.notify(userId, params, senderId ?? auth?.userId, scope);
+      return service.notify(userId, params, auth?.userId, scope, assertCurrentAuthoritySync);
     },
-    notifyUsers(userIds, params, senderId) {
+    notifyUsers(userIds, params) {
       requireCreateAuthority();
-      if (senderId) requireActor(senderId);
       assertCurrentAuthoritySync();
-      return service.notifyUsers(userIds, params, senderId ?? auth?.userId, scope);
+      return service.notifyUsers(userIds, params, auth?.userId, scope, assertCurrentAuthoritySync);
     },
-    notifyRole(role, params, senderId) {
+    notifyRole(role, params) {
       requireCreateAuthority();
-      if (senderId) requireActor(senderId);
       assertCurrentAuthoritySync();
-      return service.notifyRole(role, params, senderId ?? auth?.userId, scope);
+      return service.notifyRole(role, params, auth?.userId, scope, assertCurrentAuthoritySync);
     },
     getById: actorNotification,
-    getByIdForUser(id, userId) {
-      requireActor(userId);
-      return actorNotification(id);
-    },
     get: actorNotification,
-    getForUser(userId) {
-      requireActor(userId);
+    getForUser() {
       return listForActor();
     },
-    list(userId) {
-      requireActor(userId);
+    list() {
       return listForActor();
     },
-    getUnreadCount(userId) {
-      requireActor(userId);
+    getUnreadCount() {
       return listForActor().filter((notification) => !notification.receipt?.read_at
         && !notification.receipt?.dismissed_at).length;
     },
@@ -148,43 +141,63 @@ export function createScopedNotificationService(
       requireManager(id);
       return service.getReceipts(id, scope);
     },
-    markSeen(id, userId) {
-      requireActor(userId);
+    markSeen(id) {
       requireVisible(id);
       assertCurrentAuthoritySync();
-      return service.markSeen(id, userId, scope);
+      return service.markSeen(
+        id,
+        requireActorId(auth),
+        scope,
+        assertCurrentAuthoritySync,
+      );
     },
-    markRead(id, userId) {
-      requireActor(userId);
+    markRead(id) {
       requireVisible(id);
       assertCurrentAuthoritySync();
-      return service.markRead(id, userId, scope);
+      return service.markRead(
+        id,
+        requireActorId(auth),
+        scope,
+        assertCurrentAuthoritySync,
+      );
     },
-    dismiss(id, userId) {
-      requireActor(userId);
+    dismiss(id) {
       requireVisible(id);
       assertCurrentAuthoritySync();
-      return service.dismiss(id, userId, scope);
+      return service.dismiss(
+        id,
+        requireActorId(auth),
+        scope,
+        assertCurrentAuthoritySync,
+      );
     },
-    markAllRead(userId) {
-      requireActor(userId);
+    markAllRead() {
       assertCurrentAuthoritySync();
-      return service.markAllRead(userId, roles, scope);
+      return service.markAllRead(
+        requireActorId(auth),
+        roles,
+        scope,
+        assertCurrentAuthoritySync,
+      );
     },
-    markAllSeen(userId) {
-      requireActor(userId);
+    markAllSeen() {
       assertCurrentAuthoritySync();
-      return service.markAllSeen(userId, roles, scope);
+      return service.markAllSeen(
+        requireActorId(auth),
+        roles,
+        scope,
+        assertCurrentAuthoritySync,
+      );
     },
     deleteNotification(id) {
       requireManager(id);
       assertCurrentAuthoritySync();
-      return service.deleteNotification(id, scope);
+      return service.deleteNotification(id, scope, assertCurrentAuthoritySync);
     },
     delete(id) {
       requireManager(id);
       assertCurrentAuthoritySync();
-      return service.delete(id, scope);
+      return service.delete(id, scope, assertCurrentAuthoritySync);
     },
   };
   return restrictedServiceProxy(
@@ -193,4 +206,11 @@ export function createScopedNotificationService(
     DENIED_NOTIFICATION_MEMBERS,
     'Notification',
   );
+}
+
+function requireActorId(
+  auth: RequestAuthorizationAccess['context'],
+): string {
+  if (!auth) throw forbidden('Notification actor is required');
+  return auth.userId;
 }

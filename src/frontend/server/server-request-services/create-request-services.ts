@@ -15,6 +15,7 @@ import {
   MULTI_TENANT_UNSCOPED_SERVICES,
   REQUEST_SERVICES,
   WORKFLOW_UNSCOPED_SERVICES,
+  createAuthorityScopedAuthorizationAccess,
   createRequestAuthServices,
   createRequestObservabilityServices,
   isMultiTenantRequest,
@@ -37,7 +38,7 @@ export function createServerRequestServices(
     return createUncommittedRequestServices(request, access, services);
   }
   const authority = createAuthorityRevalidators(request, access, services);
-  return createAuthorityScopedServerServices({
+  return createInternalAuthorityScopedServerServices({
     request,
     access,
     services,
@@ -45,7 +46,10 @@ export function createServerRequestServices(
     assertCurrentAuthority: authority.asynchronous,
     assertCurrentAuthoritySync: authority.synchronous,
     allowUnsafe: true,
-  }) as ServerRequestServices;
+    strict: false,
+    privilegedSystem: false,
+    auditProvenance: 'authenticated-request',
+  }) as unknown as ServerRequestServices;
 }
 
 /**
@@ -95,6 +99,33 @@ export function createDeferredServerRequestServices(
 export function createAuthorityScopedServerServices(
   options: CreateAuthorityScopedServerServicesOptions,
 ): AuthorityScopedServerServices {
+  return createInternalAuthorityScopedServerServices({
+    ...options,
+    allowUnsafe: false,
+    strict: true,
+    privilegedSystem: false,
+    auditProvenance: 'authenticated-request',
+  });
+}
+
+interface CreateInternalAuthorityScopedServerServicesOptions
+  extends CreateAuthorityScopedServerServicesOptions {
+  readonly allowUnsafe: boolean;
+  readonly strict: boolean;
+  readonly privilegedSystem: boolean;
+  readonly auditProvenance: 'authenticated-request' | 'system';
+}
+
+/** Internal projection seam for HTTP setup and sealed system workflow work. */
+export function createInternalAuthorityScopedServerServices(
+  options: CreateInternalAuthorityScopedServerServicesOptions,
+): AuthorityScopedServerServices {
+  if (typeof options.assertCurrentAuthority !== 'function'
+    || typeof options.assertCurrentAuthoritySync !== 'function') {
+    throw new TypeError(
+      'Authority-scoped server services require live asynchronous and synchronous authority fences.',
+    );
+  }
   const databaseAuthoritySync = options.assertCurrentAuthoritySync;
   const {
     access,
@@ -102,24 +133,39 @@ export function createAuthorityScopedServerServices(
     scope,
     request,
     assertCurrentAuthority,
-    assertCurrentAuthoritySync = () => {},
-    allowUnsafe = false,
-    strict = false,
-    privilegedSystem = false,
+    assertCurrentAuthoritySync,
+    allowUnsafe,
+    strict,
+    privilegedSystem,
+    auditProvenance,
     userProperties,
   } = options;
+  // Public machine/background projections must reject already-stale authority
+  // before exposing any capability. HTTP request projections have already
+  // passed route admission and may be backed by a legacy session verifier that
+  // supports only asynchronous revalidation; their synchronous mutations
+  // continue to fail closed at the individual commit boundary instead of
+  // turning every read-only route into a 409.
+  if (strict) assertCurrentAuthoritySync();
+  const projectedAccess = strict
+    ? createAuthorityScopedAuthorizationAccess(access, assertCurrentAuthoritySync)
+    : access;
+  const authorityProperties = userProperties
+    ? Object.freeze({ ...userProperties })
+    : null;
   const multiTenant = isMultiTenantRequest(access, services);
   const storage = services.storage
     ? createScopedStorageService(
         services.storage,
         scope,
         access,
-        () => userProperties
-          ? { ...userProperties }
+        () => authorityProperties
+          ? { ...authorityProperties }
           : services.auth.store?.getProperties(access.context?.userId ?? '') ?? {},
         assertCurrentAuthority,
         assertCurrentAuthoritySync,
         privilegedSystem,
+        auditProvenance,
       )
     : null;
   const notifications = services.notifications
@@ -155,10 +201,11 @@ export function createAuthorityScopedServerServices(
         storage,
         access.context?.userId ?? null,
         assertCurrentAuthority,
+        assertCurrentAuthoritySync,
       )
     : null;
   const auth = multiTenant || strict
-    ? createRequestAuthServices(services.auth)
+    ? createRequestAuthServices(services.auth, strict)
     : services.auth;
   const observability = multiTenant || strict
     ? createRequestObservabilityServices(
@@ -167,6 +214,7 @@ export function createAuthorityScopedServerServices(
         access,
         request ?? null,
         assertCurrentAuthoritySync,
+        strict,
       )
     : services.observability;
   // Tenant-file operations require an explicit durable synchronous fence.
@@ -182,7 +230,7 @@ export function createAuthorityScopedServerServices(
 
   const overrides: Record<PropertyKey, unknown> = {
     [REQUEST_SERVICES]: true,
-    access,
+    access: projectedAccess,
     scope,
     data: requestData,
     auth,
@@ -195,29 +243,37 @@ export function createAuthorityScopedServerServices(
   };
   if (allowUnsafe) overrides.unsafe = services;
 
-  return new Proxy(services, {
+  const projection = new Proxy(services, {
     get(target, property, receiver) {
       if (Object.hasOwn(overrides, property)) return Reflect.get(overrides, property);
+      if (strict) throw unsafeService(property);
       if (isHiddenRequestService(property, { strict, multiTenant })) {
         throw unsafeService(property);
       }
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
+      if (Object.hasOwn(overrides, property)) return true;
+      if (strict) return false;
       if (isHiddenRequestService(property, { strict, multiTenant })) return false;
-      return Object.hasOwn(overrides, property) || Reflect.has(target, property);
+      return Reflect.has(target, property);
     },
     ownKeys(target) {
       return requestServiceOwnKeys(target, overrides, { strict, multiTenant });
     },
     getOwnPropertyDescriptor(target, property) {
-      if (isHiddenRequestService(property, { strict, multiTenant })) return undefined;
       if (Object.hasOwn(overrides, property)) {
         return requestServiceOverrideDescriptor(overrides, property);
       }
+      if (strict) return undefined;
+      if (isHiddenRequestService(property, { strict, multiTenant })) return undefined;
       return Reflect.getOwnPropertyDescriptor(target, property);
     },
-  }) as AuthorityScopedServerServices;
+  });
+  // The proxy deliberately narrows raw ServerRouteServices at runtime. Its
+  // exact public shape is covered by own-key/runtime traps and compile-time
+  // negative assertions; the source object itself must remain the raw target.
+  return projection as unknown as AuthorityScopedServerServices;
 }
 
 export function isServerRequestServices(
@@ -256,6 +312,7 @@ function createUncommittedRequestServices(
           null,
           access.context?.userId ?? null,
           authority.asynchronous,
+          authority.synchronous,
         )
       : null,
   };
@@ -283,7 +340,7 @@ function createUncommittedRequestServices(
       }
       return Reflect.getOwnPropertyDescriptor(target, property);
     },
-  }) as ServerRequestServices;
+  }) as unknown as ServerRequestServices;
 }
 
 function isHiddenRequestService(
@@ -299,6 +356,11 @@ function requestServiceOwnKeys(
   overrides: Record<PropertyKey, unknown>,
   mode: { readonly strict: boolean; readonly multiTenant: boolean },
 ): Array<string | symbol> {
+  if (mode.strict) {
+    return Reflect.ownKeys(overrides).filter(
+      (property) => property !== REQUEST_SERVICES,
+    );
+  }
   return [...new Set([
     ...Reflect.ownKeys(target),
     ...Reflect.ownKeys(overrides),

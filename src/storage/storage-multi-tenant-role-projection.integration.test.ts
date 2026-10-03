@@ -231,13 +231,15 @@ async function request<T = Record<string, unknown>>(
 
 function emptyStorageAdapter(): StorageAdapter {
   return {
+    writeShutdownSafety: 'cooperative',
     async writeBlob() {
       return { checksum: 'unused', size: 0, headBytes: new Uint8Array() };
     },
     async readBlob() { return null; },
     async readBlobRange() { return null; },
     async removeBlob() {},
-    async blobExists() { return false; },
+    removeBlobSync() {},
+    async blobExists() { return true; },
     async blobSize() { return 0; },
   };
 }

@@ -6,6 +6,11 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Exported `createAuthorityScopedServerServices` and its option/result types
+  from `@zero/framework/server` for verified app-owned machine principals.
+  The boundary requires both asynchronous and synchronous live Guardian
+  authority fences and does not turn a caller-selected tenant into authority.
+
 - Fixed direct and composed Fabric realm admission so tables are installed in
   deterministic foreign-key dependency order instead of lexical order.
   In-realm dependencies, including cross-contribution and quoted references,
@@ -22,6 +27,18 @@ All notable Zero Platform changes are tracked here.
   transitions retain their fail-closed boundary.
 
 ### Added
+
+- Added opt-in Storage Studio: Guardian-scoped application, organization, and
+  personal managed drives over the existing Storage engine, with stable keys,
+  quotas, lifecycle and durable cleanup jobs, typed browser/scoped-server APIs,
+  server-backed file search, object ACL editing, previews, and an adaptive
+  control plane. It is independent of Fabric and disabled by default, so
+  existing Storage routes, hooks, and bare `StorageManagement` usage remain
+  behaviorally compatible. System migrations `034` and `035` add Studio
+  sidecars and shared-CAS leases. Custom adapters must declare cooperative or
+  durably journaled shutdown behavior and provide synchronous fenced deletion;
+  enabling Studio additionally requires the adapter's `shared-cas`
+  declaration and closes legacy unmanaged drive creation.
 
 - Added the opt-in Data Studio feature for organization-owned runtime data in
   Fabric tenant databases. It includes fixed ReactiveDB storage for bounded

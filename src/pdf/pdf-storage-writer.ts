@@ -8,11 +8,14 @@
 import { posix } from 'node:path';
 
 import { getStorageService } from '../storage';
+import type { StorageObjectApi } from '../storage/storage-service';
 import { PdfError } from './pdf-error';
 import type { PdfStorageWriter, PdfStorageWriteInput } from './pdf-types';
 
 /** Storage service getter accepted for tests and alternate runtime composition. */
-export type PdfStorageServiceGetter = typeof getStorageService;
+export type PdfStorageServiceGetter = () => ({
+  readonly objects: Pick<StorageObjectApi, 'upload'>;
+} | null);
 
 /** Write generated PDFs through the platform storage metadata/blob boundary. */
 export class ZeroPdfStorageWriter implements PdfStorageWriter {

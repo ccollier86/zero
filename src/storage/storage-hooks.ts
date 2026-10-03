@@ -451,19 +451,31 @@ export function useStorageFolder(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const {
     cursor: requestedCursor,
     limit,
+    search: requestedSearch,
     sortBy,
     sortDir,
     type,
   } = options;
+  const requestKey = storageHookRequestKey(
+    authorizationBoundary.key,
+    driveId,
+    path,
+    requestedCursor,
+    limit,
+    requestedSearch?.trim(),
+    sortBy,
+    sortDir,
+    type,
+  );
+  const [loadedRequestKey, setLoadedRequestKey] = useState(requestKey);
 
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLoadedRequestKey(requestKey);
     setItems([]);
     setTotal(0);
     setCursor(null);
@@ -482,6 +494,7 @@ export function useStorageFolder(
     if (path) query.set('path', path);
     if (requestedCursor) query.set('cursor', requestedCursor);
     if (limit) query.set('limit', String(limit));
+    if (requestedSearch?.trim()) query.set('search', requestedSearch.trim());
     if (sortBy) query.set('sortBy', sortBy);
     if (sortDir) query.set('sortDir', sortDir);
     if (type) query.set('type', type);
@@ -511,8 +524,10 @@ export function useStorageFolder(
     driveId,
     limit,
     path,
+    requestKey,
     refreshKey,
     requestedCursor,
+    requestedSearch,
     sortBy,
     sortDir,
     type,
@@ -521,7 +536,7 @@ export function useStorageFolder(
   const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
   const visible = authorizationBoundary.ready
-    && loadedBoundaryKey === authorizationBoundary.key;
+    && loadedRequestKey === requestKey;
   return {
     items: visible ? items : [],
     total: visible ? total : 0,
@@ -621,12 +636,17 @@ export function useDriveCapabilities(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const requestKey = storageCapabilityRequestKey(
+    authorizationBoundary.key,
+    driveId,
+    path,
+  );
+  const [loadedRequestKey, setLoadedRequestKey] = useState(requestKey);
 
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLoadedRequestKey(requestKey);
     setCapabilities(null);
     setError(null);
     if (!driveId || !client || !authorizationBoundary.ready) {
@@ -670,19 +690,28 @@ export function useDriveCapabilities(
     client,
     driveId,
     path,
+    requestKey,
     refreshKey,
   ]);
 
   const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
   const visible = authorizationBoundary.ready
-    && loadedBoundaryKey === authorizationBoundary.key;
+    && loadedRequestKey === requestKey;
   return {
     capabilities: visible ? capabilities : null,
     loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
     error: visible ? error : null,
     refresh,
   };
+}
+
+function storageCapabilityRequestKey(
+  boundaryKey: string,
+  driveId: string | null,
+  path: string | undefined,
+): string {
+  return `${boundaryKey}\0${driveId ?? ''}\0${path ?? ''}`;
 }
 
 // ─── useStoragePermissions ───────────────────────────────────────────────
@@ -705,12 +734,17 @@ export function useStoragePermissions(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const requestKey = storageHookRequestKey(
+    authorizationBoundary.key,
+    driveId,
+    objectPath,
+  );
+  const [loadedRequestKey, setLoadedRequestKey] = useState(requestKey);
 
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLoadedRequestKey(requestKey);
     setPermissions([]);
     setError(null);
     if (!driveId || !client || !authorizationBoundary.ready) {
@@ -754,13 +788,14 @@ export function useStoragePermissions(
     client,
     driveId,
     objectPath,
+    requestKey,
     refreshKey,
   ]);
 
   const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
   const visible = authorizationBoundary.ready
-    && loadedBoundaryKey === authorizationBoundary.key;
+    && loadedRequestKey === requestKey;
   return {
     permissions: visible ? permissions : [],
     loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
@@ -788,12 +823,13 @@ export function useDriveUsage(driveId: string | null): UseDriveUsageReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const requestKey = storageHookRequestKey(authorizationBoundary.key, driveId);
+  const [loadedRequestKey, setLoadedRequestKey] = useState(requestKey);
 
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLoadedRequestKey(requestKey);
     setUsage(null);
     setError(null);
     if (!driveId || !client || !authorizationBoundary.ready) {
@@ -829,19 +865,24 @@ export function useDriveUsage(driveId: string | null): UseDriveUsageReturn {
     authorizationBoundary.ready,
     client,
     driveId,
+    requestKey,
     refreshKey,
   ]);
 
   const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
   const visible = authorizationBoundary.ready
-    && loadedBoundaryKey === authorizationBoundary.key;
+    && loadedRequestKey === requestKey;
   return {
     usage: visible ? usage : null,
     loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
     error: visible ? error : null,
     refresh,
   };
+}
+
+function storageHookRequestKey(...parts: readonly unknown[]): string {
+  return JSON.stringify(parts);
 }
 
 // ─── usePresignedUrl ─────────────────────────────────────────────────────
@@ -888,6 +929,11 @@ export interface StorageActions {
   deleteFile: (driveId: string, path: string) => Promise<void>;
   moveFile: (driveId: string, from: string, to: string) => Promise<FileInfo>;
   copyFile: (driveId: string, from: string, to: string) => Promise<FileInfo>;
+  updateFileMetadata: (
+    driveId: string,
+    path: string,
+    metadata: Record<string, unknown>,
+  ) => Promise<FileInfo>;
   setVisibility: (driveId: string, isPublic: boolean, path?: string) => Promise<void>;
   getFileUrl: (driveId: string, path: string) => string;
 }
@@ -964,6 +1010,14 @@ export function useStorageActions(): StorageActions {
       return scope.run(() => apiFetch<FileInfo>(client, `/drives/${driveId}/copy`, {
         method: 'POST',
         body: { from, to },
+      }));
+    }, [client, scope]),
+
+    updateFileMetadata: useCallback(async (driveId, path, metadata) => {
+      const encoded = encodePath(path);
+      return scope.run(() => apiFetch<FileInfo>(client, `/drives/${driveId}/info/${encoded}`, {
+        method: 'PATCH',
+        body: { metadata },
       }));
     }, [client, scope]),
 

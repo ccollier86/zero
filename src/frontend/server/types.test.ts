@@ -244,9 +244,10 @@ describe('resolveConfig', () => {
     }, {
       ZERO_STORAGE_SIGNING_SECRET: 'env-storage-capability-secret-32-bytes',
     });
-    expect(envOnly.storage).toEqual({
+    expect(envOnly.storage).toMatchObject({
       signingSecret: 'env-storage-capability-secret-32-bytes',
       defaultPresignedTTL: 3600,
+      studio: { enabled: false },
     });
 
     const explicit = resolveConfig({
@@ -260,9 +261,10 @@ describe('resolveConfig', () => {
     }, {
       ZERO_STORAGE_SIGNING_SECRET: 'env-storage-capability-secret-32-bytes',
     });
-    expect(explicit.storage).toEqual({
+    expect(explicit.storage).toMatchObject({
       signingSecret: 'config-storage-capability-secret-32-bytes',
       defaultPresignedTTL: 900,
+      studio: { enabled: false },
     });
   });
 

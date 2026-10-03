@@ -7,6 +7,7 @@ dist/
 !.env.example
 !examples/**/.env.example
 data/
+.storage/
 *.db
 *.db-wal
 *.db-shm

@@ -230,6 +230,7 @@ import {
   createDatabaseRef,
   createNamedDatabaseRef,
   createTenantDatabaseRef,
+  createAuthorityScopedServerServices,
   createAuthorizationKernel as createServerAuthorizationKernel,
   createResourceCrudPlugin,
   createUploadGrantToken,
@@ -276,6 +277,22 @@ import type {
   AuthTenantTerminologyConfig,
   NativeAuthorizationSourceResolver,
   AsyncDatabaseClient,
+  AuthorityScopedAuthServices,
+  AuthorityScopedObservabilityServices,
+  AuthorityScopedServerServices,
+  CreateAuthorityScopedServerServicesOptions,
+  ScopedNotificationService,
+  ScopedPdfService,
+  ScopedPdfStorageTarget,
+  ScopedRoomService,
+  ScopedStorageDriveApi,
+  ScopedStorageObjectApi,
+  ScopedStoragePermissionApi,
+  ScopedStorageService,
+  ScopedStorageUploadGrantApi,
+  StorageAdapterOperationOptions as ServerStorageAdapterOperationOptions,
+  StorageBlobWriteResult as ServerStorageBlobWriteResult,
+  StoragePendingBlobPublication as ServerStoragePendingBlobPublication,
   DatabaseActorBundleLaunch,
   DatabaseActorCommandPrefixLaunch,
   DatabaseActorExecutorPolicy,
@@ -342,6 +359,11 @@ import {
   createStoragePlugin,
   createUploadGrantToken as createSubpathUploadGrantToken,
   verifyUploadGrantToken as verifySubpathUploadGrantToken,
+} from '@zero/framework/storage';
+import type {
+  StorageAdapterOperationOptions,
+  StorageBlobWriteResult,
+  StoragePendingBlobPublication,
 } from '@zero/framework/storage';
 import {
   createSyncPlugin,
@@ -659,6 +681,30 @@ const workflowTypeSurface = null as unknown as {
   scopedListFilter: ScopedWorkflowInstanceListFilter;
   scoped: ScopedWorkflowService;
 };
+const machineServiceProjection = null as unknown as {
+  auth: AuthorityScopedAuthServices;
+  create: typeof createAuthorityScopedServerServices;
+  notifications: ScopedNotificationService;
+  observability: AuthorityScopedObservabilityServices;
+  options: CreateAuthorityScopedServerServicesOptions;
+  pdf: ScopedPdfService;
+  pdfStorageTarget: ScopedPdfStorageTarget;
+  rooms: ScopedRoomService;
+  storageDrives: ScopedStorageDriveApi;
+  storageObjects: ScopedStorageObjectApi;
+  storagePermissions: ScopedStoragePermissionApi;
+  storage: ScopedStorageService;
+  storageUploads: ScopedStorageUploadGrantApi;
+  services: AuthorityScopedServerServices;
+};
+const storageAdapterContract = null as unknown as {
+  operation: StorageAdapterOperationOptions;
+  publication: StoragePendingBlobPublication;
+  serverOperation: ServerStorageAdapterOperationOptions;
+  serverPublication: ServerStoragePendingBlobPublication;
+  serverWrite: ServerStorageBlobWriteResult;
+  write: StorageBlobWriteResult;
+};
 const dataStudioServerFeature = createDataStudioFeatureSubpath();
 const dataStudioServerTypes = null as unknown as {
   feature: DataStudioFeatureSubpath;
@@ -675,6 +721,7 @@ export const serverSymbols = {
   AuthTenantAdministrationService,
   ADMINISTRATION_TENANT_ROLE_KEYS,
   AuthorizationKernel,
+  createAuthorityScopedServerServices,
   FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS,
   accessRequirement,
   authAdministration,
@@ -885,6 +932,8 @@ export const serverSymbols = {
   workflowChooseOptions,
   workflowDefinition,
   workflowTypeSurface,
+  machineServiceProjection,
+  storageAdapterContract,
   typedWorkflowActivity,
   WorkflowActivityCatalog,
   WorkflowExecutor,

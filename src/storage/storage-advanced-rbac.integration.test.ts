@@ -20,13 +20,15 @@ let storage: StorageService;
 let baseUrl = '';
 
 const adapter: StorageAdapter = {
+  writeShutdownSafety: 'cooperative',
   async writeBlob() {
     return { checksum: crypto.randomUUID(), size: 0, headBytes: new Uint8Array() };
   },
   async readBlob() { return null; },
   async readBlobRange() { return null; },
   async removeBlob() {},
-  async blobExists() { return false; },
+  removeBlobSync() {},
+  async blobExists() { return true; },
   async blobSize() { return 0; },
 };
 

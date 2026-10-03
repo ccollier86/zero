@@ -483,6 +483,116 @@ invalidates every outstanding presigned URL and upload grant, so deploy
 rotations with the maximum configured capability lifetime in mind. Storage
 secrets remain server-only and are never included in browser platform config.
 
+### Storage Studio
+
+`storage.studio` enables the managed organization/personal-drive control plane
+around the existing Storage engine. It is disabled by default and does not
+require ReactiveDB Fabric, but it does require Guardian/auth because every
+catalog and object operation is authority scoped. Managed drive profiles, idempotency receipts, quota
+reservations, and lifecycle jobs stay in the private system database; adapter
+bytes remain under `storageDir` or the configured adapter.
+
+```ts
+import { defineZeroConfig } from '@zero/framework/server';
+import {
+  STORAGE_STUDIO_PERMISSION_REGISTRY,
+  STORAGE_STUDIO_ROLE_FRAGMENTS,
+} from '@zero/framework/storage';
+
+export default defineZeroConfig({
+  // db, systemDb, tables...
+  auth: {
+    tenancy: { mode: 'multi' },
+    authorization: {
+      mode: 'advanced',
+      permissions: { ...STORAGE_STUDIO_PERMISSION_REGISTRY },
+      roles: {
+        owner: { allPermissions: true },
+        'storage-manager': STORAGE_STUDIO_ROLE_FRAGMENTS.manager,
+      },
+    },
+  },
+  storageDir: './data/files',
+  storage: {
+    defaultPresignedTTL: 900,
+    studio: {
+      enabled: true,
+      organizationDrives: true,
+      personalDrives: false,
+      personalSelfService: false,
+      isolation: 'shared-cas',
+      maxCapabilityTTL: 3_600,
+      defaultGrants: [{
+        grantType: 'role',
+        grantValue: 'owner',
+        permission: 'admin',
+      }],
+      publicAccess: {
+        allowPublicDrives: false,
+        allowPublicObjects: false,
+      },
+      limits: {
+        maxOrganizationDrives: 25,
+        maxPersonalDrivesPerUser: 1,
+        maxObjectsPerDrive: 100_000,
+        defaultDriveSizeBytes: 100_000_000_000,
+        defaultFileSizeBytes: 500_000_000,
+        maxDriveSizeBytes: 200_000_000_000,
+        maxFileSizeBytes: 1_000_000_000,
+        maxConcurrentUploadBytes: 500_000_000,
+      },
+    },
+  },
+});
+```
+
+| Option | Default | Contract |
+| --- | --- | --- |
+| `enabled` | `false` | Activate the managed-drive service, policy, and scoped API; disabled is the compatibility default. |
+| `organizationDrives` | `true` | Permit application-owned drives in single mode and active-organization drives in multi mode. |
+| `personalDrives` | `false` | Permit user-owned drives inside the current application/organization scope. |
+| `personalSelfService` | `false` | Let an authenticated user provision their own personal drive; requires `personalDrives`. |
+| `isolation` | `'shared-cas'` | The only public Storage Studio adapter contract in this release. |
+| `defaultGrants` | `[]` | `read`, `write`, or `admin` ACLs installed in the provisioning transaction. A user grant may use `'$creator'`. |
+| `publicAccess.allowPublicDrives` | `false` | Permit managed drives to be public. Requires public objects too. |
+| `publicAccess.allowPublicObjects` | `false` | Permit public managed objects. |
+| `maxCapabilityTTL` | `defaultPresignedTTL` | Maximum presigned/upload-grant lifetime for a managed drive. |
+| `limits.maxOrganizationDrives` | `100` | Managed application/organization drives per scope. |
+| `limits.maxPersonalDrivesPerUser` | `10` | Managed personal drives per user and scope. |
+| all other `limits.*` values | `0` | No configured Studio ceiling. |
+
+All counts and byte values are non-negative safe integers. A non-zero default
+cannot exceed its configured maximum, file limits cannot exceed the
+corresponding drive limits, and `storage.defaultPresignedTTL` cannot exceed
+`storage.studio.maxCapabilityTTL`. Unknown nested settings fail configuration
+instead of being ignored.
+
+Membership removal is not a Storage configuration switch. Guardian revokes the
+former member's session, user API-key, and scoped-service authority
+immediately; a user-owned drive is retained for an authorized organization
+administrator to manage explicitly. Already-issued presigned URLs and upload
+grants remain bounded bearer capabilities until expiry or managed-drive
+generation invalidation, with `maxCapabilityTTL` as the server-side ceiling.
+
+At startup, an enabled Studio requires the adapter to declare `shared-cas` in
+`supportedStudioIsolation`. Configuration rejects every other isolation value
+in this release. `shared-cas` shares the adapter's content-addressable blob
+pool while drive IDs, object metadata, Guardian authority, and Storage ACLs
+provide logical isolation. Every Zero 2 Storage adapter is also admitted
+against the engine-wide mutation contract: synchronous `removeBlobSync()` and
+either cooperative `AbortSignal` shutdown or durable publication receipts.
+This applies even while Studio is disabled, because ordinary Storage and
+Studio share the same reference-counted blob engine. The built-in local
+adapter implements the full contract; an unsafe custom adapter fails startup.
+Lifecycle cleanup, expired lease recovery, retained
+blob cleanup, and terminal receipt pruning run through the Storage plugin's
+managed bounded worker; there is no separate scheduler setting to enable.
+Elysia shutdown stops future wakes and joins an active maintenance pass. Read
+the complete
+[Storage Studio guide](./storage-studio.md) for Guardian permissions,
+provisioning, lifecycle, SDK/UI, routes, upgrade behavior, and scoped machine
+services.
+
 The capability axes and all four combinations normalize deterministically;
 omitting them still resolves to `single/simple`.
 
