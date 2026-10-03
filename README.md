@@ -227,6 +227,12 @@ apps. Start with the
   supported multi-database topology, actor isolation, file/WAL and bounded
   hot placement, tenant routing, realtime behavior, capacity, durability, and
   operational boundaries.
+- [Data Studio](./docs/data-studio.md): optional organization-owned logical
+  tables over fixed Fabric schemas, Guardian permissions, the browser SDK,
+  smooth inline editing, and headless function/workflow access.
+- [Storage Studio And Vector Studio Roadmap](./docs/control-plane-roadmap.md):
+  separate future organization control planes around the existing Storage and
+  Vector engines; proposed surfaces are not current APIs.
 - [Auth System](./docs/auth/README.md): canonical auth index for installation
   bootstrap, all four tenancy/authorization profiles, declarative permissions,
   administration, onboarding, user API keys, browser state, audit, and

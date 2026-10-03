@@ -18,7 +18,6 @@ import {
   getAuthStore,
   getTokenService,
 } from '../../auth/auth.plugin';
-import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import type { RequestAuthorizationAccess } from '../../auth/authorization-access';
 import {
   compileAccessRequirement,
@@ -29,7 +28,7 @@ import {
   type CompiledAccessRequirement,
   type StructuredAccessRequirement,
 } from '../../auth/authorization-kernel';
-import { AuthError, type AuthContext } from '../../auth/types';
+import type { AuthContext } from '../../auth/types';
 import {
   createServerRoute,
 } from './server-route';
@@ -39,6 +38,7 @@ import {
   type ServerRouteServices,
 } from './server-services';
 import type { ServerRequestServices } from './server-request-services';
+import { applyServerExtensionErrorHandler } from './server-extension-error-handler';
 import {
   evaluateMiddlewareApplicability,
   normalizeHttpMethod,
@@ -372,7 +372,7 @@ export async function createServerExtensionApp(options: {
     { name: options.name ?? 'zero.app.server-extensions' },
     options.runtime,
   ) as AnyElysia;
-  app = applyAuthErrorHandler(app);
+  app = applyServerExtensionErrorHandler(app);
 
   for (const extension of options.extensions) {
     app = await applyServerExtensionWithPlan(
@@ -592,22 +592,6 @@ function applyAuthGuard(
     onRequest(handler: ReturnType<typeof createProtectedMultipartRequestGuard>): AnyElysia;
     onBeforeHandle(handler: (context: unknown) => MaybePromise<unknown>): AnyElysia;
   }).onRequest(multipartGuard!).onBeforeHandle(guard);
-}
-
-function applyAuthErrorHandler(app: AnyElysia): AnyElysia {
-  return (app as AnyElysia & {
-    onError(handler: (context: { error: unknown; set: { status?: number } }) => unknown): AnyElysia;
-  }).onError(function mapZeroExtensionAuthError({ error, set }) {
-    if (error instanceof AuthError) {
-      set.status = error.status;
-      return {
-        error: getPublicAuthErrorMessage(error),
-        code: error.code,
-      };
-    }
-
-    return undefined;
-  });
 }
 
 function buildRouteOptions(

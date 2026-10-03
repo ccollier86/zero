@@ -197,6 +197,19 @@ export type {
   DatabaseWriteCommandRegistry,
 } from './database-realm';
 
+export {
+  databaseRealmContribution,
+  defineDatabaseRealmContribution,
+} from './database-realm-contribution';
+export type {
+  DatabaseRealmContribution,
+  DatabaseRealmContributionDefinition,
+} from './database-realm-contribution';
+export { composeDatabaseRealm } from './database-realm-composition';
+export type {
+  DatabaseRealmCompositionDefinition,
+} from './database-realm-composition';
+
 export { createAsyncDatabaseClient } from './database-client';
 export type { CreateAsyncDatabaseClientOptions } from './database-client';
 export type {

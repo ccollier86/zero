@@ -184,6 +184,18 @@ export type {
   UseDataRealmReadinessResult,
 } from './data-realm-readiness-hooks';
 
+export {
+  DataStudioOperationTracker,
+  resolveDataStudioAccess,
+  useDataStudio,
+} from './data-studio-hooks';
+export type {
+  DataStudioAccess,
+  DataStudioControllerStatus,
+  UseDataStudioOptions,
+  UseDataStudioResult,
+} from './data-studio-hooks';
+
 export { useMutation } from './mutation-hooks';
 export type { UseMutationOptions, UseMutationReturn } from './mutation-hooks';
 

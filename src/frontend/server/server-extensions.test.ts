@@ -7,11 +7,19 @@
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Elysia, type AnyElysia } from 'elysia';
+import { Elysia, t, type AnyElysia } from 'elysia';
 
 import { createAuthPlugin, getAuthStore } from '../../auth/auth.plugin';
+import { OBS_CODES } from '../../observability/codes';
+import { MemoryEventStore } from '../../observability/memory-event-store';
+import { createObservabilityPlugin } from '../../observability/plugin';
 import type { ReactiveDB } from '../../sync';
 import { createSyncPlugin } from '../../sync';
+import {
+  ZERO_REQUEST_PARSE_FAILED,
+  ZERO_REQUEST_VALIDATION_FAILED,
+  ZERO_RESPONSE_VALIDATION_FAILED,
+} from './server-extension-error-handler';
 import {
   createServerExtensionApp,
   defineEndpoint,
@@ -27,6 +35,99 @@ afterEach(async () => {
 });
 
 describe('server extensions middleware policy', () => {
+  test('sanitizes validation and parse failures without reflecting request values', async () => {
+    const events = new MemoryEventStore();
+    const observability = {
+      sink: events,
+      store: events,
+      config: { console: false },
+    };
+    const extensions = await createServerExtensionApp({
+      extensions: [defineEndpoint({
+        method: 'POST',
+        path: '/api/private-values',
+        body: t.Object({
+          operationId: t.String({ minLength: 1 }),
+          values: t.Record(t.String(), t.Unknown()),
+        }),
+        handler: () => ({ ok: true }),
+      }), defineEndpoint({
+        method: 'GET',
+        path: '/api/invalid-server-response',
+        response: t.Object({ ok: t.Boolean() }),
+        handler: () => ({ privateResult: 'must-not-leak-from-response-validation' }),
+      })],
+    });
+    const app = new Elysia()
+      .use(createObservabilityPlugin({ runtime: observability, config: { endpoint: false } }))
+      .use(extensions as AnyElysia)
+      .listen(0) as AnyElysia;
+    policyApps.push(app);
+
+    const validationSecret = 'must-never-be-reflected-or-logged';
+    const invalid = await fetch(`${baseUrl(app)}/api/private-values`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operationId: 42,
+        values: { clinicalNote: validationSecret },
+      }),
+    });
+    const invalidText = await invalid.text();
+
+    expect(invalid.status).toBe(422);
+    expect(JSON.parse(invalidText)).toEqual({
+      error: 'Invalid request.',
+      code: ZERO_REQUEST_VALIDATION_FAILED,
+    });
+    expect(invalidText).not.toContain(validationSecret);
+    expect(invalidText).not.toContain('found');
+    expect(invalidText).not.toContain('schema');
+    expect(invalidText).not.toContain('expected');
+
+    const rejected = events.query({
+      code: OBS_CODES.APP_REQUEST_VALIDATION_REJECTED.code,
+    });
+    expect(rejected.count).toBe(1);
+    expect(rejected.events[0]?.error).toBeUndefined();
+    expect(JSON.stringify(rejected.events[0])).not.toContain(validationSecret);
+
+    const malformedSecret = 'also-must-never-be-reflected-or-logged';
+    const malformed = await fetch(`${baseUrl(app)}/api/private-values`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: `{"operationId":"op", "values":{"secret":"${malformedSecret}"}`,
+    });
+    const malformedText = await malformed.text();
+
+    expect(malformed.status).toBe(400);
+    expect(JSON.parse(malformedText)).toEqual({
+      error: 'Invalid request body.',
+      code: ZERO_REQUEST_PARSE_FAILED,
+    });
+    expect(malformedText).not.toContain(malformedSecret);
+    expect(events.query({ code: OBS_CODES.APP_REQUEST_PARSE_REJECTED.code }).count).toBe(1);
+    expect(JSON.stringify(events.query({ code: OBS_CODES.APP_REQUEST_PARSE_REJECTED.code })))
+      .not.toContain(malformedSecret);
+
+    const invalidResponse = await fetch(`${baseUrl(app)}/api/invalid-server-response`);
+    const invalidResponseText = await invalidResponse.text();
+    expect(invalidResponse.status).toBe(500);
+    expect(JSON.parse(invalidResponseText)).toEqual({
+      error: 'Invalid server response.',
+      code: ZERO_RESPONSE_VALIDATION_FAILED,
+    });
+    expect(invalidResponseText).not.toContain('must-not-leak-from-response-validation');
+    const responseFailures = events.query({
+      code: OBS_CODES.APP_RESPONSE_VALIDATION_FAILED.code,
+    });
+    expect(responseFailures.count).toBe(1);
+    expect(responseFailures.events[0]?.error).toBeUndefined();
+    expect(JSON.stringify(responseFailures)).not.toContain(
+      'must-not-leak-from-response-validation',
+    );
+  });
+
   test('enforces matcher auth, admin role, and method policy through middleware', async () => {
     let app = await createPolicyApp([
       defineMiddleware({

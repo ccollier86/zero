@@ -92,6 +92,19 @@ hybrid-placement contracts are tracked in the
 The declarative application surface is summarized in the
 [SDK reference](./sdk-reference.md#reactivedb-fabric-actor-backed-multi-database-tenancy).
 
+For organization-owned runtime tables, Zero provides an optional first-party
+[Data Studio](./data-studio.md). It stores logical schemas and rows through a
+fixed Fabric realm contribution, reuses Guardian tenant permissions and ID-only
+identity anchors, exposes lightweight read-only HTTP/Sync reconciliation
+metadata, and keeps full reads plus revisioned/idempotent mutations on its
+dedicated API. Install its complete server, realm, authorization, and browser
+fragments together; partial installation fails startup.
+
+Data Studio does not provision Storage drives or Vector indexes. Those remain
+separate future control planes described in the
+[Storage Studio and Vector Studio roadmap](./control-plane-roadmap.md); current
+applications continue to use Zero's existing Storage and Vector APIs.
+
 Fabric leaves `db` as the pinned shared application database, while Guardian
 and other Zero authority remain in the separate `systemDb`. It can route each
 selected tenant's application Resources to an isolated actor-owned database.
@@ -897,6 +910,7 @@ Zero includes these backend capabilities out of the box:
 | ReactiveDB | SQLite table definition, change tracking, ring-buffer replay, natural identity. |
 | Sync | WebSocket snapshots, live updates, lazy/auto sync, sync policy hooks. |
 | Data API | `/api/data` reads for lazy tables with pagination, sorting, filtering, limits, and auth/policy integration. |
+| Data Studio | Optional organization-owned logical tables over Guardian permissions and fixed Fabric realm operations, with read-only HTTP/Sync reconciliation metadata plus dedicated bounded reads and command-only mutations. |
 | Storage | Built-in file storage with platform auth boundaries and a reusable management organism. |
 | State Sync | Server-persisted reactive key/value state isolated per authorized-scope user. |
 | Notifications | Server-created notifications and receipt tracking. |
@@ -1125,6 +1139,7 @@ Zero includes reusable frontend organisms for fast data-driven screens:
 | Organism | Use it for | Docs |
 | --- | --- | --- |
 | `DataTableView` | Schema-aware tables with full-sync, lazy `/api/data`, or caller-owned sources. | [docs/frontend/data-table.md](./frontend/data-table.md) |
+| `DataStudio` | Organization-owned logical tables with server-capability-aware schema/row controls and geometry-stable inline editing. | [docs/data-studio.md](./data-studio.md) |
 | `KanbanBoard` | Drag-and-drop status boards, pipelines, queues, and workflow lanes backed by caller-owned or live data. | [docs/frontend/kanban.md](./frontend/kanban.md) |
 | `MasterDetailView` | A table/list plus detail panel, generated edit form, custom detail body, record navigation, and DataTable-style lazy sources. | [docs/frontend/master-detail.md](./frontend/master-detail.md) |
 | `DetailPanel` / `ListDetailLayout` / `RecordNavigationBar` | Custom detail screens that need the polished shell without the full organism. | [docs/frontend/master-detail.md](./frontend/master-detail.md#low-level-detail-primitives) |

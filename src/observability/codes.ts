@@ -33,6 +33,9 @@ export const OBS_CODES = {
   APP_LISTENING: code('app', 'listening', 'info', 'Application server is listening.'),
   APP_SHUTDOWN_SIGNAL: code('app', 'shutdown.signal', 'info', 'Shutdown signal received.'),
   APP_REQUEST_FAILED: code('app', 'request.failed', 'error', 'Request failed.'),
+  APP_REQUEST_VALIDATION_REJECTED: code('app', 'request_validation.rejected', 'warn', 'Request validation failed.'),
+  APP_REQUEST_PARSE_REJECTED: code('app', 'request_parse.rejected', 'warn', 'Request body parsing failed.'),
+  APP_RESPONSE_VALIDATION_FAILED: code('app', 'response_validation.failed', 'error', 'Response validation failed.'),
   APP_REQUEST_SLOW: code('app', 'request.slow', 'warn', 'Request exceeded the configured slow threshold.'),
   APP_LIFECYCLE_FAILED: code('app', 'lifecycle.failed', 'error', 'Elysia lifecycle handler failed.'),
   APP_LIFECYCLE_SLOW: code('app', 'lifecycle.slow', 'warn', 'Elysia lifecycle handler exceeded the configured slow threshold.'),
@@ -258,6 +261,13 @@ export const OBS_CODES = {
   DATABASE_RECEIPT_COMPACTED: code('database', 'receipt.compacted', 'info', 'Durable database receipt results were compacted to permanent tombstones.'),
   DATABASE_HISTORY_GAP: code('database', 'history.gap', 'warn', 'Database change history has a gap.'),
 
+  DATA_STUDIO_SCHEMA_CREATED: code('data-studio', 'schema.created', 'info', 'Data Studio table schema created.'),
+  DATA_STUDIO_SCHEMA_UPDATED: code('data-studio', 'schema.updated', 'info', 'Data Studio table schema updated.'),
+  DATA_STUDIO_SCHEMA_ARCHIVED: code('data-studio', 'schema.archived', 'info', 'Data Studio table schema archived.'),
+  DATA_STUDIO_SCHEMA_RESTORED: code('data-studio', 'schema.restored', 'info', 'Data Studio table schema restored.'),
+  DATA_STUDIO_OPERATION_REJECTED: code('data-studio', 'operation.rejected', 'warn', 'Data Studio operation was rejected.'),
+  DATA_STUDIO_OPERATION_FAILED: code('data-studio', 'operation.failed', 'error', 'Data Studio operation failed.'),
+
   NOTIFICATIONS_STARTED: code('notifications', 'started', 'info', 'Notifications plugin started.'),
   NOTIFICATIONS_STOPPED: code('notifications', 'stopped', 'info', 'Notifications plugin stopped.'),
   NOTIFICATIONS_CLEANUP: code('notifications', 'cleanup.expired', 'info', 'Expired notifications were cleaned up.'),
@@ -347,6 +357,7 @@ export const OBS_CODES = {
   FRONTEND_RESOURCE_ACTION_FAILED: code('frontend', 'resource.action_failed', 'error', 'Frontend generated-resource action failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
   FRONTEND_WORKFLOW_TOPOLOGY_FAILED: code('frontend', 'workflow.topology_failed', 'error', 'Workflow topology query failed.'),
+  FRONTEND_DATA_STUDIO_OPERATION_FAILED: code('frontend', 'data_studio.operation_failed', 'error', 'Frontend Data Studio operation failed.'),
   FRONTEND_COPY_FAILED: code('frontend', 'copy.failed', 'error', 'Clipboard copy action failed.'),
   FRONTEND_CODE_HIGHLIGHT_FAILED: code('frontend', 'code_highlight.failed', 'warn', 'Frontend code block highlighting failed.'),
 

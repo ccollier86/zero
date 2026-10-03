@@ -348,6 +348,69 @@ error contract, deployment requirements, and deliberate exclusions are
 authoritative in
 [ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md).
 
+### Optional Data Studio
+
+Data Studio is the opt-in Guardian/Fabric control plane for organization-owned
+logical tables. Install its fragments explicitly in a multi-tenant advanced-
+authorization app:
+
+```ts
+import { createDataStudioFeature } from '@zero/framework/data-studio/server';
+
+const dataStudio = createDataStudioFeature();
+
+export default defineZeroConfig({
+  tables: { ...appTables, ...dataStudio.appTables },
+  resources: [...appResources, ...dataStudio.resources],
+  auth: {
+    tenancy: { mode: 'multi' },
+    authorization: {
+      mode: 'advanced',
+      registryVersion: 3,
+      permissions: { ...appPermissions, ...dataStudio.permissions },
+      roles: {
+        ...appRoles,
+        'data-studio-viewer': dataStudio.roleFragments.viewer,
+        'data-studio-editor': dataStudio.roleFragments.editor,
+        'data-studio-manager': dataStudio.roleFragments.manager,
+      },
+    },
+  },
+  databaseTopology: {
+    mode: 'multiple',
+    // Compose DATA_STUDIO_REALM_CONTRIBUTION into this exact realm.
+    realm: tenantDatabaseRealm,
+    tenantIsolation: 'tenant-database',
+    // ...required rootDirectory/actors and ordinary Fabric options
+  },
+});
+```
+
+`appTables` is the `createApp()` fragment: it carries full-sync catalog
+metadata, lazy row metadata, and server-only private tables. These generic
+projections omit complete schemas/values; the dedicated Data Studio API returns
+the bounded full records. `tables` on the feature object is the underlying raw
+actor schema. The browser separately merges `DATA_STUDIO_CLIENT_TABLES` into
+`AppProvider({ tables })`. Spread `dataStudio.appTables` unchanged into app
+configuration; using raw `DATA_STUDIO_TENANT_TABLES`, changing catalog `full` or
+row `lazy` Sync, or altering a fixed schema—including Guardian reference
+metadata or mutation validators—fails startup with `DATABASE_CONFIG_INVALID`.
+
+Spread `dataStudio.resources` unchanged. Zero validates the exact normalized
+official Resource name, table, primary key, exposure, realm, actions, field
+allow-lists, and policy before auto-mounting the built-in router. A partial or
+altered Resource contract fails startup with `DATABASE_CONFIG_INVALID`; those
+declarations are not customization templates. The actor entrypoint must pass
+the same composed realm to `runDatabaseActorIfRequested()` that the topology
+uses; do not pass the pre-composition app realm or replace official Data Studio
+query/command handlers behind the same operation names. Handler substitution
+also fails with `DATABASE_CONFIG_INVALID`. Adding the permission or role
+semantics follows Guardian's normal `registryVersion` bump rule.
+
+See [Data Studio](./data-studio.md) for complete realm composition, browser and
+headless APIs, schema evolution, limits, idempotency, and upgrade/removal
+guidance.
+
 ### Torrent workflow configuration
 
 **Torrent** is Zero's durable workflow and orchestration system. The product

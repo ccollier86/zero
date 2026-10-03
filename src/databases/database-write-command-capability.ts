@@ -93,12 +93,18 @@ export interface DatabaseWriteCommandSession {
   close(): void;
 }
 
-/** Create a revocable facade whose closures are the only reference to the DB. */
+/**
+ * Create a revocable facade whose closures are the only reference to the DB.
+ * Framework-owned registered tables remain readable but reject every command
+ * mutation path supplied through `readOnlyTables`.
+ */
 export function createDatabaseWriteCommandSession(
   database: ReactiveDB,
+  readOnlyTables: readonly string[] = [],
 ): DatabaseWriteCommandSession {
   let active = true;
   let capability!: DatabaseWriteCommandCapability;
+  const protectedTables = new Set(readOnlyTables.map((table) => table.toLowerCase()));
   const methods = Object.create(null) as Record<string, unknown>;
   const assertActive = (): void => {
     if (!active) {
@@ -114,49 +120,83 @@ export function createDatabaseWriteCommandSession(
     assertActive();
     return method(...args);
   };
+  const assertWritableTable = (table: string): void => {
+    if (typeof table === 'string' && protectedTables.has(table.toLowerCase())) {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Database registered-command table is read-only.',
+      );
+    }
+  };
 
-  defineMethod(methods, 'insert', activeMethod((table: string, row: Row) =>
-    database.insert(table, row)));
-  defineMethod(methods, 'create', activeMethod((table: string, row: Row) =>
-    database.create(table, row)));
-  defineMethod(methods, 'createStrict', activeMethod((table: string, row: Row) =>
-    database.createStrict(table, row)));
+  defineMethod(methods, 'insert', activeMethod((table: string, row: Row) => {
+    assertWritableTable(table);
+    return database.insert(table, row);
+  }));
+  defineMethod(methods, 'create', activeMethod((table: string, row: Row) => {
+    assertWritableTable(table);
+    return database.create(table, row);
+  }));
+  defineMethod(methods, 'createStrict', activeMethod((table: string, row: Row) => {
+    assertWritableTable(table);
+    return database.createStrict(table, row);
+  }));
   defineMethod(methods, 'createScoped', activeMethod((
     table: string,
     row: Row,
     scope: ReactiveDBRowScope,
-  ) => database.createScoped(table, row, scope)));
+  ) => {
+    assertWritableTable(table);
+    return database.createScoped(table, row, scope);
+  }));
   defineMethod(methods, 'update', activeMethod((
     table: string,
     id: string,
     partial: Partial<Row>,
-  ) => database.update(table, id, partial)));
+  ) => {
+    assertWritableTable(table);
+    return database.update(table, id, partial);
+  }));
   defineMethod(methods, 'updateIfCurrent', activeMethod((
     table: string,
     id: string,
     partial: Partial<Row>,
     expectedRow: Row,
-  ) => database.updateIfCurrent(table, id, partial, expectedRow)));
+  ) => {
+    assertWritableTable(table);
+    return database.updateIfCurrent(table, id, partial, expectedRow);
+  }));
   defineMethod(methods, 'updateScoped', activeMethod((
     table: string,
     id: string,
     partial: Partial<Row>,
     scope: ReactiveDBRowScope,
     expectedRow?: Row,
-  ) => database.updateScoped(table, id, partial, scope, expectedRow)));
-  defineMethod(methods, 'delete', activeMethod((table: string, id: string) =>
-    database.delete(table, id)));
+  ) => {
+    assertWritableTable(table);
+    return database.updateScoped(table, id, partial, scope, expectedRow);
+  }));
+  defineMethod(methods, 'delete', activeMethod((table: string, id: string) => {
+    assertWritableTable(table);
+    return database.delete(table, id);
+  }));
   defineMethod(methods, 'deleteIfCurrent', activeMethod((
     table: string,
     id: string,
     expectedRow: Row,
-  ) => database.deleteIfCurrent(table, id, expectedRow)));
+  ) => {
+    assertWritableTable(table);
+    return database.deleteIfCurrent(table, id, expectedRow);
+  }));
   defineMethod(methods, 'deleteScoped', activeMethod((
     table: string,
     id: string,
     scope: ReactiveDBRowScope,
     expectedRow?: Row,
-  ) => database.deleteScoped(table, id, scope, expectedRow)));
+  ) => {
+    assertWritableTable(table);
+    return database.deleteScoped(table, id, scope, expectedRow);
+  }));
   defineMethod(methods, 'query', activeMethod(
     (table: string) => database.query(table),
   ));
@@ -182,18 +222,28 @@ export function createDatabaseWriteCommandSession(
     table: string,
     key: IdentityKey,
   ) => database.queryByIdentity(table, key)));
-  defineMethod(methods, 'upsertByIdentity', activeMethod(
-    (table: string, row: Row) => database.upsertByIdentity(table, row),
-  ));
+  defineMethod(methods, 'upsertByIdentity', activeMethod((
+    table: string,
+    row: Row,
+  ) => {
+    assertWritableTable(table);
+    return database.upsertByIdentity(table, row);
+  }));
   defineMethod(methods, 'updateByIdentity', activeMethod((
     table: string,
     key: IdentityKey,
     partial: Partial<Row>,
-  ) => database.updateByIdentity(table, key, partial)));
+  ) => {
+    assertWritableTable(table);
+    return database.updateByIdentity(table, key, partial);
+  }));
   defineMethod(methods, 'deleteByIdentity', activeMethod((
     table: string,
     key: IdentityKey,
-  ) => database.deleteByIdentity(table, key)));
+  ) => {
+    assertWritableTable(table);
+    return database.deleteByIdentity(table, key);
+  }));
   defineMethod(methods, 'transaction', activeMethod(<T>(
     operation: (db: DatabaseWriteCommandCapability) => T,
   ): T => {

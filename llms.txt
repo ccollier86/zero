@@ -19,6 +19,8 @@ quickly from one integrated platform. It combines:
 - separate pinned system and application ReactiveDB planes
 - ReactiveDB Fabric for bounded actor-owned file/WAL, hot, and hybrid
   multi-database topologies
+- optional Data Studio for Guardian-authorized, organization-owned logical
+  tables inside Fabric tenant databases
 - WebSocket sync and lazy `/api/data`
 - generated resource CRUD with server-side policy
 - auth, email, account lifecycle, password reset/setup, email verification,
@@ -47,6 +49,12 @@ Zero's durable, versioned workflow and orchestration system is called
 established `workflows` configuration, `/workflows/*` routes,
 `@zero/framework/workflows`, `zero.workflows`, `useWorkflow*`, `Workflow*`,
 `workflow_*`, `WORKFLOW_*`, and `workflows.*` contracts.
+
+Zero's optional organization-owned logical-table control plane is **Data
+Studio**. Application code uses `client.dataStudio`, `useDataStudio`,
+`DataStudio`, `@zero/framework/data-studio`, and
+`@zero/framework/data-studio/server`. It stores logical schemas and rows in a
+fixed Fabric realm; it is not a browser-accessible raw SQLite/DDL service.
 
 Zero's app-building rule is simple: **use framework pieces first**. Do not
 recreate auth forms, modal managers, storage browsers, data tables, sidebars,
@@ -117,6 +125,12 @@ publicly supported.
 - `docs/framework/multi-database-architecture.md`: authoritative supported
   ReactiveDB Fabric contract, including topology, isolation, routing,
   concurrency, Sync, capacity, durability, and release boundaries.
+- `docs/data-studio.md`: complete optional Data Studio installation,
+  Guardian/Fabric authority, logical schema and row model, SDK/components,
+  inline editing, headless service, limits, and upgrade/removal contract.
+- `docs/control-plane-roadmap.md`: future-only Storage Studio and Vector Studio
+  design, including shared Guardian/Fabric/control-plane conventions and each
+  domain's distinct provisioning, quotas, jobs, deletion, and recovery work.
 - `docs/workflows.md`: authoritative Torrent workflow DSL, versioning,
   execution, memory, interaction, recovery, authority, Fabric data, and live
   visualization contract.
@@ -373,6 +387,7 @@ UI:
 import { AppShell } from '@zero/framework/components/app-shell';
 import { Button } from '@zero/framework/components/ui/button';
 import { DataTableView } from '@zero/framework/components/data-table';
+import { DataStudio } from '@zero/framework/components/data-studio';
 import { Popover, PopoverContent, PopoverTrigger } from '@zero/framework/components/popover';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
 import { KanbanBoard } from '@zero/framework/components/kanban';
@@ -388,6 +403,8 @@ import { AnimateIcon, Check, Trash, ZeroIcon } from '@zero/framework/icons';
 Subsystem imports exist for advanced use:
 
 - `@zero/framework/auth`
+- `@zero/framework/data-studio`
+- `@zero/framework/data-studio/server`
 - `@zero/framework/email`
 - `@zero/framework/kv`
 - `@zero/framework/migrations`
@@ -536,6 +553,7 @@ app.listen(config.port ?? 3000);
 | Application ReactiveDB | The pinned `db` plane owns shared application tables from `tables`; server writes emit Sync changes. |
 | System ReactiveDB | The always-separate pinned `systemDb` plane owns Guardian authority and Zero service state. File mode is the production default. |
 | ReactiveDB Fabric | With `databaseTopology`, actor-owned application databases use validated file/WAL, bounded hot, or hybrid placement while both pinned planes remain in the app runtime. |
+| Data Studio | Optional; auto-mounts its organization-scoped logical-table router only after complete createApp table installation, exact normalized official Resources, and a composed Fabric realm. |
 | Application SQL | The application SQLite service is available as `zero.sql`/`zero.sqlite`. |
 | WebSocket sync | Mounted at `/sync`; auth and resource-policy aware. |
 | `/api/data` | Lazy table query API with pagination, sorting, filters, limits, and policy integration. |
@@ -697,6 +715,80 @@ This is a supported Zero 2.0 source/local contract for one app coordinator and
 one exclusively owned local Fabric root. Distributed ownership, online
 placement migration, and operator-grade fleet orchestration remain excluded;
 see [ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md).
+
+### Data Studio
+
+Data Studio is an optional organization-owned logical-table layer for a
+Guardian multi-tenant, advanced-RBAC app using Fabric tenant databases. It
+does not create physical tables dynamically. Its fixed realm stores logical
+catalog rows, aggregate logical rows, immutable schema history, typed cell
+projections, and per-column statistics.
+
+Installation is all-or-nothing:
+
+- spread `createDataStudioFeature().appTables` unchanged into
+  `createApp({ tables })`;
+- spread every feature Resource unchanged;
+- merge the three `data-studio:*` permissions and app-selected viewer/editor/
+  manager role fragments, bumping Guardian `registryVersion` as required;
+- compose `DATA_STUDIO_REALM_CONTRIBUTION` with the app realm using
+  `databaseRealmContribution()` + `composeDatabaseRealm()`;
+- pass that exact composed realm to both `databaseTopology.realm` and
+  `runDatabaseActorIfRequested()`;
+- merge `DATA_STUDIO_CLIENT_TABLES` into the browser `AppProvider` tables.
+
+Do not spread raw `feature.tables` / `DATA_STUDIO_TENANT_TABLES` into
+`createApp()`; use `DATA_STUDIO_APP_TABLES` / `appTables` so catalog metadata
+stays full Sync and row metadata stays lazy Sync. Startup also requires the
+exact fixed schemas, including Guardian reference metadata and mutation
+validators, and requires registered Data Studio operation names to retain the
+official query/command handlers. Same-name schema or handler replacements are
+not valid customization.
+Generic Resource/Sync projections omit `schema_json` and `values_json` and are
+only reconciliation signals; the dedicated byte-bounded API returns complete
+schemas and rows. Startup compares every official Resource's normalized name,
+table, primary key, exposure, realm, actions, field allow-lists, and policy.
+Partial or altered table/Resource/Sync/handler contracts fail with
+`DATABASE_CONFIG_INVALID`. The built-in router then auto-mounts at
+`/api/_zero/data-studio`; do not mount its returned router again in an ordinary
+`createApp()` app.
+
+The permission split is `data-studio:read`, `data-studio:write`, and
+`data-studio:manage`. The browser uses `client.dataStudio`, `useDataStudio()`,
+or the packaged `DataStudio` control plane. UI capability props only narrow
+presentation. Mutations remain dedicated HTTP/Fabric command operations;
+never mutate Data Studio's physical tables through Sync collections.
+
+Inline cells are geometry-stable transparent overlays, not decorated form
+inputs: Enter commits, Tab/Shift+Tab commit and move, Escape cancels, and
+pending/saved/error/conflict indicators stay within the cell. Conflicts reload
+authoritative data. Unchanged Enter, Tab, and blur gestures issue no mutation,
+preserving absent cells, stored nulls, and datetime precision. Custom inline
+cell composition passes the row revision so reconciliation cannot silently
+rebase a stale draft.
+
+Server functions/routes/activities use
+`createDataStudioService({ data: zero.data, actor })`. This service receives an
+already authority-scoped Fabric client and accepts no tenant selector, path,
+database ref, raw SQL, or manager. Business routes still enforce their own
+feature permissions.
+
+Logical write/filter input uses public column keys. Returned row values use
+immutable column IDs. Defaults materialize only on create/full replacement;
+schema changes never pretend an older absent cell contains a new default.
+Schema changes use stored counts to reject unsafe removal/type/required
+transitions, and a retired column ID cannot be reused.
+
+Row pages are count- and byte-bounded; follow `nextOffset` rather than adding
+`limit`. Mutations use expected revisions and operation IDs. If
+`DataStudioMutationError.requiresSameIdempotencyKey` is true, retry only the
+exact mutation with its existing `operationId`.
+
+Read [Data Studio](docs/data-studio.md) for the complete API, fixed tables,
+install recipe, Pantheon organization-owned model, limits, error/logging
+contract, and upgrade/removal steps. Organization Storage-drive and Vector-
+index provisioning are separate follow-on designs, not Data Studio features;
+see the future-only [control-plane roadmap](docs/control-plane-roadmap.md).
 
 ## Sync Modes
 
@@ -1996,6 +2088,7 @@ Platform hooks:
 | --- | --- |
 | Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
+| Data Studio | `useDataStudio` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
@@ -2213,6 +2306,15 @@ Data organisms:
 - `MasterDetailView`
 - `MasterDetailPage`
 - `CrudPage`
+- `DataStudio`
+- `DataStudioWorkspace`
+- `DataStudioGrid`
+- `DataStudioToolbar`
+- `DataStudioInlineCell`
+- `DataStudioFilterControl`
+- `DataStudioInspector`
+- `DataStudioTableDialog`, `DataStudioRowDialog`, `DataStudioConfirmDialog`
+  (from `@zero/framework/components/data-studio`)
 
 Forms:
 
@@ -2539,6 +2641,12 @@ reference docs confirm the behavior is implemented.
   authoritative Zero 2.0 contract for actor-owned multi-database
   topology, tenant routing, file/WAL and bounded hot placement, hybrid policy,
   exact tenant Sync, capacity, durability, observability, and release gates.
+- [Data Studio](docs/data-studio.md): optional organization-owned logical
+  tables, complete Guardian/Fabric installation, schema evolution, browser SDK
+  and UI, headless server service, limits, idempotency, and operations.
+- [Storage Studio And Vector Studio Roadmap](docs/control-plane-roadmap.md):
+  future-only organization provisioning and lifecycle plan around the existing
+  Storage and Vector engines; it does not define current framework exports.
 - [System And Application Database Planes](docs/framework/system-database.md):
   canonical `systemDb`/`db` ownership, `zero.system` privilege boundary,
   ID-only Guardian anchors, durable projection/readiness, commit fencing,

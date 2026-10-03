@@ -82,6 +82,26 @@ describe('database realm definition', () => {
     }), 'does not declare its exact managed foreign key');
   });
 
+  test('rejects app realm tables that shadow activated Guardian anchors', () => {
+    const tasks = defineTable('tasks', {
+      user_id: field.guardianUser(),
+    }, { pk: 'task_id' });
+    for (const [anchor, schema] of Object.entries({
+      users: { user_id: 'text primary key' },
+      tenant_memberships: {
+        membership_id: 'text primary key',
+        tenant_id: 'text not null',
+        user_id: 'text references users(user_id) on delete restrict not null',
+      },
+    })) {
+      expectDatabaseConfigMessage(() => defineDatabaseRealm({
+        name: `shadowed-${anchor}`,
+        version: '1',
+        tables: { [anchor]: schema, tasks: tasks.serverTable },
+      }), `"${anchor}" is a framework-owned Guardian anchor`);
+    }
+  });
+
   test('clones and freezes schema, migrations, and handler registries', () => {
     const sourceTables: Record<string, TableSchema> = {
       todos: {
@@ -725,6 +745,159 @@ describe('database realm handler execution', () => {
       ), 'DATABASE_RESULT_LIMIT');
       expect(db.get('todos', 'poisoned')).toBeNull();
       expect(db.currentSeq).toBe(1);
+    } finally {
+      db.dispose();
+    }
+  });
+
+  test('keeps projected Guardian anchors readable but immutable to realm commands', () => {
+    const tasks = defineTable('protected_tasks', {
+      membership_id: field.guardianMembership(),
+      title: field.text({ required: true }),
+    }, { pk: 'task_id' });
+    const realm = defineDatabaseRealm({
+      name: 'guardian-anchor-command-fence',
+      version: '1',
+      tables: { protected_tasks: tasks.serverTable },
+      commands: {
+        'anchors.mutate': ({ db }, input: { method: string }) => {
+          const row = { user_id: 'user-one' };
+          switch (input.method) {
+            case 'insert':
+              db.insert('users', { user_id: 'attacker' });
+              break;
+            case 'create':
+              db.create('users', { user_id: 'attacker' });
+              break;
+            case 'createStrict':
+              db.createStrict('users', { user_id: 'attacker' });
+              break;
+            case 'createScoped':
+              db.createScoped('users', { user_id: 'attacker' }, {
+                field: 'user_id',
+                value: 'attacker',
+              });
+              break;
+            case 'update':
+              db.update('users', 'user-one', { user_id: 'attacker' });
+              break;
+            case 'updateIfCurrent':
+              db.updateIfCurrent('users', 'user-one', { user_id: 'attacker' }, row);
+              break;
+            case 'updateScoped':
+              db.updateScoped('users', 'user-one', { user_id: 'attacker' }, {
+                field: 'user_id',
+                value: 'user-one',
+              }, row);
+              break;
+            case 'delete':
+              db.delete('users', 'user-one');
+              break;
+            case 'deleteIfCurrent':
+              db.deleteIfCurrent('users', 'user-one', row);
+              break;
+            case 'deleteScoped':
+              db.deleteScoped('users', 'user-one', {
+                field: 'user_id',
+                value: 'user-one',
+              }, row);
+              break;
+            case 'upsertByIdentity':
+              db.upsertByIdentity('users', { user_id: 'attacker' });
+              break;
+            case 'updateByIdentity':
+              db.updateByIdentity('users', { user_id: 'user-one' }, {
+                user_id: 'attacker',
+              });
+              break;
+            case 'deleteByIdentity':
+              db.deleteByIdentity('users', { user_id: 'user-one' });
+              break;
+          }
+          return null;
+        },
+        'anchors.deleteMembership': ({ db }) => {
+          db.delete('tenant_memberships', 'membership-one');
+          return null;
+        },
+        'tasks.create': ({ db }) => {
+          const membership = db.get('tenant_memberships', 'membership-one');
+          if (!membership || membership.user_id !== 'user-one') {
+            throw new Error('Missing projected membership');
+          }
+          const change = db.createStrict('protected_tasks', {
+            task_id: 'task-one',
+            membership_id: 'membership-one',
+            title: 'Allowed realm write',
+          });
+          return { rowId: change.rowId, userId: membership.user_id };
+        },
+      },
+    });
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('users', { user_id: 'text primary key' });
+    db.defineTable('tenant_memberships', {
+      membership_id: 'text primary key',
+      tenant_id: 'text not null',
+      user_id: 'text references users(user_id) on delete restrict not null',
+    });
+    db.defineTable('protected_tasks', tasks.serverTable);
+    db.createStrict('users', { user_id: 'user-one' });
+    db.createStrict('tenant_memberships', {
+      membership_id: 'membership-one',
+      tenant_id: 'tenant-one',
+      user_id: 'user-one',
+    });
+
+    try {
+      const methods = [
+        'insert',
+        'create',
+        'createStrict',
+        'createScoped',
+        'update',
+        'updateIfCurrent',
+        'updateScoped',
+        'delete',
+        'deleteIfCurrent',
+        'deleteScoped',
+        'upsertByIdentity',
+        'updateByIdentity',
+        'deleteByIdentity',
+      ];
+      for (const method of methods) {
+        expectDatabaseCode(() => runDatabaseRealmCommand(
+          realm,
+          db,
+          'anchors.mutate',
+          { method },
+        ), 'DATABASE_OPERATION_UNSUPPORTED');
+      }
+      expectDatabaseCode(() => runDatabaseRealmCommand(
+        realm,
+        db,
+        'anchors.deleteMembership',
+        null,
+      ), 'DATABASE_OPERATION_UNSUPPORTED');
+      expect(db.get('users', 'user-one')).toEqual({ user_id: 'user-one' });
+      expect(db.get('users', 'attacker')).toBeNull();
+      expect(db.get('tenant_memberships', 'membership-one')).toEqual({
+        membership_id: 'membership-one',
+        tenant_id: 'tenant-one',
+        user_id: 'user-one',
+      });
+
+      expect(runDatabaseRealmCommand(
+        realm,
+        db,
+        'tasks.create',
+        null,
+      )).toEqual({ rowId: 'task-one', userId: 'user-one' });
+      expect(db.get('protected_tasks', 'task-one')).toEqual({
+        task_id: 'task-one',
+        membership_id: 'membership-one',
+        title: 'Allowed realm write',
+      });
     } finally {
       db.dispose();
     }

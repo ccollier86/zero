@@ -213,6 +213,7 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `KanbanBoard`, `KanbanTaskCard` | `kanban/kanban-board.tsx` | Drag-and-drop board organism for status/work queues. |
 | `MasterDetailView`, `MasterDetailPage` | `master-detail/master-detail-page.tsx` | List/table + detail organism with DataTable-compatible `source`, search options, and `tableToolbarSlots` support. |
 | `CrudPage` | `crud-page/crud-page.tsx` | Schema CRUD page/organism using DataTable, generated forms, and forwarded `tableToolbarSlots`. |
+| `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioFilterControl`, `DataStudioInspector`, `DataStudioInlineCell`, `DataStudio*Dialog` | `data-studio/*` | Guardian/Fabric organization-owned logical-table control plane. The connected organism adapts to server capabilities; the inline editor overlays the cell with inherited styling so editing does not change row/column geometry. |
 
 ## Platform Domain Organisms
 
@@ -234,6 +235,12 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `IdentityUserManagement` | `admin/users/user-management.tsx` | Explicit established global-identity/account organism for controlled integrations that intentionally do not want auth-profile adaptation. |
 | `StorageManagement` | `storage/storage-management.tsx` | Full storage management organism with drive settings, permissions, file browsing, dropzone uploads, filtered/sorted folders, and presigned download links. |
 | `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel` | `storage/*` | Storage subcomponents for custom storage UIs. Use these before writing bespoke storage admin screens. |
+
+Data Studio is documented in [Data Studio](../data-studio.md). Its
+`capabilities` prop is UI-only narrowing; server permissions remain
+authoritative. Its inspector includes compact Record, Schema, and
+syntax-highlighted/copyable Code tabs. Use the packaged control plane or its
+controller/subcomponents before creating an app-specific logical table editor.
 
 ## Animate UI Source Groups
 

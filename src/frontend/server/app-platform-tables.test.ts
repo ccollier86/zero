@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  DATA_STUDIO_CELLS_TABLE_NAME,
+  DATA_STUDIO_ROWS_TABLE_NAME,
+  DATA_STUDIO_TABLES_TABLE_NAME,
+} from '../../data-studio';
+import {
   WORKFLOW_SERVER_TABLE_NAMES,
   WORKFLOW_TABLES,
 } from '../../workflows/types';
@@ -8,8 +13,12 @@ import {
   addPlatformSnapshotTables,
   resolveGenericDataQueryableTables,
   resolvePlatformClientTables,
+  resolvePlatformSyncWriteProtectedTables,
 } from './app-platform-tables';
-import { PLATFORM_SYNC_PRIVATE_TABLES } from './platform-sync-policy';
+import {
+  PLATFORM_SYNC_PRIVATE_TABLES,
+  resolvePlatformSyncPrivateTables,
+} from './platform-sync-policy';
 
 describe('platform system-plane client table catalog', () => {
   test('omits workflow system-plane and snapshot tables when workflows are disabled', () => {
@@ -50,5 +59,27 @@ describe('platform system-plane client table catalog', () => {
 
     expect(queryable).toEqual(new Set(['documents']));
     expect(lazyTables.has('workflow_instances')).toBeTrue();
+  });
+
+  test('reserves Data Studio names only when the complete feature is installed', () => {
+    expect(resolvePlatformSyncWriteProtectedTables(false).has(
+      DATA_STUDIO_TABLES_TABLE_NAME,
+    )).toBeFalse();
+    expect(resolvePlatformSyncWriteProtectedTables(false).has(
+      DATA_STUDIO_ROWS_TABLE_NAME,
+    )).toBeFalse();
+    expect(resolvePlatformSyncPrivateTables(false).has(
+      DATA_STUDIO_CELLS_TABLE_NAME,
+    )).toBeFalse();
+
+    expect(resolvePlatformSyncWriteProtectedTables(true).has(
+      DATA_STUDIO_TABLES_TABLE_NAME,
+    )).toBeTrue();
+    expect(resolvePlatformSyncWriteProtectedTables(true).has(
+      DATA_STUDIO_ROWS_TABLE_NAME,
+    )).toBeTrue();
+    expect(resolvePlatformSyncPrivateTables(true).has(
+      DATA_STUDIO_CELLS_TABLE_NAME,
+    )).toBeTrue();
   });
 });

@@ -143,6 +143,15 @@ import type {
   WebRefreshProof,
 } from '@zero/framework/auth';
 import { runPlatformDoctor, runUsageAudit } from '@zero/framework/doctor';
+import {
+  createDataStudioFeature as createDataStudioFeatureSubpath,
+  createDataStudioRouter as createDataStudioRouterSubpath,
+  DataStudioService as DataStudioServiceSubpath,
+} from '@zero/framework/data-studio/server';
+import type {
+  DataStudioFeature as DataStudioFeatureSubpath,
+  DataStudioMutationReceipt as DataStudioMutationReceiptSubpath,
+} from '@zero/framework/data-studio/server';
 import { EmailService } from '@zero/framework/email';
 import {
   createKvPlugin as createKvPluginSubpath,
@@ -215,6 +224,8 @@ import {
   DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
   defaultDatabaseHotSnapshotTimeoutMs,
   DatabaseError,
+  databaseRealmContribution,
+  composeDatabaseRealm,
   createDataRealmReadinessPlugin as createServerDataRealmReadinessPlugin,
   createDatabaseRef,
   createNamedDatabaseRef,
@@ -225,6 +236,7 @@ import {
   defineAuthConfig,
   defineNativeAuthConfig,
   defineDatabaseRealm,
+  defineDatabaseRealmContribution,
   defineResource,
   defineResourceFields as defineServerResourceFields,
   getAI,
@@ -303,6 +315,9 @@ import type {
   DatabaseReadQueryStatement,
   DatabaseReadResult,
   DatabaseRealm,
+  DatabaseRealmCompositionDefinition,
+  DatabaseRealmContribution,
+  DatabaseRealmContributionDefinition,
   DatabaseRealmDefinition,
   DatabaseSequenceToken,
   DatabaseSerializableValue,
@@ -420,6 +435,22 @@ const emptyDatabaseRealm = defineDatabaseRealm({
   queries: {},
   commands: {},
 });
+const emptyDatabaseRealmContributionDefinition: DatabaseRealmContributionDefinition = {
+  name: 'package-export-contribution',
+  version: '1',
+};
+const emptyDatabaseRealmContribution: DatabaseRealmContribution =
+  defineDatabaseRealmContribution(emptyDatabaseRealmContributionDefinition);
+const adaptedDatabaseRealmContribution: DatabaseRealmContribution =
+  databaseRealmContribution(emptyDatabaseRealm);
+const emptyDatabaseRealmCompositionDefinition: DatabaseRealmCompositionDefinition = {
+  name: 'package-export-composition',
+  version: '1',
+  contributions: [emptyDatabaseRealmContribution],
+};
+const composedDatabaseRealm = composeDatabaseRealm(
+  emptyDatabaseRealmCompositionDefinition,
+);
 const databaseReadQueryHandler = null as unknown as DatabaseReadQueryHandler;
 const databaseReadQueryRegistry = {} as DatabaseReadQueryRegistry;
 const databaseWriteCommandCapability = {} as DatabaseWriteCommandCapability;
@@ -628,6 +659,11 @@ const workflowTypeSurface = null as unknown as {
   scopedListFilter: ScopedWorkflowInstanceListFilter;
   scoped: ScopedWorkflowService;
 };
+const dataStudioServerFeature = createDataStudioFeatureSubpath();
+const dataStudioServerTypes = null as unknown as {
+  feature: DataStudioFeatureSubpath;
+  receipt: DataStudioMutationReceiptSubpath<unknown>;
+};
 
 export const serverSymbols = {
   AIService,
@@ -657,6 +693,10 @@ export const serverSymbols = {
   authTenantTerminology,
   configuredPostLoginPath,
   createApp,
+  createDataStudioRouterSubpath,
+  dataStudioServerFeature,
+  dataStudioServerTypes,
+  DataStudioServiceSubpath,
   createIdentityProjectionLifecycleHook,
   DatabaseError,
   DATABASE_ACTOR_CHILD_FLAG,
@@ -718,8 +758,16 @@ export const serverSymbols = {
   defineNativeAuthConfig,
   defineIdentityAnchorTables,
   defineIdentityProjectionSystemTables,
+  composeDatabaseRealm,
+  databaseRealmContribution,
   defineDatabaseRealm,
+  defineDatabaseRealmContribution,
   emptyDatabaseRealm,
+  emptyDatabaseRealmContribution,
+  adaptedDatabaseRealmContribution,
+  emptyDatabaseRealmContributionDefinition,
+  emptyDatabaseRealmCompositionDefinition,
+  composedDatabaseRealm,
   databaseReadQueryHandler,
   databaseReadQueryRegistry,
   databaseWriteCommandCapability,
@@ -859,6 +907,14 @@ import type {
   StreamingTextStatus as StreamingTextStatusRoot,
 } from '@zero/framework';
 import {
+  DATA_STUDIO_APP_TABLES as DATA_STUDIO_APP_TABLES_SUBPATH,
+  DATA_STUDIO_CLIENT_TABLES as DATA_STUDIO_CLIENT_TABLES_SUBPATH,
+  normalizeDataStudioSchema as normalizeDataStudioSchemaSubpath,
+} from '@zero/framework/data-studio';
+import type {
+  DataStudioSchema as DataStudioSchemaSubpath,
+} from '@zero/framework/data-studio';
+import {
   AdministrationScopeGate as AdministrationScopeGateSubpath,
   ApiKeyManagement as ApiKeyManagementSubpath,
   ApplicationUserApiKeyManagement as ApplicationUserApiKeyManagementSubpath,
@@ -915,6 +971,18 @@ import type {
   DataTableToolbarSlot as DataTableToolbarSlotSubpath,
   DataTableToolbarSlots as DataTableToolbarSlotsSubpath,
 } from '@zero/framework/components/data-table';
+import {
+  DataStudio as DataStudioSubpath,
+  DataStudioFilterControl as DataStudioFilterControlSubpath,
+  DataStudioInlineCell as DataStudioInlineCellSubpath,
+  DataStudioWorkspace as DataStudioWorkspaceSubpath,
+} from '@zero/framework/components/data-studio';
+import type {
+  DataStudioInlineCellProps as DataStudioInlineCellPropsSubpath,
+  DataStudioFilterControlProps as DataStudioFilterControlPropsSubpath,
+  DataStudioProps as DataStudioPropsSubpath,
+  DataStudioWorkspaceProps as DataStudioWorkspacePropsSubpath,
+} from '@zero/framework/components/data-studio';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
 import {
   Popover as PopoverSubpath,
@@ -972,6 +1040,7 @@ import {
   useAuthorization as useAuthorizationSubpath,
   useCollection as useCollectionSubpath,
   useDataRealmReadiness as useDataRealmReadinessSubpath,
+  useDataStudio as useDataStudioSubpath,
   useHasPermission as useHasPermissionSubpath,
   usePlatformAdministration as usePlatformAdministrationSubpath,
   usePlatformTenants as usePlatformTenantsSubpath,
@@ -992,6 +1061,7 @@ import type {
   UseAuthApiKeysOptions as UseAuthApiKeysOptionsSubpath,
   UseAuthApiKeysResult as UseAuthApiKeysResultSubpath,
   UseDataRealmReadinessResult as UseDataRealmReadinessResultSubpath,
+  UseDataStudioResult as UseDataStudioResultSubpath,
   UsePlatformAdministrationOptions as UsePlatformAdministrationOptionsSubpath,
   UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
   UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
@@ -1013,6 +1083,7 @@ import {
   dataRealmReadinessAllowsApplicationData,
   DataRealmReadinessNotice,
   DataRealmReadyGate,
+  DataStudio,
   DomainOnboarding,
   ApiError,
   Button,
@@ -1065,6 +1136,7 @@ import {
   TypewriterEffect,
   useCollection,
   useDataRealmReadiness,
+  useDataStudio,
   useApplicationAccess,
   useAuthApiKeys,
   useAuthConfig,
@@ -1139,6 +1211,11 @@ import type {
   AuthPlatformUpdateMemberParams,
   ControlPlaneAuditViewerProps,
   DataRealmReadinessSnapshot,
+  DataStudioCapabilities,
+  DataStudioRowFilter,
+  DataStudioProps,
+  DataStudioSdkSurface,
+  UseDataStudioResult,
   DataRealmReadyGateProps,
   DataTableSearchOptions,
   DataTableSearchProps,
@@ -1297,6 +1374,27 @@ import type {
 	const apiKeySubpathPublicTypes = {} as ApiKeySubpathPublicTypes;
 	const clientApiKeys = {} as Client['apiKeys'];
 	const clientDataRealm = {} as Client['dataRealm'];
+	const clientDataStudio = {} as Client['dataStudio'];
+	type DataStudioPublicTypes = readonly [
+	  DataStudioCapabilities,
+	  DataStudioProps,
+	  DataStudioPropsSubpath,
+	  DataStudioInlineCellPropsSubpath,
+	  DataStudioFilterControlPropsSubpath,
+	  DataStudioRowFilter,
+	  DataStudioWorkspacePropsSubpath,
+	  DataStudioSdkSurface,
+	  UseDataStudioResult,
+	  UseDataStudioResultSubpath,
+	];
+	const dataStudioPublicTypes = null as unknown as DataStudioPublicTypes;
+	const dataStudioSubpathSchema: DataStudioSchemaSubpath = {
+	  version: 1,
+	  columns: [],
+	};
+	const normalizedDataStudioSubpathSchema = normalizeDataStudioSchemaSubpath(
+	  dataStudioSubpathSchema,
+	);
 	const clientMutationRejection = {} as SyncMutationRejection;
 	const clientSubpathMutationRejection = {} as ClientSyncMutationRejection;
 		const domainReleaseInput = {} as AuthTenantDomainReleaseInput;
@@ -1395,6 +1493,16 @@ export const clientSymbols = {
 	  createSyncClient,
 	  clientApiKeys,
 	  clientDataRealm,
+	  clientDataStudio,
+	  dataStudioPublicTypes,
+	  DATA_STUDIO_APP_TABLES_SUBPATH,
+	  DATA_STUDIO_CLIENT_TABLES_SUBPATH,
+	  normalizedDataStudioSubpathSchema,
+	  DataStudio,
+	  DataStudioFilterControlSubpath,
+	  DataStudioSubpath,
+	  DataStudioInlineCellSubpath,
+	  DataStudioWorkspaceSubpath,
 	  clientMutationRejection,
 	  clientSubpathMutationRejection,
 	  clientResourceFields,
@@ -1507,6 +1615,8 @@ export const clientSymbols = {
   useCollection,
   useDataRealmReadiness,
   useDataRealmReadinessSubpath,
+  useDataStudio,
+  useDataStudioSubpath,
   useApplicationAccess,
   useApplicationAccessSubpath,
   useAuthApiKeys,

@@ -14,6 +14,11 @@ import {
 } from '../../auth/authorization-access';
 import type { AuthorizationKernel } from '../../auth/authorization-kernel';
 import { IDENTITY_PROJECTION_TARGET_TABLES } from '../../auth/identity-projection-schema';
+import {
+  DATA_STUDIO_CELLS_TABLE_NAME,
+  DATA_STUDIO_COLUMN_STATS_TABLE_NAME,
+  DATA_STUDIO_SCHEMA_VERSIONS_TABLE_NAME,
+} from '../../data-studio/data-studio-tenant-schema';
 import type {
   Change,
   Row,
@@ -61,6 +66,22 @@ export const PLATFORM_SYNC_PRIVATE_TABLES = new Set([
   'storage_objects',
 ]);
 
+const DATA_STUDIO_SYNC_PRIVATE_TABLES = Object.freeze([
+  DATA_STUDIO_SCHEMA_VERSIONS_TABLE_NAME,
+  DATA_STUDIO_CELLS_TABLE_NAME,
+  DATA_STUDIO_COLUMN_STATS_TABLE_NAME,
+]);
+
+/** Add optional feature-owned private tables only after complete admission. */
+export function resolvePlatformSyncPrivateTables(
+  dataStudioEnabled = false,
+): ReadonlySet<string> {
+  return new Set([
+    ...PLATFORM_SYNC_PRIVATE_TABLES,
+    ...(dataStudioEnabled ? DATA_STUDIO_SYNC_PRIVATE_TABLES : []),
+  ]);
+}
+
 const PLATFORM_SYNC_SCOPED_TABLES = new Set([
   'notifications',
   'notification_receipts',
@@ -83,6 +104,8 @@ export interface PlatformSyncPolicyOptions {
   getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
   /** Multi mode rejects identity-only/application sessions for service data. */
   tenancyMode?: 'single' | 'multi';
+  /** Complete optional-feature private-table set admitted for this app. */
+  privateTables?: ReadonlySet<string>;
 }
 
 interface PlatformFilterCache {
@@ -218,7 +241,7 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
       const delegateFilter = delegated.rowFilters.get(table);
       const delegateProjector = delegated.rowProjectors?.get(table);
 
-      if (PLATFORM_SYNC_PRIVATE_TABLES.has(table)) {
+      if ((this.options.privateTables ?? PLATFORM_SYNC_PRIVATE_TABLES).has(table)) {
         platformFingerprint.push([table, 'denied']);
         continue;
       }

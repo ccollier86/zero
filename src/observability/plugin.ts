@@ -7,7 +7,7 @@
  * sink helpers instead.
  */
 
-import { Elysia, t } from 'elysia';
+import { Elysia, ValidationError, t } from 'elysia';
 import { OBS_CODES } from './codes';
 import {
   emitPlatformCodeTo,
@@ -57,7 +57,28 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
   const traceConfig = config.trace === false ? undefined : config.trace;
 
   const app = new Elysia({ name: 'observability' })
-    .onError({ as: 'global' }, function reportPlatformError({ error, request, set }) {
+    .onError({ as: 'global' }, function reportPlatformError({ code, error, request, set }) {
+      if (code === 'VALIDATION' || code === 'PARSE') {
+        const responseFailure = code === 'VALIDATION'
+          && error instanceof ValidationError
+          && error.type === 'response';
+        emitPlatformCodeTo(
+          runtime,
+          responseFailure
+            ? OBS_CODES.APP_RESPONSE_VALIDATION_FAILED
+            : code === 'VALIDATION'
+              ? OBS_CODES.APP_REQUEST_VALIDATION_REJECTED
+            : OBS_CODES.APP_REQUEST_PARSE_REJECTED,
+          {
+            metadata: {
+              method: request.method,
+              path: getSafeRequestPath(request),
+              status: responseFailure ? 500 : code === 'VALIDATION' ? 422 : 400,
+            },
+          },
+        );
+        return;
+      }
       emitPlatformCodeTo(runtime, OBS_CODES.APP_REQUEST_FAILED, {
         error,
         metadata: {

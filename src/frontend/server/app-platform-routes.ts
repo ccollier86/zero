@@ -8,6 +8,8 @@ import {
 } from '../../auth/page-session';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import type { NormalizedAuthBehaviorConfig } from '../../auth/types';
+import { resolveDataStudioInstallation } from '../../data-studio/data-studio-installation';
+import { createDataStudioRouter } from '../../data-studio/data-studio-router';
 import type { EmailRuntime } from '../../email';
 import { emitPlatformCodeTo } from '../../observability';
 import {
@@ -32,6 +34,7 @@ import type { AppIdentityProjectionRuntime } from './identity-projection-runtime
 import { createResourceTenantDatabaseAccess } from './request-database-client';
 import { createRouterPlugin } from './router-plugin';
 import { loadServerRoutePlugins } from './server-route-loader';
+import { createServerExtensionApp } from './server-extensions';
 import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 import type { ResolvedConfig } from './types';
 
@@ -134,6 +137,21 @@ export async function mountPlatformRoutes({
       ),
       ...config.resourceRoutes,
     }));
+  }
+
+  if (resolveDataStudioInstallation(
+    config.tables,
+    resourceRegistry,
+    config.databaseTopology.mode === 'multiple'
+      ? config.databaseTopology.realm
+      : null,
+    config.declaredSyncModes,
+  )) {
+    app.use(await createServerExtensionApp({
+      name: 'zero.data-studio',
+      extensions: [createDataStudioRouter()],
+      runtime,
+    }) as any);
   }
 
   const serverRoutePlugins = await loadServerRoutePlugins({

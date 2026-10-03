@@ -37,6 +37,7 @@ import { DatabaseReaderRuntime } from './database-reader-runtime';
 import { DatabaseRuntime } from './database-runtime';
 import { DatabaseTenantSyncSnapshotSessionStore } from './database-tenant-sync-snapshot-session';
 import { DatabaseWriterOperationEngine } from './database-writer-engine';
+import { identityAnchorReactiveTableSchemas } from '../auth/identity-projection-reactive-schema';
 import { defineIdentityAnchorSQLiteTables } from '../auth/identity-projection-schema';
 import {
   inspectGuardianReferenceSchema,
@@ -158,7 +159,10 @@ export function openWriterBinding(
         : { reactive: { ringBufferDepth } }),
       migrations: realm.migrations,
       migrate: true,
-      tables: realm.tables,
+      tables: {
+        ...identityAnchorReactiveTableSchemas(realm.guardianAnchorRequirements),
+        ...realm.tables,
+      },
       migrationLog: () => undefined,
     });
     assertActorGuardianReferenceStorage(runtime.sqlite.raw, realm);

@@ -4,6 +4,7 @@ import { IDENTITY_PROJECTION_TARGET_TABLES } from '../../auth/identity-projectio
 import { NOTIFICATION_TABLES } from '../../notifications/types';
 import { ROOM_TABLES } from '../../rooms/types';
 import { STORAGE_TABLES } from '../../storage/types';
+import { DATA_STUDIO_TENANT_TABLES } from '../../data-studio/data-studio-tenant-schema';
 import type { ClientTableDef } from '../../sync/types';
 import {
   WORKFLOW_SERVER_TABLE_NAMES,
@@ -17,6 +18,16 @@ export const PLATFORM_SYNC_WRITE_PROTECTED_TABLES = new Set([
   ...WORKFLOW_SERVER_TABLE_NAMES,
   ...Object.keys(STORAGE_TABLES),
 ]);
+
+/** Add optional feature-owned tables only after complete feature admission. */
+export function resolvePlatformSyncWriteProtectedTables(
+  dataStudioEnabled = false,
+): ReadonlySet<string> {
+  return new Set([
+    ...PLATFORM_SYNC_WRITE_PROTECTED_TABLES,
+    ...(dataStudioEnabled ? Object.keys(DATA_STUDIO_TENANT_TABLES) : []),
+  ]);
+}
 
 export const PLATFORM_CLIENT_TABLES = {
   ...NOTIFICATION_TABLES,

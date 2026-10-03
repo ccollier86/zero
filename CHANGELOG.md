@@ -6,6 +6,14 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Fixed direct and composed Fabric realm admission so tables are installed in
+  deterministic foreign-key dependency order instead of lexical order.
+  In-realm dependencies, including cross-contribution and quoted references,
+  now create their parent tables first; Guardian's framework-owned identity
+  anchors and migration-created support tables remain valid external parents.
+  Unsupported in-realm cross-table dependency cycles fail startup with a
+  stable database configuration error, while external references remain under
+  runtime schema verification rather than composition-time rejection.
 - Fixed a Guardian browser deadlock where an anonymous Sync reset advanced the
   authorization data revision and permanently hid public login or first-admin
   bootstrap UI behind “Restoring your secure session…”. A settled signed-out
@@ -15,6 +23,19 @@ All notable Zero Platform changes are tracked here.
 
 ### Added
 
+- Added the opt-in Data Studio feature for organization-owned runtime data in
+  Fabric tenant databases. It includes fixed ReactiveDB storage for bounded
+  logical schemas and rows, Guardian permission/role fragments, registered
+  actor queries and commands, scope-closed Elysia APIs, typed browser clients
+  and hooks, lightweight Sync invalidation metadata, and an adaptive packaged
+  control plane with smooth geometry-preserving inline cell editing. Complete
+  installation is admitted only for multi-tenant, advanced-authorization,
+  tenant-database Fabric deployments. The official Resource fragment must be
+  installed unchanged: partial, altered, or otherwise unsupported normalized
+  Resource contracts fail closed with `DATABASE_CONFIG_INVALID` during startup.
+  Admission also pins the official fixed schemas and Guardian metadata,
+  mutation validators, actor query/command handlers, and catalog-full/row-lazy
+  client Sync modes; same-name substitutions fail closed.
 - Added the tokenized, display-only `SecretField` component for masked API
   keys, tokens, and signing secrets. It supports bounded prefix/suffix masking,
   controlled or uncontrolled reveal state, permanently masked and non-copyable

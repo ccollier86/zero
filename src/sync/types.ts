@@ -984,7 +984,9 @@ export interface ClientTableDef {
    * Sync mode:
    * - `'full'` (default) — all rows sent in initial snapshot, always in sync
    * - `'lazy'` — NOT included in snapshot. Data loaded on demand via `collection.load()`.
-   *   Live changes still arrive via WebSocket and apply if the row exists in the store.
+   *   Authorized subsequent changes still arrive via WebSocket: inserts and updates
+   *   apply by primary key even when the row was not loaded, and deletes remove it
+   *   when present.
    * - `'auto'` — server startup resolves to `'full'` or `'lazy'` based on
    *   configured row limits. Browser apps receive the resolved mode.
    */

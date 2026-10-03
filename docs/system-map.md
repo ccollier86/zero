@@ -15,6 +15,9 @@ This document maps every system to its files, explains how the documentation is 
   and review rules.
 - [Zero Product Roadmap](./platform-roadmap.md) records unordered future
   direction; unchecked items are not implemented contracts.
+- [Storage Studio And Vector Studio Roadmap](./control-plane-roadmap.md)
+  specifies separate future organization control planes around the existing
+  Storage and Vector engines; it does not describe current APIs.
 - [Releasing Zero](./releasing.md) defines release verification and support
   boundaries.
 - [`llms.txt`](../llms.txt) is the comprehensive agent-facing guide.
@@ -28,6 +31,7 @@ then inspect the implementation and tests before changing a system.
 
 ```
 src/
+  data-studio/              <- Optional org-owned logical tables over Guardian + Fabric
   databases/               <- ReactiveDB Fabric actors, coordinator, isolation, receipts, tenant Sync
   persistence/             <- SQLite modes, snapshots, checkpoints, connection ownership
   resources/               <- Declarative Resource registry, policy, CRUD, field access, realms
@@ -53,6 +57,7 @@ src/
     ui/                    <- Core UI primitives (35 components)
     forms/                 <- AutoForm, FieldRenderer, Wizard
     data-table/            <- DataTable + related components
+    data-studio/           <- Adaptive logical-table control plane and inline cells
     secret-field/          <- Display-only masked/revealable secret and clipboard boundary
     auth/                  <- Auth UI blocks (LoginForm, reset/setup forms, gates, etc.)
     master-detail/         <- MasterDetailView / MasterDetailPage
@@ -185,6 +190,7 @@ for the authoritative Zero 2.0 contract and deliberate exclusions.
 | `src/databases/database-actor-liveness.ts` | Rollback-journal restart fence against orphan actors after parent failure |
 | `src/databases/database-operations.ts` plus `database-operation-{contracts,fields,payload,validation}.ts` | Public structured-operation facade plus focused contracts, field grammar, payload cloning/bounds, and catalog-aware validation |
 | `src/databases/database-realm.ts` / `database-realm-schema-admission.ts` | Immutable actor realm registry plus definition-time writable-column, portable-affinity, foreign-key, and reserved-object admission |
+| `src/databases/database-realm-contribution.ts` / `database-realm-composition.ts` | Immutable plugin/app realm fragments, deterministic composition, collision checks, and manifest fingerprints |
 | `src/databases/database-writer-engine.ts` plus `database-writer-{mutation-executor,read-executor,receipts,realm-validation,contracts,errors}.ts` | ReactiveDB writer facade plus focused reads/mutations, assertions, durable receipts, realm checks, replay ordering, and stable error projection |
 | `src/databases/database-read-query-capability.ts`, `database-read-query-sql.ts`, `database-write-command-capability.ts`, and `database-{handler-result,read-result}-validation.ts` | Path-free registered-operation capabilities, revocation, isolated readonly SQL admission grammar, and bounded producer-result validation |
 | `src/databases/database-tenant-sync*.ts` plus the focused snapshot `{codec,materializer,page,storage,limits,errors}` modules | Exact immutable snapshot sessions, replay, wakeups, bounded encoding/materialization, paging, storage, and cleanup |
@@ -212,6 +218,50 @@ for the authoritative Zero 2.0 contract and deliberate exclusions.
 - The logical database reference and instance ID survive hot snapshot inode
   replacement. Root ownership, single-link checks, actor liveness leases, and
   post-settlement proof refresh prevent duplicate writer authority.
+
+---
+
+## System 1.1: Data Studio
+
+**What:** Optional organization-owned logical schemas and rows stored through a
+fixed Fabric realm. Guardian permissions control table reads, row changes, and
+schema management; Fabric selects the organization database only from trusted
+server authority. See [Data Studio](./data-studio.md) for installation, schema
+evolution, the SDK/control plane, and headless use.
+
+| File | Purpose |
+| --- | --- |
+| `src/data-studio/data-studio-feature.ts` / `data-studio-installation.ts` | Complete opt-in fragment and fail-closed full-install admission, including exact Resources, fixed schemas, public Sync modes, and official actor handlers. |
+| `src/data-studio/data-studio-access.ts` | Guardian permission registry and reusable viewer/editor/manager role fragments. |
+| `src/data-studio/data-studio-tenant-schema.ts` / `data-studio-app-tables.ts` / `data-studio-client-tables.ts` | Fixed actor schemas plus createApp-ready and browser Sync table catalogs. |
+| `src/data-studio/data-studio-realm-contribution.ts` / `data-studio-realm-{queries,commands}.ts` | Reusable Fabric contribution and registered operation catalogs. |
+| `src/data-studio/data-studio-table-commands.ts` / `data-studio-row-commands.ts` | Revisioned, attributed, transactional table/row mutation logic. |
+| `src/data-studio/data-studio-row-query-sql.ts` | Closed, parameterized logical search/filter/sort compiler. |
+| `src/data-studio/data-studio-service.ts` / `data-studio-router.ts` | Scope-closed server facade and built-in Guardian-authorized HTTP routes. |
+| `src/data-studio/data-studio-resources.ts` | Read-only HTTP/Sync reconciliation-metadata Resources; schemas/values use the dedicated API and private implementation tables stay internal. |
+| `src/frontend/client/data-studio-client.ts` / `data-studio-hooks.ts` | Official authenticated transport, scope-partitioned cache, headless React controller, and mutation retry identity. |
+| `src/components/data-studio/` | List/detail control plane, schema/row dialogs, inspector, filters, and geometry-stable inline editing. |
+
+**Key patterns:**
+
+- `createDataStudioFeature().appTables`, permissions/roles, client tables, and
+  `DATA_STUDIO_REALM_CONTRIBUTION` are installed together; the feature's
+  Resources are spread unchanged. Any partial or altered normalized Resource
+  name, table, primary key, exposure, realm, actions, field allow-lists, or
+  policy contract fails startup with `DATABASE_CONFIG_INVALID`.
+- `DATA_STUDIO_APP_TABLES` is the required app fragment: catalog metadata stays
+  full Sync and row metadata stays lazy Sync. Fixed schemas retain exact
+  Guardian metadata and mutation validators, and registered operation names
+  retain their official query/command handlers. Raw-table substitution or any
+  same-name schema/handler replacement fails startup admission.
+- Logical schemas do not perform request-time DDL. Fixed rows/cells/history and
+  statistics make validation, Sync, and actor fingerprints deterministic.
+- Guardian ID-only mirrors satisfy attribution foreign keys but are never an
+  authorization source; live system-plane membership remains authoritative.
+- Generic HTTP/Sync access is read-only metadata and never carries complete
+  schema/row payloads. Dedicated reads and named actor-command mutations use
+  bounded results, expected revisions, deterministic receipts, and stable
+  `DATA_STUDIO_*` errors.
 
 ---
 

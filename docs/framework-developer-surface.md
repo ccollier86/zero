@@ -93,6 +93,8 @@ commands replace scaffold targets.
 | `@zero/framework/styles.css` | Packaged Zero stylesheet for app entrypoints that need explicit CSS import. |
 | `@zero/framework/ai` | AI service contracts when importing the AI layer directly. |
 | `@zero/framework/auth` | Auth plugin, store, token, and auth config contracts. |
+| `@zero/framework/data-studio` | Browser-safe logical schema/value contracts, client table fragment, permissions, errors, and codecs. |
+| `@zero/framework/data-studio/server` | Optional Data Studio install bundle, realm contribution, router, and scope-closed server service. |
 | `@zero/framework/native` | Platform-neutral desktop/mobile public-client auth SDK. Use the packaged host-bridge recipes in `examples/native-auth`. |
 | `@zero/framework/doctor` | Programmatic platform doctor use. Generated apps usually call `zero doctor`. |
 | `@zero/framework/email` | Email providers/service contracts for custom adapters. App code usually calls `getEmailService()` from `server`. |
@@ -117,6 +119,7 @@ commands replace scaffold targets.
 | `@zero/framework/components/code-block` | Public Shiki code block with tabs, line numbers, and copy action. Also exported from `react`. |
 | `@zero/framework/components/cta` | Public call-to-action section with Hero-compatible actions. Also exported from `react`. |
 | `@zero/framework/components/data-table` | Data table primitives. Also exported from `react`. |
+| `@zero/framework/components/data-studio` | Organization-owned logical-table control plane, workspace pieces, dialogs, value helpers, and geometry-stable inline cells. Primary control-plane exports are also available from `react`; use this narrow subpath for dialogs and value helpers. |
 | `@zero/framework/components/expandable-card` | Public shared-layout expandable cards. Also exported from `react`. |
 | `@zero/framework/components/faq` | Public FAQ accordion with generated answer support. Also exported from `react`. |
 | `@zero/framework/components/features` | Public feature section with icon bullets and flexible image/code/custom visual slot. Also exported from `react`. |
@@ -247,6 +250,7 @@ SQLite's file/WAL path.
 | ReactiveDB | Always created by sync plugin; app tables come from `tables`. |
 | System ReactiveDB | Always separate from app data; owns Guardian and Zero state. Trusted server setup can reach the privileged `zero.system` facade. |
 | ReactiveDB Fabric | With `databaseTopology.mode: 'multiple'`, keeps the shared application database pinned and routes named or physical-tenant Resources through bounded subprocess actors inside Zero 2.0's supported local-root boundary. |
+| Data Studio | Mounted only when its complete `appTables` and exact normalized official Resource fragments are installed; adds the organization-scoped logical-table router over the composed Fabric realm. |
 | Application SQL | Always created before plugins; app-owned backend routes can use `zero.sql`/`zero.sqlite` for backend-only application SQL. |
 | WebSocket sync | Always mounted at `/sync`. Auth-aware and resource-policy-aware when auth/resources are enabled. |
 | Auth | Mounted when `auth !== false`; adds `/auth/*`, request helpers, and protected page redirects. |
@@ -280,6 +284,72 @@ server entry. Omitting `databaseTopology` preserves the ordinary composition
 shown above. See [Platform Configuration](./platform-configuration.md#reactivedb-fabric-topology)
 and the [Fabric architecture](./framework/multi-database-architecture.md) for
 the complete supported contract and its deliberate exclusions.
+
+### Data Studio composition boundary
+
+Data Studio is an optional logical-table layer for organization-owned runtime
+data. It is a plugin-style composition of existing Zero boundaries rather than
+a tenant-selected raw SQLite service:
+
+```ts
+import {
+  composeDatabaseRealm,
+  databaseRealmContribution,
+} from '@zero/framework/server';
+import {
+  createDataStudioFeature,
+  DATA_STUDIO_REALM_CONTRIBUTION,
+} from '@zero/framework/data-studio/server';
+
+const dataStudio = createDataStudioFeature();
+const tenantRealm = composeDatabaseRealm({
+  name: 'app-tenant-data',
+  version: '2',
+  contributions: [
+    databaseRealmContribution(appTenantRealm),
+    DATA_STUDIO_REALM_CONTRIBUTION,
+  ],
+});
+
+const config = defineZeroConfig({
+  tables: { ...appTables, ...dataStudio.appTables },
+  resources: [...appResources, ...dataStudio.resources],
+  // Merge dataStudio.permissions/roleFragments into advanced Guardian auth.
+  databaseTopology: {
+    mode: 'multiple',
+    realm: tenantRealm,
+    tenantIsolation: 'tenant-database',
+    // ...required rootDirectory/actors and ordinary Fabric options
+  },
+});
+```
+
+Use `appTables` unchanged for `createApp()` because it retains catalog metadata
+as full Sync and row metadata as lazy Sync. Those generic projections omit
+complete schemas/values; dedicated Data Studio routes provide the bounded full
+reads. Use raw `DATA_STUDIO_TENANT_TABLES` / `tables` only for lower-level
+realm/schema work. Startup rejects changed public Sync modes or fixed schemas,
+including Guardian reference metadata and mutation validators, with
+`DATABASE_CONFIG_INVALID`.
+The actor entrypoint must pass the composed realm, not `appTenantRealm`, to
+`runDatabaseActorIfRequested()`. The browser merges
+`DATA_STUDIO_CLIENT_TABLES` into `AppProvider` and renders `DataStudio` or uses
+`useDataStudio()`.
+
+Spread `dataStudio.resources` unchanged. The built-in router mounts only after
+complete table and registered actor query/command installation plus an exact
+normalized match for every official Resource's name, table, primary key,
+exposure, realm, actions, field allow-lists, and policy. Partial or altered
+Resource contracts fail startup with `DATABASE_CONFIG_INVALID`. Registered Data
+Studio operation names must still reference the official query/command handlers;
+same-name replacements fail the same admission boundary.
+Its session/API-key routes require an active organization and the relevant
+`data-studio:*` permission. Server-owned functions and Torrent activities can
+wrap their already-scoped `zero.data` in `createDataStudioService`; the service
+has no tenant selector, path, raw SQL, or database manager.
+
+See [Data Studio](./data-studio.md) for the full install, schema evolution,
+inline UI, SDK, idempotency, limits, and Pantheon pattern.
 
 ## Data Models And ReactiveDB
 

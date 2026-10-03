@@ -62,6 +62,44 @@ export type {
   SyncMutationRejection,
 } from './client/sdk';
 export {
+  DATA_STUDIO_API_PREFIX,
+  DataStudioMutationError,
+  createDataStudioOperationId,
+  createDataStudioSdkSurface,
+  dataStudioCellValue,
+  dataStudioRowQueryKey,
+  dataStudioRowValuesByKey,
+  isDataStudioMutationError,
+  isDataStudioRevisionConflict,
+} from './client/data-studio-client';
+export type {
+  DataStudioCacheSnapshot,
+  DataStudioCapabilities,
+  DataStudioColumn,
+  DataStudioMutationFailureBody,
+  DataStudioMutationOptions,
+  DataStudioRequestOptions,
+  DataStudioReconciliationEvent,
+  DataStudioRow,
+  DataStudioRowFilter,
+  DataStudioRowFilterOperator,
+  DataStudioRowFilterValue,
+  DataStudioRowPage,
+  DataStudioRowQuery,
+  DataStudioRowValues,
+  DataStudioSchema,
+  DataStudioSchemaVersion,
+  DataStudioSchemaVersionQuery,
+  DataStudioSdkSurface,
+  DataStudioSdkSurfaceOptions,
+  DataStudioTable,
+  DataStudioTableSummary,
+  DataStudioTableCreate,
+  DataStudioTableStatus,
+  DataStudioTableUpdate,
+  DataStudioValue,
+} from './client/data-studio-client';
+export {
   DATA_REALM_READINESS_DEFAULT_POLL_MS,
   DATA_REALM_READINESS_MAX_POLL_MS,
   DATA_REALM_READINESS_MIN_POLL_MS,
@@ -299,6 +337,7 @@ export {
   buildResourceListQuery,
   useConnectionHealth,
   useDataRealmReadiness,
+  useDataStudio,
   useMutation,
   // Auth
   useAuth,
@@ -351,6 +390,10 @@ export type {
   DataRealmReadinessUiStatus,
   UseDataRealmReadinessOptions,
   UseDataRealmReadinessResult,
+  DataStudioAccess,
+  DataStudioControllerStatus,
+  UseDataStudioOptions,
+  UseDataStudioResult,
   UseTenantMembersOptions,
   UseTenantMembersResult,
   UsePlatformAdministrationOptions,
@@ -520,6 +563,29 @@ export type {
   UseDataTableReturn,
   UseDataTableSourceOptions,
 } from '../components/data-table';
+
+// ─── Data Studio ────────────────────────────────────────────────────────
+export {
+  DataStudio,
+  DataStudioFilterControl,
+  DataStudioGrid,
+  DataStudioInlineCell,
+  DataStudioInspector,
+  DataStudioToolbar,
+  DataStudioWorkspace,
+  resolveDataStudioCellKeyAction,
+} from '../components/data-studio';
+export type {
+  DataStudioCellKeyAction,
+  DataStudioCellSaveState,
+  DataStudioFilterControlProps,
+  DataStudioGridProps,
+  DataStudioInlineCellProps,
+  DataStudioInspectorProps,
+  DataStudioProps,
+  DataStudioToolbarProps,
+  DataStudioWorkspaceProps,
+} from '../components/data-studio';
 
 // ─── Kanban Board ──────────────────────────────────────────────────────
 export {

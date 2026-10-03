@@ -36,8 +36,10 @@ constrain what each connection may receive.
 Startup counts rows, keeps small tables in full websocket snapshots, and
 auto-resolves oversized tables to lazy sync. Tables with `_sync: 'lazy'` or a
 resolved lazy mode skip the initial snapshot and load on demand via
-`collection.load()` or `useLazyCollection()`. Live changes still stream once
-rows are present locally.
+`collection.load()` or `useLazyCollection()`. Lazy tables still join the live
+subscription during the Sync handshake: subsequent authorized inserts and
+updates stream and apply by row ID even when that row was not previously
+loaded, while deletes remove a matching local row when present.
 
 **Retained-log reconnect:** If a client disconnects briefly, it sends its last
 `seq` on reconnect. The server replays missed changes from the retained,

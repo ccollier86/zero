@@ -2,12 +2,209 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
+import { identityAnchorReactiveTableSchemas } from '../auth/identity-projection-reactive-schema';
+import { defineIdentityAnchorSQLiteTables } from '../auth/identity-projection-schema';
 import { createPlatformSQLiteService } from '../persistence';
 import type { Migration } from '../migrations';
 import { DatabaseError } from './database-error';
+import { composeDatabaseRealm } from './database-realm-composition';
+import { defineDatabaseRealm } from './database-realm';
 import { DatabaseRuntime } from './database-runtime';
 
 describe('DatabaseRuntime', () => {
+  test('registers only required Guardian anchor projections with ReactiveDB', () => {
+    const userSqlite = createPlatformSQLiteService({ mode: 'memory' });
+    defineIdentityAnchorSQLiteTables(userSqlite.raw);
+    const userRuntime = DatabaseRuntime.open({
+      id: 'user-anchor-projection',
+      role: 'named',
+      sqlite: userSqlite,
+      ownsSQLite: true,
+      tables: identityAnchorReactiveTableSchemas(['user']),
+    });
+    try {
+      expect(userRuntime.db.get('users', 'missing-user')).toBeNull();
+      expect(() => userRuntime.db.get('tenant_memberships', 'missing-membership'))
+        .toThrow("Table 'tenant_memberships' is not defined");
+    } finally {
+      userRuntime.close();
+    }
+
+    const membershipSqlite = createPlatformSQLiteService({ mode: 'memory' });
+    defineIdentityAnchorSQLiteTables(membershipSqlite.raw);
+    membershipSqlite.raw.run('INSERT INTO users (user_id) VALUES (?)', ['user-one']);
+    membershipSqlite.raw.run(`
+      INSERT INTO tenant_memberships (membership_id, tenant_id, user_id)
+      VALUES (?, ?, ?)
+    `, ['membership-one', 'tenant-one', 'user-one']);
+    const membershipRuntime = DatabaseRuntime.open({
+      id: 'membership-anchor-projection',
+      role: 'named',
+      sqlite: membershipSqlite,
+      ownsSQLite: true,
+      tables: identityAnchorReactiveTableSchemas(['user', 'membership']),
+    });
+    try {
+      expect(membershipRuntime.db.get('users', 'user-one')).toEqual({
+        user_id: 'user-one',
+      });
+      expect(membershipRuntime.db.get(
+        'tenant_memberships',
+        'membership-one',
+      )).toEqual({
+        membership_id: 'membership-one',
+        tenant_id: 'tenant-one',
+        user_id: 'user-one',
+      });
+    } finally {
+      membershipRuntime.close();
+    }
+  });
+
+  test('opens composed realm tables in deterministic foreign-key dependency order', () => {
+    const realm = composeDatabaseRealm({
+      name: 'runtime-foreign-key-order',
+      version: '1',
+      contributions: [{
+        name: 'dependant',
+        version: '1',
+        tables: {
+          a_children: {
+            id: 'text primary key',
+            parent_id: 'text references z_parents(id) on delete restrict not null',
+          },
+        },
+      }, {
+        name: 'parent',
+        version: '1',
+        tables: { z_parents: { id: 'text primary key' } },
+      }],
+    });
+    const runtime = DatabaseRuntime.open({
+      id: 'composed-foreign-key-order',
+      role: 'named',
+      sqlite: createPlatformSQLiteService({ mode: 'memory' }),
+      ownsSQLite: true,
+      tables: realm.tables,
+    });
+    try {
+      runtime.db.insert('z_parents', { id: 'parent-one' });
+      expect(runtime.db.insert('a_children', {
+        id: 'child-one',
+        parent_id: 'parent-one',
+      })).toMatchObject({
+        op: 'INSERT',
+        row: { id: 'child-one', parent_id: 'parent-one' },
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
+  test('orders every direct realm across quoted and repeated foreign-key references', () => {
+    const realm = defineDatabaseRealm({
+      name: 'direct-foreign-key-order',
+      version: '1',
+      tables: {
+        a_quoted_children: {
+          id: 'text primary key',
+          parent_id: "text default 'references fake_parent(id)' "
+            + "/* references fake_parent(id) */ references 'z_parents'(id) "
+            + 'on delete restrict not null',
+        },
+        b_multiple_children: {
+          id: 'text primary key',
+          parent_id: 'text references external_parents(id) references z_parents(id) not null',
+        },
+        z_parents: { id: 'text primary key' },
+      },
+    });
+    expect(Object.keys(realm.tables)).toEqual([
+      'z_parents',
+      'a_quoted_children',
+      'b_multiple_children',
+    ]);
+
+    const sqlite = createPlatformSQLiteService({ mode: 'memory' });
+    sqlite.raw.run('CREATE TABLE external_parents (id TEXT PRIMARY KEY)');
+    const runtime = DatabaseRuntime.open({
+      id: 'direct-foreign-key-order',
+      role: 'named',
+      sqlite,
+      ownsSQLite: true,
+      tables: realm.tables,
+    });
+    try {
+      runtime.sqlite.raw.run(
+        'INSERT INTO external_parents (id) VALUES (?)',
+        ['parent-one'],
+      );
+      runtime.db.createStrict('z_parents', { id: 'parent-one' });
+      runtime.db.createStrict('a_quoted_children', {
+        id: 'quoted-child',
+        parent_id: 'parent-one',
+      });
+      runtime.db.createStrict('b_multiple_children', {
+        id: 'multiple-child',
+        parent_id: 'parent-one',
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+
+  test('preserves migration-created external foreign-key parents', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zero-database-external-parent-'));
+    const path = join(root, 'external-parent.sqlite');
+    const realm = composeDatabaseRealm({
+      name: 'runtime-external-foreign-key',
+      version: '1',
+      contributions: [{
+        name: 'records',
+        version: '1',
+        migrations: [{
+          version: '001_external_parent',
+          description: 'Create external realm support table',
+          up(database) {
+            database.run('CREATE TABLE external_parents (id TEXT PRIMARY KEY)');
+          },
+        }],
+        tables: {
+          records: {
+            id: 'text primary key',
+            parent_id: 'text references external_parents(id) on delete restrict not null',
+          },
+        },
+      }],
+    });
+
+    try {
+      const runtime = DatabaseRuntime.open({
+        id: 'composed-external-foreign-key',
+        role: 'named',
+        sqlite: createPlatformSQLiteService({ mode: 'file', path }),
+        ownsSQLite: true,
+        migrate: true,
+        migrations: realm.migrations,
+        tables: realm.tables,
+      });
+      try {
+        runtime.sqlite.raw.run(
+          'INSERT INTO external_parents (id) VALUES (?)',
+          ['parent-one'],
+        );
+        expect(runtime.db.insert('records', {
+          id: 'record-one',
+          parent_id: 'parent-one',
+        })).toMatchObject({ op: 'INSERT' });
+      } finally {
+        runtime.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('owns one ReactiveDB and preserves per-file rows and sequence state', () => {
     const root = mkdtempSync(join(tmpdir(), 'zero-database-runtime-'));
     const path = join(root, 'app.sqlite');

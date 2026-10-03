@@ -238,6 +238,14 @@
       "types": "./src/doctor/index.ts",
       "import": "./src/doctor/index.ts"
     },
+    "./data-studio": {
+      "types": "./src/data-studio/index.ts",
+      "import": "./src/data-studio/index.ts"
+    },
+    "./data-studio/server": {
+      "types": "./src/data-studio/server.ts",
+      "import": "./src/data-studio/server.ts"
+    },
     "./email": {
       "types": "./src/email/index.ts",
       "import": "./src/email/index.ts"
@@ -353,6 +361,10 @@
     "./components/data-table": {
       "types": "./src/components/data-table/index.ts",
       "import": "./src/components/data-table/index.ts"
+    },
+    "./components/data-studio": {
+      "types": "./src/components/data-studio/index.ts",
+      "import": "./src/components/data-studio/index.ts"
     },
     "./components/dropdown-menu": {
       "types": "./src/components/dropdown-menu/index.ts",

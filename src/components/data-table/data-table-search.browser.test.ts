@@ -3,16 +3,19 @@
  * value, and reduced-motion lifecycle in a real browser.
  */
 
-import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chromium, type Browser, type Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
+import {
+  acquirePlaywrightTestBrowser,
+  playwrightTestBrowserAvailable,
+  type PlaywrightTestBrowserLease,
+} from '../../test-support/playwright-test-browser';
 
-const browserAvailable = existsSync(chromium.executablePath());
-const browserTest = browserAvailable ? test : test.skip;
+const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 // Launching and driving a real Chromium process can be CPU-starved when Bun
 // runs the full suite in parallel. Keep a bounded browser-specific budget so
 // Bun does not time out a still-running case and let suite teardown close the
@@ -21,12 +24,15 @@ const BROWSER_HOOK_TIMEOUT_MS = 60_000;
 const BROWSER_TEST_TIMEOUT_MS = 60_000;
 
 let browser: Browser | undefined;
+let browserLease: PlaywrightTestBrowserLease | undefined;
 let buildDir: string | undefined;
 let bundlePath: string | undefined;
 let stylesheetPath: string | undefined;
 
 beforeAll(async () => {
-  if (!browserAvailable) return;
+  if (!playwrightTestBrowserAvailable) return;
+  browserLease = await acquirePlaywrightTestBrowser();
+  browser = browserLease.browser;
 
   const scratchRoot = join(process.cwd(), '.zero');
   await mkdir(scratchRoot, { recursive: true });
@@ -51,12 +57,14 @@ beforeAll(async () => {
     await buildPlatformStyles(buildDir, join(buildDir, 'missing-app'))
   ).cssPath;
 
-  browser = await chromium.launch({ headless: true });
 }, BROWSER_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
-  await browser?.close();
-  if (buildDir) await rm(buildDir, { recursive: true, force: true });
+  try {
+    if (buildDir) await rm(buildDir, { recursive: true, force: true });
+  } finally {
+    browserLease?.release();
+  }
 }, BROWSER_HOOK_TIMEOUT_MS);
 
 describe('DataTableSearch browser lifecycle', () => {

@@ -338,6 +338,13 @@ the linked documentation.
 
 ## Storage and file experiences
 
+- [ ] **Storage Studio** — **Core or official plugin**. Add organization-owned
+  drive provisioning, quota/lifecycle jobs, recovery, and an adaptive
+  Guardian/Fabric control plane around the existing Storage engine. Keep
+  object access on Storage's drive policy and do not make platform inventory
+  implicit customer-file access. See the focused
+  [Storage Studio and Vector Studio roadmap](./control-plane-roadmap.md).
+
 - [ ] **Finder-grade file browser** — **Component pack**. Expand the existing
   `StorageFileBrowser` and storage administration surfaces rather than
   replacing them.
@@ -397,6 +404,13 @@ the linked documentation.
     explicit handling when a provider omits usage fields.
 
 ## AI interfaces and intelligent data
+
+- [ ] **Vector Studio** — **Core or official plugin**. Add organization-owned
+  vector-index provisioning, generation-safe reindex work, quotas, recovery,
+  and an adaptive Guardian/Fabric control plane around the existing Vector
+  service. Keep AI provider/model execution and secrets outside the vector
+  catalog. See the focused
+  [Storage Studio and Vector Studio roadmap](./control-plane-roadmap.md).
 
 - [ ] **AI chat interface package** — **Component pack**. Adapt useful Prompt
   Kit patterns or another suitable foundation after a licensing review.

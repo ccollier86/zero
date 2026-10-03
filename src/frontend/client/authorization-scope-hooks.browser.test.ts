@@ -1,22 +1,28 @@
 /** Browser regression coverage for root authorization readiness transitions. */
 
-import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chromium, type Browser, type Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
+import {
+  acquirePlaywrightTestBrowser,
+  playwrightTestBrowserAvailable,
+  type PlaywrightTestBrowserLease,
+} from '../../test-support/playwright-test-browser';
 
-const browserAvailable = existsSync(chromium.executablePath());
-const browserTest = browserAvailable ? test : test.skip;
+const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 const TEST_TIMEOUT_MS = 60_000;
 
 let browser: Browser | undefined;
+let browserLease: PlaywrightTestBrowserLease | undefined;
 let buildDir: string | undefined;
 let bundlePath: string | undefined;
 let appBundlePath: string | undefined;
 
 beforeAll(async () => {
-  if (!browserAvailable) return;
+  if (!playwrightTestBrowserAvailable) return;
+  browserLease = await acquirePlaywrightTestBrowser();
+  browser = browserLease.browser;
 
   const scratchRoot = join(process.cwd(), '.zero');
   await mkdir(scratchRoot, { recursive: true });
@@ -46,13 +52,14 @@ beforeAll(async () => {
     throw new Error(result.logs.map((log) => log.message).join('\n'));
   }
   await buildAppProviderFixture(appEntrypoint, appBundlePath);
-
-  browser = await chromium.launch({ headless: true });
 }, TEST_TIMEOUT_MS);
 
 afterAll(async () => {
-  await browser?.close();
-  if (buildDir) await rm(buildDir, { recursive: true, force: true });
+  try {
+    if (buildDir) await rm(buildDir, { recursive: true, force: true });
+  } finally {
+    browserLease?.release();
+  }
 }, TEST_TIMEOUT_MS);
 
 describe('authorization scope browser readiness', () => {

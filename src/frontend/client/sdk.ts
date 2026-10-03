@@ -121,6 +121,11 @@ import {
 } from './resource-client';
 import { createDataRealmReadinessSdkSurface } from './data-realm-readiness-transport';
 import type { DataRealmReadinessSdkSurface } from '../../auth/data-realm-readiness-types';
+import {
+  createDataStudioSdkSurface,
+  type DataStudioSdkSurface,
+} from './data-studio-client';
+import { subscribeToDataStudioSync } from './data-studio-sync';
 
 /**
  * All platform-internal tables that hooks depend on.
@@ -408,6 +413,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Readiness of the authenticated request's server-derived application realm. */
   readonly dataRealm: DataRealmReadinessSdkSurface;
+
+  /** Organization-scoped logical tables, schemas, and rows. */
+  readonly dataStudio: DataStudioSdkSurface;
 
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
@@ -865,6 +873,7 @@ export function createClient(config: ClientConfig): Client {
   let syncClient!: SyncClient;
   let stateClient: StateClient | null = null;
   let ephemeralClient!: EphemeralClient;
+  let dataStudio!: DataStudioSdkSurface;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -884,6 +893,7 @@ export function createClient(config: ClientConfig): Client {
   function invalidateAuthorizationData(): void {
     authorizationScopeEpoch += 1;
     cancelAuthorizationScopeRequests();
+    dataStudio?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -900,6 +910,7 @@ export function createClient(config: ClientConfig): Client {
     authorizationScopeTransition = true;
     authorizationScopeEpoch += 1;
     cancelAuthorizationScopeRequests();
+    dataStudio?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();
@@ -1098,6 +1109,17 @@ export function createClient(config: ClientConfig): Client {
   // ─── Collection Cache ─────────────────────────────────────────────
   const collections = new Map<string, Collection<any, any>>();
   const resourceClients = new Map<string, ResourceClient<any>>();
+  dataStudio = createDataStudioSdkSurface(clientFetch, {
+    subscribeReconciliation(callback) {
+      return subscribeToDataStudioSync({
+        collection(name) {
+          return tables[name]
+            ? getCollection(name) as Collection<Row>
+            : null;
+        },
+      }, callback);
+    },
+  });
 
   let previousAuthToken = currentAuthToken();
   let previousAuthorizationScope = readAuthorizationScope(previousAuthToken);
@@ -1117,6 +1139,7 @@ export function createClient(config: ClientConfig): Client {
     if (scopeChanged) {
       authorizationScopeEpoch += 1;
       cancelAuthorizationScopeRequests();
+      dataStudio.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1223,6 +1246,7 @@ export function createClient(config: ClientConfig): Client {
     get audit() { return requireAuthClient().audit; },
     get platformAdmin() { return requireAuthClient().platformAdmin; },
     get dataRealm() { return dataRealm; },
+    get dataStudio() { return dataStudio; },
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },
@@ -1457,6 +1481,7 @@ export function createClient(config: ClientConfig): Client {
       ephemeralClient.dispose();
       collections.clear();
       resourceClients.clear();
+      dataStudio.clear();
       _instance = null;
     },
   };

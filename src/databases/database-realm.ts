@@ -24,7 +24,9 @@ import {
   attachGuardianTableReferences,
   getGuardianAnchorRequirements,
   getGuardianTableReferences,
+  GUARDIAN_MEMBERSHIP_REFERENCE,
   GUARDIAN_TABLE_REFERENCES,
+  GUARDIAN_USER_REFERENCE,
   inspectGuardianReferenceSchema,
   type GuardianFieldReference,
   type GuardianReferenceKind,
@@ -45,6 +47,7 @@ import {
   databaseRealmRegistryAdmissionIssue,
   databaseRealmTableNameAdmissionIssue,
 } from './database-realm-schema-admission';
+import { orderDatabaseRealmTables } from './database-realm-table-order';
 import type { DatabaseReadQueryContext } from './database-read-query-capability';
 import {
   createDatabaseWriteCommandSession,
@@ -218,6 +221,17 @@ export function defineDatabaseRealm<
       ? ['membership' as const]
       : []),
   ]);
+  const guardianAnchorTables = guardianAnchorTableNames(
+    guardianAnchorRequirements,
+  );
+  for (const tableName of Object.keys(tables)) {
+    if (guardianAnchorTables.some((anchor) =>
+      anchor.toLowerCase() === tableName.toLowerCase())) {
+      throw configInvalid(
+        `Database realm table "${tableName}" is a framework-owned Guardian anchor.`,
+      );
+    }
+  }
 
   for (const queryName of Object.keys(queries)) {
     if (Object.prototype.hasOwnProperty.call(commands, queryName)) {
@@ -322,7 +336,10 @@ export function runDatabaseRealmCommand(
   }
   const handler = realm.commands[name]!;
   const detachedInput = cloneDatabaseSerializableValue(input);
-  const session = createDatabaseWriteCommandSession(database);
+  const session = createDatabaseWriteCommandSession(
+    database,
+    guardianAnchorTableNames(realm.guardianAnchorRequirements),
+  );
   try {
     return database.transaction(() => {
       const output = handler(session.context, detachedInput);
@@ -365,7 +382,21 @@ function cloneTableRegistry(
   const registryIssue = databaseRealmRegistryAdmissionIssue(tables);
   if (registryIssue) throw configInvalid(registryIssue);
 
-  return Object.freeze(tables);
+  const ordered = Object.create(null) as Record<string, Readonly<TableSchema>>;
+  for (const entry of orderDatabaseRealmTables(
+    Object.entries(tables).map(([name, value]) => ({ name, value })),
+  )) {
+    ordered[entry.name] = entry.value;
+  }
+  return Object.freeze(ordered);
+}
+
+function guardianAnchorTableNames(
+  requirements: readonly GuardianReferenceKind[],
+): readonly string[] {
+  return requirements.length === 0
+    ? []
+    : [GUARDIAN_USER_REFERENCE.table, GUARDIAN_MEMBERSHIP_REFERENCE.table];
 }
 
 function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSchema> {

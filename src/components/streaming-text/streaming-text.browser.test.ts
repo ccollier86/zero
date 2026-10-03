@@ -4,21 +4,27 @@
  * replay, callback, announcement, and source-replacement behavior.
  */
 
-import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chromium, type Browser, type Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
+import {
+  acquirePlaywrightTestBrowser,
+  playwrightTestBrowserAvailable,
+  type PlaywrightTestBrowserLease,
+} from '../../test-support/playwright-test-browser';
 
-const browserAvailable = existsSync(chromium.executablePath());
-const browserTest = browserAvailable ? test : test.skip;
+const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 
 let browser: Browser | undefined;
+let browserLease: PlaywrightTestBrowserLease | undefined;
 let buildDir: string | undefined;
 let bundlePath: string | undefined;
 
 beforeAll(async () => {
-  if (!browserAvailable) return;
+  if (!playwrightTestBrowserAvailable) return;
+  browserLease = await acquirePlaywrightTestBrowser();
+  browser = browserLease.browser;
 
   const scratchRoot = join(process.cwd(), '.zero');
   await mkdir(scratchRoot, { recursive: true });
@@ -40,12 +46,14 @@ beforeAll(async () => {
     throw new Error(result.logs.map((log) => log.message).join('\n'));
   }
 
-  browser = await chromium.launch({ headless: true });
 });
 
 afterAll(async () => {
-  await browser?.close();
-  if (buildDir) await rm(buildDir, { recursive: true, force: true });
+  try {
+    if (buildDir) await rm(buildDir, { recursive: true, force: true });
+  } finally {
+    browserLease?.release();
+  }
 });
 
 describe('StreamingText browser lifecycle', () => {

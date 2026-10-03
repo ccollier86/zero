@@ -1,6 +1,10 @@
 /** Resource registry and Sync-policy composition for createApp(). */
 
 import type { NormalizedAuthBehaviorConfig } from '../../auth/types';
+import {
+  assertDataStudioInstallationPreflight,
+  resolveDataStudioInstallation,
+} from '../../data-studio/data-studio-installation';
 import type { PlatformObservabilityRuntime } from '../../observability/types';
 import {
   createResourceRegistry,
@@ -24,12 +28,12 @@ import {
 } from '../../sync/sync-policy';
 import type { SyncResourcePolicyAdapter } from '../../sync/types';
 import {
-  PLATFORM_SYNC_PRIVATE_TABLES,
   PlatformSyncPolicyService,
+  resolvePlatformSyncPrivateTables,
 } from './platform-sync-policy';
 import {
   addPlatformSnapshotTables,
-  PLATFORM_SYNC_WRITE_PROTECTED_TABLES,
+  resolvePlatformSyncWriteProtectedTables,
 } from './app-platform-tables';
 import { assertResourceExposureLoadingCompatibility } from './resource-loading-compatibility';
 import {
@@ -62,21 +66,21 @@ export async function composeAppResources({
   getSystemDB,
 }: ComposeAppResourcesInput): Promise<AppResourceComposition> {
   addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false);
-  const platformSyncPolicy = config.auth !== false
-    ? createDefaultSyncPolicy({
-        readProtectedTables: PLATFORM_SYNC_PRIVATE_TABLES,
-        writeProtectedTables: PLATFORM_SYNC_WRITE_PROTECTED_TABLES,
-      })
-    : undefined;
-  const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
-
   const loadedResources = await loadResourceDefinitions({
     resourcesDir: config.serverResourcesDir,
     observability,
   });
+  const resources = [...config.resources, ...loadedResources];
+  assertDataStudioInstallationPreflight({
+    resources,
+    authEnabled: config.auth !== false,
+    tenancyMode: authConfig.tenancy.mode,
+    authorizationMode: authConfig.authorization.mode,
+    databaseTopology: config.databaseTopology,
+  });
   const managedTables = new Set(Object.keys(config.tables));
   const registry = createResourceRegistry({
-    resources: [...config.resources, ...loadedResources],
+    resources,
     tables: config.tables,
     authConfig,
     tenancyMode: authConfig.tenancy.mode,
@@ -86,6 +90,24 @@ export async function composeAppResources({
     managedTables,
     observability,
   });
+  const dataStudioEnabled = resolveDataStudioInstallation(
+    config.tables,
+    registry,
+    config.databaseTopology.mode === 'multiple'
+      ? config.databaseTopology.realm
+      : null,
+    config.declaredSyncModes,
+  );
+  const privateTables = resolvePlatformSyncPrivateTables(dataStudioEnabled);
+  const platformSyncPolicy = config.auth !== false
+    ? createDefaultSyncPolicy({
+        readProtectedTables: privateTables,
+        writeProtectedTables: resolvePlatformSyncWriteProtectedTables(
+          dataStudioEnabled,
+        ),
+      })
+    : undefined;
+  const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
   const tenantDatabaseTopology = config.databaseTopology.mode === 'multiple'
     && config.databaseTopology.tenantIsolation === 'tenant-database'
     ? resolveTenantDatabaseResourceTopology(
@@ -128,6 +150,7 @@ export async function composeAppResources({
         getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
         getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
         tenancyMode: authConfig.tenancy.mode,
+        privateTables,
       });
 
   return Object.freeze({
