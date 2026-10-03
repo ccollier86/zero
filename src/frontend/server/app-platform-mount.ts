@@ -10,6 +10,7 @@ import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { SyncPolicy } from '../../sync/sync-policy';
 import { mountPlatformRoutes } from './app-platform-routes';
+import type { AppStopHook } from './app-stop-lifecycle';
 import { mountPlatformServices } from './app-platform-services';
 import { addPlatformSnapshotTables } from './app-platform-tables';
 import type { AppIdentityProjectionRuntime } from './identity-projection-runtime';
@@ -35,6 +36,12 @@ export interface MountPlatformAppInput {
   identityProjectionRuntime: AppIdentityProjectionRuntime | null;
 }
 
+export interface MountedPlatformApp {
+  readonly app: Elysia;
+  /** App-owned extension hooks that must drain before platform services stop. */
+  readonly extensionStopHooks: readonly AppStopHook[];
+}
+
 /** Mount post-Sync platform plugins in their established dependency order. */
 export async function mountPlatformApp({
   app,
@@ -50,7 +57,7 @@ export async function mountPlatformApp({
   clientEntry,
   cssPath,
   identityProjectionRuntime,
-}: MountPlatformAppInput) {
+}: MountPlatformAppInput): Promise<MountedPlatformApp> {
   app.onStart(() => {
     const resolution = resolveTableSyncModes(config, syncDB, undefined, {
       tenantDatabaseTables,
@@ -73,7 +80,7 @@ export async function mountPlatformApp({
     identityProjectionRuntime,
   });
 
-  await mountPlatformRoutes({
+  const extensionStopHooks = await mountPlatformRoutes({
     app,
     runtime,
     syncDB,
@@ -87,5 +94,5 @@ export async function mountPlatformApp({
     identityProjectionRuntime,
   });
 
-  return app;
+  return { app, extensionStopHooks };
 }

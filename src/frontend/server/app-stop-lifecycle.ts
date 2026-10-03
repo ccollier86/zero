@@ -21,7 +21,9 @@ interface StopLifecycleApp extends StoppableApp {
 }
 
 export interface AppStopBarrierOptions {
-  /** App-owned cleanup that runs after listener quiescence and before plugin hooks. */
+  /** Captured app hooks drained after listener quiescence while services remain live. */
+  drainHooks?: readonly AppStopHook[];
+  /** Framework cleanup that runs after drains and before remaining plugin hooks. */
   beforeHooks?: () => void | Promise<void>;
   /** Captured hooks that must run before the remaining plugin hooks. */
   firstHooks?: readonly AppStopHook[];
@@ -54,10 +56,12 @@ export function getAppStopHooks(app: StopLifecycleApp): readonly AppStopHook[] {
 /**
  * Own the complete Elysia shutdown boundary.
  *
- * The listener is quiesced first, app-owned asynchronous services are drained,
- * and every captured Elysia stop hook is then awaited exactly once. Bun's
- * stale WebSocket counter is recognized narrowly and recovered without
- * weakening shutdown behavior for live requests or unknown adapters.
+ * The listener is quiesced first, explicit drain hooks run while app services
+ * remain live, framework cleanup runs, and every remaining Elysia stop hook is
+ * then awaited exactly once. Bun's stale WebSocket counter is recognized
+ * narrowly and recovered without weakening shutdown behavior for live requests
+ * or unknown adapters. Hook and cleanup failures are collected so one owner
+ * cannot skip later teardown.
  */
 export function installAppStopBarrier<T extends StoppableApp>(
   app: T,
@@ -68,9 +72,12 @@ export function installAppStopBarrier<T extends StoppableApp>(
   const options: AppStopBarrierOptions = typeof beforeHooksOrOptions === 'function'
     ? { ...compatibilityOptions, beforeHooks: beforeHooksOrOptions }
     : beforeHooksOrOptions;
+  const drainHooks = [...new Set(options.drainHooks ?? [])];
   const nativeStop = app.stop.bind(app);
   let listenerCompleted = false;
-  let cleanupAttempted = false;
+  let drainHooksAttempted = false;
+  let beforeHooksAttempted = false;
+  let hooksAttempted = false;
   let stopped = false;
   let stopping: Promise<T> | null = null;
 
@@ -101,8 +108,15 @@ export function installAppStopBarrier<T extends StoppableApp>(
           nativeStoppedApps.add(app);
         }
 
-        if (!cleanupAttempted) {
-          cleanupAttempted = true;
+        if (!drainHooksAttempted) {
+          drainHooksAttempted = true;
+          for (const hook of drainHooks) {
+            await collectFailure(failures, () => hook.fn(lifecycleApp));
+          }
+        }
+
+        if (!beforeHooksAttempted) {
+          beforeHooksAttempted = true;
           if (options.beforeHooks) {
             await collectFailure(failures, options.beforeHooks);
           }
@@ -118,11 +132,13 @@ export function installAppStopBarrier<T extends StoppableApp>(
         hookCapture.restore();
       }
 
-      if (cleanupAttempted) {
+      if (drainHooksAttempted && beforeHooksAttempted && !hooksAttempted) {
+        hooksAttempted = true;
         const hooks = orderHooks(
           hookCapture.hooks(),
           options.firstHooks ?? [],
           options.lastHooks ?? [],
+          drainHooks,
         );
         for (const hook of hooks) {
           await collectFailure(failures, () => hook.fn(lifecycleApp));
@@ -131,7 +147,10 @@ export function installAppStopBarrier<T extends StoppableApp>(
 
       // Listener closure and every owned cleanup were attempted. Repeating
       // closed-resource hooks after a failure would be unsafe.
-      stopped = listenerCompleted && cleanupAttempted;
+      stopped = listenerCompleted
+        && drainHooksAttempted
+        && beforeHooksAttempted
+        && hooksAttempted;
       throwCollectedFailures(failures, 'Application shutdown failed');
       return app;
     })().catch((error) => {
@@ -296,13 +315,15 @@ function orderHooks(
   hooks: readonly AppStopHook[],
   first: readonly AppStopHook[],
   last: readonly AppStopHook[],
+  omitted: readonly AppStopHook[] = [],
 ): AppStopHook[] {
   const available = new Set(hooks);
-  const reserved = new Set([...first, ...last]);
+  const omittedHooks = new Set(omitted);
+  const reserved = new Set([...first, ...last, ...omitted]);
   return [...new Set([
-    ...first.filter((hook) => available.has(hook)),
+    ...first.filter((hook) => available.has(hook) && !omittedHooks.has(hook)),
     ...hooks.filter((hook) => !reserved.has(hook)),
-    ...last.filter((hook) => available.has(hook)),
+    ...last.filter((hook) => available.has(hook) && !omittedHooks.has(hook)),
   ])];
 }
 

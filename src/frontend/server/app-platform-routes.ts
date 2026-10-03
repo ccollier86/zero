@@ -34,6 +34,10 @@ import type { AppIdentityProjectionRuntime } from './identity-projection-runtime
 import { createResourceTenantDatabaseAccess } from './request-database-client';
 import { createRouterPlugin } from './router-plugin';
 import { loadServerRoutePlugins } from './server-route-loader';
+import {
+  getAppStopHooks,
+  type AppStopHook,
+} from './app-stop-lifecycle';
 import { createServerExtensionApp } from './server-extensions';
 import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 import type { ResolvedConfig } from './types';
@@ -52,7 +56,13 @@ interface MountPlatformRoutesInput {
   readonly identityProjectionRuntime: AppIdentityProjectionRuntime | null;
 }
 
-/** Mount request-facing routes after every service dependency is available. */
+/**
+ * Mount request-facing routes after every service dependency is available.
+ *
+ * Returns the app-owned extension stop hooks so the composition root can drain
+ * them while Guardian, Fabric, and the rest of the app-local runtime remain
+ * available. Built-in route hooks are deliberately excluded from that phase.
+ */
 export async function mountPlatformRoutes({
   app,
   runtime,
@@ -65,7 +75,7 @@ export async function mountPlatformRoutes({
   clientEntry,
   cssPath,
   identityProjectionRuntime,
-}: MountPlatformRoutesInput): Promise<void> {
+}: MountPlatformRoutesInput): Promise<readonly AppStopHook[]> {
   const getAuthStore = () => runtime.get(ZERO_AUTH_STORE);
   const getTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
   const getRequestCredentialResolver = () => (
@@ -163,9 +173,13 @@ export async function mountPlatformRoutes({
       { kind: 'routes', dir: config.serverRoutesDir },
     ],
   });
+  const hooksBeforeAppExtensions = new Set(getAppStopHooks(app));
   for (const serverRoutePlugin of serverRoutePlugins) {
     app.use(serverRoutePlugin as any);
   }
+  const appExtensionStopHooks = getAppStopHooks(app).filter(
+    (hook) => !hooksBeforeAppExtensions.has(hook),
+  );
 
   app.get('/api/health', () => ({ status: 'ok', uptime: process.uptime() }));
 
@@ -224,4 +238,6 @@ export async function mountPlatformRoutes({
         }
       : {}),
   }));
+
+  return appExtensionStopHooks;
 }

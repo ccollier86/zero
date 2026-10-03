@@ -143,6 +143,80 @@ describe('app stop lifecycle', () => {
     expect(calls).toEqual(['auth', 'extension', 'database']);
   });
 
+  test('runs extension drains before final service disposal', async () => {
+    const calls: string[] = [];
+    let servicesAvailable = true;
+    const app = new Elysia()
+      .onStop(() => {
+        calls.push('guardian');
+        servicesAvailable = false;
+      })
+      .onStop(async () => {
+        await Promise.resolve();
+        expect(servicesAvailable).toBe(true);
+        calls.push('extension');
+      });
+    const [, extension] = getAppStopHooks(app);
+    const managed = installAppStopBarrier(app, {
+      drainHooks: [extension],
+      beforeHooks: () => {
+        expect(servicesAvailable).toBe(true);
+        calls.push('runtime');
+      },
+    });
+
+    await managed.stop();
+
+    expect(calls).toEqual(['extension', 'runtime', 'guardian']);
+  });
+
+  test('attempts every hook and final service disposal after an extension rejects', async () => {
+    const extensionFailure = new Error('extension drain failed');
+    const runtimeFailure = new Error('runtime cleanup failed');
+    const platformFailure = new Error('platform stop failed');
+    const calls: string[] = [];
+    const app = new Elysia()
+      .onStop(() => {
+        calls.push('platform');
+        throw platformFailure;
+      })
+      .onStop(async () => {
+        calls.push('extension:first');
+        throw extensionFailure;
+      })
+      .onStop(() => { calls.push('extension:second'); });
+    const [, firstExtension, secondExtension] = getAppStopHooks(app);
+    const managed = installAppStopBarrier(app, {
+      drainHooks: [firstExtension, secondExtension],
+      beforeHooks: () => {
+        calls.push('runtime');
+        throw runtimeFailure;
+      },
+    });
+
+    let received: unknown;
+    try {
+      await managed.stop();
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(AggregateError);
+    expect((received as AggregateError).errors).toEqual([
+      extensionFailure,
+      runtimeFailure,
+      platformFailure,
+    ]);
+    expect(calls).toEqual([
+      'extension:first',
+      'extension:second',
+      'runtime',
+      'platform',
+    ]);
+    await expect(managed.stop()).resolves.toBe(managed);
+    expect(calls).toHaveLength(4);
+  });
+
   test('retries native listener closure but never repeats cleanup', async () => {
     const nativeFailure = new Error('native stop failed');
     let nativeCalls = 0;

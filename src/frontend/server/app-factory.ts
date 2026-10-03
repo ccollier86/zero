@@ -208,11 +208,12 @@ export async function createApp(userConfig: AppConfig) {
       identityProjectionRuntime,
     });
     const stopped = installAppStopBarrier(
-      mounted,
-      async () => {
-        await runtime.dispose();
-      },
+      mounted.app,
       {
+        // App-owned extensions may need their authority-scoped Guardian and
+        // Fabric services to record interrupted work during graceful stop.
+        drainHooks: mounted.extensionStopHooks,
+        beforeHooks: () => runtime.dispose(),
         onTransportStopStalled(status) {
           emitPlatformCodeTo(
             observabilityRuntime,

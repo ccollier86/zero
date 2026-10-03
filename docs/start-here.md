@@ -502,6 +502,18 @@ Resource definitions are loaded before backend extensions so routes can inspect
 exported from `@zero/framework/server`; raw Elysia plugins remain supported when
 a route needs framework-level control.
 
+Managed `createApp()` shutdown first quiesces the listener, then awaits every
+`onStop` hook discovered through `server/plugins`, `server/middleware`,
+`server/endpoints`, and `server/routes` while Guardian, Fabric, and the other
+app-local services remain available. It next performs app-local runtime teardown
+in its established dependency order and then runs the remaining platform plugin
+hooks. Every hook and final cleanup is attempted even when an earlier extension
+rejects; `app.stop()` reports the single failure or their ordered aggregate only
+after teardown finishes. A
+request-scoped service facade captured by admitted work can therefore perform a
+bounded final write during its extension's drain, but shutdown does not admit a
+new request or weaken that facade's live authority checks.
+
 Use middleware matchers for cross-cutting app policy. `path`, `method`, and
 `predicate` decide whether middleware applies; `auth`, `role`, and
 `properties` enforce server-side access once it applies. Property matchers use

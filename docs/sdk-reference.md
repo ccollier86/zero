@@ -4774,6 +4774,19 @@ database handle. App-owned extensions belong in `server/plugins`,
 explicit directory options. Use low-level plugin factories only when building
 a standalone Elysia composition without `createApp()`.
 
+For managed apps, stop ordering is a public lifecycle guarantee: Zero first
+quiesces the listener, awaits discovered app-extension `onStop` hooks with
+Guardian/Fabric services still live, performs app-local runtime teardown in its
+established dependency order, and then runs the remaining platform hooks. It
+attempts all hooks and final cleanup when any extension rejects and reports the
+ordered failure aggregate afterward.
+This app-owned-first phase covers hooks composed from `server/plugins`,
+`server/middleware`, `server/endpoints`, and `server/routes`; an arbitrary hook
+attached after `createApp()` returns is still awaited, but is not classified as
+a discovered app-extension drain. Captured request-scoped services retain their
+normal authority revalidation during drain—shutdown never turns them into
+unrestricted database access.
+
 ---
 
 ## Hooks Reference
