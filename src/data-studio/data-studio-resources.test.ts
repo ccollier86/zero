@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
 import { projectResourceRow } from '../resources/resource-field-access';
+import {
+  getPolicyEligibleTenantKinds,
+  resourcePolicyAdmitsCredential,
+} from '../resources/resource-policy-inspection';
 import { DATA_STUDIO_CLIENT_TABLES } from './data-studio-client-tables';
 import { DATA_STUDIO_RESOURCES } from './data-studio-resources';
 import {
@@ -9,6 +13,20 @@ import {
 } from './data-studio-tenant-schema';
 
 describe('Data Studio reconciliation resources', () => {
+  test('admits both organization kinds without weakening the declared credential gate', () => {
+    for (const resource of DATA_STUDIO_RESOURCES) {
+      for (const action of resource.actions) {
+        const policy = resource.policy[action]!;
+        expect(getPolicyEligibleTenantKinds(policy)).toEqual([
+          'organization',
+          'administration',
+        ]);
+        expect(resourcePolicyAdmitsCredential(policy, 'session')).toBe(true);
+        expect(resourcePolicyAdmitsCredential(policy, 'api-key')).toBe(true);
+      }
+    }
+  });
+
   test('keep canonical schemas and row values off generic HTTP and Sync pages', () => {
     const catalog = DATA_STUDIO_RESOURCES.find(
       (resource) => resource.table === DATA_STUDIO_TABLES_TABLE_NAME,

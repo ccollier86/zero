@@ -34,14 +34,19 @@ Guardian session or user API key
 
 Important invariants:
 
-- Data Studio requires an active Guardian organization membership. It is not a
+- Data Studio requires an active Guardian customer-organization or
+  administration-organization membership. An administration organization can
+  own and manage its own Data Studio tables; platform authority alone never
+  grants access to another organization's data. Data Studio is not a
   global-user table store and it does not accept a tenant ID, database ID,
   database path, or Fabric reference from the browser.
 - Fabric selects the physical database from committed server authority. URL
   parameters, request bodies, headers, logical table keys, and row values
   cannot select a database.
 - The public routes accept session and Guardian user API-key credentials. The
-  same live membership and RBAC authority applies to both.
+  same live membership and RBAC authority applies to both. Guardian currently
+  issues tenant-bound user API keys only for customer organizations; the
+  protected administration organization uses a live session.
 - `data-studio:read`, `data-studio:write`, and `data-studio:manage` are
   tenant-scoped Guardian permissions. UI capability checks improve
   presentation; the server remains authoritative.
@@ -532,7 +537,9 @@ export default defineEndpoint({
   handler: async ({ access, body, zero }) => {
     const auth = access.requireUser();
     access.requireTenant();
-    if (auth.tenantKind !== 'organization' || !auth.membershipId) {
+    const organizationKind = auth.tenantKind === 'organization'
+      || auth.tenantKind === 'administration';
+    if (!organizationKind || !auth.membershipId) {
       throw new DataStudioError(
         'DATA_STUDIO_AUTHORITY_REQUIRED',
         'Data Studio requires an active organization membership.',

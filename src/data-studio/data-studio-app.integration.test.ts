@@ -84,6 +84,7 @@ describe('Data Studio app composition', () => {
     const feature = createDataStudioFeature();
     let app: ManagedApp | undefined;
     let sync: SyncConnection | undefined;
+    let administrationSync: SyncConnection | undefined;
 
     try {
       const appDir = join(root, 'app');
@@ -111,6 +112,7 @@ describe('Data Studio app composition', () => {
               'data-studio-manager': feature.roleFragments.manager,
             },
           },
+          apiKeys: true,
         },
         databaseTopology: {
           mode: 'multiple',
@@ -159,15 +161,28 @@ describe('Data Studio app composition', () => {
 
       // The first public registration bootstraps the protected administration
       // organization. The remaining registrations create customer orgs.
-      await register(baseUrl, 'platform', 'Platform Administration');
+      const administration = await register(
+        baseUrl,
+        'platform',
+        'Platform Administration',
+      );
       const tenantA = await register(baseUrl, 'tenant-a', 'Tenant A');
       const tenantB = await register(baseUrl, 'tenant-b', 'Tenant B');
       const viewerIdentity = await register(baseUrl, 'viewer', 'Viewer Home');
 
-      const [tenantAReadiness, tenantBReadiness] = await Promise.all([
+      const [
+        administrationReadiness,
+        tenantAReadiness,
+        tenantBReadiness,
+      ] = await Promise.all([
+        waitForDataRealmReady(baseUrl, administration.accessToken),
         waitForDataRealmReady(baseUrl, tenantA.accessToken),
         waitForDataRealmReady(baseUrl, tenantB.accessToken),
       ]);
+      expect(administrationReadiness).toMatchObject({
+        status: 200,
+        body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
+      });
       expect(tenantAReadiness).toMatchObject({
         status: 200,
         body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
@@ -176,6 +191,100 @@ describe('Data Studio app composition', () => {
         status: 200,
         body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
       });
+
+      const administrationCapabilities = await jsonRequest(
+        baseUrl,
+        'GET',
+        `${BASE_PATH}/capabilities`,
+        administration.accessToken,
+      );
+      expect(administrationCapabilities).toMatchObject({
+        status: 200,
+        body: {
+          enabled: true,
+          scope: 'organization',
+          permissions: { read: true, write: true, manage: true },
+        },
+      });
+
+      const administrationTable = await jsonRequest(
+        baseUrl,
+        'POST',
+        `${BASE_PATH}/tables`,
+        administration.accessToken,
+        {
+          operationId: 'administration-audit-table-create',
+          name: 'Administration Audit Notes',
+          key: 'administration_audit_notes',
+          schema: CONTACT_SCHEMA,
+        },
+      );
+      expect(administrationTable).toMatchObject({
+        status: 200,
+        body: {
+          table: {
+            key: 'administration_audit_notes',
+            rowCount: 0,
+          },
+        },
+      });
+      const administrationTableId = administrationTable.body.table.tableId as string;
+      const administrationRow = await jsonRequest(
+        baseUrl,
+        'POST',
+        `${BASE_PATH}/tables/${administrationTableId}/rows`,
+        administration.accessToken,
+        {
+          operationId: 'administration-audit-row-create',
+          values: { name: 'Platform-only note', active: true },
+        },
+      );
+      expect(administrationRow).toMatchObject({
+        status: 200,
+        body: {
+          row: {
+            tableId: administrationTableId,
+            values: { col_name: 'Platform-only note', col_active: true },
+          },
+        },
+      });
+
+      const administrationGenericTables = await jsonRequest(
+        baseUrl,
+        'GET',
+        `/api/data?table=${DATA_STUDIO_TABLES_TABLE_NAME}`,
+        administration.accessToken,
+      );
+      expect(administrationGenericTables).toMatchObject({
+        status: 200,
+        body: {
+          rows: [{
+            table_id: administrationTableId,
+            key: 'administration_audit_notes',
+            row_count: 1,
+          }],
+        },
+      });
+      expect(JSON.stringify(administrationGenericTables.body))
+        .not.toContain('schema_json');
+
+      administrationSync = await connectSync(
+        syncUrl,
+        administration.accessToken,
+      );
+      subscribeDataStudio(administrationSync);
+      const administrationSnapshot = await waitForTenantSnapshot(
+        administrationSync,
+      );
+      expect(
+        administrationSnapshot.tables[DATA_STUDIO_TABLES_TABLE_NAME]
+          ?.[administrationTableId],
+      ).toMatchObject({
+        table_id: administrationTableId,
+        key: 'administration_audit_notes',
+        row_count: 1,
+      });
+      expect(JSON.stringify(administrationSnapshot)).not.toContain('schema_json');
 
       // Tenant B's owner is also a manager in Tenant A. Logging in and making
       // an explicit tenant selection proves the normal Guardian activation path.
@@ -261,6 +370,76 @@ describe('Data Studio app composition', () => {
       const tableId = createdTable.body.table.tableId as string;
       expect(tableId).toBeString();
 
+      // Guardian user API keys are customer-organization credentials. Their
+      // Data Studio authority remains the exact live membership scope.
+      const issuedCustomerKey = await jsonRequest(
+        baseUrl,
+        'POST',
+        '/auth/api-keys',
+        tenantA.accessToken,
+        { label: 'Customer Data Studio regression' },
+      );
+      expect(issuedCustomerKey).toMatchObject({
+        status: 200,
+        body: {
+          apiKey: {
+            tenantId: tenantA.tenant.tenantId,
+            membershipId: tenantA.tenant.membershipId,
+            scopeKind: 'tenant',
+            status: 'active',
+          },
+        },
+      });
+      expect(issuedCustomerKey.body.secret).toBeString();
+      const customerApiKey = issuedCustomerKey.body.secret as string;
+      expect(await jsonRequest(
+        baseUrl,
+        'GET',
+        `${BASE_PATH}/tables/${tableId}`,
+        customerApiKey,
+      )).toMatchObject({
+        status: 200,
+        body: { table: { tableId } },
+      });
+      const customerGenericTables = await jsonRequest(
+        baseUrl,
+        'GET',
+        `/api/data?table=${DATA_STUDIO_TABLES_TABLE_NAME}`,
+        customerApiKey,
+      );
+      expect(customerGenericTables).toMatchObject({
+        status: 200,
+        body: {
+          rows: [{
+            table_id: tableId,
+            key: 'contacts',
+            row_count: 0,
+          }],
+        },
+      });
+      expect(customerGenericTables.body.rows).toHaveLength(1);
+
+      // Administration membership admits only the administration database,
+      // while customer membership admits only the selected customer database.
+      expect((await jsonRequest(
+        baseUrl,
+        'GET',
+        `${BASE_PATH}/tables/${administrationTableId}`,
+        manager.accessToken,
+      )).status).toBe(404);
+      expect((await jsonRequest(
+        baseUrl,
+        'GET',
+        `${BASE_PATH}/tables/${tableId}`,
+        administration.accessToken,
+      )).status).toBe(404);
+      expect((await jsonRequest(
+        baseUrl,
+        'GET',
+        `${BASE_PATH}/tables/${administrationTableId}`,
+        customerApiKey,
+      )).status).toBe(404);
+
       sync = await connectSync(syncUrl, manager.accessToken);
       subscribeDataStudio(sync);
       const snapshot = await waitForTenantSnapshot(sync);
@@ -269,6 +448,9 @@ describe('Data Studio app composition', () => {
         key: 'contacts',
         row_count: 0,
       });
+      expect(
+        snapshot.tables[DATA_STUDIO_TABLES_TABLE_NAME]?.[administrationTableId],
+      ).toBeUndefined();
       expect(JSON.stringify(snapshot)).not.toContain('schema_json');
       expect(JSON.stringify(snapshot)).not.toContain('values_json');
 
@@ -549,6 +731,7 @@ describe('Data Studio app composition', () => {
         body: { rows: [], total: 0 },
       });
     } finally {
+      await administrationSync?.close();
       await sync?.close();
       await app?.stop(true);
       const service = getPlatformSQLiteService();

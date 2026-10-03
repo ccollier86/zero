@@ -22,7 +22,7 @@ const readPolicy = allOf(
     permission: DATA_STUDIO_READ_PERMISSION,
     credentials: ['session', 'api-key'],
   }),
-  tenantKindPolicy('organization'),
+  tenantKindPolicy('organization', 'administration'),
 );
 
 /**

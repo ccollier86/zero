@@ -55,7 +55,9 @@ export function requireDataStudioOrganizationContext(
 } {
   const auth = context.access.requireUser();
   const scope = context.access.requireTenant();
-  if (auth.tenantKind !== 'organization'
+  const organizationKind = auth.tenantKind === 'organization'
+    || auth.tenantKind === 'administration';
+  if (!organizationKind
     || auth.tenantId !== scope.tenantId
     || auth.membershipId !== scope.membershipId
     || context.zero.scope?.scopeKind !== 'tenant'
