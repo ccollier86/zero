@@ -468,13 +468,14 @@ describe('zero update safety', () => {
               join(installedFramework, 'package.json'),
               `${JSON.stringify({ name: '@zero/framework', version: '9.9.9' }, null, 2)}\n`
             );
+            await simulateResolvedLocalArchive(project);
             return { exitCode: 0 };
           },
         }
       );
 
       expect(exitCode).toBe(0);
-      expect(commands).toEqual([LOCAL_UPDATE_COMMAND]);
+      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, LOCAL_UPDATE_COMMAND]);
       expect(verifyCalls).toBe(1);
       expect(await readFile(project.archivePath, 'utf8')).toBe(
         'bootstrapped local framework archive\n'
@@ -662,6 +663,7 @@ describe('zero update safety', () => {
               join(project.projectDir, 'node_modules', '.cache', 'zero-update'),
               'installed\n'
             );
+            await simulateResolvedLocalArchive(project);
             return { exitCode: 0 };
           },
         }
@@ -669,7 +671,7 @@ describe('zero update safety', () => {
 
       if (exitCode !== 0) throw new Error(captured.output.join('\n'));
       expect(exitCode).toBe(0);
-      expect(commands).toEqual([LOCAL_UPDATE_COMMAND]);
+      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, LOCAL_UPDATE_COMMAND]);
       expect(commands[0]).toContain('--ignore-scripts');
       expect(commands.flat()).not.toContain('migrate:plan');
       expect(commands.flat()).not.toContain('typecheck');
@@ -742,6 +744,65 @@ describe('zero update safety', () => {
       expect(await readFile(project.lockPath, 'utf8')).toBe(lockBefore);
       expect(await readFile(project.archivePath, 'utf8')).toBe(archiveBefore);
       expect(await readFile(project.dataSentinelPath, 'utf8')).toBe(dataBefore);
+      expect(await snapshotTree(project.projectDir)).toEqual(treeBefore);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rolls back when the canonical install changes the freshly resolved lock', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'zero-update-canonical-lock-drift-'));
+    const project = await createProject(rootDir);
+    const treeBefore = await snapshotTree(project.projectDir);
+    const packageBefore = await readFile(project.packagePath, 'utf8');
+    const lockBefore = await readFile(project.lockPath, 'utf8');
+    const archiveBefore = await readFile(project.archivePath, 'utf8');
+    const preparedArchive = join(rootDir, 'canonical-lock-drift-framework.tgz');
+    await writeFile(preparedArchive, 'framework paired with drifting canonical lock\n');
+    const commands: string[][] = [];
+    let exactRestoreObserved = false;
+
+    try {
+      const exitCode = await runZeroUpdateCli(
+        ['--project', project.projectDir, '--local', project.frameworkDir],
+        {
+          logger: captureLogger().logger,
+          packLocalFramework: async () => ({
+            archivePath: preparedArchive,
+            cleanup: async () => {},
+          }),
+          verifyLocalInstall: async () => {},
+          runCommand: async (argv) => {
+            commands.push([...argv]);
+            if (commands.length === 1) {
+              await writeFile(
+                join(project.projectDir, 'node_modules', '@zero', 'framework', 'package.json'),
+                `${JSON.stringify({ name: '@zero/framework', version: '9.9.9' }, null, 2)}\n`
+              );
+              await simulateResolvedLocalArchive(project);
+              return { exitCode: 0 };
+            }
+            if (commands.length === 2) {
+              await writeFile(project.lockPath, 'unexpected canonical lock drift\n');
+              return { exitCode: 0 };
+            }
+
+            exactRestoreObserved =
+              (await readFile(project.packagePath, 'utf8')) === packageBefore &&
+              (await readFile(project.lockPath, 'utf8')) === lockBefore &&
+              (await readFile(project.archivePath, 'utf8')) === archiveBefore;
+            return { exitCode: 0 };
+          },
+        }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(commands).toEqual([
+        LOCAL_UPDATE_COMMAND,
+        LOCAL_UPDATE_COMMAND,
+        FROZEN_ROLLBACK_COMMAND,
+      ]);
+      expect(exactRestoreObserved).toBe(true);
       expect(await snapshotTree(project.projectDir)).toEqual(treeBefore);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
@@ -928,8 +989,10 @@ describe('zero update safety', () => {
                 join(project.projectDir, 'node_modules', '@zero', 'framework', 'package.json'),
                 `${JSON.stringify({ name: '@zero/framework', version: '9.9.9' }, null, 2)}\n`
               );
+              await simulateResolvedLocalArchive(project);
               return { exitCode: 0 };
             }
+            if (commands.length === 2) return { exitCode: 0 };
             if (argv.join(' ') === 'bun run typecheck') return { exitCode: 0 };
             if (argv.join(' ') === 'bun run doctor') {
               return { exitCode: 9, stderr: 'doctor rejected update' };
@@ -946,6 +1009,7 @@ describe('zero update safety', () => {
 
       expect(exitCode).toBe(1);
       expect(commands).toEqual([
+        LOCAL_UPDATE_COMMAND,
         LOCAL_UPDATE_COMMAND,
         ['bun', 'run', 'typecheck'],
         ['bun', 'run', 'doctor'],
@@ -1238,6 +1302,38 @@ async function createFrameworkCheckout(rootDir: string): Promise<string> {
     `${JSON.stringify({ name: '@zero/framework', version: '9.9.9' }, null, 2)}\n`
   );
   return frameworkDir;
+}
+
+async function simulateResolvedLocalArchive(project: TestProject): Promise<void> {
+  const packageJson = JSON.parse(await readFile(project.packagePath, 'utf8')) as {
+    dependencies: Record<string, string>;
+  };
+  const stagedSpecifier = packageJson.dependencies['@zero/framework'];
+  if (stagedSpecifier === LOCAL_FRAMEWORK_DEPENDENCY) return;
+  if (!stagedSpecifier.startsWith('file:./.zero/framework/zero-framework-update-')) {
+    throw new Error(`Expected staged framework specifier, found ${stagedSpecifier}`);
+  }
+  const stagedResolution = stagedSpecifier.slice('file:'.length);
+  await writeFile(
+    project.lockPath,
+    [
+      '{',
+      '  "workspaces": {',
+      '    "": {',
+      '      "dependencies": {',
+      `        "@zero/framework": ${JSON.stringify(stagedSpecifier)},`,
+      '        "react": "^19.0.0"',
+      '      }',
+      '    }',
+      '  },',
+      '  "packages": {',
+      `    "@zero/framework": ["@zero/framework@${stagedResolution}", {}, "sha512-b2xk"],`,
+      '    "react": ["react@19.0.0", "", {}, "sha512-a2VlcA=="]',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+  );
 }
 
 function captureLogger(): CapturedLogger {

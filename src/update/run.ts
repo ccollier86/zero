@@ -35,6 +35,12 @@ import {
   type LocalFrameworkPackage,
 } from '../create-zero/local-framework-package';
 import { bindBunLockToLocalArchive } from './bun-lock-integrity';
+import {
+  canonicalizeResolvedLocalArchiveLock,
+  createLocalArchiveResolutionReference,
+  createStagedPackageManifest,
+  type LocalArchiveResolutionReference,
+} from './local-archive-resolution';
 
 const FRAMEWORK_PACKAGE = '@zero/framework';
 const LOCAL_ARCHIVE_RELATIVE_PATH = join('.zero', 'framework', 'zero-framework.tgz');
@@ -149,6 +155,11 @@ interface ProjectUpdateLock {
   release(): Promise<void>;
 }
 
+interface LocalArchiveResolutionSession {
+  reference: LocalArchiveResolutionReference;
+  stagedArchivePath: string;
+}
+
 interface ParsedCliArgs extends ZeroUpdateOptions {
   help: boolean;
 }
@@ -221,6 +232,7 @@ export async function updateZeroProject(
   let packedHash: string | null = null;
   let snapshot: UpdateSnapshot | null = null;
   let updateLock: ProjectUpdateLock | null = null;
+  let localResolution: LocalArchiveResolutionSession | null = null;
   let mutationStarted = false;
   let preserveSnapshot = false;
 
@@ -244,7 +256,7 @@ export async function updateZeroProject(
       mutationStarted = true;
       await ensureLocalManagedDirectories(state.projectDir);
       await atomicallyReplaceFile(packed!.archivePath, state.archivePath!, state.projectDir);
-      await refreshLocalArchiveLock(state);
+      localResolution = await stageLocalArchiveResolution(state);
     }
 
     mutationStarted = true;
@@ -255,6 +267,27 @@ export async function updateZeroProject(
     });
     if (installResult.exitCode !== 0) {
       throw new Error(commandFailureMessage('framework installation', installCommand, installResult));
+    }
+    if (mode === 'local') {
+      const canonicalLockText = await finalizeLocalArchiveResolution(
+        state,
+        localResolution!
+      );
+      localResolution = null;
+      const canonicalInstallResult = await runner(installCommand, {
+        cwd: state.projectDir,
+        stdio: 'inherit',
+      });
+      if (canonicalInstallResult.exitCode !== 0) {
+        throw new Error(
+          commandFailureMessage(
+            'canonical framework installation',
+            installCommand,
+            canonicalInstallResult
+          )
+        );
+      }
+      await assertCanonicalInstallPreservedLock(state, canonicalLockText);
     }
 
     const after = await inspectUpdatedProject(state, mode, localSource?.version ?? null);
@@ -301,6 +334,15 @@ export async function updateZeroProject(
     }
 
     if (!snapshot) throw asUpdateError(error);
+    if (localResolution) {
+      try {
+        await removeStagedLocalArchive(state.projectDir, localResolution);
+        localResolution = null;
+      } catch {
+        // Rollback still restores the protected files. The guarded finally
+        // cleanup retries the staged archive without following changed paths.
+      }
+    }
     const rollback = await rollbackProject(state, snapshot, runner);
     preserveSnapshot = !rollback.succeeded;
     const detail = error instanceof Error ? error.message : String(error);
@@ -313,6 +355,13 @@ export async function updateZeroProject(
       rollbackSucceeded: rollback.succeeded,
     });
   } finally {
+    if (localResolution) {
+      await removeStagedLocalArchive(state.projectDir, localResolution).catch((error) => {
+        logger.error(
+          `[zero update] Warning: could not remove staged local archive ${localResolution!.stagedArchivePath}: ${String(error)}`
+        );
+      });
+    }
     if (packed) {
       await packed.cleanup().catch((error) => {
         logger.error(`[zero update] Warning: could not remove packed-update temporary files: ${String(error)}`);
@@ -974,6 +1023,11 @@ async function assertInstalledMatchesArchive(archivePath: string, projectDir: st
         `[zero update] Packed framework contains an unsafe archive path: ${archiveName}`
       );
     }
+    if (components[0] === 'node_modules') {
+      throw new ZeroUpdateError(
+        `[zero update] Packed framework contains a package-manager-owned path: ${archiveName}`
+      );
+    }
     expected.set(relativeName, file);
   }
   if (expected.size === 0) {
@@ -1021,6 +1075,14 @@ async function listInstalledPackageFiles(
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
       const path = join(directory, entry.name);
+      if (directory === installedRoot && entry.name === 'node_modules') {
+        if (entry.isSymbolicLink() || !entry.isDirectory()) {
+          throw new ZeroUpdateError(
+            `[zero update] Invalid package-manager dependency directory: ${path}`
+          );
+        }
+        continue;
+      }
       if (entry.isSymbolicLink()) {
         throw new ZeroUpdateError(
           `[zero update] Refusing symlink inside installed framework package: ${path}`
@@ -1095,21 +1157,99 @@ async function atomicallyWriteFile(
   }
 }
 
-async function refreshLocalArchiveLock(state: ProjectState): Promise<void> {
+async function stageLocalArchiveResolution(
+  state: ProjectState
+): Promise<LocalArchiveResolutionSession> {
+  const lockPath = state.lockPaths[0];
+  if (!state.archivePath || basename(lockPath) !== 'bun.lock') {
+    throw new Error('[zero update] Managed local archive lock state is unavailable');
+  }
+  const reference = createLocalArchiveResolutionReference(randomUUID());
+  const stagedArchivePath = join(
+    state.projectDir,
+    ...reference.archiveRelativePath.replace(/^\.\//, '').split('/')
+  );
+  const stagedManifest = createStagedPackageManifest(
+    state.packageJson,
+    state.dependency.section,
+    reference
+  );
+
+  try {
+    await atomicallyReplaceFile(state.archivePath, stagedArchivePath, state.projectDir);
+    await atomicallyWriteFile(
+      new TextEncoder().encode(stagedManifest),
+      state.packagePath,
+      state.projectDir
+    );
+    return { reference, stagedArchivePath };
+  } catch (error) {
+    await assertSafeManagedParent(state.projectDir, stagedArchivePath)
+      .then(() => rm(stagedArchivePath, { force: true }))
+      .catch(() => undefined);
+    throw error;
+  }
+}
+
+async function finalizeLocalArchiveResolution(
+  state: ProjectState,
+  session: LocalArchiveResolutionSession
+): Promise<string> {
   const lockPath = state.lockPaths[0];
   if (!state.archivePath || basename(lockPath) !== 'bun.lock') {
     throw new Error('[zero update] Managed local archive lock state is unavailable');
   }
   await assertRegularNonSymlinkFile(lockPath, 'bun.lock');
+  await assertRegularNonSymlinkFile(state.packagePath, 'project package.json');
   await assertLocalManagedPath(state.projectDir, state.archivePath);
-  const [lockText, archiveBytes] = await Promise.all([
+  const [lockText, archiveBytes, currentPackageBytes] = await Promise.all([
     readFile(lockPath, 'utf8'),
     readFile(state.archivePath),
+    readFile(state.packagePath),
   ]);
-  const updated = bindBunLockToLocalArchive(lockText, archiveBytes);
-  if (updated !== lockText) {
-    await atomicallyWriteFile(Buffer.from(updated), lockPath, state.projectDir);
+  const currentPackage = parsePackageJson(currentPackageBytes, state.packagePath);
+  const currentDependency = findFrameworkDependency(currentPackage);
+  if (
+    currentDependency.section !== state.dependency.section ||
+    currentDependency.specifier !== session.reference.dependencySpecifier
+  ) {
+    throw new Error('[zero update] Bun changed the staged local framework dependency');
   }
+  assertOnlyFrameworkDependencyChanged(
+    state.packageJson,
+    currentPackage,
+    state.dependency.section
+  );
+  const updated = canonicalizeResolvedLocalArchiveLock(
+    lockText,
+    session.reference,
+    archiveBytes
+  );
+  await atomicallyWriteFile(state.packageBytes, state.packagePath, state.projectDir);
+  await atomicallyWriteFile(new TextEncoder().encode(updated), lockPath, state.projectDir);
+  await removeStagedLocalArchive(state.projectDir, session);
+  return updated;
+}
+
+async function assertCanonicalInstallPreservedLock(
+  state: ProjectState,
+  expectedLockText: string
+): Promise<void> {
+  const lockPath = state.lockPaths[0];
+  await assertRegularNonSymlinkFile(lockPath, 'bun.lock');
+  if (await readFile(lockPath, 'utf8') !== expectedLockText) {
+    throw new Error(
+      '[zero update] Bun changed bun.lock while installing the canonical local archive'
+    );
+  }
+}
+
+async function removeStagedLocalArchive(
+  projectDir: string,
+  session: LocalArchiveResolutionSession
+): Promise<void> {
+  await assertSafeManagedParent(projectDir, session.stagedArchivePath);
+  await rm(session.stagedArchivePath, { force: true });
 }
 
 async function assertLocalArchiveLock(state: ProjectState): Promise<void> {

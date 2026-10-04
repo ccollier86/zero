@@ -207,7 +207,7 @@ want the newest published release. If the installed framework predates this
 command, bootstrap it with
 `bunx --package @zero/framework@latest zero update --project .`.
 
-With Zero 2.0 on `main`, an application intentionally remaining on the legacy
+With Zero 2.x on `main`, an application intentionally remaining on the legacy
 combined-database 1.3 line must not use the `zero-update` stable wrapper. Use an
 exact `v1.3.3`/`release/1.3` checkout through `zero update --local` as documented
 in [Releasing Zero](./releasing.md#maintained-13-compatibility-line).
@@ -220,19 +220,35 @@ zero update --project /path/to/my-zero-app --local /path/to/zero-platform
 ```
 
 The project must already have exactly one `bun.lock` or `bun.lockb`, even for a
-dry-run. Commit that lockfile for checkout-local apps. The updater directly
-manages only Zero dependency artifacts and package-manager install state. The
-stable wrapper copies its saved archive into the ignored
-`.zero/framework/zero-framework.tgz` cache; the explicit `--local` development
-path packs only the checkout the caller named. In a clean clone, the `.zero/`
-directories and archive may be completely absent; a mutating update creates
-them before installation, while `--dry-run` reports the pending work without
-creating anything. Existing symlinks or wrong-type entries at those managed
-paths are rejected. The updater leaves app-owned files, environment
-configuration, databases, and storage alone in its default mode, and runs no
-app-defined scripts. `--check` executes the project's existing typecheck and
-Doctor scripts; review them first because their side effects are outside
-updater rollback. Zero itself never selects a migration command. Run
+dry-run. Local and saved-archive updates require the text `bun.lock`; registry
+updates may retain a single legacy `bun.lockb`. Commit the active lockfile for
+checkout-local apps. The updater directly
+manages only Zero dependency artifacts, the framework's resolved dependency
+metadata, and package-manager install state. The stable wrapper copies its
+saved archive into the ignored `.zero/framework/zero-framework.tgz` cache; the
+explicit `--local` development path packs only the checkout the caller named.
+
+For a local or saved-package update, Zero temporarily gives the replacement
+archive a unique managed reference so Bun reads the new framework manifest
+instead of retaining the previous release's transitive dependency graph. After
+installation, the updater restores the app's `package.json` byte-for-byte,
+returns the framework lock entry to its canonical archive path and integrity,
+removes the staging artifact, verifies the canonical package binding and exact
+archive-owned installed files, and preserves unrelated dependency resolutions.
+Later frozen installs therefore retain the updated framework payload and graph.
+The updater does not replace the whole app lockfile or upgrade unrelated
+packages. Do not delete `node_modules`, `bun.lock`, or `.zero/framework` as an
+update step.
+
+In a genuinely clean clone, the `.zero/` directories and archive may be
+completely absent; a mutating update creates them before installation, while
+`--dry-run` reports the pending work without creating anything. Existing
+symlinks or wrong-type entries at those managed paths are rejected. The updater
+leaves app-owned files, environment configuration, databases, and storage alone
+in its default mode, and runs no app-defined scripts. `--check` executes the
+project's existing typecheck and Doctor scripts; review them first because
+their side effects are outside updater rollback. Zero itself never selects a
+migration command. Run
 `bun run migrate:plan` separately and intentionally against the correct
 database or a safe copy before applying any database change.
 

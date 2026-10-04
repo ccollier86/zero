@@ -298,7 +298,7 @@ surfaces without Guardian multi-tenancy, ReactiveDB Fabric, or the Zero 2.0
 system/application database split.
 
 The `zero-update` wrapper intentionally follows committed `main`, so it will
-install Zero 2.0 after this release. Do not use that stable wrapper for an app
+install the current Zero 2.x release. Do not use that stable wrapper for an app
 that is staying on 1.3. Instead, check out the exact `v1.3.3` tag (or the
 maintained `release/1.3` branch), inspect the plan, and use the explicit local
 source path:
@@ -317,20 +317,35 @@ for the exact package, migration, registration, split, and rollback sequence.
 For deliberate testing of an unreleased checkout, use
 `zero update --project /path/to/test-app --local /path/to/zero-platform` instead.
 The test app must already have a text `bun.lock`, including for the dry-run, so
-the local archive's integrity can be refreshed safely. Keep that lockfile in a
-clean-clone smoke fixture, remove its
-ignored `.zero/` cache and `node_modules`, and confirm `--dry-run` leaves them
-absent before the mutating update recreates the managed archive and install.
-Also confirm existing symlinks or wrong-type entries at managed cache paths are
-rejected. The updater must directly manage only the
-`@zero/framework` dependency, the local
-`.zero/framework/zero-framework.tgz` cache when applicable, and package-manager
-install state. The local archive is ignored and is restored from the saved
-release by `zero-update`. Without `--check`, app source, config, environment files,
-databases, and storage must remain untouched and no app-defined scripts may
-run. `--check` executes the disposable app's existing typecheck and Doctor
-scripts; inspect them first because their side effects are outside updater
-rollback. Zero itself must not directly invoke migration tooling. Run
+the managed archive and dependency resolution can be updated with deterministic
+rollback. Exercise this against a populated existing-app fixture: keep its
+current `bun.lock`, installed package tree, and managed `.zero/framework`
+archive in place. A normal local/saved-package update uses a private, unique
+staged archive reference so Bun reads the replacement framework manifest and
+refreshes the framework's resolved transitive dependency metadata. It then
+restores the app's exact `package.json` bytes, canonicalizes only the managed
+framework reference and archive integrity in `bun.lock`, and removes the staged
+archive. A targeted canonical install must leave that resolved lock byte-for-byte
+unchanged, and the installed framework's package-owned files must exactly match
+the canonical archive. This final binding check prevents a later frozen install
+from reusing the previous archive payload.
+
+The updater must not delete or regenerate the whole app lockfile, broadly
+re-resolve unrelated dependencies, or require operators to remove
+`node_modules`, `bun.lock`, or the managed cache first. It must directly manage
+only the `@zero/framework` dependency and its resolved package metadata, the
+local `.zero/framework/zero-framework.tgz` cache when applicable, and
+package-manager install state. The local archive is ignored and is restored
+from the saved release by `zero-update`. A genuinely clean clone with no
+managed cache remains supported, and `--dry-run` reports pending work without
+creating it. Existing symlinks or wrong-type entries at managed cache paths are
+rejected.
+
+Without `--check`, app source, config, environment files, databases, and
+storage must remain untouched and no app-defined scripts may run. `--check`
+executes the disposable app's existing typecheck and Doctor scripts; inspect
+them first because their side effects are outside updater rollback. Zero itself
+must not directly invoke migration tooling. Run
 `bun run migrate:plan` separately and intentionally against the correct test
 database or a safe copy; migration planning may open or create configured
 database or ledger files.

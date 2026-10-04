@@ -2,6 +2,27 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.1.1 - 2026-10-04
+
+This fix-forward release contains the complete 2.1.0 feature set below. The
+2.1.0 checkpoint was retained locally rather than retagged and was not
+published to npm.
+
+### Fixed
+
+- Fixed local and saved-package updates retaining the previous framework
+  archive's transitive dependency graph after installing new framework source.
+  The updater now resolves the replacement through one private, unique staged
+  archive reference, restores the app's `package.json` byte-for-byte,
+  canonicalizes only the managed framework lock reference and integrity, and
+  removes staging. It verifies the canonical install leaves the resolved lock
+  byte-identical and that archive-owned installed files exactly match, so a
+  later frozen install cannot reuse the previous payload. This refreshes
+  Zero-owned dependency metadata without deleting the app lockfile, broadly
+  resolving unrelated packages, or requiring manual cache or `node_modules`
+  cleanup. Update failures restore the prior manifest, lock, archive, and
+  installed framework through the existing rollback boundary.
+
 ## 2.1.0 - 2026-10-04
 
 This is an additive minor release on the Zero 2.x Guardian/Fabric/Torrent
