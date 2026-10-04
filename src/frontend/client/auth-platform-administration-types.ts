@@ -15,7 +15,7 @@ import type {
   AuthTenantUpdateMemberParams,
 } from './auth-types';
 
-/** At least one explicitly selected administration-organization role. */
+/** At least one role explicitly selected for the Administration Organization. */
 export type AuthPlatformRoleSelection = readonly [string, ...string[]];
 
 /**
@@ -23,7 +23,8 @@ export type AuthPlatformRoleSelection = readonly [string, ...string[]];
  *
  * Unlike an ordinary tenant member addition, this control-plane operation
  * never defaults to the customer `member` role. Callers must choose one or
- * more administration roles explicitly.
+ * more roles explicitly. Tenant-scoped app roles and application-authority
+ * roles are both valid here; the server preserves their independent scopes.
  */
 export interface AuthPlatformAddMemberParams {
   email: string;
@@ -32,7 +33,7 @@ export interface AuthPlatformAddMemberParams {
 
 /**
  * Update an administration member without permitting an empty mutation or an
- * explicitly empty administration-role set at the TypeScript boundary.
+ * explicitly empty role set at the TypeScript boundary.
  */
 export type AuthPlatformUpdateMemberParams =
   | {
@@ -57,7 +58,7 @@ export type AuthPlatformUpdateMemberInput =
       roles: AuthPlatformRoleSelection;
     };
 
-/** Issue an administration invitation with an explicit non-empty role set. */
+/** Issue an Administration Organization invitation with an explicit role set. */
 export interface AuthPlatformIssueInvitationParams {
   email: string;
   roles: AuthPlatformRoleSelection;

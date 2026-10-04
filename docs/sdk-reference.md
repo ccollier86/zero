@@ -35,6 +35,7 @@ import {
 - [Animated Components (animate-ui)](#animated-components)
 - [Animated Icons](#animated-icons)
 - [Server (createApp)](#server)
+  - [ReactiveDB Database Functions And Triggers](#reactivedb-database-functions-and-triggers)
   - [ReactiveDB Fabric: Actor-Backed Multi-Database Tenancy](#reactivedb-fabric-actor-backed-multi-database-tenancy)
 - [Hooks Reference](#hooks-reference)
 - [Selected Export Reference](#selected-export-reference)
@@ -1429,7 +1430,8 @@ can inspect pending invitations without receiving issue controls; revoke is
 projected separately from `canManageInvitations`. Issue roles are limited to
 active-tenant, assignable, grantable, non-system roles below the actor's live
 grant ceiling; Administration Organization invitations therefore cannot
-acquire customer roles. Manual delivery returns and displays the raw token
+silently default a role, but may explicitly grant ordinary app roles,
+application-authority roles, or both. Manual delivery returns and displays the raw token
 once. Dialog close or authorization-scope change clears sensitive state, and
 stale issue/copy callbacks are discarded.
 
@@ -3793,6 +3795,76 @@ source, focused tests, and deliberate trusted escape hatch. Use the
 for the shipped Zero 2.0 boundary, supporting evidence, and the remaining
 public-package and wider-deployment gates.
 
+#### ReactiveDB Database Functions And Triggers
+
+Use `@zero/framework/database-automations` to define versioned functions and
+AFTER-change triggers:
+
+```ts
+import {
+  defineDatabaseAutomations,
+  defineDatabaseFunction,
+  defineDatabaseTrigger,
+  type DatabaseTransactionFunctionCapability,
+  type DatabaseTriggerFunctionInput,
+} from '@zero/framework/database-automations';
+
+const updateSearchProjection = defineDatabaseFunction<
+  DatabaseTriggerFunctionInput,
+  void,
+  DatabaseTransactionFunctionCapability
+>({
+  name: 'documents.update-search-projection',
+  version: 1,
+  mode: 'transaction',
+  handler: ({ input, transaction }) => {
+    const document = input.change.row;
+    if (!document) return;
+    const title = document.title;
+    if (typeof title !== 'string') {
+      throw new Error('Document title is invalid.');
+    }
+    const values = { title, updated_at: input.change.timestamp };
+    if (transaction.queryOne('document_search', input.change.rowId)) {
+      transaction.update('document_search', input.change.rowId, values);
+    } else {
+      transaction.create('document_search', {
+        document_id: input.change.rowId,
+        ...values,
+      });
+    }
+  },
+});
+
+const onDocumentChanged = defineDatabaseTrigger({
+  name: 'documents.after-change',
+  version: 1,
+  table: 'documents',
+  after: { insert: true, update: { columns: ['title'] } },
+  run: updateSearchProjection,
+});
+
+export const databaseAutomations = defineDatabaseAutomations({
+  functions: [updateSearchProjection],
+  triggers: [onDocumentChanged],
+});
+```
+
+Install the registry as top-level `databaseAutomations` for the pinned
+application database or as `automations` on a Fabric realm. Transaction
+functions are synchronous and share the source commit. Durable functions are
+captured in the same source transaction, delivered at least once after commit,
+and receive the scope-fenced `DatabaseAutomationExecutionServerServices`
+context. Its `zero.torrent.deliverEvent(instanceId, eventName, payload,
+{ key? })` method performs exact retry-safe Torrent resume without accepting a
+handler-supplied principal or tenant selector.
+
+Read the dedicated
+[ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md)
+guide before enabling durable handlers; it defines the JSON boundary,
+idempotency rules, version compatibility, retry/dead-letter behavior, hard
+limits, Fabric source catalog, migrations, and Doctor checks.
+
 #### ReactiveDB Fabric: Actor-Backed Multi-Database Tenancy
 
 ReactiveDB Fabric is the conceptual name for Zero's isolated multi-database
@@ -4983,6 +5055,17 @@ response commit. `WorkflowService.sendEventAsSystem()` is the explicit
 scope-checked system-principal alternative. Unsealed legacy/generic trusted
 events may still feed ordinary `waitFor` nodes, but cannot answer
 `requestAndWait` interactions.
+
+For retried trusted integrations, use
+`WorkflowService.deliverEventAsSystem(instanceId, eventName, payload, options)`.
+`options` extends the system authority fields with the required
+`idempotencyKey`; its public types are `WorkflowSystemEventDeliveryOptions` and
+`WorkflowSystemEventDeliveryResult`. The 1–128 character portable key is scoped
+by exact principal and application/tenant scope. An identical command returns
+the original `{ eventId, instanceId, eventName, createdAt }` receipt and
+re-kicks a running frontier. Reusing the key for a changed command throws
+`WORKFLOW_EVENT_IDEMPOTENCY_CONFLICT`. The event, private delivery, authority,
+capacity reservation, and receipt share one ReactiveDB transaction.
 
 Private delivery state classifies every event as `actor`, `system`, or
 `legacy-untrusted`; sealed authority bytes count toward the same event quotas

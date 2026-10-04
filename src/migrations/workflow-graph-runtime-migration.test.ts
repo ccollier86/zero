@@ -503,9 +503,16 @@ function columnNames(db: Database, table: string): string[] {
 }
 
 function workflowTriggerShape(db: Database): Array<{ name: string; sql: string }> {
+  const tables = [
+    'workflow_definitions',
+    'workflow_instances',
+    'workflow_steps',
+    ...NEW_TABLES,
+  ];
+  const placeholders = tables.map(() => '?').join(', ');
   return (db.query(`SELECT name, sql FROM sqlite_master
-    WHERE type = 'trigger' AND name LIKE 'trg_workflow_%'
-    ORDER BY name`).all() as Array<{ name: string; sql: string }>)
+    WHERE type = 'trigger' AND tbl_name IN (${placeholders})
+    ORDER BY name`).all(...tables) as Array<{ name: string; sql: string }>)
     .map((trigger) => ({ ...trigger, sql: normalizeSql(trigger.sql) }));
 }
 

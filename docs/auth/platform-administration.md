@@ -2,13 +2,14 @@
 
 > Status: supported Zero 2.0 Guardian contract
 >
-> Last reviewed: 2026-10-01
+> Last reviewed: 2026-10-03
 
 Zero's multi-tenant profiles create one protected **Administration
 Organization** for the people who operate the application. Every later tenant
 is a customer organization. The two kinds use the same membership, invitation,
-role-assignment, ownership, revision, and audit machinery, but they are not
-interchangeable data scopes.
+role-assignment, ownership, revision, and audit machinery. Both kinds can own
+an ordinary application data realm; only the protected kind can additionally
+project application/platform authority.
 
 This document is the contract for the administration scope, the customer
 organization directory and bounded membership control plane, their browser
@@ -26,8 +27,8 @@ The Administration Organization exists only when `auth.tenancy` resolves to
 | --- | --- | --- |
 | `single/simple` | Existing single-application bootstrap; no tenant | Global `user`/`admin` behavior |
 | `single/advanced` | Existing single-application bootstrap; no tenant | Application roles and `application.*` permissions |
-| `multi/simple` | Protected Administration Organization plus owner membership | Exactly one administration membership role |
-| `multi/advanced` | Protected Administration Organization plus owner membership | One or more administration membership roles |
+| `multi/simple` | Protected Administration Organization plus owner membership | Exactly one membership role; ordinary app or application-authority role |
+| `multi/advanced` | Protected Administration Organization plus owner membership | One or more additive app/application-authority roles |
 
 Omitted auth mode remains `single/simple`. Multi-mode bootstrap creates the
 first tenant with `kind: 'administration'`, binds the bootstrap identity as its
@@ -72,9 +73,10 @@ tenant.
 
 After a successful start, keeping the same selector is idempotent; removing it
 is also safe because the tenant's protected `kind` is durable and immutable.
-Review retained non-owner memberships after adoption: legacy customer roles
-remain visible but inert in the Administration Organization until the live
-owner deliberately removes them and retains an administration-only role. This selector is not a
+Review retained non-owner memberships after adoption: ordinary tenant/app
+roles become live authority for the Administration Organization's own app
+realm, but do not grant application/platform permissions. Application-scope
+roles remain independently reviewable. This selector is not a
 `single`-to-`multi` profile migration, does not discover a candidate, and does
 not provide broader guided populated-app adoption. See
 [Platform Configuration](../platform-configuration.md#administration-organization-adoption)
@@ -89,8 +91,8 @@ The administration tenant:
   target;
 - is never selected by accepting a tenant ID in a platform-administration
   request body, query, header, or path;
-- cannot own a verified company-domain claim or become an ordinary customer
-  data realm; and
+- cannot own a verified company-domain claim or become a customer lifecycle
+  target, but may own its own Fabric application data realm; and
 - does not grant implicit access to any customer organization's data.
 
 The browser must first switch its durable session to the administration tenant.
@@ -131,8 +133,11 @@ Cross-organization platform work uses explicit application permissions:
 | Read/manage platform audit retention/export | `application.audit:read` / `application.audit:manage` |
 
 The built-in `administrator` and `access-manager` membership roles are
-administration-only. Any configured role that explicitly contains an
-`application.*` permission is also administration-only. The server returns
+administration-only: they may never be assigned to a customer organization.
+Any configured role that explicitly contains an `application.*` permission is
+also administration-only. This is a one-way customer safety fence, not a rule
+that excludes ordinary app roles from the Administration Organization. The
+server returns
 `administrationOnly`, `assignable`, and `grantable` on every role descriptor;
 packaged controls obey those projections instead of reconstructing role policy
 in the browser. Customer-organization controls do not offer administration-only
@@ -142,23 +147,29 @@ does not. Apps can define another administration-only role with a narrower
 combination, but all three permissions in the table are still required at
 request and commit time.
 
-Every newly added or invited non-owner administration member must receive only
-explicit administration-only roles; these flows never fall back to the customer
-`member` role. Generic role replacement applies the same tenant-kind policy.
-For member creation, a missing or empty role set fails with
-`AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED`; a declared customer-only role
-uses the same code. An undeclared role fails with
+Every newly added or invited non-owner administration member must receive an
+explicit non-empty role set. That set may contain only ordinary tenant/app
+roles, only application-authority roles, or both. Ordinary roles govern the
+Administration Organization's own app APIs, Resources, Sync, storage, Data
+Studio, workflows, and Fabric database. Application roles independently govern
+platform controls. Membership alone grants neither realm. Generic role
+replacement applies the same model and advanced mode can add or remove one
+realm without disturbing the other. For member creation, a missing or empty
+role set fails with `AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED`. An undeclared role fails with
 `AUTHORIZATION_ROLE_UNDECLARED`, while the protected `owner` or another system
 role fails with `TENANT_OWNER_ROLE_PROTECTED`. Malformed JSON values remain
 `AUTH_VALIDATION_FAILED`. The protected `owner` role is
 handled only by bootstrap and the dedicated ownership lifecycle: ownership
 transfer demotes the former owner to `administrator`, invalidates that actor's
-current session, and promotes the target atomically. Retained legacy
-customer-only or retired assignments may remain visible for diagnosis but are
-never offered for a new administration assignment.
+current session, and promotes the target atomically. Retired assignments remain
+visible for diagnosis but are inert and cannot be newly granted.
 
-Administration membership is covered by the platform-administrator MFA
-requirement. Invitation inspection and acceptance carry a required,
+With `mfa.policy: 'admin-required'`, live application authority—not mere
+Administration Organization membership—activates the platform-operator MFA
+requirement. An app-only member follows the app's ordinary MFA policy; adding an
+application-authority role activates the gate immediately, and removing the
+last such role removes that particular policy source. Invitation inspection
+and acceptance carry a required,
 server-derived tenant `kind`, allowing public UI to label this stronger scope
 before authentication without revealing private permissions.
 
@@ -432,7 +443,7 @@ page-sized panels.
 The focused Invite/Invitations dialog is capability-shaped. A platform
 administrator may issue an invitation only when live policy enables a delivery
 mode, `canManageInvitations` is true, and the actor can grant at least one
-administration-only role. When invitation policy is enabled, an actor with only
+assignable role. When invitation policy is enabled, an actor with only
 `canReadInvitations` can still open the dialog as a pending-invitation viewer.
 The embedded list requests only `pending` records, follows the server cursor
 through Load more (10 per page by default), and exposes revoke only with
@@ -443,7 +454,7 @@ fences stale completions.
 
 Role editing selects exactly one role in `multi/simple` and supports bounded
 multiple assignments in `multi/advanced`; both modes require at least one
-administration-only role. Account-level operations are independently gated by
+explicit role. Account-level operations are independently gated by
 `application.users:*`; administration membership alone does not expose them.
 
 The Workspaces view uses `PlatformWorkspaceManagement`. It browses customer

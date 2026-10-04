@@ -420,7 +420,46 @@ describe('tenant invitation and join-request HTTP ceremonies', () => {
     });
   }, 60_000);
 
-  test('requires MFA before an administration-organization invitation grants authority', async () => {
+  test('does not treat an app-only Administration Organization invite as a platform operator', async () => {
+    const harness = await startRequiredMfa({
+      policy: 'admin-required',
+      tenantKind: 'administration',
+    });
+    const issued = harness.runtime.getTenantOnboardingService()!.issueInvitation({
+      tenantId: harness.owner.tenant.tenantId,
+      email: 'administration-app-member@example.test',
+      roleKeys: ['member'],
+      assertCurrentAuthority: await ownerMutationAuthority(harness),
+    });
+    const accepted = await request(harness, 'POST', '/auth/invitations/accept', {
+      token: issued.token,
+      username: 'administration-app-member',
+      email: 'administration-app-member@example.test',
+      password: 'password123',
+    });
+    expect(accepted).toMatchObject({
+      status: 200,
+      body: {
+        invitationAccepted: true,
+        activeTenant: {
+          tenantId: harness.owner.tenant.tenantId,
+          kind: 'administration',
+          role: 'member',
+        },
+      },
+    });
+    expect(accepted.body.mfaSetupRequired).toBeUndefined();
+    const auth = await harness.runtime.getTokenService()!.resolveAuthContext(
+      accepted.body.accessToken,
+    );
+    expect(auth).toMatchObject({
+      tenantKind: 'administration',
+      tenantRole: 'member',
+    });
+    expect(auth?.mfaVerifiedAt).toBeUndefined();
+  }, 60_000);
+
+  test('requires MFA before an administration-organization invitation grants platform authority', async () => {
     const harness = await startRequiredMfa({
       policy: 'admin-required',
       tenantKind: 'administration',

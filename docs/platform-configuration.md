@@ -196,6 +196,38 @@ createApp({
 });
 ```
 
+### ReactiveDB database automations
+
+Compose versioned functions and AFTER-change triggers with
+`@zero/framework/database-automations`, then import the registry explicitly.
+The pinned application database uses top-level `databaseAutomations`:
+
+```ts
+import { defineZeroConfig } from '@zero/framework/server';
+import { applicationAutomations } from './db/automations';
+import { tables } from './db/schema';
+
+export default defineZeroConfig({
+  db: { mode: 'file', path: './data/application.sqlite' },
+  systemDb: { mode: 'file', path: './data/system.sqlite' },
+  tables,
+  databaseAutomations: applicationAutomations,
+});
+```
+
+Fabric automations instead belong to `defineDatabaseRealm({ automations })`,
+so the parent and actor import the same exact schema, manifest, and handlers.
+Transaction-only registries may use ephemeral storage. Any durable function
+requires crash-durable source storage, a crash-durable `systemDb` for the source
+catalog, its source-local managed outbox, and the host dispatcher; invalid
+combinations fail before writes are accepted. Zero does not discover
+`db/functions/`, `db/triggers/`, or `db/automations.ts`.
+
+See
+[ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md)
+for the recommended folder layout, syntax, same-commit and durable semantics,
+Fabric authority, exact Torrent resume, versioning, limits, and operations.
+
 ### ReactiveDB Fabric topology
 
 `databaseTopology` is the typed configuration surface for Fabric. Omitting it,
@@ -799,6 +831,12 @@ writes also require the platform read permissions documented in
 `owner` receives every permission available to its
 live scope: a customer owner remains tenant-only, while the protected
 Administration Organization owner can receive application permissions.
+
+`administrationOnly` is a customer-assignment fence. The Administration
+Organization itself may receive both ordinary tenant/app roles and these
+application-authority roles. Advanced members may hold both, while each scope
+is expanded and revoked independently. App-only administration members do not
+become platform operators.
 
 Apps may reference framework permission keys in their own role templates but
 cannot redefine their labels or semantics. App permissions extend the
@@ -1510,6 +1548,9 @@ Current checks cover:
     unsafe authority durability, legacy combined authority layouts, Guardian
     reference compatibility, shared anchor readiness, and aggregate projection
     target/backlog health. Existing files are inspected read-only.
+19. Pinned and Fabric ReactiveDB automation definition/manifest integrity,
+    exact schema targets, realm consistency, and managed durable source,
+    outbox, and dispatcher readiness.
 
 Usage-audit options:
 

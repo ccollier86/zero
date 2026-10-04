@@ -262,6 +262,10 @@ export type {
   WorkflowExecutionObservabilityServices,
   WorkflowExecutionServerServices,
 } from './server/workflow-execution-services';
+export type {
+  DatabaseAutomationExecutionServerServices,
+  DatabaseAutomationTorrentService,
+} from './server/database-automation-execution-services';
 export {
   ZERO_SERVER_EXTENSION_KIND,
   applyServerExtension,

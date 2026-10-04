@@ -29,6 +29,10 @@ import {
   checkPreResolutionDatabaseDirectoryIsolation,
 } from './platform-doctor-database';
 import {
+  checkConfiguredDatabaseAutomations,
+  checkUnresolvedDatabaseAutomations,
+} from './platform-doctor-database-automation-config';
+import {
   checkPreResolutionSystemDatabase,
   checkSystemDatabase,
 } from './platform-doctor-system-database';
@@ -93,6 +97,10 @@ export function runPlatformDoctor(
 
   checkTableSchemas(config.tables, sink);
 
+  if (!resolved) {
+    checkUnresolvedDatabaseAutomations(config, sink);
+  }
+
   if (resolved) {
     const doctorAuthConfig = resolveDoctorAuthConfig(
       resolved.auth === false ? {} : resolved.auth as AuthBehaviorConfig,
@@ -103,6 +111,7 @@ export function runPlatformDoctor(
     checkMigrations(resolved, sink);
     checkSystemDatabase(resolved, sink, env, options.projectRoot);
     checkDatabaseTopology(resolved, sink);
+    checkConfiguredDatabaseAutomations(resolved, sink);
     checkSyncPolicy(resolved, sink);
     checkResources(resolved, sink, doctorAuthConfig);
     checkAuthPublicPaths(resolved, sink);

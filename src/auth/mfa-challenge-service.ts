@@ -105,7 +105,7 @@ export class MfaChallengeService {
     private readonly challengeStore: MfaChallengeStore,
     private readonly accountEmail: AccountEmailService,
     private readonly auditService?: AuthAuditService,
-    private readonly isAdministrationMember: (userId: string) => boolean = () => false,
+    private readonly isAdministrationOperator: (userId: string) => boolean = () => false,
     private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
     private readonly getAuthGeneration: (userId: string) => number = () => 0,
   ) {
@@ -130,7 +130,7 @@ export class MfaChallengeService {
     if (this.config.mfa.policy === 'required') return true;
     if (this.config.mfa.policy === 'admin-required') {
       return user.role === 'admin'
-        || Boolean(user.userId && this.resolveAdministrationMembership(user.userId));
+        || Boolean(user.userId && this.resolveAdministrationOperator(user.userId));
     }
     return false;
   }
@@ -142,19 +142,19 @@ export class MfaChallengeService {
     if (this.config.mfa.policy === 'required') return 'global';
     if (this.config.mfa.policy === 'admin-required'
       && (user.role === 'admin'
-        || Boolean(user.userId && this.resolveAdministrationMembership(user.userId)))) {
+        || Boolean(user.userId && this.resolveAdministrationOperator(user.userId)))) {
       return 'admin-role';
     }
     return 'none';
   }
 
-  private resolveAdministrationMembership(userId: string): boolean {
+  private resolveAdministrationOperator(userId: string): boolean {
     return invokeSynchronousAuthCallback(
-      () => this.isAdministrationMember(userId),
+      () => this.isAdministrationOperator(userId),
       {
         component: 'mfa-challenge-service',
-        invariant: 'administration-membership-resolver-async',
-        message: '[auth] MFA administration membership resolution must be synchronous.',
+        invariant: 'administration-operator-resolver-async',
+        message: '[auth] MFA administration operator resolution must be synchronous.',
         emitCode: this.emitCode,
       },
     );

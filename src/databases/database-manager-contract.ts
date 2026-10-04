@@ -1,6 +1,7 @@
 /** Public contracts for the application database ownership boundary. */
 
 import type { IdentityProjectionTarget } from '../auth/identity-projection-types';
+import type { DatabaseAutomationSourceCatalog } from '../database-automations/automation-source-catalog-store';
 import type { AuthorityCommitCoordinator } from './authority-commit-coordinator';
 import type {
   DatabaseCoordinator,
@@ -58,6 +59,11 @@ export interface DatabaseManagerOptions {
   readonly serviceRuntimes?: readonly PinnedDatabaseRuntimeBinding[];
   /** Shared/exclusive fence between the pinned system and application planes. */
   readonly authorityCommitCoordinator?: AuthorityCommitCoordinator;
+  /**
+   * Optional manager-owned durable source catalog bound to `systemRuntime`.
+   * Required when an actor realm declares durable database functions.
+   */
+  readonly automationSourceCatalog?: DatabaseAutomationSourceCatalog;
   /** Omit when actor-backed databases are disabled. */
   readonly multiple?: MultipleDatabaseManagerOptions;
 }

@@ -727,12 +727,12 @@ describe('advanced authorization role runtime', () => {
       userId: 'u_subject',
     })?.roles).not.toContain('platform-reader');
 
-    expectRoleError(() => harness.roles.assignTenantRole({
+    expect(harness.roles.assignTenantRole({
       tenantId: administration.tenant.tenantId,
       membershipId: adminMember.membershipId,
       roleKey: 'member',
       createdBy: 'u_admin_owner',
-    }), 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED');
+    }).authority.roles).toContain('member');
 
     expect(harness.roles.assignTenantRole({
       tenantId: administration.tenant.tenantId,

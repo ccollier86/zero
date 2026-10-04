@@ -115,6 +115,11 @@ export {
   type WorkflowMutationOptions,
   type WorkflowServiceOptions,
 } from './workflow-service';
+export {
+  MAX_WORKFLOW_SYSTEM_EVENT_IDEMPOTENCY_KEY_LENGTH,
+  type WorkflowSystemEventDeliveryOptions,
+  type WorkflowSystemEventDeliveryResult,
+} from './workflow-system-event-delivery-contract';
 export type { WorkflowStartOptions } from './workflow-start-options';
 export {
   WorkflowInteractionAuthority,

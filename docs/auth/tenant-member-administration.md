@@ -134,7 +134,7 @@ explicit administration roles and never applies this customer-role default.
 On member update, advanced-mode `roles: []` deliberately removes every
 assignable role from an ordinary customer-organization membership; protected
 system roles remain untouched. Administration Organization memberships must
-always retain at least one administration-only role, and simple mode still
+always retain at least one explicit app or application-authority role, and simple mode still
 requires exactly one role whenever `roles` is changed. The write is one SQLite
 transaction; a failed role change rolls back a status change in the same
 request. A direct SDK role-set

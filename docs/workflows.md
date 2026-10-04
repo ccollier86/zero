@@ -1158,6 +1158,64 @@ sealed system principal is tenant-scope checked. Generic trusted
 rows—remain `legacy-untrusted`: they can drive an ordinary event wait but are
 never accepted as `requestAndWait` responses.
 
+Retries from webhooks, schedulers, database triggers, and other durable
+system-plane adapters should use `deliverEventAsSystem()` instead. It requires
+an idempotency key and returns the original durable acknowledgement on every
+replay:
+
+```ts
+const delivered = await workflows.deliverEventAsSystem(
+  runId,
+  'provider.completed',
+  { providerEventId },
+  {
+    principal: 'provider-webhook',
+    reason: 'Resume the run after verified provider completion',
+    scope: tenantScope,
+    idempotencyKey: `provider:${providerEventId}`,
+  },
+);
+// { eventId, instanceId, eventName, createdAt }
+```
+
+The key is 1–128 portable characters (`A–Z`, `a–z`, `0–9`, `.`, `_`, `:`,
+or `-`, beginning with an alphanumeric character). Its namespace is the exact
+system principal plus application/tenant scope. The first call atomically
+commits the event audit row, delivery envelope, MAC-sealed authority, capacity
+reservation, and immutable receipt. The same canonical command returns that
+exact stored acknowledgement without adding capacity; a changed target,
+event, payload, or reason inside that namespace fails with HTTP `409`
+`WORKFLOW_EVENT_IDEMPOTENCY_CONFLICT`. Object-key order does not change the
+canonical payload fingerprint. A different principal or scope selects a
+separate receipt namespace rather than revealing or conflicting with another
+tenant's delivery.
+
+A successful replay also re-kicks a running frontier. This closes the crash
+window where the SQLite commit succeeds but the process stops before dispatch;
+replaying after a completed run still returns the original acknowledgement.
+The result intentionally contains no `replayed` flag, so retrying transport
+code does not branch on delivery history. Receipt keys, fingerprints, payloads,
+and reasons are excluded from observability metadata. This trusted method is
+available only on the raw server `WorkflowService`, not request/activity-scoped
+`zero.workflows` facades.
+
+### Resuming Torrent From ReactiveDB Automations
+
+A durable ReactiveDB function uses the narrower managed
+`zero.torrent.deliverEvent(instanceId, eventName, payload, { key? })` bridge.
+It targets one exact workflow instance and derives the permanent Torrent
+idempotency identity from the source-local outbox delivery plus the optional
+bounded discriminator. Zero supplies the system principal and application or
+tenant scope from the trusted automation source catalog; the handler cannot
+override either value. Retrying the durable function therefore returns the
+original event acknowledgement rather than creating another event.
+
+Do not call the raw `WorkflowService.deliverEventAsSystem()` from a database
+automation or reconstruct its scope from a changed row. See
+[ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md#resume-one-exact-torrent-instance)
+for the typed definition, trigger registration, versioning, and restart
+contract.
+
 ### Channel-neutral request and response
 
 `requestAndWait()` persists an interaction before invoking any delivery
@@ -1549,6 +1607,7 @@ interchangeable:
 | `getPublicTopology()` | Read the payload-free, immutable presentation topology pinned to one scope-checked run. |
 | `sendEvent()` | Persist a durable event and return whether that event was claimed before return. |
 | `sendEventAsSystem()` | Persist an explicitly privileged, scope-bound event with a MAC-sealed system principal. |
+| `deliverEventAsSystem()` | Atomically persist or exactly replay a principal/scope/idempotency-key-bound system event receipt, re-kicking a running frontier on replay. |
 | `stop()` / `cancel()` | Cancel a live instance. |
 | `pause()` / `resume()` | Freeze and restore one live instance. |
 | `advance()` | Coalesce and drive the current graph frontier. |
@@ -1872,7 +1931,7 @@ thrown error remains the event's raw `error`; configured sinks own external
 serialization/redaction, so application errors must not embed secrets or
 sensitive records in their message, stack, or custom fields.
 
-## Storage And Migrations 030–033
+## Storage And Migrations 030–036
 
 Migration `030_workflow_graph_runtime` adds immutable graph versions, graph
 coordination, scratch memory, and interaction state without dropping existing
@@ -1893,7 +1952,7 @@ Server-only definition and coordination tables:
 - `_workflow_each_items`
 - `_workflow_memory`
 - `_workflow_interaction_details` and `_workflow_interaction_responses`
-- `_workflow_event_delivery`, `_workflow_event_authorities`, and `_workflow_event_usage`
+- `_workflow_event_delivery`, `_workflow_event_authorities`, `_workflow_event_usage`, and `_workflow_system_event_receipts`
 - `_workflow_runtime_usage`, `_workflow_step_attempts`, and `_workflow_pauses`
 - `_workflow_runtime_owner_lease`
 - `_workflow_execution_authorities` and `_workflow_step_executions`
@@ -1930,6 +1989,13 @@ reruns preserve already trusted event origins.
 It also removes the historical workflow `ON DELETE CASCADE` actions. Related
 deletes must now travel through explicit ReactiveDB/service mutations, so Sync,
 audit, and workflow coordination observe every change.
+
+Migration `036_workflow_system_event_receipts` adds the private immutable
+receipt ledger for `deliverEventAsSystem()`. Receipt identity is separated by
+exact application/tenant scope and system principal; each row must reference a
+complete system-authority event/delivery/seal chain. Its target kind is
+explicitly stored as `instance`, leaving a versioned migration path for a
+future narrower wait-node target without weakening today's command identity.
 
 Definition names are unique within `(scope_type, scope_id)` rather than across
 the whole installation. Application code definitions remain available to

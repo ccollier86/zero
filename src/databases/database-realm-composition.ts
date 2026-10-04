@@ -7,11 +7,11 @@
  * remain centralized in defineDatabaseRealm().
  */
 
-import { createHash } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import type { Migration } from '../migrations/types';
 import type { TableSchema } from '../sync/types';
 import { DatabaseError } from './database-error';
+import { composeDatabaseRealmAutomations } from './database-realm-automation-admission';
 import {
   defineDatabaseRealmContribution,
   type DatabaseRealmContribution,
@@ -70,13 +70,22 @@ export function composeDatabaseRealm(
     mergeHandlers(queries, commands, contribution);
   }
 
+  const composedTables = sortedRegistry(tables);
+  const automations = composeDatabaseRealmAutomations(
+    contributions.flatMap((contribution) => contribution.automations === undefined
+      ? []
+      : [{ contribution: contribution.name, registry: contribution.automations }]),
+    composedTables,
+  );
+
   const realm = defineDatabaseRealm({
     name: record.name as string,
     version: record.version as string,
-    tables: sortedRegistry(tables),
+    tables: composedTables,
     migrations: sortedValues(migrations),
     queries: sortedRegistry(queries),
     commands: sortedRegistry(commands),
+    ...(automations === undefined ? {} : { automations }),
   });
   return withCompositionFingerprint(realm, contributions);
 }
@@ -251,11 +260,11 @@ function withCompositionFingerprint(
     }))
     .sort((left, right) =>
       left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  const fingerprint = `sha256:${createHash('sha256')
-    .update('zero.database-realm-composition.v1\0', 'utf8')
-    .update(realm.fingerprint, 'utf8')
-    .update('\0', 'utf8')
-    .update(JSON.stringify(manifest), 'utf8')
+  const fingerprint = `sha256:${new Bun.CryptoHasher('sha256')
+    .update('zero.database-realm-composition.v1\0')
+    .update(realm.fingerprint)
+    .update('\0')
+    .update(JSON.stringify(manifest))
     .digest('hex')}`;
   return Object.freeze({ ...realm, fingerprint });
 }

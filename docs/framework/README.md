@@ -116,6 +116,10 @@ Zero.
   phased plan for the Zero-owned KV/cache engine, SQL persistence primitive,
   ReactiveDB refactor, vector storage modes, doctor checks, and generated app
   defaults.
+- [ReactiveDB Database Functions And Triggers](./reactive-database-automations.md):
+  declarative AFTER-change functions, synchronous same-transaction work,
+  durable source-local delivery, Fabric authority, exact Torrent resume,
+  versioning, limits, recovery, and Doctor operations.
 - [ReactiveDB Fabric: Multi-Database Architecture](./multi-database-architecture.md):
   active implementation contract for isolated file/WAL and bounded hot
   databases, subprocess writer/reader actors, exact bounded tenant-Sync

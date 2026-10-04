@@ -14,7 +14,7 @@ import { LOCAL_FRAMEWORK_DEPENDENCY } from './create-zero/local-framework-packag
 import { runCreateZeroCli } from './create-zero/run';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 35 },
+  { length: 37 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 const PACKAGE_RUNTIME_SMOKE_TIMEOUT_MS = 180_000;

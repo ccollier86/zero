@@ -70,9 +70,11 @@ advanced application-role assignment and does not supply `applicationScope`.
 `scope.roles` and `scope.permissions` are application roles in single-tenant
 mode or the active membership's tenant permissions in multi-tenant mode.
 `applicationScope` is an additive, nullable projection. In multi mode Zero
-populates it only while the active session is bound to the protected
-Administration Organization, and only with the membership's live application
-authority. Older compatible servers may omit the field. A platform
+populates it only for a session bound to the protected Administration
+Organization whose live roles actually grant application authority. An
+app-only administration member therefore has an ordinary tenant `scope` and a
+null `applicationScope`. API-key credentials never receive this projection.
+Older compatible servers may omit the field. A platform
 administrator does not implicitly receive customer-tenant permissions. The
 Administration Organization's session summary carries
 `kind: 'administration'`; its application authority still does not imply

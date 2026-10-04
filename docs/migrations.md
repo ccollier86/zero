@@ -234,6 +234,30 @@ maintained 1.3 patch path, the offline 1.3-to-2.0 database split, live-run
 authority boundary, and rollback procedure, follow the
 [Torrent upgrade guide](./workflows.md#upgrading-existing-torrent-applications).
 
+## Torrent Receipts And Database Automation Sources
+
+Migration `036_workflow_system_event_receipts` adds Torrent's private,
+immutable system-event receipt ledger. Durable ReactiveDB functions use it
+through `zero.torrent.deliverEvent()` so an outbox retry resumes one exact
+workflow instance without inserting a duplicate event.
+
+Migration `037_database_automation_source_catalog` adds the private system-
+plane catalog for pinned application, named, and tenant database sources. It
+persists trusted source identity and application/tenant authority so the host
+can find source-local durable outboxes after restart. It does not store trigger
+inputs, row payloads, source paths, or handler output.
+
+The durable outbox itself is private schema inside each physical source
+database. The managed runtime installs and validates it after the source realm
+is ready; it is not an application table and does not belong in an app or
+Fabric realm migration. Before enabling durable functions, back up all planes,
+apply managed system migrations through `037`, deploy matching parent/actor
+realm modules, and run Platform Doctor in strict mode. Transaction-only
+registries do not create an outbox.
+
+The full update, version-retention, recovery, and rollback checklist is in
+[ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md#deployment-checklist).
+
 ## Schema Module Shape
 
 Doctor and plan need a module that exports declared tables. These shapes are

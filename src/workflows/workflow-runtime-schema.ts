@@ -2,6 +2,9 @@
 
 import type { ReactiveDB } from '../sync/reactive-db';
 import { ensureWorkflowRuntimeLeaseSchema } from './workflow-runtime-lease-schema';
+import {
+  ensureWorkflowSystemEventReceiptSchema,
+} from './workflow-system-event-receipt-schema';
 
 type RuntimeSchemaDatabase = Pick<ReactiveDB, 'exec' | 'prepare'>;
 
@@ -82,6 +85,7 @@ export function ensureWorkflowRuntimeSchema(db: RuntimeSchemaDatabase): void {
   db.exec(`CREATE TRIGGER IF NOT EXISTS trg_workflow_event_authority_delete_forbidden
     BEFORE DELETE ON _workflow_event_authorities
     BEGIN SELECT RAISE(ABORT, 'workflow event authority is immutable'); END`);
+  ensureWorkflowSystemEventReceiptSchema(db);
   const eventUsageTableCreated = !tablesExist(db, ['_workflow_event_usage']);
   db.exec(`CREATE TABLE IF NOT EXISTS _workflow_event_usage (
     instance_id TEXT PRIMARY KEY,

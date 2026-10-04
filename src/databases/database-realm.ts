@@ -6,8 +6,8 @@
  * none of its functions ever cross the public operation or IPC boundary.
  */
 
-import { createHash } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
+import type { DatabaseAutomationRegistry } from '../database-automations/database-automations';
 import {
   createMigrationRegistry,
   type Migration,
@@ -38,6 +38,7 @@ import {
   type TableSchema,
 } from '../sync/types';
 import { DatabaseError } from './database-error';
+import { admitDatabaseRealmAutomations } from './database-realm-automation-admission';
 import {
   cloneDatabaseHandlerResult,
   invalidDatabaseHandlerResult,
@@ -68,7 +69,7 @@ import {
 } from './database-operations';
 
 /** Domain separator for deterministic realm fingerprints. */
-export const DATABASE_REALM_FINGERPRINT_VERSION = 1 as const;
+export const DATABASE_REALM_FINGERPRINT_VERSION = 2 as const;
 
 /** Maximum UTF-8 bytes accepted in one table column definition. */
 export const DATABASE_REALM_SQL_DEFINITION_MAX_BYTES = 8_192;
@@ -86,6 +87,7 @@ const REALM_FIELDS = new Set([
   'migrations',
   'queries',
   'commands',
+  'automations',
 ]);
 const MIGRATION_FIELDS = new Set([
   'version',
@@ -157,6 +159,8 @@ export interface DatabaseRealmDefinition<
   readonly queries?: TQueries;
   /** Named synchronous write handlers imported inside writer actors. */
   readonly commands?: TCommands;
+  /** Actor-local database functions and AFTER-trigger declarations. */
+  readonly automations?: DatabaseAutomationRegistry;
 }
 
 /** One immutable migration checksum entry used by actor handshakes. */
@@ -176,6 +180,11 @@ export interface DatabaseRealm<
   readonly migrations: MigrationRegistry;
   readonly queries: Readonly<TQueries>;
   readonly commands: Readonly<TCommands>;
+  /**
+   * Canonically admitted actor-local automations. Executable handlers never
+   * cross IPC; actor processes import the realm definition independently.
+   */
+  readonly automations?: DatabaseAutomationRegistry;
   /** Framework-owned identity anchors required by this actor realm. */
   readonly guardianAnchorRequirements: readonly GuardianReferenceKind[];
   readonly schemaChecksum: string;
@@ -211,6 +220,7 @@ export function defineDatabaseRealm<
     record.commands,
     'command',
   ) as TCommands;
+  const automations = admitDatabaseRealmAutomations(record.automations, tables);
   const guardianAnchorRequirements = Object.freeze([
     ...(Object.values(tables).some((table) =>
       getGuardianAnchorRequirements(table).includes('user'))
@@ -256,6 +266,12 @@ export function defineDatabaseRealm<
     migrationChecksums,
     queries: Object.keys(queries).sort(),
     commands: Object.keys(commands).sort(),
+    automation: automations === undefined
+      ? null
+      : {
+        fingerprint: automations.fingerprint,
+        manifest: automations.manifest,
+      },
     guardianReferences: Object.fromEntries(
       Object.entries(tables).map(([table, schema]) => [
         table,
@@ -271,6 +287,7 @@ export function defineDatabaseRealm<
     migrations,
     queries: queries as Readonly<TQueries>,
     commands: commands as Readonly<TCommands>,
+    ...(automations === undefined ? {} : { automations }),
     guardianAnchorRequirements,
     schemaChecksum,
     migrationChecksums,
@@ -761,15 +778,19 @@ function createRealmFingerprint(input: {
   migrationChecksums: readonly DatabaseRealmMigrationChecksum[];
   queries: readonly string[];
   commands: readonly string[];
+  automation: Readonly<{
+    fingerprint: string;
+    manifest: unknown;
+  }> | null;
   guardianReferences: Readonly<Record<string, unknown>>;
 }): string {
   const canonical = stableStringify({
     fingerprintVersion: DATABASE_REALM_FINGERPRINT_VERSION,
     ...input,
   });
-  return `sha256:${createHash('sha256')
-    .update('zero.database-realm.v1\0', 'utf8')
-    .update(canonical, 'utf8')
+  return `sha256:${new Bun.CryptoHasher('sha256')
+    .update('zero.database-realm.v2\0')
+    .update(canonical)
     .digest('hex')}`;
 }
 

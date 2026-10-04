@@ -129,7 +129,7 @@ describe('request authorization access', () => {
     expect(access.applicationAuthorization).toBeNull();
   });
 
-  test('makes customer-only simple roles inert in the administration organization', () => {
+  test('projects ordinary app roles in the administration organization without platform authority', () => {
     const kernel = createKernel('multi', 'simple');
     const access = createRequestAuthorizationAccess({
       kernel,
@@ -147,8 +147,42 @@ describe('request authorization access', () => {
         membershipAuthorizationGeneration: 1,
       },
     });
-    expect(access.authorization).toBeNull();
+    expect(access.authorization).toMatchObject({
+      scopeKind: 'tenant',
+      roles: ['member'],
+    });
     expect(access.applicationAuthorization).toBeNull();
+  });
+
+  test('never projects administration application authority through an API key', () => {
+    const kernel = createKernel('multi', 'simple');
+    const access = createRequestAuthorizationAccess({
+      kernel,
+      authContext: {
+        userId: 'u_administration_key',
+        email: 'administration-key@example.test',
+        role: 'user',
+        credentialKind: 'api-key',
+        credentialId: 'key-1',
+        sessionScopeKind: 'tenant',
+        sessionScopeId: 'ten_administration',
+        tenantId: 'ten_administration',
+        tenantKind: 'administration',
+        membershipId: 'tmem_administration',
+        tenantRole: 'owner',
+        tenantAuthorizationGeneration: 1,
+        membershipAuthorizationGeneration: 1,
+      },
+    });
+    access.authorize({ user: 'required', credentials: ['api-key'] });
+    expect(access.authorization).toMatchObject({
+      scopeKind: 'tenant',
+      roles: ['owner'],
+      allPermissions: true,
+    });
+    expect(access.applicationAuthorization).toBeNull();
+    expect(() => access.requirePermission('application.users:read'))
+      .toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));
   });
 
   test('fences every cached authority accessor after the runtime profile changes', () => {

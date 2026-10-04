@@ -224,7 +224,10 @@ function TenantInvitationFormScope({
         loadingMessage="Loading organization terminology…"
         unavailableMessage="Organization terminology could not be loaded. You can still accept this invitation."
       />
-      <TenantInvitationScopeNotice kind={inspection.tenant.kind} />
+      <TenantInvitationScopeNotice
+        kind={inspection.tenant.kind}
+        platformAuthority={inspection.platformAuthority}
+      />
       {error && (
         <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error}
@@ -339,12 +342,17 @@ export function tenantInvitationPresentation(
 /** Distinguishes a protected-scope invite before the user authenticates. */
 export function TenantInvitationScopeNotice({
   kind,
-}: { kind: 'administration' | 'organization' }) {
+  platformAuthority,
+}: {
+  kind: 'administration' | 'organization';
+  platformAuthority: boolean;
+}) {
   if (kind !== 'administration') return null;
   return (
     <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm" role="note">
-      This protected-scope invitation grants platform administration access,
-      not customer data access. Platform-administrator MFA policy applies.
+      {platformAuthority
+        ? 'This protected-scope invitation grants explicit platform administration access. Platform-administrator MFA policy applies.'
+        : 'This invitation joins the Administration Organization app workspace without granting platform administration access.'}
     </p>
   );
 }

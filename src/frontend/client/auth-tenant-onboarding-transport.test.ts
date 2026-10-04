@@ -14,11 +14,13 @@ describe('tenant invitation browser parsing', () => {
         slug: 'platform--administration',
         kind: 'administration',
       },
+      platformAuthority: true,
       emailHint: 'a***@example.test',
       expiresAt: 1_800_000_000_000,
       account: 'sign-in',
     });
     expect(inspection.available && inspection.tenant.kind).toBe('administration');
+    expect(inspection.available && inspection.platformAuthority).toBe(true);
 
     const accepted = parseTenantInvitationAcceptance({
       ...sessionCompletion(),
@@ -52,6 +54,15 @@ describe('tenant invitation browser parsing', () => {
     expect(() => parseTenantInvitationInspection({
       available: true,
       tenant: { name: 'Acme', slug: 'acme', kind: 'platform' },
+      platformAuthority: false,
+      emailHint: 'a***@example.test',
+      expiresAt: 1,
+      account: 'sign-in',
+    })).toThrow('invalid tenant invitation response');
+    expect(() => parseTenantInvitationInspection({
+      available: true,
+      tenant: { name: 'Acme', slug: 'acme', kind: 'organization' },
+      platformAuthority: true,
       emailHint: 'a***@example.test',
       expiresAt: 1,
       account: 'sign-in',

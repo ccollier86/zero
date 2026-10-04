@@ -226,7 +226,8 @@ export class AuthApiKeyManagementPolicy {
       return;
     }
     const scope = access.requireTenant();
-    if (auth.tenantKind !== 'organization' || scope.tenantId !== auth.tenantId) {
+    if ((auth.tenantKind !== 'organization' && auth.tenantKind !== 'administration')
+      || scope.tenantId !== auth.tenantId) {
       throw apiKeyForbidden();
     }
     access.requirePermission(mutate ? 'tenant.members:manage' : 'tenant.members:read');
@@ -240,7 +241,7 @@ export class AuthApiKeyManagementPolicy {
         ? auth.role === 'admin'
         : access.hasPermission('application.roles:manage');
     }
-    return auth.tenantKind === 'organization'
+    return (auth.tenantKind === 'organization' || auth.tenantKind === 'administration')
       && Boolean(auth.tenantId)
       && access.hasPermission('tenant.members:manage');
   }

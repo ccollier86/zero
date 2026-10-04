@@ -33,6 +33,12 @@ import {
   WorkflowEventCoordinator,
   type WorkflowEventMutationOptions,
 } from './workflow-event-coordinator';
+import { WorkflowSystemEventDeliveryCoordinator } from './workflow-system-event-delivery-coordinator';
+import type {
+  WorkflowSystemEventDeliveryOptions,
+  WorkflowSystemEventDeliveryResult,
+  WorkflowSystemEventDeliveryMutation,
+} from './workflow-system-event-delivery-contract';
 import { WorkflowFrontierPump } from './workflow-frontier-pump';
 import { WorkflowGraphRuntime } from './workflow-graph-runtime';
 import { WorkflowInstanceFactory } from './workflow-instance-factory';
@@ -134,6 +140,7 @@ export class WorkflowService {
   private readonly queries: WorkflowRunQueryService;
   private readonly starts: WorkflowStartCoordinator;
   private readonly events: WorkflowEventCoordinator;
+  private readonly systemEventDeliveries: WorkflowSystemEventDeliveryCoordinator;
   private readonly ownerLease: WorkflowRuntimeOwnerLease;
   private readonly onRuntimeOwnershipLost:
     ((error: WorkflowError) => void | Promise<void>) | null;
@@ -271,6 +278,15 @@ export class WorkflowService {
         this.scopes,
         hooks,
       );
+      this.systemEventDeliveries = new WorkflowSystemEventDeliveryCoordinator(
+        db,
+        this.repository,
+        this.runtime,
+        clock,
+        this.scopes,
+        hooks,
+        this.observability,
+      );
       this.ownerLease.onLost((error) => this.quiesceAfterOwnershipLoss(error));
     } catch (error) {
       this.ownerLease.release();
@@ -400,6 +416,26 @@ export class WorkflowService {
     system: WorkflowSystemExecutionOptions,
   ): Promise<boolean> {
     return this.events.sendEventAsSystem(instanceId, eventName, payload, system);
+  }
+
+  /**
+   * Deliver one privileged event exactly once per principal/scope/key command.
+   * Replays return the original acknowledgement and re-kick a running frontier.
+   */
+  async deliverEventAsSystem(
+    instanceId: string,
+    eventName: string,
+    payload: unknown,
+    options: WorkflowSystemEventDeliveryOptions,
+    mutation: WorkflowSystemEventDeliveryMutation = {},
+  ): Promise<WorkflowSystemEventDeliveryResult> {
+    return this.systemEventDeliveries.deliver(
+      instanceId,
+      eventName,
+      payload,
+      options,
+      mutation,
+    );
   }
 
   cancel(

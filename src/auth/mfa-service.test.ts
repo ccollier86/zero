@@ -49,7 +49,7 @@ describe('MfaService', () => {
     expect(JSON.stringify(adminConfig)).not.toContain('test-secret');
   });
 
-  test('rejects an asynchronous administration-membership policy resolver', async () => {
+  test('rejects an asynchronous administration-operator policy resolver', async () => {
     const authConfig = resolveAuthBehaviorConfig({
       mfa: {
         enabled: true,
@@ -78,7 +78,7 @@ describe('MfaService', () => {
       mfaRequired: false,
     })).toThrow(expect.objectContaining({
       code: 'AUTH_STATE_INVARIANT_FAILED',
-      message: '[auth] MFA administration membership resolution must be synchronous.',
+      message: '[auth] MFA administration operator resolution must be synchronous.',
     }));
     await Promise.resolve();
 

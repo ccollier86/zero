@@ -282,6 +282,8 @@ export type AuthTenantInvitationInspection =
         slug: string;
         kind: 'administration' | 'organization';
       };
+      /** True only when the invitation grants explicit platform-control authority. */
+      platformAuthority: boolean;
       emailHint: string;
       expiresAt: number;
       account: 'sign-in' | 'create';

@@ -66,6 +66,7 @@ type NonRequestWorkflowMember =
   | 'startAsSystem'
   | 'runAsSystem'
   | 'sendEventAsSystem'
+  | 'deliverEventAsSystem'
   | 'captureActorAuthorityAssertion'
   | 'captureActorAuthorityFence'
   | 'pollRetries'

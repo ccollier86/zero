@@ -71,6 +71,16 @@ import {
   clearReactiveDBLocalChangeOriginsThrough,
   takeReactiveDBLocalChangeOrigin,
 } from './reactive-db-local-change-origin';
+import {
+  disposeReactiveDBMutationInterceptorHost,
+  initializeReactiveDBMutationInterceptorHost,
+  invokeReactiveDBMutationInterceptor,
+} from './reactive-db-mutation-interceptor';
+import {
+  createReactiveDBTransactionToken,
+  retireReactiveDBTransactionToken,
+  type ReactiveDBTransactionToken,
+} from './reactive-db-transaction-token';
 import type {
   ReactiveDBConfig,
   TableSchema,
@@ -88,6 +98,15 @@ export {
   getReactiveDBLocalChangeOrigin,
   withReactiveDBLocalChangeOrigin,
 } from './reactive-db-local-change-origin';
+export { registerReactiveDBMutationInterceptor } from './reactive-db-mutation-interceptor';
+export type {
+  ReactiveDBMutationChange,
+  ReactiveDBMutationInterception,
+  ReactiveDBMutationInterceptor,
+  ReactiveDBReadOnlyRow,
+  ReactiveDBReadOnlyValue,
+} from './reactive-db-mutation-interceptor';
+export type { ReactiveDBTransactionToken } from './reactive-db-transaction-token';
 
 const DEFAULT_RING_BUFFER_DEPTH = 1000;
 
@@ -178,7 +197,8 @@ export interface ReactiveDBRowScope {
  *  1. Executes the prepared statement
  *  2. Allocates the next database-wide seq value
  *  3. Records in the _changes ring buffer
- *  4. Emits to change listeners
+ *  4. Invokes the optional same-transaction mutation interceptor
+ *  5. Emits to change listeners after commit
  */
 export class ReactiveDB {
   private readonly epoch = crypto.randomUUID();
@@ -198,12 +218,14 @@ export class ReactiveDB {
   private drainingLocalDeliveryQueue = false;
   private changeDeliveryDepth = 0;
   private activeTransactionChangeOrigin: string | null = null;
+  private activeTransactionToken: ReactiveDBTransactionToken | null = null;
   private readonly transactionDomain: object = Object.freeze({});
 
   // Transaction support: when true, changes are accumulated and emitted after commit
   private inTransaction = false;
   private deferredChanges: Change[] | null = null;
   private postCommitCallbacks: Array<() => unknown> | null = null;
+  private postCommitFences: Array<() => unknown> | null = null;
   private readonly transactionExecution = new AsyncLocalStorage<TransactionExecutionContext>();
 
   constructor(config: ReactiveDBConfig) {
@@ -234,6 +256,7 @@ export class ReactiveDB {
           this.managedTableSchemaContracts,
         ),
       });
+      initializeReactiveDBMutationInterceptorHost(this);
     } catch (error) {
       if (this.ownsSQLiteService) {
         this.sqlite?.close();
@@ -1379,10 +1402,37 @@ export class ReactiveDB {
   }
 
   /**
+   * Register a synchronous mandatory fence for the current transaction.
+   *
+   * Unlike `afterCommit`, a fence failure is returned to the root transaction
+   * caller after SQLite has committed and normal committed-change delivery has
+   * run. Callers must throw an outcome-aware error because the commit can no
+   * longer be rolled back. Nested registrations join the outer root boundary.
+   *
+   * @internal Platform durability/security primitive; application notifications
+   * should continue to use best-effort `afterCommit`.
+   */
+  afterCommitFence(callback: () => unknown): void {
+    this.assertNotDisposed();
+    this.assertNotInSnapshotReader();
+    if (!this.inTransaction || this.postCommitFences === null) {
+      throw new Error(
+        'ReactiveDB afterCommitFence callbacks require an active transaction',
+      );
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError('ReactiveDB afterCommitFence callback must be a function');
+    }
+    this.postCommitFences.push(callback);
+  }
+
+  /**
    * Execute multiple writes as a single atomic transaction.
    *
    * - All writes succeed or none do (SQLite ACID).
    * - Each write increments seq and records in _changes normally.
+   * - The optional mutation interceptor runs synchronously after each change is
+   *   recorded and queued, while the root SQLite transaction can still roll back.
    * - Change listeners are deferred as one complete batch, then fired in
    *   sequence and registration order after commit. Reentrant commits queue
    *   behind that batch.
@@ -1414,12 +1464,16 @@ export class ReactiveDB {
 
     const pendingChanges: Change[] = [];
     const pendingPostCommitCallbacks: Array<() => unknown> = [];
+    const pendingPostCommitFences: Array<() => unknown> = [];
     const transactionChangeOrigin = takeReactiveDBLocalChangeOrigin(this);
+    const transactionToken = createReactiveDBTransactionToken();
     this.inTransaction = true;
     this.deferredChanges = pendingChanges;
     this.postCommitCallbacks = pendingPostCommitCallbacks;
+    this.postCommitFences = pendingPostCommitFences;
     beginReactiveDBRollbackRecoveryScope(this);
     this.activeTransactionChangeOrigin = transactionChangeOrigin;
+    this.activeTransactionToken = transactionToken;
     const commitGuardLease: { release: (() => undefined) | null } = {
       release: null,
     };
@@ -1498,8 +1552,15 @@ export class ReactiveDB {
       this.inTransaction = false;
       this.deferredChanges = null;
       this.postCommitCallbacks = null;
+      this.postCommitFences = null;
       discardReactiveDBRollbackRecoveries(this);
       this.activeTransactionChangeOrigin = null;
+      this.activeTransactionToken = null;
+      retireReactiveDBTransactionToken(transactionToken);
+
+      const postCommitFenceFailure = this.runPostCommitFences(
+        pendingPostCommitFences,
+      );
 
       if (pendingChanges.length > 0 && this.externalChangeDispatcher) {
         // The durable dispatcher is the sole listener path while replica
@@ -1512,8 +1573,14 @@ export class ReactiveDB {
 
       this.runPostCommitCallbacks(pendingPostCommitCallbacks);
 
+      if (postCommitFenceFailure) throw postCommitFenceFailure;
+
       return result;
     } catch (err) {
+      // Mandatory fences run only after the committed transaction state has
+      // been fully released. Their failure reports the committed-but-unknown
+      // boundary and must never execute rollback recovery against that commit.
+      if (!this.inTransaction) throw err;
       // Transaction rolled back — the database-owned sequence allocation and
       // all pending change rows roll back with the application writes. Keep
       // this execution poisoned as well: any detached async continuation
@@ -1527,7 +1594,10 @@ export class ReactiveDB {
       this.inTransaction = false;
       this.deferredChanges = null;
       this.postCommitCallbacks = null;
+      this.postCommitFences = null;
       this.activeTransactionChangeOrigin = null;
+      this.activeTransactionToken = null;
+      retireReactiveDBTransactionToken(transactionToken);
       for (const change of pendingChanges) {
         clearReactiveDBLocalChangeOrigin(this, change.seq);
       }
@@ -1538,6 +1608,7 @@ export class ReactiveDB {
       runReactiveDBRollbackRecoveries(this);
       throw err;
     } finally {
+      retireReactiveDBTransactionToken(transactionToken);
       commitGuardLease.release?.();
     }
   }
@@ -1716,6 +1787,9 @@ export class ReactiveDB {
       }
 
       this.lifecycleState = 'releasing';
+      // Seal trusted interceptor registration before any fallible resource
+      // cleanup. A partially released database must never accept a new hook.
+      disposeReactiveDBMutationInterceptorHost(this);
       try {
         this.externalChangeDispatcher?.stop();
 
@@ -1734,7 +1808,9 @@ export class ReactiveDB {
         this.localDeliveryQueue.length = 0;
         this.drainingLocalDeliveryQueue = false;
         this.activeTransactionChangeOrigin = null;
+        this.activeTransactionToken = null;
         this.postCommitCallbacks = null;
+        this.postCommitFences = null;
         clearAllReactiveDBLocalChangeOrigins(this);
         reactiveDBCommitGuards.delete(this);
         discardReactiveDBRollbackRecoveries(this);
@@ -1809,6 +1885,14 @@ export class ReactiveDB {
     if (this.inTransaction && this.deferredChanges) {
       // Defer emission until transaction commits
       this.deferredChanges.push(deliveryChange);
+      if (!this.activeTransactionToken) {
+        throw new Error('ReactiveDB mutation interception requires an active transaction token');
+      }
+      invokeReactiveDBMutationInterceptor(
+        this,
+        deliveryChange,
+        this.activeTransactionToken,
+      );
     } else {
       this.enqueueLocalChanges([deliveryChange]);
     }
@@ -1902,6 +1986,27 @@ export class ReactiveDB {
         });
       }
     }
+  }
+
+  private runPostCommitFences(
+    fences: readonly (() => unknown)[],
+  ): unknown | null {
+    const failures: unknown[] = [];
+    for (const fence of fences) {
+      try {
+        const result = fence();
+        if (isReactiveDBPromiseLike(result)) {
+          void Promise.resolve(result).catch(() => {});
+          throw new Error('ReactiveDB afterCommitFence callbacks must be synchronous');
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 0) return null;
+    return failures.length === 1
+      ? failures[0]
+      : new AggregateError(failures, 'ReactiveDB post-commit fences failed');
   }
 
   private assertNotDisposed(): void {

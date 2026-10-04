@@ -84,6 +84,23 @@ runtime writes to console, keeps a bounded in-memory event store, and exposes a
 protected `/api/_zero/observability/events` endpoint. See
 [Observability](./observability.md).
 
+### ReactiveDB database functions and triggers
+
+ReactiveDB can declaratively run versioned functions after tracked inserts,
+updates, and deletes. Transaction functions synchronously maintain same-source
+invariants, derived rows, and rollups in the originating SQLite commit. Durable
+functions atomically enqueue source-local work, then run post-commit through a
+fenced application/tenant service projection with retries, dead-letter state,
+restart recovery, and exact idempotent Torrent event delivery. These are
+ReactiveDB change hooks, not raw SQLite triggers; direct SQL writes do not
+enter the automation runtime.
+
+The pinned application database declares `databaseAutomations`; each Fabric
+realm declares its own `automations` registry. Read
+[ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md)
+for syntax, execution semantics, Fabric authority, bounds, deployment, and
+operations.
+
 ### ReactiveDB Fabric: isolated multi-database runtime
 
 ReactiveDB Fabric is Zero 2.0's supported isolated multi-database runtime. It
@@ -687,8 +704,11 @@ event-and-actor-bound Guardian seal; consumption revalidates current
 credential/account/scope/membership/RBAC authority and repeats the fence at
 accepted-response commit. Custom claims are still send-time app metadata, so
 reload mutable app-specific values inside the authority callback. Explicit
-system events use `sendEventAsSystem()`; legacy/unsealed events cannot answer
-an interaction.
+system events use `sendEventAsSystem()`; retrying system-plane integrations use
+`deliverEventAsSystem()` so the event, sealed authority, queue accounting, and
+per-principal/per-scope receipt commit atomically. Exact retries re-kick the run
+without creating another event. Legacy/unsealed events cannot answer an
+interaction.
 
 Mutable custom responder policy is also fenced at that commit edge. Synchronous
 policies are reevaluated inside the final response transaction. An asynchronous

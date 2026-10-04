@@ -23,9 +23,10 @@ export function parseTenantInvitationInspection(
 ): AuthTenantInvitationInspection {
   const result = exactInvitationRecord(value, valueAt(value, 'available') === false
     ? ['available']
-    : ['available', 'tenant', 'emailHint', 'expiresAt', 'account']);
+    : ['available', 'tenant', 'platformAuthority', 'emailHint', 'expiresAt', 'account']);
   if (result.available === false) return Object.freeze({ available: false });
   if (result.available !== true
+    || typeof result.platformAuthority !== 'boolean'
     || !boundedString(result.emailHint, 1, 320)
     || !isTimestamp(result.expiresAt)
     || (result.account !== 'sign-in' && result.account !== 'create')) {
@@ -34,7 +35,10 @@ export function parseTenantInvitationInspection(
   const tenant = exactInvitationRecord(result.tenant, ['name', 'slug', 'kind']);
   if (!boundedString(tenant.name, 1, 120)
     || !isCanonicalAuthTenantSlug(tenant.slug)
-    || !TENANT_KINDS.has(String(tenant.kind))) throw invalidInvitationDto();
+    || !TENANT_KINDS.has(String(tenant.kind))
+    || (result.platformAuthority && tenant.kind !== 'administration')) {
+    throw invalidInvitationDto();
+  }
   return Object.freeze({
     available: true,
     tenant: Object.freeze({
@@ -42,6 +46,7 @@ export function parseTenantInvitationInspection(
       slug: tenant.slug,
       kind: tenant.kind as 'administration' | 'organization',
     }),
+    platformAuthority: result.platformAuthority,
     emailHint: result.emailHint,
     expiresAt: result.expiresAt,
     account: result.account,

@@ -7,6 +7,13 @@
  */
 
 import type { IdentityAnchorState } from '../auth/identity-projection-types';
+import type {
+  DatabaseAutomationSourceRecord,
+  DatabaseAutomationSourceRegistration,
+} from '../database-automations/automation-source-catalog-contract';
+import type {
+  DatabaseAutomationSourceCatalog,
+} from '../database-automations/automation-source-catalog-store';
 import type { AuthorityCommitCoordinator } from './authority-commit-coordinator';
 import {
   deriveNamedDatabaseId,
@@ -24,7 +31,11 @@ import {
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
 import { DatabaseError } from './database-error';
-import { createDatabaseRef, type DatabaseId } from './database-file';
+import {
+  createDatabaseRef,
+  normalizeDatabaseId,
+  type DatabaseId,
+} from './database-file';
 import type {
   BindTenantDatabaseOptions,
   DatabaseTenantEligibilityOptions,
@@ -48,6 +59,7 @@ export interface DatabaseManagerActorRouterOptions {
   readonly tenantDatabases: boolean;
   readonly tenantIdentityProjection: DatabaseTenantIdentityProjectionOptions | null;
   readonly tenantDatabaseEligibility: DatabaseTenantEligibilityOptions | null;
+  readonly automationSourceCatalog: DatabaseAutomationSourceCatalog | null;
 }
 
 /** @internal Actor-backed routing kept separate from pinned-plane lifecycle. */
@@ -57,6 +69,8 @@ export class DatabaseManagerActorRouter {
   readonly #tenantDatabases: boolean;
   readonly #identityProjection: DatabaseTenantIdentityProjectionAdmission;
   readonly #tenantDatabaseEligibility: DatabaseTenantEligibilityOptions | null;
+  readonly #automationSourceCatalog: DatabaseAutomationSourceCatalog | null;
+  readonly #realmHasDurableFunctions: boolean;
 
   constructor(options: DatabaseManagerActorRouterOptions) {
     this.#coordinator = options.coordinator;
@@ -66,6 +80,10 @@ export class DatabaseManagerActorRouter {
       options.tenantIdentityProjection,
     );
     this.#tenantDatabaseEligibility = options.tenantDatabaseEligibility;
+    this.#automationSourceCatalog = options.automationSourceCatalog;
+    this.#realmHasDurableFunctions = options.coordinator?.realm.automations
+      ?.listFunctions()
+      .some(({ mode }) => mode === 'durable') ?? false;
   }
 
   get multipleEnabled(): boolean {
@@ -92,6 +110,7 @@ export class DatabaseManagerActorRouter {
   async acquireNamed(input: string): Promise<DatabaseCoordinatorLease> {
     const coordinator = this.#requireCoordinator();
     const physicalId = deriveNamedDatabaseId(input);
+    const logicalSourceId = String(normalizeDatabaseId(input));
     // A tenant-file coordinator may require authority for every write. Named
     // setup bindings are already privileged, so bind an internal live proof.
     const commitAuthority = this.#tenantDatabases
@@ -101,20 +120,39 @@ export class DatabaseManagerActorRouter {
           () => undefined,
         )
       : undefined;
-    return await coordinator.acquire(physicalId, {
+    const lease = await coordinator.acquire(physicalId, {
       ...(commitAuthority ? { commitAuthority } : {}),
     });
+    try {
+      this.#registerReadySource(namedSource(
+        createDatabaseRef(physicalId),
+        logicalSourceId,
+      ));
+      return lease;
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
   }
 
   /** Bind one request/background capability from trusted tenant authority. */
   async bindTenant(
     options: BindTenantDatabaseOptions,
   ): Promise<TenantDatabaseBinding> {
-    const { physicalId, authority } = this.#resolveTenantBinding(options);
+    const { physicalId, logicalSourceId, authority } =
+      this.#resolveTenantBinding(options);
     const lease = await this.#requireCoordinator().acquire(physicalId, {
       commitAuthority: authority,
     });
     try {
+      this.#registerReadySource(tenantSource(
+        createDatabaseRef(physicalId),
+        logicalSourceId,
+      ));
+      // Registration must precede every post-open mutation. Identity
+      // projection can itself touch an app table with an automation trigger;
+      // cataloguing first prevents durable work from becoming undiscoverable
+      // if projection or a later setup step fails.
       await this.#identityProjection.reconcile(options.tenantId, lease);
       const client = createAsyncDatabaseClient({
         executor: createLeaseExecutor(lease),
@@ -132,12 +170,17 @@ export class DatabaseManagerActorRouter {
   async bindTenantSync(
     options: BindTenantDatabaseOptions,
   ): Promise<TenantDatabaseSyncBinding> {
-    const { physicalId, authority } = this.#resolveTenantBinding(options);
+    const { physicalId, logicalSourceId, authority } =
+      this.#resolveTenantBinding(options);
     const coordinator = this.#requireCoordinator();
     const readinessLease = await coordinator.acquire(physicalId, {
       commitAuthority: authority,
     });
     try {
+      this.#registerReadySource(tenantSource(
+        createDatabaseRef(physicalId),
+        logicalSourceId,
+      ));
       await this.#identityProjection.reconcile(options.tenantId, readinessLease);
     } finally {
       readinessLease.release();
@@ -155,6 +198,7 @@ export class DatabaseManagerActorRouter {
     if (!this.#identityProjection.enabled) return;
     this.#assertTenantDatabaseEligible(tenantId);
     const physicalId = deriveTenantDatabaseId(tenantId);
+    const logicalSourceId = String(normalizeDatabaseId(tenantId));
     const authority = createDatabaseCommitAuthority(
       this.#requireAuthority(),
       physicalId,
@@ -164,6 +208,10 @@ export class DatabaseManagerActorRouter {
       commitAuthority: authority,
     });
     try {
+      this.#registerReadySource(tenantSource(
+        createDatabaseRef(physicalId),
+        logicalSourceId,
+      ));
       await this.#identityProjection.reconcile(tenantId, lease);
     } finally {
       lease.release();
@@ -193,6 +241,91 @@ export class DatabaseManagerActorRouter {
     }
   }
 
+  /** @internal Bind one catalog-proven existing source for host recovery. */
+  async acquireAutomationSourceForRecovery(
+    source: DatabaseAutomationSourceRecord,
+  ): Promise<DatabaseCoordinatorLease | null> {
+    if (!this.#realmHasDurableFunctions) {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'The actor realm has no durable database functions.',
+      );
+    }
+    const expected = this.#assertCatalogSourceCurrent(source);
+    if (expected.sourceKind === 'application') {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Application automation sources use the pinned database plane.',
+      );
+    }
+
+    const physicalId = expected.sourceKind === 'named'
+      ? deriveNamedDatabaseId(expected.logicalSourceId)
+      : deriveTenantDatabaseId(expected.logicalSourceId);
+    if (createDatabaseRef(physicalId) !== expected.sourceRef) {
+      throw automationSourceAuthorityChanged();
+    }
+
+    let commitAuthority: DatabaseCommitAuthority | undefined;
+    if (expected.sourceKind === 'tenant') {
+      if (!this.#tenantDatabases) {
+        throw new DatabaseError(
+          'DATABASE_OPERATION_UNSUPPORTED',
+          'Tenant database isolation is not enabled.',
+        );
+      }
+      this.#assertTenantDatabaseEligible(expected.logicalSourceId);
+      commitAuthority = createDatabaseCommitAuthority(
+        this.#requireAuthority(),
+        physicalId,
+        () => {
+          this.#assertCatalogSourceCurrent(expected);
+          this.#assertTenantDatabaseEligible(expected.logicalSourceId);
+          return undefined;
+        },
+      );
+    } else if (this.#tenantDatabases) {
+      commitAuthority = createDatabaseCommitAuthority(
+        this.#requireAuthority(),
+        physicalId,
+        () => {
+          this.#assertCatalogSourceCurrent(expected);
+          return undefined;
+        },
+      );
+    }
+
+    const lease = await this.#requireCoordinator().acquireExisting(physicalId, {
+      ...(commitAuthority ? { commitAuthority } : {}),
+    });
+    if (!lease) return null;
+    try {
+      if (commitAuthority) {
+        assertDatabaseCommitAuthorityCurrent(
+          commitAuthority,
+          this.#requireAuthority(),
+          createDatabaseRef(physicalId),
+        );
+      } else {
+        this.#assertCatalogSourceCurrent(expected);
+      }
+      return lease;
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+  }
+
+  /** @internal Revalidate one server-owned source before/after host effects. */
+  assertAutomationSourceAuthorityCurrent(
+    source: DatabaseAutomationSourceRecord,
+  ): void {
+    const current = this.#assertCatalogSourceCurrent(source);
+    if (current.sourceKind !== 'tenant') return;
+    if (!this.#tenantDatabases) throw automationSourceAuthorityChanged();
+    this.#assertTenantDatabaseEligible(current.logicalSourceId);
+  }
+
   #requireCoordinator(): DatabaseCoordinator {
     if (!this.#coordinator) {
       throw new DatabaseError(
@@ -212,6 +345,7 @@ export class DatabaseManagerActorRouter {
 
   #resolveTenantBinding(options: BindTenantDatabaseOptions): Readonly<{
     physicalId: DatabaseId;
+    logicalSourceId: string;
     authority: DatabaseCommitAuthority;
   }> {
     if (!this.#tenantDatabases) {
@@ -232,6 +366,7 @@ export class DatabaseManagerActorRouter {
     this.#assertTenantDatabaseEligible(options.tenantId);
 
     const physicalId = deriveTenantDatabaseId(options.tenantId);
+    const logicalSourceId = String(normalizeDatabaseId(options.tenantId));
     const authorityOwner = this.#requireAuthority();
     const authority = createDatabaseCommitAuthority(
       authorityOwner,
@@ -247,7 +382,42 @@ export class DatabaseManagerActorRouter {
       createDatabaseRef(physicalId),
     );
     assertTenantReadAuthorityCurrent(options.assertCurrentReadAuthority);
-    return Object.freeze({ physicalId, authority });
+    return Object.freeze({ physicalId, logicalSourceId, authority });
+  }
+
+  #registerReadySource(registration: DatabaseAutomationSourceRegistration): void {
+    if (!this.#realmHasDurableFunctions) return;
+    const catalog = this.#requireAutomationSourceCatalog();
+    catalog.register(registration);
+  }
+
+  #assertCatalogSourceCurrent(
+    expected: DatabaseAutomationSourceRecord,
+  ): DatabaseAutomationSourceRecord {
+    const catalog = this.#requireAutomationSourceCatalog();
+    let current: DatabaseAutomationSourceRecord | null;
+    try {
+      current = catalog.get(expected.sourceRef);
+    } catch {
+      throw automationSourceAuthorityChanged();
+    }
+    if (!current
+      || expected.status !== 'active'
+      || current.status !== 'active'
+      || !sameAutomationSourceRecord(current, expected)) {
+      throw automationSourceAuthorityChanged();
+    }
+    return current;
+  }
+
+  #requireAutomationSourceCatalog(): DatabaseAutomationSourceCatalog {
+    if (!this.#automationSourceCatalog) {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Durable database automation recovery is not configured.',
+      );
+    }
+    return this.#automationSourceCatalog;
   }
 
   #assertTenantDatabaseEligible(tenantId: string): void {
@@ -327,6 +497,63 @@ function createLeaseExecutor(
       return lease.execute(operation, options);
     },
   } as AsyncDatabaseOperationExecutor;
+}
+
+function namedSource(
+  sourceRef: string,
+  logicalSourceId: string,
+): DatabaseAutomationSourceRegistration {
+  return Object.freeze({
+    sourceRef,
+    sourceKind: 'named',
+    logicalSourceId,
+    authority: Object.freeze({
+      scopeKind: 'application',
+      scopeId: 'application',
+      tenantId: null,
+    }),
+  });
+}
+
+function tenantSource(
+  sourceRef: string,
+  tenantId: string,
+): DatabaseAutomationSourceRegistration {
+  return Object.freeze({
+    sourceRef,
+    sourceKind: 'tenant',
+    logicalSourceId: tenantId,
+    authority: Object.freeze({
+      scopeKind: 'tenant',
+      scopeId: tenantId,
+      tenantId,
+    }),
+  });
+}
+
+function sameAutomationSourceRecord(
+  left: DatabaseAutomationSourceRecord,
+  right: DatabaseAutomationSourceRecord,
+): boolean {
+  return left.sourceRef === right.sourceRef
+    && left.sourceKind === right.sourceKind
+    && left.logicalSourceId === right.logicalSourceId
+    && left.authority.scopeKind === right.authority.scopeKind
+    && left.authority.scopeId === right.authority.scopeId
+    && left.authority.tenantId === right.authority.tenantId
+    && left.status === right.status
+    && left.revision === right.revision
+    && left.ordinal === right.ordinal
+    && left.registeredAt === right.registeredAt
+    && left.updatedAt === right.updatedAt;
+}
+
+function automationSourceAuthorityChanged(): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_AUTHORITY_CHANGED',
+    'Database automation source authority changed before recovery.',
+    { retryable: false, outcome: 'not-started' },
+  );
 }
 
 function configInvalid(message: string): DatabaseError {

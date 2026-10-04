@@ -246,6 +246,10 @@
       "types": "./src/data-studio/server.ts",
       "import": "./src/data-studio/server.ts"
     },
+    "./database-automations": {
+      "types": "./src/database-automations/index.ts",
+      "import": "./src/database-automations/index.ts"
+    },
     "./email": {
       "types": "./src/email/index.ts",
       "import": "./src/email/index.ts"
