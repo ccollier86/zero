@@ -8,6 +8,12 @@
 
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
 import {
+  DatabaseAutomationSourceCatalog,
+} from '../database-automations/automation-source-catalog-store';
+import type {
+  DatabaseAutomationSourceRecord,
+} from '../database-automations/automation-source-catalog-contract';
+import {
   DatabaseCoordinator,
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
@@ -24,6 +30,14 @@ import type {
 import { DatabaseRuntime } from './database-runtime';
 import { PinnedDatabaseRuntimes } from './pinned-database-runtimes';
 import type { IdentityAnchorState } from '../auth/identity-projection-types';
+
+interface DatabaseAutomationRecoveryBinding {
+  readonly router: DatabaseManagerActorRouter;
+  readonly assertStarted: () => void;
+}
+
+const databaseAutomationRecoveryBindings =
+  new WeakMap<DatabaseManager, DatabaseAutomationRecoveryBinding>();
 
 export type {
   BindTenantDatabaseOptions,
@@ -51,6 +65,7 @@ export class DatabaseManager implements AsyncDisposable {
   readonly #pinnedRuntimes: PinnedDatabaseRuntimes;
   readonly #actorRouter: DatabaseManagerActorRouter;
   readonly #authority: AuthorityCommitCoordinator | null;
+  readonly #automationSourceCatalog: DatabaseAutomationSourceCatalog | null;
   #state: DatabaseManagerState = 'created';
   #closeTask: Promise<void> | null = null;
 
@@ -106,6 +121,15 @@ export class DatabaseManager implements AsyncDisposable {
       && options.authorityCommitCoordinator !== multiple.authorityCommitCoordinator) {
       throw configInvalid('Database manager authority coordinators must match.');
     }
+    if (options.automationSourceCatalog !== undefined
+      && (!(options.automationSourceCatalog instanceof DatabaseAutomationSourceCatalog)
+        || !options.automationSourceCatalog.isBoundToSystemRuntime(
+          options.systemRuntime,
+        ))) {
+      throw configInvalid(
+        'Database automation source catalog must use the manager system runtime.',
+      );
+    }
     if (multiple?.tenantDatabases !== undefined
       && typeof multiple.tenantDatabases !== 'boolean') {
       throw configInvalid('Tenant-database policy is invalid.');
@@ -133,6 +157,14 @@ export class DatabaseManager implements AsyncDisposable {
     if (multiple?.tenantDatabaseEligibility && multiple.tenantDatabases !== true) {
       throw configInvalid('Tenant database eligibility requires tenant databases.');
     }
+    const actorRealmHasDurableFunctions = multiple?.coordinator.realm.automations
+      ?.listFunctions()
+      .some(({ mode }) => mode === 'durable') ?? false;
+    if (actorRealmHasDurableFunctions && !options.automationSourceCatalog) {
+      throw configInvalid(
+        'Durable actor database functions require an automation source catalog.',
+      );
+    }
 
     this.systemRuntime = options.systemRuntime;
     this.appRuntime = options.appRuntime;
@@ -145,13 +177,19 @@ export class DatabaseManager implements AsyncDisposable {
     this.#authority = options.authorityCommitCoordinator
       ?? multiple?.authorityCommitCoordinator
       ?? null;
+    this.#automationSourceCatalog = options.automationSourceCatalog ?? null;
     this.#actorRouter = new DatabaseManagerActorRouter({
       coordinator: multiple?.coordinator ?? null,
       authority: this.#authority,
       tenantDatabases: multiple?.tenantDatabases ?? false,
       tenantIdentityProjection: multiple?.tenantIdentityProjection ?? null,
       tenantDatabaseEligibility: multiple?.tenantDatabaseEligibility ?? null,
+      automationSourceCatalog: this.#automationSourceCatalog,
     });
+    databaseAutomationRecoveryBindings.set(this, Object.freeze({
+      router: this.#actorRouter,
+      assertStarted: () => this.#assertStarted(),
+    }));
   }
 
   /** Start system before application services, then claim the actor database root. */
@@ -254,6 +292,7 @@ export class DatabaseManager implements AsyncDisposable {
           { retryable: false, outcome: 'unknown' },
         );
       }
+      this.#automationSourceCatalog?.close();
       if (this.#authority) await this.#authority.close();
       this.#pinnedRuntimes.close();
       this.#state = 'closed';
@@ -266,6 +305,37 @@ export class DatabaseManager implements AsyncDisposable {
   #assertStarted(): void {
     if (this.#state !== 'started') throw closedError();
   }
+}
+
+/**
+ * @internal Acquire one catalog-proven existing actor source for host recovery.
+ *
+ * This helper is intentionally absent from the public databases barrel and
+ * request service projections. The returned lease remains caller-owned.
+ */
+export async function acquireDatabaseAutomationSourceForRecovery(
+  manager: DatabaseManager,
+  source: DatabaseAutomationSourceRecord,
+): Promise<DatabaseCoordinatorLease | null> {
+  const binding = databaseAutomationRecoveryBindings.get(manager);
+  if (!binding) {
+    throw configInvalid('Database automation recovery manager is invalid.');
+  }
+  binding.assertStarted();
+  return await binding.router.acquireAutomationSourceForRecovery(source);
+}
+
+/** @internal Revalidate catalog and tenant eligibility for one host effect. */
+export function assertDatabaseAutomationSourceAuthorityCurrent(
+  manager: DatabaseManager,
+  source: DatabaseAutomationSourceRecord,
+): void {
+  const binding = databaseAutomationRecoveryBindings.get(manager);
+  if (!binding) {
+    throw configInvalid('Database automation authority manager is invalid.');
+  }
+  binding.assertStarted();
+  binding.router.assertAutomationSourceAuthorityCurrent(source);
 }
 
 function runtimeSummary(

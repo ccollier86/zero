@@ -30,11 +30,17 @@ import {
   createAppIdentityProjectionRuntime,
   type AppIdentityProjectionRuntime,
 } from './identity-projection-runtime';
+import {
+  closeManagedAppDatabaseAutomations,
+  createManagedAppDatabaseAutomations,
+  type ManagedAppDatabaseAutomations,
+} from './app-database-automations';
 
 export interface ManagedAppDatabasePlanes {
   readonly manager: DatabaseManager;
   readonly identityProjection: AppIdentityProjectionRuntime | null;
   readonly tenantDataPlane: SyncTenantDataPlane | undefined;
+  readonly automations: ManagedAppDatabaseAutomations;
 }
 
 interface CreateManagedAppDatabasePlanesOptions {
@@ -97,6 +103,18 @@ export function createManagedAppDatabasePlanes({
     === 'tenant-database'
     ? authorityCommitCoordinator
     : undefined;
+
+  const automations = createManagedAppDatabaseAutomations({
+    config,
+    systemRuntime,
+    applicationRuntime,
+  });
+  // Until DatabaseManager adopts the catalog and the runtime adopts the
+  // pinned interceptor, construction failure must still release both before
+  // the base database handles are disposed.
+  const removeTemporaryAutomationCleanup = runtime.addCleanup(
+    () => closeManagedAppDatabaseAutomations(automations),
+  );
 
   if (authorityCommitCoordinator) {
     runtime.addCleanup(() => authorityCommitCoordinator.close());
@@ -166,33 +184,56 @@ export function createManagedAppDatabasePlanes({
       })
     : null;
 
-  const openedManager = new DatabaseManager({
-    systemRuntime,
-    appRuntime: applicationRuntime,
-    ...(authorityCommitCoordinator ? { authorityCommitCoordinator } : {}),
-    multiple: coordinator
-      ? {
-          coordinator,
-          ...(tenantAuthorityCommitCoordinator
-            ? {
-                authorityCommitCoordinator: tenantAuthorityCommitCoordinator,
-                tenantDatabases: true,
-                ...(tenantResourceTopology
-                  ? {
-                      tenantDatabaseEligibility: createTenantDatabaseEligibility(
-                        systemRuntime.db,
-                        tenantResourceTopology.eligibleTenantKinds,
-                      ),
-                    }
-                  : {}),
-              }
-            : {}),
-          ...(identityProjection?.tenantManagerOptions
-            ? { tenantIdentityProjection: identityProjection.tenantManagerOptions }
-            : {}),
-        }
-      : undefined,
-  });
+  let openedManager: DatabaseManager;
+  try {
+    openedManager = new DatabaseManager({
+      systemRuntime,
+      appRuntime: applicationRuntime,
+      ...(authorityCommitCoordinator ? { authorityCommitCoordinator } : {}),
+      ...(automations.catalog
+        ? { automationSourceCatalog: automations.catalog }
+        : {}),
+      multiple: coordinator
+        ? {
+            coordinator,
+            ...(tenantAuthorityCommitCoordinator
+              ? {
+                  authorityCommitCoordinator: tenantAuthorityCommitCoordinator,
+                  tenantDatabases: true,
+                  ...(tenantResourceTopology
+                    ? {
+                        tenantDatabaseEligibility: createTenantDatabaseEligibility(
+                          systemRuntime.db,
+                          tenantResourceTopology.eligibleTenantKinds,
+                        ),
+                      }
+                    : {}),
+                }
+              : {}),
+            ...(identityProjection?.tenantManagerOptions
+              ? { tenantIdentityProjection: identityProjection.tenantManagerOptions }
+              : {}),
+          }
+        : undefined,
+    });
+  } catch (error) {
+    const failures: unknown[] = [error];
+    try {
+      automations.application?.close();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    try {
+      automations.catalog?.close();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    if (failures.length === 1) throw error;
+    throw new AggregateError(
+      failures,
+      'Database manager and automation cleanup failed.',
+    );
+  }
   manager = openedManager;
   onManagerCreated(openedManager);
 
@@ -201,6 +242,10 @@ export function createManagedAppDatabasePlanes({
     runtime.clear(ZERO_DATABASE_MANAGER, openedManager);
     return openedManager.close();
   });
+  if (automations.application) {
+    runtime.addCleanup(() => automations.application!.close());
+  }
+  removeTemporaryAutomationCleanup();
   removeTemporaryApplicationCleanup();
   removeTemporarySystemCleanup();
 
@@ -222,5 +267,6 @@ export function createManagedAppDatabasePlanes({
     manager: openedManager,
     identityProjection,
     tenantDataPlane,
+    automations,
   });
 }

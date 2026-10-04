@@ -72,14 +72,15 @@ The configured tenancy and authorization axes determine how a key is bound:
 | --- | --- | --- |
 | `single/simple` | application + user | Current global/simple user role |
 | `single/advanced` | application + user | Current application role assignments and declared permissions |
-| `multi/simple` | exact customer organization membership | Current membership role in that organization |
-| `multi/advanced` | exact customer organization membership | Current organization role assignments and declared permissions |
+| `multi/simple` | exact customer or Administration Organization membership | Current tenant-scoped membership role in that organization |
+| `multi/advanced` | exact customer or Administration Organization membership | Current tenant-scoped role assignments and declared permissions |
 
-Multi-tenant keys cannot be issued for the protected Administration
-Organization. Platform administrators may review and manage keys belonging to
-customer organizations, but a customer key never becomes platform-control
-authority. A key bound to organization A cannot select organization B or use a
-membership in B.
+An Administration Organization member may issue a tenant-bound key for that
+organization's ordinary app features when self-service and role eligibility
+allow it. Guardian never projects the membership's `application.*` authority
+through an API-key credential—even when the same member also holds a platform
+role. Platform administration remains session-only. A key bound to organization
+A cannot select organization B or use a membership in B.
 
 `eligibleScopeRoles` is evaluated against live authority. In advanced mode, a
 user with any eligible active role may receive and use a key. Removing the last
@@ -255,7 +256,7 @@ Issuance/rotation permissions by profile are:
 - `single/simple`: current global `admin`;
 - `single/advanced`: `application.roles:manage`;
 - organization administration: `tenant.members:manage` in the active customer
-  organization; and
+  or Administration Organization for keys bound to that same organization; and
 - platform administration: `application.users:manage` plus
   `application.tenants:read` in the Administration Organization.
 

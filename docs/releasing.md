@@ -99,6 +99,16 @@ the roadmap. Zero 2.0's source/local release boundary is:
   root ownership remain outside this boundary. Public npm and a wider
   package/OS matrix require the additional gates below; they do not make the
   documented local-root contract provisional.
+- ReactiveDB database automations are supported for mutations which enter the
+  tracked ReactiveDB boundary. Transaction functions are synchronous,
+  same-source, bounded, and commit or roll back with the source change. Durable
+  functions use a source-local transactional outbox, at-least-once delivery,
+  fenced leases, restart recovery through the system-database source catalog,
+  and authority-scoped server services. Their Torrent bridge targets one exact
+  workflow instance with a permanent idempotency receipt. Direct `zero.sql`
+  writes and migrations do not invoke these triggers, and external effects
+  still require destination idempotency. See
+  [ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md).
 - The system/application database split is a breaking upgrade for legacy
   combined layouts. Runtime and Doctor detect that layout read-only and fail
   closed with `requiredAction: 'split-system-database'`; they do not move data.
@@ -141,7 +151,9 @@ the roadmap. Zero 2.0's source/local release boundary is:
   used to exclude overlapping recovery and fence expired owners. Migration
   `033` adds topology-independent definition/version/draft and terminal-event
   delivery integrity triggers and is kept byte-identical on the maintained
-  1.3 line. The
+  1.3 line. Migrations `034` and `035` add Storage Studio's management and
+  shared-CAS state, `036` adds immutable Torrent system-event delivery
+  receipts, and `037` adds the ReactiveDB automation source catalog. The
   managed registry belongs only to `systemDb`; application and Fabric tenant
   schemas use their own explicit provisioning path.
   break-glass, tenant-custom roles, broader populated-app discovery/migration
@@ -191,9 +203,10 @@ tenant after migration `024`, treat exact adoption as a reviewed data migration:
    trail contains `tenant.administration-adopted`, the selected row has
    `kind = 'administration'`, exactly one such row exists, and its owner can
    enter the packaged platform controls with the required MFA assurance.
-5. Review every retained non-owner membership and deliberately assign an
-   administration-only role where access is intended. Customer-only retained
-   roles do not gain application authority.
+5. Review every retained non-owner membership. Ordinary tenant/app roles now
+   govern access to the Administration Organization's own app data realm but do
+   not gain application authority; assign an administration-only role only to
+   identities that should operate the platform control plane.
 6. Start the remaining runtimes on the identical auth/authorization registry.
    Keeping the exact selector is an idempotent assertion; removing it after the
    verified rollout is safe because the protected kind is durable.

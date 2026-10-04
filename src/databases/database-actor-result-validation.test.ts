@@ -133,7 +133,7 @@ describe('database actor execute result validation', () => {
       mutationResult({ changed: false, op: 'UPDATE', sequence: { seq: 4 } }),
       mutationResult({ changed: true, op: null, sequence: null }),
       mutationResult({ changed: true, op: 'INSERT', sequence: { seq: 4 } }),
-      mutationResult({ changed: true, op: 'UPDATE', sequence: { seq: 3 } }),
+      mutationResult({ changed: true, op: 'UPDATE', sequence: { seq: 5 } }),
       mutationResult({ unexpected: true }),
     ];
     for (const candidate of hostile) {
@@ -143,6 +143,14 @@ describe('database actor execute result validation', () => {
         'unknown',
       );
     }
+
+    const followedByAutomationChanges = mutationResult();
+    followedByAutomationChanges.sequence = { seq: 7 };
+    expect(validateDatabaseActorExecuteResult(
+      followedByAutomationChanges,
+      updateOperation,
+      catalog,
+    )).toEqual(followedByAutomationChanges);
 
     const create = operation({
       type: 'mutate',
@@ -316,7 +324,7 @@ describe('database actor execute result validation', () => {
     }, updateOperation);
   });
 
-  test('correlates ordered batch effects and their final durable sequence', () => {
+  test('correlates ordered batch effects with the complete transaction head', () => {
     const valid = batchResult();
     expect(validateDatabaseActorExecuteResult(valid, batchOperation, catalog))
       .toEqual(valid);
@@ -325,14 +333,22 @@ describe('database actor execute result validation', () => {
     tooShort.value.mutations.pop();
     expectWriteProtocol(tooShort, batchOperation);
 
-    const gap = batchResult();
-    gap.value.mutations[2]!.sequence = { seq: 12 };
-    gap.sequence = { seq: 12 };
-    expectWriteProtocol(gap, batchOperation);
+    const automationGaps = batchResult();
+    automationGaps.value.mutations[2]!.sequence = { seq: 12 };
+    automationGaps.sequence = { seq: 15 };
+    expect(validateDatabaseActorExecuteResult(
+      automationGaps,
+      batchOperation,
+      catalog,
+    )).toEqual(automationGaps);
 
-    const wrongFinal = batchResult();
-    wrongFinal.sequence = { seq: 11 };
-    expectWriteProtocol(wrongFinal, batchOperation);
+    const outOfOrder = batchResult();
+    outOfOrder.value.mutations[2]!.sequence = { seq: 8 };
+    expectWriteProtocol(outOfOrder, batchOperation);
+
+    const aboveHead = batchResult();
+    aboveHead.value.mutations[2]!.sequence = { seq: 11 };
+    expectWriteProtocol(aboveHead, batchOperation);
 
     const wrongNoChange = batchResult();
     wrongNoChange.value.mutations[1]!.rowId = 'another';

@@ -349,7 +349,10 @@ function validateTrustedCommitValue(
       catalog,
       mutationEffectFormat,
     );
-    if (effect.changed && effect.sequence!.seq !== result.sequence.seq) {
+    // Same-transaction database automations may append tracked changes after
+    // the submitted effect. The commit token is the complete transaction head,
+    // so the submitted effect must not claim a later sequence than that head.
+    if (effect.changed && effect.sequence!.seq > result.sequence.seq) {
       throw protocolFailure(true);
     }
     return;
@@ -368,12 +371,14 @@ function validateTrustedCommitValue(
       );
       if (!effect.changed) continue;
       const sequence = effect.sequence!.seq;
-      if (previousSequence !== null && sequence !== previousSequence + 1) {
+      // Automation cascades may occupy gaps between submitted batch effects;
+      // explicit effects must still remain strictly ordered.
+      if (previousSequence !== null && sequence <= previousSequence) {
         throw protocolFailure(true);
       }
       previousSequence = sequence;
     }
-    if (previousSequence !== null && previousSequence !== result.sequence.seq) {
+    if (previousSequence !== null && previousSequence > result.sequence.seq) {
       throw protocolFailure(true);
     }
     return;
@@ -409,7 +414,7 @@ function validateWriteResult(
         catalog,
         result.replayed ? 'either' : 'current',
       );
-      if (effect.changed && effect.sequence!.seq !== result.sequence.seq) {
+      if (effect.changed && effect.sequence!.seq > result.sequence.seq) {
         throw protocolFailure(true);
       }
       break;
@@ -430,12 +435,12 @@ function validateWriteResult(
         );
         if (!effect.changed) continue;
         const seq = effect.sequence!.seq;
-        if (priorChangedSeq !== null && seq !== priorChangedSeq + 1) {
+        if (priorChangedSeq !== null && seq <= priorChangedSeq) {
           throw protocolFailure(true);
         }
         priorChangedSeq = seq;
       }
-      if (priorChangedSeq !== null && priorChangedSeq !== result.sequence.seq) {
+      if (priorChangedSeq !== null && priorChangedSeq > result.sequence.seq) {
         throw protocolFailure(true);
       }
       break;

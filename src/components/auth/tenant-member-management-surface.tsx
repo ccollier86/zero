@@ -170,8 +170,8 @@ export function TenantMemberManagementSurface({
       {capabilities?.canManageMembers && tenantKind === 'administration'
         && !controller.canChooseAddRoles && (
         <p className="text-sm text-muted-foreground" role="status">
-          Adding a platform administrator requires authority to grant at least one
-          administration role.
+          Adding an administration-organization member requires authority to
+          grant at least one role.
         </p>
       )}
       {!controller.visibleConfirmation && !controller.addDialogOpen

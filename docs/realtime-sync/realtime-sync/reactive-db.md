@@ -509,6 +509,20 @@ JSON, and continuity gaps fail closed.
 
 Returns `null` when the gap is too large, signaling the caller (sync plugin) to send a full snapshot instead.
 
+## Database Functions And Triggers
+
+ReactiveDB's declarative automation layer matches tracked AFTER-style insert,
+update, and delete changes. Synchronous transaction functions join the source
+commit and may produce further tracked changes; durable functions append a
+private source-local outbox command to that same commit and run only after it
+succeeds. Private outbox writes never enter `_changes` or Sync.
+
+This mechanism observes ReactiveDB mutations, not arbitrary SQL. Direct raw SQL
+and migrations remain outside its trigger boundary. The complete authoring,
+ordering, retry, idempotency, Fabric authority, versioning, limit, and recovery
+contract is documented in
+[ReactiveDB Database Functions And Triggers](../../framework/reactive-database-automations.md).
+
 ## Transactions
 
 Batch multiple writes into a single atomic operation:

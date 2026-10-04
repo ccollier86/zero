@@ -44,6 +44,18 @@ export function isAdministrationOnlyRole(
   )));
 }
 
+/** Whether one live role set projects any application-scope authority. */
+export function rolesProjectApplicationAuthority(
+  authorization: ResolvedAuthAuthorizationConfig,
+  roleKeys: readonly string[],
+): boolean {
+  return roleKeys.some((roleKey) => {
+    const role = authorization.roles[roleKey];
+    return role?.allPermissions === true
+      || isAdministrationOnlyRole(authorization, roleKey);
+  });
+}
+
 export function isRoleAssignableToTenantKind(
   roleKey: string,
   kind: TenantKind,
@@ -52,7 +64,11 @@ export function isRoleAssignableToTenantKind(
   const administrationOnly = authorization
     ? isAdministrationOnlyRole(authorization, roleKey)
     : isAdministrationTenantRoleKey(roleKey);
-  return kind === 'administration' ? administrationOnly : !administrationOnly;
+  // The protected Administration Organization is also an ordinary app data
+  // realm. It may therefore receive tenant-scoped app roles as well as roles
+  // which project application authority. Customer organizations retain the
+  // one-way fence and can never receive application-authority roles.
+  return kind === 'administration' || !administrationOnly;
 }
 
 /**

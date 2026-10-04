@@ -426,7 +426,7 @@ describe('packaged tenant administration components', () => {
       .toEqual(['member', 'manager', 'billing']);
   });
 
-  test('offers roles only inside the active customer or administration kind', () => {
+  test('keeps platform roles out of customers and offers both role realms in administration', () => {
     const customer = tenantRole('member', true);
     const administrator = {
       ...tenantRole('administrator', true),
@@ -436,7 +436,7 @@ describe('packaged tenant administration components', () => {
     expect(rolesForTenantKind([customer, administrator], 'organization')
       .map((role) => role.key)).toEqual(['member']);
     expect(rolesForTenantKind([customer, administrator], 'administration')
-      .map((role) => role.key)).toEqual(['administrator']);
+      .map((role) => role.key)).toEqual(['member', 'administrator']);
   });
 
   test('renders protected-scope onboarding exclusions only for administration', () => {

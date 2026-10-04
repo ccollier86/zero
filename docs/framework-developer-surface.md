@@ -1416,6 +1416,14 @@ mutable app-specific state and honor the callback `AbortSignal`. The explicit
 `sendEventAsSystem()` path uses a scope-checked sealed system principal;
 legacy/unsealed events cannot answer an interaction.
 
+Trusted adapters that can retry use `deliverEventAsSystem()` with a mandatory
+principal/scope-local idempotency key. Its event, delivery envelope, authority
+seal, capacity reservation, and immutable receipt commit together. Exact
+replays return the original acknowledgement and re-kick the running frontier;
+changed commands fail deterministically with
+`WORKFLOW_EVENT_IDEMPOTENCY_CONFLICT`. The raw method is intentionally absent
+from request/activity-scoped workflow facades.
+
 The private event `authority_kind` distinguishes actor, explicit system, and
 legacy-untrusted rows. Event capacity accounts for actor JSON plus authority
 JSON/MAC bytes. Interaction decision and event consumption share one

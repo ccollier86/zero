@@ -129,21 +129,25 @@ export class DatabaseWriterLane {
     this.active = true;
     void Promise.resolve().then(task.execute).then(
       (value) => {
-        if (!task!.settled) {
-          task!.settled = true;
-          task!.resolve(value);
-        }
+        const shouldResolve = !task!.settled;
+        if (shouldResolve) task!.settled = true;
+        this.finishActiveTask();
+        if (shouldResolve) task!.resolve(value);
       },
       (caught) => {
-        if (!task!.settled) {
-          task!.settled = true;
-          task!.reject(safeCoordinatorError(caught));
-        }
+        const shouldReject = !task!.settled;
+        if (shouldReject) task!.settled = true;
+        const error = shouldReject ? safeCoordinatorError(caught) : null;
+        this.finishActiveTask();
+        if (error) task!.reject(error);
       },
-    ).finally(() => {
-      this.active = false;
-      this.pump();
-    });
+    );
+  }
+
+  /** Release the writer FIFO before the operation result reaches host code. */
+  private finishActiveTask(): void {
+    this.active = false;
+    this.pump();
   }
 
   private expire(task: WriterLaneTask<any>): void {

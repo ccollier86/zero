@@ -32,13 +32,25 @@ describe('TenantInvitationForm tenant-kind presentation', () => {
     );
     const notice = renderToStaticMarkup(createElement(TenantInvitationScopeNotice, {
       kind: 'administration',
+      platformAuthority: true,
     }));
 
     expect(presentation.title).toBe('Join Platform administration');
     expect(presentation.actionTerm).toBe('Platform administration');
     expect(notice).toContain('protected-scope invitation');
-    expect(notice).toContain('not customer data access');
+    expect(notice).toContain('explicit platform administration access');
     expect(notice).toContain('MFA policy applies');
+  });
+
+  test('does not mislabel an app-only administration invitation as platform access', () => {
+    const notice = renderToStaticMarkup(createElement(TenantInvitationScopeNotice, {
+      kind: 'administration',
+      platformAuthority: false,
+    }));
+
+    expect(notice).toContain('app workspace');
+    expect(notice).toContain('without granting platform administration access');
+    expect(notice).not.toContain('MFA policy applies');
   });
 
   test('keeps customer invitations on configured terminology without an admin warning', () => {
@@ -49,6 +61,7 @@ describe('TenantInvitationForm tenant-kind presentation', () => {
     );
     const notice = renderToStaticMarkup(createElement(TenantInvitationScopeNotice, {
       kind: 'organization',
+      platformAuthority: false,
     }));
 
     expect(presentation.title).toBe('Join Northside');

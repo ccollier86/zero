@@ -8,6 +8,17 @@
 
 import { DatabaseError } from './database-error';
 import {
+  establishHotAutomationClaimDurability,
+} from './database-actor-automation-durability';
+import {
+  databaseActorAutomationOperationKind,
+} from './database-actor-automation-session';
+import {
+  DATABASE_ACTOR_AUTOMATION_OUTBOX_OPERATION,
+  validateDatabaseActorAutomationOutboxPayload,
+  type DatabaseActorAutomationOutboxResult,
+} from './database-automation-actor-protocol';
+import {
   actorBindingSequence,
   closeActorBinding,
   establishHotWriteDurability,
@@ -179,6 +190,8 @@ export class DatabaseActorRuntime implements Disposable {
           return asExecutorValue(this.findReceipt(request));
         case DATABASE_ACTOR_OPERATIONS.identityProjection:
           return asExecutorValue(this.identityProjection(request));
+        case DATABASE_ACTOR_AUTOMATION_OUTBOX_OPERATION:
+          return asExecutorValue(this.automationOutbox(request));
         case DATABASE_ACTOR_OPERATIONS.unbind:
           return this.unbind(request);
         default:
@@ -534,6 +547,47 @@ export class DatabaseActorRuntime implements Disposable {
     return result;
   }
 
+  private automationOutbox(
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseActorAutomationOutboxResult {
+    const payload = validateDatabaseActorAutomationOutboxPayload(request.payload);
+    const binding = this.requireBinding(payload.databaseRef);
+    const operationKind = databaseActorAutomationOperationKind(payload);
+    requireOperationKind(request.kind, operationKind);
+    if (binding.role !== 'writer') {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Readonly database actors do not manage automation delivery.',
+      );
+    }
+    if (!binding.automationSession) {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Database realm does not declare automations.',
+      );
+    }
+
+    const execute = () => binding.automationSession!.execute(payload);
+    let result: DatabaseActorAutomationOutboxResult;
+    try {
+      result = operationKind === 'write' && binding.authorityCommitGuard
+        ? binding.authorityCommitGuard.runAuthorityNeutral(execute)
+        : execute();
+    } catch (error) {
+      if (operationKind === 'write') {
+        this.establishHotWriteDurability(binding, false);
+      }
+      throw error;
+    }
+
+    if (payload.action === 'claim' && result !== null) {
+      this.establishHotAutomationClaimDurability(binding);
+    } else if (operationKind === 'write') {
+      this.establishHotWriteDurability(binding, false);
+    }
+    return result;
+  }
+
   private unbind(request: DatabaseExecutorServerRequest): null {
     const payload = validateDatabaseActorUnbindPayload(request.payload);
     const binding = this.requireBinding(payload.databaseRef);
@@ -592,6 +646,18 @@ export class DatabaseActorRuntime implements Disposable {
   ): void {
     try {
       establishHotWriteDurability(binding, replayed);
+    } catch (error) {
+      this.closeRequested = true;
+      this.state = 'failed';
+      throw error;
+    }
+  }
+
+  private establishHotAutomationClaimDurability(
+    binding: DatabaseActorWriterBinding,
+  ): void {
+    try {
+      establishHotAutomationClaimDurability(binding);
     } catch (error) {
       this.closeRequested = true;
       this.state = 'failed';

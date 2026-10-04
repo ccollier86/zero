@@ -394,8 +394,10 @@ In multi mode, team-managed platform administration is one protected,
 server-created Administration Organization that reuses the ordinary
 role-assignment, invitation, grant-ceiling, revision, ownership, and audit
 machinery. It is a distinct platform scope—not a discoverable customer
-tenant—and its administration-only roles may grant explicit
-`application.*` permissions without granting customer data access. This avoids
+tenant—but it also owns an ordinary app data realm. Tenant-scoped app roles and
+administration-only roles can be assigned independently or together;
+administration-only roles may grant explicit `application.*` permissions
+without granting customer data access. This avoids
 a second RBAC system and does not expose the single/advanced
 `/auth/application` API in multi mode.
 

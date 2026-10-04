@@ -6,6 +6,13 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Administration Organization members can now hold ordinary tenant-scoped app
+  roles, platform/application roles, or both. Ordinary app roles authorize only
+  that organization's own app data; platform operations still require explicit
+  live application authority, customer organizations still reject platform
+  roles, and Guardian API keys issued there remain tenant-scoped. Invitation,
+  role-management, MFA, packaged-control, and live-revocation paths now share
+  the same boundary.
 - Fixed ReactiveDB Sync WebSocket lifecycle tracking to use Bun's stable raw
   socket identity across Elysia callbacks. Disconnect and plugin disposal now
   permanently fence pending identity/access resolution, clear active tracking
@@ -35,6 +42,15 @@ All notable Zero Platform changes are tracked here.
 
 ### Added
 
+- Added declarative ReactiveDB database functions and AFTER triggers through
+  `@zero/framework/database-automations`. Synchronous transaction functions can
+  enforce same-commit invariants and rollups, while durable functions use a
+  source-local transactional outbox, fenced leases, bounded retry/dead-letter
+  handling, crash recovery, authority-scoped Zero services, Fabric-wide source
+  discovery, and exact idempotent Torrent event delivery. Configuration,
+  actor-protocol admission, Doctor diagnostics, observability, package exports,
+  and deployment documentation are included. System migrations `036` and `037`
+  add Torrent system-event receipts and the automation source catalog.
 - Added opt-in Storage Studio: Guardian-scoped application, organization, and
   personal managed drives over the existing Storage engine, with stable keys,
   quotas, lifecycle and durable cleanup jobs, typed browser/scoped-server APIs,

@@ -83,10 +83,11 @@ export class AuthApiKeyManagement {
     this.policy.requireSelfService();
     return this.issueInTransaction(operation, input, 'self', (actor) => {
       const binding = this.options.authority.bindingFromActor(actor);
-      // API keys are deliberately unavailable in the protected multi-tenant
-      // Administration Organization. The exact session has already been
-      // revalidated above, so a missing customer/application binding is an
-      // authorization denial rather than a concurrency failure.
+      // The exact session has already been revalidated above, so a missing
+      // application/tenant binding is an authorization denial rather than a
+      // concurrency failure. Administration-organization bindings remain
+      // tenant-only: request authorization never projects their application
+      // authority through an API-key credential.
       if (!binding) throw apiKeyForbidden();
       return { userId: actor.userId, binding };
     });

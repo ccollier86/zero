@@ -8,7 +8,7 @@ import { AuthApiKeyService } from './auth-api-key-service';
 import { AuthApiKeyStore } from './auth-api-key-store';
 import { GuardianRequestCredentialResolver } from './auth-request-credential-resolver';
 import { AuthActionTokenService } from './action-token-service';
-import { createAdministrationMemberResolver } from './auth-administration-membership';
+import { createAdministrationOperatorResolver } from './auth-administration-membership';
 import { AuthApplicationAdministrationService } from './auth-application-administration-service';
 import { AuthAuditService } from './auth-audit-service';
 import { AuthEmailOutbox } from './auth-email-outbox';
@@ -165,8 +165,10 @@ export async function bootstrapAuthRuntimeServices(
   services.mfaMethodStore = new MfaMethodStore(config.db);
   services.mfaService = new MfaService(authConfig);
   services.mfaChallengeStore = new MfaChallengeStore(config.db);
-  const isAdministrationMember = createAdministrationMemberResolver(
+  const isAdministrationOperator = createAdministrationOperatorResolver(
     services.tenancyService,
+    authorizationKernel,
+    services.authorizationRoleService,
   );
   services.mfaChallengeService = new MfaChallengeService(
     authConfig,
@@ -174,7 +176,7 @@ export async function bootstrapAuthRuntimeServices(
     services.mfaChallengeStore,
     services.accountEmailService,
     services.auditService,
-    isAdministrationMember,
+    isAdministrationOperator,
     emitCode,
     (userId) => services.userStore!.getAuthGeneration(userId),
   );

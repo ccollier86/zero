@@ -43,6 +43,10 @@ import type {
   DatabaseTrustedWriteExecutor,
 } from './database-trusted-writer';
 import type { DatabaseWriterCommitValue } from './database-writer-engine';
+import type {
+  DatabaseCoordinatorAutomationDeliveryInput,
+  DatabaseCoordinatorAutomationDeliveryResult,
+} from './database-coordinator-automation-delivery-runtime';
 
 export interface CoordinatorTenantSyncSnapshotStart {
   readonly databaseRef: DatabaseCoordinatorEntry['databaseRef'];
@@ -52,6 +56,14 @@ export interface CoordinatorTenantSyncSnapshotStart {
 
 /** Narrow host boundary implemented by DatabaseCoordinator. */
 export interface DatabaseCoordinatorCapabilityHost {
+  executeAutomationDelivery<
+    TInput extends DatabaseCoordinatorAutomationDeliveryInput,
+  >(
+    entry: DatabaseCoordinatorEntry,
+    input: TInput,
+    options: DatabaseExecutionOptions | undefined,
+    commitAuthority: DatabaseCommitAuthority | null,
+  ): Promise<DatabaseCoordinatorAutomationDeliveryResult<TInput>>;
   executeIdentityProjection(
     entry: DatabaseCoordinatorEntry,
     input: Omit<DatabaseIdentityProjectionPayload, 'databaseRef'>,
@@ -222,6 +234,22 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
     );
   }
 
+  /** @internal Durable delivery path; not part of DatabaseCoordinatorLease. */
+  executeAutomationDelivery<
+    TInput extends DatabaseCoordinatorAutomationDeliveryInput,
+  >(
+    input: TInput,
+    options?: DatabaseExecutionOptions,
+  ): Promise<DatabaseCoordinatorAutomationDeliveryResult<TInput>> {
+    this.assertActive();
+    return this.#coordinator.executeAutomationDelivery(
+      this.#entry,
+      input,
+      options,
+      this.#commitAuthority,
+    );
+  }
+
   replay(
     afterSeq: number,
     limit?: number,
@@ -261,6 +289,23 @@ export function executeCoordinatorIdentityProjection(
     );
   }
   return lease.executeIdentityProjection(input, options);
+}
+
+/** Invoke the private delivery path only on a coordinator-owned lease. */
+export function executeCoordinatorAutomationDelivery<
+  TInput extends DatabaseCoordinatorAutomationDeliveryInput,
+>(
+  lease: DatabaseCoordinatorLease,
+  input: TInput,
+  options?: DatabaseExecutionOptions,
+): Promise<DatabaseCoordinatorAutomationDeliveryResult<TInput>> {
+  if (!(lease instanceof CoordinatorLease)) {
+    throw new DatabaseError(
+      'DATABASE_CONFIG_INVALID',
+      'Database automation delivery requires a coordinator-owned binding.',
+    );
+  }
+  return lease.executeAutomationDelivery(input, options);
 }
 
 class CoordinatorTrustedWriter implements DatabaseTrustedWriteExecutor {

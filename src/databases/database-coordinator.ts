@@ -87,6 +87,11 @@ import { DatabaseCoordinatorTenantSyncRuntime } from './database-coordinator-ten
 import { DatabaseCoordinatorOperationRuntime } from './database-coordinator-operation-runtime';
 import { DatabaseCoordinatorIdentityProjectionRuntime } from './database-coordinator-identity-projection-runtime';
 import {
+  DatabaseCoordinatorAutomationDeliveryRuntime,
+  type DatabaseCoordinatorAutomationDeliveryInput,
+  type DatabaseCoordinatorAutomationDeliveryResult,
+} from './database-coordinator-automation-delivery-runtime';
+import {
   normalizeDatabaseCoordinatorConfig,
 } from './database-coordinator-config';
 import { DatabaseCoordinatorSyncPublication } from './database-coordinator-sync-publication';
@@ -143,6 +148,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
   private readonly authority: DatabaseCoordinatorAuthority;
   private readonly operationRuntime: DatabaseCoordinatorOperationRuntime;
   private readonly identityProjectionRuntime: DatabaseCoordinatorIdentityProjectionRuntime;
+  private readonly automationDeliveryRuntime: DatabaseCoordinatorAutomationDeliveryRuntime;
   private readonly tenantSyncRuntime: DatabaseCoordinatorTenantSyncRuntime;
   private readonly blockedDatabases = new Map<DatabaseId, {
     readonly databaseRef: DatabaseRef;
@@ -311,6 +317,44 @@ export class DatabaseCoordinator implements AsyncDisposable {
             error,
             'runtime-failure',
           )
+        ),
+        emit: (event) => this.emit(event),
+      });
+    this.automationDeliveryRuntime =
+      new DatabaseCoordinatorAutomationDeliveryRuntime({
+        queueTimeoutMs: this.queueTimeoutMs,
+        operationTimeoutMs: this.operationTimeoutMs,
+        now: this.now,
+        authorityCommitCoordinator: config.authorityCommitCoordinator,
+        requireCommitAuthority: config.requireCommitAuthority,
+        assertStarted: () => this.assertStarted(),
+        canAwaitOpening: (entry) => this.entryLifecycle.canAwaitOpening(entry),
+        awaitReplacementOpening: (entry, execution, operation, resume) => (
+          this.operationRuntime.awaitReplacementOpening(
+            entry,
+            execution,
+            operation,
+            resume,
+          )
+        ),
+        assertUsableEntry: (entry) => this.assertUsableEntry(entry),
+        enqueueLane: (entry, operation, execution, run) => (
+          this.operationRuntime.enqueueLane(entry, operation, execution, run)
+        ),
+        requireWriter: (entry) => this.entryLifecycle.requireWriter(entry),
+        isTerminalFailure: (executor, error) => (
+          this.entryLifecycle.isTerminalExecutorFailure(executor, error)
+        ),
+        retire: (entry, executor, error) => (
+          this.entryLifecycle.retireBinding(
+            entry,
+            executor,
+            error,
+            'runtime-failure',
+          )
+        ),
+        holdAuthorityUntilSettlement: (lease, executor) => (
+          this.authority.holdUntilSettlement(lease, executor)
         ),
         emit: (event) => this.emit(event),
       });
@@ -767,6 +811,22 @@ export class DatabaseCoordinator implements AsyncDisposable {
     commitAuthority: DatabaseCommitAuthority | null = null,
   ): Promise<DatabaseIdentityProjectionResult> {
     return this.identityProjectionRuntime.execute(
+      entry,
+      input,
+      options,
+      commitAuthority,
+    );
+  }
+
+  executeAutomationDelivery<
+    TInput extends DatabaseCoordinatorAutomationDeliveryInput,
+  >(
+    entry: DatabaseEntry,
+    input: TInput,
+    options: DatabaseExecutionOptions = {},
+    commitAuthority: DatabaseCommitAuthority | null = null,
+  ): Promise<DatabaseCoordinatorAutomationDeliveryResult<TInput>> {
+    return this.automationDeliveryRuntime.execute(
       entry,
       input,
       options,

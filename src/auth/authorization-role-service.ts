@@ -94,9 +94,9 @@ export class AuthorizationRoleService {
 
     // A role retained from an older configuration remains visible to the
     // control plane for cleanup, but becomes inert when it does not belong to
-    // the live tenant kind. This protects both directions: administration
-    // roles cannot leak into customer organizations, and customer roles cannot
-    // accidentally confer authority inside the administration organization.
+    // the live tenant kind. Application-authority roles cannot leak into
+    // customer organizations; the Administration Organization deliberately
+    // accepts both ordinary app roles and application-authority roles.
     const roles = set.roles.filter((roleKey) => (
       roleKey === 'owner'
       || isRoleAssignableToTenantKind(
@@ -640,12 +640,6 @@ export class AuthorizationRoleService {
       tenant.kind,
       this.kernel.authorization,
     )) {
-      if (tenant.kind === 'administration') {
-        throw new AuthorizationRoleAssignmentError(
-          `Administration organization memberships require an administration role: ${roleKey}`,
-          'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
-        );
-      }
       throw new AuthorizationRoleAssignmentError(
         `Authorization role requires the administration organization: ${roleKey}`,
         'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED',

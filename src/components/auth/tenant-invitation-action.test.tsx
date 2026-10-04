@@ -111,7 +111,7 @@ describe('tenant invitation action', () => {
     expect(markup).toContain('Close');
   });
 
-  test('requires at least one grantable administration role in protected scope', () => {
+  test('requires at least one grantable role in protected scope', () => {
     const denied = resolveTenantInvitationActionPolicy({
       publicConfig: publicConfig(),
       administrationConfig: administrationConfig({
@@ -126,7 +126,7 @@ describe('tenant invitation action', () => {
     const allowed = resolveTenantInvitationActionPolicy({
       publicConfig: publicConfig(),
       administrationConfig: administrationConfig({
-        roles: [role('access-manager', { administrationOnly: true })],
+        roles: [role('member')],
       }),
       invitationsEnabled: true,
       tenantKind: 'administration',
@@ -134,7 +134,7 @@ describe('tenant invitation action', () => {
 
     expect(denied.canIssue).toBe(false);
     expect(allowed.canIssue).toBe(true);
-    expect(allowed.roleChoices.map((item) => item.key)).toEqual(['access-manager']);
+    expect(allowed.roleChoices.map((item) => item.key)).toEqual(['member']);
   });
 
   test('preserves valid drafts and otherwise selects member or the first role', () => {

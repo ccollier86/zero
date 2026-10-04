@@ -8,6 +8,7 @@
 
 import { createPlatformSQLiteService } from '../persistence';
 import { DatabaseError } from './database-error';
+import { DatabaseActorAutomationSession } from './database-actor-automation-session';
 import { DatabaseActorAuthorityCommitGuard } from './database-actor-authority-commit-guard';
 import {
   acquireDatabaseActorLiveness,
@@ -50,6 +51,7 @@ export interface DatabaseActorWriterBinding {
   readonly placement: DatabaseActorPlacementConfig;
   readonly runtime: DatabaseRuntime;
   readonly engine: DatabaseWriterOperationEngine;
+  readonly automationSession: DatabaseActorAutomationSession | null;
   readonly authorityCommitGuard: DatabaseActorAuthorityCommitGuard | null;
   readonly snapshotSessions: DatabaseTenantSyncSnapshotSessionStore;
   readonly openedFileIdentity: DatabaseFileIdentityProof;
@@ -91,6 +93,7 @@ export function openWriterBinding(
   let sqlite: ReturnType<typeof createPlatformSQLiteService> | null = null;
   let runtime: DatabaseRuntime | null = null;
   let engine: DatabaseWriterOperationEngine | null = null;
+  let automationSession: DatabaseActorAutomationSession | null = null;
   let authorityCommitGuard: DatabaseActorAuthorityCommitGuard | null = null;
   let snapshotSessions: DatabaseTenantSyncSnapshotSessionStore | null = null;
   let livenessGuard: DatabaseActorLivenessGuard | null = null;
@@ -200,6 +203,18 @@ export function openWriterBinding(
       || payload.placement.durability === 'periodic') {
       runtime.start();
     }
+    automationSession = realm.automations
+      ? new DatabaseActorAutomationSession({
+          db: runtime.db,
+          registry: realm.automations,
+          realmName: realm.name,
+          realmFingerprint: realm.fingerprint,
+          storageMode: payload.placement.mode,
+          readOnlyTables: Object.keys(
+            identityAnchorReactiveTableSchemas(realm.guardianAnchorRequirements),
+          ),
+        })
+      : null;
     // Runtime startup may perform framework-owned maintenance transactions.
     // Install the request revision guard only after startup is complete so no
     // maintenance write can inherit or require ambient request authority.
@@ -215,6 +230,7 @@ export function openWriterBinding(
       placement: payload.placement,
       runtime,
       engine,
+      automationSession,
       authorityCommitGuard,
       snapshotSessions,
       openedFileIdentity: openedFileIdentity,
@@ -232,6 +248,9 @@ export function openWriterBinding(
     }
     if (snapshotSessions) {
       attemptClose(() => snapshotSessions!.close(), cleanupFailures);
+    }
+    if (automationSession) {
+      attemptClose(() => automationSession!.close(), cleanupFailures);
     }
     if (engine) attemptClose(() => engine!.close(), cleanupFailures);
     if (runtime) {
@@ -446,6 +465,9 @@ export function closeActorBinding(binding: DatabaseActorBinding): void {
       attemptClose(() => binding.authorityCommitGuard!.close(), failures);
     }
     attemptClose(() => binding.snapshotSessions.close(), failures);
+    if (binding.automationSession) {
+      attemptClose(() => binding.automationSession!.close(), failures);
+    }
     attemptClose(() => binding.engine.close(), failures);
     attemptClose(() => binding.runtime.close(), failures);
   } else {

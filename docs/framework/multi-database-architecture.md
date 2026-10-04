@@ -1365,6 +1365,24 @@ replicas must fail validation rather than silently weaken database ownership.
 See [System and Application Database Planes](./system-database.md#authority-fence)
 for the exact fence contract.
 
+### Source-local database automations
+
+A Fabric realm may declare a versioned ReactiveDB automation registry. Its
+transaction functions execute inside the actor's originating write, while each
+durable function is inserted into a private outbox in that same physical source
+database. The system database retains only the trusted source catalog used to
+find those outboxes after restart; it does not centralize their payloads.
+
+Durable execution occurs after the writer lane is released. The host creates a
+strict service projection from the catalog's application/tenant authority and
+revalidates that authority around execution and completion. A request field,
+row value, header, or database reference cannot select another tenant. Exact
+function versions survive additive deployments, while actor/realm binding
+drift fails closed. See
+[ReactiveDB Database Functions And Triggers](./reactive-database-automations.md)
+for declarations, outbox semantics, Torrent delivery, limits, recovery, and
+Doctor guidance.
+
 ## Idempotency, Failure, and Restart
 
 A database actor can commit a transaction and exit before its response reaches the

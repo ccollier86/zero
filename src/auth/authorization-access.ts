@@ -419,9 +419,9 @@ function projectAuthorizationScope(
   }
 
   if (!auth.tenantRole) return null;
-  // A retained simple-mode assignment outside the live tenant kind is invalid
-  // authority in either direction. `owner` is the shared protected lifecycle
-  // role and is therefore valid for both customer and administration tenants.
+  // An application-authority role retained in a customer organization is
+  // invalid authority. The Administration Organization accepts ordinary app
+  // roles too, while `owner` remains the shared protected lifecycle role.
   if (auth.tenantKind
     && auth.tenantRole !== 'owner'
     && !isRoleAssignableToTenantKind(
@@ -462,6 +462,7 @@ function projectAdministrationApplicationScope(
   emitCode?: AuthPlatformCodeEmitter,
 ): AuthorizationScopeSnapshot | null {
   if (kernel.tenancy.mode !== 'multi'
+    || auth.credentialKind === 'api-key'
     || auth.tenantKind !== 'administration'
     || auth.sessionScopeKind !== 'tenant'
     || !auth.tenantId
@@ -475,13 +476,16 @@ function projectAdministrationApplicationScope(
       userId: auth.userId,
     }, emitCode);
     if (!assignment) return null;
-    return expandAdvancedScope(kernel, assignment, {
+    const scope = expandAdvancedScope(kernel, assignment, {
       tenancy: 'multi',
       mode: 'advanced',
       scopeKind: 'application',
       scopeId: 'application',
       revision: tenantRevision(auth, `administration:${assignment.revision}`),
     });
+    return scope.allPermissions === true || scope.permissions.length > 0
+      ? scope
+      : null;
   }
 
   if (!auth.tenantRole) return null;
@@ -490,6 +494,7 @@ function projectAdministrationApplicationScope(
     [auth.tenantRole],
     'application',
   );
+  if (!expanded.allPermissions && expanded.permissions.length === 0) return null;
   return freezeScope({
     tenancy: 'multi',
     mode: 'simple',

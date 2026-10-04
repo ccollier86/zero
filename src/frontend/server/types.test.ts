@@ -7,6 +7,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
+import { defineDatabaseAutomations } from '../../database-automations/database-automations';
+import { defineDatabaseFunction } from '../../database-automations/database-function';
+import { defineDatabaseTrigger } from '../../database-automations/database-trigger';
 import { defineTable, field, schema } from '../../schema';
 import { SYNC_TABLE_MUTATION_VALIDATOR } from '../../sync/types';
 import { defineZeroConfig, resolveConfig } from './types';
@@ -20,6 +23,70 @@ const tables = {
 };
 
 describe('resolveConfig', () => {
+  test('admits pinned application automations against the declared schema', () => {
+    const updateIndex = defineDatabaseFunction({
+      name: 'todos.update-index',
+      version: 1,
+      mode: 'transaction',
+      handler: () => undefined,
+    });
+    const configured = defineDatabaseAutomations({
+      functions: [updateIndex],
+      triggers: [defineDatabaseTrigger({
+        name: 'todos.title-updated',
+        version: 1,
+        table: 'todos',
+        after: { update: { columns: ['title'] } },
+        run: updateIndex,
+      })],
+    });
+
+    const resolved = resolveConfig({
+      db: { mode: 'file', path: './data/application.db' },
+      tables,
+      databaseAutomations: configured,
+    });
+
+    expect(resolved.databaseAutomations?.fingerprint).toBe(configured.fingerprint);
+    expect(resolved.databaseAutomations).not.toBe(configured);
+
+    const invalid = defineDatabaseAutomations({
+      functions: [updateIndex],
+      triggers: [defineDatabaseTrigger({
+        name: 'todos.missing-column',
+        version: 1,
+        table: 'todos',
+        after: { update: { columns: ['missing'] } },
+        run: updateIndex,
+      })],
+    });
+    expect(() => resolveConfig({
+      db: { mode: 'file', path: './data/application.db' },
+      tables,
+      databaseAutomations: invalid,
+    })).toThrow(expect.objectContaining({ code: 'DATABASE_CONFIG_INVALID' }));
+  });
+
+  test('requires a durable system database for durable function discovery', () => {
+    const durable = defineDatabaseFunction({
+      name: 'todos.publish',
+      version: 1,
+      mode: 'durable',
+      handler: async () => undefined,
+    });
+    const configured = defineDatabaseAutomations({ functions: [durable] });
+
+    expect(() => resolveConfig({
+      db: { mode: 'file', path: './data/application.db' },
+      systemDb: { mode: 'ephemeral' },
+      tables,
+      databaseAutomations: configured,
+    })).toThrow(expect.objectContaining({
+      code: 'DATABASE_CONFIG_INVALID',
+      details: { component: 'database-automations' },
+    }));
+  });
+
   test('resolves an always-separate system database without changing db', () => {
     const appDb = { mode: 'file' as const, path: './data/application.db' };
     const systemDb = { mode: 'file' as const, path: './data/control.db' };

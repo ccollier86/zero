@@ -1012,15 +1012,28 @@ describe('multi-tenant browser session completion', () => {
       tenantKind: 'organization',
     });
 
-    tenancy.addMembership({
+    const appMembership = tenancy.addMembership({
       tenantId: bootstrap.body.tenant.tenantId,
       userId: customer.body.user.userId,
-      roleKey: 'administrator',
+      roleKey: 'member',
       createdBy: bootstrap.body.user.userId,
     });
 
-    // The membership is live policy state. It invalidates both access and
-    // refresh use immediately; no token claim or UI state can delay the gate.
+    // An ordinary app role in the Administration Organization is not a
+    // platform-operator signal and does not activate admin-required MFA.
+    await expect(tokens.resolveAuthContext(customer.body.accessToken)).resolves.toMatchObject({
+      userId: customer.body.user.userId,
+      tenantKind: 'organization',
+    });
+    const appOnlyLogin = await login(harness, 'admin-assurance-customer');
+    expect(appOnlyLogin.body.tenantSelectionRequired).toBe(true);
+    expect(appOnlyLogin.body.mfaSetupRequired).toBeUndefined();
+
+    tenancy.updateMembershipRole(appMembership.membershipId, 'administrator');
+
+    // Application authority in that membership is live policy state. It
+    // invalidates both access and refresh use immediately; no token claim or
+    // UI state can delay the gate.
     await expect(tokens.resolveAuthContext(customer.body.accessToken)).resolves.toBeNull();
     const staleRefresh = await post(harness, '/auth/refresh', {
       refreshToken: customer.body.refreshToken,

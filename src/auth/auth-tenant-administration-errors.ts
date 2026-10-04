@@ -51,7 +51,7 @@ export function administrationRoleRequired(roleKey?: string): AuthError {
   return new AuthError(
     roleKey
       ? `Role is not assignable to the administration organization: ${roleKey}`
-      : 'Administration organization members require a platform administration role',
+      : 'Administration organization members require at least one explicit role',
     'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
     422,
   );

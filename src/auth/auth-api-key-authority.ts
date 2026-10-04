@@ -181,7 +181,7 @@ export class AuthApiKeyAuthority {
     const tenant = this.options.tenancy?.getTenant(tenantId) ?? null;
     const membership = this.options.tenancy?.getMembershipById(membershipId) ?? null;
     if (!tenant
-      || tenant.kind !== 'organization'
+      || (tenant.kind !== 'organization' && tenant.kind !== 'administration')
       || !membership
       || membership.tenantId !== tenantId
       || (expectedUserId !== undefined && membership.userId !== expectedUserId)

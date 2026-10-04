@@ -605,10 +605,10 @@ registry in both simple and advanced authorization modes:
   converted into the default grant.
 - Stored invitation roles are revalidated at acceptance, so removed or newly
   protected role definitions fail closed.
-- Administration Organization invitations require at least one explicit
-  administration-only role. Customer-only roles are never offered or accepted;
-  retained legacy assignments may be displayed for diagnosis but are not new
-  assignment choices.
+- Administration Organization invitations require at least one explicit role.
+  Ordinary app roles, application-authority roles, and bounded combinations are
+  all valid within the issuer's live grant ceiling. Customer organizations
+  still reject every administration-only role.
 
 UI filtering is only a convenience; every constraint is repeated at the
 Elysia plugin/service boundary and inside the serialized transition.
@@ -635,7 +635,7 @@ Applications should branch on `code`, not error text. Important codes include:
 | `TENANT_JOIN_REQUEST_ROLE_SERVER_OWNED` | A client sent `roles` for an ordinary/default request whose role is selected by the server |
 | `TENANT_OWNER_ROLE_PROTECTED` | Onboarding attempted to grant protected owner/system authority |
 | `TENANT_ROLE_ESCALATION_FORBIDDEN` | Requested role exceeds the acting member's grant ceiling |
-| `AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED` | Administration membership/invitation omitted roles or selected no valid administration-only role |
+| `AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED` | Administration membership/invitation omitted its required explicit non-empty role selection |
 | `AUTHORIZATION_CHANGED` | Actor session, scope, roles, or authority-bearing properties changed before the mutation could commit; reload before retrying |
 | `TENANT_INVITATION_EMAIL_UNAVAILABLE` | Runtime email/outbox service is unavailable |
 | `TENANT_INVITATION_EMAIL_CAPACITY` | Durable queue could not accept the job; issuance was rolled back |

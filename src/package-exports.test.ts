@@ -142,7 +142,16 @@ import type {
   UserStoreOptions,
   WebRefreshProof,
 } from '@zero/framework/auth';
-import { runPlatformDoctor, runUsageAudit } from '@zero/framework/doctor';
+import {
+  defineDatabaseAutomations,
+  defineDatabaseFunction,
+  defineDatabaseTrigger,
+} from '@zero/framework/database-automations';
+import {
+  checkDatabaseAutomations,
+  runPlatformDoctor,
+  runUsageAudit,
+} from '@zero/framework/doctor';
 import {
   createDataStudioFeature as createDataStudioFeatureSubpath,
   createDataStudioRouter as createDataStudioRouterSubpath,
@@ -384,6 +393,7 @@ import {
   WorkflowExecutor,
   WorkflowRegistry,
   WorkflowService,
+  MAX_WORKFLOW_SYSTEM_EVENT_IDEMPOTENCY_KEY_LENGTH,
   createWorkflowObservability,
   expr,
   flow,
@@ -414,6 +424,8 @@ import {
   type WorkflowObservability,
   type WorkflowPublicTopology,
   type WorkflowStartOptions,
+  type WorkflowSystemEventDeliveryOptions,
+  type WorkflowSystemEventDeliveryResult,
 } from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
@@ -637,6 +649,25 @@ const configuredPostLoginPath = (config: AppConfig): string | undefined => confi
 const resolvedPostLoginPath = (config: ResolvedConfig): string => config.postLoginPath;
 const workflowDefinition = flow(step('start', 'smoke.activity', { input: expr.input() }));
 const workflowChooseOptions: WorkflowChooseOptions = { label: 'Smoke choice' };
+const workflowSystemEventIdempotencyKeyLimit =
+  MAX_WORKFLOW_SYSTEM_EVENT_IDEMPOTENCY_KEY_LENGTH;
+const packageAutomationFunction = defineDatabaseFunction({
+  name: 'package.smoke',
+  version: 1,
+  mode: 'transaction',
+  handler: () => null,
+});
+const packageAutomationTrigger = defineDatabaseTrigger({
+  name: 'package.smoke',
+  version: 1,
+  table: 'package_rows',
+  after: { insert: true },
+  run: packageAutomationFunction,
+});
+const packageAutomationRegistry = defineDatabaseAutomations({
+  functions: [packageAutomationFunction],
+  triggers: [packageAutomationTrigger],
+});
 type WorkflowActivityInput = { instanceId: string };
 type WorkflowPublicTypes = readonly [
   ClaimedWorkflowEvent,
@@ -658,6 +689,8 @@ type WorkflowPublicTypes = readonly [
   WorkflowObservability,
   WorkflowPublicTopology,
   WorkflowStartOptions,
+  WorkflowSystemEventDeliveryOptions,
+  WorkflowSystemEventDeliveryResult,
 ];
 const typedWorkflowRegistry = new WorkflowRegistry();
 const typedWorkflowActivity = typedWorkflowRegistry.registerActivity<
@@ -915,6 +948,7 @@ export const serverSymbols = {
   serverAuthRequestCredentialResolver,
   RoomOwnerCannotLeaveError,
   resolvedPostLoginPath,
+  checkDatabaseAutomations,
   runPlatformDoctor,
   runUsageAudit,
   runDatabaseActorIfRequested,
@@ -930,6 +964,8 @@ export const serverSymbols = {
   verifySubpathUploadGrantToken,
   verifyUploadGrantToken,
   workflowChooseOptions,
+  workflowSystemEventIdempotencyKeyLimit,
+  packageAutomationRegistry,
   workflowDefinition,
   workflowTypeSurface,
   machineServiceProjection,

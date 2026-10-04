@@ -7,9 +7,11 @@
  */
 
 import { types as utilTypes } from 'node:util';
+import type { DatabaseAutomationRegistry } from '../database-automations/database-automations';
 import type { Migration } from '../migrations/types';
 import type { TableSchema } from '../sync/types';
 import { DatabaseError } from './database-error';
+import { requireDatabaseAutomationRegistry } from './database-realm-automation-admission';
 import {
   defineDatabaseRealm,
   type DatabaseReadQueryRegistry,
@@ -24,6 +26,7 @@ const CONTRIBUTION_FIELDS = new Set([
   'migrations',
   'queries',
   'commands',
+  'automations',
 ]);
 
 /** Caller-owned definition for one independently reusable realm fragment. */
@@ -49,6 +52,8 @@ export interface DatabaseRealmContributionDefinition<
   readonly queries?: TQueries;
   /** Actor-local registered write handlers supplied by this fragment. */
   readonly commands?: TCommands;
+  /** Actor-local functions and triggers supplied by this fragment. */
+  readonly automations?: DatabaseAutomationRegistry;
 }
 
 /** Detached, immutable contribution safe to reuse in multiple compositions. */
@@ -62,6 +67,7 @@ export interface DatabaseRealmContribution<
   readonly migrations: readonly Readonly<Migration>[];
   readonly queries: Readonly<TQueries>;
   readonly commands: Readonly<TCommands>;
+  readonly automations?: DatabaseAutomationRegistry;
 }
 
 /**
@@ -86,6 +92,12 @@ export function defineDatabaseRealmContribution<
     queries: record.queries as TQueries | undefined,
     commands: record.commands as TCommands | undefined,
   });
+  // Trigger targets can intentionally refer to tables owned by another
+  // contribution. Full schema-backed admission therefore occurs only after
+  // composition has merged every table.
+  const automations = record.automations === undefined
+    ? undefined
+    : requireDatabaseAutomationRegistry(record.automations);
 
   return Object.freeze({
     name: realm.name,
@@ -94,6 +106,7 @@ export function defineDatabaseRealmContribution<
     migrations: realm.migrations,
     queries: realm.queries,
     commands: realm.commands,
+    ...(automations === undefined ? {} : { automations }),
   });
 }
 
@@ -117,6 +130,7 @@ export function databaseRealmContribution<
     migrations: realm.migrations,
     queries: realm.queries,
     commands: realm.commands,
+    automations: realm.automations,
   });
 }
 

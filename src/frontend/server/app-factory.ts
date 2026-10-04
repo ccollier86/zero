@@ -39,6 +39,9 @@ import { buildAppAssets } from './app-build-assets';
 import { AppDatabaseBootstrap } from './app-database-bootstrap';
 import { composeAppResources } from './app-resource-composition';
 import { mountAppSyncEngine } from './app-sync-mount';
+import {
+  installAppDatabaseAutomationDispatcher,
+} from './app-database-automation-dispatcher';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
 
@@ -206,6 +209,16 @@ export async function createApp(userConfig: AppConfig) {
       clientEntry,
       cssPath,
       identityProjectionRuntime,
+    });
+    installAppDatabaseAutomationDispatcher({
+      app: mounted.app,
+      runtime,
+      manager: openedDatabaseManager,
+      automations: databasePlanes.automations,
+      actorRegistry: config.databaseTopology.mode === 'multiple'
+        ? config.databaseTopology.realm.automations ?? null
+        : null,
+      observability: observabilityRuntime,
     });
     const stopped = installAppStopBarrier(
       mounted.app,

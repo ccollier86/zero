@@ -45,6 +45,9 @@ For durable orchestration, **Torrent** is Zero's workflow system. Torrent is
 product/documentation vocabulary; application code continues to use
 `workflows`, `@zero/framework/workflows`, `zero.workflows`, and the existing
 `useWorkflow*` hooks documented in [Torrent: Durable Workflows](./workflows.md).
+For versioned functions which react to ReactiveDB inserts, updates, and deletes,
+including same-transaction rollups and durable post-commit/Torrent effects, use
+[ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md).
 For the exact opt-in user-key configuration, per-route credential admission,
 live-authority lifecycle, SDK, and packaged management controls, read
 [Guardian User API Keys](./auth/api-keys.md).
@@ -921,7 +924,7 @@ Zero includes these backend capabilities out of the box:
 | --- | --- |
 | Auth | Users, installation bootstrap, all four tenancy/authorization profiles, durable scoped sessions, declarative RBAC, tenant/application administration, invitations/join requests, configured user properties, account gates, and installed-app OIDC/PKCE. |
 | Email | Provider boundary with Resend default and custom provider support. |
-| ReactiveDB | SQLite table definition, change tracking, ring-buffer replay, natural identity. |
+| ReactiveDB | SQLite table definition, change tracking, ring-buffer replay, natural identity, and [declarative transaction/durable database automations](./framework/reactive-database-automations.md). |
 | Sync | WebSocket snapshots, live updates, lazy/auto sync, sync policy hooks. |
 | Data API | `/api/data` reads for lazy tables with pagination, sorting, filtering, limits, and auth/policy integration. |
 | Data Studio | Optional organization-owned logical tables over Guardian permissions and fixed Fabric realm operations, with read-only HTTP/Sync reconciliation metadata plus dedicated bounded reads and command-only mutations. |

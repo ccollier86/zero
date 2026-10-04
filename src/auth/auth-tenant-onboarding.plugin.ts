@@ -92,7 +92,8 @@ export function createAuthTenantOnboardingPlugin(
         const administrationMfaSetup = authConfig.mfa.enabled
           && authConfig.mfa.policy === 'admin-required'
           && inspection.available
-          && inspection.tenant.kind === 'administration';
+          && inspection.tenant.kind === 'administration'
+          && inspection.platformAuthority;
         const account = await service.createInvitationAccount({
           token: body.token,
           username: body.username,

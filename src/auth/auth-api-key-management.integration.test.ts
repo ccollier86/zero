@@ -166,11 +166,44 @@ describe('Guardian API-key management HTTP routes', () => {
       harness,
       'POST',
       '/auth/api-keys',
-      { label: 'Must not become a platform key' },
+      { label: 'Administration workspace automation' },
       platform.accessToken,
     );
-    expect(administrationSelfIssue.status).toBe(403);
-    expect(administrationSelfIssue.body.code).toBe('FORBIDDEN');
+    expect(administrationSelfIssue).toMatchObject({
+      status: 200,
+      body: {
+        apiKey: {
+          scopeKind: 'tenant',
+          scopeId: platform.tenantId,
+          tenantId: platform.tenantId,
+          membershipId: platform.membershipId,
+        },
+      },
+    });
+    expect(await json(
+      harness,
+      'GET',
+      '/api/api-key-probe',
+      undefined,
+      administrationSelfIssue.body.secret,
+    )).toMatchObject({
+      status: 200,
+      body: {
+        credentialKind: 'api-key',
+        scopeKind: 'tenant',
+        tenantId: platform.tenantId,
+      },
+    });
+    expect((await json(
+      harness,
+      'GET',
+      '/api/platform-key-probe',
+      undefined,
+      platform.accessToken,
+    )).status).toBe(200);
+    expect((await fetch(`${harness.url}/api/platform-key-probe`, {
+      headers: { Authorization: `Bearer ${administrationSelfIssue.body.secret}` },
+    })).status).toBe(403);
 
     const owner = await register(harness, 'owner', 'API Key Org');
 
@@ -264,7 +297,13 @@ async function start(config: AuthBehaviorConfig): Promise<Harness> {
       scopeId: context.authContext.sessionScopeId,
       tenantId: context.authContext.tenantId ?? null,
       membershipId: context.authContext.membershipId ?? null,
-    }), { zeroAuth: API_KEY_ACCESS });
+    }), { zeroAuth: API_KEY_ACCESS })
+    .get('/api/platform-key-probe', () => ({ allowed: true }), {
+      zeroAuth: {
+        ...API_KEY_ACCESS,
+        permission: 'application.users:read',
+      },
+    });
   app.listen(0);
   const createdRuntime = runtime as AuthRuntime | null;
   if (!createdRuntime) throw new Error('Auth runtime was not created');

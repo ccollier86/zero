@@ -226,6 +226,8 @@ export type AuthTenantInvitationInspection =
   | {
       available: true;
       tenant: { name: string; slug: string; kind: TenantKind };
+      /** Whether the invitation's live role set crosses the platform-control boundary. */
+      platformAuthority: boolean;
       emailHint: string;
       expiresAt: number;
       account: 'sign-in' | 'create';

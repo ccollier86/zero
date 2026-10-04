@@ -25,6 +25,10 @@ import type {
   ResourceCrudRoutesConfig,
   ResourceDefinition,
 } from '../../resources';
+import type { DatabaseAutomationRegistry } from '../../database-automations/database-automations';
+import { admitDatabaseRealmAutomations } from '../../databases/database-realm-automation-admission';
+import { DatabaseError } from '../../databases/database-error';
+import { resolveSQLiteStorageConfig } from '../../persistence/storage-config';
 import type { KvServiceConfig } from '../../kv';
 import { resolvePdfConfig } from '../../pdf/pdf-config';
 import type { PdfConfig, ResolvedPdfConfig } from '../../pdf/pdf-types';
@@ -266,6 +270,13 @@ export interface AppConfig {
    * ```
    */
   tables: Record<string, AppTableInput>;
+
+  /**
+   * ReactiveDB functions and AFTER triggers installed on the pinned application
+   * database. Fabric realms declare their actor-local automations on the realm
+   * itself so every isolated file receives the same admitted registry.
+   */
+  databaseAutomations?: DatabaseAutomationRegistry;
 
   /**
    * Auth configuration.
@@ -520,6 +531,8 @@ export interface ResolvedConfig {
   systemDb: ReactiveDBConfig;
   databaseTopology: ResolvedAppDatabaseTopologyConfig;
   tables: Record<string, TableSchema>;
+  /** Schema-admitted functions/triggers for the pinned application database. */
+  databaseAutomations?: DatabaseAutomationRegistry;
   /** Server-only logical validators used by websocket mutation handling. */
   mutationValidators: Record<string, SyncTableMutationValidator>;
   auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
@@ -653,12 +666,33 @@ export function resolveConfig(
   }
   assertSupportedAppTableRowIdentities(normalized);
 
+  const databaseAutomations = admitDatabaseRealmAutomations(
+    config.databaseAutomations,
+    normalized,
+  );
+
   const databaseTopology = resolveAppDatabaseTopology(
     config.databaseTopology,
     authBehavior?.tenancy.mode ?? 'single',
     normalized,
   );
   const systemDb = resolveSystemDatabaseConfig(config.db, config.systemDb);
+  const durableDatabaseAutomations = registryHasDurableFunctions(databaseAutomations)
+    || (databaseTopology.mode === 'multiple'
+      && registryHasDurableFunctions(databaseTopology.realm.automations));
+  const systemDatabaseMode = systemDb.sqlite?.mode
+    ?? resolveSQLiteStorageConfig(systemDb).mode;
+  if (durableDatabaseAutomations && systemDatabaseMode === 'ephemeral') {
+    throw new DatabaseError(
+      'DATABASE_CONFIG_INVALID',
+      'Durable database functions require a crash-durable system database for source recovery.',
+      {
+        retryable: false,
+        outcome: 'not-started',
+        details: { component: 'database-automations' },
+      },
+    );
+  }
   const storageDir = config.storageDir ?? '.storage';
   const outDir = config.outDir ?? './.build';
   if (databaseTopology.mode === 'multiple') {
@@ -707,6 +741,7 @@ export function resolveConfig(
     systemDb,
     databaseTopology,
     tables: normalized,
+    ...(databaseAutomations === undefined ? {} : { databaseAutomations }),
     mutationValidators,
     auth,
     workflows,
@@ -753,6 +788,12 @@ export function resolveConfig(
     resolvedSyncModes: {},
     tableColumns,
   };
+}
+
+function registryHasDurableFunctions(
+  registry: DatabaseAutomationRegistry | undefined,
+): boolean {
+  return registry?.listFunctions().some(({ mode }) => mode === 'durable') ?? false;
 }
 
 /** Validate behavior and app-only token fields before config reaches startup. */

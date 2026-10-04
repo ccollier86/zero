@@ -556,7 +556,7 @@ function requireAdministrationMemberRoles(
 ): readonly string[] {
   if (roles === undefined || roles.length === 0) {
     throw new AuthError(
-      'Administration organization members require a platform administration role',
+      'Administration organization members require at least one explicit role',
       'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
       422,
     );

@@ -1,9 +1,18 @@
 // ─── Server: ReactiveDB ────────────────────────────────────────────────────
 export { ReactiveDB, createReactiveDB } from './reactive-db';
+export { registerReactiveDBMutationInterceptor } from './reactive-db-mutation-interceptor';
 export type {
   ExternalChangePollingOptions,
   ReactiveDBRowScope,
 } from './reactive-db';
+export type {
+  ReactiveDBMutationChange,
+  ReactiveDBMutationInterception,
+  ReactiveDBMutationInterceptor,
+  ReactiveDBReadOnlyRow,
+  ReactiveDBReadOnlyValue,
+} from './reactive-db-mutation-interceptor';
+export type { ReactiveDBTransactionToken } from './reactive-db-transaction-token';
 export { SYNC_TABLE_MUTATION_VALIDATOR } from './types';
 export type {
   ReactiveDBConfig,

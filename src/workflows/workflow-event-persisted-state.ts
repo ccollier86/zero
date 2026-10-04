@@ -12,6 +12,9 @@ import { MAX_WORKFLOW_EVENT_NAME_LENGTH } from './workflow-event-capacity-store'
 import { parsePersistedWorkflowJson, persistedWorkflowTimestamp } from './workflow-persisted-state-values';
 import { WorkflowExecutionAuthorityStore } from './workflow-execution-authority';
 import { WorkflowEventAuthorityStore } from './workflow-event-authority-store';
+import {
+  validateWorkflowSystemEventReceiptState,
+} from './workflow-system-event-receipt-integrity';
 
 interface PersistedEventEnvelope {
   event_id: string;
@@ -110,6 +113,7 @@ function validateWorkflowEventState(
     WHERE delivery.instance_id = ? AND event.event_id IS NULL LIMIT 1`)
     .get(instanceId) as { event_id: string } | null;
   if (orphan) throw invalidEventState('delivery row has no matching public event');
+  validateWorkflowSystemEventReceiptState(db, instanceId, eventAuthorities);
 }
 
 function validateEnvelope(

@@ -47,6 +47,7 @@ import type {
   ResolvedAuthTenantOnboardingConfig,
 } from './auth-tenant-onboarding-types';
 import type { AuthorizationKernel } from './authorization-kernel';
+import { rolesProjectApplicationAuthority } from './authorization-registry';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { roleGrantCeilingFromAuthority } from './authorization-role-grant';
 import type { TenancyService } from './tenancy/tenancy-service';
@@ -214,6 +215,13 @@ export class AuthTenantInvitationService {
           : ['tenant.invitations:manage', 'tenant.roles:manage'],
       );
       const tenant = this.requireActiveTenant(tenantId);
+      if (tenant.kind === 'administration' && inputRoleKeys === undefined) {
+        throw new AuthError(
+          'Administration organization invitations require an explicit role selection',
+          'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
+          422,
+        );
+      }
       const roleKeys = normalizeAuthTenantOnboardingRoleKeys({
         kernel: this.kernel,
         roleKeys: requestedRoleKeys,
@@ -409,6 +417,8 @@ export class AuthTenantInvitationService {
     return {
       available: true,
       tenant: { name: tenant.name, slug: tenant.slug, kind: tenant.kind },
+      platformAuthority: tenant.kind === 'administration'
+        && rolesProjectApplicationAuthority(this.kernel.authorization, invitation.roleKeys),
       emailHint: maskEmail(invitation.email),
       expiresAt: invitation.expiresAt,
       account: this.users.getUserByEmail(invitation.email) ? 'sign-in' : 'create',

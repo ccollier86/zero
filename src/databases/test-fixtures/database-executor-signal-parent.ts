@@ -1,6 +1,6 @@
 /** Test-only supervisor used to exercise terminal process-group shutdown. */
 
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { SubprocessDatabaseExecutor } from '../subprocess-database-executor';
@@ -11,6 +11,13 @@ const childPath = fileURLToPath(new URL(
   './database-executor-child.ts',
   import.meta.url,
 ));
+
+function publishResult(value: unknown): void {
+  if (!resultPath) return;
+  const pendingPath = `${resultPath}.pending`;
+  writeFileSync(pendingPath, JSON.stringify(value), { flag: 'wx' });
+  renameSync(pendingPath, resultPath);
+}
 
 if (!readyPath || !resultPath) {
   process.exitCode = 64;
@@ -47,19 +54,19 @@ if (!readyPath || !resultPath) {
     await Bun.sleep(25);
     await executor.close();
     const diagnostics = executor.diagnostics();
-    writeFileSync(resultPath, JSON.stringify({
+    publishResult({
       ok: diagnostics.lastFailureCode === null,
       diagnostics,
-    }), { flag: 'wx' });
+    });
     if (diagnostics.lastFailureCode !== null) process.exitCode = 70;
   } catch (error) {
-    writeFileSync(resultPath, JSON.stringify({
+    publishResult({
       ok: false,
       code: error && typeof error === 'object' && 'code' in error
         ? error.code
         : 'UNKNOWN',
       diagnostics: executor.diagnostics(),
-    }), { flag: 'wx' });
+    });
     process.exitCode = 70;
   }
 }

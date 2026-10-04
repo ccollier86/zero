@@ -1363,6 +1363,47 @@ describe('transactions', () => {
     expect(() => db.afterCommit(() => {})).toThrow(
       'afterCommit callbacks require an active transaction',
     );
+    expect(() => db.afterCommitFence(() => {})).toThrow(
+      'afterCommitFence callbacks require an active transaction',
+    );
+  });
+
+  test('surfaces nested mandatory fence failures after preserving the commit', () => {
+    const order: string[] = [];
+    db.onChange((change) => order.push(`change:${change.rowId}`));
+
+    expect(() => db.transaction(() => {
+      db.insert('todos', { id: 'fenced', title: 'Committed', done: 0 });
+      db.transaction(() => {
+        db.afterCommitFence(() => {
+          order.push('nested-fence');
+          throw new Error('durability outcome unknown');
+        });
+      });
+      db.afterCommitFence(() => order.push('outer-fence'));
+      db.afterCommit(() => order.push('notification'));
+    })).toThrow('durability outcome unknown');
+
+    expect(db.get('todos', 'fenced')).not.toBeNull();
+    expect(order).toEqual([
+      'nested-fence',
+      'outer-fence',
+      'change:fenced',
+      'notification',
+    ]);
+    expect(() => db.insert(
+      'todos',
+      { id: 'after-fence', title: 'Still usable', done: 0 },
+    )).not.toThrow();
+  });
+
+  test('discards mandatory fences when the transaction rolls back', () => {
+    let fenced = false;
+    expect(() => db.transaction(() => {
+      db.afterCommitFence(() => { fenced = true; });
+      throw new Error('rollback before fence');
+    })).toThrow('rollback before fence');
+    expect(fenced).toBe(false);
   });
 
   test('runs afterCommit callbacks once in registration order after state resets', () => {

@@ -5,9 +5,10 @@ import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { captureAuthApplicationMutationAuthority } from './auth-application-mutation-authority';
+import { createAuthMiddleware } from './auth.middleware';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
-import type { AuthAuthorizationConfig } from './types';
+import { AuthError, type AuthAuthorizationConfig } from './types';
 
 interface Harness {
   app: AnyElysia;
@@ -71,7 +72,7 @@ describe('protected platform administration', () => {
       },
     });
     expect(config.body.roles.find((role: any) => role.key === 'member'))
-      .toMatchObject({ administrationOnly: false, assignable: false });
+      .toMatchObject({ administrationOnly: false, assignable: true, grantable: true });
     expect(config.body.roles.find((role: any) => role.key === 'administrator'))
       .toMatchObject({ administrationOnly: true, assignable: true });
     expect(config.body.customerRoles.find((role: any) => role.key === 'member'))
@@ -521,6 +522,7 @@ describe('protected platform administration', () => {
     const owner = await register(harness, 'platform-ceiling-owner');
     const delegate = await register(harness, 'platform-ceiling-delegate');
     const target = await register(harness, 'platform-ceiling-target');
+    const appMember = await register(harness, 'platform-ceiling-app-member');
 
     expect(await request(harness, 'POST', '/auth/platform/members', {
       email: delegate.user.email,
@@ -559,20 +561,18 @@ describe('protected platform administration', () => {
       expect(requestedPermissions).toEqual(['tenant.members:manage']);
     }
     expect(await request(harness, 'POST', '/auth/platform/members', {
-      email: delegate.user.email,
+      email: appMember.user.email,
       roles: ['member'],
     }, owner.accessToken)).toMatchObject({
-      status: 422,
-      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
+      status: 200,
+      body: { member: { roles: ['member'] } },
     });
-    expect(await request(harness, 'POST', '/auth/platform/invitations', {
-      email: 'invalid-admin-invite@example.test',
+    const appInvite = await request(harness, 'POST', '/auth/platform/invitations', {
+      email: 'app-member-invite@example.test',
       roles: ['manager'],
       delivery: 'manual',
-    }, owner.accessToken)).toMatchObject({
-      status: 422,
-      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
-    });
+    }, owner.accessToken);
+    expect(appInvite.status).toBe(200);
     const adminInvite = await request(harness, 'POST', '/auth/platform/invitations', {
       email: 'admin-invited@example.test',
       roles: ['administrator'],
@@ -789,7 +789,7 @@ describe('protected platform administration', () => {
     )).toMatchObject({ status: 200, body: { member: { status: 'removed' } } });
   }, 60_000);
 
-  test('keeps out-of-kind assignments inert and lets only the live owner clean them up', async () => {
+  test('supports mixed app and platform roles with independent grant ceilings', async () => {
     const harness = await start({ mode: 'advanced' });
     const owner = await register(harness, 'platform-scope-cleanup-owner');
     const delegate = await register(harness, 'platform-scope-cleanup-delegate');
@@ -838,14 +838,14 @@ describe('protected platform administration', () => {
       tenantId: owner.tenant.tenantId,
       membershipId: targetMember.body.member.membershipId,
       userId: target.user.userId,
-    })?.roles).toEqual(['administrator']);
+    })?.roles).toEqual(['administrator', 'member']);
 
     const delegateSession = await switchTenant(
       harness,
       delegate.refreshToken,
       owner.tenant.tenantId,
     );
-    expect(await request(
+    const appRoleRemoved = await request(
       harness,
       'PATCH',
       `/auth/platform/members/${targetMember.body.member.membershipId}`,
@@ -854,38 +854,207 @@ describe('protected platform administration', () => {
         expectedRoleRevision: listed.body.members[0].roleRevision,
       },
       delegateSession.accessToken,
-    )).toMatchObject({
-      status: 403,
-      body: { code: 'TENANT_ROLE_ESCALATION_FORBIDDEN' },
-    });
-
-    const cleaned = await request(
-      harness,
-      'PATCH',
-      `/auth/platform/members/${targetMember.body.member.membershipId}`,
-      {
-        roles: ['administrator'],
-        expectedRoleRevision: listed.body.members[0].roleRevision,
-      },
-      owner.accessToken,
     );
-    expect(cleaned).toMatchObject({
+    expect(appRoleRemoved).toMatchObject({
       status: 200,
       body: { member: { roles: ['administrator'] } },
     });
-    expect(await request(
+
+    const mixed = await request(
       harness,
       'PATCH',
       `/auth/platform/members/${targetMember.body.member.membershipId}`,
       {
         roles: ['administrator', 'member'],
-        expectedRoleRevision: cleaned.body.member.roleRevision,
+        expectedRoleRevision: appRoleRemoved.body.member.roleRevision,
       },
       owner.accessToken,
-    )).toMatchObject({
-      status: 422,
-      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
+    );
+    expect(mixed).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['administrator', 'member'] } },
     });
+  }, 60_000);
+
+  test('keeps app and platform authority independent for administration members', async () => {
+    const harness = await start({
+      mode: 'advanced',
+      permissions: {
+        'documents:read': {
+          label: 'Read documents',
+          scope: 'tenant',
+        },
+      },
+      roles: {
+        builder: {
+          label: 'Builder',
+          permissions: ['documents:read'],
+        },
+      },
+    });
+    const owner = await register(harness, 'platform-independent-owner');
+    const builder = await register(harness, 'platform-independent-builder');
+
+    const added = await request(harness, 'POST', '/auth/platform/members', {
+      email: builder.user.email,
+      roles: ['builder'],
+    }, owner.accessToken);
+    expect(added).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['builder'] } },
+    });
+
+    let builderSession = await switchTenant(
+      harness,
+      builder.refreshToken,
+      owner.tenant.tenantId,
+    );
+    expect(await request(
+      harness,
+      'GET',
+      '/api/documents',
+      undefined,
+      builderSession.accessToken,
+    )).toMatchObject({ status: 200, body: { allowed: true } });
+    expect(await request(
+      harness,
+      'GET',
+      '/api/platform-probe',
+      undefined,
+      builderSession.accessToken,
+    )).toMatchObject({ status: 403, body: { code: 'FORBIDDEN' } });
+    expect(await request(
+      harness,
+      'GET',
+      '/auth/platform/tenants',
+      undefined,
+      builderSession.accessToken,
+    )).toMatchObject({ status: 403, body: { code: 'FORBIDDEN' } });
+
+    const mixed = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${added.body.member.membershipId}`,
+      {
+        roles: ['builder', 'administrator'],
+        expectedRoleRevision: added.body.member.roleRevision,
+      },
+      owner.accessToken,
+    );
+    expect(mixed).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['administrator', 'builder'] } },
+    });
+    expect((await request(
+      harness,
+      'GET',
+      '/api/documents',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(401);
+
+    builderSession = await login(
+      harness,
+      builder.user.email,
+      owner.tenant.tenantId,
+    );
+    expect((await request(
+      harness,
+      'GET',
+      '/api/documents',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(200);
+    expect((await request(
+      harness,
+      'GET',
+      '/api/platform-probe',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(200);
+    expect((await request(
+      harness,
+      'GET',
+      '/auth/platform/tenants',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(200);
+
+    const appOnly = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${added.body.member.membershipId}`,
+      {
+        roles: ['builder'],
+        expectedRoleRevision: mixed.body.member.roleRevision,
+      },
+      owner.accessToken,
+    );
+    expect(appOnly).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['builder'] } },
+    });
+    expect((await request(
+      harness,
+      'GET',
+      '/api/platform-probe',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(401);
+
+    builderSession = await login(
+      harness,
+      builder.user.email,
+      owner.tenant.tenantId,
+    );
+    expect((await request(
+      harness,
+      'GET',
+      '/api/documents',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(200);
+    expect((await request(
+      harness,
+      'GET',
+      '/api/platform-probe',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(403);
+
+    const platformOnly = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${added.body.member.membershipId}`,
+      {
+        roles: ['administrator'],
+        expectedRoleRevision: appOnly.body.member.roleRevision,
+      },
+      owner.accessToken,
+    );
+    expect(platformOnly).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['administrator'] } },
+    });
+    builderSession = await login(
+      harness,
+      builder.user.email,
+      owner.tenant.tenantId,
+    );
+    expect((await request(
+      harness,
+      'GET',
+      '/api/documents',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(403);
+    expect((await request(
+      harness,
+      'GET',
+      '/api/platform-probe',
+      undefined,
+      builderSession.accessToken,
+    )).status).toBe(200);
   }, 60_000);
 
   test('revalidates application authority inside tenant lifecycle writes', async () => {
@@ -1027,17 +1196,48 @@ async function start(
     config: { console: false },
   });
   let runtime: AuthRuntime | null = null;
-  const app = new Elysia().use(createAuthPlugin({
-    db,
-    runtime: appRuntime,
-    tenancy: 'multi',
-    authorization,
-    bootstrap: 'public',
-    registration: { mode: 'public' },
-    onRuntimeCreated(created) {
-      runtime = created;
-    },
-  }));
+  const app = new Elysia()
+    .onError(({ error, request, set }) => {
+      if (!new URL(request.url).pathname.startsWith('/api/')
+        || !(error instanceof AuthError)) return undefined;
+      set.status = error.status;
+      return { error: error.message, code: error.code };
+    })
+    .use(createAuthPlugin({
+      db,
+      runtime: appRuntime,
+      tenancy: 'multi',
+      authorization,
+      bootstrap: 'public',
+      registration: { mode: 'public' },
+      onRuntimeCreated(created) {
+        runtime = created;
+      },
+    }))
+    .use(createAuthMiddleware(
+      () => runtime?.getTokenService() ?? null,
+      {
+        getRequestCredentialResolver: () => (
+          runtime?.getRequestCredentialResolver() ?? null
+        ),
+        getAuthorizationKernel: () => runtime?.getAuthorizationKernel() ?? null,
+        getPropertyStore: () => runtime?.getStore() ?? null,
+        getRoleAssignments: () => runtime?.getAuthorizationRoleService() ?? null,
+      },
+    ))
+    .get('/api/documents', () => ({ allowed: true }), {
+      zeroAuth: {
+        user: 'required',
+        tenant: 'required',
+        permission: 'documents:read',
+      },
+    })
+    .get('/api/platform-probe', () => ({ allowed: true }), {
+      zeroAuth: {
+        user: 'required',
+        permission: 'application.users:read',
+      },
+    });
   app.listen(0);
   const createdRuntime = runtime as AuthRuntime | null;
   if (!createdRuntime) throw new Error('Auth runtime was not created');
@@ -1082,6 +1282,33 @@ async function register(harness: Harness, key: string): Promise<Session> {
   return {
     user: response.body.user,
     tenant: response.body.tenant,
+    accessToken: response.body.accessToken,
+    refreshToken: response.body.refreshToken,
+  };
+}
+
+async function login(
+  harness: Harness,
+  email: string,
+  tenantId: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const response = await request(harness, 'POST', '/auth/login', {
+    username: email,
+    password: 'password123',
+  });
+  expect(response.status).toBe(200);
+  if (response.body.tenantSelectionRequired === true) {
+    const selected = await request(harness, 'POST', '/auth/tenants/select', {
+      continuation: response.body.tenantSelection.continuation,
+      tenantId,
+    });
+    expect(selected.status).toBe(200);
+    return {
+      accessToken: selected.body.accessToken,
+      refreshToken: selected.body.refreshToken,
+    };
+  }
+  return {
     accessToken: response.body.accessToken,
     refreshToken: response.body.refreshToken,
   };

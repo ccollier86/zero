@@ -301,6 +301,9 @@ The first implementation routes these platform paths through the sink:
   and bounded shutdown
 - scheduler job failures
 - ReactiveDB change-listener failures
+- ReactiveDB database-automation dispatcher lifecycle, durable delivery claims,
+  completions, retries, dead letters, lease recovery/loss, manifest drift,
+  abandoned executions, and scoped-service cleanup failures
 - sync-mode startup warnings
 - sync policy callback failures
 - SSR renderer failures
@@ -322,6 +325,21 @@ interaction bodies, or delivery content. A failed activity's thrown value is sti
 `error`; configured sinks own external serialization/redaction, so application
 errors must not embed secrets or sensitive records in messages, stacks, or
 custom fields.
+
+Idempotent system delivery emits `workflows.system_event.delivered`,
+`workflows.system_event.replayed`, `workflows.system_event.conflict`, or
+`workflows.system_event.delivery_failed`. Their metadata may include the run,
+event name, bounded system principal, and scope kind; it never includes the
+idempotency key, command fingerprint, payload, or authority reason.
+
+ReactiveDB durable functions emit stable `database.automation_dispatcher.*`,
+`database.automation_delivery.*`, `database.automation_manifest.drift`,
+`database.automation_execution.abandoned`, and
+`database.automation_service.cleanup_failed` events. Metadata is deliberately
+low-cardinality: source kind, attempt number, bounded terminal reason, and
+aggregate recovery counts. It excludes source references, tenant and row
+identities, invocation and delivery identities, lease tokens, function input,
+and handler output.
 
 CLI presentation in `src/migrations/run.ts` intentionally remains direct
 console output because it is command UI.
