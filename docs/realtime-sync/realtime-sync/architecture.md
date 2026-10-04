@@ -218,11 +218,24 @@ interface SyncClient {
   readonly store: SyncStore;
   readonly connected: boolean;
   insert(table: string, row: Row): void;   // optimistic + WS send
+  insertAsync(table: string, row: Row, options?: SyncMutationWaitOptions): Promise<void>;
   update(table: string, id: string, partial: Partial<Row>): void;
+  updateAsync(
+    table: string,
+    id: string,
+    partial: Partial<Row>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
   delete(table: string, id: string): void;
+  deleteAsync(table: string, id: string, options?: SyncMutationWaitOptions): Promise<void>;
   disconnect(): void;
 }
 ```
+
+The void methods preserve the original immediate-return contract. Async
+methods take the same optimistic path and await the exact server receipt. Their
+abort/overall-wait options govern only the caller's bounded wait after
+submission; they are not write-cancellation primitives.
 
 See [SyncStore deep dive](./sync-store.md).
 

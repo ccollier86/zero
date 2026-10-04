@@ -383,15 +383,18 @@ describe('resolveConfig', () => {
   });
 
   test('normalizes workflow registration and enforces its auth dependency', () => {
-    const register = () => undefined;
+    const register = (_registry: unknown, context: { ai: unknown }) => {
+      void context.ai;
+    };
+    const onServiceCreated = () => undefined;
     const interactionAuthority = new WorkflowInteractionAuthority(() => true);
     const configured = resolveConfig({
       db: { mode: 'memory' },
       tables,
       auth: true,
-      workflows: { register, interactionAuthority },
+      workflows: { register, onServiceCreated, interactionAuthority },
     });
-    expect(configured.workflows).toEqual({ register, interactionAuthority });
+    expect(configured.workflows).toEqual({ register, onServiceCreated, interactionAuthority });
 
     const disabled = resolveConfig({
       db: { mode: 'memory' },

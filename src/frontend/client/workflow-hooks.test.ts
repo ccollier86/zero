@@ -1277,13 +1277,16 @@ class TestCollection<T extends Row> {
         return () => this.listeners.delete(callback);
       },
       insert: () => undefined,
+      insertAsync: async () => undefined,
       identityKey: () => '',
       getByIdentity: () => null,
       upsertByIdentity: () => undefined,
       updateByIdentity: () => undefined,
       deleteByIdentity: () => undefined,
       update: () => undefined,
+      updateAsync: async () => undefined,
       remove: () => undefined,
+      removeAsync: async () => undefined,
       load: () => undefined,
       clear: () => this.replace([]),
     };

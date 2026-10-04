@@ -396,6 +396,15 @@ export default function CustomersPage() {
 }
 ```
 
+For a large directory, switch the same organism to
+`source={{ type: 'server', table: 'customers' }}` and set
+`searchable={{ fields: ['name'] }}`. That mode sends search, filters, sorting,
+and offset pagination through the authenticated `/api/data` adapter while
+keeping each accepted page outside the shared collection. Cursor APIs can
+supply a `DataTableServerAdapter`. Existing collection tables and their
+post-write `onCellEdit` notifications require no rewrite; use `onCellCommit`
+only for a custom authoritative writer.
+
 Server code can write through ReactiveDB. Today, file `app/api/**/route.ts`
 handlers receive `LoaderContext`, so app code should use server getters when it
 needs platform services:
@@ -830,21 +839,87 @@ const config = {
 } satisfies AppConfig;
 ```
 
-Supported providers are activated by env/config. Examples:
+The catalog includes Vercel AI Gateway, major language and multimodal
+providers, cloud-native Claude Platform on AWS/Bedrock/Azure/Vertex adapters,
+embedding providers, and dedicated image, transcription, and speech providers.
+Simple providers
+activate from an API key or documented bearer token. Cloud providers require
+their complete endpoint and credential shape. Representative env forms:
 
 ```txt
+AI_GATEWAY_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
+ANTHROPIC_AUTH_TOKEN=
+ANTHROPIC_AWS_API_KEY=
+ANTHROPIC_AWS_WORKSPACE_ID=
+ANTHROPIC_AWS_BASE_URL=
 GEMINI_API_KEY=
-GROQ_API_KEY=
-XAI_API_KEY=
-COHERE_API_KEY=
-LLAMA_API_KEY=
-DEEPSEEK_API_KEY=
-PERPLEXITY_API_KEY=
-VOYAGE_API_KEY=
-DEEPGRAM_API_KEY=
+AWS_REGION=
+AWS_BEARER_TOKEN_BEDROCK=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
+BEDROCK_BASE_URL=
+AMAZON_BEDROCK_BASE_URL=
+AWS_ENDPOINT_URL_BEDROCK_RUNTIME=
+AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME=
+AWS_ENDPOINT_URL=
+AZURE_RESOURCE_NAME=
+AZURE_API_KEY=
+AZURE_BASE_URL=
+GOOGLE_VERTEX_API_KEY=
+GOOGLE_VERTEX_PROJECT=
+GOOGLE_VERTEX_LOCATION=
+PRODIA_TOKEN=
+KLINGAI_API_KEY=
+KLINGAI_ACCESS_KEY=
+KLINGAI_SECRET_KEY=
+CARTESIA_API_KEY=
+GMI_CLOUD_APIKEY=
+TOPAZ_API_KEY=
 ```
+
+Use `AIProviderConfig.headers` and `fetch` for request middleware, and
+`settings` for cloud credential providers, cloud endpoints, gateway metadata
+caching, or provider-specific construction options. The complete catalog and
+activation table is in [AI Providers](./ai-providers.md).
+
+Provider `apiKey` and `baseURL` values are tri-state: omitted inherits env, a
+string overrides it, and `null` suppresses env inheritance for that field (a
+fixed adapter service endpoint can still apply). Explicit alternate cloud
+credential settings suppress ambient API keys and conflicting explicit modes
+fail closed.
+
+Claude Platform on AWS requires a workspace ID and either API-key auth with a
+region/endpoint or complete SigV4 auth. Kling similarly accepts one API key or
+its complete legacy access-key pair. Prodia, Cartesia, GMI Cloud, and Topaz use
+their documented single-key variables. The canonical capability and precedence
+matrix is in [AI Providers](./ai-providers.md).
+
+Gateway auto-detection requires `AI_GATEWAY_API_KEY`; explicit
+`gateway: { type: 'gateway', apiKey: null }` opts in to Vercel OIDC without
+inheriting that ambient key. Generated config uses the runtime readiness
+resolver for complete env shapes. `ZERO_AI_ENABLED` overrides automatic on/off
+selection, but OIDC and dynamic callbacks still require explicit trusted
+provider config.
+
+`AI_PROVIDER_CATALOG` is a frozen public metadata export for Doctor-style
+tooling and provider selectors. Treat it as descriptive metadata; activation
+comes from the resolver so cloud and alternate credential modes are not lost:
+
+```ts
+import { resolveAIConfig } from '@zero/framework/server';
+
+const detected = resolveAIConfig(true);
+const hasActiveProvider = detected !== false
+  && Object.values(detected.providers).some((provider) => provider.active);
+```
+
+This is an adapter catalog, not a live Gateway/provider model-and-price
+catalog. Provider settings and secrets currently come from trusted app config
+and environment variables; no database-backed AI configuration plane is
+implemented.
 
 Use AI from server code:
 
@@ -857,7 +932,7 @@ export async function POST({ request }: LoaderContext) {
 
   const { prompt } = await request.json();
   const result = await ai.generateText({
-    model: 'openai:gpt-4.1-mini',
+    model: 'openai/gpt-4.1-mini',
     prompt,
   });
 
@@ -876,7 +951,7 @@ const conversation = ai?.conversation()
   .user('Call notes...');
 
 const result = await conversation?.generate({
-  model: 'anthropic:claude-sonnet-4',
+  model: 'anthropic/claude-sonnet-4',
 });
 ```
 
@@ -904,11 +979,28 @@ const tools = defineAITools({
 });
 
 await getAI()?.generateText({
-  model: 'openai:gpt-4.1-mini',
+  model: 'openai/gpt-4.1-mini',
   prompt: 'Find the customer',
   tools,
 });
 ```
+
+Model references always use `providerId/modelId`. Provider capability flags
+describe the adapter surface; the selected provider model must support the
+operation too. Zero exposes AI SDK 7 text/streaming, typed output, tools,
+vision, single/batch embeddings, reranking, images, transcription, speech,
+bounded provider-hosted files, preview video, bounded ephemeral agents, and
+the Torrent-durable agent bridge.
+Remote prompt assets which the selected model cannot consume by URL are always
+materialized through Zero's Bun DNS-pinned, redirect-validated downloader with
+the fixed 64-MiB aggregate `AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES` budget.
+Downloads are sequential; provider-native URLs remain remote and do not
+consume that budget.
+See [AI](./ai.md), [AI Generation And Streaming](./ai-generation.md),
+[AI Embeddings And Reranking](./ai-embeddings-reranking.md),
+[AI Hosted Files And Video](./ai-files-video.md), [AI Agents](./ai-agents.md),
+and [Durable AI Agents With Torrent](./ai-durable-agents.md) before extending
+the service.
 
 No public AI gateway routes are mounted by default.
 

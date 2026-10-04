@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { defineSchema, field } from '../../schema';
 import { DataTable } from './data-table';
 import { DataTableSearch } from './data-table-search';
+import { DataTableControls } from './data-table-controls';
 
 const userSchema = defineSchema({
   username: field.text({ label: 'Username' }),
@@ -130,6 +131,30 @@ describe('DataTable toolbar', () => {
     );
 
     expect(markup).not.toContain('data-slot="data-table-toolbar"');
+  });
+});
+
+describe('DataTableControls composition', () => {
+  test('supports server-backed search-first controls and optional slots without table state', () => {
+    const markup = renderToStaticMarkup(
+      <DataTableControls
+        aria-label="Organization controls"
+        search={<DataTableSearch value="" onValueChange={() => undefined} />}
+        controls={<button type="button">Filter organizations</button>}
+        actions={<button type="button">Refresh directory</button>}
+        supplemental={<span>Showing active organizations</span>}
+      />,
+    );
+    expect(markup).toContain('aria-label="Organization controls"');
+    expect(markup.indexOf('role="searchbox"')).toBeLessThan(markup.indexOf('Filter organizations'));
+    expect(markup.indexOf('Filter organizations')).toBeLessThan(markup.indexOf('Refresh directory'));
+    expect(markup.indexOf('Refresh directory')).toBeLessThan(markup.indexOf('Showing active organizations'));
+
+    const minimal = renderToStaticMarkup(
+      <DataTableControls search={<DataTableSearch value="" onValueChange={() => undefined} />} />,
+    );
+    expect(minimal).not.toContain('data-table-toolbar-right');
+    expect(minimal).not.toContain('data-table-toolbar-below');
   });
 });
 

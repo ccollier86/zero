@@ -12,6 +12,20 @@ const userSchema = defineSchema({
 });
 
 describe('DataTable cell rendering', () => {
+  test('renders every supplied row when pagination is disabled', () => {
+    const rows = Array.from({ length: 35 }, (_, index) => ({ id: `row-${index}`, username: `record-${index}` }));
+    const allRows = renderToStaticMarkup(
+      <DataTable schema={userSchema} primaryKey="id" columns={['username']} data={rows} paginated={false} />,
+    );
+    const firstPage = renderToStaticMarkup(
+      <DataTable schema={userSchema} primaryKey="id" columns={['username']} data={rows} paginated={{ pageSize: 20 }} />,
+    );
+    expect(allRows).toContain('record-34');
+    expect(allRows).not.toContain('data-table-pagination');
+    expect(firstPage).toContain('record-19');
+    expect(firstPage).not.toContain('record-20');
+    expect(firstPage).toContain('Showing 1-20 of 35');
+  });
   test('renders accessor values when a column has no custom cell override', () => {
     const markup = renderToStaticMarkup(
       <DataTable
@@ -146,7 +160,7 @@ describe('DataTable row interaction', () => {
     expect(row).toContain('focus-visible:ring-2');
     expect(row).not.toContain('role="button"');
     expect(markup).toContain('aria-label="Select row"');
-    expect(markup).toContain('>Open menu</span>');
+    expect(markup).toContain('>Open row actions</span>');
   });
 
   test('keeps rows without a click handler out of the tab order', () => {

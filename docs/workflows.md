@@ -177,11 +177,12 @@ export default defineZeroConfig({
 });
 ```
 
-`AppWorkflowsConfig` has three optional settings:
+`AppWorkflowsConfig` has four optional settings:
 
 | Option | Default | Contract |
 | --- | --- | --- |
-| `register` | No callback | Registers trusted activities and code-authored definitions during app composition. Zero awaits synchronous or asynchronous registration before recovery and service publication. |
+| `register` | No callback | Registers trusted activities and code-authored definitions during app composition. It receives `(registry, { ai })`, where `ai` is this app's isolated `AIService` or `null`. Zero awaits synchronous or asynchronous registration before recovery and service publication. |
+| `onServiceCreated` | No callback | Synchronously observes this app's recovered, published `WorkflowService`. Use it to bind an app-local integration already registered in `register`; throwing rolls startup back. |
 | `shutdownGraceMs` | `30_000` | Maximum time to wait for physical handlers to settle after cancellation during shutdown. It must be a safe integer from `0` through `2_147_483_647`. |
 | `interactionAuthority` | Built-in starter-only authority | Replaces Torrent's default human/agent response policy with one fail-closed Guardian/app `WorkflowInteractionAuthority`. It does not grant run inspection or lifecycle authority. |
 
@@ -604,7 +605,7 @@ The DSL builds inert descriptors and compiles them into canonical graph IR:
 | `step(id, activity, options?)` | Invoke one registered activity. |
 | `choose(id, when(...), otherwise(...))` | Select the first true branch, otherwise the required fallback. |
 | `parallel(id, branches)` | Start named branches together and continue after their generated all-branches join. |
-| `each(id, source, body, options?)` | Snapshot an array and invoke one activity for each item with bounded concurrency. |
+| `each(id, source, body, options?)` | Snapshot an array and invoke one activity for each item with bounded concurrency; use `visibility: 'private'` when item payloads must not enter public run/step rows. |
 | `waitFor(id, event, options?)` | Wait for a named durable event. |
 | `requestAndWait(id, event, options?)` | Open a durable interaction, optionally deliver a request, and wait for one accepted response. |
 
@@ -673,6 +674,16 @@ is explicit: `{ ok: true, value }` for success or
 An `each` body is one activity invocation. Put a reusable multi-step sequence
 inside that activity, or model additional graph work after the aggregated
 `each` result.
+
+`visibility` defaults to `'public'`. With `visibility: 'private'`, Torrent
+stores the snapshotted source, item inputs, and item outputs only in its
+underscore-prefixed private execution tables. The public parent and child step
+rows retain safe topology, status, labels, indexes, and timing, but their
+payload-bearing input/output columns remain `null`. Private fan-out items also
+share the run's instance scratch-memory namespace so a trusted downstream
+activity can assemble results without copying them through a public aggregate
+output. This is a projection boundary, not encryption: keep credentials in a
+secret manager and continue to authorize every effect.
 
 ## Canonical Graph IR
 
@@ -941,9 +952,9 @@ Workflow code encounters two deliberately different service surfaces:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `runAsActor` | `(name: string, input: unknown, authContext: AuthContext, options?: WorkflowStartOptions, assertCurrentAuthority?: () => void) => Promise<instanceId>` | Derive/seal a live request credential and scope, enforce start access, optionally pin a version, then execute. The fifth argument is a low-level adapter fence, not an ordinary application option. |
-| `runAsSystem` | `(name, input, { principal, reason, scope }, { version? }?) => Promise<instanceId>` | Explicit audited privileged background execution with optional version pinning |
-| `run` | `(name, input?, startedBy?, scopeOrOptions?, options?) => Promise<instanceId>` | Standalone compatibility only; accepts `{ version? }` directly in single-tenant mode, or a trusted scope followed by `{ version? }` when scope and version are both required. Managed raw services require an actor/system method. |
+| `runAsActor` | `(name: string, input: unknown, authContext: AuthContext, options?: WorkflowStartOptions, assertCurrentAuthority?: () => void) => Promise<instanceId>` | Derive/seal a live request credential and scope, enforce start access, optionally pin a version, seed graph-private memory, or select a bounded per-run memory policy, then execute. The fifth argument is a low-level adapter fence, not an ordinary application option. |
+| `runAsSystem` | `(name, input, { principal, reason, scope }, options?) => Promise<instanceId>` | Explicit audited privileged background execution with an optional version pin, graph-private memory seed, or bounded per-run memory policy. |
+| `run` | `(name, input?, startedBy?, scopeOrOptions?, options?) => Promise<instanceId>` | Standalone compatibility only; accepts `WorkflowStartOptions` directly in single-tenant mode, or a trusted scope followed by those options when scope and version are both required. Managed raw services require an actor/system method. |
 | `advance` | `(instanceId, scope?) => Promise<void>` | Execute next pending step; multi-tenant callers require the validated owning scope |
 | `sendEvent` | `(instanceId, eventName, payload?, sentBy?, scopeOrActor?, actor?, mutation?) => Promise<boolean>` | Persist an event under trusted scope/actor authority and report whether the legal frontier claimed it |
 | `stop` | `(instanceId, scope?, mutation?) => void` | Set workflow and all pending/waiting steps to cancelled |
@@ -963,6 +974,17 @@ current Guardian authority, then carries a synchronous assertion to the final
 ReactiveDB writer transaction so authorization cannot change between admission
 and commit. Normal application code should use scoped `zero.workflows`, or the
 four-argument actor form when it legitimately holds a live `AuthContext`.
+
+`WorkflowStartOptions` accepts `version`, the trusted graph-only
+`initialMemory` map, and a trusted `memoryLimits` override. `initialMemory` is
+validated and written atomically with the new run, its authority seal, version
+selection, and normalized memory policy. A failed validation or stale
+authority assertion leaves none of those rows behind. The seed and policy are
+never copied into Sync-visible run or step input, are not accepted by the
+workflow HTTP start route, and are rejected for legacy sequential workflows.
+Use them from trusted server composition for private durable context such as an
+AI-agent transcript or bounded correlation state; do not turn either into a
+caller-selected browser payload.
 
 `captureActorAuthorityFence(authContext)` returns the secret-free captured
 actor authority plus its `assertCurrentAuthority` callback.
@@ -1078,9 +1100,39 @@ Memory entries use optimistic versions and enforce bounded JSON storage. The
 managed runtime allows 256-byte UTF-8 keys, 256 entries, 64 KiB per value, and
 1 MiB total per namespace.
 
+A trusted graph start can narrow or raise those defaults for that run with
+`WorkflowStartOptions.memoryLimits`:
+
+```ts
+await workflows.runAsSystem('bounded-import', input, systemAuthority, {
+  version: 3,
+  memoryLimits: {
+    maxValueBytes: 256 * 1024,
+    maxEntries: 1_024,
+    maxTotalBytes: 8 * 1024 * 1024,
+  },
+});
+```
+
+The override is a partial `WorkflowMemoryLimits` object. Torrent fills omitted
+fields from the ordinary defaults, requires positive safe integers, and caps
+the normalized policy at 1,024 bytes per key, 1 MiB per value, 4,096 entries,
+and 16 MiB total. `maxValueBytes` cannot exceed `maxTotalBytes`. The normalized
+policy is immutable for the run, persists with its private runtime state, and
+is restored before recovery resumes work. It is a trusted service-only graph
+contract: browser/HTTP starts cannot set it, and legacy sequential workflows
+reject it.
+
 Scratch memory is execution state, not a general app database. `_workflow_memory`
 is private, excluded from HTTP and Sync, and removed with its run. Store app
 records in app tables and keep large files in Zero Storage.
+
+Trusted graph starts can seed this namespace with
+`WorkflowStartOptions.initialMemory`. Seeding uses the same key, value, entry,
+and aggregate policy that later `ctx.memory` writes use and commits in the
+graph creation transaction. This contract is what lets integrations such as
+durable AI agents begin with private prompts and typed contexts without
+exposing them as public workflow input.
 
 ## Durable Waits And Interactions
 
@@ -1597,9 +1649,9 @@ interchangeable:
 
 | Method | Behavior |
 | --- | --- |
-| Scoped `zero.workflows.run()` / `.start()` | Capture the current actor, enforce definition access, close over the active scope, optionally accept `{ version? }`, create durable state, and drive ready nodes. |
+| Scoped `zero.workflows.run()` / `.start()` | Capture the current actor, enforce definition access, close over the active scope, optionally accept trusted `WorkflowStartOptions`, create durable state, and drive ready nodes. |
 | Raw `runAsActor()` / `startAsActor()` | Start under an exact live Guardian session or API-key authority. Signature: `(name, input, authContext, options?, assertCurrentAuthority?)`; the optional fifth callback is reserved for low-level adapters and is asserted in the final writer transaction. |
-| Raw `runAsSystem()` / `startAsSystem()` | Start under an explicit `{ principal, reason, scope }` system authority. Accepts `{ version? }` as the final argument. |
+| Raw `runAsSystem()` / `startAsSystem()` | Start under an explicit `{ principal, reason, scope }` system authority. Accepts `WorkflowStartOptions` as the final argument. |
 | Raw `run()` / `start()` | Standalone compatibility only. A managed raw service rejects this path rather than silently granting system authority. |
 | `get()` / `getInstance()` | Read one instance in trusted server code. |
 | `list()` / `listInstances()` | List instances; HTTP adds owner scope. |

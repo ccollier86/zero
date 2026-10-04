@@ -1,179 +1,90 @@
 /**
  * ai-types.ts
  *
- * Defines public contracts for Zero's internal AI layer. These types are
- * framework-neutral and intentionally avoid provider SDK concrete classes so
- * app code can depend on stable platform boundaries.
+ * Defines request and result contracts for Zero's internal AI layer and
+ * preserves the established provider-type re-exports. These types are
+ * framework-neutral so app code can depend on stable platform boundaries.
  */
 
 import type {
+  ActiveTools,
+  EmbedEndEvent,
+  EmbedStartEvent,
   FinishReason,
+  GenerateTextInclude,
+  GenerateTextOnAbortCallback,
+  GenerateTextOnEndCallback,
+  GenerateTextOnStartCallback,
+  GenerateTextOnStepEndCallback,
+  GenerateTextOnStepStartCallback,
   GenerateImageResult,
   GenerateTextResult,
+  Instructions,
+  LanguageModelCallOptions,
+  OnLanguageModelCallEndCallback,
+  OnLanguageModelCallStartCallback,
+  OnToolExecutionEndCallback,
+  OnToolExecutionStartCallback,
+  PrepareStepFunction,
+  StopCondition,
   StreamTextResult,
+  StreamTextInclude,
+  StreamTextOnChunkCallback,
+  StreamTextOnEndCallback,
+  SpeechResult,
+  TelemetryOptions,
+  TimeoutConfiguration,
+  ToolApprovalConfiguration,
   ToolChoice,
+  ToolOrder,
   ToolSet,
-  Experimental_SpeechResult as SpeechResult,
-  Experimental_TranscriptionResult as TranscriptionResult,
+  TranscriptionResult,
 } from 'ai';
-import type { ProviderV3 } from '@ai-sdk/provider';
-import type { ModelMessage } from '@ai-sdk/provider-utils';
+import type {
+  Context,
+  InferToolSetContext,
+  ModelMessage,
+} from '@ai-sdk/provider-utils';
 
-/** Built-in provider adapter identifiers accepted by Zero AI config. */
-export type AIProviderType =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'groq'
-  | 'xai'
-  | 'cohere'
-  | 'deepgram'
-  | 'openai-compatible'
-  | 'meta-llama'
-  | 'custom';
+import type { AIAnyOutput, AIOutputSpec } from './ai-output';
+import type { AIHostedFileLocator } from './ai-files-types';
 
-/** Model capabilities used for provider status and request validation. */
-export type AICapability =
-  | 'text'
-  | 'streaming'
-  | 'tools'
-  | 'vision'
-  | 'embeddings'
-  | 'images'
-  | 'transcription'
-  | 'speech';
+/**
+ * Provider-specific request options.
+ *
+ * The broad record preserves Zero's established source contract. SDK 7
+ * providers may apply stricter runtime validation to individual values.
+ */
+export type AIProviderOptions = Record<string, Record<string, unknown>>;
 
-/** Tracks whether a provider came from env auto-detection or explicit config. */
-export type AIProviderSource = 'env' | 'config';
-
-/** Context passed to a custom AI SDK provider adapter factory. */
-export interface AICustomProviderContext {
-  id: string;
-  apiKey?: string;
-  baseURL?: string;
-  headers?: Record<string, string>;
-  capabilities: AIProviderCapabilities;
-}
-
-/** AI SDK provider object or factory accepted by `type: 'custom'`. */
-export type AICustomProviderAdapter =
-  | ProviderV3
-  | ((context: AICustomProviderContext) => ProviderV3);
-
-/** Capability flags advertised by a configured provider. */
-export interface AIProviderCapabilities {
-  text: boolean;
-  streaming: boolean;
-  tools: boolean;
-  vision: boolean;
-  embeddings: boolean;
-  images: boolean;
-  transcription: boolean;
-  speech: boolean;
-}
-
-/** Developer-provided provider configuration accepted by `createApp({ ai })`. */
-export interface AIProviderConfig {
-  /** Provider adapter type. */
-  type: AIProviderType;
-  /** Set false to keep a configured provider visible but inactive. */
-  enabled?: boolean;
-  /** API key or token. Omit to let env auto-detection provide it. */
-  apiKey?: string | null;
-  /** Custom provider base URL. Required for most openai-compatible providers. */
-  baseURL?: string | null;
-  /** Extra headers for provider adapters that support them. */
-  headers?: Record<string, string>;
-  /** Optional capability override for custom providers. */
-  capabilities?: Partial<AIProviderCapabilities>;
-  /** AI SDK provider object or factory. Required when `type` is `custom`. */
-  adapter?: AICustomProviderAdapter;
-}
-
-/** Status endpoint access policy accepted by the AI plugin. */
-export type AIStatusEndpointReadMode =
-  | 'admin'
-  | 'development'
-  | 'admin-or-dev'
-  | 'disabled'
-  | ((ctx: {
-    request: Request;
-    authContext: { userId: string; email?: string; role?: string } | null;
-  }) => boolean | Promise<boolean>);
-
-/** Configuration for the optional public-safe AI status endpoint. */
-export interface AIStatusEndpointConfig {
-  /** Set true to expose the optional `/api/_zero/ai/status` route. */
-  enabled?: boolean;
-  /** Endpoint base path. Default: `/api/_zero/ai`. */
-  basePath?: string;
-  /** Read policy. Defaults to admin with auth, development without auth. */
-  read?: AIStatusEndpointReadMode;
-}
-
-/** Top-level AI configuration accepted by `createApp()`. */
-export interface AIConfig {
-  /** Set false to disable env scanning and only use explicit providers. */
-  autoDetect?: boolean;
-  /** Explicit provider definitions. Config wins over env auto-detection. */
-  providers?: Record<string, AIProviderConfig | false>;
-  /** Friendly model aliases such as `fast`, `smart`, `embedding`, and `image`. */
-  aliases?: Record<string, string>;
-  /** Optional provider status endpoint configuration. Default: no AI routes. */
-  statusEndpoint?: false | AIStatusEndpointConfig;
-}
-
-/** Provider config after env/config detection, normalization, and activation. */
-export interface ResolvedAIProviderConfig extends AIProviderConfig {
-  id: string;
-  source: AIProviderSource;
-  active: boolean;
-  configuredBy: string[];
-  capabilities: AIProviderCapabilities;
-  reason: string | null;
-}
-
-/** Resolved AI status endpoint settings consumed by the Elysia plugin. */
-export interface ResolvedAIStatusEndpointConfig {
-  enabled: boolean;
-  basePath: string;
-  read?: AIStatusEndpointReadMode;
-}
-
-/** Fully normalized AI runtime config consumed by AIService and the plugin. */
-export interface ResolvedAIConfig {
-  enabled: true;
-  autoDetect: boolean;
-  providers: Record<string, ResolvedAIProviderConfig>;
-  aliases: Record<string, string>;
-  statusEndpoint: ResolvedAIStatusEndpointConfig;
-}
-
-/** Public-safe provider status returned by the status endpoint. */
-export interface AIProviderStatus {
-  id: string;
-  type: AIProviderType;
-  active: boolean;
-  source: AIProviderSource;
-  configuredBy: string[];
-  baseURL: string | null;
-  capabilities: AIProviderCapabilities;
-  reason: string | null;
-}
-
-/** Public-safe model alias status returned by the status endpoint. */
-export interface AIModelAliasStatus {
-  model: string;
-  active: boolean;
-  reason: string | null;
-}
-
-/** Public-safe AI runtime status returned by AIService.status(). */
-export interface AIStatus {
-  enabled: boolean;
-  providers: AIProviderStatus[];
-  aliases: Record<string, AIModelAliasStatus>;
-}
+export type {
+  AIConfig,
+  AICapability,
+  AICustomProviderAdapter,
+  AICustomProviderContext,
+  AIFetchFunction,
+  AIFilesProviderStatus,
+  AIAzureTokenProvider,
+  AIBedrockCredentialProvider,
+  AIBedrockCredentials,
+  AIModelAliasStatus,
+  AIProviderCapabilities,
+  AIProviderFileOperations,
+  AIProviderAdapter,
+  AIProviderConfig,
+  AIProviderInstanceSettings,
+  AIProviderSource,
+  AIProviderStatus,
+  AIProviderType,
+  AIAwsCredentialProvider,
+  AIStatus,
+  AIStatusEndpointConfig,
+  AIStatusEndpointReadMode,
+  ResolvedAIConfig,
+  ResolvedAIProviderCapabilities,
+  ResolvedAIProviderConfig,
+  ResolvedAIStatusEndpointConfig,
+} from './ai-provider-types';
 
 /** Zero conversation roles normalized to AI SDK model messages. */
 export type AIMessageRole = 'system' | 'developer' | 'user' | 'assistant' | 'tool';
@@ -191,13 +102,27 @@ export interface AIImageContentPart {
   mediaType?: string;
 }
 
-/** File or binary part accepted inside multimodal AI messages. */
-export interface AIFileContentPart {
+/** Shared metadata for file parts accepted inside multimodal AI messages. */
+interface AIFileContentPartBase {
   type: 'file';
-  data: string | URL | Uint8Array | ArrayBuffer;
   mediaType: string;
   filename?: string;
 }
+
+/** File part backed by raw data or a URL. */
+export interface AIRawFileContentPart extends AIFileContentPartBase {
+  data: string | URL | Uint8Array | ArrayBuffer;
+  hostedFile?: never;
+}
+
+/** File part backed by a durable provider-hosted file locator. */
+export interface AIHostedFileContentPart extends AIFileContentPartBase {
+  hostedFile: AIHostedFileLocator;
+  data?: never;
+}
+
+/** File or provider-hosted reference accepted inside multimodal AI messages. */
+export type AIFileContentPart = AIRawFileContentPart | AIHostedFileContentPart;
 
 /** User-facing message content accepted by conversation helpers. */
 export type AIMessageContent = string | readonly (AITextContentPart | AIImageContentPart | AIFileContentPart)[];
@@ -228,39 +153,130 @@ export interface AIMessage {
 /** Shared model request options accepted by text and conversation calls. */
 export interface AIRequestOptions {
   model?: string;
+  maxRetries?: number;
+  timeout?: number;
+  headers?: Record<string, string | undefined>;
   temperature?: number;
   topP?: number;
+  topK?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  seed?: number;
+  reasoning?: LanguageModelCallOptions['reasoning'];
   maxOutputTokens?: number;
   stopSequences?: string[];
   abortSignal?: AbortSignal;
-  providerOptions?: Record<string, Record<string, unknown>>;
+  providerOptions?: AIProviderOptions;
   metadata?: Record<string, unknown>;
 }
+
+/** SDK 7 generation controls shared by text and conversation calls. */
+export type AIGenerationOptions<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = Omit<AIRequestOptions, 'timeout'> & {
+  /** Preferred trusted instructions. `system` remains supported for compatibility. */
+  instructions?: Instructions;
+  /** @deprecated Use `instructions`; retained for existing Zero applications. */
+  system?: string;
+  output?: Output;
+  timeout?: TimeoutConfiguration<Tools>;
+  tools?: Tools;
+  toolChoice?: ToolChoice<Tools>;
+  toolsContext?: InferToolSetContext<Tools>;
+  runtimeContext?: RuntimeContext;
+  activeTools?: ActiveTools<Tools>;
+  toolOrder?: ToolOrder<Tools>;
+  stopWhen?: StopCondition<Tools, RuntimeContext> | readonly StopCondition<Tools, RuntimeContext>[];
+  prepareStep?: PrepareStepFunction<Tools, RuntimeContext>;
+  toolApproval?: ToolApprovalConfiguration<Tools, RuntimeContext>;
+  /** HMAC key used by SDK 7 to sign and verify tool approval requests. */
+  toolApprovalSecret?: string | Uint8Array;
+  telemetry?: TelemetryOptions<RuntimeContext, Tools>;
+  include?: GenerateTextInclude;
+  onStart?: GenerateTextOnStartCallback<Tools, RuntimeContext, Output>;
+  onStepStart?: GenerateTextOnStepStartCallback<Tools, RuntimeContext, Output>;
+  onLanguageModelCallStart?: OnLanguageModelCallStartCallback;
+  onLanguageModelCallEnd?: OnLanguageModelCallEndCallback<Tools>;
+  onToolExecutionStart?: OnToolExecutionStartCallback<Tools>;
+  onToolExecutionEnd?: OnToolExecutionEndCallback<Tools>;
+  onStepEnd?: GenerateTextOnStepEndCallback<Tools, RuntimeContext>;
+  onEnd?: GenerateTextOnEndCallback<Tools, RuntimeContext>;
+};
+
+/** Retry-aware stream error observer supported by AI SDK 7. */
+export type AIStreamErrorCallback = (event: { error: unknown }) =>
+  | void
+  | { retry: true }
+  | PromiseLike<void | { retry: true }>;
+
+/** SDK 7 controls that apply only to streamed generation. */
+export type AIStreamGenerationOptions<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = Omit<AIGenerationOptions<Tools, RuntimeContext, Output>, 'include' | 'onEnd' | 'onAbort'> & {
+  /** Provider-stream retries after a response has begun. Omit to disable. */
+  streamRetries?: number;
+  include?: GenerateTextInclude & StreamTextInclude;
+  onChunk?: StreamTextOnChunkCallback<Tools>;
+  onError?: AIStreamErrorCallback;
+  onEnd?: StreamTextOnEndCallback<Tools, RuntimeContext, Output>;
+  onAbort?: GenerateTextOnAbortCallback<Tools, RuntimeContext>;
+};
 
 /** Request shape for one-shot text generation or streaming. */
-export interface AIGenerateTextRequest extends AIRequestOptions {
+export type AIGenerateTextRequest<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = AIGenerationOptions<Tools, RuntimeContext, Output> & {
   prompt?: string;
-  system?: string;
   messages?: readonly AIMessage[];
-  tools?: ToolSet;
-  toolChoice?: ToolChoice<ToolSet>;
-}
+};
+
+/** Request shape for streamed text generation. */
+export type AIStreamTextRequest<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = AIStreamGenerationOptions<Tools, RuntimeContext, Output> & {
+  prompt?: string;
+  messages?: readonly AIMessage[];
+};
 
 /** Request shape for explicit multi-turn conversation generation. */
-export interface AIGenerateConversationRequest extends AIRequestOptions {
-  system?: string;
+export type AIGenerateConversationRequest<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = AIGenerationOptions<Tools, RuntimeContext, Output> & {
   messages: readonly AIMessage[];
-  tools?: ToolSet;
-  toolChoice?: ToolChoice<ToolSet>;
-}
+};
+
+/** Request shape for an explicit streamed conversation. */
+export type AIStreamConversationRequest<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = AIStreamGenerationOptions<Tools, RuntimeContext, Output> & {
+  messages: readonly AIMessage[];
+};
 
 /** Request shape for a single text embedding call. */
-export interface AIEmbedRequest {
+export interface AIEmbedRequest<RUNTIME_CONTEXT extends Context = Context> {
   model?: string;
   value: string;
+  maxRetries?: number;
   abortSignal?: AbortSignal;
-  providerOptions?: Record<string, Record<string, unknown>>;
+  headers?: Record<string, string | undefined>;
+  providerOptions?: AIProviderOptions;
   metadata?: Record<string, unknown>;
+  runtimeContext?: RUNTIME_CONTEXT;
+  telemetry?: TelemetryOptions<RUNTIME_CONTEXT>;
+  onStart?: (event: EmbedStartEvent<RUNTIME_CONTEXT>) => PromiseLike<void> | void;
+  onEnd?: (event: EmbedEndEvent<RUNTIME_CONTEXT>) => PromiseLike<void> | void;
 }
 
 /** Stable embedding result returned by AIService.embed(). */
@@ -271,24 +287,45 @@ export interface AIEmbedResult {
 }
 
 /** Request shape for image generation through an image-capable provider. */
+export type AIDataContent = string | Uint8Array | ArrayBuffer;
+
+export type AIImagePrompt = string | {
+  images: AIDataContent[];
+  text?: string;
+  mask?: AIDataContent;
+};
+
 export interface AIGenerateImageRequest {
   model?: string;
-  prompt: string;
+  prompt: AIImagePrompt;
   n?: number;
+  maxImagesPerCall?: number;
   size?: `${number}x${number}`;
   aspectRatio?: `${number}:${number}`;
   seed?: number;
+  maxRetries?: number;
   abortSignal?: AbortSignal;
-  providerOptions?: Record<string, Record<string, unknown>>;
+  headers?: Record<string, string | undefined>;
+  providerOptions?: AIProviderOptions;
   metadata?: Record<string, unknown>;
 }
+
+/** Bounded URL downloader accepted by transcription requests. */
+export type AITranscriptionDownload = (options: {
+  url: URL;
+  abortSignal?: AbortSignal;
+}) => Promise<{ data: Uint8Array; mediaType: string | undefined }>;
 
 /** Request shape for audio transcription through a transcription provider. */
 export interface AITranscribeRequest {
   model?: string;
   audio: string | URL | Uint8Array | ArrayBuffer;
+  maxRetries?: number;
   abortSignal?: AbortSignal;
-  providerOptions?: Record<string, Record<string, unknown>>;
+  headers?: Record<string, string | undefined>;
+  providerOptions?: AIProviderOptions;
+  telemetry?: TelemetryOptions;
+  download?: AITranscriptionDownload;
   metadata?: Record<string, unknown>;
 }
 
@@ -303,28 +340,36 @@ export interface AIGenerateSpeechRequest {
   language?: string;
   maxRetries?: number;
   abortSignal?: AbortSignal;
-  providerOptions?: Record<string, Record<string, unknown>>;
+  headers?: Record<string, string | undefined>;
+  providerOptions?: AIProviderOptions;
+  telemetry?: TelemetryOptions;
   metadata?: Record<string, unknown>;
 }
 
 /** Options carried by a chainable AIConversationBuilder. */
-export interface AIConversationOptions extends AIRequestOptions {
-  system?: string;
+export type AIConversationOptions<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+> = Omit<AIGenerationOptions<Tools, RuntimeContext, AIAnyOutput>, 'output'> & {
   messages?: readonly AIMessage[];
-  tools?: ToolSet;
-  toolChoice?: ToolChoice<ToolSet>;
-}
+};
 
 /** Options for a bounded, non-persistent server-side conversation session. */
-export interface AIConversationSessionOptions extends AIConversationOptions {
+export type AIConversationSessionOptions<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+> = AIConversationOptions<Tools, RuntimeContext> & {
   /** Maximum messages retained in local memory. Default: 32. */
   maxMessages?: number;
   /** Approximate maximum retained message content characters. */
   maxCharacters?: number;
-}
+};
 
 /** Chainable helper contract for multi-turn conversations. */
-export interface AIConversation {
+export interface AIConversation<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+> {
   /** Append a system message to this conversation. */
   system(content: string): this;
   /** Append a user message to this conversation. */
@@ -336,13 +381,20 @@ export interface AIConversation {
   /** Return the normalized message list currently owned by this builder. */
   messages(): readonly AIMessage[];
   /** Generate a final response using the current messages. */
-  generate(options?: AIRequestOptions): Promise<GenerateTextResult<ToolSet, any>>;
+  generate<Output extends AIOutputSpec = AIAnyOutput>(
+    options?: Omit<AIGenerationOptions<Tools, RuntimeContext, Output>, 'tools'>
+  ): Promise<GenerateTextResult<Tools, RuntimeContext, Output>>;
   /** Stream a response using the current messages. */
-  stream(options?: AIRequestOptions): StreamTextResult<ToolSet, any>;
+  stream<Output extends AIOutputSpec = AIAnyOutput>(
+    options?: Omit<AIStreamGenerationOptions<Tools, RuntimeContext, Output>, 'tools'>
+  ): StreamTextResult<Tools, RuntimeContext, Output>;
 }
 
 /** Transient server-side conversation helper that appends user/assistant turns. */
-export interface AIConversationSession {
+export interface AIConversationSession<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+> {
   /** Append any message to the bounded in-memory history. */
   append(message: AIMessage): this;
   /** Append a user message without calling a provider. */
@@ -354,13 +406,24 @@ export interface AIConversationSession {
   /** Clear history while preserving the configured system prompt. */
   clear(): this;
   /** Append one user message, call the selected model, and store the answer. */
-  send(content: AIMessageContent, options?: AIRequestOptions): Promise<GenerateTextResult<ToolSet, any>>;
+  send<Output extends AIOutputSpec = AIAnyOutput>(
+    content: AIMessageContent,
+    options?: Omit<AIGenerationOptions<Tools, RuntimeContext, Output>, 'tools'>
+  ): Promise<GenerateTextResult<Tools, RuntimeContext, Output>>;
 }
 
 /** AI SDK text generation result returned by Zero's service boundary. */
-export type AITextResult = GenerateTextResult<ToolSet, any>;
+export type AITextResult<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = GenerateTextResult<Tools, RuntimeContext, Output>;
 /** AI SDK stream result returned by Zero's service boundary. */
-export type AIStreamResult = StreamTextResult<ToolSet, any>;
+export type AIStreamResult<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+  Output extends AIOutputSpec = AIAnyOutput,
+> = StreamTextResult<Tools, RuntimeContext, Output>;
 /** AI SDK image generation result returned by Zero's service boundary. */
 export type AIImageResult = GenerateImageResult;
 /** AI SDK transcription result returned by Zero's service boundary. */

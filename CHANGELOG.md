@@ -2,7 +2,13 @@
 
 All notable Zero Platform changes are tracked here.
 
-## Unreleased
+## 2.1.0 - 2026-10-04
+
+This is an additive minor release on the Zero 2.x Guardian/Fabric/Torrent
+architecture. The AI SDK 7 and DataTable surfaces do not require a database
+migration or rewrite existing UI call sites; `onCellCommit` is an optional
+custom-writer override. This release is not a migration of legacy 1.3 database
+layouts and is not backported to the maintained `release/1.3` line.
 
 ### Fixed
 
@@ -40,8 +46,80 @@ All notable Zero Platform changes are tracked here.
   replacement data, stored-session restoration, logout, revocation, and scope
   transitions retain their fail-closed boundary.
 
+### Improved
+
+- Added the public, table-independent `DataTableControls` shell and reused it
+  across DataTable, Data Studio, Storage Studio/file browsing, global-user,
+  tenant-member, and platform-workspace toolbars. Search remains first before
+  selectors and filters, uses the standard 112 px collapsed / 216 px expanded
+  behavior, and optional controls/actions/supplemental content keeps one
+  responsive layout. Existing table-aware slots, filtering, debounce, focus,
+  and specialized component props remain unchanged; application call sites
+  require no rewrite.
+
 ### Added
 
+- Expanded `DataTableView` with an additive isolated server source for
+  authenticated offset queries and custom cursor adapters; optional totals;
+  partial controlled state; stable min/max/flex/wrap/truncate sizing; and
+  authorization-fenced stale-request handling. Inline, row, and page-bulk
+  actions now support awaited acceptance, pending/error state, confirmation,
+  and lifecycle abort signals. Existing arrays, collections, lazy sources,
+  synchronous actions, and collection `onCellEdit` notifications remain
+  compatible; `onCellCommit` is the explicit custom-writer override. Server
+  selection and CSV export remain loaded-page operations unless an app supplies
+  an explicit all-matching backend target or export endpoint.
+- Added exact-receipt optimistic mutation APIs for Sync and typed collections:
+  `insertAsync`, `updateAsync`, and `deleteAsync`/`removeAsync`. Existing void
+  mutations remain backward compatible. Async writes resolve only after their
+  exact server acknowledgement and reject through secret-safe
+  `SyncMutationError` codes on server rejection, transport timeout, snapshot
+  replacement, reset, authorization-scope replacement, or disconnect. Caller
+  abort and bounded wait timeout stop only the promise wait and never pretend
+  to cancel a write that may still commit.
+
+- Expanded Zero AI into a broad first-class official provider catalog across
+  language, embedding, image, transcription, and speech adapters, including
+  Vercel AI Gateway, Azure OpenAI, Amazon Bedrock, Google Vertex AI, Mistral,
+  Together AI, DeepInfra, Cerebras, Fireworks, fal, ElevenLabs, and additional
+  official AI SDK providers. Provider construction now uses focused cloud,
+  language, media, and extended factories; config supports custom fetch,
+  headers, and typed provider settings. Cloud readiness handles Bedrock's
+  region/credential alternatives, Azure endpoint/key-or-token auth, Vertex
+  express/ADC modes, and explicit Gateway OIDC without treating partial ambient
+  config as active. Gateway OIDC uses `apiKey: null` so an ambient Gateway key
+  cannot silently change the selected mode. Provider key/base-URL config now
+  documents its omitted/string/`null` inheritance contract, including Bedrock
+  `AWS_ENDPOINT_URL`. Provider IDs, absolute HTTP(S) endpoints, supported
+  adapter settings, and capability ceilings now fail invalid config closed
+  instead of accepting ambiguous or ignored values. Native DeepSeek,
+  Perplexity, and Voyage adapters retain
+  compatibility with their established explicit OpenAI-compatible configs.
+  Initialization failures now use stable Zero AI errors and secret-safe
+  observability, and provider docs/env/Doctor guidance cover the full catalog.
+  Audited request contracts also cover Anthropic bearer auth, cloud credential
+  precedence, current Gateway/direct model aliases, multimodal capability
+  admission, fixed-origin audio proxying, streaming enforcement, and
+  secret-safe provider status origins. Bedrock text-only turns now retain
+  completed tool history through a bounded, non-executable text projection
+  when native tool blocks would be invalid; unsafe projections fail closed.
+  The discontinued direct Meta-hosted
+  Llama transport was removed; its released imports and provider type now
+  produce a no-network `AI_PROVIDER_RETIRED` migration error, while Llama
+  remains available through supported hosts such as Bedrock, Groq, Together
+  AI, Fireworks, Hugging Face, and OpenAI-compatible endpoints.
+  `AI_CONFIGURED` plus provider/request events document the bounded metadata
+  and caller-metadata redaction contract.
+- Upgraded Zero's AI surface to AI SDK 7 while preserving the established
+  `AIService` request contract. Additive APIs include `AIOutput` structured
+  generation, provider-neutral reasoning and bounded timeout controls,
+  `embedMany()`, reranking, provider-hosted reusable files, preview video
+  operations, typed tools and ephemeral agents, and Torrent-backed durable
+  resumable agents with signed approvals. Managed generation and agent paths
+  now share capability admission, app-local lifecycle/request telemetry,
+  immutable bounded JSON contexts and tool results, and Bun-native DNS-pinned
+  prompt downloads that reject private destinations and enforce redirect,
+  cancellation, timeout, and aggregate byte limits.
 - Added declarative ReactiveDB database functions and AFTER triggers through
   `@zero/framework/database-automations`. Synchronous transaction functions can
   enforce same-commit invariants and rollups, while durable functions use a

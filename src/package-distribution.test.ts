@@ -118,6 +118,14 @@ describe('package distribution', () => {
       expect(contents).toContain('package/src/components/secret-field/secret-field.tsx');
       expect(contents).toContain('package/src/components/streaming-text/streaming-text.tsx');
       expect(contents).toContain('package/docs/start-here.md');
+      expect(contents).toContain('package/docs/ai-generation.md');
+      expect(contents).toContain('package/docs/ai-agents.md');
+      expect(contents).toContain('package/docs/ai-durable-agents.md');
+      expect(contents).toContain('package/docs/ai-embeddings-reranking.md');
+      expect(contents).toContain('package/docs/ai-files-video.md');
+      expect(contents).toContain('package/src/ai/ai-model-execution.ts');
+      expect(contents).toContain('package/src/ai/agents/ai-agent-service.ts');
+      expect(contents).toContain('package/src/ai/durable/index.ts');
       expect(contents).toContain('package/docs/auth/native-app-auth.md');
       expect(contents).toContain('package/tsconfig.json');
       expect(packagedFiles).not.toContain('package/.env');
@@ -151,6 +159,15 @@ describe('package distribution', () => {
       expect(frameworkPackageJson.dependencies['@sinclair/typebox']).toBeDefined();
       expect(frameworkPackageJson.dependencies['file-type']).toBeDefined();
       expect(frameworkPackageJson.dependencies['openapi-types']).toBeDefined();
+      for (const dependency of [
+        'ai',
+        '@ai-sdk/amazon-bedrock',
+        '@ai-sdk/azure',
+        '@ai-sdk/gateway',
+        '@ai-sdk/google-vertex',
+      ]) {
+        expect(frameworkPackageJson.dependencies[dependency]).toMatch(/^\d+\.\d+\.\d+$/);
+      }
       expect(frameworkPackageJson.files).not.toContain('.');
       expect(frameworkPackageJson.files).not.toContain('sdk');
       expect(frameworkPackageJson.files.some((file) => file.startsWith('sdk/'))).toBe(false);
@@ -292,6 +309,7 @@ async function runPackageRuntimeSmoke(appDir: string): Promise<void> {
       DB_MODE: 'ephemeral',
       SYSTEM_DB_MODE: 'ephemeral',
       ZERO_AUTH_ENABLED: 'false',
+      ZERO_AI_ENABLED: 'false',
       ZERO_PDF_ENABLED: 'false',
       ZERO_VECTOR_ENABLED: 'false',
       RESEND_API_KEY: '',
@@ -302,8 +320,6 @@ async function runPackageRuntimeSmoke(appDir: string): Promise<void> {
       GROQ_API_KEY: '',
       XAI_API_KEY: '',
       COHERE_API_KEY: '',
-      META_LLAMA_API_KEY: '',
-      LLAMA_API_KEY: '',
       DEEPSEEK_API_KEY: '',
       PERPLEXITY_API_KEY: '',
       VOYAGE_API_KEY: '',
@@ -519,9 +535,17 @@ import {
 } from '@zero/framework/auth';
 import {
   SYNC_ACK_ERROR_CODES,
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
   type SyncAckErrorCode,
   type SyncDataPlaneName,
+  type SyncMutationErrorCode,
+  type SyncMutationErrorDetails,
   type SyncMutationRejection,
+  type SyncMutationWaitOptions,
   type SyncSnapshotBeginMessage,
   type SyncSnapshotChunkMessage,
   type SyncSnapshotEndMessage,
@@ -602,7 +626,10 @@ type PackagedGuardianFabricContract = readonly [
   SynchronousIdentityProjectionTarget,
   SyncAckErrorCode,
   SyncDataPlaneName,
+  SyncMutationErrorCode,
+  SyncMutationErrorDetails,
   SyncMutationRejection,
+  SyncMutationWaitOptions,
   SyncSnapshotBeginMessage,
   SyncSnapshotChunkMessage,
   SyncSnapshotEndMessage,
@@ -633,6 +660,11 @@ const packagedGuardianFabricRuntimeExports = {
   identityProjectionError,
   parseDataRealmReadinessSnapshot,
   SYNC_ACK_ERROR_CODES,
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
 };
 void packagedGuardianFabricRuntimeExports;
 

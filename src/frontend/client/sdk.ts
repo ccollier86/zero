@@ -144,6 +144,18 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
 
 export type { SyncClient };
 export type { SyncMutationRejection } from '../../sync/types';
+export {
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
+} from '../../sync/client/sync-mutation-receipts';
+export type {
+  SyncMutationErrorCode,
+  SyncMutationErrorDetails,
+  SyncMutationWaitOptions,
+} from '../../sync/client/sync-mutation-receipts';
 
 export type {
   AuthApiKeyApplicationAdminSdkSurface,

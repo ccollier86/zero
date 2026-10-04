@@ -203,11 +203,13 @@ intake behavior through the planned blueprint/draft/attachment layer.
 
 | Component | File | Role |
 | --- | --- | --- |
-| `DataTableView`, `DataTable` | `data-table/data-table.tsx` | Schema-aware table organism with full-sync/lazy/custom sources and a responsive, composable toolbar; `DataTableView` is preferred. |
-| `DataTableSearch` | `data-table/data-table-search.tsx` | Compact expanding searchbox used only by table toolbars, with Escape/Enter and reduced-motion behavior. |
+| `DataTableView`, `DataTable` | `data-table/data-table.tsx` | Schema-aware table organism with full-sync/lazy/custom/isolated-server sources, controlled state, acknowledged mutations, offset/cursor pagination, stable sizing, and a responsive toolbar; `DataTableView` is preferred. |
+| `DataTableControls` | `data-table/data-table-controls.tsx` | Table-independent responsive shell for optional search, controls, actions, and supplemental React-node slots; forwards div attributes and owns no query state. |
+| `DataTableSearch` | `data-table/data-table-search.tsx` | Compact expanding searchbox for table and management-directory toolbars, with Escape/Enter and reduced-motion behavior. |
 | `DataTableToolbar` | `data-table/data-table-toolbar.tsx` | Search, generated filters, active-filter feedback, selection-aware `controls`/`actions`/`supplemental` slots, column visibility, and export actions. |
 | `DataTablePagination` | `data-table/data-table-pagination.tsx` | Table pagination controls. |
 | `DataTableRowActions` | `data-table/data-table-row-actions.tsx` | Row action dropdown. |
+| `DataTableBulkActions` | `data-table/data-table-bulk-actions.tsx` | Awaited page-scoped actions plus an explicit low-level all-matching target contract. |
 | `DataTableColumnHeader` | `data-table/data-table-column-header.tsx` | Sortable/filterable header. |
 | `EditableCell`, `AnimatedCell` | `data-table/*cell.tsx` | Inline editing and value transition cells. |
 | `KanbanBoard`, `KanbanTaskCard` | `kanban/kanban-board.tsx` | Drag-and-drop board organism for status/work queues. |

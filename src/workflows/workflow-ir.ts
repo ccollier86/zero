@@ -93,6 +93,7 @@ export interface WorkflowJoinNode extends WorkflowIRNodeBase {
 
 export type WorkflowEachInvalidItemPolicy = 'fail' | 'skip';
 export type WorkflowEachErrorPolicy = 'fail' | 'collect';
+export type WorkflowEachVisibility = 'public' | 'private';
 
 /** Execute a nested graph once for every item in a snapshotted array. */
 export interface WorkflowEachNode extends WorkflowIRNodeBase {
@@ -104,6 +105,8 @@ export interface WorkflowEachNode extends WorkflowIRNodeBase {
   concurrency: number;
   onInvalid: WorkflowEachInvalidItemPolicy;
   onError: WorkflowEachErrorPolicy;
+  /** Keep snapshotted item values and handler results out of public step rows. */
+  visibility?: WorkflowEachVisibility;
   body: WorkflowGraphIR;
 }
 

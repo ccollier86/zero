@@ -4,6 +4,7 @@ import type {
   SyncMutationRejection,
 } from '../types';
 import type { createSyncStore } from './sync-store';
+import type { SyncMutationWaitOptions } from './sync-mutation-receipts';
 
 /** Public client surface for realtime table synchronization. */
 export interface SyncClient {
@@ -15,10 +16,29 @@ export interface SyncClient {
   readonly connected: boolean;
   /** Apply an optimistic insert and submit it to the server. */
   insert(table: string, row: Row): void;
+  /** Apply an optimistic insert and resolve after its exact server receipt. */
+  insertAsync(
+    table: string,
+    row: Row,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
   /** Apply an optimistic update and submit it to the server. */
   update(table: string, id: string, partial: Partial<Row>): void;
+  /** Apply an optimistic update and resolve after its exact server receipt. */
+  updateAsync(
+    table: string,
+    id: string,
+    partial: Partial<Row>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
   /** Apply an optimistic delete and submit it to the server. */
   delete(table: string, id: string): void;
+  /** Apply an optimistic delete and resolve after its exact server receipt. */
+  deleteAsync(
+    table: string,
+    id: string,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
   /** Send or buffer an extension-protocol message. */
   sendRaw(message: object): void;
   /** Open the socket when automatic connection is disabled. */

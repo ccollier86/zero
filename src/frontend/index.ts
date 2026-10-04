@@ -45,6 +45,11 @@ export {
   getClient,
   FetchError,
   ResourceMutationError,
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
 } from './client/sdk';
 export type {
   Client,
@@ -59,7 +64,10 @@ export type {
   ResourceMutationOptions,
   ResourceRowResult,
   SyncClient,
+  SyncMutationErrorCode,
+  SyncMutationErrorDetails,
   SyncMutationRejection,
+  SyncMutationWaitOptions,
 } from './client/sdk';
 export {
   DATA_STUDIO_API_PREFIX,
@@ -551,9 +559,17 @@ export { DataTable, DataTableView } from '../components/data-table';
 export { useDataTable, useDataTableSource, buildDataTableLazyQuery } from '../components/data-table';
 export { DataTableColumnHeader } from '../components/data-table';
 export { DataTableToolbar } from '../components/data-table';
+export { DataTableControls } from '../components/data-table';
 export { DataTableSearch } from '../components/data-table';
 export { DataTablePagination } from '../components/data-table';
 export { DataTableRowActions } from '../components/data-table';
+export {
+  DataTableBulkActions,
+  DataTableServerSourceError,
+  createDataTableApiAdapter,
+  buildDataTableServerQuery,
+  useDataTableMutationRunner,
+} from '../components/data-table';
 export type {
   DataTableCellContext,
   DataTableColumnOverride,
@@ -561,6 +577,24 @@ export type {
   DataTableFilters,
   DataTableFilterValue,
   DataTableInitialState,
+  DataTableState,
+  DataTablePaginationProps,
+  DataTableServerAdapter,
+  DataTableServerAdapterContext,
+  DataTableServerCursorPage,
+  DataTableServerOffsetPage,
+  DataTableServerPage,
+  DataTableServerPaginationMode,
+  DataTableServerQuery,
+  DataTableServerResult,
+  DataTableServerSource,
+  DataTableServerSourceErrorCode,
+  DataTableBulkAction,
+  DataTableBulkActionsProps,
+  DataTablePageBulkSelection,
+  DataTableAllMatchingBulkSelection,
+  DataTableMutationContext,
+  DataTableMutationRunner,
   DataTableProps,
   DataTableSearchOptions,
   DataTableSearchProps,
@@ -568,6 +602,7 @@ export type {
   DataTableSourceActions,
   DataTableSourceState,
   DataTableToolbarContext,
+  DataTableControlsProps,
   DataTableToolbarProps,
   DataTableToolbarSlot,
   DataTableToolbarSlots,

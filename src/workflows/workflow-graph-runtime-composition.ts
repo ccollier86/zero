@@ -18,6 +18,7 @@ import { WorkflowGraphWakeScheduler } from './workflow-graph-wake-scheduler';
 import { WorkflowInteractionAuthority } from './workflow-interaction-authority';
 import { WorkflowInteractionService } from './workflow-interaction-service';
 import { WorkflowInteractionStore } from './workflow-interaction-store';
+import { WorkflowInstanceObserver } from './workflow-instance-observer';
 import { WorkflowMemoryStore } from './workflow-memory-store';
 import {
   createWorkflowObservability,
@@ -68,6 +69,7 @@ export interface WorkflowGraphRuntimeComposition {
   driver: WorkflowGraphDriver;
   recovery: WorkflowGraphRecoveryCoordinator;
   starts: WorkflowGraphStartCoordinator;
+  instanceObserver: WorkflowInstanceObserver;
 }
 
 export function createWorkflowGraphRuntimeComposition(
@@ -90,6 +92,7 @@ export function createWorkflowGraphRuntimeComposition(
   );
   const definitions = new WorkflowGraphDefinitionResolver(versions, registry);
   const memory = new WorkflowMemoryStore(db, { clock: now, observability });
+  const instanceObserver = new WorkflowInstanceObserver(db);
   const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
   const interactionValidator = new WorkflowGraphInteractionValidator(
     registry,
@@ -209,6 +212,7 @@ export function createWorkflowGraphRuntimeComposition(
     definitions,
     versions,
     authority,
+    memory,
     hooks.advance,
     now,
     observability,
@@ -232,5 +236,6 @@ export function createWorkflowGraphRuntimeComposition(
     driver,
     recovery,
     starts,
+    instanceObserver,
   };
 }

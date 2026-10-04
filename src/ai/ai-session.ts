@@ -4,24 +4,37 @@
  * Owns transient in-memory conversation sessions for repeated server-side AI
  * calls. This file does not persist chat threads, expose routes, or choose
  * providers outside the model value supplied by app code.
- */
+*/
+
+import type { ToolSet } from 'ai';
+import type { Context } from '@ai-sdk/provider-utils';
 
 import type {
+  AIGenerationOptions,
   AIGenerateConversationRequest,
   AIConversationSession,
   AIConversationSessionOptions,
   AIMessage,
   AIMessageContent,
-  AIRequestOptions,
   AITextResult,
 } from './ai-types';
+import type { AIAnyOutput, AIOutputSpec } from './ai-output';
 
-interface AIConversationSessionRunner {
-  generateConversation(request: AIGenerateConversationRequest): Promise<AITextResult>;
+interface AIConversationSessionRunner<
+  Tools extends ToolSet,
+  RuntimeContext extends Context,
+> {
+  generateConversation<
+    Output extends AIOutputSpec,
+  >(request: AIGenerateConversationRequest<Tools, RuntimeContext, Output>):
+    Promise<AITextResult<Tools, RuntimeContext, Output>>;
 }
 
 /** Bounded, non-persistent helper for reusing recent messages across calls. */
-export class AIConversationSessionBuilder implements AIConversationSession {
+export class AIConversationSessionBuilder<
+  Tools extends ToolSet = ToolSet,
+  RuntimeContext extends Context = Context,
+> implements AIConversationSession<Tools, RuntimeContext> {
   private readonly messageList: AIMessage[] = [];
 
   /**
@@ -31,8 +44,8 @@ export class AIConversationSessionBuilder implements AIConversationSession {
    * they do not persist or summarize messages.
    */
   constructor(
-    private readonly runner: AIConversationSessionRunner,
-    private readonly options: AIConversationSessionOptions = {}
+    private readonly runner: AIConversationSessionRunner<Tools, RuntimeContext>,
+    private readonly options: AIConversationSessionOptions<Tools, RuntimeContext> = {}
   ) {
     if (options.system) this.messageList.push({ role: 'system', content: options.system });
     if (options.messages) this.messageList.push(...options.messages);
@@ -72,7 +85,10 @@ export class AIConversationSessionBuilder implements AIConversationSession {
    * Append one user input, generate a response with all current messages, and
    * append the assistant text result back into the local history.
    */
-  async send(content: AIMessageContent, options: AIRequestOptions = {}): Promise<AITextResult> {
+  async send<Output extends AIOutputSpec = AIAnyOutput>(
+    content: AIMessageContent,
+    options: Omit<AIGenerationOptions<Tools, RuntimeContext, Output>, 'tools'> = {}
+  ): Promise<AITextResult<Tools, RuntimeContext, Output>> {
     this.user(content);
     const result = await this.runner.generateConversation({
       ...this.options,

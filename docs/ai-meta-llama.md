@@ -1,69 +1,32 @@
-# Meta Llama Provider
+# Retired Meta Llama Provider
 
-Zero includes a custom AI SDK provider adapter for Meta's hosted Llama API.
+Zero no longer connects directly to Meta's former hosted Llama API. Meta
+retired that service, so `LLAMA_API_KEY`, `META_LLAMA_API_KEY`, and the
+`meta/<model>` provider route are not detected or used.
 
-This is different from a generic OpenAI-compatible adapter. Meta's native API
-can return Meta-specific completion and stream event shapes, so Zero keeps a
-native adapter and exposes it under the developer-facing provider id `meta`.
+Use a currently supported host for Llama models instead:
 
-## Enable
+- `bedrock/<model>` for Amazon Bedrock
+- `groq/<model>` for Groq
+- `togetherai/<model>` for Together AI
+- `fireworks/<model>` for Fireworks AI
+- `huggingface/<model>` for Hugging Face
+- an explicitly configured `openai-compatible` provider for another host
 
-Set either env key:
-
-```txt
-LLAMA_API_KEY=...
-META_LLAMA_API_KEY=...
-```
-
-Then enable AI:
-
-```ts
-const app = await createApp({
-  db,
-  tables,
-  ai: true,
-});
-```
-
-## Use
+For example:
 
 ```ts
 const result = await ai.generateText({
-  model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8',
-  prompt: 'Explain the latest account activity.',
+  model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
+  prompt: 'Summarize this incident.',
 });
 ```
 
-## Supported Features
+The legacy `createMetaLlama`, `metaLlama`, and `type: 'meta-llama'` names remain
+temporarily importable so existing applications receive a clear
+`AI_PROVIDER_RETIRED` error. They never contact an endpoint and are not aliases
+for a replacement provider. Remove old Meta keys, choose a host, and update
+model references explicitly; Zero will not silently move requests or data to a
+different vendor.
 
-The adapter supports:
-
-1. Non-streaming text generation.
-2. Streaming text generation.
-3. Text prompts.
-4. Image URL and base64/data URL prompt parts.
-5. Function tool definitions.
-6. Assistant tool call messages.
-7. Tool result messages.
-8. JSON response format mapping.
-9. Usage extraction from `usage` and Meta metrics payloads.
-
-## Custom Base URL
-
-```ts
-ai: {
-  providers: {
-    meta: {
-      type: 'meta-llama',
-      apiKey: Bun.env.META_LLAMA_API_KEY,
-      baseURL: Bun.env.META_LLAMA_BASE_URL,
-    },
-  },
-}
-```
-
-The default base URL is:
-
-```txt
-https://api.llama.com/v1
-```
+See [AI Providers](./ai-providers.md) for provider activation and capabilities.

@@ -98,6 +98,14 @@ interface WorkflowMemoryRow {
   updated_at: string;
 }
 
+interface WorkflowMemoryPolicyRow {
+  instance_id: string;
+  max_key_bytes: number;
+  max_value_bytes: number;
+  max_entries: number;
+  max_total_bytes: number;
+}
+
 export interface WorkflowMemoryStoreOptions {
   limits?: Partial<WorkflowMemoryLimits>;
   clock?: () => Date;
@@ -121,17 +129,66 @@ export class WorkflowMemoryStore {
     this.runtimeBudget = new WorkflowRuntimeValueBudget(db);
   }
 
+  /**
+   * Pin an immutable, per-run memory budget before initial memory is seeded.
+   *
+   * The policy is private runtime state and survives process restarts. Omitted
+   * runs continue to use the service-wide defaults, so a larger trusted run
+   * does not weaken the normal workflow memory boundary.
+   */
+  createInstancePolicy(
+    instanceId: string,
+    input: Partial<WorkflowMemoryLimits>,
+  ): Readonly<WorkflowMemoryLimits> {
+    const scope = normalizeWorkflowMemoryScope({ instanceId, kind: 'instance' });
+    const limits = Object.freeze(resolveWorkflowMemoryLimits({
+      ...this.limits,
+      ...input,
+    }));
+    try {
+      this.db.prepare(`INSERT INTO _workflow_memory_policies (
+        instance_id, max_key_bytes, max_value_bytes, max_entries, max_total_bytes
+      ) VALUES (?, ?, ?, ?, ?)`).run(
+        scope.instanceId,
+        limits.maxKeyBytes,
+        limits.maxValueBytes,
+        limits.maxEntries,
+        limits.maxTotalBytes,
+      );
+    } catch (error) {
+      const existing = this.readInstancePolicy(scope.instanceId);
+      if (existing) {
+        throw new WorkflowError(
+          'Workflow memory policy is already pinned for this instance',
+          'WORKFLOW_STATE_INVALID',
+          500,
+        );
+      }
+      throw error;
+    }
+    return limits;
+  }
+
+  /** Resolve the immutable budget governing one workflow instance. */
+  limitsForInstance(instanceId: string): Readonly<WorkflowMemoryLimits> {
+    const scope = normalizeWorkflowMemoryScope({ instanceId, kind: 'instance' });
+    return this.readInstancePolicy(scope.instanceId) ?? this.limits;
+  }
+
   /** Read one detached entry from an instance or each-item namespace. */
   get(scope: WorkflowMemoryScope, key: string): WorkflowMemoryEntry | null {
+    const normalized = normalizeWorkflowMemoryScope(scope);
     return this.readEntry(
-      normalizeWorkflowMemoryScope(scope),
-      validateWorkflowMemoryKey(key, this.limits),
+      normalized,
+      validateWorkflowMemoryKey(key, this.resolveLimits(normalized.instanceId)),
     );
   }
 
   /** List one namespace in stable key order. */
   list(scope: WorkflowMemoryScope): WorkflowMemoryEntry[] {
-    return this.readEntries(normalizeWorkflowMemoryScope(scope));
+    const normalized = normalizeWorkflowMemoryScope(scope);
+    this.resolveLimits(normalized.instanceId);
+    return this.readEntries(normalized);
   }
 
   /** Atomically write one JSON value with optional optimistic version fencing. */
@@ -177,6 +234,7 @@ export class WorkflowMemoryStore {
     metadata: WorkflowMemoryTransactionOptions = {},
   ): T {
     const normalized = normalizeWorkflowMemoryScope(scope);
+    const limits = this.resolveLimits(normalized.instanceId);
     validateWorkflowMemoryMetadata(metadata);
     try {
       return this.db.transaction(() => {
@@ -184,7 +242,7 @@ export class WorkflowMemoryStore {
         const transaction = new MemoryTransaction(
           this.db,
           normalized,
-          this.limits,
+          limits,
           this.clock,
           metadata,
           this.runtimeBudget,
@@ -232,6 +290,32 @@ export class WorkflowMemoryStore {
       ORDER BY key ASC
     `).all(scope.instanceId, scope.kind, scope.scopeId) as WorkflowMemoryRow[];
     return rows.map(deserializeEntry);
+  }
+
+  private resolveLimits(instanceId: string): Readonly<WorkflowMemoryLimits> {
+    return this.readInstancePolicy(instanceId) ?? this.limits;
+  }
+
+  private readInstancePolicy(instanceId: string): Readonly<WorkflowMemoryLimits> | null {
+    const row = this.db.prepare(`SELECT * FROM _workflow_memory_policies
+      WHERE instance_id = ? LIMIT 1`).get(instanceId) as WorkflowMemoryPolicyRow | null;
+    if (!row) return null;
+    try {
+      return Object.freeze(resolveWorkflowMemoryLimits({
+        maxKeyBytes: Number(row.max_key_bytes),
+        maxValueBytes: Number(row.max_value_bytes),
+        maxEntries: Number(row.max_entries),
+        maxTotalBytes: Number(row.max_total_bytes),
+      }));
+    } catch (error) {
+      const wrapped = new WorkflowError(
+        'Workflow memory policy is invalid',
+        'WORKFLOW_STATE_INVALID',
+        500,
+      );
+      Object.defineProperty(wrapped, 'cause', { value: error, configurable: true });
+      throw wrapped;
+    }
   }
 }
 

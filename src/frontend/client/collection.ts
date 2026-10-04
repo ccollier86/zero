@@ -16,6 +16,7 @@ import {
 import { decodeBooleanValue, encodeBooleanValue } from '../../schema/field-codecs';
 import type { InsertInput, PrimaryKeyOf } from '../../schema/infer';
 import type { SyncClient } from '../../sync/client/sync-client';
+import type { SyncMutationWaitOptions } from '../../sync/client/sync-mutation-receipts';
 import type { ClientTableDef, Row } from '../../sync/types';
 
 export interface Collection<
@@ -40,6 +41,12 @@ export interface Collection<
   /** Optimistic insert; applied locally and synced to the server. */
   insert(row: InsertInput<T, TPrimaryKey>): void;
 
+  /** Optimistic insert that resolves after its exact server receipt. */
+  insertAsync(
+    row: InsertInput<T, TPrimaryKey>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
+
   /** Return the deterministic sync id for a natural identity key. */
   identityKey(key: IdentityKey): string;
 
@@ -58,8 +65,18 @@ export interface Collection<
   /** Optimistic update by sync primary key. */
   update(id: string, partial: Partial<T>): void;
 
+  /** Optimistic update that resolves after its exact server receipt. */
+  updateAsync(
+    id: string,
+    partial: Partial<T>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
+
   /** Optimistic delete by sync primary key. */
   remove(id: string): void;
+
+  /** Optimistic delete that resolves after its exact server receipt. */
+  removeAsync(id: string, options?: SyncMutationWaitOptions): Promise<void>;
 
   /** Subscribe to all changes in this table. Returns unsubscribe. */
   subscribe(callback: (rows: Record<string, T>) => void): () => void;
@@ -216,6 +233,17 @@ export function createCollection<
       syncClient.insert(name, encodeLogicalRow(withCollectionPrimaryKey(row)));
     },
 
+    async insertAsync(
+      row: InsertInput<T, TPrimaryKey>,
+      options?: SyncMutationWaitOptions,
+    ): Promise<void> {
+      await syncClient.insertAsync(
+        name,
+        encodeLogicalRow(withCollectionPrimaryKey(row)),
+        options,
+      );
+    },
+
     identityKey,
 
     getByIdentity(key: IdentityKey): T | null {
@@ -249,8 +277,28 @@ export function createCollection<
       syncClient.update(name, id, encodeLogicalRow(partial as Row));
     },
 
+    async updateAsync(
+      id: string,
+      partial: Partial<T>,
+      options?: SyncMutationWaitOptions,
+    ): Promise<void> {
+      await syncClient.updateAsync(
+        name,
+        id,
+        encodeLogicalRow(partial as Row),
+        options,
+      );
+    },
+
     remove(id: string): void {
       syncClient.delete(name, id);
+    },
+
+    async removeAsync(
+      id: string,
+      options?: SyncMutationWaitOptions,
+    ): Promise<void> {
+      await syncClient.deleteAsync(name, id, options);
     },
 
     subscribe(callback: (rows: Record<string, T>) => void): () => void {

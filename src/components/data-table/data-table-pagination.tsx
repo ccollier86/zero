@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
+import type { DataTableServerPage } from './data-table-server-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,9 @@ export interface DataTablePaginationProps<TData> {
   table: Table<TData>;
   pageSizes?: number[];
   className?: string;
+  /** Absent for local row models; a null value means the server page is not loaded yet. */
+  serverPage?: DataTableServerPage | null;
+  loading?: boolean;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -30,11 +34,22 @@ export function DataTablePagination<TData>({
   table,
   pageSizes = [10, 20, 50, 100],
   className,
+  serverPage,
+  loading = false,
 }: DataTablePaginationProps<TData>) {
   const { pageIndex, pageSize } = table.getState().pagination;
-  const totalRows = table.getFilteredRowModel().rows.length;
-  const start = pageIndex * pageSize + 1;
-  const end = Math.min(start + pageSize - 1, totalRows);
+  const server = serverPage !== undefined;
+  const totalRows = server ? serverPage?.total : table.getFilteredRowModel().rows.length;
+  const count = server ? table.getRowModel().rows.length : Math.min(pageSize, Math.max(0, totalRows! - pageIndex * pageSize));
+  const offset = serverPage?.mode === 'offset' ? serverPage.offset : pageIndex * pageSize;
+  const start = offset + 1;
+  const end = offset + count;
+  const pageCount = totalRows === undefined ? undefined : Math.max(1, Math.ceil(totalRows / pageSize));
+  const canPrevious = pageIndex > 0 && !loading;
+  const canNext = !loading && (server
+    ? Boolean(serverPage?.hasMore) && (serverPage?.mode !== 'cursor' || serverPage.nextCursor != null)
+    : table.getCanNextPage());
+  const canJumpToLast = pageCount !== undefined && serverPage?.mode !== 'cursor';
 
   return (
     <div
@@ -46,9 +61,9 @@ export function DataTablePagination<TData>({
     >
       {/* Row count */}
       <div className="min-w-0 text-sm text-muted-foreground sm:flex-1">
-        {totalRows > 0
-          ? `Showing ${start}-${end} of ${totalRows}`
-          : 'No results'}
+        {count > 0
+          ? `Showing ${start}-${end}${totalRows === undefined ? '' : ` of ${totalRows}`}`
+          : loading ? 'Loading records…' : 'No results'}
         {table.getFilteredSelectedRowModel().rows.length > 0 && (
           <span className="ml-2">
             ({table.getFilteredSelectedRowModel().rows.length} selected)
@@ -61,6 +76,7 @@ export function DataTablePagination<TData>({
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground whitespace-nowrap">Rows per page</span>
           <Select
+            disabled={loading}
             value={String(pageSize)}
             onValueChange={(value) => {
               table.setPageSize(Number(value));
@@ -81,7 +97,7 @@ export function DataTablePagination<TData>({
 
         {/* Page info */}
         <div className="flex items-center text-sm text-muted-foreground whitespace-nowrap">
-          Page {pageIndex + 1} of {table.getPageCount() || 1}
+          Page {pageIndex + 1}{pageCount === undefined ? '' : ` of ${pageCount}`}
         </div>
 
         {/* Navigation buttons */}
@@ -92,7 +108,7 @@ export function DataTablePagination<TData>({
             size="icon-xs"
             aria-label="First page"
             onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
+            disabled={!canPrevious}
           >
             <ChevronsLeft className="size-3.5" />
           </Button>
@@ -102,7 +118,7 @@ export function DataTablePagination<TData>({
             size="icon-xs"
             aria-label="Previous page"
             onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
+            disabled={!canPrevious}
           >
             <ChevronLeft className="size-3.5" />
           </Button>
@@ -112,20 +128,20 @@ export function DataTablePagination<TData>({
             size="icon-xs"
             aria-label="Next page"
             onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
+            disabled={!canNext}
           >
             <ChevronRight className="size-3.5" />
           </Button>
-          <Button
+          {canJumpToLast && <Button
             type="button"
             variant="outline"
             size="icon-xs"
             aria-label="Last page"
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
+            onClick={() => table.setPageIndex(pageCount! - 1)}
+            disabled={!canNext}
           >
             <ChevronsRight className="size-3.5" />
-          </Button>
+          </Button>}
         </div>
       </div>
     </div>

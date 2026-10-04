@@ -183,6 +183,15 @@ export function createGraphRuntimeTables(db: WorkflowSchemaDatabase): void {
 
 /** Create private scratch-memory and interaction-detail tables. */
 export function createMemoryAndInteractionTables(db: WorkflowSchemaDatabase): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS _workflow_memory_policies (
+    instance_id TEXT PRIMARY KEY,
+    max_key_bytes INTEGER NOT NULL CHECK (max_key_bytes BETWEEN 1 AND 1024),
+    max_value_bytes INTEGER NOT NULL CHECK (max_value_bytes BETWEEN 1 AND 1048576),
+    max_entries INTEGER NOT NULL CHECK (max_entries BETWEEN 1 AND 4096),
+    max_total_bytes INTEGER NOT NULL CHECK (max_total_bytes BETWEEN 1 AND 16777216),
+    CHECK (max_value_bytes <= max_total_bytes),
+    FOREIGN KEY (instance_id) REFERENCES workflow_instances(instance_id)
+  )`);
   db.exec(`CREATE TABLE IF NOT EXISTS _workflow_memory (
     memory_id TEXT PRIMARY KEY,
     instance_id TEXT NOT NULL,
@@ -252,6 +261,7 @@ export function createWorkflowGraphIndexes(db: WorkflowSchemaDatabase): void {
     'CREATE INDEX IF NOT EXISTS idx_workflow_steps_node ON workflow_steps(instance_id, node_id, activation_key)',
     'CREATE INDEX IF NOT EXISTS idx_workflow_graph_edges_from ON _workflow_graph_edges(instance_id, from_node_id, ordinal)',
     'CREATE INDEX IF NOT EXISTS idx_workflow_each_items_status ON _workflow_each_items(instance_id, node_id, activation_key, status, item_index)',
+    'CREATE INDEX IF NOT EXISTS idx_workflow_memory_policy_instance ON _workflow_memory_policies(instance_id)',
     'CREATE INDEX IF NOT EXISTS idx_workflow_memory_scope ON _workflow_memory(instance_id, scope_kind, scope_id)',
     'CREATE INDEX IF NOT EXISTS idx_workflow_interactions_instance_status ON workflow_interactions(instance_id, status, opened_at)',
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_interactions_identity

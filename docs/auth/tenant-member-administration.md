@@ -307,6 +307,13 @@ confirmed revoke when the actor has invitation-management authority. An
 identity or active-tenant scope change closes the dialog, clears manual-token
 state, and fences stale mutation results.
 
+The member directory's search is the shared compact `DataTableSearch`, placed
+first before status and role controls. It collapses to 112 px and expands to
+216 px on focus or for an active query while preserving the existing server
+search, debounce, and focus behavior. Existing `UserManagement`,
+`PlatformUserManagement`, and `TenantMemberManagement` call sites require no
+changes.
+
 Focused layouts can attach the same workflow to the member primitive:
 
 ```tsx

@@ -473,6 +473,13 @@ controls appear only when `canManageTenantMembers` and the relevant
 inspectable but immutable, and workspace lifecycle commands stay in the
 directory's bottom bar.
 
+People, selected-workspace members, and the workspace directory all use the
+shared compact `DataTableSearch` as the first list control before role, status,
+or other filters. It is 112 px while idle and 216 px while focused or populated;
+existing backend search, debounce, focus, and capability behavior is unchanged.
+This is a packaged presentation improvement and requires no application API or
+component-prop migration.
+
 Customer membership authority remains distinct from customer data-plane
 authority. These controls can operate membership and role lifecycle without
 switching the platform actor into the customer workspace, but they cannot read

@@ -4,6 +4,7 @@
 
 import * as React from 'react';
 import { ArrowLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { DataTableControls } from '../data-table/data-table-controls';
 import { DataTableSearch } from '../data-table/data-table-search';
 import { Button } from '../ui/button';
 import {
@@ -73,24 +74,24 @@ export function StorageStudioToolbar({
         </Button>
       </div>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <DataTableSearch
-          value={controller.filters.search}
-          onValueChange={controller.setSearch}
-          label={filesView ? 'Search files and folders' : 'Search drives'}
-          placeholder={filesView ? 'Search files…' : 'Search drives…'}
-          maxLength={filesView ? 200 : 120}
-          collapsedWidth={112}
-          expandedWidth={216}
-          className="max-w-full"
-        />
-
-        {filesView ? (
-          <FileFilters controller={controller} />
-        ) : (
-          <DriveFilters controller={controller} />
+      <DataTableControls
+        aria-label={filesView ? 'Storage object controls' : 'Storage drive controls'}
+        search={(
+          <DataTableSearch
+            value={controller.filters.search}
+            onValueChange={controller.setSearch}
+            label={filesView ? 'Search files and folders' : 'Search drives'}
+            placeholder={filesView ? 'Search files…' : 'Search drives…'}
+            maxLength={filesView ? 200 : 120}
+            collapsedWidth={112}
+            expandedWidth={216}
+            className="max-w-full"
+          />
         )}
-      </div>
+        controls={filesView
+          ? <FileFilters controller={controller} />
+          : <DriveFilters controller={controller} />}
+      />
     </header>
   );
 }

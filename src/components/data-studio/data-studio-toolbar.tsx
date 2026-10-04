@@ -1,12 +1,16 @@
 'use client';
 
+/** Search-first catalog and record controls; data loading stays in the controller. */
+
 import * as React from 'react';
-import { Filter, LoaderCircle, Plus, RefreshCw, Search } from 'lucide-react';
+import { Filter, LoaderCircle, Plus, RefreshCw } from 'lucide-react';
 import type {
   DataStudioTableSummary,
   DataStudioTableStatus,
 } from '../../frontend/client/data-studio-client';
 import { Button } from '../ui/button';
+import { DataTableControls } from '../data-table/data-table-controls';
+import { DataTableSearch } from '../data-table/data-table-search';
 import {
   Select,
   SelectContent,
@@ -58,88 +62,102 @@ export function DataStudioToolbar({
   return (
     <div
       data-slot="data-studio-toolbar"
-      role="group"
-      aria-label="Data Studio controls"
       className={cn(
-        'flex flex-col gap-2 border-b bg-background p-2 sm:flex-row sm:flex-wrap sm:items-center',
+        'min-w-0 border-b bg-background px-3 py-2.5 sm:px-4',
         className,
       )}
     >
-      <Select value={selectedTableId ?? undefined} disabled={busy} onValueChange={onTableChange}>
-        <SelectTrigger className="h-8 min-w-0 sm:w-52" aria-label="Logical table">
-          <SelectValue placeholder={loading ? 'Loading tables…' : 'Choose a table'} />
-        </SelectTrigger>
-        <SelectContent>
-          {tables.map((table) => (
-            <SelectItem key={table.tableId} value={table.tableId}>
-              {table.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <DataTableControls
+        aria-label="Data Studio controls"
+        search={(
+          <DataTableSearch
+            value={search}
+            onValueChange={onSearchChange}
+            label="Search records"
+            placeholder="Search records…"
+            maxLength={200}
+            disabled={busy}
+            collapsedWidth={112}
+            expandedWidth={216}
+            className="max-w-full"
+          />
+        )}
+        controls={(
+          <>
+            <Select
+              value={selectedTableId ?? undefined}
+              disabled={busy}
+              onValueChange={onTableChange}
+            >
+              <SelectTrigger className="h-8 min-w-0 w-52 max-w-full" aria-label="Logical table">
+                <SelectValue placeholder={loading ? 'Loading tables…' : 'Choose a table'} />
+              </SelectTrigger>
+              <SelectContent>
+                {tables.map((table) => (
+                  <SelectItem key={table.tableId} value={table.tableId}>
+                    {table.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-      <div className="relative min-w-0 flex-1 sm:min-w-48">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <input
-          type="search"
-          value={search}
-          maxLength={200}
-          disabled={busy}
-          className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-          placeholder="Search records"
-          aria-label="Search records"
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
-      </div>
+            <Select value={tableStatus} disabled={busy} onValueChange={(value) => {
+              onStatusChange(value as DataStudioTableStatus | 'all');
+            }}>
+              <SelectTrigger className="h-8 w-32" aria-label="Table status filter">
+                <Filter className="size-3.5" aria-hidden="true" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="archived">Archived</SelectItem>
+                <SelectItem value="all">All tables</SelectItem>
+              </SelectContent>
+            </Select>
 
-      <Select value={tableStatus} disabled={busy} onValueChange={(value) => {
-        onStatusChange(value as DataStudioTableStatus | 'all');
-      }}>
-        <SelectTrigger className="h-8 w-full sm:w-32" aria-label="Table status filter">
-          <Filter className="size-3.5" aria-hidden="true" />
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="active">Active</SelectItem>
-          <SelectItem value="archived">Archived</SelectItem>
-          <SelectItem value="all">All tables</SelectItem>
-        </SelectContent>
-      </Select>
+            {filterControl}
+          </>
+        )}
+        actions={(
+          <>
+            <span
+              className="hidden whitespace-nowrap text-xs tabular-nums text-muted-foreground lg:inline"
+              aria-live="polite"
+            >
+              {loadedCount} of {totalRows}
+            </span>
 
-      {filterControl}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-2"
+              disabled={loading || busy}
+              aria-label="Refresh Data Studio"
+              onClick={onRefresh}
+            >
+              {loading
+                ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                : <RefreshCw className="size-3.5" aria-hidden="true" />}
+              <span className="sr-only sm:not-sr-only">Refresh</span>
+            </Button>
 
-      <span className="hidden whitespace-nowrap text-xs tabular-nums text-muted-foreground lg:inline" aria-live="polite">
-        {loadedCount} of {totalRows}
-      </span>
-
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="h-8 px-2"
-        disabled={loading || busy}
-        aria-label="Refresh Data Studio"
-        onClick={onRefresh}
-      >
-        {loading
-          ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-          : <RefreshCw className="size-3.5" aria-hidden="true" />}
-        <span className="sr-only sm:not-sr-only">Refresh</span>
-      </Button>
-
-      {canManage && (
-        <Button
-          type="button"
-          size="sm"
-          className="h-8"
-          aria-haspopup="dialog"
-          disabled={busy}
-          onClick={onCreateTable}
-        >
-          <Plus className="size-3.5" aria-hidden="true" />
-          New table
-        </Button>
-      )}
+            {canManage && (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8"
+                aria-haspopup="dialog"
+                disabled={busy}
+                onClick={onCreateTable}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                New table
+              </Button>
+            )}
+          </>
+        )}
+      />
     </div>
   );
 }

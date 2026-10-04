@@ -10,8 +10,9 @@ The vector layer is intentionally separate from the AI layer:
 2. `VectorService` stores vectors and runs similarity/filter queries.
 3. `createAIVectorBridge()` composes the two when you want one helper.
 
-Zero does not provide native embedding generation, reranking, or public vector
-routes in this slice.
+`AIService` provides embedding generation and reranking; the vector service
+does not duplicate those provider calls. Zero mounts no public vector routes
+by default.
 
 ## Enable Vectors
 
@@ -19,7 +20,7 @@ routes in this slice.
 import { createApp } from '@zero/framework/server';
 
 const app = await createApp({
-  db: { mode: './data/app.db' },
+  db: { mode: 'file', path: './data/app.db' },
   tables,
   auth: true,
   vector: true,

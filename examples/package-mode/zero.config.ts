@@ -5,7 +5,7 @@
  * paths; it does not start the HTTP server.
  */
 
-import { defineZeroConfig } from '@zero/framework/server';
+import { defineZeroConfig, resolveAIConfig } from '@zero/framework/server';
 import type { SQLiteStorageConfig, SQLiteStorageMode } from '@zero/framework/server';
 import { tables } from './db/schema';
 
@@ -13,20 +13,13 @@ const PORT = Number(Bun.env.PORT ?? 3000);
 const APP_NAME = readEnv('APP_NAME') ?? 'Zero App';
 const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
 const authEnabled = Bun.env.ZERO_AUTH_ENABLED === 'true';
-const hasAI = Boolean(
-  Bun.env.OPENAI_API_KEY
-    || Bun.env.ANTHROPIC_API_KEY
-    || Bun.env.GEMINI_API_KEY
-    || Bun.env.GOOGLE_API_KEY
-    || Bun.env.GROQ_API_KEY
-    || Bun.env.XAI_API_KEY
-    || Bun.env.COHERE_API_KEY
-    || Bun.env.META_LLAMA_API_KEY
-    || Bun.env.LLAMA_API_KEY
-    || Bun.env.DEEPSEEK_API_KEY
-    || Bun.env.PERPLEXITY_API_KEY
-    || Bun.env.VOYAGE_API_KEY
-    || Bun.env.DEEPGRAM_API_KEY
+const aiEnabled = readEnv('ZERO_AI_ENABLED');
+const detectedAI = resolveAIConfig(true);
+const hasDetectedAIProvider = detectedAI !== false
+  && Object.values(detectedAI.providers).some((provider) => provider.active);
+const hasAI = aiEnabled === 'true' || (
+  aiEnabled !== 'false'
+  && hasDetectedAIProvider
 );
 const hasVector = Bun.env.ZERO_VECTOR_ENABLED === 'true';
 const hasPdf = Bun.env.ZERO_PDF_ENABLED === 'true';

@@ -156,7 +156,7 @@ export class WorkflowEachController {
       });
       this.store.updateStep(parent.step_id, {
         status: 'waiting',
-        input: serializeWorkflowEachJson(source),
+        input: node.visibility === 'private' ? null : serializeWorkflowEachJson(source),
         started_at: parent.started_at ?? now,
         updated_at: now,
       });
@@ -208,11 +208,16 @@ export class WorkflowEachController {
             value: parseWorkflowEachJson(item.input_json),
             index: item.item_index,
             key: item.item_key,
-            memoryScope: {
-              instanceId: instance.instance_id,
-              kind: 'each-item',
-              scopeId: item.item_id,
-            },
+            memoryScope: node.visibility === 'private'
+              ? { instanceId: instance.instance_id, kind: 'instance' }
+              : {
+                  instanceId: instance.instance_id,
+                  kind: 'each-item',
+                  scopeId: item.item_id,
+                },
+            ...(node.visibility === 'private'
+              ? { persistInput: false, persistOutput: false }
+              : {}),
           },
         );
       }));
@@ -307,7 +312,9 @@ export class WorkflowEachController {
       }
       if (!this.authority.validateInstance(instance.instance_id)) return false;
       this.store.updateStep(parentStepId, {
-        status: 'completed', output: serializeWorkflowEachJson(output), error: null,
+        status: 'completed',
+        output: node.visibility === 'private' ? null : serializeWorkflowEachJson(output),
+        error: null,
         completed_at: now, updated_at: now,
       });
       return true;

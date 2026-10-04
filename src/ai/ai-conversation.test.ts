@@ -32,6 +32,10 @@ describe('toModelMessages', () => {
     expect((messages[1] as any).content[1]).toMatchObject({
       type: 'file',
       mediaType: 'image/png',
+      data: {
+        type: 'url',
+        url: new URL('https://example.test/image.png'),
+      },
     });
     expect((messages[2] as any).content[1]).toEqual({
       type: 'tool-call',
@@ -43,7 +47,148 @@ describe('toModelMessages', () => {
       type: 'tool-result',
       toolCallId: 'call_1',
       toolName: 'lookup',
-      output: { ok: true },
+      output: { type: 'json', value: { ok: true } },
+    });
+  });
+
+  test('normalizes raw tool outputs and preserves valid discriminated outputs', () => {
+    const messages = toModelMessages([
+      {
+        role: 'assistant',
+        content: [{
+          type: 'tool-result',
+          toolCallId: 'assistant-result',
+          toolName: 'lookup',
+          output: 'plain result',
+        }],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'normalized-result',
+            toolName: 'lookup',
+            output: { type: 'execution-denied', reason: 'Approval declined.' },
+          },
+          {
+            type: 'tool-result',
+            toolCallId: 'undefined-result',
+            toolName: 'lookup',
+            output: undefined,
+          },
+        ],
+      },
+    ]);
+
+    expect((messages[0] as any).content[0].output).toEqual({
+      type: 'text',
+      value: 'plain result',
+    });
+    expect((messages[1] as any).content[0].output).toEqual({
+      type: 'execution-denied',
+      reason: 'Approval declined.',
+    });
+    expect((messages[1] as any).content[1].output).toEqual({
+      type: 'json',
+      value: null,
+    });
+  });
+
+  test('binds hosted-file references to the selected configured provider', () => {
+    const message = {
+      role: 'user' as const,
+      content: [{
+        type: 'file' as const,
+        hostedFile: {
+          version: 1 as const,
+          providerId: 'primary-openai',
+          providerReference: { 'openai.files': 'file_123' },
+        },
+        mediaType: 'application/pdf',
+        filename: 'record.pdf',
+      }],
+    };
+
+    const messages = toModelMessages([message], { providerId: 'primary-openai' });
+    expect((messages[0] as any).content[0]).toEqual({
+      type: 'file',
+      data: {
+        type: 'reference',
+        reference: { 'openai.files': 'file_123' },
+      },
+      mediaType: 'application/pdf',
+      filename: 'record.pdf',
+    });
+
+    expect(() => toModelMessages([message])).toThrow(expect.objectContaining({
+      code: 'AI_REQUEST_INVALID',
+    }));
+    expect(() => toModelMessages([message], { providerId: 'other-openai' }))
+      .toThrow(expect.objectContaining({ code: 'AI_REQUEST_INVALID' }));
+  });
+
+  test('detaches binary files and JSON tool history from caller mutation', () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const toolInput = { nested: { id: 1 } };
+    const toolOutput = { nested: { ok: true } };
+    const messages = toModelMessages([
+      {
+        role: 'user',
+        content: [{
+          type: 'file',
+          data: bytes,
+          mediaType: 'application/octet-stream',
+        }],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'lookup', input: toolInput }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: 'call_1', output: toolOutput }],
+      },
+    ]);
+
+    bytes[0] = 9;
+    toolInput.nested.id = 9;
+    toolOutput.nested.ok = false;
+
+    expect((messages[0] as any).content[0].data.data).toEqual(new Uint8Array([1, 2, 3]));
+    expect((messages[1] as any).content[0].input).toEqual({ nested: { id: 1 } });
+    expect((messages[2] as any).content[0].output).toEqual({
+      type: 'json',
+      value: { nested: { ok: true } },
+    });
+  });
+
+  test('preserves SDK 7 content tool results while detaching their media', () => {
+    const bytes = new Uint8Array([4, 5, 6]);
+    const messages = toModelMessages([{
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call_1',
+        output: {
+          type: 'content',
+          value: [{
+            type: 'file',
+            data: { type: 'data', data: bytes },
+            mediaType: 'application/octet-stream',
+          }],
+        },
+      }],
+    }]);
+    bytes[0] = 9;
+
+    expect((messages[0] as any).content[0].output).toMatchObject({
+      type: 'content',
+      value: [{
+        type: 'file',
+        data: { type: 'data', data: new Uint8Array([4, 5, 6]) },
+        mediaType: 'application/octet-stream',
+      }],
     });
   });
 });

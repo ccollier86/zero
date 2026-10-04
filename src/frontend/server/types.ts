@@ -18,6 +18,7 @@ import type {
 import { parseTokenTTL } from '../../tokens/token-utils';
 import type { AppIdentityConfig, EmailConfig } from '../../email/types';
 import { resolveAIConfig } from '../../ai/ai-env';
+import type { AIService } from '../../ai/ai-service';
 import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
 import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
@@ -34,6 +35,7 @@ import { resolvePdfConfig } from '../../pdf/pdf-config';
 import type { PdfConfig, ResolvedPdfConfig } from '../../pdf/pdf-types';
 import type { WorkflowRegistry } from '../../workflows/workflow-registry';
 import type { WorkflowInteractionAuthority } from '../../workflows/workflow-interaction-authority';
+import type { WorkflowService } from '../../workflows/workflow-service';
 import {
   assertDatabaseDirectoryIsolation,
   resolveControlDatabasePaths,
@@ -219,12 +221,29 @@ export interface ResolvedSyncDefaults {
 export type SyncAuthMode = 'required' | 'public';
 
 /** Managed durable-workflow registration for a full-stack app. */
+export interface AppWorkflowRegistrationContext {
+  /** This app's isolated AI service, or null when the AI layer is disabled. */
+  readonly ai: AIService | null;
+}
+
+/** Managed durable-workflow registration for a full-stack app. */
 export interface AppWorkflowsConfig {
   /**
    * Register handlers and definitions during app composition. Async setup is
    * awaited before crash recovery and service publication.
    */
-  register?: (registry: WorkflowRegistry) => void | Promise<void>;
+  register?: (
+    registry: WorkflowRegistry,
+    context: AppWorkflowRegistrationContext,
+  ) => void | Promise<void>;
+  /**
+   * Observe this app's recovered, published Torrent service.
+   *
+   * Use this synchronous binding seam for app-local integrations that need
+   * both the registry created in `register` and the live service. Throwing
+   * aborts workflow publication and rolls startup back.
+   */
+  onServiceCreated?: (service: WorkflowService) => void;
   /** Maximum shutdown wait for handlers that ignore cancellation. Default: 30s. */
   shutdownGraceMs?: number;
   /** Guardian/app policy adapter for human or agent interaction responders. */

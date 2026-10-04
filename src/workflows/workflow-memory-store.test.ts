@@ -131,6 +131,27 @@ describe('workflow scratch memory', () => {
     expect(store.get(itemB, 'status')?.value).toBe('pending');
   });
 
+  test('pins a restart-safe per-instance budget without changing ordinary defaults', () => {
+    seedWorkflow(db, 'instance-default');
+    const policy = store.createInstancePolicy('instance-1', {
+      maxEntries: 512,
+      maxTotalBytes: 2 * 1024 * 1024,
+    });
+
+    expect(policy).toMatchObject({
+      maxKeyBytes: 256,
+      maxValueBytes: 64 * 1024,
+      maxEntries: 512,
+      maxTotalBytes: 2 * 1024 * 1024,
+    });
+    expect(store.limitsForInstance('instance-1')).toEqual(policy);
+    expect(store.limitsForInstance('instance-default')).toEqual(store.limits);
+    expectWorkflowCode(
+      () => store.createInstancePolicy('instance-1', { maxEntries: 513 }),
+      'WORKFLOW_STATE_INVALID',
+    );
+  });
+
   test('returns each concurrent increment result and preserves the final count', async () => {
     store.set(SCOPE, 'counter', 0);
     const values = await Promise.all(Array.from({ length: 100 }, async () => {
@@ -200,20 +221,30 @@ test('workflow memory survives a file-backed restart', async () => {
   try {
     first = openMemoryDb(path);
     seedWorkflow(first, 'restart-instance');
-    new WorkflowMemoryStore(first).set(
+    const firstStore = new WorkflowMemoryStore(first);
+    firstStore.set(
       { instanceId: 'restart-instance', kind: 'instance' },
       'checkpoint',
       { page: 7 },
     );
+    firstStore.createInstancePolicy('restart-instance', {
+      maxEntries: 512,
+      maxTotalBytes: 2 * 1024 * 1024,
+    });
     first.dispose();
     first = null;
 
     second = openMemoryDb(path);
-    const recovered = new WorkflowMemoryStore(second).get(
+    const recoveredStore = new WorkflowMemoryStore(second);
+    const recovered = recoveredStore.get(
       { instanceId: 'restart-instance', kind: 'instance' },
       'checkpoint',
     );
     expect(recovered).toMatchObject({ value: { page: 7 }, version: 1 });
+    expect(recoveredStore.limitsForInstance('restart-instance')).toMatchObject({
+      maxEntries: 512,
+      maxTotalBytes: 2 * 1024 * 1024,
+    });
   } finally {
     first?.dispose();
     second?.dispose();

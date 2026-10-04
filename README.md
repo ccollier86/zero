@@ -265,6 +265,27 @@ apps. Start with the
 - [Torrent: Durable Workflows](./docs/workflows.md): code DSL, canonical graph IR,
   immutable code/database versions, trusted activities, memory, interactions,
   recovery, and safe real-time React visualization data.
+- [AI](./docs/ai.md): server-side service methods, aliases, conversations,
+  tools, Torrent integration, vector composition, status, and security bounds.
+- [AI Generation And Streaming](./docs/ai-generation.md): SDK 7 instructions,
+  reasoning, typed output, timeouts, retries, contexts, approvals, lifecycle,
+  errors, and compatibility guidance.
+- [AI Embeddings And Reranking](./docs/ai-embeddings-reranking.md): bounded
+  single/batch embeddings, reranking, integrity checks, aliases, and vector
+  composition.
+- [AI Hosted Files And Video](./docs/ai-files-video.md): bounded provider-hosted
+  file lifecycle, reusable provider references, preview video generation, and
+  model-pinned durable operation envelopes.
+- [AI Agents](./docs/ai-agents.md): immutable versioned definitions, typed
+  context, bounded ephemeral execution, signed approvals, and Torrent boundary.
+- [Durable AI Agents With Torrent](./docs/ai-durable-agents.md): private
+  persisted agent state, durable approvals, recovery, live authority, and
+  idempotent tool-effect guidance.
+- [AI Providers](./docs/ai-providers.md): canonical provider catalog,
+  credential modes and precedence, capabilities, endpoints, aliases, and
+  readiness behavior.
+- [Observability](./docs/observability.md): stable event/error sink contracts,
+  redaction rules, ownership, and operational event coverage.
 - [Component Inventory](./docs/frontend/component-inventory.md): reusable UI,
   app shells, data organisms, frontend sections, and use-first rules.
 - [Streaming Text](./docs/frontend/streaming-text.md): accessible AI/agent text

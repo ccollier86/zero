@@ -149,6 +149,17 @@ On `ok: true`, the client installs the canonical `change` when present and
 removes the mutation from its pending queue. This also reconciles defaults,
 normalization, later writes, and durable receipt replay.
 
+The additive `SyncClient.insertAsync()`, `updateAsync()`, and `deleteAsync()`
+methods, plus their typed `Collection` equivalents, resolve only from this
+exact `ref` after the ack has passed through canonical store routing and the
+same-row queue. Existing void mutation methods retain their fire-and-forget
+contract. The async wait defaults to 30 seconds and is bounded to five minutes.
+Caller abort and wait timeout stop only the promise wait; they do not remove or
+roll back a submitted mutation, so it may still commit. Temporary reconnects
+and `preserve-pending` snapshots retain the waiter, while snapshot replacement,
+client reset/disconnect, and authorization-scope replacement reject it with a
+stable `SyncMutationError.code`.
+
 On `ok: false`, the client rolls back the optimistic change by restoring the
 previous state from the pending queue. A negative acknowledgement settles that
 attempt; recovery behavior depends on `errorCode`:
@@ -175,6 +186,13 @@ where `source` is `server` or `timeout`. Callback failures cannot interrupt
 rollback or queue progress. Applications should branch on `errorCode` and use
 `source` only to distinguish a local acknowledgement timeout; `error` remains
 display-oriented text.
+
+An awaited negative ack rejects with the secret-free `SyncMutationError` only
+after that rollback. Its `code` is `SYNC_MUTATION_REJECTED` and its optional
+`serverErrorCode` carries the stable `SyncAckErrorCode`; raw server text and
+causes are deliberately excluded. The transport acknowledgement timeout uses
+`SYNC_MUTATION_ACK_TIMEOUT`. The distinct `SYNC_MUTATION_WAIT_TIMEOUT` and
+`SYNC_MUTATION_WAIT_ABORTED` codes mean only that the caller stopped waiting.
 
 #### `sync.catchup`
 

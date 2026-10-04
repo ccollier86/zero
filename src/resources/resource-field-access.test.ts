@@ -216,6 +216,48 @@ describe('resource field access contract', () => {
     })).toMatchObject({ status: 400 });
   });
 
+  test('builds matching SQL and actor plans for OR search and multi-sort', () => {
+    const options = {
+      table: 'documents',
+      columns: ['id', 'title', 'summary', 'secret'],
+      filterColumns: ['id', 'title', 'summary'],
+      sortColumns: ['title', 'id'],
+      query: {
+        search: 'report',
+        searchField: ['title', 'summary'],
+        sort: ['title:asc', 'id:desc'],
+      },
+    } as const;
+
+    const sql = buildResourceListQueryPlan(options);
+    expect(sql).toMatchObject({
+      sql: 'SELECT * FROM "documents" WHERE ("title" LIKE ? ESCAPE \'\\\' OR "summary" LIKE ? ESCAPE \'\\\') ORDER BY "title" ASC, "id" DESC LIMIT ? OFFSET ?',
+      params: ['%report%', '%report%'],
+    });
+
+    const actor = buildResourceListFindPlan(options);
+    expect(actor).toMatchObject({
+      input: {
+        filters: [{
+          type: 'anyOf',
+          filters: [
+            { type: 'field', field: 'title', operator: 'contains', value: 'report' },
+            { type: 'field', field: 'summary', operator: 'contains', value: 'report' },
+          ],
+        }],
+        order: [
+          { field: 'title', direction: 'asc' },
+          { field: 'id', direction: 'desc' },
+        ],
+      },
+    });
+
+    for (const build of [buildResourceListQueryPlan, buildResourceListFindPlan]) {
+      expect(build({ ...options, query: { search: 'classified', searchField: 'secret' } }))
+        .toMatchObject({ status: 400 });
+    }
+  });
+
   test('bounds Resource list query cardinality and string size on both database planes', () => {
     const tooManyFilters = Array.from(
       { length: RESOURCE_QUERY_LIMITS.filterCount + 1 },

@@ -178,6 +178,9 @@ export function createWorkflowGraphIntegrityTriggers(db: WorkflowSchemaDatabase)
       OR OLD.scope_id IS NOT NEW.scope_id
       OR OLD.key IS NOT NEW.key
     BEGIN SELECT RAISE(ABORT, 'workflow memory identity is immutable'); END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS trg_workflow_memory_policy_immutable
+    BEFORE UPDATE ON _workflow_memory_policies
+    BEGIN SELECT RAISE(ABORT, 'workflow memory policy is immutable'); END`);
   db.exec(`CREATE TRIGGER IF NOT EXISTS trg_workflow_interaction_identity_immutable
     BEFORE UPDATE OF tenant_id, instance_id, node_id, step_id, opened_at, created_at
     ON workflow_interactions
@@ -246,6 +249,7 @@ export function createWorkflowGraphIntegrityTriggers(db: WorkflowSchemaDatabase)
     ['_workflow_graph_edges', 'edge_id'],
     ['_workflow_decisions', 'decision_id'],
     ['_workflow_each_items', 'item_id'],
+    ['_workflow_memory_policies', 'instance_id'],
     ['_workflow_memory', 'memory_id'],
     ['workflow_interactions', 'interaction_id'],
   ] as const) {

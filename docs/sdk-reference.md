@@ -525,6 +525,61 @@ deliberate retry. `SYNC_DATA_REALM_UNAVAILABLE` and mutation-capacity failures
 must not be automatically replayed. The same config callback and subscription
 exist on the low-level `SyncClient` from `@zero/framework/sync`.
 
+### Acknowledged optimistic mutations
+
+The original `insert()`, `update()`, and `delete()` methods remain unchanged:
+they apply optimistically and return immediately. Use their additive async
+counterparts when a save, inline edit, or action must wait for the exact
+`sync.ack.ref` from the server:
+
+```ts
+import {
+  SYNC_MUTATION_ERROR_CODES,
+  SyncMutationError,
+} from '@zero/framework/react';
+
+const todos = client.collection<Todo>('todos');
+
+try {
+  await todos.updateAsync(
+    'todo-1',
+    { done: true },
+    { signal: saveController.signal, timeoutMs: 45_000 },
+  );
+} catch (error) {
+  if (error instanceof SyncMutationError) {
+    if (error.code === SYNC_MUTATION_ERROR_CODES.serverRejected) {
+      // Stable server classification when the ack supplied one.
+      console.log(error.serverErrorCode);
+    }
+  }
+}
+```
+
+`SyncClient` exposes `insertAsync(table, row, options?)`,
+`updateAsync(table, id, partial, options?)`, and
+`deleteAsync(table, id, options?)`. `Collection` exposes the typed
+`insertAsync(row, options?)`, `updateAsync(id, partial, options?)`, and
+`removeAsync(id, options?)` forms. They resolve only after the exact receipt
+has been routed through the canonical store and same-row queue. A negative ack
+rolls back first and then rejects with `SyncMutationError`; raw server messages
+and causes are not copied into that error. Inspect `code`, and inspect
+`serverErrorCode` only when `code` is `SYNC_MUTATION_REJECTED`.
+
+The overall receipt wait defaults to 30 seconds and accepts an integer from 1
+through 300,000 milliseconds. It includes time spent behind an earlier
+same-row mutation. A pre-aborted signal or invalid timeout prevents submission.
+After submission, an abort or `SYNC_MUTATION_WAIT_TIMEOUT` stops only that
+caller's wait: it does not cancel, remove, or roll back the mutation, which may
+still commit. By contrast, `SYNC_MUTATION_ACK_TIMEOUT` is the Sync transport's
+own acknowledgement deadline and follows the existing rollback/rejection path.
+
+Ordinary reconnect and `preserve-pending` baselines keep exact-ref waiters.
+Snapshot replacement, explicit reset, authorization-scope replacement, and
+client disconnect reject affected waiters with distinct stable codes. This
+prevents a UI from reporting success after its original scope or queue was
+discarded while preserving uncertain same-scope writes across reconnect.
+
 `client.resource(name)` can reach only registered resources whose server-owned
 exposure is `http` or `all`. `internal` and `sync` resources deliberately look
 unknown to generated HTTP CRUD.
@@ -701,6 +756,10 @@ col.insert({ title: 'Buy milk', done: false });  // Auto-generates UUID PK
 col.update(id, { done: true }); // Partial update
 col.remove(id);                 // Delete
 
+await col.insertAsync({ title: 'Buy milk', done: false });
+await col.updateAsync(id, { done: true }, { signal });
+await col.removeAsync(id, { timeoutMs: 45_000 });
+
 // Natural-identity tables
 col.identityKey({ team_id: 'team-1', user_id: 'user-1' });
 col.getByIdentity({ team_id: 'team-1', user_id: 'user-1' });
@@ -712,7 +771,11 @@ col.subscribe(rows => { ... })      // All changes
 col.subscribeOne(id, row => { ... }) // Single row changes
 ```
 
-All mutations are **optimistic** — they apply locally first, then sync to server via WebSocket. If the server rejects, changes roll back.
+All collection mutations are **optimistic** — they apply locally first, then
+sync to the server over WebSocket. The void methods return after local
+submission. The async methods preserve the same immediate optimistic UI but
+wait for authoritative acceptance; if the server rejects, the change rolls
+back before the promise rejects.
 
 ---
 
@@ -2091,7 +2154,7 @@ toolbar, editing, and override guide.
     { label: 'Delete', icon: Trash2, onClick: (row) => remove(row.todo_id), variant: 'destructive' },
     { label: 'Edit', icon: Pencil, onClick: (row) => push(`/todos/${row.todo_id}`) },
   ]}
-  searchable={{         // Compact, table-only global search
+  searchable={{         // Compact global table search
     placeholder: 'Find todos…',
     ariaLabel: 'Search todos',
   }}
@@ -2100,7 +2163,8 @@ toolbar, editing, and override guide.
   paginated={{ pageSize: 20 }}
   selectable            // Checkbox column
   onSelectionChange={(ids) => console.log('Selected:', ids)}
-  onCellEdit={(rowId, col, val) => console.log('Edited:', rowId, col, val)}
+  // Collection sources auto-write first; this remains a post-write notification.
+  onCellEdit={(rowId, col, val) => console.log('Accepted edit:', rowId, col, val)}
   toolbarLabel="Todo table controls"
   showToolbar            // Force toolbar rendering for export/columns only
   exportFilename="todos.csv"
@@ -2132,6 +2196,28 @@ Lazy `/api/data` table:
 />
 ```
 
+Isolated offset-paged server query using Zero's authenticated `/api/data`
+adapter:
+
+```tsx
+<DataTableView
+  schema={auditLogTable.schema}
+  source={{ type: 'server', table: 'audit_log' }}
+  searchable={{ fields: ['actor', 'event'] }}
+  filterable
+  sortable
+  paginated={{ pageSize: 50 }}
+/>
+```
+
+Server mode projects search, column filters, sorting, and pagination into a
+`DataTableServerQuery`. Results stay outside the shared collection, totals are
+optional, and accepted rows are fenced by the current query and authorization
+scope. Offset mode can use the built-in adapter; cursor mode requires a custom
+`DataTableServerAdapter` returning opaque `nextCursor`/`previousCursor` values.
+The table retains cursors only for visited pages. Use a stable source
+`getRowId` when results do not contain the schema primary key.
+
 Caller-owned rows:
 
 ```tsx
@@ -2161,16 +2247,41 @@ Custom data source with mutation actions:
 />
 ```
 
+Mutation actions may be synchronous or return `Promise<void>`. Built-in
+collection edits wait for the exact Sync acknowledgment. `onCellEdit` preserves
+its legacy role: it is the writer for caller-owned arrays, but a post-write
+notification when the source exposes `actions.update`. To replace the source
+writer with a custom endpoint, use `onCellCommit`; DataTable will call that
+writer alone and await it before closing the editor:
+
+```tsx
+<DataTableView
+  schema={invoiceTable.schema}
+  source={{ type: 'server', table: 'invoices' }}
+  editable={['status']}
+  onCellCommit={(id, field, value, context) => client.fetch(`/api/invoices/${id}`, {
+    method: 'PATCH',
+    signal: context?.signal,
+    body: JSON.stringify({ [field]: value }),
+  })}
+/>
+```
+
 Toolbar behavior:
 
+- `DataTableControls` is the exported table-independent responsive shell behind
+  `DataTableToolbar` and packaged management directories. It accepts optional
+  React-node `search`, `controls`, `actions`, and `supplemental` slots plus
+  standard `div` attributes, and owns no table or query state.
 - This toolbar update is source-compatible with existing tables. The boolean
   `searchable` form and `toolbarActions` keep working unchanged;
   `toolbarSlots`/`toolbarLabel` are optional, and no database or schema
   migration is required. Both action outlets may coexist during incremental
   adoption; `toolbarSlots.actions` renders before `toolbarActions`.
 - `searchable` accepts `boolean | DataTableSearchOptions`. The options are
-  `placeholder`, `ariaLabel`, `collapsedWidth`, `expandedWidth`, and
-  `disabled`.
+  `fields`, `placeholder`, `ariaLabel`, `collapsedWidth`, `expandedWidth`, and
+  `disabled`. `fields` selects built-in server-search columns; otherwise Zero
+  derives visible textual schema fields.
 - Compact search expands on focus or while populated. `Escape` clears a query
   before blurring/collapsing an empty search, `Enter` does not submit an
   ancestor form, and reduced-motion preferences disable the spring transition.
@@ -2192,10 +2303,12 @@ Toolbar behavior:
 - Set `showExport={false}` or `showColumnVisibility={false}` to hide those
   default controls.
 
-Toolbar search, generated schema filters, and TanStack controls supplied by a
-slot operate on rows already loaded into the table. They do not update lazy
-`filters` or `source.filters`, which are server query inputs sent to
-`/api/data`. `clearAll` clears client search and column filters only.
+For array, collection, and lazy sources, toolbar search and generated schema
+filters operate on rows already loaded into the table. They do not update lazy
+`filters` or `source.filters`, which are separate source inputs sent to
+`/api/data`. For a `server` source, the same table state is instead projected
+into the server query and refetched. `clearAll` resets search and column-filter
+state in both cases.
 
 `CrudPage`, `MasterDetailView`, and `MasterDetailPage` forward the same slot
 contract through `tableToolbarSlots`; their `searchable` props also accept
@@ -2224,6 +2337,9 @@ rendering or behavior.
     status: {
       header: 'Status',
       width: 140,
+      minWidth: 112,
+      maxWidth: 180,
+      truncate: true,
       cell: ({ value }) => <StatusBadge status={String(value)} />,
     },
     last_contacted_at: {
@@ -2239,11 +2355,18 @@ Editable cells decode values for display/editing and encode the changed field
 before calling collection updates. For example, a `field.tags()` cell edits a
 `string[]` but stores JSON text in the row.
 
+Column overrides also accept `flex`, `wrap`, and `truncate`. Use
+`tableLayout="fixed"` for stable geometry: fixed-width columns keep their
+resolved width and flexible columns consume remaining space.
+
 **Features:**
 - **Inline editing** — click a cell to edit, Enter to save, Escape to cancel, Tab to move
 - **Full-sync source** — `collection="table"` subscribes through the reactive DB
 - **Lazy source** — `source={{ type: 'lazy', table }}` fetches `/api/data`, then stays live for loaded rows
+- **Server source** — isolated offset/cursor pages with server search, filters, sorting, optional totals, and auth-safe stale-request fencing
 - **Caller-owned source** — `data` or `source={{ type: 'data' }}` for external backends
+- **Awaited mutations** — inline, row, and bulk actions expose pending state and accept only after their writer resolves
+- **Controlled state** — optionally control any subset of search, filters, sorting, pagination, selection, and visibility
 - **Generated filters** — `filterable` renders field-aware inputs for schema columns
 - **Real-time cell flash** — when another user changes a value, the cell briefly highlights blue
 - **Row animations** — new rows slide in, deleted rows fade out (via AnimatePresence)
@@ -2257,17 +2380,22 @@ Available for composing custom table layouts:
 | Component | Description |
 |-----------|-------------|
 | `DataTableColumnHeader` | Sortable column header with sort indicator |
-| `DataTableSearch` | Compact, animated, accessible search control scoped to table toolbars |
+| `DataTableControls` | Table-independent responsive shell for search, controls, actions, and supplemental React nodes |
+| `DataTableSearch` | Compact, animated, accessible search control for table and management-directory toolbars |
 | `DataTableToolbar` | Responsive search/filter control plane with composable slots, selection context, column visibility, and CSV export |
 | `DataTablePagination` | Page controls, rows-per-page selector |
 | `DataTableRowActions` | Per-row action dropdown menu |
+| `DataTableBulkActions` | Page-scoped selection actions, or an explicit caller-owned all-matching target |
 | `AnimatedCell` | Cell wrapper that flashes on value change |
 | `EditableCell` | Cell with inline edit mode |
 
 ### `useDataTable(options)`
 
 Headless hook for full table state control. Pass `primaryKey` to override
-`schema.primaryKey` when adapting legacy data.
+`schema.primaryKey` when adapting legacy data. `initialState` seeds state;
+`state` may control only selected facets while `onStateChange` receives the
+complete state. Query criteria and page-size changes reset the page and
+page-local selection.
 
 ---
 
@@ -5174,7 +5302,8 @@ fan-out execution, interactions, recovery, privacy, and authorization.
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `useDataTable` | `<T>(opts) => UseDataTableReturn<T>` | TanStack Table state management |
-| `useDataTableSource` | `<T>(opts) => DataTableSourceState<T>` | DataTable source resolver for static, full-sync, and lazy sources |
+| `useDataTableSource` | `<T>(opts) => DataTableSourceState<T>` | DataTable source resolver for static, full-sync, lazy, and isolated server sources |
+| `useDataTableMutationRunner` | `(opts?) => DataTableMutationRunner` | Authorization-fenced async cell/row/bulk mutation lifecycle |
 
 ### Generic UI Hooks
 
@@ -5217,10 +5346,10 @@ generated or exhaustive inventory; use TypeScript autocomplete and the package
 barrel for the exact installed-version surface.
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `ResourceMutationError`, `DataStudioMutationError`, `createDataStudioOperationId`, `StorageStudioMutationError`, `createStorageStudioOperationId`, `createStorageStudioSdkSurface`, `dataStudioRowValuesByKey`, `dataStudioCellValue`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
+`createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `ResourceMutationError`, `SyncMutationError`, `isSyncMutationError`, `SYNC_MUTATION_ERROR_CODES`, `SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS`, `SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS`, `DataStudioMutationError`, `createDataStudioOperationId`, `StorageStudioMutationError`, `createStorageStudioOperationId`, `createStorageStudioSdkSurface`, `dataStudioRowValuesByKey`, `dataStudioCellValue`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataTableServerQuery`, `createDataTableApiAdapter`, `DataTableServerSourceError`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApiKeyManagement`, `SelfApiKeyManagement`, `ApplicationUserApiKeyManagement`, `TenantMemberApiKeyManagement`, `PlatformApiKeyManagement`, `PlatformWorkspaceManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `AdministrationScopeGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `SecretField`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableSearch`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioInlineCell`, `DataStudioFilterControl`, `DataStudioInspector`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `IdentityUserManagement`, `StorageManagement`, `StorageStudioManagement`, `StorageStudioWorkspace`, `StorageStudioToolbar`, `StorageStudioList`, `StorageStudioInspector`, `StorageStudioActionBar`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApiKeyManagement`, `SelfApiKeyManagement`, `ApplicationUserApiKeyManagement`, `TenantMemberApiKeyManagement`, `PlatformApiKeyManagement`, `PlatformWorkspaceManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `AdministrationScopeGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `SecretField`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableControls`, `DataTableSearch`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `DataTableBulkActions`, `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioInlineCell`, `DataStudioFilterControl`, `DataStudioInspector`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `IdentityUserManagement`, `StorageManagement`, `StorageStudioManagement`, `StorageStudioWorkspace`, `StorageStudioToolbar`, `StorageStudioList`, `StorageStudioInspector`, `StorageStudioActionBar`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 Realm-readiness additions: `DataRealmReadyGate`, `DataRealmReadinessNotice`.
 
@@ -5229,7 +5358,7 @@ Additional Storage Studio component exports are
 `StorageFilePreview`.
 
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataStudio`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantInvitationAction`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useStorageStudioManagement`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataStudio`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantInvitationAction`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useStorageStudioManagement`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useDataTableMutationRunner`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 Realm-readiness hook: `useDataRealmReadiness`.
 
@@ -5247,7 +5376,17 @@ Data Studio's side-effect-free browser table fragment is exported as
 `@zero/framework/react` barrel.
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `SyncMutationRejection`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `DataStudioCapabilities`, `DataStudioTable`, `DataStudioTableSummary`, `DataStudioSchema`, `DataStudioRow`, `DataStudioRowPage`, `DataStudioRowFilter`, `DataStudioSdkSurface`, `UseDataStudioOptions`, `UseDataStudioResult`, `DataStudioProps`, `DataStudioWorkspaceProps`, `DataStudioGridProps`, `DataStudioInlineCellProps`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthPlatformTenantOwnershipTransferResult`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `SecretFieldProps`, `PlatformUserManagementProps`, `PlatformWorkspaceManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthConfigStatus`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantInvitationActionOptions`, `UseTenantInvitationActionResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `WorkflowInteractionSubmissionResult`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSearchOptions`, `DataTableSearchProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `DataTableToolbarContext`, `DataTableToolbarProps`, `DataTableToolbarSlot`, `DataTableToolbarSlots`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `SyncMutationErrorCode`, `SyncMutationErrorDetails`, `SyncMutationWaitOptions`, `SyncMutationRejection`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `DataStudioCapabilities`, `DataStudioTable`, `DataStudioTableSummary`, `DataStudioSchema`, `DataStudioRow`, `DataStudioRowPage`, `DataStudioRowFilter`, `DataStudioSdkSurface`, `UseDataStudioOptions`, `UseDataStudioResult`, `DataStudioProps`, `DataStudioWorkspaceProps`, `DataStudioGridProps`, `DataStudioInlineCellProps`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthPlatformTenantOwnershipTransferResult`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `SecretFieldProps`, `PlatformUserManagementProps`, `PlatformWorkspaceManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthConfigStatus`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantInvitationActionOptions`, `UseTenantInvitationActionResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `WorkflowInteractionSubmissionResult`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSearchOptions`, `DataTableSearchProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `DataTableToolbarContext`, `DataTableToolbarProps`, `DataTableToolbarSlot`, `DataTableToolbarSlots`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+
+Additional DataTable contracts in the browser-safe barrel are
+`DataTableState`, `DataTableServerAdapter`, `DataTableServerAdapterContext`,
+`DataTableServerQuery`, `DataTableServerResult`, `DataTableServerPage`,
+`DataTableServerOffsetPage`, `DataTableServerCursorPage`,
+`DataTableServerPaginationMode`, `DataTableServerSource`,
+`DataTableServerSourceErrorCode`, `DataTablePaginationProps`,
+`DataTableBulkAction`, `DataTableBulkActionsProps`,
+`DataTablePageBulkSelection`, `DataTableAllMatchingBulkSelection`,
+`DataTableMutationContext`, and `DataTableMutationRunner`.
 
 Guardian user API-key types in the browser-safe barrel:
 `AuthApiKeyApplicationAdminSdkSurface`, `AuthApiKeyCreatedVia`,
@@ -5365,7 +5504,7 @@ table-name constants exist for trusted adapter ownership only; their rows and
 columns are not an application query contract. See
 [System and Application Database Planes](./framework/system-database.md#advanced-server-only-projection-composition).
 
-Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SYNC_ACK_ERROR_CODES`, `SyncAckErrorCode`, `SyncMutationRejection`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
+Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SYNC_ACK_ERROR_CODES`, `SYNC_MUTATION_ERROR_CODES`, `SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS`, `SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS`, `SyncMutationError`, `isSyncMutationError`, `SyncAckErrorCode`, `SyncMutationErrorCode`, `SyncMutationErrorDetails`, `SyncMutationWaitOptions`, `SyncMutationRejection`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 
 ### CVA Variant Functions
 `buttonVariants`, `badgeVariants`

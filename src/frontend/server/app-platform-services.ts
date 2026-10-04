@@ -28,6 +28,7 @@ import {
   ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_AI_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
 } from '../../runtime/service-keys';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
@@ -199,6 +200,7 @@ export async function mountPlatformServices({
         runtime,
         systemDB,
         scheduler,
+        managedInitializers,
         getTokenService,
         authorization,
         managedStartup,
@@ -218,6 +220,7 @@ interface WorkflowMountInput {
   readonly runtime: ZeroAppRuntime;
   readonly systemDB: ReactiveDB;
   readonly scheduler: SchedulerService;
+  readonly managedInitializers: Array<() => Promise<void>>;
   readonly getTokenService: () => TokenService | null;
   readonly authorization: AuthMiddlewareAuthorizationOptions;
   readonly workflowConfig: Exclude<ResolvedConfig['workflows'], false>;
@@ -231,6 +234,7 @@ function mountWorkflowService({
   runtime,
   systemDB,
   scheduler,
+  managedInitializers,
   getTokenService,
   authorization,
   managedStartup,
@@ -240,7 +244,12 @@ function mountWorkflowService({
     db: systemDB,
     runtime,
     scheduler,
-    register: workflowConfig.register,
+    register: workflowConfig.register
+      ? (registry) => workflowConfig.register?.(registry, {
+        ai: runtime.get(ZERO_AI_SERVICE),
+      })
+      : undefined,
+    onServiceCreated: workflowConfig.onServiceCreated,
     shutdownGraceMs: workflowConfig.shutdownGraceMs,
     interactionAuthority: workflowConfig.interactionAuthority,
     executionServices: createWorkflowExecutionServiceProvider({ runtime }),
@@ -252,6 +261,11 @@ function mountWorkflowService({
     },
     getTokenService,
     authorization,
+  }, {
+    managedStartup: true,
+    onInitializerCreated(initialize) {
+      managedInitializers.push(initialize);
+    },
   }));
 }
 

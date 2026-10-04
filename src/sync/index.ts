@@ -82,6 +82,13 @@ export {
 
 // ─── Wire Protocol Types ──────────────────────────────────────────────────
 export { SYNC_ACK_ERROR_CODES } from './types';
+export {
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
+} from './client/sync-mutation-receipts';
 export type {
   SyncDataPlaneName,
   SyncSnapshotMessage,
@@ -105,6 +112,11 @@ export type {
   SyncAuthLifecycleBinder,
   SyncClientLifecycleTarget,
 } from './types';
+export type {
+  SyncMutationErrorCode,
+  SyncMutationErrorDetails,
+  SyncMutationWaitOptions,
+} from './client/sync-mutation-receipts';
 
 // ─── Server: Ephemeral KV ──────────────────────────────────────────────────
 export { EphemeralStateManager } from './ephemeral-manager';

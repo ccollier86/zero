@@ -196,6 +196,68 @@ createApp({
 });
 ```
 
+### AI provider configuration
+
+`ai: true` enables catalog auto-detection. A provider is active only when its
+complete readiness contract is satisfied: normally an API key, but Bedrock
+requires a region plus credentials, Azure requires an endpoint plus
+credentials, Vertex accepts express-key or project/location authentication,
+and Open Responses requires a base URL.
+
+Use typed explicit config when credentials or construction behavior cannot be
+represented by env alone:
+
+```ts
+ai: {
+  autoDetect: true,
+  providers: {
+    bedrock: {
+      type: 'amazon-bedrock',
+      settings: {
+        region: Bun.env.AWS_REGION ?? 'us-east-1',
+        credentialProvider: () => loadApplicationAwsCredentials(),
+      },
+    },
+    local: {
+      type: 'openai-compatible',
+      baseURL: 'http://127.0.0.1:11434/v1',
+      capabilities: { text: true, streaming: true },
+    },
+  },
+  aliases: {
+    smart: 'bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0',
+    fast: 'local/llama3.2',
+    reranking: 'bedrock/amazon.rerank-v1:0',
+  },
+  filesProvider: 'openai',
+}
+```
+
+Provider config also accepts `headers`, a custom `fetch`, and a provider
+`settings` object. Model references always use `providerId/modelId`; the colon
+in a provider-specific model ID is data after the slash, not Zero's separator.
+For `apiKey` and `baseURL`, omission inherits env, a string overrides it, and
+`null` suppresses env inheritance for that field (an adapter's fixed service
+endpoint still applies when one exists). Explicit alternate cloud auth
+settings suppress ambient API keys.
+Blank or whitespace-only strings normalize to omission before inheritance;
+use `null` for explicit suppression.
+An explicit `{ type: 'gateway', apiKey: null }` opts in to Vercel OIDC without
+inheriting an ambient API key; generated config uses full provider
+readiness—not key presence alone—for env auto-enable. `ZERO_AI_ENABLED` can
+force the plugin on or off, but Gateway OIDC and dynamic credential callbacks
+still require explicit trusted config.
+See [AI Providers](./ai-providers.md) for the full catalog, cloud credential
+rules, settings, capabilities, aliases, hosted-file default, and env bindings.
+See [AI Generation And Streaming](./ai-generation.md) for SDK 7 request
+controls and [AI Embeddings And Reranking](./ai-embeddings-reranking.md) for
+the bounded operation contract. See
+[AI Hosted Files And Video](./ai-files-video.md) for hosted-file provider
+selection, transfer ceilings, reusable references, and preview video jobs. See
+[AI Agents](./ai-agents.md) and
+[Durable AI Agents With Torrent](./ai-durable-agents.md) for bounded ephemeral
+execution and the managed app-local Torrent bridge.
+
 ### ReactiveDB database automations
 
 Compose versioned functions and AFTER-change triggers with
@@ -1380,26 +1442,40 @@ Relevant environment variables are shown in `.env.example`:
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK as raw JSON or base64; PEM is not supported. Missing `kid` is derived deterministically from the public key. |
 | `ZERO_STORAGE_SIGNING_SECRET` | Optional HMAC key for storage presigned URLs and upload grants; use at least 32 random bytes. A durable shared system database can use Zero's persisted generated key. |
-| `OPENAI_API_KEY` | Enables OpenAI when `ai: true`. |
-| `ANTHROPIC_API_KEY` | Enables Anthropic when `ai: true`. |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI when `ai: true`. |
-| `GROQ_API_KEY` | Enables Groq when `ai: true`. |
-| `XAI_API_KEY` | Enables xAI when `ai: true`. |
-| `COHERE_API_KEY` | Enables Cohere when `ai: true`. |
-| `LLAMA_API_KEY` / `META_LLAMA_API_KEY` | Enables the custom Meta Llama provider when `ai: true`. |
-| `DEEPSEEK_API_KEY` | Enables DeepSeek via OpenAI-compatible adapter when `ai: true`. |
-
-| `PERPLEXITY_API_KEY` / `PERPLEXITYAI_API_KEY` | Enables Perplexity via OpenAI-compatible adapter when `ai: true`. |
-| `VOYAGE_API_KEY` | Enables Voyage embeddings via OpenAI-compatible adapter when `ai: true`. |
-| `DEEPGRAM_API_KEY` | Enables Deepgram transcription and speech when `ai: true`. |
+| `ZERO_AI_ENABLED` | Generated-app on/off override. Complete env credential/endpoint shapes auto-enable through the normal readiness resolver; forcing `true` does not invent credentials or opt into OIDC. |
+| `AI_GATEWAY_API_KEY` | Enables Vercel AI Gateway when `ai: true`. |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`, `GROQ_API_KEY`, `XAI_API_KEY`, `COHERE_API_KEY` | Enable the corresponding native language/multimodal provider. Anthropic bearer tokens use `Authorization`, not `x-api-key`. |
+| `ANTHROPIC_AWS_WORKSPACE_ID` plus `ANTHROPIC_AWS_API_KEY` and `AWS_REGION` / `AWS_DEFAULT_REGION` (or `ANTHROPIC_AWS_BASE_URL`) | Enables Claude Platform on AWS with API-key authentication. The workspace is always required. |
+| `ANTHROPIC_AWS_WORKSPACE_ID` plus `AWS_REGION` and complete static AWS credentials | Enables Claude Platform on AWS with SigV4. Explicit trusted config can use `settings.credentialProvider`; API-key mode takes precedence over ambient static credentials. |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` | Enables Google Generative AI, using the first non-empty key. |
+| `AZURE_API_KEY` plus `AZURE_RESOURCE_NAME` or `AZURE_BASE_URL` | Enables Azure OpenAI. An explicit `settings.tokenProvider` can replace the key. |
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | Amazon Bedrock signing/endpoint region. Region alone does not activate Bedrock. |
+| `AWS_BEARER_TOKEN_BEDROCK` | Activates Bedrock bearer authentication with a region-derived endpoint or endpoint override; bearer mode does not use SigV4. |
+| `BEDROCK_BASE_URL`, `AMAZON_BEDROCK_BASE_URL`, `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`, `AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME`, `AWS_ENDPOINT_URL` | Bedrock endpoint override precedence, from a generic Zero/provider endpoint through the separate model-runtime and agent-runtime service endpoints to the AWS-wide endpoint. Bearer mode can use a model-runtime endpoint instead of a region for non-reranking operations. The agent-runtime endpoint alone is not that activation signal; SigV4 and reranking still require a region. |
+| `AWS_ACCESS_KEY_ID` plus `AWS_SECRET_ACCESS_KEY`; optional `AWS_SESSION_TOKEN` | Activates Bedrock with its region and a complete static credential set. Workload identity uses explicit `settings.credentialProvider`. |
+| `GOOGLE_VERTEX_API_KEY` | Enables Vertex express mode. |
+| `GOOGLE_VERTEX_PROJECT` plus `GOOGLE_VERTEX_LOCATION` | Enables Vertex project/location mode using Google Cloud authentication. |
+| `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `TOGETHER_AI_API_KEY`, `DEEPINFRA_API_KEY`, `DEEPSEEK_API_KEY`, `CEREBRAS_API_KEY`, `FIREWORKS_API_KEY` | Enable the corresponding native language/multimodal provider. |
+| `PERPLEXITY_API_KEY` / `PERPLEXITYAI_API_KEY`, `VOYAGE_API_KEY` | Enable native Perplexity or Voyage adapters. |
+| `FAL_API_KEY` / `FAL_KEY`, `LUMA_API_KEY`, `REPLICATE_API_TOKEN`, `BFL_API_KEY`, `ARK_API_KEY`, `QUIVERAI_API_KEY` | Enable image/media providers. |
+| `PRODIA_TOKEN`, `TOPAZ_API_KEY` | Enable Prodia's text/vision/image/video adapter or Topaz's image-only Zero surface. |
+| `KLINGAI_API_KEY` or complete `KLINGAI_ACCESS_KEY` plus `KLINGAI_SECRET_KEY` | Enables Kling AI preview video. The API key takes precedence when both modes are present. |
+| `CARTESIA_API_KEY`, `GMI_CLOUD_APIKEY` | Enable Cartesia transcription/speech or GMI Cloud text generation. |
+| `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `HUME_API_KEY`, `REVAI_API_KEY`, `ASSEMBLYAI_API_KEY`, `GLADIA_API_KEY`, `FISH_AUDIO_API_KEY` | Enable speech and/or transcription providers according to their adapter capability. |
+| `BASETEN_API_KEY`, `HUGGINGFACE_API_KEY`, `MOONSHOT_API_KEY`, `ALIBABA_API_KEY`, `MINIMAX_API_KEY`, `ZAI_API_KEY` | Enable the corresponding extended provider. |
+| `OPEN_RESPONSES_BASE_URL` | Enables the Open Responses adapter. Use explicit config when the endpoint also needs a key. |
 | `{PROVIDER_ID}_API_KEY` | Optional convention for explicit non-catalog AI providers when `apiKey` is omitted, for example `LOCAL_API_KEY`. |
-| `{PROVIDER_ID}_BASE_URL` | Optional convention for explicit non-catalog AI providers when `baseURL` is omitted, for example `LOCAL_BASE_URL`. |
+| `{PROVIDER_ID}_BASE_URL` | Endpoint override convention, with punctuation converted to underscores. Zero safely rewrites fixed-origin audio adapter requests as needed. |
 | `ZERO_AI_FAST_MODEL` | Optional `fast` alias override. |
 | `ZERO_AI_SMART_MODEL` | Optional `smart` alias override. |
 | `ZERO_AI_EMBEDDING_MODEL` | Optional `embedding` alias override. |
 | `ZERO_AI_IMAGE_MODEL` | Optional `image` alias override. |
 | `ZERO_AI_TRANSCRIPTION_MODEL` | Optional `transcription` alias override. |
 | `ZERO_AI_SPEECH_MODEL` | Optional `speech` alias override. |
+| `ZERO_AI_RERANKING_MODEL` | Optional `reranking` alias override. |
+| `ZERO_AI_VIDEO_MODEL` | Optional preview `video` alias override. |
+| `ZERO_AI_FILES_PROVIDER` | Optional default provider ID for hosted-file operations. The active provider must support each requested operation. |
+| `ZERO_AI_APPROVAL_SECRET` | Optional app convention for server-only HMAC material passed explicitly to tool/agent approval configuration. Zero does not read it implicitly; use at least 32 high-entropy bytes. |
 | `ZERO_VECTOR_ENABLED` | Starter-app convention for enabling inline vector config. |
 | `ZERO_VECTOR_DATA_DIR` | Default local zvec collection directory. |
 | `ZERO_VECTOR_DEFAULT_DIMENSIONS` | Default vector dimensions for `vector: true`. |
@@ -1528,8 +1604,9 @@ Current checks cover:
 11. Lazy/auto sync index guidance for `/api/data` filters and sorting.
 12. Observability disabled in production, unreadable endpoint policy, and
     endpoint/store mismatches.
-13. AI provider readiness, custom OpenAI-compatible base URLs, aliases,
-    capability mismatches, and status endpoint access policy.
+13. AI provider readiness (including cloud credentials/endpoints), reserved
+    catalog IDs, custom OpenAI-compatible base URLs, aliases, capability
+    mismatches, and status endpoint access policy.
 14. Vector path collisions, storage/build-output path overlap, read-only
     indexes, unusually high dimensions, embedding alias readiness, and
     unindexed scope metadata fields.

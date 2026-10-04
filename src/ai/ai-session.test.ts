@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AIConversationSessionBuilder } from './ai-session';
-import type { AIGenerateConversationRequest, AITextResult } from './ai-types';
+import type { AIMessage, AITextResult } from './ai-types';
 
 describe('AIConversationSessionBuilder', () => {
   test('carries prior user and assistant turns into the next request', async () => {
-    const requests: AIGenerateConversationRequest[] = [];
+    const requests: Array<{ messages: readonly AIMessage[] }> = [];
     const session = new AIConversationSessionBuilder({
       async generateConversation(request) {
         requests.push({ ...request, messages: [...request.messages] });

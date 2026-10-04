@@ -344,6 +344,11 @@ Catalog search accepts at most 120 characters. The same search control performs
 a bounded server-side literal search over the current folder's immediate
 children while in file view; it is not limited to the page already loaded in
 the browser. Drive and file pages both expose previous/next controls.
+Storage Studio's drive catalog, Studio file view, and reusable
+`StorageFileBrowser` now share `DataTableControls`: compact search appears
+first, then view-specific filters, with actions in the responsive action group.
+This changes presentation only; the existing controllers, server-backed query
+semantics, component props, and inspector slots require no caller rewrite.
 Exact-object grants are editable in the selected file/folder inspector, while
 inherited drive and ancestor grants are shown read-only and must be changed at
 their source; folder grants inherit to descendants. Actions are projected from

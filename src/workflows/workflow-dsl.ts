@@ -13,6 +13,7 @@ import type {
   WorkflowActivityReference,
   WorkflowEachErrorPolicy,
   WorkflowEachInvalidItemPolicy,
+  WorkflowEachVisibility,
   WorkflowJsonValue,
 } from './workflow-ir';
 import { WORKFLOW_COMPILER_ID_PREFIX } from './workflow-ir';
@@ -106,6 +107,8 @@ export interface WorkflowEachOptions {
   concurrency?: number;
   onInvalid?: WorkflowEachInvalidItemPolicy;
   onError?: WorkflowEachErrorPolicy;
+  /** `private` retains fan-out payloads only in server-owned underscore tables. */
+  visibility?: WorkflowEachVisibility;
 }
 
 export interface WorkflowEachDsl {
@@ -279,7 +282,7 @@ export function each(
 ): WorkflowEachDsl {
   assertAuthorId(id);
   assertOptions(options, [
-    'label', 'itemSchema', 'itemKey', 'concurrency', 'onInvalid', 'onError',
+    'label', 'itemSchema', 'itemKey', 'concurrency', 'onInvalid', 'onError', 'visibility',
   ], 'each');
   return Object.freeze({
     kind: 'each',

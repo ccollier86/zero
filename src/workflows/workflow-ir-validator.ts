@@ -180,7 +180,7 @@ function validateNode(
       return;
     case 'each':
       assertKeys(value, [
-        'id', 'kind', 'label', 'source', 'itemSchema', 'itemKey', 'concurrency', 'onInvalid', 'onError', 'body',
+        'id', 'kind', 'label', 'source', 'itemSchema', 'itemKey', 'concurrency', 'onInvalid', 'onError', 'visibility', 'body',
       ], `Workflow each "${value.id}"`);
       validateWorkflowExpression(value.source);
       if (value.itemSchema !== undefined) assertWorkflowJsonValue(value.itemSchema, 'Each item schema');
@@ -195,6 +195,11 @@ function validateNode(
       }
       if (value.onError !== 'fail' && value.onError !== 'collect') {
         invalid('Workflow each onError policy is invalid');
+      }
+      if (value.visibility !== undefined
+        && value.visibility !== 'public'
+        && value.visibility !== 'private') {
+        invalid('Workflow each visibility is invalid');
       }
       validateGraph(value.body, options, depth + 1, budget, true);
       if (!isRecord(value.body)

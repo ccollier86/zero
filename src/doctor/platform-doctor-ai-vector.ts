@@ -27,6 +27,8 @@ const AI_ALIAS_CAPABILITIES: Record<string, AICapability> = {
   image: 'images',
   transcription: 'transcription',
   speech: 'speech',
+  reranking: 'reranking',
+  video: 'video',
 };
 
 const VECTOR_SCOPE_METADATA_FIELDS = new Set([
@@ -51,12 +53,16 @@ export function checkAI(
 
   const providers = Object.values(resolved.ai.providers);
   if (!providers.some((provider) => provider.active)) {
+    const allConfiguredProvidersDisabled = providers.length > 0
+      && providers.every((provider) => provider.reason === 'config_disabled');
     addFinding(findings, {
       severity: 'warning',
       code: 'ai.providers.none_active',
       path: 'ai.providers',
       message: 'AI is enabled, but no provider is active.',
-      hint: 'Set a supported provider API key in the environment, add an explicit active provider, or set ai: false.',
+      hint: allConfiguredProvidersDisabled
+        ? 'Re-enable at least one configured provider, add an active provider, or set ai: false.'
+        : 'Set a supported provider API key in the environment, add an explicit active provider, or set ai: false.',
       docs: './docs/ai-providers.md',
     });
   }
@@ -69,6 +75,8 @@ export function checkAI(
     const capability = AI_ALIAS_CAPABILITIES[alias] ?? 'text';
     checkAIModelReference(resolved.ai, alias, model, capability, `ai.aliases.${alias}`, findings);
   }
+
+  checkAIFilesProvider(resolved.ai, findings);
 
   const statusEndpoint = resolved.ai.statusEndpoint;
   if (!statusEndpoint.enabled) return;
@@ -95,6 +103,68 @@ export function checkAI(
       docs: './docs/ai.md#status',
     });
   }
+}
+
+/** Validate the optional default provider for hosted file uploads. */
+function checkAIFilesProvider(
+  ai: ResolvedAIConfig,
+  findings: PlatformDoctorFindingSink,
+): void {
+  const providerId = ai.filesProvider;
+  if (!providerId) return;
+
+  const provider = ai.providers[providerId];
+  if (!provider) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'ai.files_provider.provider_missing',
+      path: 'ai.filesProvider',
+      message: `AI filesProvider points at "${providerId}", but that provider is not configured.`,
+      hint: 'Configure that provider, or select an active provider that supports hosted file uploads.',
+      docs: './docs/ai-providers.md#provider-hosted-files',
+    });
+    return;
+  }
+
+  if (!provider.active) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'ai.files_provider.provider_inactive',
+      path: 'ai.filesProvider',
+      message: `AI filesProvider points at inactive provider "${providerId}"${provider.reason ? ` (${provider.reason})` : ''}.`,
+      hint: 'Provide the provider credentials/settings, or select a different active files provider.',
+      docs: './docs/ai-providers.md#provider-hosted-files',
+    });
+    return;
+  }
+
+  if (!provider.capabilities.files) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'ai.files_provider.capability_unsupported',
+      path: 'ai.filesProvider',
+      message: `AI provider "${providerId}" does not advertise hosted file uploads.`,
+      hint: 'Select OpenAI, xAI, Anthropic, Google, DeepSeek, or a custom provider with the files capability.',
+      docs: './docs/ai-providers.md#provider-hosted-files',
+    });
+    return;
+  }
+
+  const missing = [
+    ['metadata reads', provider.capabilities.fileMetadata],
+    ['downloads', provider.capabilities.fileDownload],
+    ['deletion', provider.capabilities.fileDelete],
+  ].filter(([, supported]) => !supported).map(([operation]) => operation);
+  if (missing.length === 0) return;
+
+  addFinding(findings, {
+    severity: 'info',
+    code: 'ai.files_provider.optional_operations_unavailable',
+    path: 'ai.filesProvider',
+    message: `AI filesProvider "${providerId}" supports uploads but not ${missing.join(', ')}.`,
+    hint: 'Account for the upload-only lifecycle, or select OpenAI/xAI when the app requires every hosted-file operation.',
+    docs: './docs/ai-providers.md#provider-hosted-files',
+  });
 }
 
 /** Validate local vector index layout, scoping metadata, and AI bridge readiness. */
@@ -198,7 +268,11 @@ function checkAIProvider(
   provider: ResolvedAIProviderConfig,
   findings: PlatformDoctorFindingSink,
 ): void {
-  if (provider.active || provider.source !== 'config') return;
+  if (
+    provider.active
+    || provider.reason === 'config_disabled'
+    || !shouldDiagnoseInactiveProvider(provider)
+  ) return;
 
   if (provider.type === 'openai-compatible' && !provider.baseURL) {
     addFinding(findings, {
@@ -209,6 +283,33 @@ function checkAIProvider(
       hint: 'Set baseURL in the provider config or use a built-in provider id with a known default base URL.',
       docs: './docs/ai-providers.md#base-urls',
     });
+    return;
+  }
+
+  if (provider.type === 'open-responses' && !provider.baseURL) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'ai.provider.base_url_missing',
+      path: `ai.providers.${provider.id}.baseURL`,
+      message: `AI provider "${provider.id}" requires an Open Responses endpoint URL, so it is inactive.`,
+      hint: 'Set baseURL to the complete Open Responses POST endpoint.',
+      docs: './docs/ai-providers.md#open-responses',
+    });
+    return;
+  }
+
+  if (provider.type === 'amazon-bedrock') {
+    addBedrockFinding(provider, findings);
+    return;
+  }
+
+  if (provider.type === 'azure') {
+    addAzureFinding(provider, findings);
+    return;
+  }
+
+  if (provider.type === 'google-vertex') {
+    addVertexFinding(provider, findings);
     return;
   }
 
@@ -231,6 +332,89 @@ function checkAIProvider(
     message: `AI provider "${provider.id}" is configured but inactive${provider.reason ? ` (${provider.reason})` : ''}.`,
     hint: 'Provide the required API key/base URL, or set this provider to false if it should stay disabled.',
     docs: './docs/ai-providers.md',
+  });
+}
+
+/** Ignore absent env providers while surfacing provider-specific partial setup. */
+function shouldDiagnoseInactiveProvider(provider: ResolvedAIProviderConfig): boolean {
+  if (provider.source === 'config') return true;
+  if (provider.configuredBy.length === 0) return false;
+
+  if (provider.type !== 'amazon-bedrock') return true;
+
+  // AWS region variables are shared with unrelated AWS services. Treat a
+  // credential signal as Bedrock intent so Doctor does not warn merely because
+  // an app happens to run in an AWS region.
+  return provider.configuredBy.some(
+    (key) => key !== 'AWS_REGION' && key !== 'AWS_DEFAULT_REGION',
+  );
+}
+
+function addBedrockFinding(
+  provider: ResolvedAIProviderConfig,
+  findings: PlatformDoctorFindingSink,
+): void {
+  const partial = provider.reason === 'partial_aws_credentials';
+  const missingRegion = provider.reason === 'missing_region';
+  addFinding(findings, {
+    severity: partial ? 'error' : 'warning',
+    code: partial
+      ? 'ai.provider.bedrock_credentials_partial'
+      : missingRegion
+        ? 'ai.provider.bedrock_region_missing'
+        : 'ai.provider.bedrock_credentials_missing',
+    path: `ai.providers.${provider.id}.settings.${missingRegion ? 'region' : 'credentialProvider'}`,
+    message: partial
+      ? `Amazon Bedrock provider "${provider.id}" has only one half of its static AWS credential pair.`
+      : missingRegion
+        ? `Amazon Bedrock provider "${provider.id}" has no AWS region.`
+        : `Amazon Bedrock provider "${provider.id}" has no usable bearer, static, or dynamic credentials.`,
+    hint: missingRegion
+      ? 'Set settings.region, AWS_REGION, or AWS_DEFAULT_REGION.'
+      : 'Use AWS_BEARER_TOKEN_BEDROCK, both AWS access-key fields, or an explicit settings.credentialProvider.',
+    docs: './docs/ai-providers.md#amazon-bedrock',
+  });
+}
+
+function addAzureFinding(
+  provider: ResolvedAIProviderConfig,
+  findings: PlatformDoctorFindingSink,
+): void {
+  const missingEndpoint = provider.reason === 'missing_azure_endpoint';
+  addFinding(findings, {
+    severity: 'warning',
+    code: missingEndpoint
+      ? 'ai.provider.azure_endpoint_missing'
+      : 'ai.provider.azure_credentials_missing',
+    path: missingEndpoint
+      ? `ai.providers.${provider.id}.settings.resourceName`
+      : `ai.providers.${provider.id}.settings.tokenProvider`,
+    message: missingEndpoint
+      ? `Azure OpenAI provider "${provider.id}" has neither a resource name nor a base URL.`
+      : `Azure OpenAI provider "${provider.id}" has neither an API key nor an Entra token provider.`,
+    hint: missingEndpoint
+      ? 'Set settings.resourceName, AZURE_RESOURCE_NAME, or baseURL.'
+      : 'Set AZURE_API_KEY/apiKey or provide settings.tokenProvider.',
+    docs: './docs/ai-providers.md#azure-openai',
+  });
+}
+
+function addVertexFinding(
+  provider: ResolvedAIProviderConfig,
+  findings: PlatformDoctorFindingSink,
+): void {
+  const missingProject = provider.reason === 'missing_project';
+  addFinding(findings, {
+    severity: 'warning',
+    code: missingProject
+      ? 'ai.provider.vertex_project_missing'
+      : 'ai.provider.vertex_location_missing',
+    path: `ai.providers.${provider.id}.settings.${missingProject ? 'project' : 'location'}`,
+    message: `Google Vertex provider "${provider.id}" has no ${missingProject ? 'project' : 'location'} for ADC authentication.`,
+    hint: missingProject
+      ? 'Set settings.project or GOOGLE_VERTEX_PROJECT, or use GOOGLE_VERTEX_API_KEY express mode.'
+      : 'Set settings.location or GOOGLE_VERTEX_LOCATION, or use GOOGLE_VERTEX_API_KEY express mode.',
+    docs: './docs/ai-providers.md#google-vertex-ai',
   });
 }
 
@@ -306,12 +490,15 @@ function checkAIModelReference(
   }
 
   if (!provider.active) {
+    const disabled = provider.reason === 'config_disabled';
     addFinding(findings, {
       severity: 'warning',
       code: `${codePrefix}.provider_inactive`,
       path: findingPath,
       message: `AI alias "${alias}" points at inactive provider "${provider.id}"${provider.reason ? ` (${provider.reason})` : ''}.`,
-      hint: 'Provide the required provider credentials/settings, choose a different active provider, or remove the alias.',
+      hint: disabled
+        ? 'Re-enable that provider, choose a different active provider, or remove the alias.'
+        : 'Provide the required provider credentials/settings, choose a different active provider, or remove the alias.',
       docs,
     });
     return;

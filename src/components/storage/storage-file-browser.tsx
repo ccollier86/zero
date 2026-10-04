@@ -9,14 +9,15 @@
  */
 
 import * as React from 'react';
-import { ChevronRight, File, Folder, Search } from 'lucide-react';
+import { ChevronRight, File, Folder } from 'lucide-react';
 import { toast } from 'sonner';
 import { AnimateIcon } from '../animate-ui/icons/icon';
 import { ArrowLeft } from '../animate-ui/icons/arrow-left';
 import { Plus } from '../animate-ui/icons/plus';
+import { DataTableControls } from '../data-table/data-table-controls';
+import { DataTableSearch } from '../data-table/data-table-search';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import {
   Select,
   SelectContent,
@@ -280,46 +281,73 @@ export function StorageFileBrowser({
         </Button>
       </div>
 
-      <div className="grid gap-2 border-b px-4 py-3 lg:grid-cols-[1fr_9rem_10rem_8rem]">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search files"
-            className="pl-9"
-          />
-        </div>
-        <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as ListOptions['type'])}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All items</SelectItem>
-            <SelectItem value="folder">Folders</SelectItem>
-            <SelectItem value="file">Files</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={sortBy} onValueChange={(value) => setSortBy(value as ListOptions['sortBy'])}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="name">Name</SelectItem>
-            <SelectItem value="updated_at">Updated</SelectItem>
-            <SelectItem value="created_at">Created</SelectItem>
-            <SelectItem value="size">Size</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={sortDir} onValueChange={(value) => setSortDir(value as ListOptions['sortDir'])}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="asc">Ascending</SelectItem>
-            <SelectItem value="desc">Descending</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="border-b px-4 py-3">
+        <DataTableControls
+          aria-label="Storage file controls"
+          search={(
+            <DataTableSearch
+              value={search}
+              onValueChange={setSearch}
+              label="Search files"
+              placeholder="Search files"
+              collapsedWidth={112}
+              expandedWidth={216}
+              className="max-w-full"
+            />
+          )}
+          controls={(
+            <>
+              <Select
+                value={typeFilter}
+                onValueChange={(value) => setTypeFilter(value as ListOptions['type'])}
+              >
+                <SelectTrigger
+                  className="h-8 w-[8.25rem] max-w-full"
+                  aria-label="Filter storage objects by type"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All items</SelectItem>
+                  <SelectItem value="folder">Folders</SelectItem>
+                  <SelectItem value="file">Files</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={sortBy}
+                onValueChange={(value) => setSortBy(value as ListOptions['sortBy'])}
+              >
+                <SelectTrigger
+                  className="h-8 w-[8.25rem] max-w-full"
+                  aria-label="Sort storage objects"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="updated_at">Updated</SelectItem>
+                  <SelectItem value="created_at">Created</SelectItem>
+                  <SelectItem value="size">Size</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={sortDir}
+                onValueChange={(value) => setSortDir(value as ListOptions['sortDir'])}
+              >
+                <SelectTrigger
+                  className="h-8 w-[7.75rem] max-w-full"
+                  aria-label="Sort direction"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="asc">Ascending</SelectItem>
+                  <SelectItem value="desc">Descending</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          )}
+        />
       </div>
 
       {visibleError && (

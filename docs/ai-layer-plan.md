@@ -1,24 +1,46 @@
 # Zero AI Layer Plan
 
-This plan defines how Zero should add a first-class internal AI layer while
-keeping the platform fast, simple, provider-neutral, and easy to extend.
+This document records the architecture and rollout of Zero's first-class
+internal AI layer. The implementation is now broader than the original
+provider proof: official provider adapters, cloud credential modes, and focused
+construction factories share one stable Zero service.
 
-The first priority is the custom Meta Llama provider from `../ai-gateway`.
-That adapter is the piece Zero cannot get from standard AI SDK packages.
+The phase/checklist language later in this file is retained as implementation
+history. The current public contracts are the linked AI reference guides, not
+an unchecked item or an older example in the rollout record.
 
 ## Current Status
 
-The first working slice is implemented:
+The production layer is implemented:
 
 1. `createApp({ ai: true })` resolves env-detected providers.
-2. `AIService` supports text, streaming, conversations, embeddings, images,
-   transcription, speech, and status inspection.
-3. The custom Meta Llama adapter is available as provider id `meta`.
-4. The Elysia plugin decorates server context with `ai`; an optional protected
+2. `AIService` supports text, streaming, SDK 7 structured output and lifecycle
+   controls, conversations, single/batch embeddings, reranking, images,
+   transcription, speech, bounded provider-hosted files, preview video,
+   bounded ephemeral agents, Torrent-durable agents, and status inspection.
+3. The provider catalog includes Gateway, cloud-native Claude Platform on AWS,
+   Bedrock/Azure/Vertex, major language/embedding providers, and dedicated
+   image/audio/video providers.
+4. Provider-specific readiness prevents partial cloud credentials from being
+   mistaken for an active adapter.
+5. Explicit provider config supports headers, custom fetch, provider settings,
+   compatible endpoints, and custom AI SDK provider factories.
+6. Provider construction is split into cloud, language, media, and extended
+   factory modules behind one exhaustive dispatch boundary.
+7. Native official adapters replace the former compatible implementations for
+   DeepSeek, Perplexity, and Voyage while their explicit legacy types remain
+   accepted under the established provider IDs.
+8. The retired direct Meta-hosted Llama API remains only as a no-network
+   compatibility tombstone with an actionable migration error.
+9. The Elysia plugin decorates server context with `ai`; an optional protected
    status route exists only when explicitly enabled.
-5. AI warnings, errors, provider lifecycle, and request lifecycle events route
-   through Zero observability.
-6. Local vector storage is implemented separately in `src/vector`; public
+10. AI warnings, initialization failures, provider lifecycle, and request
+    lifecycle events route through Zero observability without projecting
+    credentials or prompts into metadata.
+11. Non-provider-native prompt URLs are materialized through a mandatory Bun
+    DNS-pinned, redirect-validated downloader. Sequential downloads share one
+    fixed 64-MiB aggregate budget per generation request.
+12. Local vector storage is implemented separately in `src/vector`; public
    OpenAI-compatible gateway routes remain future follow-up work.
 
 ## Goals
@@ -33,7 +55,7 @@ The first working slice is implemented:
    optional plugin later.
 8. Route warnings, errors, and lifecycle events through Zero observability.
 
-## Non-Goals For The First Slice
+## Current Boundaries
 
 1. Do not port the entire AI gateway.
 2. Do not ship a public OpenAI-compatible gateway by default.
@@ -41,12 +63,15 @@ The first working slice is implemented:
 4. Do not build a provider admin UI in the first backend slice.
 5. Do not add external vector search providers before the local vector store
    proves the default embedded shape.
+6. Keep preview video and provider-hosted files behind bounded, operation-
+   specific service contracts; adapter capability metadata alone is not enough
+   to make a provider/model operation safe.
 
-## Proposed Public API
+## Public API
 
 ```ts
 const app = await createApp({
-  db: { mode: './data/app.db' },
+  db: { mode: 'file', path: './data/app.db' },
   tables,
   auth: true,
   ai: true,
@@ -60,12 +85,14 @@ const ai = getAI();
 
 const result = await ai.generateText({
   model: 'smart',
+  instructions: 'Return a concise operational summary.',
   prompt: 'Summarize this account.',
+  reasoning: 'medium',
 });
 
 const conversation = ai.conversation({
-  model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8',
-  system: 'You are a precise assistant for this app.',
+  model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
+  instructions: 'You are a precise assistant for this app.',
 });
 
 conversation.user('What changed on this customer record?');
@@ -78,7 +105,7 @@ const answer = await conversation.generate();
 For streaming:
 
 ```ts
-const stream = await ai.streamConversation({
+const stream = ai.streamConversation({
   model: 'fast',
   messages,
   tools,
@@ -91,6 +118,18 @@ For embeddings:
 const embedding = await ai.embed({
   model: 'embedding',
   value: documentText,
+});
+
+const embeddings = await ai.embedMany({
+  model: 'embedding',
+  values: documents,
+});
+
+const ranking = await ai.rerank({
+  model: 'reranking',
+  query,
+  documents,
+  topN: 10,
 });
 ```
 
@@ -126,9 +165,9 @@ const speech = await ai.generateSpeech({
 });
 ```
 
-With `DEEPGRAM_API_KEY` set, the default `speech` alias resolves to
-`deepgram/aura-2-helena-en`. OpenAI speech models can also be selected
-explicitly when `OPENAI_API_KEY` is configured.
+With `DEEPGRAM_API_KEY` set and no earlier active Gateway speech candidate, the
+default `speech` alias resolves to `deepgram/aura-2-helena-en`. OpenAI speech
+models can also be selected explicitly when `OPENAI_API_KEY` is configured.
 
 ## Module Layout
 
@@ -137,17 +176,57 @@ src/ai/
   index.ts
   ai.plugin.ts
   ai-service.ts
+  ai-service-support.ts
+  ai-request-telemetry.ts
+  ai-prompt-download.ts
+  ai-safe-download.ts
+  ai-safe-download-contracts.ts
+  ai-safe-download-cancellation.ts
+  ai-safe-download-errors.ts
+  ai-safe-download-url-policy.ts
+  ai-safe-download-response.ts
+  ai-output.ts
   ai-conversation.ts
+  ai-session.ts
   ai-toolkit.ts
+  ai-workflow.ts
+  ai-embedding-operations.ts
+  ai-embedding-types.ts
+  ai-operation-limits.ts
+  ai-rerank-document-snapshot.ts
+  ai-rerank-service.ts
+  ai-rerank-types.ts
+  ai-files-service.ts
+  ai-files-types.ts
+  ai-files-provider-resolution.ts
+  ai-video-service.ts
+  ai-video-types.ts
   ai-types.ts
+  ai-provider-types.ts
   ai-errors.ts
   ai-env.ts
+  ai-env-values.ts
+  ai-env-provider-endpoints.ts
+  ai-env-provider-resolution.ts
+  ai-env-selection.ts
+  ai-fetch.ts
   ai-provider-catalog.ts
+  ai-provider-activation.ts
+  ai-provider-factory.ts
   ai-registry.ts
+  ai-model-registry-resolution.ts
   ai-model-aliases.ts
   ai-observability.ts
+  agents/
+  durable/
   adapters/
     meta-llama.ts
+  providers/
+    provider-factory-types.ts
+    cloud-provider-factories.ts
+    language-provider-factories.ts
+    media-provider-factories.ts
+    extended-provider-factories.ts
 ```
 
 Responsibilities:
@@ -156,83 +235,130 @@ Responsibilities:
 | --- | --- |
 | `ai.plugin.ts` | Elysia plugin that decorates `ai` and exposes optional status routes. |
 | `ai-service.ts` | Framework-neutral service wrapping AI SDK calls. |
+| `ai-service-support.ts` | Pure request normalization and capability guards shared by service modalities. |
+| `ai-request-telemetry.ts` | Bounded request lifecycle telemetry and provider usage projection. |
+| `ai-prompt-download.ts` | Sequential Bun DNS-pinned, redirect-validated materialization for prompt assets a selected model cannot consume remotely, under one shared 64-MiB request budget. |
+| `ai-safe-download.ts` | Small single-asset Bun download orchestrator shared by prompt, transcription, and video operations. |
+| `ai-safe-download-contracts.ts` / `ai-safe-download-cancellation.ts` / `ai-safe-download-errors.ts` / `ai-safe-download-url-policy.ts` / `ai-safe-download-response.ts` | Focused transport contracts, abort/timeout composition, stable errors, DNS/address/redirect policy, and bounded response consumption. |
+| `ai-output.ts` | Stable typed facade over AI SDK 7 text, object, array, choice, and JSON output modes. |
 | `ai-conversation.ts` | Conversation builder and message normalization. |
+| `ai-session.ts` | Bounded in-memory conversation-session helper. |
 | `ai-toolkit.ts` | Helpers for defining tools in app code. |
-| `ai-types.ts` | Public AI config, provider, model, message, and tool contracts. |
+| `ai-workflow.ts` | Torrent activity bridge for common AI calls. |
+| `ai-embedding-operations.ts` / `ai-embedding-types.ts` | Bounded ordered batch embedding execution and public request/result contracts. |
+| `ai-rerank-service.ts` / `ai-rerank-types.ts` | Bounded homogeneous-document reranking and provider-response integrity checks. |
+| `ai-operation-limits.ts` / `ai-rerank-document-snapshot.ts` | Shared embedding/reranking admission bounds plus iterative, deeply detached, byte-bounded JSON document snapshots. |
+| `ai-files-service.ts` | Bounded provider-hosted upload, metadata, download, and delete operations. |
+| `ai-files-types.ts` | Versioned provider locators and hosted-file request/result contracts. |
+| `ai-files-provider-resolution.ts` | Capability-checked provider-hosted-files resolution and public-safe readiness projection. |
+| `ai-video-service.ts` | Preview video generate, asynchronous start, and pinned status operations. |
+| `ai-video-types.ts` | Bounded video request/result types and durable model-pinned operation envelope. |
+| `agents/` | Immutable agent/tool definitions, bounded execution, typed contexts, approvals, and lifecycle events. |
+| `durable/` | Finite Torrent agent graphs, private durable state, scope-checked service methods, approval interactions, and live execution-context reconstruction. |
+| `ai-types.ts` | Public request, result, message, conversation, and tool contracts. |
+| `ai-provider-types.ts` | Provider/configuration, cloud credential, capability, and status contracts. |
 | `ai-errors.ts` | Stable domain errors. |
-| `ai-env.ts` | Reads env without leaking secrets. |
+| `ai-env.ts` | Public configuration-resolution coordinator. |
+| `ai-env-values.ts` / `ai-env-provider-endpoints.ts` / `ai-env-provider-resolution.ts` / `ai-env-selection.ts` | Focused environment parsing, provider-endpoint precedence, credential readiness, provider activation, alias selection, and hosted-file-provider selection. |
+| `ai-fetch.ts` | Request-proxy helpers for adapters with fixed upstream origins. |
 | `ai-provider-catalog.ts` | Built-in provider definitions and env key mapping. |
-| `ai-registry.ts` | Builds the active AI SDK provider registry. |
-| `ai-model-aliases.ts` | Resolves aliases like `fast`, `smart`, `embedding`, `image`, `speech`. |
+| `ai-provider-activation.ts` | Provider-specific credential readiness, settings projection, and auth-mode capability constraints. |
+| `ai-provider-factory.ts` | Exhaustive construction dispatch and stable, secret-safe initialization failure boundary. |
+| `providers/provider-factory-types.ts` | Shared factory contracts, common request options, modality normalization, and endpoint rewriting. |
+| `providers/cloud-provider-factories.ts` | Gateway, Azure, Bedrock, and Vertex constructors. |
+| `providers/language-provider-factories.ts` | Native language, embedding, and multimodal constructors. |
+| `providers/media-provider-factories.ts` | Image, transcription, and speech constructors. |
+| `providers/extended-provider-factories.ts` | Extended, compatible, Open Responses, and retired-provider boundaries. |
+| `ai-registry.ts` | Builds the active AI SDK registry and exposes its stable public registry contracts. |
+| `ai-model-registry-resolution.ts` | Capability-checked resolution for language, embedding, image, audio, reranking, and video models. |
+| `ai-model-aliases.ts` | Resolves aliases such as `fast`, `smart`, `embedding`, `reranking`, `image`, `speech`, and `video`. |
 | `ai-observability.ts` | Emits Zero observability events for AI lifecycle and failures. |
-| `adapters/meta-llama.ts` | Ported Meta Llama AI SDK `LanguageModelV2` adapter. |
+| `adapters/meta-llama.ts` | No-network compatibility tombstone for the retired direct Meta-hosted Llama API. |
 
-Each file should keep one responsibility and include front matter plus concise
+Each file keeps one responsibility and includes front matter plus concise
 signature comments for exported APIs.
 
 ## Provider Auto-Provisioning
 
-When `ai: true`, Zero should scan environment variables and enable providers
-whose required keys are present.
+When `ai: true`, Zero scans the catalog's env bindings and evaluates the
+provider's declared activation kind:
 
-Initial env map:
+| Activation kind | Contract |
+| --- | --- |
+| API key | At least one ordered catalog key is non-empty. |
+| Anthropic | API key or bearer `authToken`; env auto-detection keeps their header semantics distinct. |
+| Claude Platform on AWS | Workspace ID plus region/endpoint and either API key or complete static/dynamic SigV4 credentials; API-key mode suppresses ambient static credentials. |
+| Kling AI | API key or a complete legacy access-key/secret-key pair; API-key env wins when both are present. |
+| Vercel AI Gateway | Auto-detection requires `AI_GATEWAY_API_KEY`; explicit `{ type: 'gateway', apiKey: null }` unambiguously opts into Vercel OIDC. |
+| Amazon Bedrock | Region plus complete static/dynamic SigV4 credentials, or bearer token plus a region/model-runtime endpoint; generic Bedrock base URLs precede the separate `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` and `AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME` service overrides, with `AWS_ENDPOINT_URL` as the final fallback. The agent-runtime endpoint alone does not activate ordinary model operations. Reranking uses agent runtime and requires a region. |
+| Azure OpenAI | Resource/base URL plus API key or explicit Entra token provider. |
+| Google Vertex AI | Express API key, or project and location for Google Cloud authentication. |
+| Base URL | A protocol endpoint exists, as required by Open Responses. |
+| Custom | App code supplied an AI SDK provider object or factory. |
 
-| Provider ID | Type | Env Keys | Default Base URL |
-| --- | --- | --- | --- |
-| `openai` | `openai` | `OPENAI_API_KEY` | provider default |
-| `anthropic` | `anthropic` | `ANTHROPIC_API_KEY` | provider default |
-| `google` | `google` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` | provider default |
-| `groq` | `groq` | `GROQ_API_KEY` | provider default |
-| `xai` | `xai` | `XAI_API_KEY` | provider default |
-| `cohere` | `cohere` | `COHERE_API_KEY` | provider default |
-| `meta` | `meta-llama` | `LLAMA_API_KEY`, `META_LLAMA_API_KEY` | `https://api.llama.com/v1` |
-| `deepseek` | `openai-compatible` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` |
-| `perplexity` | `openai-compatible` | `PERPLEXITY_API_KEY`, `PERPLEXITYAI_API_KEY` | `https://api.perplexity.ai` |
-| `voyage` | `openai-compatible` | `VOYAGE_API_KEY` | `https://api.voyageai.com/v1` |
-| `deepgram` | `deepgram` | `DEEPGRAM_API_KEY` | provider default |
+The exhaustive provider/key/capability matrix lives in
+[AI Providers](./ai-providers.md), keeping this architecture record from
+duplicating a changing catalog.
 
-The provider id should be what developers use in model strings. For Meta,
-developers should use:
+The provider ID is the developer-facing part before the slash. Llama models
+remain available through supported hosts, for example Groq:
 
 ```ts
-model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8'
+model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct'
 ```
 
-Internally, `meta` resolves to the custom `meta-llama` adapter.
+`bedrock/<model>` selects the `amazon-bedrock` adapter type. The retired
+`meta/<model>` route is never redirected to another vendor.
 
 ## Explicit Configuration
 
-Auto-detection should be the default, but explicit config should always win:
+Auto-detection is the default, but explicit config always wins:
 
 ```ts
 ai: {
   aliases: {
     fast: 'groq/llama-3.3-70b-versatile',
     smart: 'anthropic/claude-sonnet-4',
-    meta: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8',
     embedding: 'openai/text-embedding-3-small',
     image: 'openai/gpt-image-1',
   },
   providers: {
-    meta: {
-      type: 'meta-llama',
-      apiKey: Bun.env.META_LLAMA_API_KEY,
-      baseURL: Bun.env.META_LLAMA_BASE_URL,
-    },
     local: {
       type: 'openai-compatible',
       apiKey: Bun.env.LOCAL_AI_API_KEY,
       baseURL: 'http://127.0.0.1:11434/v1',
     },
+    bedrock: {
+      type: 'amazon-bedrock',
+      settings: {
+        region: 'us-east-1',
+        credentialProvider: () => loadApplicationAwsCredentials(),
+      },
+    },
   },
 }
 ```
 
-Support `ai: false` to disable everything.
+`ai: false` disables everything. Reserved catalog IDs reject unrelated adapter
+types instead of inheriting mismatched env/capability metadata.
+
+Provider `apiKey` and `baseURL` are tri-state: omitted inherits env, a string
+overrides it, and `null` suppresses env inheritance for that field. Explicit
+alternate Anthropic, Claude Platform on AWS, Bedrock, Kling, Azure, or Vertex
+auth settings suppress ambient API keys and conflict with an explicitly
+supplied key. Gateway OIDC is declared as
+`{ type: 'gateway', apiKey: null }`. OpenAI-compatible capabilities are
+capped at text, streaming, tools, vision, embeddings, and images; only custom
+adapters can declare arbitrary implemented Zero capabilities.
+
+Provider IDs match `[A-Za-z0-9][A-Za-z0-9._-]*`; resolved base URLs must be
+absolute HTTP(S) URLs. A non-custom adapter rejects populated provider settings
+outside its supported settings set. All three conditions fail with
+`AI_PROVIDER_CONFIG_INVALID` rather than being normalized or ignored.
 
 ## Active Provider Status
 
-Zero should expose an internal service method:
+Zero exposes an internal service method:
 
 ```ts
 const status = ai.status();
@@ -245,12 +371,11 @@ Shape:
   enabled: true,
   providers: [
     {
-      id: 'meta',
-      type: 'meta-llama',
+      id: 'groq',
+      type: 'groq',
       active: true,
       source: 'env',
-      configuredBy: ['META_LLAMA_API_KEY'],
-      baseURL: 'https://api.llama.com/v1',
+      configuredBy: ['GROQ_API_KEY'],
       capabilities: {
         text: true,
         streaming: true,
@@ -260,12 +385,22 @@ Shape:
         images: false,
         transcription: false,
         speech: false,
+        reranking: false,
+        video: false,
+        files: false,
+        fileMetadata: false,
+        fileDownload: false,
+        fileDelete: false,
+        skills: false,
+        realtime: false,
+        evaluation: false,
+        batch: false,
       },
     },
   ],
   aliases: {
     fast: { model: 'groq/llama-3.3-70b-versatile', active: true },
-    smart: { model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8', active: true },
+    smart: { model: 'groq/llama-3.3-70b-versatile', active: true },
   },
 }
 ```
@@ -283,6 +418,9 @@ When enabled, default access should match observability posture:
 3. Disabled unless `ai.statusEndpoint.enabled` is true.
 
 Never return raw API keys or secret values.
+The provider list contains every resolved entry, including inactive catalog
+and explicit entries with bounded reasons. `active` means readiness passed and
+construction succeeded, not that every model supports every adapter surface.
 
 ## Conversation API
 
@@ -294,7 +432,7 @@ Builder API:
 ```ts
 const thread = ai.conversation({
   model: 'smart',
-  system: 'You are the app assistant.',
+  instructions: 'You are the app assistant.',
   metadata: { customerId },
 });
 
@@ -315,7 +453,7 @@ Direct API:
 ```ts
 await ai.generateConversation({
   model: 'smart',
-  system: 'You are concise.',
+  instructions: 'You are concise.',
   messages: [
     { role: 'user', content: 'First question' },
     { role: 'assistant', content: 'First answer' },
@@ -362,53 +500,20 @@ Tool goals:
 2. Convert schemas to AI SDK-compatible tool definitions.
 3. Keep execution server-side only.
 4. Emit observability events for tool failures.
-5. Allow per-call tool choice when the AI SDK supports it.
+5. Support per-call tool choice, active-tool sets, deterministic ordering,
+   typed runtime/tool context, bounded timeouts, and signed approval policy.
 
 Tool definitions should be plain app code. They should not require route
 registration.
 
-## Custom Meta Llama Provider
+## Retired Direct Meta Llama Provider
 
-Port `../ai-gateway/src/providers/adapters/meta-llama.ts` into:
-
-```txt
-src/ai/adapters/meta-llama.ts
-```
-
-Production changes while porting:
-
-1. Add file front matter and exported signature comments.
-2. Split large mapping helpers if the file becomes hard to test.
-3. Preserve AI SDK `LanguageModelV2` compatibility.
-4. Keep support for:
-   - non-stream generation
-   - streaming
-   - text prompts
-   - image URL/base64 prompt parts
-   - function tools
-   - tool-call result messages
-   - JSON response formats
-   - usage extraction from both `usage` and Meta metric payloads
-5. Add tests for:
-   - provider factory behavior
-   - env key loading
-   - request body mapping
-   - assistant tool call mapping
-   - tool result mapping
-   - response text parsing
-   - response tool call parsing
-   - stream text deltas
-   - stream tool input deltas
-   - finish reason mapping
-   - usage extraction
-   - HTTP error parsing
-
-Potential improvement:
-
-1. Support a compatibility-mode fallback using `createOpenAICompatible` against
-   `https://api.llama.com/compat/v1`.
-2. Keep native mode as default because the current adapter already handles
-   Meta-specific response and stream shapes.
+Meta no longer offers the hosted API targeted by Zero's original custom
+adapter. Zero therefore does not auto-detect its old keys, advertise it in the
+catalog, or retain its transport implementation. The released import and
+provider-type names remain as a no-network compatibility tombstone so upgrades
+fail with `AI_PROVIDER_RETIRED` and supported host guidance. Zero never silently
+redirects data to a different vendor.
 
 ## Model Aliases
 
@@ -418,22 +523,25 @@ Aliases keep apps fast to write:
 await ai.generateText({ model: 'fast', prompt });
 await ai.generateText({ model: 'smart', prompt });
 await ai.embed({ model: 'embedding', value });
+await ai.rerank({ model: 'reranking', query, documents });
 ```
 
-Default alias resolution should be provider-aware:
+Default alias resolution is provider-aware:
 
-1. If `ANTHROPIC_API_KEY` exists, `smart` can prefer Anthropic.
-2. If `META_LLAMA_API_KEY` or `LLAMA_API_KEY` exists, `smart` can use Meta.
-3. If `GROQ_API_KEY` exists, `fast` can use Groq.
-4. If only OpenAI exists, use OpenAI for both.
-5. If no provider can satisfy an alias, mark it inactive and fail with a clear
-   `AI_MODEL_NOT_CONFIGURED` error when used.
+1. When Gateway is active, its matching OpenAI/Anthropic models are preferred.
+2. Direct Anthropic can satisfy `smart`.
+3. Direct Groq can satisfy `fast`.
+4. OpenAI and Google provide later text and modality candidates.
+5. If no active provider matches a fixed candidate, the generated alias is
+   absent and using it fails with `AI_MODEL_NOT_CONFIGURED`.
 
-Explicit aliases should override defaults.
+Explicit aliases and `ZERO_AI_*_MODEL` env values override defaults.
+Activation alone does not invent a model ID: cloud-only Bedrock, Azure, or
+Vertex setups commonly need explicit aliases or provider-qualified models.
 
 ## Observability
 
-Add stable codes:
+Implemented stable codes:
 
 1. `AI_CONFIGURED`
 2. `AI_PROVIDER_ENABLED`
@@ -444,7 +552,13 @@ Add stable codes:
 7. `AI_REQUEST_COMPLETED`
 8. `AI_REQUEST_FAILED`
 9. `AI_TOOL_FAILED`
-10. `AI_STATUS_ACCESS_DENIED`
+10. `AI_STEP_STARTED`, `AI_STEP_COMPLETED`, `AI_STEP_FAILED`
+11. `AI_MODEL_CALL_STARTED`, `AI_MODEL_CALL_COMPLETED`, `AI_MODEL_CALL_FAILED`
+12. `AI_AGENT_RUN_STARTED`, `AI_AGENT_RUN_COMPLETED`,
+    `AI_AGENT_RUN_CANCELLED`, `AI_AGENT_RUN_FAILED`
+13. `AI_AGENT_STEP_STARTED`
+14. `AI_AGENT_TOOL_STARTED`, `AI_AGENT_TOOL_COMPLETED`, `AI_AGENT_TOOL_FAILED`
+15. `AI_STATUS_ACCESS_DENIED`
 
 Metadata should include:
 
@@ -456,12 +570,25 @@ Metadata should include:
 6. Token usage when available.
 7. Tool names when relevant.
 
-Metadata must not include:
+Framework-owned metadata must not include:
 
 1. API keys.
 2. Raw prompts by default.
 3. Raw model output by default.
-4. Private tool arguments unless the app explicitly opts into that.
+4. Private tool arguments or results.
+
+Caller-supplied request metadata is recursively bounded and redacts
+prompt/content/payload and credential-shaped keys. Callers should still pass
+only operational correlation data, never sensitive records. `AI_CONFIGURED`
+contains the resolved provider-status count and configured alias names.
+
+Provider initialization is stricter: it replaces the raw construction error
+with a generic event error and keeps only provider ID/type plus a closed safe
+classification (`Error`, `TypeError`, `RangeError`, `ReferenceError`,
+`SyntaxError`, `URIError`, `AggregateError`, or `provider_error`). It never
+emits an arbitrary vendor class name or message. Runtime request failures
+can retain the raw error channel for an app-local sink, so configured external
+sinks remain responsible for error serialization/redaction.
 
 ## CreateApp Integration
 
@@ -494,62 +621,68 @@ Recommended ordering in `createApp()`:
 
 ## Public Exports
 
-Server barrel:
+The server barrel re-exports the execution surface from `@zero/framework/ai`.
+Representative imports are:
 
 ```ts
-export {
+import {
+  AIOutput,
   AIService,
+  AIAgentRegistry,
+  AIDurableAgentService,
+  AIDurableAgentWorkflowRuntime,
   createAIPlugin,
-  createMetaLlama,
+  defineAIAgent,
+  defineAIAgentTool,
   defineAITools,
   getAI,
-} from '../ai';
-
-export type {
-  AIConfig,
-  AIProviderConfig,
-  AIProviderStatus,
-  AIConversation,
-  AIMessage,
-  AITextResult,
-  AIStreamResult,
-} from '../ai';
+  toModelMessages,
+} from '@zero/framework/server';
 ```
 
-Client barrel should not export server AI execution primitives. Later, it can
+Provider/configuration, generation, embeddings/reranking, hosted-file/video,
+agent, and durable-agent request/result types are exported from the same
+server boundary. The four documented durable-agent capacity constants are
+public from both `@zero/framework/ai` and `@zero/framework/server`.
+
+The client barrel does not export server AI execution primitives. Later, it can
 export UI hooks for protected app-owned AI endpoints, but model execution must
 stay server-side by default.
 
 ## Documentation
 
-Add docs:
+Primary docs:
 
 1. `docs/ai.md`
 2. `docs/ai-providers.md`
-3. `docs/ai-conversations.md`
-4. `docs/ai-tools.md`
-5. `docs/ai-meta-llama.md`
+3. `docs/ai-generation.md`
+4. `docs/ai-embeddings-reranking.md`
+5. `docs/ai-files-video.md`
+6. `docs/ai-conversations.md`
+7. `docs/ai-tools.md`
+8. `docs/ai-agents.md`
+9. `docs/ai-durable-agents.md`
+10. `docs/ai-meta-llama.md` retirement and migration note
 
-Update docs:
-
-1. `docs/platform-configuration.md`
-2. `docs/start-here.md` when it exists
-3. `.env.example`
-4. `docs/system-map.md`
-5. `docs/observability.md`
+The cross-cutting configuration, system-map, observability, Vector, Torrent,
+starter, environment-example, README, and `llms.txt` references link back to
+those canonical guides.
 
 Docs should explain:
 
 1. How env auto-detection works.
 2. Which providers become active from which keys.
-3. How to inspect active providers.
+3. How to inspect active and inactive provider readiness.
 4. How to set aliases.
-5. How to use `meta/<model>` with the custom Meta adapter.
+5. How to migrate retired `meta/<model>` references to an explicitly chosen host.
 6. How to send single prompts.
 7. How to send conversations.
 8. How to define tools.
 9. How to add a custom provider adapter.
 10. Why public AI routes are not enabled by default.
+11. How structured output, timeout, retry, and lifecycle semantics work.
+12. How hosted files, video operations, ephemeral agents, and durable agents
+    preserve provider, authority, persistence, and redaction boundaries.
 
 ## Implementation Phases
 
@@ -562,20 +695,19 @@ Docs should explain:
 5. Add config support to `AppConfig`.
 6. Add tests for env/provider resolution.
 
-### Phase 2: Meta Provider Port
+### Phase 2: Provider Compatibility Foundation
 
-1. Add `src/ai/adapters/meta-llama.ts`.
-2. Install required AI SDK dependencies.
-3. Add unit tests with mocked fetch.
-4. Verify TypeScript compatibility with AI SDK `LanguageModelV2`.
+1. Install required AI SDK dependencies.
+2. Add provider-boundary tests with mocked fetch.
+3. Keep Zero's application-facing model contract independent of provider SDK internals.
 
 ### Phase 3: Registry And Service
 
 1. Add `ai-registry.ts`.
 2. Add `ai-model-aliases.ts`.
 3. Add `ai-service.ts`.
-4. Implement `generateText`, `streamText`, `embed`, `generateImage`,
-   `transcribe`, and `generateSpeech`.
+4. Implement `generateText`, `streamText`, `embed`, `embedMany`, `rerank`,
+   `generateImage`, `transcribe`, and `generateSpeech`.
 5. Add service tests for active providers, aliases, and unsupported capabilities.
 
 ### Phase 4: Conversations And Tools
@@ -607,7 +739,7 @@ Docs should explain:
 2. Update env example.
 3. Add a small app example using:
    - env auto-detected providers
-   - Meta Llama
+   - a supported hosted Llama provider
    - conversation builder
    - tools
    - status inspection
@@ -624,14 +756,44 @@ Implemented in `src/vector`:
 Future vector work should focus on examples, platform doctor index guidance,
 and optional external adapters only when a real app needs them.
 
+### Phase 9: AI SDK 7 Expansion
+
+Implemented in the current AI service:
+
+1. Provider-neutral instructions/reasoning and typed output through
+   `AIOutput`.
+2. Total, step, stream-chunk, and tool timeouts plus retry-aware streaming.
+3. Typed runtime/tool context, signed tool approvals, and content-free
+   lifecycle callbacks.
+4. Bounded `embedMany()` and document `rerank()` operations with provider
+   response integrity checks.
+5. Immutable, versioned, bounded ephemeral agent definitions and tools.
+6. Operation-specific provider-hosted file upload/metadata/download/delete
+   with durable provider locators.
+7. Preview video generate/start/status with fixed media ceilings and
+   model-pinned durable operation envelopes.
+8. A first-party durable-agent bridge that compiles exact agent versions into
+   finite Torrent graphs with private scratch state, durable approvals, live
+   authority reconstruction, scope-checked progress/results, and bounded tool
+   fan-out.
+9. A mandatory Bun prompt downloader which pins validated public DNS results,
+   revalidates redirects, and sequentially materializes assets under one shared
+   64-MiB generation-request budget while leaving provider-native URLs remote.
+
+See [AI Generation And Streaming](./ai-generation.md),
+[AI Embeddings And Reranking](./ai-embeddings-reranking.md),
+[AI Agents](./ai-agents.md),
+[Durable AI Agents With Torrent](./ai-durable-agents.md), and
+[AI Hosted Files And Video](./ai-files-video.md) for the supported contracts.
+
 ## Risks
 
 1. AI SDK types may shift between major versions.
-   - Mitigation: pin compatible versions and keep adapter tests close to the
-     provider.
-2. Meta API stream shapes may vary.
-   - Mitigation: tests should cover both Meta event payloads and
-     OpenAI-compatible chunk payloads currently handled by the adapter.
+   - Mitigation: Zero pins AI SDK 7, exposes stable request/error/output
+     facades where needed, and keeps adapter tests close to each provider.
+2. Hosted provider APIs can be retired.
+   - Mitigation: remove dead transports, retain actionable compatibility
+     tombstones for released names, and never silently redirect vendors.
 3. Auto aliases could surprise developers.
    - Mitigation: expose `ai.status()` and make explicit aliases easy.
 4. Tool execution can leak data if treated casually.
@@ -640,13 +802,13 @@ and optional external adapters only when a real app needs them.
 5. Public AI execution routes can become a security and billing hazard.
    - Mitigation: no public execution routes in core; optional plugin later.
 
-## Recommended First Working Slice
+## Original First Working Slice (Completed)
 
-Build the smallest production-quality slice that proves the architecture:
+The original production-quality slice that proved the architecture was:
 
 1. `ai: true` config.
-2. Env auto-detection for OpenAI, Anthropic, Groq, Google, and Meta.
-3. Ported Meta Llama adapter.
+2. Env auto-detection for the initial provider set.
+3. A provider adapter proving the initial abstraction (subsequently retired).
 4. `ai.status()`.
 5. `ai.generateText()`.
 6. `ai.streamText()`.
@@ -655,6 +817,6 @@ Build the smallest production-quality slice that proves the architecture:
 9. Observability events.
 10. Docs and env example.
 
-That slice gives Zero the main value: drop in provider keys, know what is
-active, use Meta through the custom provider, and write real multi-turn app AI
-features without exposing a public gateway.
+That slice established the service used by the current broad provider catalog.
+The provider expansion retains the same service/model contracts, so app code
+does not need a provider-specific execution layer.

@@ -208,7 +208,9 @@ test('createApp registers workflows before listen and owns startup and cleanup',
 
     expect(registrationCalled).toBe(true);
     expect(getWorkflowRegistry()?.getWorkflow('managed-workflow')).toBeDefined();
-    expect(getWorkflowService()).toBeNull();
+    // Managed createApp() composition now awaits recovery and publishes the
+    // service before returning. HTTP remains unavailable until Elysia starts.
+    expect(getWorkflowService()).not.toBeNull();
 
     const health = await app.handle(new Request('http://localhost/api/health'));
     expect(health.status).toBe(200);
@@ -219,7 +221,7 @@ test('createApp registers workflows before listen and owns startup and cleanup',
       error: 'Workflow request failed',
       code: 'WORKFLOW_NOT_READY',
     });
-    expect(getWorkflowService()).toBeNull();
+    expect(getWorkflowService()).not.toBeNull();
 
     app.listen(0);
     await waitFor(() => Boolean(

@@ -473,6 +473,13 @@ none/null/type-aware defaults, and presentation-order controls. Editing a
 persisted label does not silently rename its public key; key changes are an
 explicit contract edit.
 
+`DataStudioToolbar` uses the same `DataTableSearch` control as Zero's table
+toolbars. Search is the first control before table selection and filters,
+collapses to 112 px, and expands to 216 px on focus or while a query is active.
+The existing controller value/change contract is unchanged, so applications
+using `DataStudio`, `DataStudioWorkspace`, or `DataStudioToolbar` do not need a
+call-site rewrite.
+
 ## Inline Editing Contract
 
 Inline editing is intentionally cell-like. Entering edit mode does not swap a

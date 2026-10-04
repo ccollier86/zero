@@ -10,9 +10,9 @@
 
 import * as React from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
-import { Search } from '../../animate-ui/icons/search';
+import { DataTableSearch } from '../../data-table/data-table-search';
+import { DataTableControls } from '../../data-table/data-table-controls';
 import { Button } from '../../ui/button';
-import { Input } from '../../ui/input';
 import {
   Select,
   SelectContent,
@@ -75,28 +75,28 @@ export function UserManagementListControls({
   }, [filters.search, onSearchChange, search]);
 
   return (
-    <div className={cn('flex flex-col gap-2 rounded-md border bg-background p-2', className)}>
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative min-w-0 flex-1 sm:max-w-[22rem]">
-            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
-              <Search size={16} />
-            </span>
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search users"
-              className="h-8 pl-8 text-sm"
-              aria-label="Search users"
-            />
-          </div>
-
+    <DataTableControls
+      aria-label="User directory controls"
+      className={cn('rounded-md border bg-background p-2', className)}
+      search={(
+        <DataTableSearch
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search users…"
+          label="Search users"
+          collapsedWidth={112}
+          expandedWidth={216}
+          className="max-w-full"
+        />
+      )}
+      controls={(
+        <>
           <Select
             value={filters.role || 'all'}
             onValueChange={(value) => onRoleChange(value === 'all' ? '' : value)}
           >
             <SelectTrigger
-              className="h-8 w-full text-sm sm:w-[11rem]"
+              className="h-8 w-[11rem] max-w-full text-sm"
               aria-label={`Filter by ${roleFieldLabel.toLowerCase()}`}
             >
               <SelectValue placeholder={roleFieldLabel} />
@@ -115,7 +115,7 @@ export function UserManagementListControls({
             value={filters.status}
             onValueChange={(value) => onStatusChange(value as UserManagementStatusFilter)}
           >
-            <SelectTrigger className="h-8 w-full text-sm sm:w-[10rem]" aria-label="Filter by status">
+            <SelectTrigger className="h-8 w-[10rem] max-w-full text-sm" aria-label="Filter by status">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
@@ -124,9 +124,10 @@ export function UserManagementListControls({
               <SelectItem value="suspended">Suspended</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-
-        <div className="flex items-center justify-between gap-2 lg:justify-end">
+        </>
+      )}
+      actions={(
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="min-w-0 text-sm text-muted-foreground">{pageWindow.label}</span>
           <div className="flex shrink-0 items-center gap-1">
             <Button
@@ -161,14 +162,13 @@ export function UserManagementListControls({
             </Button>
           </div>
         </div>
-      </div>
-
-      {isLoading && (
+      )}
+      supplemental={isLoading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
           <RefreshCw className="size-3 animate-spin" />
           Loading users
         </div>
-      )}
-    </div>
+      ) : undefined}
+    />
   );
 }

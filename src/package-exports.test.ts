@@ -24,15 +24,15 @@ describe('package exports', () => {
 
   test('server-facing package subpaths build through the export map', async () => {
     await buildSmokeEntry('server.ts', serverSmokeSource, 'bun');
-  });
+  }, 120_000);
 
   test('client-facing package subpaths build through the export map', async () => {
     await buildSmokeEntry('client.tsx', clientSmokeSource, 'browser');
-  });
+  }, 120_000);
 
   test('native auth package subpath builds without React or server imports', async () => {
     await buildSmokeEntry('native.ts', nativeSmokeSource, 'browser');
-  });
+  }, 120_000);
 });
 
 async function buildSmokeEntry(fileName: string, source: string, target: 'bun' | 'browser'): Promise<void> {
@@ -53,7 +53,46 @@ async function buildSmokeEntry(fileName: string, source: string, target: 'bun' |
 
 const serverSmokeSource = `
 import { Database } from 'bun:sqlite';
-import { AIService } from '@zero/framework/ai';
+import {
+  AI_PROVIDER_CATALOG,
+  AI_PROVIDER_TYPES,
+  AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES,
+  AI_DURABLE_AGENT_MAX_CONTEXT_AND_TOOL_BYTES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_STATE_BYTES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_STATE_ENTRIES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_VALUE_BYTES,
+  AI_DURABLE_AGENT_STATE_VERSION,
+  AIAgentRunner,
+  AIAgentService,
+  AIDurableAgentService,
+  AIDurableAgentWorkflowRuntime,
+  AIOutput,
+  AIService,
+  createAIHostedFilesService,
+  createAIModelExecutionPreparer,
+  createAIVideoService,
+  defineAIAgent,
+  defineAIAgentTool,
+  prepareDirectAIModelExecution,
+  type AIAgentDefinition,
+  type AIDurableAgentProgress,
+  type AIDurableAgentRuntimeOptions,
+  type AIAzureTokenProvider,
+  type AIBedrockCredentialProvider,
+  type AIEmbedManyRequest,
+  type AIGenerateImageRequest,
+  type AIGenerateVideoRequest,
+  type AIFetchFunction,
+  type AIHostedFileLocator,
+  type AIProviderOptions,
+  type AIProviderInstanceSettings,
+  type AIModelExecutionRequest,
+  type AIPrepareModelExecution,
+  type AIServiceOptions,
+  type AIRerankRequest,
+  type RegisteredAIDurableAgent,
+  type ResolvedAIProviderCapabilities,
+} from '@zero/framework/ai';
 import {
   ADMINISTRATION_TENANT_ROLE_KEYS,
   AuthApplicationAdministrationService,
@@ -211,6 +250,9 @@ import {
   AuthApiKeyService as ServerAuthApiKeyService,
   AuthApiKeyStore as ServerAuthApiKeyStore,
   createApp,
+  AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES as SERVER_AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_VALUE_BYTES as SERVER_AI_DURABLE_AGENT_MAX_PRIVATE_VALUE_BYTES,
+  createAIModelExecutionPreparer as createServerAIModelExecutionPreparer,
   DATABASE_ACTOR_CHILD_FLAG,
   DATABASE_HOT_DEFAULT_DURABILITY,
   DATABASE_HOT_DEFAULT_SNAPSHOT_INTERVAL_MS,
@@ -276,6 +318,9 @@ import {
 import type {
   AppConfig,
   AppDatabasePlacementConfig,
+  AppWorkflowRegistrationContext,
+  AIServiceOptions as ServerAIServiceOptions,
+  AIPrepareModelExecution as ServerAIPrepareModelExecution,
   AuthAdministrationTenantConfig as ServerAuthAdministrationTenantConfig,
   AuthApiKeyManagementCapabilities as ServerAuthApiKeyManagementCapabilities,
   AuthApiKeyServiceOptions as ServerAuthApiKeyServiceOptions,
@@ -377,10 +422,18 @@ import type {
 import {
   createSyncPlugin,
   SYNC_ACK_ERROR_CODES,
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
   type SyncAckErrorCode,
   type SyncAckMessage,
   type SyncDataPlaneName,
+  type SyncMutationErrorCode,
+  type SyncMutationErrorDetails,
   type SyncMutationRejection,
+  type SyncMutationWaitOptions,
   type SyncPluginConfig,
   type SyncSnapshotBeginMessage,
   type SyncSnapshotChunkMessage,
@@ -593,6 +646,21 @@ const syncAckMessage: SyncAckMessage = {
   errorCode: syncAckErrorCode,
 };
 const syncMutationRejection = {} as SyncMutationRejection;
+const syncMutationErrorCode: SyncMutationErrorCode =
+  SYNC_MUTATION_ERROR_CODES.waitTimeout;
+const syncMutationErrorDetails: SyncMutationErrorDetails = {
+  ref: 'mutation-ref', table: 'todos', op: 'UPDATE', rowId: 'todo-1',
+};
+const syncMutationWaitOptions: SyncMutationWaitOptions = {
+  timeoutMs: SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+};
+const syncMutationError = new SyncMutationError(
+  syncMutationErrorCode,
+  syncMutationErrorDetails,
+);
+void isSyncMutationError(syncMutationError);
+void syncMutationWaitOptions;
+void SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS;
 type SyncDataPlaneSnapshotMessages = readonly [
   SyncDataPlaneName,
   SyncSnapshotBeginMessage,
@@ -738,6 +806,28 @@ const storageAdapterContract = null as unknown as {
   serverWrite: ServerStorageBlobWriteResult;
   write: StorageBlobWriteResult;
 };
+const aiSdk7Surface = null as unknown as {
+  agent: AIAgentDefinition;
+  durable: {
+    descriptor: RegisteredAIDurableAgent;
+    options: AIDurableAgentRuntimeOptions;
+    progress: AIDurableAgentProgress;
+  };
+  capabilities: ResolvedAIProviderCapabilities;
+  embedMany: AIEmbedManyRequest;
+  file: AIHostedFileLocator;
+  image: AIGenerateImageRequest;
+  rerank: AIRerankRequest;
+  execution: {
+    request: AIModelExecutionRequest;
+    prepare: AIPrepareModelExecution;
+    service: AIServiceOptions;
+    serverPrepare: ServerAIPrepareModelExecution;
+    serverService: ServerAIServiceOptions;
+  };
+  video: AIGenerateVideoRequest;
+};
+const appWorkflowRegistrationContext = null as unknown as AppWorkflowRegistrationContext;
 const dataStudioServerFeature = createDataStudioFeatureSubpath();
 const dataStudioServerTypes = null as unknown as {
   feature: DataStudioFeatureSubpath;
@@ -745,7 +835,31 @@ const dataStudioServerTypes = null as unknown as {
 };
 
 export const serverSymbols = {
+  AI_PROVIDER_CATALOG,
+  AI_PROVIDER_TYPES,
+  AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES,
+  SERVER_AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES,
+  AI_DURABLE_AGENT_MAX_CONTEXT_AND_TOOL_BYTES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_STATE_BYTES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_STATE_ENTRIES,
+  AI_DURABLE_AGENT_MAX_PRIVATE_VALUE_BYTES,
+  SERVER_AI_DURABLE_AGENT_MAX_PRIVATE_VALUE_BYTES,
+  AI_DURABLE_AGENT_STATE_VERSION,
+  AIAgentRunner,
+  AIAgentService,
+  AIDurableAgentService,
+  AIDurableAgentWorkflowRuntime,
+  AIOutput,
   AIService,
+  aiSdk7Surface,
+  appWorkflowRegistrationContext,
+  createAIHostedFilesService,
+  createAIModelExecutionPreparer,
+  createServerAIModelExecutionPreparer,
+  createAIVideoService,
+  defineAIAgent,
+  defineAIAgentTool,
+  prepareDirectAIModelExecution,
   AuthApplicationAdministrationService,
   AuthApiKeyService,
   AuthApiKeyStore,
@@ -982,10 +1096,28 @@ export const serverSymbols = {
 
 const clientSmokeSource = `
 import {
+  buildDataTableServerQuery as buildDataTableServerQueryRoot,
+  createDataTableApiAdapter as createDataTableApiAdapterRoot,
+  DataTableBulkActions as DataTableBulkActionsRoot,
+  DataTableControls as DataTableControlsRoot,
+  DataTableServerSourceError as DataTableServerSourceErrorRoot,
   SecretField as SecretFieldRoot,
   StreamingText as StreamingTextRoot,
+  useDataTableMutationRunner as useDataTableMutationRunnerRoot,
 } from '@zero/framework';
 import type {
+  DataTableAllMatchingBulkSelection as DataTableAllMatchingBulkSelectionRoot,
+  DataTableBulkAction as DataTableBulkActionRoot,
+  DataTableBulkActionsProps as DataTableBulkActionsPropsRoot,
+  DataTableMutationContext as DataTableMutationContextRoot,
+  DataTableMutationRunner as DataTableMutationRunnerRoot,
+  DataTablePageBulkSelection as DataTablePageBulkSelectionRoot,
+  DataTablePaginationProps as DataTablePaginationPropsRoot,
+  DataTableServerAdapter as DataTableServerAdapterRoot,
+  DataTableServerPage as DataTableServerPageRoot,
+  DataTableServerQuery as DataTableServerQueryRoot,
+  DataTableServerResult as DataTableServerResultRoot,
+  DataTableState as DataTableStateRoot,
   SecretFieldProps as SecretFieldPropsRoot,
   StreamSource as StreamSourceRoot,
   StreamingTextProps as StreamingTextPropsRoot,
@@ -1044,11 +1176,30 @@ import { CodeBlock as CodeBlockSubpath } from '@zero/framework/components/code-b
 import { CtaSection as CtaSectionSubpath } from '@zero/framework/components/cta';
 import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
 import {
+  buildDataTableServerQuery as buildDataTableServerQuerySubpath,
+  createDataTableApiAdapter as createDataTableApiAdapterSubpath,
+  DataTableBulkActions as DataTableBulkActionsSubpath,
+  DataTableControls as DataTableControlsSubpath,
   DataTableSearch as DataTableSearchSubpath,
+  DataTableServerSourceError as DataTableServerSourceErrorSubpath,
   DataTableToolbar as DataTableToolbarSubpath,
   DataTableView,
+  useDataTableMutationRunner as useDataTableMutationRunnerSubpath,
 } from '@zero/framework/components/data-table';
 import type {
+  DataTableAllMatchingBulkSelection as DataTableAllMatchingBulkSelectionSubpath,
+  DataTableBulkAction as DataTableBulkActionSubpath,
+  DataTableBulkActionsProps as DataTableBulkActionsPropsSubpath,
+  DataTableMutationContext as DataTableMutationContextSubpath,
+  DataTableMutationRunner as DataTableMutationRunnerSubpath,
+  DataTablePageBulkSelection as DataTablePageBulkSelectionSubpath,
+  DataTablePaginationProps as DataTablePaginationPropsSubpath,
+  DataTableServerAdapter as DataTableServerAdapterSubpath,
+  DataTableServerPage as DataTableServerPageSubpath,
+  DataTableServerQuery as DataTableServerQuerySubpath,
+  DataTableServerResult as DataTableServerResultSubpath,
+  DataTableState as DataTableStateSubpath,
+  DataTableControlsProps as DataTableControlsPropsSubpath,
   DataTableSearchOptions as DataTableSearchOptionsSubpath,
   DataTableSearchProps as DataTableSearchPropsSubpath,
   DataTableToolbarContext as DataTableToolbarContextSubpath,
@@ -1213,6 +1364,10 @@ import {
   StickToBottom,
   SelfApiKeyManagement,
   SecretField,
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
   StreamingText,
   TextGenerateEffect,
   ThemeTogglerButton,
@@ -1228,6 +1383,7 @@ import {
   useAuthAudit,
   useDomainOnboarding,
   useAuthorization,
+  isSyncMutationError,
   isAuthorizationScopeCallbackCurrent,
   useAuthorizationScopeBoundary,
   useHasPermission,
@@ -1320,7 +1476,10 @@ import type {
 	  AppShellWorkspaceConfig,
   Client,
   IssuedAuthApiKey,
+	  SyncMutationErrorCode,
+	  SyncMutationErrorDetails,
 	  SyncMutationRejection,
+	  SyncMutationWaitOptions,
   LoginFormProps,
   SecretFieldProps,
   StreamSource,
@@ -1355,6 +1514,21 @@ import type {
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
+	const rootSyncMutationErrorCode: SyncMutationErrorCode =
+	  SYNC_MUTATION_ERROR_CODES.waitTimeout;
+	const rootSyncMutationErrorDetails: SyncMutationErrorDetails = {
+	  ref: 'root-ref', table: 'todos', op: 'UPDATE', rowId: 'todo-1',
+	};
+	const rootSyncMutationWaitOptions: SyncMutationWaitOptions = {
+	  timeoutMs: SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+	};
+	const rootSyncMutationError = new SyncMutationError(
+	  rootSyncMutationErrorCode,
+	  rootSyncMutationErrorDetails,
+	);
+	void isSyncMutationError(rootSyncMutationError);
+	void rootSyncMutationWaitOptions;
+	void SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS;
 	type SecretFieldPublicTypes = readonly [
 	  SecretFieldPropsRoot,
 	  SecretFieldProps,
@@ -1374,13 +1548,38 @@ import type {
 	];
 	const streamingTextPublicTypes = null as unknown as StreamingTextPublicTypes;
 	type DataTablePublicTypes = readonly [
+	  DataTableAllMatchingBulkSelectionRoot<{ query: string }>,
+	  DataTableBulkActionRoot<Row, { query: string }>,
+	  DataTableBulkActionsPropsRoot<Row, { query: string }>,
+	  DataTableMutationContextRoot,
+	  DataTableMutationRunnerRoot,
+	  DataTablePageBulkSelectionRoot<Row>,
+	  DataTablePaginationPropsRoot<Row>,
+	  DataTableServerAdapterRoot<Row>,
+	  DataTableServerPageRoot,
+	  DataTableServerQueryRoot,
+	  DataTableServerResultRoot<Row>,
+	  DataTableStateRoot,
 	  DataTableSearchOptions,
 	  DataTableSearchProps,
 	  DataTableToolbarContext<Row>,
 	  DataTableToolbarProps<Row>,
 	  DataTableToolbarSlot<Row>,
 	  DataTableToolbarSlots<Row>,
+	  DataTableAllMatchingBulkSelectionSubpath<{ query: string }>,
+	  DataTableBulkActionSubpath<Row, { query: string }>,
+	  DataTableBulkActionsPropsSubpath<Row, { query: string }>,
+	  DataTableMutationContextSubpath,
+	  DataTableMutationRunnerSubpath,
+	  DataTablePageBulkSelectionSubpath<Row>,
+	  DataTablePaginationPropsSubpath<Row>,
+	  DataTableServerAdapterSubpath<Row>,
+	  DataTableServerPageSubpath,
+	  DataTableServerQuerySubpath,
+	  DataTableServerResultSubpath<Row>,
+	  DataTableStateSubpath,
 	  DataTableSearchOptionsSubpath,
+	  DataTableControlsPropsSubpath,
 	  DataTableSearchPropsSubpath,
 	  DataTableToolbarContextSubpath<Row>,
 	  DataTableToolbarPropsSubpath<Row>,
@@ -1593,11 +1792,23 @@ export const clientSymbols = {
 	  clientResourceFields,
 	  dataTablePublicTypes,
 	  DataTable,
+	  buildDataTableServerQueryRoot,
+	  buildDataTableServerQuerySubpath,
+	  createDataTableApiAdapterRoot,
+	  createDataTableApiAdapterSubpath,
+	  DataTableBulkActionsRoot,
+	  DataTableBulkActionsSubpath,
+	  DataTableControlsRoot,
+	  DataTableControlsSubpath,
+  DataTableServerSourceErrorRoot,
+  DataTableServerSourceErrorSubpath,
   DataTableSearch,
   DataTableSearchSubpath,
   DataTableToolbar,
   DataTableToolbarSubpath,
   DataTableView,
+  useDataTableMutationRunnerRoot,
+  useDataTableMutationRunnerSubpath,
   DropdownMenu,
   DropdownMenuSubpath,
   ExpandableCards,

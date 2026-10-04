@@ -231,6 +231,12 @@ ownership transfer invoke `onActorAuthorizationChanged` only after the server
 mutation succeeds. Zero's own bearer refresh has already run best-effort at
 that point.
 
+The identity directory uses the shared compact `DataTableSearch` as its first
+list control before role and status filters. It expands from 112 px to 216 px
+on focus or while a query is active without changing the existing server
+search, debounce, focus, props, or filtering contract. Existing
+`UserManagement` integrations require no rewrite.
+
 ## Choosing the correct surface
 
 | Need | Surface |

@@ -10,7 +10,7 @@ import type { WorkflowEachItemRecord } from './workflow-graph-store';
 import type { WorkflowEachNode, WorkflowGraphIR } from './workflow-ir';
 import { MAX_WORKFLOW_RUNTIME_JSON_BYTES } from './workflow-runtime-json';
 import { validateWorkflowSchemaValue } from './workflow-schema-snapshot';
-import { parseWorkflowJson } from './workflow-json-value';
+import { parseWorkflowJson, workflowJsonBytes } from './workflow-json-value';
 import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
 
 const ITEM_STATUSES = new Set([
@@ -65,7 +65,17 @@ function validateEachExpansion(
     invalid(`each node "${node.id}" has an invalid expanded status`);
   }
 
-  const source = parseJson(parent.input, `each node "${node.id}" source`);
+  if (node.visibility === 'private' && parent.input !== null) {
+    invalid(`private each node "${node.id}" exposed its source`);
+  }
+  const source = node.visibility === 'private'
+    ? [...items]
+      .sort((left, right) => left.item_index - right.item_index)
+      .map((item, index) => parseJson(
+        item.input_json,
+        `each node "${node.id}" item ${index} input`,
+      ))
+    : parseJson(parent.input, `each node "${node.id}" source`);
   if (!Array.isArray(source)) invalid(`each node "${node.id}" source is not an array`);
   if (items.length !== source.length || children.length !== source.length) {
     invalid(`each node "${node.id}" item count does not match its source`);
@@ -178,6 +188,10 @@ function validateEachItem(
   assertOptionalBoundedJson(item.output_json, `each node "${node.id}" item ${index} output`);
   assertOptionalBoundedJson(child.input, `each node "${node.id}" child ${index} input`);
   assertOptionalBoundedJson(child.output, `each node "${node.id}" child ${index} output`);
+  if (node.visibility === 'private'
+    && (child.input !== null || child.output !== null || item.output_json !== null)) {
+    invalid(`private each node "${node.id}" exposed an item value`);
+  }
   assertItemTimestamps(item, node.id, index);
   if (item.error !== null && (typeof item.error !== 'string' || item.error.length > 2_000)) {
     invalid(`each node "${node.id}" item ${index} error is invalid`);
@@ -269,7 +283,9 @@ function validateCompletedExpansion(
       ? { ok: true, value: parseNullableJson(item.output_json, node.id) }
       : { ok: false, skipped: item.status === 'skipped', error: item.error }
     : parseNullableJson(item.output_json, node.id));
-  const expected = stringifyJson(output, `each node "${node.id}" completed output`);
+  const expected = node.visibility === 'private'
+    ? null
+    : stringifyJson(output, `each node "${node.id}" completed output`);
   if (parent.output !== expected || parent.completed_at === null) {
     invalid(`each node "${node.id}" completed output is incoherent`);
   }
@@ -332,7 +348,7 @@ function stringifyJson(value: unknown, label: string): string {
     return invalid(`${label} is not JSON-serializable`);
   }
   if (serialized === undefined) invalid(`${label} is not JSON-serializable`);
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_WORKFLOW_RUNTIME_JSON_BYTES) {
+  if (workflowJsonBytes(serialized) > MAX_WORKFLOW_RUNTIME_JSON_BYTES) {
     invalid(`${label} exceeds its byte limit`);
   }
   return serialized;
@@ -345,7 +361,7 @@ function assertOptionalBoundedJson(value: unknown, label: string): void {
 }
 
 function assertBoundedJson(value: string, label: string): void {
-  if (Buffer.byteLength(value, 'utf8') > MAX_WORKFLOW_RUNTIME_JSON_BYTES) {
+  if (workflowJsonBytes(value) > MAX_WORKFLOW_RUNTIME_JSON_BYTES) {
     invalid(`${label} exceeds its byte limit`);
   }
   try {

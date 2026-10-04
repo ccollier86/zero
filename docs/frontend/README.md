@@ -198,7 +198,7 @@ call wires it all.
 | [Public Components](./public-components.md) | Feature sections, code blocks, FAQ, expandable cards, bento grids, and animated lists for public landing/content sections |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |
-| [DataTableView](./data-table.md) | Schema-aware table organism with full-sync/lazy/data sources, inline editing, compact table-only search, composable selection-aware toolbar slots, and column overrides |
+| [DataTableView](./data-table.md) | Schema-aware table organism with full-sync/lazy/data/isolated-server sources, offset or cursor pagination, controlled state, acknowledged inline and bulk actions, compact composable controls, and stable sizing |
 | [KanbanBoard](./kanban.md) | Tokenized drag-and-drop board organism for ordered records grouped by caller-owned columns |
 | [LaunchBoard](./launchboard.md) | Reference app showing AppShell + ReactiveDB + KanbanBoard + platform modals in one package-mode example |
 | [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |

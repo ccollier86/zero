@@ -1129,6 +1129,158 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'ai.status_endpoint.requires_auth')).toBe(true);
   });
 
+  test('diagnoses cloud AI provider credential and endpoint configuration', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: { users: { id: 'text primary key' } },
+      auth: false,
+      ai: {
+        autoDetect: false,
+        providers: {
+          bedrock: {
+            type: 'amazon-bedrock',
+            settings: { region: 'us-east-1', accessKeyId: 'partial' },
+          },
+          azure: {
+            type: 'azure',
+            apiKey: 'azure-key',
+          },
+          'google-vertex': {
+            type: 'google-vertex',
+            settings: { project: 'example-project' },
+          },
+        },
+      },
+    }, { env: {} });
+
+    expect(report.ok).toBe(false);
+    expect(hasFinding(report, 'ai.provider.bedrock_credentials_partial')).toBe(true);
+    expect(hasFinding(report, 'ai.provider.azure_endpoint_missing')).toBe(true);
+    expect(hasFinding(report, 'ai.provider.vertex_location_missing')).toBe(true);
+  });
+
+  test('checks hosted-files provider readiness and optional operations', () => {
+    const missing = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth: false,
+      ai: { autoDetect: false, filesProvider: 'missing' },
+    }, { env: {} });
+    expect(hasFinding(missing, 'ai.files_provider.provider_missing')).toBe(true);
+
+    const unsupported = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth: false,
+      ai: {
+        autoDetect: false,
+        filesProvider: 'groq',
+        providers: { groq: { type: 'groq', apiKey: 'groq-key' } },
+      },
+    }, { env: {} });
+    expect(hasFinding(unsupported, 'ai.files_provider.capability_unsupported')).toBe(true);
+
+    const uploadOnly = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth: false,
+      ai: {
+        autoDetect: false,
+        filesProvider: 'google',
+        providers: { google: { type: 'google', apiKey: 'google-key' } },
+      },
+    }, { env: {} });
+    expect(hasFinding(uploadOnly, 'ai.files_provider.optional_operations_unavailable')).toBe(true);
+
+    const complete = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth: false,
+      ai: {
+        autoDetect: false,
+        filesProvider: 'openai',
+        providers: { openai: { type: 'openai', apiKey: 'openai-key' } },
+      },
+    }, { env: {} });
+    expect(hasFinding(complete, 'ai.files_provider.optional_operations_unavailable')).toBe(false);
+  });
+
+  test('uses reranking and video capabilities for their default aliases', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth: false,
+      ai: {
+        autoDetect: false,
+        providers: { voyage: { type: 'voyage', apiKey: 'voyage-key' } },
+        aliases: {
+          reranking: 'voyage/rerank-2.5',
+          video: 'voyage/not-a-video-model',
+        },
+      },
+    }, { env: {} });
+
+    const capabilityFindings = report.findings.filter(
+      (finding) => finding.code === 'ai.alias.capability_unsupported'
+    );
+    expect(capabilityFindings).toContainEqual(expect.objectContaining({ path: 'ai.aliases.video' }));
+    expect(capabilityFindings).not.toContainEqual(expect.objectContaining({ path: 'ai.aliases.reranking' }));
+  });
+
+  test('does not warn about an explicitly disabled AI provider', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: { users: { id: 'text primary key' } },
+      auth: false,
+      ai: {
+        autoDetect: false,
+        providers: {
+          openai: false,
+        },
+        aliases: {
+          fast: 'openai/gpt-4o-mini',
+        },
+      },
+    }, { env: {} });
+
+    expect(hasFinding(report, 'ai.providers.none_active')).toBe(true);
+    expect(hasFinding(report, 'ai.provider.inactive')).toBe(false);
+    expect(getFinding(report, 'ai.providers.none_active')?.hint)
+      .toStartWith('Re-enable at least one configured provider');
+    expect(getFinding(report, 'ai.alias.provider_inactive')?.hint)
+      .toStartWith('Re-enable that provider');
+  });
+
+  test('diagnoses partial env cloud providers even when another provider is active', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: { users: { id: 'text primary key' } },
+      auth: false,
+      ai: true,
+    }, {
+      env: {
+        OPENAI_API_KEY: 'active-openai-key',
+        AWS_REGION: 'us-east-1',
+        AWS_ACCESS_KEY_ID: 'partial-bedrock-access-key',
+        AZURE_API_KEY: 'partial-azure-key',
+        GOOGLE_VERTEX_PROJECT: 'partial-vertex-project',
+      },
+    });
+
+    expect(hasFinding(report, 'ai.providers.none_active')).toBe(false);
+    expect(hasFinding(report, 'ai.provider.bedrock_credentials_partial')).toBe(true);
+    expect(hasFinding(report, 'ai.provider.azure_endpoint_missing')).toBe(true);
+    expect(hasFinding(report, 'ai.provider.vertex_location_missing')).toBe(true);
+  });
+
+  test('does not treat a shared AWS region alone as Bedrock configuration', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: { users: { id: 'text primary key' } },
+      auth: false,
+      ai: true,
+    }, {
+      env: {
+        OPENAI_API_KEY: 'active-openai-key',
+        AWS_REGION: 'us-east-1',
+      },
+    });
+
+    expect(hasFinding(report, 'ai.provider.bedrock_credentials_missing')).toBe(false);
+    expect(hasFinding(report, 'ai.provider.bedrock_region_missing')).toBe(false);
+    expect(hasFinding(report, 'ai.provider.bedrock_credentials_partial')).toBe(false);
+  });
+
   test('checks vector paths, metadata index guidance, and embedding readiness', () => {
     const report = runPlatformDoctor({
       db: { mode: ':memory:' },

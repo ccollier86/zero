@@ -11,7 +11,7 @@ if (!ai) throw new Error('AI is not enabled.');
 
 const thread = ai.conversation({
   model: 'smart',
-  system: 'You are a precise assistant for this app.',
+  instructions: 'You are a precise assistant for this app.',
 });
 
 thread.user('Summarize this customer.');
@@ -28,7 +28,7 @@ const result = await thread.generate({
 ```ts
 const result = await ai.generateConversation({
   model: 'smart',
-  system: 'Use short answers.',
+  instructions: 'Use short answers.',
   messages: [
     { role: 'user', content: 'First question' },
     { role: 'assistant', content: 'First answer' },
@@ -37,11 +37,15 @@ const result = await ai.generateConversation({
 });
 ```
 
+`system` remains supported for compatibility, but `instructions` is preferred
+for new SDK 7 code. Instruction messages already present in the conversation
+are normalized into the same boundary.
+
 ## Multimodal User Messages
 
 ```ts
 await ai.generateConversation({
-  model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8',
+  model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
   messages: [
     {
       role: 'user',
@@ -55,7 +59,10 @@ await ai.generateConversation({
 ```
 
 Zero normalizes image parts into AI SDK file parts with an inferred image media
-type.
+type. If the selected model cannot consume that URL directly, Zero uses its
+mandatory Bun DNS-pinned and redirect-validated prompt downloader. One request
+has a shared 64-MiB budget across all assets Zero materializes locally.
+See [Remote Image And File Inputs](./ai-generation.md#remote-image-and-file-inputs).
 
 ## Streaming
 
@@ -63,6 +70,8 @@ type.
 const stream = ai.streamConversation({
   model: 'fast',
   messages,
+  timeout: { totalMs: 30_000, firstChunkMs: 5_000, chunkMs: 10_000 },
+  streamRetries: 1,
 });
 
 for await (const delta of stream.textStream) {
@@ -70,9 +79,23 @@ for await (const delta of stream.textStream) {
 }
 ```
 
+Conversation generation accepts the same structured output, reasoning,
+timeout, typed context, tool approval, step-control, telemetry, and lifecycle
+options as text generation. See
+[AI Generation And Streaming](./ai-generation.md).
+
+For Bedrock, a later turn with no active tools preserves completed historical
+tool calls/results/approvals as bounded, labeled text because Bedrock requires
+a current tool configuration for native tool blocks. Nothing is re-executed,
+no tool definition is injected, and active-tool turns retain their native
+representation. Unsafe or oversized history fails closed with
+`AI_REQUEST_INVALID` rather than being silently removed. See
+[Bedrock inactive-tool history](./ai-generation.md#bedrock-inactive-tool-history)
+for the exact 1-MiB and content boundary.
+
 ## Persistence
 
-The first AI slice does not persist chat threads. Apps should store durable
+Zero does not persist chat threads. Apps should store durable
 conversation history in normal ReactiveDB tables when needed. A dedicated
 thread store can be added later as a separate module.
 
@@ -88,7 +111,7 @@ or persistence layer.
 ```ts
 const session = ai.session({
   model: 'smart',
-  system: 'You are a precise assistant for this workflow.',
+  instructions: 'You are a precise assistant for this workflow.',
   maxMessages: 12,
 });
 
@@ -101,3 +124,11 @@ return second.text;
 `send()` appends the user message, calls the selected model with all retained
 messages, then appends the assistant text response. Use `session.messages()` if
 you need to inspect or persist the current history yourself.
+
+## Related Documentation
+
+- [AI](./ai.md)
+- [AI Generation And Streaming](./ai-generation.md)
+- [AI Hosted Files And Video](./ai-files-video.md)
+- [AI Tools](./ai-tools.md)
+- [AI Agents](./ai-agents.md)

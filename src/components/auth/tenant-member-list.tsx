@@ -1,15 +1,17 @@
 'use client';
 
+/** Member directory controls and rows; authority and data loading stay in the controller. */
+
 import * as React from 'react';
 import { RefreshCw } from 'lucide-react';
-import { Search } from '#zero/components/animate-ui/icons/search';
+import { DataTableSearch } from '../data-table/data-table-search';
+import { DataTableControls } from '../data-table/data-table-controls';
 import type {
   AuthTenantMember,
   AuthTenantMembershipStatus,
 } from '../../frontend/client/auth-types';
 import { badgeVariants } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
-import { Input } from '#zero/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -50,26 +52,26 @@ export function TenantMemberListControls({
   onLoadMore,
 }: TenantMemberListControlsProps) {
   return (
-    <div className="flex flex-col gap-2 rounded-md border bg-background p-2 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative min-w-0 flex-1 sm:max-w-[24rem]">
-          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
-            <Search size={16} />
-          </span>
-          <Input
-            ref={searchInputRef}
-            type="search"
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Search members"
-            className="h-8 pl-8 text-sm"
-            aria-label="Search members"
-          />
-        </div>
+    <DataTableControls
+      aria-label="Member directory controls"
+      className="rounded-md border bg-background p-2"
+      search={(
+        <DataTableSearch
+          ref={searchInputRef}
+          value={search}
+          onValueChange={onSearchChange}
+          placeholder="Search members…"
+          label="Search members"
+          collapsedWidth={112}
+          expandedWidth={216}
+          className="max-w-full"
+        />
+      )}
+      controls={(
         <Select value={status} onValueChange={(value) => (
           onStatusChange(value as AuthTenantMembershipStatus | 'all')
         )}>
-          <SelectTrigger className="h-8 w-full text-sm sm:w-[10rem]" aria-label="Membership status">
+          <SelectTrigger className="h-8 w-[10rem] max-w-full text-sm" aria-label="Membership status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -79,35 +81,36 @@ export function TenantMemberListControls({
             <SelectItem value="removed">Removed</SelectItem>
           </SelectContent>
         </Select>
-      </div>
-
-      <div className="flex items-center justify-between gap-2 lg:justify-end">
-        <span className="text-xs text-muted-foreground">
-          {loadedCount === 0 ? 'No members' : `${loadedCount} loaded${hasMore ? '+' : ''}`}
-        </span>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="outline"
-          onClick={onRefresh}
-          disabled={isLoading || isLoadingMore}
-          aria-label="Refresh members"
-        >
-          <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
-        </Button>
-        {hasMore && (
+      )}
+      actions={(
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {loadedCount === 0 ? 'No members' : `${loadedCount} loaded${hasMore ? '+' : ''}`}
+          </span>
           <Button
             type="button"
-            size="xs"
+            size="icon-xs"
             variant="outline"
-            onClick={onLoadMore}
+            onClick={onRefresh}
             disabled={isLoading || isLoadingMore}
+            aria-label="Refresh members"
           >
-            {isLoadingMore ? 'Loading…' : 'Load more'}
+            <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
           </Button>
-        )}
-      </div>
-    </div>
+          {hasMore && (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={onLoadMore}
+              disabled={isLoading || isLoadingMore}
+            >
+              {isLoadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          )}
+        </div>
+      )}
+    />
   );
 }
 

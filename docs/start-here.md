@@ -45,6 +45,9 @@ For durable orchestration, **Torrent** is Zero's workflow system. Torrent is
 product/documentation vocabulary; application code continues to use
 `workflows`, `@zero/framework/workflows`, `zero.workflows`, and the existing
 `useWorkflow*` hooks documented in [Torrent: Durable Workflows](./workflows.md).
+For immutable bounded AI agents that need restart recovery, private transcripts,
+durable human approval, and live authority checks, use
+[Durable AI Agents With Torrent](./ai-durable-agents.md).
 For versioned functions which react to ReactiveDB inserts, updates, and deletes,
 including same-transaction rollups and durable post-commit/Torrent effects, use
 [ReactiveDB Database Functions And Triggers](./framework/reactive-database-automations.md).
@@ -241,25 +244,18 @@ Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 
 ```ts
-import { defineZeroConfig } from '@zero/framework/server';
+import { defineZeroConfig, resolveAIConfig } from '@zero/framework/server';
 import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
 const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
-const hasAI = Boolean(
-  Bun.env.OPENAI_API_KEY ||
-  Bun.env.ANTHROPIC_API_KEY ||
-  Bun.env.GEMINI_API_KEY ||
-  Bun.env.GOOGLE_API_KEY ||
-  Bun.env.GROQ_API_KEY ||
-  Bun.env.XAI_API_KEY ||
-  Bun.env.COHERE_API_KEY ||
-  Bun.env.META_LLAMA_API_KEY ||
-  Bun.env.LLAMA_API_KEY ||
-  Bun.env.DEEPSEEK_API_KEY ||
-  Bun.env.PERPLEXITY_API_KEY ||
-  Bun.env.VOYAGE_API_KEY ||
-  Bun.env.DEEPGRAM_API_KEY
+const aiEnabled = Bun.env.ZERO_AI_ENABLED?.trim();
+const detectedAI = resolveAIConfig(true);
+const hasDetectedAIProvider = detectedAI !== false
+  && Object.values(detectedAI.providers).some((provider) => provider.active);
+const hasAI = aiEnabled === 'true' || (
+  aiEnabled !== 'false'
+  && hasDetectedAIProvider
 );
 const hasVector = Bun.env.ZERO_VECTOR_ENABLED === 'true';
 const hasPdf = Bun.env.ZERO_PDF_ENABLED === 'true';
@@ -341,6 +337,13 @@ const config = defineZeroConfig({
 export default config;
 export { config };
 ```
+
+The generated starter's `ZERO_AI_ENABLED` is an app-level selector: `false`
+disables AI even when provider env is ready, a blank value enables AI only when
+the shared resolver finds an active provider, and `true` mounts AI even if no
+provider is ready. It never creates credentials or opts into Gateway OIDC;
+declare OIDC in trusted config with
+`providers.gateway = { type: 'gateway', apiKey: null }`.
 
 Then keep `app/server.ts` small:
 
@@ -845,18 +848,27 @@ Common variables:
 | `ZERO_STORAGE_SIGNING_SECRET` | Optional shared HMAC key for storage presigned URLs/upload grants. Use at least 32 random bytes for ephemeral databases or replicas with separate databases. |
 | `ZERO_KV_BASE_DIR` | Optional app convention for KV journal/checkpoint files. Defaults to `./data/kv`. |
 | `ZERO_KV_DURABILITY` | Optional app convention for KV durability: `everysec` or `always`. |
-| `OPENAI_API_KEY` | Enables OpenAI in the AI layer. |
-| `ANTHROPIC_API_KEY` | Enables Anthropic in the AI layer. |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI in the AI layer. |
-| `GROQ_API_KEY` | Enables Groq in the AI layer. |
-| `LLAMA_API_KEY` / `META_LLAMA_API_KEY` | Enables Zero's custom Meta Llama provider. |
-| `DEEPGRAM_API_KEY` | Enables Deepgram transcription and speech in the AI layer. |
+| `ZERO_AI_ENABLED` | Generated-app on/off override. Complete env provider readiness is detected automatically; forcing `true` does not invent credentials or opt into OIDC. |
+| Provider API keys | Enable native language, embedding, reranking, image, transcription, speech, hosted-file, and preview-video adapter capabilities. The complete operation matrix is in [AI Providers](./ai-providers.md). |
+| `AI_GATEWAY_API_KEY` | Enables Gateway key auth. Gateway OIDC requires explicit trusted `{ type: 'gateway', apiKey: null }` config. |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | Enables Anthropic API-key or bearer-token auth; API-key env wins when both are set. |
+| Claude Platform on AWS | `ANTHROPIC_AWS_WORKSPACE_ID` plus either `ANTHROPIC_AWS_API_KEY` and a region/`ANTHROPIC_AWS_BASE_URL`, or a region and complete SigV4 credentials. API-key mode wins over ambient static credentials. |
+| `AZURE_API_KEY` plus `AZURE_RESOURCE_NAME` / `AZURE_BASE_URL` | Enables Azure OpenAI. Explicit config also supports an Entra token provider. |
+| Bedrock bearer | `AWS_BEARER_TOKEN_BEDROCK` plus `AWS_REGION` / `AWS_DEFAULT_REGION`, or a model-runtime endpoint from `BEDROCK_BASE_URL`, `AMAZON_BEDROCK_BASE_URL`, `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`, or `AWS_ENDPOINT_URL`. Bearer mode does not use SigV4. `AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME` separately selects the reranking endpoint; reranking still requires a region. |
+| Bedrock SigV4 | `AWS_REGION` / `AWS_DEFAULT_REGION` plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (optional `AWS_SESSION_TOKEN`), or explicit trusted `settings.credentialProvider`. |
+| `GOOGLE_VERTEX_API_KEY` or `GOOGLE_VERTEX_PROJECT` plus `GOOGLE_VERTEX_LOCATION` | Enables Vertex express mode or project/location mode. |
+| `OPEN_RESPONSES_BASE_URL` | Enables the Open Responses adapter. |
+| Current official additions | `PRODIA_TOKEN`, `KLINGAI_API_KEY` (or complete `KLINGAI_ACCESS_KEY` + `KLINGAI_SECRET_KEY`), `CARTESIA_API_KEY`, `GMI_CLOUD_APIKEY`, and `TOPAZ_API_KEY`. See [AI Providers](./ai-providers.md) for exact capabilities. |
 | `ZERO_AI_FAST_MODEL` | Optional `fast` alias override. |
 | `ZERO_AI_SMART_MODEL` | Optional `smart` alias override. |
 | `ZERO_AI_EMBEDDING_MODEL` | Optional `embedding` alias override. |
 | `ZERO_AI_IMAGE_MODEL` | Optional `image` alias override. |
 | `ZERO_AI_TRANSCRIPTION_MODEL` | Optional `transcription` alias override. |
 | `ZERO_AI_SPEECH_MODEL` | Optional `speech` alias override. |
+| `ZERO_AI_RERANKING_MODEL` | Optional `reranking` alias override. |
+| `ZERO_AI_VIDEO_MODEL` | Optional preview `video` alias override. |
+| `ZERO_AI_FILES_PROVIDER` | Optional default provider ID for hosted-file operations. |
+| `ZERO_AI_APPROVAL_SECRET` | Optional app convention for server-only HMAC material passed explicitly to tool/agent approval configuration. Zero does not read it implicitly; use at least 32 high-entropy bytes. |
 | `ZERO_VECTOR_ENABLED` | App convention for enabling `vector` config. |
 | `ZERO_VECTOR_DATA_DIR` | Default zvec collection directory. |
 | `ZERO_VECTOR_DEFAULT_DIMENSIONS` | Default vector dimensions for `vector: true`. |
@@ -935,7 +947,7 @@ Zero includes these backend capabilities out of the box:
 | Torrent | [Versioned durable workflows](./workflows.md), trusted activities, choices, parallel joins, bounded array fan-out, event and human waits, private scratch memory, crash recovery, and owner-scoped live visualization. The product name does not rename the existing `workflows` APIs. |
 | Migrations | Explicit migration files, ledger, schema history, rollback, backups, doctor, draft plans. |
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
-| AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |
+| AI | Internal server-side AI SDK 7 service with a broad official provider catalog, cloud credential modes, custom/compatible adapters, aliases, typed output, conversations, tools, single/batch embeddings, reranking, media, hosted files, preview video, bounded ephemeral agents, lifecycle telemetry, and protected status. |
 | Vector Store | Local zvec-backed vector persistence/search with scoped filters and AI embedding bridge helpers. |
 | PDF | Secure browser-grade HTML/CSS-to-PDF rendering with bounded concurrency, strict resource policy, storage composition, and a replaceable renderer adapter. |
 
@@ -1034,7 +1046,7 @@ Use text labels instead of emojis for actions, states, and navigation. See
 
 ## AI
 
-Enable AI with provider keys and `ai: true`:
+Enable AI with provider credentials and `ai: true`:
 
 ```ts
 const app = await createApp({
@@ -1056,17 +1068,30 @@ if (!ai) throw new Error('AI is not enabled.');
 
 const result = await ai.conversation({
   model: 'smart',
-  system: 'You are a precise app assistant.',
+  instructions: 'You are a precise app assistant.',
 })
   .user('Summarize this customer record.')
   .generate();
 ```
 
-Inspect active providers from server code with `ai.status()`. Zero mounts no AI
-routes by default; an optional protected status route can be enabled explicitly
-when an app wants HTTP runtime inspection. See [AI](./ai.md), [AI
-Providers](./ai-providers.md), [AI Conversations](./ai-conversations.md),
-[AI Tools](./ai-tools.md), and [Meta Llama](./ai-meta-llama.md).
+Inspect resolved providers from server code with `ai.status()`: both active and
+inactive entries are returned with bounded readiness reasons. Zero mounts no
+AI routes by default; an optional protected status route can be enabled
+explicitly when an app wants HTTP runtime inspection. Claude Platform on AWS,
+Bedrock, Azure, and Vertex have cloud-specific readiness rules; a region or
+endpoint alone is not treated as a complete credential configuration.
+Explicit provider `apiKey` and `baseURL` values are tri-state—omitted inherits
+env, a string overrides it, and
+`null` suppresses env inheritance. Model references use
+`providerId/modelId`, and actual support varies by model within an adapter's
+declared capabilities. See [AI](./ai.md),
+[AI Generation And Streaming](./ai-generation.md),
+[AI Embeddings And Reranking](./ai-embeddings-reranking.md),
+[AI Hosted Files And Video](./ai-files-video.md),
+[AI Providers](./ai-providers.md), [AI Conversations](./ai-conversations.md),
+[AI Tools](./ai-tools.md), [AI Agents](./ai-agents.md),
+[Durable AI Agents With Torrent](./ai-durable-agents.md), and the
+[retired Meta Llama migration note](./ai-meta-llama.md).
 
 ## Vector Store
 
@@ -1155,7 +1180,7 @@ Zero includes reusable frontend organisms for fast data-driven screens:
 
 | Organism | Use it for | Docs |
 | --- | --- | --- |
-| `DataTableView` | Schema-aware tables with full-sync, lazy `/api/data`, or caller-owned sources. | [docs/frontend/data-table.md](./frontend/data-table.md) |
+| `DataTableView` | Schema-aware tables with full-sync, lazy hydration, caller-owned rows, or isolated offset/cursor server queries. | [docs/frontend/data-table.md](./frontend/data-table.md) |
 | `DataStudio` | Organization-owned logical tables with server-capability-aware schema/row controls and geometry-stable inline editing. | [docs/data-studio.md](./data-studio.md) |
 | `KanbanBoard` | Drag-and-drop status boards, pipelines, queues, and workflow lanes backed by caller-owned or live data. | [docs/frontend/kanban.md](./frontend/kanban.md) |
 | `MasterDetailView` | A table/list plus detail panel, generated edit form, custom detail body, record navigation, and DataTable-style lazy sources. | [docs/frontend/master-detail.md](./frontend/master-detail.md) |

@@ -169,6 +169,24 @@ describe('resource field access across managed transports', () => {
         'http://zero.test/api/data?table=documents&order=secret',
       ));
       expect(sort.status).toBe(400);
+
+      const searchable = await app.handle(new Request(
+        'http://zero.test/api/data?table=documents&search=Visible&searchField=title&sort=title:asc',
+      ));
+      expect(searchable.status).toBe(200);
+      expect(await searchable.json()).toMatchObject({
+        rows: [{ id: 'doc-1', title: 'Visible title' }],
+      });
+
+      const hiddenSearch = await app.handle(new Request(
+        'http://zero.test/api/data?table=documents&search=classified&searchField=secret',
+      ));
+      expect(hiddenSearch.status).toBe(400);
+
+      const hiddenMultiSort = await app.handle(new Request(
+        'http://zero.test/api/data?table=documents&sort=secret:asc',
+      ));
+      expect(hiddenMultiSort.status).toBe(400);
     } finally {
       runtime.db.dispose();
     }

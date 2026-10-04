@@ -377,6 +377,39 @@ describe('/api/data', () => {
     ]);
   });
 
+  test('supports explicit OR search fields and deterministic multi-column sorting', async () => {
+    app = createTestApp();
+    seedItems(app);
+
+    const result = await getJson(
+      '/api/data?table=items&search=a&searchField=title&searchField=category&sort=category:asc&sort=priority:desc',
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body.rows.map((row: { id: string }) => row.id)).toEqual([
+      'i3', 'i2', 'i1', 'i4',
+    ]);
+  });
+
+  test('rejects search without fields and mixed legacy/new sorting', async () => {
+    app = createTestApp();
+    seedItems(app);
+
+    const missingFields = await getJson('/api/data?table=items&search=Alpha');
+    expect(missingFields).toMatchObject({
+      status: 400,
+      body: { code: 'invalid-data-query' },
+    });
+
+    const mixedSort = await getJson(
+      '/api/data?table=items&sort=priority:asc&order=title&dir=desc',
+    );
+    expect(mixedSort).toMatchObject({
+      status: 400,
+      body: { code: 'invalid-data-query' },
+    });
+  });
+
   test('caps limits and rejects invalid query columns', async () => {
     app = createTestApp({ maxLimit: 2 });
     seedItems(app);
@@ -1031,7 +1064,7 @@ describe('/api/data', () => {
     });
 
     const result = await getJson(
-      '/api/data?table=isolated_docs&filter=title:contains:Al&order=id&dir=asc',
+      '/api/data?table=isolated_docs&search=Al&searchField=title&sort=id:asc&sort=title:desc',
       { authorization: 'Bearer isolated-token' },
     );
 
@@ -1054,12 +1087,18 @@ describe('/api/data', () => {
       table: 'isolated_docs',
       input: {
         filters: [{
-          type: 'field',
-          field: 'title',
-          operator: 'contains',
-          value: 'Al',
+          type: 'anyOf',
+          filters: [{
+            type: 'field',
+            field: 'title',
+            operator: 'contains',
+            value: 'Al',
+          }],
         }],
-        order: [{ field: 'id', direction: 'asc' }],
+        order: [
+          { field: 'id', direction: 'asc' },
+          { field: 'title', direction: 'desc' },
+        ],
         limit: 2,
         offset: 0,
       },

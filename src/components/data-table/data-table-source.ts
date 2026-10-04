@@ -1,9 +1,9 @@
 /**
  * data-table-source.ts
  *
- * Resolves DataTable rows from caller-owned arrays, reactive collections, or
- * lazy `/api/data` reads. This hook owns data-source wiring only; it does not
- * render table UI or build TanStack column definitions.
+ * Resolves DataTable rows from caller-owned arrays, reactive collections,
+ * lazy hydration, or isolated server pages. This hook owns data-source wiring
+ * only; it does not render table UI or build TanStack column definitions.
  */
 
 'use client';
@@ -14,27 +14,37 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from 'react';
 import { useClientMaybe } from '../../frontend/client/client-context';
+import type { InternalClient } from '../../frontend/client/sdk';
 import {
   isAuthorizationScopeCallbackCurrent,
   useAuthorizationScopeBoundary,
 } from '../../frontend/client/authorization-scope-hooks';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import type { Row } from '../../sync/types';
+import type {
+  DataTableServerPage,
+  DataTableServerQuery,
+  DataTableServerSource,
+} from './data-table-server-types';
+import { invokeDataTableSourceWrite } from './data-table-source-action-guard';
+import { useOptionalDataTableCollection } from './use-data-table-collection-source';
+import { useDataTableServerSource } from './use-data-table-server-source';
 
-const NOOP_UNSUBSCRIBE = () => {};
-const EMPTY_RECORD: Record<string, never> = {};
 const EMPTY_ARRAY: never[] = [];
 
 export type DataTableFilterValue = string | number | boolean;
 export type DataTableFilters = Record<string, DataTableFilterValue>;
 
 export interface DataTableSourceActions<T extends Row> {
-  insert: (row: T) => void;
-  update: (id: string, partial: Partial<T>) => void;
-  remove: (id: string) => void;
+  insert: (row: T, options?: { signal?: AbortSignal }) => void | Promise<void>;
+  update: (
+    id: string,
+    partial: Partial<T>,
+    options?: { signal?: AbortSignal },
+  ) => void | Promise<void>;
+  remove: (id: string, options?: { signal?: AbortSignal }) => void | Promise<void>;
   load: (rows: T[], options?: { replace?: boolean }) => void;
   clear: () => void;
 }
@@ -46,7 +56,7 @@ export type DataTableSource<T extends Row = Row> =
       actions?: Partial<DataTableSourceActions<T>>;
       isLoading?: boolean;
       error?: Error | string | null;
-      refresh?: () => void;
+      refresh?: () => void | Promise<void>;
     }
   | {
       type: 'collection';
@@ -58,7 +68,8 @@ export type DataTableSource<T extends Row = Row> =
       filters?: DataTableFilters;
       options?: LazyCollectionOptions;
       replaceOnLoad?: boolean;
-    };
+    }
+  | DataTableServerSource<T>;
 
 export interface UseDataTableSourceOptions<T extends Row> {
   source?: DataTableSource<T>;
@@ -67,6 +78,8 @@ export interface UseDataTableSourceOptions<T extends Row> {
   lazy?: boolean;
   filters?: DataTableFilters;
   lazyOptions?: LazyCollectionOptions;
+  query?: DataTableServerQuery;
+  primaryKey?: string;
 }
 
 export interface DataTableSourceState<T extends Row> {
@@ -75,12 +88,8 @@ export interface DataTableSourceState<T extends Row> {
   table: string | null;
   isLoading: boolean;
   error: Error | string | null;
-  refresh: () => void;
-  actions: DataTableSourceActions<T> | null;
-}
-
-interface OptionalCollectionState<T extends Row> {
-  data: T[] | null;
+  page: DataTableServerPage | null;
+  refresh: () => void | Promise<void>;
   actions: DataTableSourceActions<T> | null;
 }
 
@@ -127,92 +136,12 @@ function resolveDataTableSource<T extends Row>({
   return { type: 'data', data: data ?? (EMPTY_ARRAY as T[]) };
 }
 
-function useOptionalCollection<T extends Row>(
-  table: string | null,
-): OptionalCollectionState<T> {
-  const client = useClientMaybe();
-  const authorizationBoundary = useAuthorizationScopeBoundary(client);
-  const boundaryKeyRef = useRef(authorizationBoundary.key);
-  const boundaryReadyRef = useRef(authorizationBoundary.ready);
-  boundaryKeyRef.current = authorizationBoundary.key;
-  boundaryReadyRef.current = authorizationBoundary.ready;
-  const callbackBoundaryKey = authorizationBoundary.key;
-  const isCurrentScope = useCallback(
-    () => isAuthorizationScopeCallbackCurrent(
-      boundaryKeyRef.current,
-      boundaryReadyRef.current,
-      callbackBoundaryKey,
-    ),
-    [callbackBoundaryKey],
-  );
-
-  if (table && !client && typeof window !== 'undefined') {
-    throw new Error(
-      'DataTable with a collection or lazy source must be used within <AppProvider> or <ClientProvider>.',
-    );
-  }
-
-  const collection = useMemo(
-    () => table && client ? client.collection<T>(table) : null,
-    [client, table],
-  );
-
-  const subscribe = useCallback(
-    (callback: () => void) => authorizationBoundary.ready && collection
-      ? collection.subscribe(callback)
-      : NOOP_UNSUBSCRIBE,
-    [authorizationBoundary.key, authorizationBoundary.ready, collection],
-  );
-
-  const byId = useSyncExternalStore(
-    subscribe,
-    () => authorizationBoundary.ready && collection
-      ? collection.getAll()
-      : EMPTY_RECORD as Record<string, T>,
-    () => EMPTY_RECORD as Record<string, T>,
-  );
-
-  const rows = useMemo(
-    () => authorizationBoundary.ready && collection ? Object.values(byId) : null,
-    [authorizationBoundary.ready, byId, collection],
-  );
-
-  const insert = useCallback((row: T) => {
-    if (isCurrentScope()) collection?.insert(row);
-  }, [collection, isCurrentScope]);
-  const update = useCallback(
-    (id: string, partial: Partial<T>) => {
-      if (isCurrentScope()) collection?.update(id, partial);
-    },
-    [collection, isCurrentScope],
-  );
-  const remove = useCallback((id: string) => {
-    if (isCurrentScope()) collection?.remove(id);
-  }, [collection, isCurrentScope]);
-  const load = useCallback(
-    (nextRows: T[], options?: { replace?: boolean }) => {
-      if (isCurrentScope()) collection?.load(nextRows, options);
-    },
-    [collection, isCurrentScope],
-  );
-  const clear = useCallback(() => {
-    if (isCurrentScope()) collection?.clear();
-  }, [collection, isCurrentScope]);
-
-  const actions = useMemo<DataTableSourceActions<T> | null>(
-    () => collection ? { insert, update, remove, load, clear } : null,
-    [clear, collection, insert, load, remove, update],
-  );
-
-  return { data: rows, actions };
-}
-
 /**
  * Resolve rows, mutation actions, loading, and refresh state for a DataTable.
  *
- * Full-sync and lazy sources use the frontend SDK client so auth headers,
- * refresh behavior, and optimistic store writes stay consistent with the rest
- * of Zero's frontend data layer.
+ * Full-sync, lazy, and built-in server sources use the frontend SDK client so
+ * auth headers, refresh behavior, and optimistic writes stay consistent with
+ * the rest of Zero's frontend data layer.
  */
 export function useDataTableSource<T extends Row = Row>(
   options: UseDataTableSourceOptions<T>,
@@ -221,10 +150,17 @@ export function useDataTableSource<T extends Row = Row>(
   const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const resolved = resolveDataTableSource(options);
   const sourceType = resolved.type;
-  const table = sourceType === 'collection' || sourceType === 'lazy'
+  const table = sourceType === 'collection' || sourceType === 'lazy' || sourceType === 'server'
     ? resolved.table
     : null;
-  const collection = useOptionalCollection<T>(table);
+  const collectionTable = resolveDataTableCollectionTable(sourceType, table, client);
+  const collection = useOptionalDataTableCollection<T>(collectionTable);
+  const server = useDataTableServerSource<T>({
+    source: sourceType === 'server' ? resolved : null,
+    query: options.query,
+    primaryKey: options.primaryKey,
+    liveRevision: collection.data,
+  });
   const [isLazyLoading, setIsLazyLoading] = useState(false);
   const [lazyError, setLazyError] = useState<Error | null>(null);
   const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
@@ -338,7 +274,7 @@ export function useDataTableSource<T extends Row = Row>(
       loadedRef.current = '';
       doLazyFetch();
     } else if (sourceType === 'data') {
-      resolved.refresh?.();
+      return resolved.refresh?.();
     }
   }, [doLazyFetch, isCurrentScope, resolved, sourceType]);
 
@@ -346,15 +282,21 @@ export function useDataTableSource<T extends Row = Row>(
     if (sourceType !== 'data' || !resolved.actions) return null;
     const actions = resolved.actions;
     return {
-      insert: (row) => {
-        if (isCurrentScope()) actions.insert?.(row);
-      },
-      update: (id, partial) => {
-        if (isCurrentScope()) actions.update?.(id, partial);
-      },
-      remove: (id) => {
-        if (isCurrentScope()) actions.remove?.(id);
-      },
+      insert: (row, actionOptions) => invokeDataTableSourceWrite(
+        'insert',
+        isCurrentScope(),
+        actions.insert ? () => actions.insert!(row, actionOptions) : undefined,
+      ),
+      update: (id, partial, actionOptions) => invokeDataTableSourceWrite(
+        'update',
+        isCurrentScope(),
+        actions.update ? () => actions.update!(id, partial, actionOptions) : undefined,
+      ),
+      remove: (id, actionOptions) => invokeDataTableSourceWrite(
+        'remove',
+        isCurrentScope(),
+        actions.remove ? () => actions.remove!(id, actionOptions) : undefined,
+      ),
       load: (rows, loadOptions) => {
         if (isCurrentScope()) actions.load?.(rows, loadOptions);
       },
@@ -374,8 +316,22 @@ export function useDataTableSource<T extends Row = Row>(
       table: null,
       isLoading: visible ? !!resolved.isLoading : authorizationBoundary.ready,
       error: visible ? resolved.error ?? null : null,
+      page: null,
       refresh,
       actions: dataActions,
+    };
+  }
+
+  if (sourceType === 'server') {
+    return {
+      data: server.data,
+      sourceType,
+      table,
+      isLoading: server.isLoading,
+      error: server.error,
+      page: server.page,
+      refresh: server.refresh,
+      actions: collection.actions,
     };
   }
 
@@ -387,7 +343,21 @@ export function useDataTableSource<T extends Row = Row>(
       ? authorizationBoundary.ready && (!visible || isLazyLoading)
       : false,
     error: sourceType === 'lazy' && visible ? lazyError : null,
+    page: null,
     refresh,
     actions: collection.actions,
   };
+}
+
+/** Server transports may target logical tables that have no ReactiveDB collection. */
+export function resolveDataTableCollectionTable(
+  sourceType: DataTableSource<Row>['type'],
+  table: string | null,
+  client: ReturnType<typeof useClientMaybe>,
+): string | null {
+  if (sourceType !== 'server') return table;
+  if (!client || !table) return null;
+  return (client as Partial<InternalClient>)._syncClient?.tables[table]
+    ? table
+    : null;
 }

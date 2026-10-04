@@ -25,7 +25,7 @@ import {
 } from '#zero/components/animate-ui/components/radix/dropdown-menu';
 import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
-import { cn } from '#zero/lib/utils';
+import { DataTableControls } from './data-table-controls';
 import {
   DataTableColumnFilter,
   getDataTableColumnLabel,
@@ -145,40 +145,32 @@ export function DataTableToolbar<TData>({
   const showSecondary = supplementalSlot != null || activeFilters.length > 0;
 
   return (
-    <div
-      role="group"
+    <DataTableControls
       aria-label={ariaLabel}
       data-slot="data-table-toolbar"
-      className={cn('flex flex-col gap-2', className)}
-    >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div
-          data-slot="data-table-toolbar-left"
-          className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
-        >
-          {showSearch && (
-            <DataTableSearch
-              value={globalFilter}
-              onValueChange={onGlobalFilterChange}
-              placeholder={searchOptions?.placeholder}
-              label={searchOptions?.ariaLabel}
-              collapsedWidth={searchOptions?.collapsedWidth}
-              expandedWidth={searchOptions?.expandedWidth}
-              disabled={searchOptions?.disabled}
-            />
-          )}
-
+      className={className}
+      search={showSearch ? (
+        <DataTableSearch
+          value={globalFilter}
+          onValueChange={onGlobalFilterChange}
+          placeholder={searchOptions?.placeholder}
+          label={searchOptions?.ariaLabel}
+          collapsedWidth={searchOptions?.collapsedWidth}
+          expandedWidth={searchOptions?.expandedWidth}
+          disabled={searchOptions?.disabled}
+        />
+      ) : undefined}
+      controls={(
+        <>
           {filterable && filterableColumns.map((column) => (
             <DataTableColumnFilter key={column.id} column={column} />
           ))}
 
           {controlsSlot}
-        </div>
-
-        <div
-          data-slot="data-table-toolbar-right"
-          className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end"
-        >
+        </>
+      )}
+      actions={(
+        <>
           {actionsSlot}
           {legacyActions}
 
@@ -223,14 +215,10 @@ export function DataTableToolbar<TData>({
               Export
             </Button>
           )}
-        </div>
-      </div>
-
-      {showSecondary && (
-        <div
-          data-slot="data-table-toolbar-below"
-          className="flex min-w-0 flex-wrap items-center gap-2"
-        >
+        </>
+      )}
+      supplemental={showSecondary ? (
+        <>
           {supplementalSlot}
 
           {activeFilters.map((filter) => {
@@ -264,9 +252,9 @@ export function DataTableToolbar<TData>({
               Clear all
             </Button>
           )}
-        </div>
-      )}
-    </div>
+        </>
+      ) : undefined}
+    />
   );
 }
 

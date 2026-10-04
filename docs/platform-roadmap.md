@@ -86,10 +86,15 @@ the linked documentation.
   bounded queryable storage, protected access, tracing, and standard emission
   boundaries. OpenTelemetry and analytics items below expand this system. See
   [Observability](./observability.md).
-- [x] **AI and vector search** provide provider abstraction, tools,
-  conversations, streaming, usage events, local vector indexes, scoped search,
-  and an embedding bridge. Schema automation and packaged AI chat UI are
-  optional layers on top. See [AI](./ai.md) and [Vector Store](./vector.md).
+- [x] **AI and vector search** provide AI SDK 7 provider abstraction, typed
+  output, tools, conversations, streaming, bounded ephemeral agents and
+  Torrent-backed durable agents, batch embeddings,
+  reranking, media, provider-hosted files, lifecycle events, local vector
+  indexes, scoped search, and an embedding bridge. Schema automation and
+  packaged AI chat UI are optional layers on top. See [AI](./ai.md),
+  [AI Hosted Files And Video](./ai-files-video.md),
+  [Durable AI Agents With Torrent](./ai-durable-agents.md), and
+  [Vector Store](./vector.md).
 - [x] **Forms and application UI** provide schema-driven and custom forms,
   wizards, draft state, tables, adaptive administration controls, storage UI,
   application shells, public components, and a tokenized design system. The
@@ -404,6 +409,13 @@ the linked documentation.
     explicit handling when a provider omits usage fields.
 
 ## AI interfaces and intelligent data
+
+- [ ] **AI model catalog and configuration control plane** — **Research**.
+  Explore provider/Gateway model discovery, effective-dated capability and
+  pricing metadata, and a deliberate trusted env-versus-database provider
+  configuration model. This is not a current Zero API. Keep provider secrets
+  server-only, preserve explicit readiness and alias semantics, and define
+  refresh/failure behavior before introducing mutable database settings.
 
 - [ ] **Vector Studio** — **Core or official plugin**. Add organization-owned
   vector-index provisioning, generation-safe reindex work, quotas, recovery,

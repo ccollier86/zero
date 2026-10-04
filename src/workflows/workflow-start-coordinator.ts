@@ -182,6 +182,13 @@ export class WorkflowStartCoordinator {
     if (!compiled || !canAccessWorkflowDefinition(compiled, 'start', principal)) {
       throw workflowNotFound();
     }
+    if (startOptions.initialMemory !== undefined || startOptions.memoryLimits !== undefined) {
+      throw new WorkflowError(
+        'Private memory options are available only to graph workflows',
+        'WORKFLOW_REQUEST_INVALID',
+        422,
+      );
+    }
     const created = this.instanceFactory.create(name, input, startedBy, {
       tenantId: serviceDataTenantId(boundary),
       onCreate: (instanceId) => {

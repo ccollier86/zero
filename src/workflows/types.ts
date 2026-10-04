@@ -331,6 +331,7 @@ export const WORKFLOW_SERVER_TABLE_NAMES: ReadonlySet<string> = new Set([
   '_workflow_graph_edges',
   '_workflow_decisions',
   '_workflow_each_items',
+  '_workflow_memory_policies',
   '_workflow_memory',
   '_workflow_interaction_details',
   '_workflow_interaction_responses',

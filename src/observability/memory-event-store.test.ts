@@ -6,6 +6,7 @@ import {
   emitPlatformCode,
   emitPlatformCodeTo,
 } from './sink';
+import { emitAIRequestCompleted } from '../ai/ai-observability';
 import type { PlatformObservabilityRuntime } from './types';
 
 describe('MemoryEventStore', () => {
@@ -80,5 +81,86 @@ describe('MemoryEventStore', () => {
     expect(secondStore.query().events.map((event) => event.id)).toEqual([
       'obs_1',
     ]);
+  });
+
+  it('retains numeric AI usage while protecting canonical fields and credential metadata', () => {
+    const store = new MemoryEventStore();
+    configureObservability({ console: false, store });
+
+    emitAIRequestCompleted({
+      providerId: 'openai',
+      providerType: 'openai',
+      model: 'openai/gpt-4o-mini',
+      inputTokens: 12,
+      outputTokens: 4,
+      totalTokens: 16,
+      metadata: {
+        providerId: 'spoofed-provider',
+        inputTokens: 'not-a-count',
+        apiToken: 'must-not-be-recorded',
+        correlationId: 'corr_123',
+        rawPrompt: 'another private prompt',
+        nested: {
+          requestId: 'req_123',
+          messages: [{ role: 'user', content: 'private patient content' }],
+          toolArguments: { patientId: 'private-patient-id' },
+          requestBody: { note: 'private request body' },
+          safe: 'retained',
+        },
+      },
+    });
+
+    const [event] = store.query({ code: OBS_CODES.AI_REQUEST_COMPLETED.code }).events;
+    expect(event.metadata).toMatchObject({
+      providerId: 'openai',
+      inputTokens: 12,
+      outputTokens: 4,
+      totalTokens: 16,
+      apiToken: '[redacted]',
+      correlationId: 'corr_123',
+      rawPrompt: '[redacted]',
+      nested: {
+        requestId: 'req_123',
+        messages: '[redacted]',
+        toolArguments: '[redacted]',
+        requestBody: '[redacted]',
+        safe: 'retained',
+      },
+    });
+    expect(JSON.stringify(event.metadata)).not.toContain('private patient content');
+    expect(JSON.stringify(event.metadata)).not.toContain('private-patient-id');
+    expect(JSON.stringify(event.metadata)).not.toContain('private request body');
+  });
+
+  it('bounds cyclic and oversized AI metadata without losing safe correlation fields', () => {
+    const store = new MemoryEventStore();
+    configureObservability({ console: false, store });
+    const cyclic: Record<string, unknown> = { trace: 'trace_123' };
+    cyclic.self = cyclic;
+
+    emitAIRequestCompleted({
+      metadata: {
+        cyclic,
+        longValue: 'x'.repeat(2_000),
+        many: Array.from({ length: 30 }, (_, index) => index),
+      },
+    });
+
+    const [event] = store.query({ code: OBS_CODES.AI_REQUEST_COMPLETED.code }).events;
+    expect(event.metadata?.cyclic).toEqual({ trace: 'trace_123', self: '[circular]' });
+    expect(String(event.metadata?.longValue).length).toBeLessThan(600);
+    expect(event.metadata?.many).toHaveLength(21);
+  });
+
+  it('omits unavailable canonical AI fields instead of reporting them as redacted values', () => {
+    const store = new MemoryEventStore();
+    configureObservability({ console: false, store });
+
+    emitAIRequestCompleted({ providerId: 'openai', capability: 'text' });
+
+    const [event] = store.query({ code: OBS_CODES.AI_REQUEST_COMPLETED.code }).events;
+    expect(event.metadata).toEqual({ providerId: 'openai', capability: 'text' });
+    expect(event.metadata).not.toHaveProperty('inputTokens');
+    expect(event.metadata).not.toHaveProperty('durationMs');
   });
 });

@@ -1,10 +1,17 @@
 import type {
   PendingMutation,
   Row,
+  SyncAckMessage,
   SyncDataPlaneName,
   SyncMutationRejection,
   SyncMutateMessage,
 } from '../types';
+import {
+  SYNC_MUTATION_ERROR_CODES,
+  SyncMutationReceipts,
+  type SyncMutationReceiptDropCode,
+  type SyncMutationWaitOptions,
+} from './sync-mutation-receipts';
 export type SyncOptimisticEvent = {
   type: 'optimistic.insert' | 'optimistic.update' | 'optimistic.delete';
   table: string;
@@ -36,6 +43,7 @@ interface SyncMutationQueueInput {
 export class SyncMutationQueue {
   private readonly queued = new Map<string, QueuedMutation[]>();
   private readonly inFlight = new Map<string, QueuedMutation>();
+  private readonly receipts = new SyncMutationReceipts();
   constructor(private readonly input: SyncMutationQueueInput) {}
   submit(message: SyncMutateMessage, event: SyncOptimisticEvent): void {
     const key = rowKey(event.table, event.rowId);
@@ -47,25 +55,69 @@ export class SyncMutationQueue {
     }
     this.dispatch(key, { message, event, attempts: 0 });
   }
-  acknowledge(ref: string): void {
+  submitAsync(
+    message: SyncMutateMessage,
+    event: SyncOptimisticEvent,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void> {
+    const receipt = this.receipts.register({
+      ref: message.ref,
+      table: event.table,
+      op: message.op,
+      rowId: event.rowId,
+    }, options);
+    if (!receipt.accepted) return receipt.promise;
+    try {
+      this.submit(message, event);
+    } catch {
+      this.receipts.reject(
+        message.ref,
+        SYNC_MUTATION_ERROR_CODES.submissionFailed,
+      );
+    }
+    return receipt.promise;
+  }
+  acknowledge(message: SyncAckMessage): void {
     for (const [key, pending] of this.inFlight) {
-      if (pending.message.ref !== ref) continue;
+      if (pending.message.ref !== message.ref) continue;
       this.inFlight.delete(key);
       this.flush(key);
+      if (message.ok) this.receipts.resolve(message.ref);
+      else {
+        this.receipts.reject(
+          message.ref,
+          SYNC_MUTATION_ERROR_CODES.serverRejected,
+          message.errorCode ?? null,
+        );
+      }
       return;
     }
   }
   snapshot(tables: Set<string>, preservePending = false): void {
     if (preservePending) return;
     if (tables.size === 0) return;
-    for (const key of this.queued.keys()) {
-      if (tables.has(tableFromKey(key))) this.queued.delete(key);
+    for (const [key, queue] of this.queued) {
+      if (!tables.has(tableFromKey(key))) continue;
+      for (const mutation of queue) {
+        this.receipts.reject(
+          mutation.message.ref,
+          SYNC_MUTATION_ERROR_CODES.snapshotReplaced,
+        );
+      }
+      this.queued.delete(key);
     }
-    for (const key of this.inFlight.keys()) {
-      if (tables.has(tableFromKey(key))) this.inFlight.delete(key);
+    for (const [key, mutation] of this.inFlight) {
+      if (!tables.has(tableFromKey(key))) continue;
+      this.receipts.reject(
+        mutation.message.ref,
+        SYNC_MUTATION_ERROR_CODES.snapshotReplaced,
+      );
+      this.inFlight.delete(key);
     }
   }
   timeout(mutation: PendingMutation): void {
+    const key = rowKey(mutation.table, mutation.rowId);
+    if (this.inFlight.get(key)?.message.ref !== mutation.ref) return;
     this.input.apply({
       type: 'sync.ack', ref: mutation.ref, ok: false, error: 'Mutation timeout',
     });
@@ -78,12 +130,15 @@ export class SyncMutationQueue {
       error: 'Mutation timeout',
       source: 'timeout',
     });
-    const key = rowKey(mutation.table, mutation.rowId);
-    if (this.inFlight.get(key)?.message.ref !== mutation.ref) return;
     this.inFlight.delete(key);
     this.flush(key);
+    this.receipts.reject(
+      mutation.ref,
+      SYNC_MUTATION_ERROR_CODES.acknowledgmentTimeout,
+    );
   }
-  clear(): void {
+  clear(reason: SyncMutationReceiptDropCode): void {
+    this.receipts.rejectAll(reason);
     this.queued.clear();
     this.inFlight.clear();
   }

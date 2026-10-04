@@ -198,13 +198,29 @@ function sanitizeMetadata(metadata: Record<string, unknown> | undefined): Record
 
   const clean: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
-    if (isSensitiveKey(key)) {
+    if (isSensitiveKey(key) && !isSafeUsageCount(key, value)) {
       clean[key] = '[redacted]';
     } else {
       clean[key] = value;
     }
   }
   return clean;
+}
+
+const SAFE_USAGE_COUNT_KEYS = new Set([
+  'inputTokens',
+  'outputTokens',
+  'totalTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'reasoningTokens',
+]);
+
+function isSafeUsageCount(key: string, value: unknown): boolean {
+  return SAFE_USAGE_COUNT_KEYS.has(key)
+    && typeof value === 'number'
+    && Number.isFinite(value)
+    && value >= 0;
 }
 
 function isSensitiveKey(key: string): boolean {

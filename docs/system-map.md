@@ -42,7 +42,7 @@ src/
   auth/oidc/               <- Native OIDC routes, request/code/session stores, and rotation
   native/                  <- Platform-neutral TypeScript native auth SDK and broker
   notifications/           <- Notification service + plugin
-  ai/                      <- Internal AI service, provider registry, tools, conversations, Meta adapter
+  ai/                      <- Internal AI service, catalog/factories, tools, agents, and retired Meta compatibility tombstone
   vector/                  <- zvec-backed local vector store, filters, AI bridge
   pdf/                     <- Browser-grade PDF service, Chromium adapter, resource policy, storage bridge
   kv/                      <- Platform KV/cache service, TTL/LRU indexes, journal/checkpoint recovery, Elysia plugin
@@ -521,34 +521,70 @@ application/tenant namespace. Other topic families require an explicit server
 
 ## System 4.1: AI
 
-**What:** Internal server-side AI service with env-detected providers, model
-aliases, custom Meta Llama adapter, conversations, app-defined tools,
-embeddings, images, transcription, speech, and optional protected runtime
-status.
+**What:** Internal server-side AI service with a broad official adapter catalog,
+cloud-specific credential readiness, model aliases, OpenAI-compatible and
+custom adapters, conversations, app-defined tools, embeddings,
+structured output, bounded batch embeddings/reranking, images, transcription,
+speech, bounded provider-hosted files, preview video, SDK 7 lifecycle controls,
+bounded ephemeral agents, Torrent-durable agents, and optional protected
+runtime status.
 
 **Docs:** [AI](./ai.md), [AI Providers](./ai-providers.md),
+[AI Generation And Streaming](./ai-generation.md),
+[AI Embeddings And Reranking](./ai-embeddings-reranking.md),
+[AI Hosted Files And Video](./ai-files-video.md),
 [AI Conversations](./ai-conversations.md), [AI Tools](./ai-tools.md),
-[Meta Llama](./ai-meta-llama.md)
+[AI Agents](./ai-agents.md),
+[Durable AI Agents With Torrent](./ai-durable-agents.md), and the
+[retired Meta Llama migration note](./ai-meta-llama.md)
 
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/ai/ai-types.ts` | Public AI config, provider, model, message, status, and request contracts |
-| `src/ai/ai-env.ts` | `ai: true` env auto-detection and config normalization |
+| `src/ai/ai-provider-types.ts` | Public provider configuration, activation, credential, capability, and status contracts |
+| `src/ai/ai-types.ts` | Public AI request/result contracts and compatibility re-exports for provider types |
+| `src/ai/ai-output.ts` | Frozen structured-output constructors and type inference over SDK 7 output modes |
+| `src/ai/ai-errors.ts` | Stable AI domain errors and machine codes |
+| `src/ai/ai-env.ts` plus `ai-env-{values,provider-endpoints,provider-resolution,selection}.ts` | Public AI config resolution plus focused environment parsing, provider-endpoint precedence, provider readiness/activation, alias selection, and hosted-file-provider selection |
+| `src/ai/ai-fetch.ts` | Fixed-origin provider request rewriting for explicit endpoint overrides |
+| `src/ai/ai-provider-activation.ts` | Provider-specific readiness, settings/env projection, and auth-mode capability constraints |
 | `src/ai/ai-provider-catalog.ts` | Built-in provider env keys, defaults, and capability metadata |
-| `src/ai/ai-registry.ts` | AI SDK provider instantiation and model lookup |
-| `src/ai/ai-service.ts` | Framework-neutral service for text, streaming, embeddings, images, transcription, speech |
+| `src/ai/ai-provider-factory.ts` | Exhaustive provider-type dispatch, stable construction errors, and secret-safe failure emission |
+| `src/ai/providers/provider-factory-types.ts` | Shared factory contracts, request-option helpers, modality normalization, and safe endpoint rewriting |
+| `src/ai/providers/cloud-provider-factories.ts` | Gateway, Azure, Bedrock, and Vertex constructors |
+| `src/ai/providers/language-provider-factories.ts` | Native language, embedding, and multimodal provider constructors |
+| `src/ai/providers/media-provider-factories.ts` | Native image, transcription, and speech provider constructors |
+| `src/ai/providers/extended-provider-factories.ts` | Extended, Open Responses, compatible, and retired-provider boundaries |
+| `src/ai/ai-registry.ts` | Active provider registry facade and stable registry contracts |
+| `src/ai/ai-model-registry-resolution.ts` / `ai-files-provider-resolution.ts` | Capability-checked model and provider-hosted-files resolution plus public-safe files readiness |
+| `src/ai/ai-model-aliases.ts` | Provider-qualified model parsing and alias resolution |
+| `src/ai/ai-observability.ts` | Bounded, redacted provider/request lifecycle event shaping |
+| `src/ai/ai-request-telemetry.ts` | Shared request lifecycle timing, usage, and failure event orchestration |
+| `src/ai/ai-prompt-download.ts` | Provider pass-through plus sequential aggregate-budget coordination for prompt URLs the selected model cannot consume remotely |
+| `src/ai/ai-safe-download.ts` plus `ai-safe-download-{contracts,cancellation,errors,url-policy,response}.ts` | Focused Bun download orchestration, contracts, abort/timeout handling, stable errors, DNS/address/redirect policy, and bounded response consumption across prompt, transcription, and video downloads |
+| `src/ai/ai-generation-lifecycle-events.ts` / `ai-generation-lifecycle-observability.ts` | Content-free SDK 7 step/model-call/tool lifecycle shaping and callback composition |
+| `src/ai/ai-embedding-types.ts` / `ai-embedding-operations.ts` | Bounded multi-value embedding contracts, execution, and provider-result integrity checks |
+| `src/ai/ai-rerank-types.ts` / `ai-rerank-service.ts` | Bounded homogeneous document reranking and provider-result integrity checks |
+| `src/ai/ai-operation-limits.ts` / `ai-rerank-document-snapshot.ts` | Shared count, byte, concurrency, and retry admission plus iterative bounded snapshots for reranking JSON documents |
+| `src/ai/ai-files-service.ts` / `ai-files-types.ts` | Bounded provider-hosted upload/metadata/download/delete operations and durable provider locators |
+| `src/ai/ai-video-service.ts` / `ai-video-types.ts` | Bounded preview video generate/start/status operations and model-pinned durable envelopes |
+| `src/ai/ai-service.ts` | Framework-neutral service for text, streaming, safe prompt downloads, embeddings, reranking, images, transcription, speech, files, video, ephemeral-agent composition, and app-local durable-agent runtime construction |
+| `src/ai/ai-service-support.ts` | Request normalization and capability admission shared by service methods |
 | `src/ai/ai-conversation.ts` | Conversation builder and message normalization |
 | `src/ai/ai-session.ts` | Bounded in-memory conversation session helper |
 | `src/ai/ai-toolkit.ts` | `aiTool()` / `defineAITools()` helpers |
+| `src/ai/agents/` | Immutable agent/tool definitions, exact-version registry, typed/frozen context, bounded runner, signed approvals, and lifecycle events |
+| `src/ai/durable/` | Torrent-backed finite agent graphs, private transcript/context memory, scope-checked progress/results, durable approvals, and live authority reconstruction |
 | `src/ai/ai-workflow.ts` | Workflow step helper for AI calls |
 | `src/ai/ai.plugin.ts` | Elysia service decoration and optional opt-in status route |
-| `src/ai/adapters/meta-llama.ts` | Native Meta hosted Llama AI SDK provider |
+| `src/ai/adapters/meta-llama.ts` | No-network compatibility tombstone for the retired direct Meta-hosted Llama API |
 | `src/ai/index.ts` | Server-side AI barrel exports |
 
-**Key pattern:** `meta/<model>` is the developer-facing model id, while the
-provider type is `meta-llama` internally. Public execution routes are not
-mounted by default; apps call the service from server code.
+**Key pattern:** every model reference uses `providerId/modelId`.
+`bedrock/<model>` maps to `amazon-bedrock`. The catalog owns
+activation/capabilities, focused factory modules own SDK construction, and the
+registry owns lookup. Public execution routes are not mounted by default; apps
+call the service from server code.
 
 ---
 
@@ -857,9 +893,16 @@ safety sweep and restart fallback.
 |------|---------|
 | `src/components/data-table/data-table.tsx` | `<DataTable>` — full-featured table |
 | `src/components/data-table/use-data-table.ts` | `useDataTable()` — TanStack Table wrapper |
-| `src/components/data-table/data-table-source.ts` | `useDataTableSource()` — static/full-sync/lazy data-source resolver |
+| `src/components/data-table/data-table-source.ts` | `useDataTableSource()` — static/full-sync/lazy/isolated-server source resolver |
+| `src/components/data-table/data-table-server-types.ts` | Public offset/cursor query, adapter, result, and safe-error contracts |
+| `src/components/data-table/data-table-server-query.ts` | Query validation plus the authenticated `/api/data` offset adapter |
+| `src/components/data-table/use-data-table-server-source.ts` | Abortable, request-ordered, authorization-fenced isolated server pages |
+| `src/components/data-table/data-table-state.ts` | Partial controlled/uncontrolled table state and reset policy |
+| `src/components/data-table/data-table-mutation-controller.ts` | Keyed async cell/row/bulk mutation, retry, and boundary lifecycle |
+| `src/components/data-table/data-table-bulk-actions.tsx` | Explicit page/all-matching bulk-selection presentation |
 | `src/components/data-table/data-table-column-header.tsx` | Sortable/filterable column headers |
-| `src/components/data-table/data-table-search.tsx` | Compact, table-only animated search with accessible keyboard and reduced-motion behavior |
+| `src/components/data-table/data-table-controls.tsx` | Table-independent responsive search/controls/actions/supplemental shell used by tables and server-backed management directories |
+| `src/components/data-table/data-table-search.tsx` | Compact animated search for table/control-plane toolbars with accessible keyboard and reduced-motion behavior |
 | `src/components/data-table/data-table-column-filter.tsx` | Schema-aware client-side column-filter controls |
 | `src/components/data-table/data-table-toolbar.tsx` | Responsive search/filter control plane with selection-aware `controls`, `actions`, and `supplemental` slots, column visibility, and export |
 | `src/components/data-table/data-table-export.ts` | CSV export projection and download helper |
@@ -902,6 +945,15 @@ remain `/api/data` inputs and are owned by the source layer rather than the
 toolbar. The slot and label props are optional additions: existing boolean
 `searchable` and `toolbarActions` integrations require no rewrite or database
 migration.
+
+`source={{ type: 'server' }}` turns that same interaction state into an
+isolated server query. Offset mode can use Zero's authenticated `/api/data`
+adapter; cursor mode supplies an app adapter. Results never hydrate the shared
+collection, totals are optional, and query/adapter/identity/auth changes retire
+old rows and requests. Built-in selection, bulk actions, and CSV export stay
+page/loaded-result scoped. Inline source writes and row/bulk actions may be
+awaited; `onCellCommit` is the explicit authoritative-writer override while
+legacy collection `onCellEdit` remains a post-write notification.
 
 ---
 

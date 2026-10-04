@@ -106,6 +106,14 @@ const DEFAULT_LIMIT = 500;
 const dataQueryFilterSchema = t.String({
   maxLength: RESOURCE_QUERY_LIMITS.filterExpressionLength,
 });
+const dataQuerySearchFieldSchema = t.String({
+  minLength: 1,
+  maxLength: RESOURCE_QUERY_LIMITS.identifierLength,
+});
+const dataQuerySortSchema = t.String({
+  minLength: 3,
+  maxLength: RESOURCE_QUERY_LIMITS.sortExpressionLength,
+});
 
 const dataQuerySchema = t.Object({
   table: t.String({
@@ -115,6 +123,17 @@ const dataQuerySchema = t.Object({
   filter: t.Optional(t.Union([
     dataQueryFilterSchema,
     t.Array(dataQueryFilterSchema, { maxItems: RESOURCE_QUERY_LIMITS.filterCount }),
+  ])),
+  search: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.searchLength })),
+  searchField: t.Optional(t.Union([
+    dataQuerySearchFieldSchema,
+    t.Array(dataQuerySearchFieldSchema, {
+      maxItems: RESOURCE_QUERY_LIMITS.searchFieldCount,
+    }),
+  ])),
+  sort: t.Optional(t.Union([
+    dataQuerySortSchema,
+    t.Array(dataQuerySortSchema, { maxItems: RESOURCE_QUERY_LIMITS.sortCount }),
   ])),
   order: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.identifierLength })),
   dir: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.directionLength })),
@@ -131,7 +150,9 @@ const dataQuerySchema = t.Object({
  * Accepts query params:
  * - `table` (required) — which table to query
  * - `filter` (repeatable) — format `field:value`, applied as AND conditions
- * - `order` (optional) — column name, always DESC
+ * - `search` + repeatable `searchField` — bounded OR text search
+ * - `sort` (repeatable) — `field:asc|desc` multi-column ordering
+ * - `order`/`dir` (optional) — legacy single-column ordering
  * - `limit` (optional) — max rows, capped at MAX_LIMIT
  *
  * Security:

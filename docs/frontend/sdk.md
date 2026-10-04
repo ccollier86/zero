@@ -865,6 +865,12 @@ interface Collection<
   /** Insert a new row. Applies optimistically, then sends to server. */
   insert(row: InsertInput<T, TPrimaryKey>): void;
 
+  /** Insert optimistically and resolve after the exact server receipt. */
+  insertAsync(
+    row: InsertInput<T, TPrimaryKey>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
+
   /** Return the deterministic sync id for a natural identity key. */
   identityKey(key: Record<string, unknown>): string;
 
@@ -883,8 +889,18 @@ interface Collection<
   /** Update a row by primary key. Partial merge. */
   update(id: string, partial: Partial<T>): void;
 
+  /** Update optimistically and resolve after the exact server receipt. */
+  updateAsync(
+    id: string,
+    partial: Partial<T>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
+
   /** Delete a row by primary key. */
   remove(id: string): void;
+
+  /** Delete optimistically and resolve after the exact server receipt. */
+  removeAsync(id: string, options?: SyncMutationWaitOptions): Promise<void>;
 
   // ─── Subscriptions ──────────────────────────────────
 
@@ -984,6 +1000,11 @@ todos.update('abc', { done: true });
 
 // Delete
 todos.remove('abc');
+
+// Await authoritative acceptance when the UI needs a committed save result.
+await todos.insertAsync({ title: 'Buy milk', done: false });
+await todos.updateAsync('abc', { done: true }, { signal });
+await todos.removeAsync('abc', { timeoutMs: 45_000 });
 ```
 
 **Mutations are optimistic.** Every mutation follows this flow:
@@ -1009,6 +1030,23 @@ todos.remove('abc');
 **Pending queue:** Each in-flight mutation is tracked with a `ref` (UUID). Mutations to the same row are serialized — the client waits for the first ack before sending the second. This prevents broken rollback chains.
 
 **Timeout:** Mutations not acked within 10 seconds are treated as failures and rolled back.
+
+**Acknowledged methods:** `insertAsync()`, `updateAsync()`, and
+`removeAsync()` keep the same immediate optimistic UI but settle only when the
+server returns the matching `sync.ack.ref`. They default to a 30-second overall
+wait (including same-row queue time), with an override from 1 through 300,000
+milliseconds. A negative ack rolls back before rejecting with the secret-free
+`SyncMutationError`; its optional `serverErrorCode` preserves a stable server
+classification. The async methods are additive, so existing calls need no
+rewrite.
+
+An already-aborted signal or invalid timeout prevents submission. Once the
+mutation is submitted, abort and `SYNC_MUTATION_WAIT_TIMEOUT` stop only the
+caller's wait; the write stays queued and may still commit. The separate
+10-second transport acknowledgement timeout rolls back and reports
+`SYNC_MUTATION_ACK_TIMEOUT`. Ordinary reconnect keeps exact-ref waiters, while
+snapshot replacement, reset, authorization-scope replacement, and disconnect
+reject them with distinct stable codes.
 
 ### Subscriptions
 

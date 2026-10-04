@@ -2,6 +2,10 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { SyncStoreContext } from './sync-store';
 import type { SyncClient } from './sync-client';
 import { SYNC_ACK_ERROR_CODES } from '../types';
+import {
+  SYNC_MUTATION_ERROR_CODES,
+  SyncMutationError,
+} from './sync-mutation-receipts';
 import { createNativeSyncAuth } from '../../native/sync-auth';
 import { createNativeTestHarness } from '../../native/test-support';
 
@@ -750,6 +754,206 @@ describe('mutations', () => {
       done: 0,
     });
 
+    client.disconnect();
+  });
+});
+
+describe('acknowledged mutations', () => {
+  test('settles only the promise matching the exact server receipt ref', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+
+    let firstSettled = false;
+    const first = client.insertAsync('todos', {
+      id: 'first', title: 'First', done: 0,
+    }).then(() => { firstSettled = true; });
+    const second = client.insertAsync('todos', {
+      id: 'second', title: 'Second', done: 0,
+    });
+    const pending = getCtx(client)._sync.pending;
+    const firstRef = pending.find(({ rowId }) => rowId === 'first')!.ref;
+    const secondRef = pending.find(({ rowId }) => rowId === 'second')!.ref;
+
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.ack', ref: secondRef, ok: true, seq: 1,
+    }));
+    await second;
+    await flushMicrotasks();
+    expect(firstSettled).toBe(false);
+    expect(getCtx(client)._sync.pending.map(({ ref }) => ref)).toEqual([firstRef]);
+
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.ack', ref: firstRef, ok: true, seq: 2,
+    }));
+    await first;
+    expect(firstSettled).toBe(true);
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    client.disconnect();
+  });
+
+  test('rejects after rollback with safe typed server details', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    const result = client.insertAsync('todos', {
+      id: 'denied', title: 'Denied', done: 0,
+    });
+    const ref = getCtx(client)._sync.pending[0]!.ref;
+
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.ack', ref, ok: false, seq: null,
+      error: 'sensitive internal rejection detail',
+      errorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+    }));
+
+    await expect(result).rejects.toMatchObject({
+      name: 'SyncMutationError',
+      code: SYNC_MUTATION_ERROR_CODES.serverRejected,
+      serverErrorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+      ref,
+      table: 'todos',
+      op: 'INSERT',
+      rowId: 'denied',
+    });
+    try {
+      await result;
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyncMutationError);
+      expect((error as Error).message).not.toContain('sensitive');
+      expect((error as Error & { cause?: unknown }).cause).toBeUndefined();
+    }
+    expect((getCtx(client).todos as Record<string, unknown>).denied).toBeUndefined();
+    client.disconnect();
+  });
+
+  test('caller abort and wait timeout never cancel or roll back the submitted write', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    const controller = new AbortController();
+    const aborted = client.insertAsync('todos', {
+      id: 'aborted-wait', title: 'Still submitted', done: 0,
+    }, { signal: controller.signal });
+    const abortedRef = getCtx(client)._sync.pending.find(
+      ({ rowId }) => rowId === 'aborted-wait',
+    )!.ref;
+    controller.abort('must-not-be-exposed');
+
+    await expect(aborted).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.waitAborted,
+      ref: abortedRef,
+    });
+    expect((getCtx(client).todos as Record<string, unknown>)['aborted-wait'])
+      .toBeDefined();
+    expect(getCtx(client)._sync.pending.some(({ ref }) => ref === abortedRef))
+      .toBe(true);
+
+    const timedOut = client.insertAsync('todos', {
+      id: 'timed-out-wait', title: 'Also submitted', done: 0,
+    }, { timeoutMs: 5 });
+    const timedOutRef = getCtx(client)._sync.pending.find(
+      ({ rowId }) => rowId === 'timed-out-wait',
+    )!.ref;
+    await expect(timedOut).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.waitTimeout,
+      ref: timedOutRef,
+    });
+    expect(getCtx(client)._sync.pending.some(({ ref }) => ref === timedOutRef))
+      .toBe(true);
+
+    for (const ref of [abortedRef, timedOutRef]) {
+      socket.simulateMessage(JSON.stringify({
+        type: 'sync.ack', ref, ok: true, seq: 1,
+      }));
+    }
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    client.disconnect();
+  });
+
+  test('does not submit when the signal or timeout is invalid before dispatch', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    socket.sent.length = 0;
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(client.insertAsync('todos', {
+      id: 'never-aborted', title: 'Never sent', done: 0,
+    }, { signal: controller.signal })).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.waitAborted,
+    });
+    await expect(client.insertAsync('todos', {
+      id: 'never-timeout', title: 'Never sent', done: 0,
+    }, { timeoutMs: 0 })).rejects.toBeInstanceOf(RangeError);
+    expect(socket.sent).toEqual([]);
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    client.disconnect();
+  });
+
+  test('rejects outstanding receipts on reset, scope replacement, and disconnect', async () => {
+    const resetClient = makeClient();
+    await flushMicrotasks();
+    const resetReceipt = resetClient.insertAsync('todos', {
+      id: 'reset', title: 'Reset', done: 0,
+    });
+    resetClient.reset();
+    await expect(resetReceipt).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.clientReset,
+    });
+    resetClient.disconnect();
+
+    const scopeClient = makeClient();
+    await flushMicrotasks();
+    const scopeReceipt = scopeClient.insertAsync('todos', {
+      id: 'scope', title: 'Scope', done: 0,
+    });
+    scopeClient.beginAuthorizationScopeTransition();
+    await expect(scopeReceipt).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.authorizationScopeReplaced,
+    });
+    scopeClient.disconnect();
+
+    const disconnectedClient = makeClient();
+    await flushMicrotasks();
+    const disconnectedReceipt = disconnectedClient.insertAsync('todos', {
+      id: 'disconnected', title: 'Disconnected', done: 0,
+    });
+    disconnectedClient.disconnect();
+    await expect(disconnectedReceipt).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.clientDisconnected,
+    });
+  });
+
+  test('snapshot replacement rejects dropped receipts while preserve-pending retains them', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient();
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    const kept = client.insertAsync('todos', {
+      id: 'kept', title: 'Kept', done: 0,
+    });
+    const keptRef = getCtx(client)._sync.pending[0]!.ref;
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', tables: { todos: {} }, seq: 1,
+      epoch: 'epoch-a', scope: 'scope-a', reset: 'preserve-pending',
+    }));
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.ack', ref: keptRef, ok: true, seq: 2,
+    }));
+    await kept;
+
+    const dropped = client.insertAsync('todos', {
+      id: 'dropped', title: 'Dropped', done: 0,
+    });
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', tables: { todos: {} }, seq: 3,
+      epoch: 'epoch-b', scope: 'scope-b', reset: 'purge',
+    }));
+    await expect(dropped).rejects.toMatchObject({
+      code: SYNC_MUTATION_ERROR_CODES.snapshotReplaced,
+    });
     client.disconnect();
   });
 });

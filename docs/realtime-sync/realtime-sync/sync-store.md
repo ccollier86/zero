@@ -475,8 +475,16 @@ interface SyncClient {
 
   // Mutations (optimistic + WS send)
   insert(table: string, row: Row): void;
+  insertAsync(table: string, row: Row, options?: SyncMutationWaitOptions): Promise<void>;
   update(table: string, id: string, partial: Partial<Row>): void;
+  updateAsync(
+    table: string,
+    id: string,
+    partial: Partial<Row>,
+    options?: SyncMutationWaitOptions,
+  ): Promise<void>;
   delete(table: string, id: string): void;
+  deleteAsync(table: string, id: string, options?: SyncMutationWaitOptions): Promise<void>;
 
   // Lifecycle
   disconnect(): void;
@@ -561,6 +569,14 @@ The optimistic apply happens synchronously. A successful transport send records
 its attempt and epoch; the matching `sync.ack` handles canonical reconciliation
 or rollback. The queue retains the serialized request until that ack arrives.
 
+The async mutation methods use the identical optimistic path but register a
+bounded exact-ref receipt before queue submission. They resolve only after the
+matching ack has been routed through the store. A caller abort or 30-second
+default wait timeout removes only that waiter—not the queued mutation—because a
+submitted write may still commit. The timeout can be overridden from 1 through
+300,000 milliseconds. A pre-aborted signal or invalid timeout prevents the
+mutation from being submitted.
+
 **Same-row serialization:** If a mutation is already pending for a given `(table, rowId)`, the client queues the new mutation locally and does not send it until the first one is acked. This prevents broken rollback chains where mutation B's `previousState` depends on mutation A having been applied.
 
 ### Reconnect
@@ -603,6 +619,14 @@ for (const mutation of this.store.getSnapshot().context._sync.pending) {
   }
 }
 ```
+
+This transport acknowledgement timeout rolls back the optimistic write and
+rejects an async mutation with `SYNC_MUTATION_ACK_TIMEOUT`. It is deliberately
+different from `SYNC_MUTATION_WAIT_TIMEOUT`: the latter only means one caller
+stopped waiting and never claims that the server rejected or cancelled the
+write. Reset, disconnect, authorization-scope replacement, and destructive
+snapshot replacement reject outstanding receipt promises with their own stable
+`SyncMutationError.code`; ordinary reconnect and `preserve-pending` retain them.
 
 ## Context Provider
 

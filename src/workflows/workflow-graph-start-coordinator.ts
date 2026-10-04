@@ -29,6 +29,8 @@ import type { WorkflowGraphStore } from './workflow-graph-store';
 import type { WorkflowGraphIR } from './workflow-ir';
 import { validateWorkflowGraphIR } from './workflow-ir-validator';
 import type { WorkflowObservability } from './workflow-observability';
+import type { WorkflowMemoryStore } from './workflow-memory-store';
+import type { WorkflowMemoryLimits } from './workflow-memory-policy';
 import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
 
 export class WorkflowGraphStartCoordinator {
@@ -37,6 +39,7 @@ export class WorkflowGraphStartCoordinator {
     private readonly definitions: WorkflowGraphDefinitionResolver,
     private readonly versions: WorkflowDefinitionVersionStore,
     private readonly authority: WorkflowExecutionAuthorityGate,
+    private readonly memory: WorkflowMemoryStore,
     private readonly advance: (instanceId: string) => Promise<void>,
     private readonly now: () => Date,
     private readonly observability: WorkflowObservability,
@@ -59,6 +62,8 @@ export class WorkflowGraphStartCoordinator {
       startedBy,
       authority,
       this.startSelection(resolved, options, authority),
+      options.initialMemory,
+      options.memoryLimits,
       assertCurrentAuthority,
     );
   }
@@ -85,6 +90,8 @@ export class WorkflowGraphStartCoordinator {
       startedBy,
       authority,
       this.startSelection(resolved, options, authority),
+      options.initialMemory,
+      options.memoryLimits,
       assertCurrentAuthority,
     );
   }
@@ -119,6 +126,8 @@ export class WorkflowGraphStartCoordinator {
     startedBy: string | null,
     authority: WorkflowPersistedExecutionAuthority,
     selection: WorkflowDefinitionStartSelection,
+    initialMemory?: Readonly<Record<string, unknown>>,
+    memoryLimits?: Partial<WorkflowMemoryLimits>,
     assertCurrentAuthority?: () => void,
   ): Promise<string> {
     const graph = definition.graph as WorkflowGraphIR;
@@ -148,6 +157,20 @@ export class WorkflowGraphStartCoordinator {
         authority,
         authority.identity.tenantId,
       );
+      if (memoryLimits !== undefined) {
+        this.memory.createInstancePolicy(instanceId, memoryLimits);
+      }
+      if (initialMemory !== undefined) {
+        this.memory.transaction(
+          { instanceId, kind: 'instance' },
+          undefined,
+          (memory) => {
+            for (const [key, value] of Object.entries(initialMemory)) {
+              memory.set(key, value, { expectedVersion: null });
+            }
+          },
+        );
+      }
       if (!this.versions.isStartSelectionCurrent(selection)) throw workflowNotFound();
     });
     this.observability.emitAfterCommit(OBS_CODES.WORKFLOW_INSTANCE_STARTED, {

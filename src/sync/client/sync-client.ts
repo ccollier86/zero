@@ -16,6 +16,10 @@ import { SyncAckMonitor } from './sync-ack-monitor';
 import { requiresSyncCachePurge } from './sync-authorization-boundary';
 import { createSyncMutationActions } from './sync-mutation-actions';
 import { SyncMutationQueue } from './sync-mutation-queue';
+import {
+  SYNC_MUTATION_ERROR_CODES,
+  type SyncMutationReceiptDropCode,
+} from './sync-mutation-receipts';
 import { SyncReconnectScheduler } from './sync-reconnect-scheduler';
 import { SyncSocketAuthClient } from './sync-socket-auth-client';
 import { SyncSocketConnection } from './sync-socket-connection';
@@ -215,7 +219,9 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     store.send({ type: 'sync.disconnected' });
     if (disposed) return;
     if (event.code === 4001) {
-      if (requiresSyncCachePurge(event)) purgeLocalState();
+      if (requiresSyncCachePurge(event)) {
+        purgeLocalState(SYNC_MUTATION_ERROR_CODES.authorizationScopeReplaced);
+      }
       socketAuth.recover(currentToken, event);
       return;
     }
@@ -268,17 +274,21 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     reconnectScheduler.schedule();
   }
 
-  function reset(): void {
+  function resetClient(reason: SyncMutationReceiptDropCode): void {
     if (disposed) return;
     closeSocket('Client reset');
-    purgeLocalState();
+    purgeLocalState(reason);
     reconnectScheduler.reset();
+  }
+
+  function reset(): void {
+    resetClient(SYNC_MUTATION_ERROR_CODES.clientReset);
   }
 
   function beginAuthorizationScopeTransition(): void {
     if (disposed) return;
     authorizationScopeTransition = true;
-    reset();
+    resetClient(SYNC_MUTATION_ERROR_CODES.authorizationScopeReplaced);
   }
 
   function completeAuthorizationScopeTransition(shouldConnect: boolean): void {
@@ -311,14 +321,14 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     }
   }
 
-  function purgeLocalState(): void {
+  function purgeLocalState(reason: SyncMutationReceiptDropCode): void {
     try {
       onAuthorizationDataInvalidated?.();
     } catch {
       // Cache observers cannot prevent the mandatory Sync data purge.
     }
     sendBuffer.length = 0;
-    mutations.clear();
+    mutations.clear(reason);
     synchronizedPlanes.clear();
     isFirstConnect = true;
     store.send({ type: 'sync.reset' });
@@ -331,7 +341,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     unbindAuthLifecycle = undefined;
     closeSocket('Client disconnect');
     sendBuffer.length = 0;
-    mutations.clear();
+    mutations.clear(SYNC_MUTATION_ERROR_CODES.clientDisconnected);
     for (const waiter of baselineWaiters) {
       clearTimeout(waiter.timer);
       waiter.reject(new Error('Sync client disconnected before authorization completed'));
@@ -350,13 +360,25 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       assertScopeWritesAvailable();
       actions.insert(table, row);
     },
+    async insertAsync(table, row, options): Promise<void> {
+      assertScopeWritesAvailable();
+      return actions.insertAsync(table, row, options);
+    },
     update(table, id, partial): void {
       assertScopeWritesAvailable();
       actions.update(table, id, partial);
     },
+    async updateAsync(table, id, partial, options): Promise<void> {
+      assertScopeWritesAvailable();
+      return actions.updateAsync(table, id, partial, options);
+    },
     delete(table, id): void {
       assertScopeWritesAvailable();
       actions.delete(table, id);
+    },
+    async deleteAsync(table, id, options): Promise<void> {
+      assertScopeWritesAvailable();
+      return actions.deleteAsync(table, id, options);
     },
     sendRaw(message: object): void {
       assertScopeWritesAvailable();

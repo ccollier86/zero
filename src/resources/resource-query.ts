@@ -15,6 +15,14 @@ import {
   type DatabaseFindFilter,
   type DatabaseFindInput,
 } from '../databases/database-operations';
+import {
+  buildResourceFindOrder,
+  buildResourceFindSearch,
+  buildResourceSqlOrder,
+  buildResourceSqlSearch,
+  RESOURCE_CLIENT_CONTROL_LIMITS,
+  validateResourceClientControls,
+} from './resource-query-client-controls';
 
 type QueryParam = string | number | null;
 
@@ -32,6 +40,11 @@ type FilterOperator =
 /** Query input accepted by generated resource list routes. */
 export interface ResourceListQueryInput {
   filter?: string | string[];
+  /** Bounded text matched across the explicitly supplied searchable fields. */
+  search?: string;
+  searchField?: string | readonly string[];
+  /** Repeatable `field:asc|desc` ordering. Cannot be mixed with order/dir. */
+  sort?: string | readonly string[];
   order?: string;
   dir?: string;
   limit?: number;
@@ -96,6 +109,7 @@ export const RESOURCE_QUERY_LIMITS = Object.freeze({
   filterCount: DATABASE_FIND_MAX_FILTERS,
   filterExpressionLength: 4_096,
   directionLength: 4,
+  ...RESOURCE_CLIENT_CONTROL_LIMITS,
 });
 
 const FILTER_OPERATORS = new Set<FilterOperator>([
@@ -148,6 +162,13 @@ export function buildResourceListQueryPlan(
     filterColumns.columns,
   );
   if ('error' in filters) return filters;
+  const search = buildResourceSqlSearch(
+    options.query?.search,
+    options.query?.searchField,
+    options.table,
+    filterColumns.columns,
+  );
+  if ('error' in search) return search;
 
   const policyFilters = buildConstraintClauses(
     options.constraints ?? [],
@@ -156,7 +177,8 @@ export function buildResourceListQueryPlan(
   );
   if ('error' in policyFilters) return policyFilters;
 
-  const order = buildOrderClause(
+  const order = buildResourceSqlOrder(
+    options.query?.sort,
     options.query?.order,
     options.query?.dir,
     options.table,
@@ -172,7 +194,11 @@ export function buildResourceListQueryPlan(
   );
   if ('error' in page) return page;
 
-  const clauses = [...filters.clauses, ...policyFilters.clauses];
+  const clauses = [
+    ...filters.clauses,
+    ...(search.clause ? [search.clause] : []),
+    ...policyFilters.clauses,
+  ];
   const whereClause = clauses.length > 0
     ? ` WHERE ${clauses.map((clause) => clause.sql).join(' AND ')}`
     : '';
@@ -228,13 +254,21 @@ export function buildResourceListFindPlan(
     filterColumns.columns,
   );
   if ('error' in filters) return filters;
+  const search = buildResourceFindSearch(
+    options.query?.search,
+    options.query?.searchField,
+    options.table,
+    filterColumns.columns,
+  );
+  if ('error' in search) return search;
   const constraints = buildFindConstraints(
     options.constraints ?? [],
     options.table,
     allowedColumnSet,
   );
   if ('error' in constraints) return constraints;
-  const order = buildFindOrder(
+  const order = buildResourceFindOrder(
+    options.query?.sort,
     options.query?.order,
     options.query?.dir,
     options.table,
@@ -255,12 +289,16 @@ export function buildResourceListFindPlan(
     };
   }
 
-  const combinedFilters = [...filters.filters, ...constraints.filters];
+  const combinedFilters = [
+    ...filters.filters,
+    ...(search.filter ? [search.filter] : []),
+    ...constraints.filters,
+  ];
   return {
     input: {
       ...(select.select === undefined ? {} : { select: select.select }),
       ...(combinedFilters.length === 0 ? {} : { filters: combinedFilters }),
-      ...(order.order === undefined ? {} : { order: [order.order] }),
+      ...(order.order === undefined ? {} : { order: order.order }),
       limit: page.limit + 1,
       offset: page.offset,
     },
@@ -369,27 +407,6 @@ function buildFindConstraint(
       filters,
     },
   };
-}
-
-function buildFindOrder(
-  orderParam: string | undefined,
-  dirParam: string | undefined,
-  table: string,
-  allowedColumnSet: Set<string>,
-): { order?: { field: string; direction: 'asc' | 'desc' } } | ResourceQueryError {
-  if (!orderParam) return {};
-  const column = validateUserColumn(
-    orderParam,
-    table,
-    allowedColumnSet,
-    'order column',
-  );
-  if ('error' in column) return column;
-  const direction = (dirParam ?? 'desc').toLowerCase();
-  if (direction !== 'asc' && direction !== 'desc') {
-    return { status: 400, error: 'Sort direction must be "asc" or "desc"' };
-  }
-  return { order: { field: orderParam, direction } };
 }
 
 function parseInValues(
@@ -607,25 +624,6 @@ function buildExactConstraintValueClause(
   };
 }
 
-function buildOrderClause(
-  orderParam: string | undefined,
-  dirParam: string | undefined,
-  table: string,
-  allowedColumnSet: Set<string>
-): { orderClause: string } | ResourceQueryError {
-  if (!orderParam) return { orderClause: '' };
-
-  const column = validateUserColumn(orderParam, table, allowedColumnSet, 'order column');
-  if ('error' in column) return column;
-
-  const direction = (dirParam ?? 'desc').toLowerCase();
-  if (direction !== 'asc' && direction !== 'desc') {
-    return { status: 400, error: 'Sort direction must be "asc" or "desc"' };
-  }
-
-  return { orderClause: ` ORDER BY ${column.identifier} ${direction.toUpperCase()}` };
-}
-
 function parsePagination(
   limitParam: number | undefined,
   offsetParam: number | undefined,
@@ -696,6 +694,9 @@ function validateResourceListQueryInput(
 ): ResourceQueryError | null {
   if (!query) return null;
 
+  const controls = validateResourceClientControls(query);
+  if (controls) return controls;
+
   const filters = query.filter === undefined
     ? []
     : Array.isArray(query.filter) ? query.filter : [query.filter];
@@ -703,6 +704,18 @@ function validateResourceListQueryInput(
     return {
       status: 400,
       error: `At most ${RESOURCE_QUERY_LIMITS.filterCount} filters are allowed`,
+    };
+  }
+  const searchFields = query.searchField === undefined
+    ? []
+    : Array.isArray(query.searchField) ? query.searchField : [query.searchField];
+  const searchNodes = query.search?.trim()
+    ? searchFields.length + 1
+    : 0;
+  if (filters.length + searchNodes > RESOURCE_QUERY_LIMITS.filterCount) {
+    return {
+      status: 400,
+      error: `At most ${RESOURCE_QUERY_LIMITS.filterCount} combined filter and search predicates are allowed`,
     };
   }
   if (filters.some((expression) => (

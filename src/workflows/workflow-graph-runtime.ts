@@ -27,6 +27,10 @@ import {
   type WorkflowGraphRuntimeCompositionOptions,
 } from './workflow-graph-runtime-composition';
 import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
+import type {
+  ObserveWorkflowInstancesOptions,
+  WorkflowInstanceTransitionListener,
+} from './workflow-instance-observer';
 
 export interface WorkflowGraphRuntimeOptions
   extends WorkflowGraphRuntimeCompositionOptions {}
@@ -48,6 +52,7 @@ export class WorkflowGraphRuntime {
   private readonly recovery: WorkflowGraphRuntimeComposition['recovery'];
   private readonly authority: WorkflowGraphRuntimeComposition['authority'];
   private readonly now: WorkflowGraphRuntimeComposition['now'];
+  private readonly instanceObserver: WorkflowGraphRuntimeComposition['instanceObserver'];
   private disposed = false;
 
   constructor(
@@ -75,6 +80,7 @@ export class WorkflowGraphRuntime {
     this.driver = composition.driver;
     this.recovery = composition.recovery;
     this.starts = composition.starts;
+    this.instanceObserver = composition.instanceObserver;
   }
 
   async startRegistered(
@@ -189,6 +195,15 @@ export class WorkflowGraphRuntime {
     return this.store.listSteps(instanceId);
   }
 
+  /** Trusted committed-row projection used by durable runtime adapters. */
+  observeInstances(
+    listener: WorkflowInstanceTransitionListener,
+    options: ObserveWorkflowInstancesOptions = {},
+  ): () => void {
+    this.assertAvailable();
+    return this.instanceObserver.subscribe(listener, options);
+  }
+
   listInteractions(instanceId: string): WorkflowInteractionRecord[] {
     return this.interactions.list(instanceId);
   }
@@ -275,6 +290,7 @@ export class WorkflowGraphRuntime {
     this.disposed = true;
     this.driver.stop();
     this.wakes.dispose();
+    this.instanceObserver.dispose();
     const executor = this.activityExecutor.dispose();
     const validators = this.interactionValidator.dispose();
     const interactions = this.interactions.dispose();

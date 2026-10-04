@@ -16,7 +16,7 @@ describe('createAIWorkflowHandler', () => {
           return { text: 'summary' } as AITextResult;
         },
       },
-      model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8',
+      model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
       system: 'Summarize customer records.',
       prompt: (ctx) => `Summarize ${ctx.input.customerId}`,
       metadata: { source: 'workflow-test' },
@@ -39,7 +39,7 @@ describe('createAIWorkflowHandler', () => {
     expect(output).toBe('summary');
     expect(authorityChecks).toBe(1);
     expect(request).toMatchObject({
-      model: 'meta/Llama-4-Maverick-17B-128E-Instruct-FP8',
+      model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
       system: 'Summarize customer records.',
       messages: [{ role: 'user', content: 'Summarize cust_123' }],
       metadata: {

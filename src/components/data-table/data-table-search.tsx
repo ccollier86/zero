@@ -36,6 +36,8 @@ export interface DataTableSearchProps
 
 /** Declarative search presentation accepted by DataTable's `searchable` prop. */
 export interface DataTableSearchOptions {
+  /** Schema columns searched by the built-in server adapter; local tables keep TanStack search. */
+  fields?: string[];
   placeholder?: string;
   ariaLabel?: string;
   collapsedWidth?: number;

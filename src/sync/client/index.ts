@@ -11,6 +11,18 @@ export type { SyncStoreContext, SyncMeta, Slice } from './sync-store';
 export { createSyncClient } from './sync-client';
 export type { SyncClient } from './sync-client';
 export type { SyncMutationRejection } from '../types';
+export {
+  SYNC_MUTATION_ERROR_CODES,
+  SYNC_MUTATION_RECEIPT_DEFAULT_TIMEOUT_MS,
+  SYNC_MUTATION_RECEIPT_MAX_TIMEOUT_MS,
+  SyncMutationError,
+  isSyncMutationError,
+} from './sync-mutation-receipts';
+export type {
+  SyncMutationErrorCode,
+  SyncMutationErrorDetails,
+  SyncMutationWaitOptions,
+} from './sync-mutation-receipts';
 
 // ─── React Hooks (Sync) ──────────────────────────────────────────────────
 export {

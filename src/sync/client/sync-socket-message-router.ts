@@ -77,7 +77,7 @@ export function routeSyncSocketEvent(
     }
   }
   if (rejection) input.mutationRejected(rejection);
-  if (message.type === 'sync.ack') input.mutations.acknowledge(message.ref);
+  if (message.type === 'sync.ack') input.mutations.acknowledge(message);
   if (message.type === 'sync.snapshot') {
     const plane = messageSyncDataPlane(message)!;
     const resetTables = message.reset

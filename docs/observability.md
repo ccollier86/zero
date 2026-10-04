@@ -258,10 +258,43 @@ reflected into the response.
 The development `ConsoleEmailProvider` also emits rather than printing a
 message preview. `EMAIL_CONSOLE_PREVIEW` contains recipient count and Boolean
 sender/text/HTML presence only. It never includes addresses, sender, subject,
-text, or HTML, and managed email runtimes emit it to their owning app.
+text, HTML, action tokens, or rendered links, and managed email runtimes emit
+it to their owning app.
 
 See [Auth System](./auth/README.md) for account/delivery behavior and
 [Native App Auth](./auth/native-app-auth.md) for the public-client protocol.
+
+## AI Operational Failure Contract
+
+AI provider construction and execution use the same platform event sink; they
+do not print credentials or provider config directly.
+
+| Event | Meaning and safe fields |
+| --- | --- |
+| `AI_CONFIGURED` | AI plugin startup completed. Metadata contains the resolved provider-status count (active and inactive entries) and configured alias names; it does not contain provider settings or secret values. |
+| `AI_PROVIDER_ENABLED`, `AI_PROVIDER_SKIPPED` | Provider startup/readiness state. Metadata is bounded to provider ID, adapter type, and inactive reason. |
+| `AI_PROVIDER_FAILED` | An active provider adapter failed during construction. The event error is replaced with a generic framework-owned error; metadata includes provider ID/type and a closed safe `reason`: `Error`, `TypeError`, `RangeError`, `ReferenceError`, `SyntaxError`, `URIError`, `AggregateError`, or `provider_error`. Arbitrary vendor class names/text, API keys, AWS credentials, token providers, headers, base URLs, custom fetch functions, and the original provider error are not emitted. Startup then throws a stable `AI_PROVIDER_CONFIG_INVALID` or `AI_PROVIDER_INITIALIZATION_FAILED` domain error. |
+| `AI_MODEL_ALIAS_UNRESOLVED` | Alias/model resolution failed before a provider request. Metadata is limited to requested/resolved model and provider/capability identifiers. |
+| `AI_REQUEST_STARTED`, `AI_REQUEST_COMPLETED`, `AI_REQUEST_FAILED` | Provider request lifecycle for generation, embedding/reranking, media, video, and operation-specific hosted-file calls, with model/capability, duration, and provider-reported token counts where available. A hosted-file download completes only when its bounded stream closes; cancellation/error fails it. Framework shaping does not copy prompts, messages, generated content, tool arguments/results, file names/references/bytes, video operations/media, audio, or credentials into metadata. `AIService` normalizes provider, timeout, abort, structured-output, and invalid-response failures before emitting them. App-owned error channels and custom adapters must still avoid embedding secrets in error text. |
+| `AI_STEP_STARTED`, `AI_STEP_COMPLETED`, `AI_STEP_FAILED` | One SDK 7 generation step. Metadata is limited to call/step correlation, duration, finish classification, and bounded usage. |
+| `AI_MODEL_CALL_STARTED`, `AI_MODEL_CALL_COMPLETED`, `AI_MODEL_CALL_FAILED` | One logical SDK 7 model call; provider retries remain inside that lifecycle. Metadata is content-free and can include bounded usage/duration. |
+| `AI_TOOL_STARTED`, `AI_TOOL_COMPLETED`, `AI_TOOL_FAILED` | Server-side tool lifecycle. Metadata can name bounded call/step/tool correlation and duration but never copies tool input, output, runtime/tool context, or approval material. The older `aiTool()` failure boundary can retain the app-owned thrown error in the local event channel. |
+| `AI_AGENT_RUN_STARTED`, `AI_AGENT_RUN_COMPLETED`, `AI_AGENT_RUN_CANCELLED`, `AI_AGENT_RUN_FAILED` | Bounded agent-run lifecycle with definition name/version and run ID; prompts, messages, contexts, and output are excluded. Durable lifecycle reconciliation uses a private receipt to record one start and exactly one committed `completed`, `failed`, or `cancelled` terminal state, fencing duplicate logical event emission across retry, recovery replay, and repeated reads. Observer delivery is best-effort, not an external exactly-once transaction; committed Torrent/progress/result state remains authoritative. Durable runs also retain Torrent's workflow scheduling, retry, wait, recovery, and terminal-state events. |
+| `AI_AGENT_STEP_STARTED` | One bounded ephemeral or durable agent model decision. |
+| `AI_AGENT_TOOL_STARTED`, `AI_AGENT_TOOL_COMPLETED`, `AI_AGENT_TOOL_FAILED` | Ephemeral or durable agent tool lifecycle with run/step/tool correlation and duration only. Tool inputs/results, execution services, approval bodies, and signing secrets are excluded. |
+| `AI_STATUS_ACCESS_DENIED` | A caller failed the optional status endpoint policy. It does not include credentials or provider configuration. |
+
+Provider config and `ai.status()` are separate boundaries. Status may project a
+safe endpoint and the names of env bindings that participated in setup, but it
+never projects secret values, cloud credential settings, credential/token
+callbacks, custom headers, or custom fetch implementations.
+
+App-supplied AI request `metadata` is recursively bounded by depth, entry,
+array, and string limits. Prompt/content/payload fields and credential-shaped
+keys are replaced with `[redacted]`, including nested objects. This is a
+defense-in-depth operational boundary, not permission to place sensitive
+records under arbitrary keys; callers should send only safe correlation IDs
+and low-cardinality operational fields.
 
 ## Trace
 
@@ -314,8 +347,10 @@ The first implementation routes these platform paths through the sink:
 - frontend notification receipt failures
 - frontend storage management action failures
 - migrator library logs
-- AI provider setup, skipped providers, request lifecycle, request failures,
-  unresolved aliases, status access denials, and tool execution failures
+- AI configuration, provider setup/skips, request lifecycle/failures,
+  unresolved aliases, SDK 7 step/model-call/tool lifecycle, bounded ephemeral
+  and Torrent-durable agent lifecycle, status access denials, and tool
+  execution failures
 - vector runtime configuration, index initialization, operation completion,
   and operation/index failures
 

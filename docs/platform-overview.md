@@ -872,7 +872,8 @@ sources. See the full guide in [DataTableView](./frontend/data-table.md).
 ```
 
 Full-sync tables use `collection="todos"` and write inline edits back through
-the reactive DB automatically. Lazy tables can fetch through Zero's `/api/data`
+the reactive DB automatically, awaiting the exact Sync acknowledgment before an
+editor reports success. Lazy tables can fetch through Zero's `/api/data`
 endpoint without hand-writing a hook; when the table is a registered resource,
 it must permit HTTP (`http` or `all`), and its `list` policy is enforced on
 those reads too. Use `all` when the same resource also participates in lazy
@@ -893,6 +894,27 @@ Sync:
 />
 ```
 
+For large result sets, use isolated server mode. Search, filters, sorting, and
+pagination become one authenticated server query; results remain outside the
+shared collection, exact totals are optional, and stale responses are fenced by
+the live authorization boundary:
+
+```tsx
+<DataTableView
+  schema={auditLogSchema}
+  source={{ type: 'server', table: 'audit_log' }}
+  searchable={{ fields: ['actor', 'event'] }}
+  filterable
+  paginated={{ pageSize: 50 }}
+/>
+```
+
+The built-in `/api/data` adapter supports offset pages. Cursor sources supply a
+custom `DataTableServerAdapter`; cursors remain opaque and only visited pages
+are navigable. Server selection, built-in bulk actions, and CSV export are
+loaded-page operations unless the app supplies an explicit all-matching backend
+target or export endpoint.
+
 Caller-owned data stays simple:
 
 ```tsx
@@ -904,9 +926,11 @@ Caller-owned data stays simple:
 />
 ```
 
-The compact search is table-only: it expands on focus or while populated,
-handles Escape/Enter without leaking form behavior, and respects reduced
-motion. `toolbarSlots.controls`, `toolbarSlots.actions`, and
+The compact search expands on focus or while populated, handles Escape/Enter
+without leaking form behavior, and respects reduced motion. DataTable and
+Zero's management directories share the table-independent `DataTableControls`
+layout shell; it does not make those specialized directories TanStack tables
+or add public slots to them. `toolbarSlots.controls`, `toolbarSlots.actions`, and
 `toolbarSlots.supplemental` can be React nodes or render functions receiving
 the table, search/filter state, `clearAll`, and current selection. The toolbar
 wraps on narrow screens and uses the shared Zero surface, border, foreground,
@@ -915,9 +939,10 @@ muted, and focus-ring tokens. All slots are optional. Existing boolean
 database migration or page rewrite; new code should use
 `toolbarSlots.actions`.
 
-Toolbar search and column filters refine the rows already loaded into TanStack.
-They do not change lazy `filters` or `source.filters`; those are separate
-server-side `/api/data` query inputs. `CrudPage` and MasterDetail wrappers
+Toolbar search and column filters refine already-loaded rows for array,
+collection, and lazy sources. They do not change lazy `filters` or
+`source.filters`; those are separate server-side `/api/data` inputs. In server
+mode, the same controls drive the server query. `CrudPage` and MasterDetail wrappers
 forward table slots through `tableToolbarSlots` and the accessible toolbar name
 through `tableToolbarLabel`. Generated discrete, numeric, and date filters
 match exact values, text filters use contains matching, and multi-value filters
@@ -926,14 +951,17 @@ match an included value.
 **Features:**
 - **Live binding:** Point it at a collection name, it auto-updates as data changes
 - **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for eligible `/api/data` tables with resource policy enforcement; registered resources must permit HTTP, and lazy Sync resources use `exposure: 'all'`
-- **Inline editing:** Click a cell, edit in-place, Tab to next — changes sync instantly
+- **Isolated server queries:** Offset or cursor pages, optional totals, custom adapters, abort/order/scope fencing, and no shared-store hydration
+- **Inline editing:** Click a cell, await authoritative acceptance, retry inline, then Tab to the next editable cell
+- **Write ownership:** Existing collection `onCellEdit` stays a post-write notification; `onCellCommit` is the explicit custom-writer override
 - **Sorting/filtering:** Column headers with sort toggles and filter inputs
 - **Composable toolbar:** Compact search, filters, arbitrary controls, selection-aware bulk actions, supplemental content, export, and column visibility can be shown independently
-- **Row actions:** Dropdown menu per row with custom actions
-- **Selection:** Checkbox selection with `onSelectionChange` callback
-- **Pagination:** Configurable page size
+- **Row and bulk actions:** Awaited callbacks, visibility/disabled policy, confirmation and hold-to-confirm, safe pending/error lifecycle
+- **Selection:** Checkbox selection with `onSelectionChange`; server selection is page-local
+- **Pagination:** Offset/cursor metadata, unknown totals, configurable page size, and visited-cursor history
 - **Global search:** Filter across all columns
-- **Column overrides:** Override labels, renderers, widths, sorting, filtering, and editability
+- **Controlled state:** Own any subset of search, filters, sorting, pagination, selection, and visibility
+- **Column overrides:** Override labels, renderers, min/max/flex widths, wrap/truncate, sorting, filtering, and editability
 - **Animated transitions:** Smooth cell updates via Motion
 
 ### KanbanBoard

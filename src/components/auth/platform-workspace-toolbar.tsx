@@ -1,11 +1,14 @@
 'use client';
 
+/** Workspace directory context and filters; server state stays in the controller. */
+
 import * as React from 'react';
-import { RefreshCw, Search } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import type { AuthPlatformTenantStatus } from '../../frontend/client/auth-platform-administration-types';
 import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
-import { Input } from '#zero/components/ui/input';
+import { DataTableSearch } from '../data-table/data-table-search';
+import { DataTableControls } from '../data-table/data-table-controls';
 import {
   Select,
   SelectContent,
@@ -38,7 +41,7 @@ export function PlatformWorkspaceToolbar(props: {
 }) {
   return (
     <div className="shrink-0 border-b border-border/70 px-3 py-3">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-2">
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 id={props.titleId} className="truncate text-base font-semibold">{props.title}</h2>
@@ -51,60 +54,67 @@ export function PlatformWorkspaceToolbar(props: {
           </p>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 lg:max-w-[42rem] lg:justify-end">
-          <div className="relative min-w-[12rem] flex-1 lg:max-w-[20rem]">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
+        <DataTableControls
+          aria-label={`${props.title} controls`}
+          search={(
+            <DataTableSearch
               value={props.search}
-              onChange={(event) => props.onSearchChange(event.target.value)}
-              aria-label={`Search customer ${props.plural}`}
-              placeholder={`Search ${props.plural}`}
-              className="h-8 pl-8"
+              onValueChange={props.onSearchChange}
+              label={`Search customer ${props.plural}`}
+              placeholder={`Search ${props.plural}…`}
+              collapsedWidth={112}
+              expandedWidth={216}
               disabled={!props.canRead}
+              className="max-w-full"
             />
-          </div>
-          <Select
-            value={props.status}
-            onValueChange={(value) => props.onStatusChange(value as PlatformWorkspaceStatusFilter)}
-            disabled={!props.canRead}
-          >
-            <SelectTrigger
-              className="h-8 w-36"
-              aria-label={`Customer ${props.singular} status`}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="suspended">Suspended</SelectItem>
-              <SelectItem value="archived">Archived</SelectItem>
-            </SelectContent>
-          </Select>
-          {props.canRead && props.hasMore && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8"
-              disabled={props.isLoadingMore}
-              onClick={props.onLoadMore}
-            >
-              {props.isLoadingMore ? 'Loading…' : 'Load more'}
-            </Button>
           )}
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            disabled={props.isLoading}
-            aria-label={`Refresh customer ${props.plural}`}
-            onClick={props.onReload}
-          >
-            <RefreshCw className={props.isLoading ? 'animate-spin' : undefined} />
-          </Button>
-        </div>
+          controls={(
+            <Select
+              value={props.status}
+              onValueChange={(value) => props.onStatusChange(value as PlatformWorkspaceStatusFilter)}
+              disabled={!props.canRead}
+            >
+              <SelectTrigger
+                className="h-8 w-36"
+                aria-label={`Customer ${props.singular} status`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="suspended">Suspended</SelectItem>
+                <SelectItem value="archived">Archived</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          actions={(
+            <>
+              {props.canRead && props.hasMore && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                  disabled={props.isLoadingMore}
+                  onClick={props.onLoadMore}
+                >
+                  {props.isLoadingMore ? 'Loading…' : 'Load more'}
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                disabled={props.isLoading}
+                aria-label={`Refresh customer ${props.plural}`}
+                onClick={props.onReload}
+              >
+                <RefreshCw className={props.isLoading ? 'animate-spin' : undefined} />
+              </Button>
+            </>
+          )}
+        />
       </div>
     </div>
   );

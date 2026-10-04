@@ -54,6 +54,9 @@ function createFakeSyncClient(
         ref: `ref-${calls.length}`,
       });
     },
+    async insertAsync(table: string, row: Row): Promise<void> {
+      client.insert(table, row);
+    },
     update(table: string, rowId: string, partial: Partial<Row>): void {
       calls.push({ op: 'update', table, rowId, partial });
       store.send({
@@ -64,6 +67,13 @@ function createFakeSyncClient(
         ref: `ref-${calls.length}`,
       });
     },
+    async updateAsync(
+      table: string,
+      rowId: string,
+      partial: Partial<Row>,
+    ): Promise<void> {
+      client.update(table, rowId, partial);
+    },
     delete(table: string, rowId: string): void {
       calls.push({ op: 'delete', table, rowId });
       store.send({
@@ -72,6 +82,9 @@ function createFakeSyncClient(
         rowId,
         ref: `ref-${calls.length}`,
       });
+    },
+    async deleteAsync(table: string, rowId: string): Promise<void> {
+      client.delete(table, rowId);
     },
     sendRaw(): void {},
     connect(): void {},
@@ -145,6 +158,34 @@ describe('createCollection schema contracts', () => {
 
     expect(collection.getOne('flag-1')?.enabled).toBe(true);
     expect(collection.getOne('flag-2')?.enabled).toBe(false);
+  });
+
+  test('exposes acknowledged insert, update, and remove without changing logical encoding', async () => {
+    const toggles = defineTable('toggles', {
+      label: field.text({ required: true }),
+      enabled: field.boolean({ required: true }),
+    }, { pk: 'toggle_id' });
+    type Toggle = InferRow<typeof toggles>;
+    const { client, calls } = createFakeSyncClient('toggles', toggles.clientTable);
+    const collection = createCollection<Toggle>('toggles', client, toggles.clientTable);
+
+    await collection.insertAsync({
+      toggle_id: 'toggle-1', label: 'Email', enabled: true,
+    });
+    await collection.updateAsync('toggle-1', { enabled: false });
+    await collection.removeAsync('toggle-1');
+
+    expect(calls).toEqual([
+      {
+        op: 'insert', table: 'toggles',
+        row: { toggle_id: 'toggle-1', label: 'Email', enabled: 1 },
+      },
+      {
+        op: 'update', table: 'toggles', rowId: 'toggle-1',
+        partial: { enabled: 0 },
+      },
+      { op: 'delete', table: 'toggles', rowId: 'toggle-1' },
+    ]);
   });
 
   test('derives natural-identity keys from logical booleans before storage encoding', () => {

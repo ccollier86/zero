@@ -1,4 +1,6 @@
-import { useState, useMemo, useCallback } from 'react';
+/** Schema-aware TanStack wiring; source transport and interaction state live separately. */
+
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   getCoreRowModel,
   getSortedRowModel,
@@ -20,6 +22,12 @@ import type { FieldMeta } from '../../schema/field-types';
 import type { Row } from '../../sync/types';
 import { decodeFieldValue } from '../../schema/field-codecs';
 import { getRowPrimaryKey, getSchemaPrimaryKey } from './row-identity';
+import {
+  useDataTableState,
+  type DataTableInitialState,
+  type DataTableState,
+} from './data-table-state';
+export type { DataTableInitialState, DataTableState } from './data-table-state';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -34,21 +42,18 @@ export interface DataTableColumnOverride<T extends Row> {
   header?: string;
   cell?: (context: DataTableCellContext<T>) => ReactNode;
   width?: number;
+  minWidth?: number;
+  maxWidth?: number;
+  /** Flexible columns consume remaining width in fixed layout. */
+  flex?: boolean;
+  wrap?: boolean;
+  truncate?: boolean;
   sortable?: boolean;
   filterable?: boolean;
   editable?: boolean;
 }
 
 export type DataTableColumnOverrides<T extends Row> = Record<string, DataTableColumnOverride<T>>;
-
-export interface DataTableInitialState {
-  sorting?: SortingState;
-  columnFilters?: ColumnFiltersState;
-  columnVisibility?: VisibilityState;
-  rowSelection?: RowSelectionState;
-  globalFilter?: string;
-  pagination?: Partial<PaginationState>;
-}
 
 export interface UseDataTableOptions<T extends Row> {
   schema: SchemaDescriptor;
@@ -59,8 +64,20 @@ export interface UseDataTableOptions<T extends Row> {
   pageSize?: number;
   globalFilter?: string;
   primaryKey?: string;
+  /** Stable identity for custom server results without the schema primary key. */
+  getRowId?: (row: T, index: number) => string | number;
   columnOverrides?: DataTableColumnOverrides<T>;
   initialState?: DataTableInitialState;
+  state?: Partial<DataTableState>;
+  onStateChange?: (state: DataTableState) => void;
+  /** False renders every supplied row instead of only hiding the footer. */
+  paginated?: boolean;
+  manualQuery?: boolean;
+  rowCount?: number;
+  pageCount?: number;
+  boundaryKey?: string;
+  sortable?: boolean;
+  searchableFields?: string[];
 }
 
 export interface UseDataTableReturn<T extends Row> {
@@ -100,26 +117,31 @@ export function useDataTable<T extends Row>(
 
   // ─── State ──────────────────────────────────────────────────────────
 
-  const [sorting, setSorting] = useState<SortingState>(initialState?.sorting ?? []);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
-    initialState?.columnFilters ?? [],
-  );
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
-    initialState?.columnVisibility ?? {},
-  );
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>(
-    initialState?.rowSelection ?? {},
-  );
-  const [editingCell, setEditingCellState] = useState<{ rowId: string; columnId: string } | null>(null);
-  const [globalFilter, setGlobalFilter] = useState(initialState?.globalFilter ?? '');
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: initialState?.pagination?.pageIndex ?? 0,
-    pageSize: initialState?.pagination?.pageSize ?? pageSize,
+  const controls = useDataTableState({
+    initialState,
+    state: options.state,
+    onStateChange: options.onStateChange,
+    pageSize,
+    boundaryKey: options.boundaryKey,
   });
+  const { sorting, columnFilters, columnVisibility, rowSelection, pagination, globalFilter } = controls.state;
+  const setSorting = useCallback((update: React.SetStateAction<SortingState>) => controls.update('sorting', update), [controls.update]);
+  const setColumnFilters = useCallback((update: React.SetStateAction<ColumnFiltersState>) => controls.update('columnFilters', update), [controls.update]);
+  const setColumnVisibility = useCallback((update: React.SetStateAction<VisibilityState>) => controls.update('columnVisibility', update), [controls.update]);
+  const setRowSelection = useCallback((update: React.SetStateAction<RowSelectionState>) => controls.update('rowSelection', update), [controls.update]);
+  const setPagination = useCallback((update: React.SetStateAction<PaginationState>) => controls.update('pagination', update), [controls.update]);
+  const setGlobalFilter = useCallback((update: React.SetStateAction<string>) => controls.update('globalFilter', update), [controls.update]);
+  const [editingCell, setEditingCellState] = useState<{ rowId: string; columnId: string } | null>(null);
+  const [editingBoundary, setEditingBoundary] = useState(options.boundaryKey);
+  const visibleEditingCell = editingBoundary === options.boundaryKey ? editingCell : null;
+  useEffect(() => { setEditingCellState(null); }, [options.boundaryKey]);
 
   const setEditingCell = useCallback(
-    (cell: { rowId: string; columnId: string } | null) => setEditingCellState(cell),
-    [],
+    (cell: { rowId: string; columnId: string } | null) => {
+      setEditingBoundary(options.boundaryKey);
+      setEditingCellState(cell);
+    },
+    [options.boundaryKey],
   );
 
   // ─── Column Definitions ─────────────────────────────────────────────
@@ -146,17 +168,23 @@ export function useDataTable<T extends Row>(
             fieldMeta: meta,
           }),
         } : {}),
-        enableSorting: override?.sortable ?? meta?.sortable !== false,
+        enableSorting: options.sortable !== false && (override?.sortable ?? meta?.sortable !== false),
         enableColumnFilter: override?.filterable ?? meta?.filterable !== false,
+        enableGlobalFilter: options.searchableFields ? options.searchableFields.includes(name) : undefined,
         ...(filterFn ? { filterFn } : {}),
         size: override?.width ?? meta?.columnWidth,
+        minSize: override?.minWidth,
+        maxSize: override?.maxWidth,
         meta: {
           fieldMeta: meta,
           isEditable: override?.editable ?? editable.includes(name),
+          flex: override?.flex,
+          wrap: override?.wrap,
+          truncate: override?.truncate,
         },
       };
     });
-  }, [columnOverrides, schema, visibleColumns, editable]);
+  }, [columnOverrides, schema, visibleColumns, editable, options.sortable, options.searchableFields]);
 
   // ─── Table Instance ─────────────────────────────────────────────────
 
@@ -178,11 +206,17 @@ export function useDataTable<T extends Row>(
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: options.manualQuery ? undefined : getSortedRowModel(),
+    getFilteredRowModel: options.manualQuery ? undefined : getFilteredRowModel(),
+    getPaginationRowModel: options.paginated === false || options.manualQuery ? undefined : getPaginationRowModel(),
+    manualSorting: options.manualQuery,
+    manualFiltering: options.manualQuery,
+    manualPagination: options.manualQuery || options.paginated === false,
+    rowCount: options.rowCount,
+    pageCount: options.pageCount,
+    autoResetPageIndex: false,
     enableRowSelection: selectable,
-    getRowId: (row, index) => getRowPrimaryKey(row, primaryKey) ?? String(index),
+    getRowId: (row, index) => String(options.getRowId?.(row, index) ?? getRowPrimaryKey(row, primaryKey) ?? index),
   });
 
   return {
@@ -195,7 +229,7 @@ export function useDataTable<T extends Row>(
     setColumnVisibility,
     rowSelection,
     setRowSelection,
-    editingCell,
+    editingCell: visibleEditingCell,
     setEditingCell,
     globalFilter,
     setGlobalFilter,

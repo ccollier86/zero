@@ -19,10 +19,15 @@ import { validateWorkflowGraphIR } from './workflow-ir-validator';
 import type { WorkflowRegistry } from './workflow-registry';
 import { validateWorkflowSchemaValue } from './workflow-schema-snapshot';
 import type { WorkflowInstanceRecord } from './types';
+import type { WorkflowMemoryLimits } from './workflow-memory-policy';
 
 export interface StartWorkflowGraphOptions {
   version?: number;
   source?: 'code' | 'database';
+  /** Trusted service-only values seeded into private run memory at creation. */
+  initialMemory?: Readonly<Record<string, unknown>>;
+  /** Trusted service-only, immutable per-run scratch-memory policy. */
+  memoryLimits?: Partial<WorkflowMemoryLimits>;
 }
 
 export class WorkflowGraphDefinitionResolver {

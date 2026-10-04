@@ -1,27 +1,20 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useRef, useEffect, useCallback } from 'react';
-import * as v from 'valibot';
-import { Input } from '#zero/components/ui/input';
-import { Checkbox } from '#zero/components/animate-ui/components/radix/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '#zero/components/ui/select';
+import { AlertCircle, LoaderCircle, RotateCcw } from 'lucide-react';
 import type { FieldMeta } from '../../schema/field-types';
-import type { DateRange } from 'react-day-picker';
-import { cn } from '#zero/lib/utils';
-import { Badge } from '#zero/components/ui/badge';
-import { DatePicker } from '#zero/components/ui/date-picker';
-import { DateRangePicker } from '#zero/components/ui/date-range-picker';
-import { TagInput } from '#zero/components/ui/tag-input';
-import { Combobox } from '#zero/components/ui/combobox';
-
-// ─── Types ──────────────────────────────────────────────────────────────────
+import { Checkbox } from '#zero/components/animate-ui/components/radix/checkbox';
+import { Button } from '#zero/components/ui/button';
+import { formatEditableCellValue } from './editable-cell-value';
+import { EditableCellEditor } from './editable-cell-editor';
+import {
+  useEditableCellSave,
+  type EditableCellSave,
+} from './use-editable-cell-save';
+import {
+  useDataTableMutationRunner,
+  type DataTableMutationRunner,
+} from './use-data-table-mutation';
 
 export interface EditableCellProps {
   value: unknown;
@@ -30,14 +23,34 @@ export interface EditableCellProps {
   fieldMeta?: FieldMeta;
   isEditing: boolean;
   onStartEdit: () => void;
-  onSave: (rowId: string, columnId: string, value: unknown) => void;
+  onSave: EditableCellSave;
+  /** Called after the write and its configured refresh are both accepted. */
+  onAccepted?: () => void;
   onCancel: () => void;
   onTabNext?: () => void;
+  mutationRunner?: DataTableMutationRunner;
+  onRefresh?: () => void | Promise<void>;
+  refreshOnSuccess?: boolean;
+  mutationBoundaryKey?: string | number | null;
 }
 
-// ─── Component ──────────────────────────────────────────────────────────────
+/** Schema-aware cell editor that closes or advances only after an accepted write. */
+export function EditableCell(props: EditableCellProps) {
+  if (props.mutationRunner) {
+    return <EditableCellContent {...props} runner={props.mutationRunner} />;
+  }
+  return <EditableCellWithLocalRunner {...props} />;
+}
 
-export function EditableCell({
+function EditableCellWithLocalRunner(props: EditableCellProps) {
+  const localRunner = useDataTableMutationRunner({
+    boundaryKey: props.mutationBoundaryKey,
+    refresh: props.onRefresh,
+  });
+  return <EditableCellContent {...props} runner={localRunner} />;
+}
+
+function EditableCellContent({
   value,
   rowId,
   columnId,
@@ -45,288 +58,136 @@ export function EditableCell({
   isEditing,
   onStartEdit,
   onSave,
+  onAccepted,
   onCancel,
   onTabNext,
-}: EditableCellProps) {
-  const type = fieldMeta?.type ?? 'text';
+  onRefresh,
+  refreshOnSuccess,
+  runner,
+}: EditableCellProps & { runner: DataTableMutationRunner }) {
+  const lifecycle = useEditableCellSave({
+    rowId,
+    columnId,
+    onSave,
+    onAccepted,
+    onTabNext,
+    onRefresh,
+    refreshOnSuccess,
+    runner,
+  });
+  const wasEditing = React.useRef(isEditing);
 
-  // Boolean: immediate toggle, no edit mode
-  if (type === 'boolean') {
+  React.useEffect(() => {
+    if (wasEditing.current && !isEditing) lifecycle.clearError();
+    wasEditing.current = isEditing;
+  }, [isEditing, lifecycle.clearError]);
+
+  const cancel = React.useCallback(() => {
+    if (lifecycle.pending) return;
+    lifecycle.clearError();
+    onCancel();
+  }, [lifecycle, onCancel]);
+
+  if ((fieldMeta?.type ?? 'text') === 'boolean') {
     return (
-      <div className="flex items-center justify-center">
-        <Checkbox
-          checked={value as boolean}
-          onCheckedChange={(checked) => {
-            onSave(rowId, columnId, checked === true);
-          }}
-        />
-      </div>
+      <BooleanEditableCell
+        value={value}
+        pending={lifecycle.pending}
+        error={lifecycle.error}
+        onToggle={(next) => lifecycle.save(next)}
+        onRetry={lifecycle.retry}
+      />
     );
   }
 
   if (isEditing) {
     return (
-      <EditingInput
+      <EditableCellEditor
         value={value}
-        columnId={columnId}
-        rowId={rowId}
         fieldMeta={fieldMeta}
-        onSave={onSave}
-        onCancel={onCancel}
-        onTabNext={onTabNext}
+        pending={lifecycle.pending}
+        error={lifecycle.error}
+        onCommit={lifecycle.save}
+        onCancel={cancel}
+        onRetry={lifecycle.retry}
+        onDraftChange={lifecycle.clearError}
       />
     );
   }
 
-  // Display mode
   return (
     <div
-      className="cursor-pointer rounded px-1 py-0.5 hover:bg-accent/50 transition-colors min-h-[1.5rem]"
-      onClick={onStartEdit}
+      data-slot="editable-cell-display"
+      className="min-h-[1.5rem] cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-accent/50"
+      onClick={() => {
+        lifecycle.clearError();
+        onStartEdit();
+      }}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onStartEdit();
-        }
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        lifecycle.clearError();
+        onStartEdit();
       }}
     >
-      {formatDisplayValue(value, fieldMeta)}
+      {formatEditableCellValue(value, fieldMeta)}
     </div>
   );
 }
 
-// ─── Editing Input ──────────────────────────────────────────────────────────
-
-function EditingInput({
+function BooleanEditableCell({
   value,
-  columnId,
-  rowId,
-  fieldMeta,
-  onSave,
-  onCancel,
-  onTabNext,
+  pending,
+  error,
+  onToggle,
+  onRetry,
 }: {
   value: unknown;
-  columnId: string;
-  rowId: string;
-  fieldMeta?: FieldMeta;
-  onSave: (rowId: string, columnId: string, value: unknown) => void;
-  onCancel: () => void;
-  onTabNext?: () => void;
+  pending: boolean;
+  error: string | null;
+  onToggle(value: boolean): Promise<boolean>;
+  onRetry(): Promise<boolean>;
 }) {
-  const [editValue, setEditValue] = useState(value);
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const type = fieldMeta?.type ?? 'text';
-
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, []);
-
-  const handleSave = useCallback(() => {
-    // Validate if possible
-    setError(null);
-    onSave(rowId, columnId, editValue);
-  }, [editValue, rowId, columnId, onSave]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleSave();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onCancel();
-      } else if (e.key === 'Tab') {
-        e.preventDefault();
-        handleSave();
-        onTabNext?.();
-      }
-    },
-    [handleSave, onCancel, onTabNext],
-  );
-
-  if ((type === 'select' || type === 'enum') && fieldMeta?.options) {
-    return (
-      <Select
-        value={(editValue as string) ?? ''}
-        onValueChange={(v) => {
-          onSave(rowId, columnId, v);
-        }}
-      >
-        <SelectTrigger className="h-7 text-xs" autoFocus>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {fieldMeta.options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    );
-  }
-
-  if (type === 'number') {
-    return (
-      <Input
-        ref={inputRef}
-        type="number"
-        value={editValue == null ? '' : String(editValue)}
-        onChange={(e) => setEditValue(e.target.value === '' ? '' : Number(e.target.value))}
-        onKeyDown={handleKeyDown}
-        onBlur={handleSave}
-        className="h-7 text-xs"
-        min={fieldMeta?.min}
-        max={fieldMeta?.max}
-      />
-    );
-  }
-
-  if (type === 'date' || type === 'datetime') {
-    return (
-      <DatePicker
-        value={editValue ? new Date(editValue as string) : undefined}
-        onChange={(date) => {
-          const val = date
-            ? type === 'datetime'
-              ? date.toISOString()
-              : date.toISOString().split('T')[0]
-            : '';
-          onSave(rowId, columnId, val);
-        }}
-      />
-    );
-  }
-
-  if (type === 'dateRange') {
-    const rangeVal = Array.isArray(editValue) ? editValue as string[] : ['', ''];
-    const range: DateRange | undefined =
-      rangeVal[0] && rangeVal[1]
-        ? { from: new Date(rangeVal[0]), to: new Date(rangeVal[1]) }
-        : undefined;
-    return (
-      <DateRangePicker
-        value={range}
-        onChange={(r) => {
-          if (r?.from && r?.to) {
-            onSave(rowId, columnId, [
-              r.from.toISOString().split('T')[0],
-              r.to.toISOString().split('T')[0],
-            ]);
-          } else if (!r?.from && !r?.to) {
-            onSave(rowId, columnId, ['', '']);
-          }
-        }}
-      />
-    );
-  }
-
-  if (type === 'tags') {
-    return (
-      <div onKeyDown={handleKeyDown} onBlur={handleSave}>
-        <TagInput
-          value={Array.isArray(editValue) ? (editValue as string[]) : []}
-          onChange={(tags) => setEditValue(tags)}
-          placeholder="Add tag..."
-        />
-      </div>
-    );
-  }
-
-  if (type === 'combobox' && fieldMeta?.options) {
-    return (
-      <Combobox
-        value={editValue as string | string[]}
-        onChange={(v) => {
-          onSave(rowId, columnId, v);
-        }}
-        options={fieldMeta.options.map((o) => ({ value: o.value, label: o.label }))}
-        multiple={fieldMeta.multiple}
-        searchable={fieldMeta.searchable ?? true}
-      />
-    );
-  }
-
-  // Default: text input
   return (
-    <Input
-      ref={inputRef}
-      type={type === 'email' ? 'email' : type === 'url' ? 'url' : 'text'}
-      value={(editValue as string) ?? ''}
-      onChange={(e) => setEditValue(e.target.value)}
-      onKeyDown={handleKeyDown}
-      onBlur={handleSave}
-      className="h-7 text-xs"
-    />
+    <div
+      data-slot="editable-boolean-cell"
+      data-save-state={pending ? 'pending' : error ? 'error' : 'idle'}
+      className="flex min-w-0 flex-wrap items-center justify-center gap-1"
+      aria-busy={pending || undefined}
+    >
+      <Checkbox
+        checked={value as boolean}
+        disabled={pending}
+        aria-invalid={error ? true : undefined}
+        onCheckedChange={(checked) => { void onToggle(checked === true); }}
+      />
+      {pending && (
+        <span role="status" className="text-muted-foreground">
+          <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
+          <span className="sr-only">Saving…</span>
+        </span>
+      )}
+      {error && !pending && (
+        <span role="alert" className="flex items-center gap-1 text-xs text-destructive">
+          <AlertCircle className="size-3" aria-hidden="true" />
+          <span className="sr-only">{error}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-destructive hover:text-destructive"
+            title="Retry save"
+            onClick={() => { void onRetry(); }}
+          >
+            <RotateCcw className="size-3" />
+            <span className="sr-only">Retry save</span>
+          </Button>
+        </span>
+      )}
+    </div>
   );
 }
 
-// ─── Display Formatting ─────────────────────────────────────────────────────
-
-function formatDisplayValue(value: unknown, meta?: FieldMeta): string {
-  if (value == null || value === '') return '\u00A0'; // non-breaking space for empty
-
-  if (meta?.type === 'boolean') {
-    return value ? '\u2713' : '\u2717';
-  }
-
-  if ((meta?.type === 'select' || meta?.type === 'enum') && meta.options) {
-    const opt = meta.options.find((o) => o.value === value);
-    return opt?.label ?? String(value);
-  }
-
-  if (meta?.type === 'multiSelect' && Array.isArray(value) && meta.options) {
-    return value
-      .map((v) => meta.options!.find((o) => o.value === v)?.label ?? v)
-      .join(', ');
-  }
-
-  if (meta?.type === 'date' && typeof value === 'string' && value) {
-    try {
-      return new Date(value).toLocaleDateString();
-    } catch {
-      return value;
-    }
-  }
-
-  if (meta?.type === 'datetime' && typeof value === 'string' && value) {
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
-  }
-
-  if (meta?.type === 'dateRange' && Array.isArray(value)) {
-    const [from, to] = value as string[];
-    if (from && to) {
-      try {
-        return `${new Date(from).toLocaleDateString()} – ${new Date(to).toLocaleDateString()}`;
-      } catch {
-        return `${from} – ${to}`;
-      }
-    }
-    return '\u00A0';
-  }
-
-  if (meta?.type === 'tags' && Array.isArray(value)) {
-    return value.join(', ');
-  }
-
-  if (meta?.type === 'combobox' && meta.options) {
-    if (Array.isArray(value)) {
-      return value
-        .map((v) => meta.options!.find((o) => o.value === v)?.label ?? v)
-        .join(', ');
-    }
-    const opt = meta.options.find((o) => o.value === value);
-    return opt?.label ?? String(value);
-  }
-
-  return String(value);
-}
+export type { EditableCellSave } from './use-editable-cell-save';

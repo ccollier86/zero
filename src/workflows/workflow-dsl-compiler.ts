@@ -100,6 +100,7 @@ class FlowCompiler {
         concurrency: value.options.concurrency ?? 1,
         onInvalid: value.options.onInvalid ?? 'fail',
         onError: value.options.onError ?? 'fail',
+        visibility: value.options.visibility,
         body: compileWorkflowFlowGraph(value.body),
       }) as unknown as WorkflowIRNode);
       return { entry: value.id, exits: [value.id] };

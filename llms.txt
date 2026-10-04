@@ -31,8 +31,10 @@ quickly from one integrated platform. It combines:
 - Torrent durable workflows, scheduler, rooms, presence, notifications, state sync
 - platform tokens for one-time and resumable public flows
 - observability codes/sinks and protected event routes
-- AI provider layer, tool helpers, conversations, embeddings, speech,
-  transcription, image generation
+- AI SDK 7 provider layer with an official provider catalog, Claude Platform
+  on AWS/Bedrock/Azure/Vertex cloud auth modes, custom/compatible adapters,
+  typed output, tools, conversations, batch embeddings, reranking, media,
+  hosted files, bounded agents, and lifecycle telemetry
 - zvec-backed vector storage
 - browser-grade HTML/CSS-to-PDF rendering with direct storage composition
 - migrations, schema history, rollback safety, backups, and drift planning
@@ -134,6 +136,22 @@ publicly supported.
 - `docs/workflows.md`: authoritative Torrent workflow DSL, versioning,
   execution, memory, interaction, recovery, authority, Fabric data, and live
   visualization contract.
+- `docs/ai.md`: Zero AI service methods, aliases, conversations, Torrent/vector
+  composition, runtime status, and service boundaries.
+- `docs/ai-generation.md`: AI SDK 7 instructions, reasoning, typed output,
+  timeouts, contexts, approvals, lifecycle, and migration behavior.
+- `docs/ai-embeddings-reranking.md`: bounded single/batch embeddings,
+  reranking, integrity checks, aliases, and vector composition.
+- `docs/ai-agents.md`: immutable versioned definitions, typed context, bounded
+  ephemeral execution, signed approvals, and the Torrent boundary.
+- `docs/ai-durable-agents.md`: finite Torrent-backed agents, private durable
+  state, approvals, recovery, live authority reconstruction, and idempotency.
+- `docs/ai-files-video.md`: provider-hosted file lifecycle, reusable provider
+  references, preview video, and durable model-pinned operation envelopes.
+- `docs/ai-providers.md`: canonical AI provider catalog, credential
+  inheritance and precedence, endpoint readiness, capabilities, and aliases.
+- `docs/observability.md`: stable backend/frontend event contracts, sink
+  ownership, operational redaction, and failure behavior.
 - `docs/framework/system-database.md`: authoritative system/application plane,
   ID-only identity-anchor projection, data-realm readiness, authority-fence,
   legacy-layout detection, and operational contract.
@@ -430,19 +448,18 @@ Use narrow frontend imports in package-mode apps. The broad
 `zero.config.ts` owns runtime settings:
 
 ```ts
-import { defineZeroConfig } from '@zero/framework/server';
+import { defineZeroConfig, resolveAIConfig } from '@zero/framework/server';
 import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
 const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
-const hasAI = Boolean(
-  Bun.env.OPENAI_API_KEY ||
-    Bun.env.ANTHROPIC_API_KEY ||
-    Bun.env.GEMINI_API_KEY ||
-    Bun.env.GOOGLE_API_KEY ||
-    Bun.env.GROQ_API_KEY ||
-    Bun.env.LLAMA_API_KEY ||
-    Bun.env.META_LLAMA_API_KEY
+const aiEnabled = Bun.env.ZERO_AI_ENABLED?.trim();
+const detectedAI = resolveAIConfig(true);
+const hasDetectedAIProvider = detectedAI !== false
+  && Object.values(detectedAI.providers).some((provider) => provider.active);
+const hasAI = aiEnabled === 'true' || (
+  aiEnabled !== 'false'
+  && hasDetectedAIProvider
 );
 const hasPdf = Bun.env.ZERO_PDF_ENABLED === 'true';
 
@@ -566,7 +583,7 @@ app.listen(config.port ?? 3000);
 | Rooms/presence | Room membership and presence primitives when auth is enabled. |
 | Torrent | Versioned durable workflow engine with trusted activities, branches/joins, fan-out, memory, interactions, crash recovery, and owner-scoped live state. Public APIs retain their established workflow names. |
 | Scheduler | Platform jobs. |
-| AI | Server-side AI provider registry/service when enabled. |
+| AI | Server-side AI provider catalog/factory/registry/service with explicit cloud credential readiness when enabled. |
 | Vector | zvec-backed vector store when enabled. |
 | PDF | Lazy browser-grade PDF service when enabled; no public routes. |
 | Observability | Stable event codes, sinks, memory store, protected event route. |
@@ -1589,6 +1606,15 @@ code and into `workflows.register`. A direct-composition integration may use
 `getWorkflowRegistry()` after `createApp()` returns and before `listen()`;
 post-listen registration is too late for recovery preflight.
 
+In managed Zero 2 apps, `workflows.register(registry, { ai })` receives this
+app's isolated AI service (or `null`) before recovery.
+`workflows.onServiceCreated(service)` is the synchronous post-recovery binding
+seam for integrations which captured a runtime during registration. The
+durable-agent bridge awaits `ai.createDurableAgentRuntime(registry, options)`
+inside an async registration callback, then binds `AIDurableAgentService` in
+the second phase; it does not
+depend on process-global `getAI()` or `getWorkflowService()` getters.
+
 Use `registerActivity()` for new work. Activities have immutable string
 versions, optional input/output schemas, descriptive capabilities, and a
 `databaseCallable` flag. Code, database, API, agent, and future visual-editor
@@ -1601,10 +1627,13 @@ The code DSL exports `flow`, `step`, `choose`, `when`, `otherwise`, `parallel`,
 `each`, `waitFor`, `requestAndWait`, and the safe serializable `expr` builders.
 Choices select in declaration order and persist exactly one decision. Parallel
 branches execute concurrently and converge at an explicit all-branches join.
-`each` snapshots its input array once, uses server-private stable item keys, enforces bounded
-concurrency, and preserves ordered results with configurable invalid/error
-policies. Legacy sequential `steps` definitions and `registerHandler()` remain
-supported.
+`each` snapshots its input array once, uses server-private stable item keys,
+enforces bounded concurrency, and preserves ordered results with configurable
+invalid/error policies. Set `visibility: 'private'` when the source, item
+inputs, and item outputs must remain only in underscore-prefixed execution
+state; public parent/child rows retain safe topology and status but store
+`null` payload columns. Legacy sequential `steps` definitions and
+`registerHandler()` remain supported.
 
 `@zero/framework/workflows` also exports the canonical IR/types and limits,
 activity catalog contracts, graph compiler/validator helpers, and durable
@@ -1622,6 +1651,20 @@ ReactiveDB-backed `ctx.memory`. Memory reads use an attempt snapshot; writes are
 staged and commit atomically only with successful node completion. Failed,
 timed-out, paused, cancelled, or stale attempts discard the overlay. Each
 fan-out item gets an isolated memory namespace.
+
+Trusted graph starts may pass `WorkflowStartOptions.initialMemory`. Torrent
+validates and seeds that private namespace atomically with run creation,
+authority sealing, and version selection. The workflow HTTP start route does
+not accept it, Sync never projects it, and legacy sequential workflows reject
+it. This is a server-side projection boundary, not an encrypted secret vault.
+
+Trusted graph starts may also pass a partial `WorkflowStartOptions.memoryLimits`
+policy. It is normalized and persisted atomically for that exact run, remains
+immutable through restart recovery, is unavailable through HTTP, and is
+rejected for legacy sequential workflows. Ordinary defaults are 256-byte keys,
+64-KiB values, 256 entries, and 1 MiB total. Hard platform ceilings are
+1,024-byte keys, 1-MiB values, 4,096 entries, and 16 MiB total; a value limit
+cannot exceed the total limit.
 
 Managed activity contexts also expose a scope-closed `ctx.zero` facade. Its
 mutable services reassert live run/attempt authority at their commit edge. All
@@ -1871,19 +1914,64 @@ graph canvas.
 Zero AI is internal/server-side by default. It is not a public gateway unless
 an app deliberately builds that.
 
-Provider keys enable providers at runtime:
+The built-in catalog covers Vercel AI Gateway, OpenAI, Anthropic, Claude
+Platform on AWS, Google, Groq, xAI, Cohere, Mistral, Together AI, DeepInfra,
+DeepSeek, Cerebras, Perplexity, Fireworks, Voyage, fal, Luma, Deepgram,
+ElevenLabs, Hume, Rev.ai, AssemblyAI, Gladia, Fish Audio, Replicate, Prodia,
+Black Forest Labs, ByteDance, Kling AI, Cartesia, GMI Cloud, QuiverAI, Baseten,
+Hugging Face, Moonshot AI, Alibaba, MiniMax, Z.AI, and Topaz. Open Responses,
+OpenAI-compatible endpoints, and custom AI SDK providers are also supported.
+Topaz is image-only in Zero because its current video contract conflicts with
+Zero's required non-blank prompt. Evaluation-only adapters such as TypeSafe are
+not catalog entries because Zero has no public evaluation operation.
 
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-- `GEMINI_API_KEY` / `GOOGLE_API_KEY`
-- `GROQ_API_KEY`
-- `XAI_API_KEY`
-- `COHERE_API_KEY`
-- `LLAMA_API_KEY` / `META_LLAMA_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `PERPLEXITY_API_KEY`
-- `VOYAGE_API_KEY`
-- `DEEPGRAM_API_KEY`
+Simple catalog providers activate from their documented key. Cloud providers
+have complete readiness contracts:
+
+- Bedrock (`bedrock/<model>`) SigV4 requires a region plus complete
+  static/dynamic credentials. Bearer auth does not use SigV4 and requires
+  `AWS_BEARER_TOKEN_BEDROCK` plus either a region or model-runtime endpoint. Endpoint env
+  precedence is `BEDROCK_BASE_URL`, `AMAZON_BEDROCK_BASE_URL`,
+  the separate `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` and
+  `AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME` service endpoints, then
+  `AWS_ENDPOINT_URL`. The agent-runtime endpoint alone does not activate
+  ordinary model operations. Reranking uses agent runtime and still requires a
+  region. Region alone is inactive.
+- On Bedrock text-only turns, Zero preserves completed historical tool
+  calls/results/approvals as labeled non-executable text because native blocks
+  require current tool configuration. It does not add tools/change toolChoice,
+  leaves active-tool turns native, and fails `AI_REQUEST_INVALID` rather than
+  dropping unsafe/non-JSON/binary/reference/custom/deep or over-1-MiB history.
+- Anthropic accepts `ANTHROPIC_API_KEY` or bearer `ANTHROPIC_AUTH_TOKEN`.
+- Claude Platform on AWS requires `ANTHROPIC_AWS_WORKSPACE_ID` plus either an
+  API key and region/endpoint or region-bound complete static/dynamic SigV4
+  credentials. API-key mode does not also inherit ambient static credentials.
+- Azure requires a resource/base URL plus API key or explicit Entra token
+  provider.
+- Vertex accepts an express API key or project/location with Google Cloud
+  authentication. Express mode does not advertise transcription.
+- Gateway env detection requires `AI_GATEWAY_API_KEY`. Explicit config with an
+  omitted key still inherits that env value; use
+  `{ type: 'gateway', apiKey: null }` to opt in to Vercel OIDC unambiguously.
+- Open Responses requires a base URL.
+
+Generated config sets `ai` from the same complete provider-readiness resolver
+used at runtime, rather than API-key presence alone. `ZERO_AI_ENABLED=false`
+suppresses generated auto-enable and `true` forces the plugin on, but it does
+not invent credentials or opt into ambient OIDC. OIDC and dynamic credential
+callbacks require explicit trusted provider config.
+
+Provider `apiKey` and `baseURL` are tri-state: omitted/`undefined` inherits env,
+a non-empty string overrides it, and `null` suppresses env inheritance for that
+field. An adapter's fixed service endpoint still applies when one exists.
+Blank strings normalize to omission; use `null` to suppress inheritance.
+Explicit Anthropic bearer, Claude Platform on AWS SigV4, Bedrock SigV4, Kling
+legacy access-key, Azure token-provider, and Vertex ADC settings suppress
+ambient API keys; explicitly configuring both modes fails closed. In env-only
+resolution, API-key/bearer precedence is Anthropic API key over bearer, Claude
+Platform on AWS API key over static SigV4, Bedrock bearer over static SigV4,
+Kling API key over the legacy pair, and Vertex express key over
+project/location ADC.
 
 Aliases:
 
@@ -1893,21 +1981,165 @@ Aliases:
 - `ZERO_AI_IMAGE_MODEL`
 - `ZERO_AI_TRANSCRIPTION_MODEL`
 - `ZERO_AI_SPEECH_MODEL`
+- `ZERO_AI_RERANKING_MODEL`
+- `ZERO_AI_VIDEO_MODEL`
+
+Hosted-file default provider:
+
+- `ZERO_AI_FILES_PROVIDER`
+
+Approval-signing example:
+
+- `ZERO_AI_APPROVAL_SECRET` is an app convention for HMAC material passed
+  explicitly to direct tool or ephemeral-agent approval configuration. Zero
+  does not read it implicitly. Use at least 32 high-entropy server-only bytes.
+  Agent approvals require signing by default; the explicit
+  `requireSignedApprovals: false` compatibility opt-out is appropriate only
+  when the decision never crosses an untrusted process or channel.
 
 Use `zero.ai` from backend routes. The AI layer supports:
 
-- text generation
-- structured output through the underlying AI SDK where configured
-- embeddings
+- text generation, streaming, vision, and provider-neutral reasoning controls
+- typed structured output through `AIOutput`
+- total, per-step, first-stream-chunk, stream-gap, and per-tool timeouts
+- sequential Bun DNS-pinned and redirect-validated prompt asset downloads under
+  one fixed 64-MiB aggregate request budget when the provider cannot consume a
+  URL remotely
+- typed runtime/tool context, active tools, step preparation, and stop controls
+- signed tool approvals
+- single and bounded batch embeddings
+- document reranking
 - image generation
 - transcription
 - speech
 - conversation helpers
 - tool helpers
-- workflow bridge helpers
+- bounded ephemeral agents with immutable name/version definitions
+- finite Torrent-durable agents with private state and resumable approvals
+- provider-hosted file upload/metadata/download/delete
+- preview video generate/start/status with durable model-pinned envelopes
+- Torrent activity helpers and the first-party durable-agent bridge
+- content-free lifecycle telemetry and redaction
 - provider status/readiness
 
-Do not expose provider keys to the frontend.
+Zero uses AI SDK 7 while preserving its established service methods. Existing
+`system`, numeric `timeout`, `generateText()`, `streamText()`, conversations,
+sessions, `aiTool()`, and `createAIWorkflowHandler()` remain compatible.
+Prefer `instructions` for new generation code. Use `AIOutput.object()`,
+`array()`, `choice()`, `json()`, or `text()` for typed result modes. Invalid
+completed structured output becomes `AI_OUTPUT_INVALID`.
+
+Model references always use `providerId/modelId`, never a colon separator.
+Adapter capability flags do not guarantee that every model supports every
+operation. `openai-compatible` can advertise text, streaming, tools, vision,
+embeddings, and images, but cannot enable transcription or speech. Built-in
+capability overrides cannot exceed the adapter's declared surface; custom
+adapters may declare the capabilities they actually implement.
+The public `AIProviderCapabilities` type keeps the original text-through-speech
+flags required and makes newer SDK 7 flags optional; normalized runtime/status
+values use `ResolvedAIProviderCapabilities`, where every boolean is present.
+
+`embedMany()` preserves input order and bounds input count, bytes,
+parallelism, and retries. `rerank()` accepts one homogeneous string or plain-
+object document set and validates provider result indexes and scores before
+returning them. The vector service remains storage/search; compose it with AI
+embedding and reranking rather than duplicating provider operations there.
+
+`ai.files` exposes operation-specific provider-hosted file methods. Configure
+`ai.filesProvider` or `ZERO_AI_FILES_PROVIDER`, or select a provider during
+upload. Upload/download default to and cannot exceed 64 MiB. URL uploads are
+not accepted. Persist the complete versioned locator. A hosted file used in a
+model message must belong to the selected model's configured Zero provider ID;
+Zero rejects a mismatch before provider I/O. Direct `toModelMessages()` use
+must pass `{ providerId }` when hosted locators are present. Provider-hosted
+files are not Zero Storage and are not automatically authorized or deleted.
+
+`ai.video.generate()` performs bounded generation/polling/materialization.
+`ai.video.start()` returns a versioned operation envelope pinned to the exact
+resolved `provider/model`; persist that complete envelope. `ai.video.status()`
+performs one check using the pinned model and ignores later alias drift. Video
+materialization defaults to and cannot exceed 256 MiB per output. Video is an
+AI SDK preview surface, so the selected model must implement the requested
+generate or start/status operation.
+
+Generation accepts `runtimeContext`, typed `toolsContext`, `activeTools`,
+`toolOrder`, `prepareStep`, `stopWhen`, `toolChoice`, approval policy and HMAC
+secret, retries, cancellation, and structured timeout controls. Lifecycle
+callbacks cover run, step, model-call, tool, stream, completion, stream-only
+abort, and retry-aware failure boundaries. Framework events never include
+prompts, generated content, tool inputs/results, contexts, provider options,
+file references, or approval secrets.
+
+One-shot and streamed generation always install Zero's prompt downloader.
+Provider-native URLs remain remote and consume none of the local materialization
+budget. Other remote image/file inputs are downloaded sequentially with Bun
+after all DNS answers and every redirect target pass the public-address policy;
+the request pins the selected address while preserving HTTP host and TLS
+identity. All locally materialized assets in one generation request share the
+fixed `AI_DEFAULT_PROMPT_DOWNLOAD_MAX_BYTES` aggregate budget (64 MiB), including
+declared and streamed response bodies. One-shot calls do not expose the
+stream-only `onAbort` callback; catch `AI_REQUEST_ABORTED` instead.
+
+URL-based transcription audio uses the same DNS-pinned, redirect-revalidated
+Bun single-asset transport with a 64-MiB default ceiling unless trusted app
+code explicitly replaces `request.download` and assumes that policy boundary.
+Provider-returned video URLs use the safe transport under the fixed per-output
+video materialization limit.
+
+The ephemeral agent layer is bounded and non-persistent: definitions and tools
+are validated and frozen, exact name/version registration is immutable,
+contexts are typed and bounded, approvals can be HMAC signed, and model/tool
+budgets are enforced before effects. Prefer `ai.createAgentService()` and the
+async `ai.createDurableAgentRuntime()` managed factories. Their string model
+references use the app-local provider registry and cross Zero's capability,
+DNS-pinned prompt-download, request-telemetry, and content-free SDK lifecycle
+boundary before model execution. The first-party durable bridge compiles
+the same exact definitions into finite version-pinned Torrent graphs. It seeds
+prompts/contexts through trusted private memory, uses private `each` fan-out
+for tool payloads, pauses through authenticated Torrent interactions, rebuilds
+live execution services for each activity, and scope-checks progress/results.
+Its exported capacity contract allows at most 10 MiB of canonical JSON in one
+chunked private value, 14 MiB of exact stored private-state bytes, 3,584 private
+state entries, and an 8-MiB combined declared context-plus-cumulative-tool-
+result envelope. Torrent retains additional bounded internal headroom for the
+bridge's manifests and control state.
+Durable `getResult()` returns `null` only while a run is nonterminal. Completed
+runs return their private final value; failed and cancelled runs return a
+secret-free stable terminal error plus turn/tool-call counts. Durable lifecycle
+reconciliation uses a private receipt to record one start and exactly one
+committed `completed`, `failed`, or `cancelled` terminal state, fencing duplicate
+logical observer emission across retry, recovery replay, and repeated reads.
+Observer delivery is best-effort rather than a transactional external
+exactly-once guarantee; committed run/progress/result state is authoritative.
+External effects remain at least once and must consume the durable activity
+idempotency key. See `docs/ai-durable-agents.md`.
+
+Provider IDs must match `[A-Za-z0-9][A-Za-z0-9._-]*`; resolved base URLs must
+be absolute HTTP(S) URLs. Non-custom adapters reject populated `settings.*`
+fields they do not implement. These fail startup with
+`AI_PROVIDER_CONFIG_INVALID` rather than being ignored.
+
+Generated aliases exist only when an active provider matches a fixed candidate.
+Cloud-only Bedrock/Azure/Vertex setups may be active with no `fast` or `smart`
+alias; use `providerId/modelId` or configure an alias. `ai.status()` returns all
+resolved active and inactive provider entries, not only constructed adapters.
+
+Provider config accepts `apiKey`, `baseURL`, `headers`, custom `fetch`, typed
+provider `settings`, capability overrides, and custom adapters. Construction
+failures become stable Zero AI errors and emit secret-safe observability.
+Framework shaping does not copy provider keys, cloud credentials, prompts,
+messages, files, or tool arguments/results into event metadata.
+`AI_CONFIGURED` records the resolved provider-status count and alias names.
+Caller request metadata is recursively bounded and redacts content/payload and
+credential-shaped keys; callers should still send only safe correlation data.
+Provider initialization failures use a generic event error and a closed safe
+reason set; arbitrary vendor class names/messages are not metadata.
+
+Read `docs/ai-generation.md`, `docs/ai-embeddings-reranking.md`,
+`docs/ai-agents.md`, `docs/ai-durable-agents.md`, and
+`docs/ai-files-video.md` before extending AI. Do not
+describe a future provider model catalog, pricing control plane, or database-
+managed credential system as implemented.
 
 ## Vector Store
 
@@ -1928,9 +2160,8 @@ vector: {
 }
 ```
 
-Use `zero.vector` server-side. Zero does not need to provide native embedding
-or reranking for every use case; pair vector storage with the AI embedding
-service when needed.
+Use `zero.vector` server-side. `AIService` provides embedding and reranking;
+pair those provider operations with vector storage/search when needed.
 
 ## PDF Rendering
 
@@ -2295,6 +2526,7 @@ Data organisms:
 
 - `DataTable`
 - `DataTableView`
+- `DataTableControls`
 - `DataTableSearch`
 - `DataTableToolbar`
 - `DataTablePagination`
@@ -2366,11 +2598,18 @@ instead of custom ad hoc fetch code.
 
 DataTable's `searchable` prop accepts `true` or
 `DataTableSearchOptions { placeholder, ariaLabel, collapsedWidth,
-expandedWidth, disabled }`. This compact animated search is table-only: it
-expands on focus or while populated, clears then collapses with Escape,
-suppresses ancestor-form submission on Enter, and respects reduced motion.
-Name the toolbar group with `toolbarLabel` when `Table controls` is not
-specific enough.
+expandedWidth, disabled }`. This compact animated search is used in table and
+management-directory toolbars: it expands on focus or while populated, clears
+then collapses with Escape, suppresses ancestor-form submission on Enter, and
+respects reduced motion. Name the toolbar group with `toolbarLabel` when
+`Table controls` is not specific enough.
+
+`DataTableControls` is the exported table-independent presentation shell used
+by DataTable and the packaged Data Studio, Storage Studio, global-user,
+tenant-member, and platform-workspace toolbars. It accepts optional React-node
+`search`, `controls`, `actions`, and `supplemental` slots plus standard div
+attributes; it owns no query or table state. Specialized controls reuse it
+internally without acquiring new public slot props.
 
 Use `toolbarSlots { controls, actions, supplemental }` for custom table
 controls and bulk actions. A slot may be a node or a render function receiving
@@ -2484,25 +2723,60 @@ Email/auth:
 
 AI/vector:
 
+- `ZERO_AI_ENABLED`: generated-app on/off override; full env readiness is
+  detected automatically, while OIDC/dynamic callbacks require explicit config
+- `AI_GATEWAY_API_KEY`
 - `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
+- `AZURE_API_KEY`
+- `AZURE_RESOURCE_NAME`
+- `AZURE_BASE_URL`
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`
+- `ANTHROPIC_AWS_WORKSPACE_ID` plus `ANTHROPIC_AWS_API_KEY` and a region /
+  `ANTHROPIC_AWS_BASE_URL`, or region-bound complete AWS SigV4 credentials
+- `AWS_REGION` / `AWS_DEFAULT_REGION`
+- `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` plus
+  `AWS_SECRET_ACCESS_KEY` and optional `AWS_SESSION_TOKEN`
+- `BEDROCK_BASE_URL` / `AMAZON_BEDROCK_BASE_URL` /
+  `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` /
+  `AWS_ENDPOINT_URL_BEDROCK_AGENT_RUNTIME` / `AWS_ENDPOINT_URL`
 - `GEMINI_API_KEY`
 - `GOOGLE_API_KEY`
+- `GOOGLE_GENERATIVE_AI_API_KEY`
+- `GOOGLE_VERTEX_API_KEY`, or `GOOGLE_VERTEX_PROJECT` plus
+  `GOOGLE_VERTEX_LOCATION`
 - `GROQ_API_KEY`
 - `XAI_API_KEY`
 - `COHERE_API_KEY`
-- `LLAMA_API_KEY`
-- `META_LLAMA_API_KEY`
+- `MISTRAL_API_KEY`
+- `TOGETHER_API_KEY` / `TOGETHER_AI_API_KEY`
+- `DEEPINFRA_API_KEY`
 - `DEEPSEEK_API_KEY`
-- `PERPLEXITY_API_KEY`
+- `CEREBRAS_API_KEY`
+- `PERPLEXITY_API_KEY` / `PERPLEXITYAI_API_KEY`
+- `FIREWORKS_API_KEY`
 - `VOYAGE_API_KEY`
-- `DEEPGRAM_API_KEY`
+- Media/audio keys: `FAL_API_KEY` / `FAL_KEY`, `LUMA_API_KEY`,
+  `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `HUME_API_KEY`, `REVAI_API_KEY`,
+  `ASSEMBLYAI_API_KEY`, `GLADIA_API_KEY`, `FISH_AUDIO_API_KEY`,
+  `REPLICATE_API_TOKEN`, `PRODIA_TOKEN`, `BFL_API_KEY`, `ARK_API_KEY`,
+  `KLINGAI_API_KEY` (or complete `KLINGAI_ACCESS_KEY` +
+  `KLINGAI_SECRET_KEY`), `CARTESIA_API_KEY`, `TOPAZ_API_KEY`, and
+  `QUIVERAI_API_KEY`
+- Extended provider keys: `BASETEN_API_KEY`, `HUGGINGFACE_API_KEY`,
+  `GMI_CLOUD_APIKEY`, `MOONSHOT_API_KEY`, `ALIBABA_API_KEY`,
+  `MINIMAX_API_KEY`, `ZAI_API_KEY`
+- `OPEN_RESPONSES_BASE_URL`
 - `ZERO_AI_FAST_MODEL`
 - `ZERO_AI_SMART_MODEL`
 - `ZERO_AI_EMBEDDING_MODEL`
 - `ZERO_AI_IMAGE_MODEL`
 - `ZERO_AI_TRANSCRIPTION_MODEL`
 - `ZERO_AI_SPEECH_MODEL`
+- `ZERO_AI_RERANKING_MODEL`
+- `ZERO_AI_VIDEO_MODEL`
+- `ZERO_AI_FILES_PROVIDER`
+- `ZERO_AI_APPROVAL_SECRET`: optional app convention passed explicitly to AI
+  approval configuration; Zero does not read it implicitly
 - `ZERO_VECTOR_ENABLED`
 - `ZERO_VECTOR_DATA_DIR`
 - `ZERO_VECTOR_DEFAULT_DIMENSIONS`
@@ -2821,17 +3095,32 @@ reference docs confirm the behavior is implemented.
 ### AI And Vector
 
 - [AI](docs/ai.md): main AI service docs covering server-side AI usage,
-  providers, aliases, text/structured/image/transcription/speech support,
-  conversations, tools, and backend integration.
+  providers, aliases, SDK 7 generation/media operations, conversations, tools,
+  agents, and backend integration.
+- [AI Generation And Streaming](docs/ai-generation.md): instructions,
+  reasoning, typed output, timeouts, retries, contexts, approvals, lifecycle,
+  errors, and backward-compatible migration.
+- [AI Embeddings And Reranking](docs/ai-embeddings-reranking.md): bounded
+  single/batch embeddings, reranking, integrity checks, aliases, and vector
+  composition.
+- [AI Agents](docs/ai-agents.md): immutable definitions, typed context,
+  bounded ephemeral execution, approvals, and Torrent durability boundary.
+- [Durable AI Agents With Torrent](docs/ai-durable-agents.md): private
+  persisted state, resumable approvals, recovery, live authority, and
+  idempotent-effect guidance.
+- [AI Hosted Files And Video](docs/ai-files-video.md): bounded provider-hosted
+  file lifecycle, reusable references, preview video, and durable operation
+  envelopes.
 - [AI Providers](docs/ai-providers.md): supported provider list, env variables,
-  aliases, provider readiness, default model behavior, and configuration notes.
+  cloud/OIDC credential rules, aliases, provider readiness, capabilities,
+  factory configuration, and model-selection notes.
 - [AI Tools](docs/ai-tools.md): tool registration/use patterns, AI SDK tool
   integration, workflow bridge concepts, and agentic helper design.
 - [AI Conversations](docs/ai-conversations.md): helpers and patterns for
-  conversation-style message history, cache-backed state, and multi-message
-  calls.
-- [Meta Llama Provider](docs/ai-meta-llama.md): custom Meta Llama provider
-  adapter, env config, request/response mapping, streaming, and provider notes.
+  conversation-style message history, transient in-memory sessions, and
+  multi-message calls.
+- [Retired Meta Llama Provider](docs/ai-meta-llama.md): migration guidance for
+  choosing a supported Llama host and the legacy compatibility error.
 - [Zero AI Layer Plan](docs/ai-layer-plan.md): design plan/history for the
   internal AI provider layer, provider registry, aliases, tools, and workflow
   integration.

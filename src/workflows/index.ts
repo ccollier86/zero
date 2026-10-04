@@ -197,6 +197,7 @@ export type {
   WorkflowEventRecord,
 } from './types';
 export type { WorkflowMemoryContext } from './workflow-memory-context';
+export type { WorkflowMemoryLimits } from './workflow-memory-policy';
 export type {
   WorkflowPublicTopology,
   WorkflowPublicTopologyEdge,
