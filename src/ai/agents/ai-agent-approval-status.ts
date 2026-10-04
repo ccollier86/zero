@@ -50,4 +50,3 @@ export function assertAIAgentApprovalRule(value: unknown, label: string): void {
 function invalid(message: string): AIError {
   return new AIError(message, 'AI_AGENT_DEFINITION_INVALID', 400);
 }
-

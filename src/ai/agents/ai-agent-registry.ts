@@ -61,4 +61,3 @@ export class AIAgentRegistry {
 function registryKey(reference: AIAgentReference): string {
   return `${reference.name}\u0000${reference.version}`;
 }
-

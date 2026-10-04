@@ -61,4 +61,3 @@ function definitionWithEnvelope(
     },
   } as AnyAIAgentDefinition;
 }
-
