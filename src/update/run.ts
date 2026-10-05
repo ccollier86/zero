@@ -39,6 +39,7 @@ import {
   canonicalizeResolvedLocalArchiveLock,
   createLocalArchiveResolutionReference,
   createStagedPackageManifest,
+  hasManagedLocalArchiveOverride,
   type LocalArchiveResolutionReference,
 } from './local-archive-resolution';
 
@@ -288,6 +289,7 @@ export async function updateZeroProject(
         );
       }
       await assertCanonicalInstallPreservedLock(state, canonicalLockText);
+      await restoreLocalPackageManifestFormatting(state);
     }
 
     const after = await inspectUpdatedProject(state, mode, localSource?.version ?? null);
@@ -535,6 +537,7 @@ async function inspectProject(projectInput: string, mode: ZeroUpdateMode): Promi
 
   if (mode === 'local') {
     validateLocalSpecifier(dependency.specifier, projectDir);
+    hasManagedLocalArchiveOverride(packageJson);
   } else {
     validateRegistrySpecifier(dependency.specifier);
   }
@@ -1215,11 +1218,12 @@ async function finalizeLocalArchiveResolution(
   ) {
     throw new Error('[zero update] Bun changed the staged local framework dependency');
   }
-  assertOnlyFrameworkDependencyChanged(
-    state.packageJson,
-    currentPackage,
-    state.dependency.section
-  );
+  const expectedStagedManifest = JSON.parse(createStagedPackageManifest(
+    state.packageJson, state.dependency.section, session.reference
+  ));
+  if (!isDeepStrictEqual(expectedStagedManifest, currentPackage)) {
+    throw new Error('[zero update] package.json changed outside the staged framework dependency and matching override; refusing the update');
+  }
   const updated = canonicalizeResolvedLocalArchiveLock(
     lockText,
     session.reference,
@@ -1241,6 +1245,19 @@ async function assertCanonicalInstallPreservedLock(
     throw new Error(
       '[zero update] Bun changed bun.lock while installing the canonical local archive'
     );
+  }
+}
+
+async function restoreLocalPackageManifestFormatting(state: ProjectState): Promise<void> {
+  await assertRegularNonSymlinkFile(state.packagePath, 'project package.json');
+  const currentBytes = await readFile(state.packagePath);
+  if (!isDeepStrictEqual(parsePackageJson(currentBytes, state.packagePath), state.packageJson)) {
+    throw new Error('[zero update] Canonical installation changed package.json outside formatting; refusing the update');
+  }
+  // Bun may reformat the manifest during its canonical install. Restore only
+  // after proving every original declaration (including overrides) is intact.
+  if (!currentBytes.equals(state.packageBytes)) {
+    await atomicallyWriteFile(state.packageBytes, state.packagePath, state.projectDir);
   }
 }
 

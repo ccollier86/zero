@@ -306,6 +306,13 @@ explicit `mutationValidator` when wrapping a hand-authored server table.
 - `'lazy'` — never include the table in websocket snapshots. Load rows on
   demand through `useLazyCollection()` or `/api/data`.
 
+In Zero 2.2.1 and later, these loading declarations are preserved on
+`defineTable().serverTable` and `schema().serverTables` through direct/composed
+Fabric realms. The framework-owned data symbol is validated without executing
+getters and stays outside SQL columns, schema checksums and realm fingerprints.
+Existing mutation validation and Guardian references remain intact; unknown
+symbols or malformed mode metadata are rejected rather than discarded.
+
 ### Type inference
 
 ```ts

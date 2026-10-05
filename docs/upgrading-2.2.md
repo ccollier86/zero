@@ -5,6 +5,22 @@ source-audit correctness fixes described in the [changelog](../CHANGELOG.md).
 This guide applies to existing Zero 2.x applications. It is not the legacy
 1.3-to-2.x system-database migration guide.
 
+## 2.2.1 Release-Blocker Corrections
+
+Use 2.2.1 rather than 2.2.0 for schema-driven Fabric apps. The 2.2.0 schema
+builder retained loading intent on server projections, but Fabric rejected its
+new framework-owned symbol. The correction validates and preserves explicit
+full/lazy/auto modes across direct/composed realms and actor startup, without
+removing Guardian references/mutation validators or accepting arbitrary symbols.
+SQL columns, checksums, realm fingerprints and durable namespaces are unchanged;
+no data conversion or new migration is required for this fix.
+
+The matching-root-override/workspace-peer updater correction stages both archive
+references consistently and restores the original root manifest bytes. Keep the
+app's matching override and workspace peers in place; the temporary workaround
+of removing them is not needed for this supported update path. Existing managed
+filesystem/symlink guards and install-state rollback remain enforced.
+
 ## Normal Saved-Package Update
 
 On the Zero development workstation, select committed main and inspect it:
@@ -14,8 +30,8 @@ zero-release main
 zero-release --status
 ```
 
-The report must identify Zero 2.2.0 and the intended main commit. Then, inside
-the consuming application:
+The report must identify Zero 2.2.1 or newer and the intended main commit. Then,
+inside the consuming application:
 
 ```sh
 zero-update --dry-run
@@ -33,7 +49,7 @@ the saved local archive flow does not depend on npm publication.
 ## Database And API Compatibility
 
 There is no new system migration or logical-table data rewrite between 2.1.1
-and 2.2.0. Guardian/Fabric installation fragments, permissions, schemas, stable
+and 2.2.1. Guardian/Fabric installation fragments, permissions, schemas, stable
 column IDs, operation IDs and revisioned write endpoints remain in use.
 Data Studio row pages add optional `readSequence` metadata from their strong
 Fabric read; existing paged consumers still parse older payloads.

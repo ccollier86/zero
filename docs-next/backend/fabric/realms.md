@@ -60,6 +60,19 @@ For schema-driven apps, use the corresponding admitted
 [server tables](../schema/tables.md), preserving validators and Guardian reference
 metadata, instead of separately rewriting their SQL declarations.
 
+Explicit `sync: 'full'`, `'lazy'` and `'auto'` from either `defineTable()` or
+`schema().serverTables` travel as framework-owned symbol metadata. Fabric's
+direct and composed realm admission validates/preserves that exact symbol along
+with existing mutation validators and Guardian references. Spreading a schema
+preserves its enumerable loading intent; the admitted clone restores an
+immutable data descriptor. Unknown symbols and accessor/invalid-mode metadata
+fail with `DATABASE_CONFIG_INVALID` without invoking metadata getters.
+
+Loading intent is gateway policy, not a SQL column or actor execution identity.
+It does not change the SQL schema checksum, realm fingerprint or durable
+operation namespace. Parent and actors still import the matching schema module;
+changing full/lazy/auto alone is not a data migration or authority change.
+
 ## Required And Optional Parts
 
 `name`, `version` and `tables` are required. Migrations, queries, commands and

@@ -174,6 +174,12 @@ migration command. Run `bun run migrate:plan` separately and intentionally
 against the correct database or a safe copy before applying any database
 change.
 
+Archive-based workspace apps can keep a matching root
+`overrides['@zero/framework']` entry and their workspace Zero peer declarations.
+Zero 2.2.1 stages the dependency and matching override together, preserves
+workspace manifests and unrelated pins, and restores the original root manifest
+bytes. No temporary removal of the override or peers is needed for that update.
+
 Never use `create-zero --force` or `zero-new --force` as an updater. Those are
 scaffolding commands and may replace a non-empty target project.
 

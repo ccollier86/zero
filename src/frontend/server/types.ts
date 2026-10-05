@@ -999,14 +999,26 @@ function normalizeRowLimit(value: number | undefined, fallback: number): number 
 /** Read shared declaration intent without treating loading metadata as SQL columns. */
 function getClientTableSyncMode(def: AppTableInput): DeclaredSyncMode | undefined {
   if (def && typeof def === 'object') {
+    const serverTable = 'serverTable' in def && def.serverTable && typeof def.serverTable === 'object'
+      ? def.serverTable : def;
+    let declaredMode: DeclaredSyncMode | undefined;
+    try {
+      // Validate present server metadata even when a wrapper or syncDefaults
+      // supplies the effective mode. Invalid declarations are not fallbacks.
+      declaredMode = getDeclaredTableSyncMode(serverTable);
+    } catch (cause) {
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        'Application table declares invalid framework sync metadata.',
+        { cause, retryable: false, outcome: 'not-started' },
+      );
+    }
     const clientTable = (def as { clientTable?: unknown }).clientTable;
     if (clientTable && typeof clientTable === 'object') {
       const mode = (clientTable as ClientTableDef)._sync;
       if (mode !== undefined) return mode;
     }
-    const serverTable = 'serverTable' in def && def.serverTable && typeof def.serverTable === 'object'
-      ? def.serverTable : def;
-    return getDeclaredTableSyncMode(serverTable);
+    return declaredMode;
   }
   return undefined;
 }

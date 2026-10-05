@@ -110,6 +110,13 @@ resolution. Explicit per-table app defaults can override that intent; global
 defaults apply only when neither is supplied. This correction is not asserted
 for the original published 2.1.1 artifact.
 
+The 2.2.1 correction joins that declaration metadata to Fabric's strict schema
+admission: all three explicit modes survive direct realms, contributions,
+composition and actor loading. Only the framework-owned symbol with a supported
+data value is admitted; metadata is never added as a SQL column. It remains
+outside SQL checksums and realm fingerprints because it controls gateway
+loading, not database identity. See [realm admission](../fabric/realms.md).
+
 Fabric placement is a separate decision. The table must be contributed to its
 declared realm; `sync: 'lazy'` does not place it in a tenant database. Guardian
 references work through managed [identity anchors](./guardian-references.md)

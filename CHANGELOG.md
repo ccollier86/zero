@@ -2,6 +2,31 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.2.1 - 2026-10-05
+
+This patch fixes two package-mode release blockers reported after 2.2.0.
+No database migration, schema conversion or application API change is required.
+See the [2.2 upgrade guide](./docs/upgrading-2.2.md).
+
+### Fixed
+
+- Fabric now admits, validates and preserves the framework-owned declared Sync
+  loading metadata emitted by both public schema builders. Explicit `full`,
+  `lazy` and `auto` modes work in direct and composed realms, configuration
+  normalization and real gateway/actor startup. Guardian references and mutation
+  validators remain enforced; unknown symbols, malformed modes and accessors
+  are rejected without invoking getters. Loading metadata does not become a SQL
+  column or change schema checksums, realm fingerprints or durable namespaces.
+- The normal saved-archive updater now stages a matching root framework override
+  together with the root dependency. Workspace peer declarations remain
+  untouched. Lockfile canonicalization checks the exact managed declarations and
+  installed package, and successful updates restore the original manifest bytes
+  even when Bun reformats them during installation. Conflicting overrides and
+  unrelated semantic edits fail closed; rollback retains the original manifest,
+  lockfile and archive. The reported override/peer workaround is no longer needed.
+- Added public packed-consumer gateway/actor restart coverage and real Bun
+  workspace update/failure-recovery tests to the package release gate.
+
 ## 2.2.0 - 2026-10-05
 
 This release adds the redesigned Data Studio and shared workspace layout, plus

@@ -19,6 +19,49 @@ interface PackedFixture {
   sourceDir: string;
 }
 
+test('real Bun updates a root local archive override with a workspace peer', async () => {
+  const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
+  await mkdir(scratchRoot, { recursive: true });
+  const rootDir = await mkdtemp(join(scratchRoot, 'zero-update-override-peer-'));
+  const suffix = crypto.randomUUID().slice(0, 8);
+  try {
+    const oldFramework = await packFixture(rootDir, '@zero/framework', `1.0.0-${suffix}`);
+    const newFramework = await packFixture(rootDir, '@zero/framework', `2.0.0-${suffix}`);
+    const appDir = join(rootDir, 'app');
+    const workspaceDir = join(appDir, 'packages', 'bridge');
+    const archiveDir = join(appDir, '.zero', 'framework');
+    await Promise.all([mkdir(workspaceDir, { recursive: true }), mkdir(archiveDir, { recursive: true })]);
+    await copyFile(oldFramework.archivePath, join(archiveDir, 'zero-framework.tgz'));
+    const manifest = `${JSON.stringify({
+      name: 'root-override-peer-fixture', private: true, workspaces: ['packages/*'],
+      dependencies: { '@zero/framework': LOCAL_FRAMEWORK_DEPENDENCY },
+      overrides: { '@zero/framework': LOCAL_FRAMEWORK_DEPENDENCY },
+    }, null, 2)}\n`;
+    const peerManifest = `${JSON.stringify({ name: '@fixture/bridge', version: '1.0.0', peerDependencies: { '@zero/framework': '*' } }, null, 2)}\n`;
+    await Promise.all([
+      Bun.write(join(appDir, 'package.json'), manifest),
+      Bun.write(join(workspaceDir, 'package.json'), peerManifest),
+      Bun.write(join(appDir, 'bunfig.toml'), '[install]\nlinker = "hoisted"\n'),
+      Bun.write(join(appDir, 'user-data-sentinel.txt'), 'app data is untouched\n'),
+    ]);
+    await runBun(appDir, ['install', '--force', '--no-cache', '--ignore-scripts', '--no-progress']);
+    const result = await updateZeroProject({ projectDir: appDir, mode: 'local', localFrameworkDir: newFramework.sourceDir });
+    expect(result.versionAfter).toBe(`2.0.0-${suffix}`);
+    expect(await Bun.file(join(appDir, 'package.json')).text()).toBe(manifest);
+    expect(await Bun.file(join(workspaceDir, 'package.json')).text()).toBe(peerManifest);
+    expect(await Bun.file(join(appDir, 'user-data-sentinel.txt')).text()).toBe('app data is untouched\n');
+    const lock = await Bun.file(join(appDir, 'bun.lock')).text();
+    expect(lock).not.toContain('zero-framework-update-');
+    expect(lock).toContain('"@zero/framework": "*"');
+    expect(await installedVersion(appDir, '@zero/framework')).toBe(`2.0.0-${suffix}`);
+    expect(await readdir(archiveDir)).toEqual(['zero-framework.tgz']);
+    await runBun(appDir, ['install', '--frozen-lockfile', '--force', '--no-cache', '--ignore-scripts', '--no-progress']);
+    expect(await installedVersion(appDir, '@zero/framework')).toBe(`2.0.0-${suffix}`);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test(
   'real Bun refreshes a changed local archive graph without moving app pins',
   async () => {

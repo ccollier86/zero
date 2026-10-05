@@ -21,6 +21,11 @@ import {
 } from '../migrations/schema-snapshot';
 import type { ReactiveDB } from '../sync/reactive-db';
 import {
+  attachDeclaredTableSyncMode,
+  DECLARED_TABLE_SYNC_MODE,
+  isDeclaredTableSyncMode,
+} from '../schema/table-sync-metadata';
+import {
   attachGuardianTableReferences,
   getGuardianAnchorRequirements,
   getGuardianTableReferences,
@@ -33,6 +38,7 @@ import {
 } from '../schema/guardian-references';
 import {
   SYNC_TABLE_MUTATION_VALIDATOR,
+  type DeclaredSyncMode,
   type Row,
   type SyncTableMutationValidator,
   type TableSchema,
@@ -254,6 +260,9 @@ export function defineDatabaseRealm<
   const schemaChecksum = hashSchemaSnapshot(snapshotDeclaredTables(
     tables as Record<string, TableSchema>,
   ));
+  // Declared loading modes are gateway policy, like app syncDefaults, rather
+  // than actor SQL/command behavior. Preserve them on admitted tables without
+  // changing schema checksums, realm identities or durable operation namespaces.
   const migrationChecksums = Object.freeze(migrations.map((migration) =>
     Object.freeze({
       version: migration.version,
@@ -424,6 +433,7 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
   const caseInsensitiveColumns = new Set<string>();
   let identity: readonly string[] | undefined;
   let validator: Readonly<SyncTableMutationValidator> | undefined;
+  let declaredSyncMode: DeclaredSyncMode | undefined;
   let guardianReferences: ReturnType<typeof getGuardianTableReferences> | undefined;
   let primaryKeys = 0;
   let primaryKey: string | null = null;
@@ -434,6 +444,17 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
     if (typeof key === 'symbol') {
       if (!('value' in descriptor)) {
         throw configInvalid('Database realm table schema symbols must be data properties.');
+      }
+      if (key === DECLARED_TABLE_SYNC_MODE) {
+        if (!descriptor.enumerable || !isDeclaredTableSyncMode(descriptor.value)) {
+          throw configInvalid(
+            'Database realm declared sync metadata must be an enumerable supported-mode data property.',
+          );
+        }
+        // Object spreads make data descriptors writable/configurable. Re-admit
+        // their value and restore the framework's immutable descriptor below.
+        declaredSyncMode = descriptor.value;
+        continue;
       }
       if (key === GUARDIAN_TABLE_REFERENCES && guardianReferences === undefined) {
         if (descriptor.enumerable || descriptor.configurable || descriptor.writable) {
@@ -573,6 +594,7 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
       );
     }
   }
+  attachDeclaredTableSyncMode(clone, declaredSyncMode);
   return Object.freeze(clone);
 }
 

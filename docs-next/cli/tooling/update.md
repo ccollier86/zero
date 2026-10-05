@@ -52,6 +52,16 @@ the canonical manifest/archive binding, and verifies installed framework files.
 Installation uses ignore-scripts by default. Local checksum/lock metadata must
 agree; a stale archive hash is not accepted as a successful refresh.
 
+For an archive-based workspace app, a root
+`overrides['@zero/framework']` entry may match the same managed archive as the
+root dependency. The updater stages both references consistently and validates
+their exact lockfile locations before restoring the canonical archive binding.
+Workspace peer declarations and unrelated overrides/pins remain unchanged;
+root package.json is restored byte-for-byte, including formatting. A conflicting
+framework override fails preflight rather than silently selecting a different
+source. Staged/canonical install or verification failure uses the same rollback
+boundary for the prior manifest, lock, archive and installed framework.
+
 Dry-run inspects targets/dependency state but does not pack, install or mutate
 them. It cannot predict every future install failure or report a registry
 version as if it were already installed.

@@ -974,6 +974,14 @@ registered handler names.
 
 An app declares a side-effect-free database realm:
 
+Schema-builder server projections can be used directly, including explicit
+`full`, `lazy` or `auto` loading declarations. Fabric admits and preserves the
+framework-owned sync-mode data symbol alongside logical mutation validators
+and Guardian references; arbitrary symbols, accessor metadata and invalid modes
+remain configuration errors. Loading metadata never becomes a SQL column and
+does not change the schema checksum or realm fingerprint. It controls gateway
+loading policy, not actor SQL behavior or authorization.
+
 ```ts
 export default defineDatabaseRealm({
   name: 'application-tenant-data',
