@@ -1,0 +1,97 @@
+---
+id: zero.frontend.forms.field-renderer
+type: reference
+audience: [developer, agent]
+owner: frontend-forms
+status: draft
+visibility: internal
+system: frontend-forms
+feature: field-renderer
+maturity: supported
+applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+modes: [browser, SSR]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.1.1"
+  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  snapshot: dirty
+  date: "2026-10-05"
+  evidence_level: source-observed
+---
+
+# Metadata-Selected Field Rendering
+
+[Forms index](./index.md) · [Documentation index](../../index.md)
+
+FieldRenderer is the bridge between a field's metadata and useForm registration.
+It renders an existing platform control with label/help/error context. It does
+not run persistence, select a tenant, grant field access or replace the schema
+validator.
+
+## Public Props
+
+FieldRenderer and FieldRendererProps are public from @zero/framework/react.
+Required props are name, meta and registration; overrides optionally supplies
+autoFocus, hidden and useSwitch.
+
+```tsx
+import { FieldRenderer, useForm } from '@zero/framework/react';
+
+// Fragment: schema is an app-owned descriptor containing title.
+const form = useForm({ schema, onSubmit: saveEncodedValues });
+<FieldRenderer
+  name="title" meta={schema.fields.get('title')!}
+  registration={form.register('title')}
+  overrides={{ autoFocus: true }}
+/>;
+```
+
+saveEncodedValues is the app's complete async writer, not a platform helper
+introduced by this example. A useForm hook must be called inside a React component.
+The known field should be checked when a name comes from dynamic/untrusted input.
+
+## Rendering Behavior
+
+Hidden metadata or overrides.hidden renders nothing. Otherwise the label is
+meta.label or a formatted name; description and validation error are connected
+through FormField. Control selection follows [input types](./input-types.md).
+Per-field override hidden only affects rendering; use the form's includeFields
+to select validation/payload fields deliberately.
+
+Numeric input displays null/undefined/blank as empty, converts numeric text,
+and maps a known optional clear to null. Text controls emit strings. Choice
+controls emit declared values/arrays. Date controls convert selected Dates into
+schema strings; date ranges emit a two-string tuple. JSON textarea parses valid
+JSON and retains invalid/non-JSON text as a logical string for its validator.
+
+Checkbox is the default boolean; useSwitch selects the platform Switch. Tags
+use maxTags presentation metadata. Combobox maps label/value options, honors
+multiple and defaults its generated search to true when metadata is omitted.
+optionIcon/optionDescription metadata does not automatically manufacture rich
+option content from a plain label/value declaration.
+
+## Custom Controls And Boundaries
+
+A genuinely custom input can consume registration directly, choose its logical
+representation and compose [field context](./field-context.md). Keep value/blur/ref
+wiring aligned rather than reimplementing auth, dirty state or the writer.
+Metadata is descriptive: tableVisible, hidden and password input presentation
+do not encrypt stored data or authorize its exposure.
+
+Required hidden Guardian IDs need a supported server-derived assignment flow;
+FieldRenderer is not an automatic user/member picker. Sharing a schema is safe
+only when its metadata/defaults contain no credentials or server-only secrets.
+
+## Verification
+
+Check the intended type/control, logical value, schema validation and encoded
+writer payload. Exercise blank/null/defaults and custom ref focus in a real
+synthetic screen. Actual AutoForm regressions cover several generated field
+families; full accessibility/installed-package qualification remains separate.
+
+## Related Guides And Next Steps
+
+- [Input types](./input-types.md) gives the control/value map.
+- [Field context](./field-context.md) owns label/help/error linkage.
+- [Schema UI metadata](../../backend/schema/ui-metadata.md) owns declaration hints.
+- [useForm](./use-form.md) owns values/validation and accepted submit.

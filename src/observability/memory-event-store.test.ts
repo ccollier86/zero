@@ -10,6 +10,12 @@ import { emitAIRequestCompleted } from '../ai/ai-observability';
 import type { PlatformObservabilityRuntime } from './types';
 
 describe('MemoryEventStore', () => {
+  it('rejects invalid retention bounds instead of admitting unbounded or fractional retention', () => {
+    for (const maxEvents of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => new MemoryEventStore({ maxEvents })).toThrow('Observability maxEvents must be a positive safe integer');
+    }
+  });
+
   it('retains only the newest events within the configured limit', () => {
     const store = new MemoryEventStore({ maxEvents: 2 });
     configureObservability({ console: false, store });

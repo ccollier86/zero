@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ZERO_VECTOR_SERVICE } from '../runtime/service-keys';
+import { ZERO_OBSERVABILITY_RUNTIME, ZERO_VECTOR_SERVICE } from '../runtime/service-keys';
+import { configureObservability } from '../observability';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { resolveVectorConfig } from './vector-config';
 import { VectorService } from './vector-service';
@@ -24,6 +25,7 @@ describe('createVectorPlugin lifecycle', () => {
     }, {});
     if (config === false) throw new Error('Expected vector config.');
     const runtime = new ZeroAppRuntime('vector-stop-barrier');
+    runtime.set(ZERO_OBSERVABILITY_RUNTIME, configureObservability(false));
     createVectorPlugin({ config, service, runtime });
 
     const disposing = runtime.dispose();

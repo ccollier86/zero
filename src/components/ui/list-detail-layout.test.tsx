@@ -78,4 +78,15 @@ describe('ListDetailLayout mobile navigation', () => {
     expect(markup).toContain('aria-label="Previous record"');
     expect(markup).toContain('aria-haspopup="dialog"');
   });
+
+  test('independent layouts have unique library panel identities and share no content trees', () => {
+    const markup = renderToStaticMarkup(<>
+      <ListDetailLayout list={<p>First list</p>} detail={<p>First detail</p>} resizable />
+      <ListDetailLayout list={<p>Second list</p>} detail={<p>Second detail</p>} resizable />
+    </>);
+    const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]!);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(markup.match(/data-panel="true"/g)).toHaveLength(4);
+    expect(markup.match(/First detail/g)).toHaveLength(1);
+  });
 });

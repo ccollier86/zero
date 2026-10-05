@@ -5,7 +5,7 @@
  * Elysia. Route/auth integrations are covered by their own subsystem tests.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 
 import {
   configureObservability,
@@ -35,6 +35,32 @@ afterEach(() => {
 });
 
 describe('PlatformTokenService action tokens', () => {
+  test('treats the exact expiry deadline as expired for action and resume tokens', () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      const action = service.createActionToken({ purpose: 'synthetic.action', ttl: '1s', cooldown: false });
+      const resume = service.createResumeToken({ flow: 'synthetic.flow', resource: { type: 'draft', id: 'synthetic' }, ttl: '1s' });
+      clock.mockReturnValue(action.record.expiresAt);
+      expect(() => service.inspectActionToken(action.rawToken)).toThrow('expired');
+      expect(() => service.consumeActionToken(action.rawToken)).toThrow('expired');
+      expect(() => service.verifyResumeToken(resume.rawToken)).toThrow('expired');
+      expect(() => service.rotateResumeToken(resume.rawToken)).toThrow('expired');
+      expect(service.cleanupExpiredActionTokens()).toBe(1);
+      expect(service.cleanupExpiredResumeTokens()).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test('rejects malformed and unsafe lifetimes with structured errors before storing tokens', () => {
+    for (const ttl of ['invalid', '999999999999999999999999999999999999999999d', '9007199254741s', '9007199254000s', 42 as unknown as string, {} as string]) {
+      expect(() => service.createActionToken({ purpose: 'synthetic.action', ttl, cooldown: false })).toThrow(PlatformTokenError);
+      expect(() => service.createResumeToken({ flow: 'synthetic.flow', resource: { type: 'draft', id: 'synthetic' }, ttl })).toThrow(PlatformTokenError);
+    }
+    expect((db.prepare('SELECT COUNT(*) AS count FROM _zero_action_tokens').get() as { count: number }).count).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) AS count FROM _zero_resume_tokens').get() as { count: number }).count).toBe(0);
+  });
+
   test('creates opaque one-time tokens without exposing token hashes', () => {
     const created = service.createActionToken({
       purpose: 'email.verify',

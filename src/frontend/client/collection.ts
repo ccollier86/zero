@@ -25,6 +25,8 @@ export interface Collection<
 > {
   /** Table name. */
   readonly name: string;
+  /** Declared sync primary key; optional for compatibility with app-owned adapters. */
+  readonly primaryKey?: string;
 
   /** Get all rows as a map of id to row. */
   getAll(): Record<string, T>;
@@ -212,6 +214,7 @@ export function createCollection<
 
   return {
     get name() { return name; },
+    get primaryKey() { return primaryKey; },
 
     getAll(): Record<string, T> {
       return getTableData();

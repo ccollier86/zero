@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import {
   GUARDIAN_TABLE_REFERENCES,
   defineSchema,
@@ -20,6 +21,19 @@ import {
 import type { InferInsert, InferRow, InsertInput } from './index';
 
 describe('natural identity schema metadata', () => {
+  test('quotes text defaults as SQLite literals rather than SQL fragments', () => {
+    const value = "O'Reilly; -- literal text";
+    const table = defineTable('quoted_defaults', { title: field.text({ defaultValue: value }) });
+    const db = new Database(':memory:');
+    try {
+      db.run(`CREATE TABLE quoted_defaults (id TEXT PRIMARY KEY, title ${table.serverTable.title})`);
+      db.run("INSERT INTO quoted_defaults (id) VALUES ('one')");
+      expect(db.query('SELECT title FROM quoted_defaults').get()).toEqual({ title: value });
+    } finally {
+      db.close();
+    }
+  });
+
   test('required booleans remain required in validation and SQL metadata', () => {
     const flags = defineTable('flags', {
       enabled: field.boolean({ required: true, defaultValue: false }),

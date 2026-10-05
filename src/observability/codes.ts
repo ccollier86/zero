@@ -259,6 +259,7 @@ export const OBS_CODES = {
   PERSISTENCE_SQL_SNAPSHOT_FAILED: code('persistence', 'sql_snapshot.failed', 'error', 'SQLite hot snapshot failed.'),
   PERSISTENCE_SQL_CHECKPOINT_COMPLETED: code('persistence', 'sql_checkpoint.completed', 'debug', 'SQLite WAL checkpoint completed.'),
   PERSISTENCE_SQL_CHECKPOINT_FAILED: code('persistence', 'sql_checkpoint.failed', 'error', 'SQLite WAL checkpoint failed.'),
+  PERSISTENCE_SQL_TRANSACTION_ROLLBACK_FAILED: code('persistence', 'sql_transaction.rollback_failed', 'error', 'SQLite transaction rollback failed.'),
 
   DATABASE_COORDINATOR_CONFIGURED: code('database', 'coordinator.configured', 'info', 'Database coordinator is configured.'),
   DATABASE_COORDINATOR_STARTED: code('database', 'coordinator.started', 'info', 'Database coordinator started.'),
@@ -400,10 +401,12 @@ export const OBS_CODES = {
   FRONTEND_DATA_PAGE_FAILED: code('frontend', 'data_page.failed', 'error', 'Frontend data page query failed.'),
   FRONTEND_RESOURCE_ACTION_FAILED: code('frontend', 'resource.action_failed', 'error', 'Frontend generated-resource action failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
+  FRONTEND_MODAL_CALLBACK_FAILED: code('frontend', 'modal_callback.failed', 'error', 'A modal close callback failed after dismissal.'),
   FRONTEND_WORKFLOW_TOPOLOGY_FAILED: code('frontend', 'workflow.topology_failed', 'error', 'Workflow topology query failed.'),
   FRONTEND_DATA_STUDIO_OPERATION_FAILED: code('frontend', 'data_studio.operation_failed', 'error', 'Frontend Data Studio operation failed.'),
   FRONTEND_COPY_FAILED: code('frontend', 'copy.failed', 'error', 'Clipboard copy action failed.'),
   FRONTEND_CODE_HIGHLIGHT_FAILED: code('frontend', 'code_highlight.failed', 'warn', 'Frontend code block highlighting failed.'),
+  FRONTEND_JSON_EDITOR_CALLBACK_FAILED: code('frontend', 'json_editor.callback_failed', 'error', 'A JSON editor local-draft callback failed.'),
 
   MIGRATOR_LOG: code('migrations', 'log', 'info', 'Migration runner emitted a log message.'),
   MIGRATOR_FAILED: code('migrations', 'failed', 'error', 'Migration failed.'),

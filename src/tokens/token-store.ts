@@ -157,7 +157,7 @@ export class PlatformTokenStore {
            AND created_at >= ?`
       ),
       deleteExpiredActionTokens: db.prepare(
-        'DELETE FROM _zero_action_tokens WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)'
+        'DELETE FROM _zero_action_tokens WHERE expires_at <= ? OR (consumed_at IS NOT NULL AND consumed_at < ?)'
       ),
       insertResumeToken: db.prepare(
         `INSERT INTO _zero_resume_tokens (
@@ -176,7 +176,7 @@ export class PlatformTokenStore {
         'UPDATE _zero_resume_tokens SET revoked_at = ? WHERE token_id = ? AND revoked_at IS NULL'
       ),
       deleteExpiredResumeTokens: db.prepare(
-        'DELETE FROM _zero_resume_tokens WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)'
+        'DELETE FROM _zero_resume_tokens WHERE expires_at <= ? OR (revoked_at IS NOT NULL AND revoked_at < ?)'
       ),
     };
   }

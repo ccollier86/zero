@@ -11,6 +11,8 @@
 import * as React from 'react';
 import { AlertCircle, Check, LoaderCircle, RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { OBS_CODES } from '../../observability/codes';
+import { emitFrontendCode } from '../../frontend/client/observability';
 
 export type InlineEditTextState =
   | 'idle'
@@ -67,6 +69,8 @@ export function InlineEditText({
   const editRevision = React.useRef<string | number | null>(null);
   const initialDraft = React.useRef(value);
   const saveSequence = React.useRef(0);
+  const mounted = React.useRef(true);
+  const inFlight = React.useRef<number | null>(null);
   const skipBlur = React.useRef(false);
   const savedTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -79,8 +83,14 @@ export function InlineEditText({
     if (!editing && state !== 'pending') setDraft(value);
   }, [editing, optimisticValue, state, value]);
 
-  React.useEffect(() => () => {
-    if (savedTimer.current) clearTimeout(savedTimer.current);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      saveSequence.current += 1;
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = null;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -90,8 +100,24 @@ export function InlineEditText({
   }, [editing]);
 
   const restoreFocus = React.useCallback(() => {
-    requestAnimationFrame(() => triggerRef.current?.focus());
+    const sequence = saveSequence.current;
+    requestAnimationFrame(() => {
+      if (mounted.current && sequence === saveSequence.current) triggerRef.current?.focus();
+    });
   }, []);
+
+  const navigateAfterAcceptance = React.useCallback((move: -1 | 1) => {
+    const sequence = saveSequence.current;
+    const current = () => mounted.current && sequence === saveSequence.current;
+    requestAnimationFrame(() => {
+      if (!current()) return;
+      try {
+        void Promise.resolve(onNavigate?.(move)).catch(() => {
+          if (current()) reportNotificationFailure('navigation');
+        });
+      } catch { if (current()) reportNotificationFailure('navigation'); }
+    });
+  }, [onNavigate]);
 
   const resetSavedTimer = React.useCallback(() => {
     if (!savedTimer.current) return;
@@ -100,8 +126,9 @@ export function InlineEditText({
   }, []);
 
   const beginEdit = React.useCallback(() => {
+    if (!mounted.current) return;
     onSelect?.();
-    if (disabled || state === 'pending') return;
+    if (disabled || state === 'pending' || inFlight.current !== null) return;
     resetSavedTimer();
     saveSequence.current += 1;
     editRevision.current = revision;
@@ -149,12 +176,12 @@ export function InlineEditText({
     setEditing(false);
     setMessage(null);
     setState('idle');
-    if (move) requestAnimationFrame(() => onNavigate?.(move));
+    if (move) navigateAfterAcceptance(move);
     else restoreFocus();
-  }, [onNavigate, restoreFocus]);
+  }, [navigateAfterAcceptance, restoreFocus]);
 
   const save = React.useCallback(async (move?: -1 | 1) => {
-    if (state === 'pending') return;
+    if (!mounted.current || disabled || inFlight.current !== null || state === 'pending') return;
     if (editRevision.current !== revision) {
       showConflict();
       return;
@@ -176,24 +203,25 @@ export function InlineEditText({
 
     resetSavedTimer();
     const sequence = ++saveSequence.current;
+    inFlight.current = sequence;
     skipBlur.current = true;
     setState('pending');
     setMessage(null);
     try {
       await onCommit(nextValue);
-      if (sequence !== saveSequence.current) return;
+      if (!mounted.current || sequence !== saveSequence.current) return;
       editRevision.current = null;
       setOptimisticValue(nextValue);
       setEditing(false);
       setState('saved');
       savedTimer.current = setTimeout(() => {
-        if (sequence === saveSequence.current) setState('idle');
+        if (mounted.current && sequence === saveSequence.current) setState('idle');
         savedTimer.current = null;
       }, 1200);
-      if (move) requestAnimationFrame(() => onNavigate?.(move));
+      if (move) navigateAfterAcceptance(move);
       else restoreFocus();
     } catch (cause) {
-      if (sequence !== saveSequence.current) return;
+      if (!mounted.current || sequence !== saveSequence.current) return;
       const conflict = isConflictError(cause);
       editRevision.current = null;
       setOptimisticValue(null);
@@ -207,16 +235,20 @@ export function InlineEditText({
         await onReload?.();
       } catch {
         // The original mutation remains the actionable error.
+        if (mounted.current && sequence === saveSequence.current) reportNotificationFailure('reload');
       }
-      restoreFocus();
+      if (mounted.current && sequence === saveSequence.current) restoreFocus();
+    } finally {
+      if (inFlight.current === sequence) inFlight.current = null;
     }
   }, [
+    disabled,
     draft,
     finishWithoutCommit,
     isConflictError,
     normalize,
     onCommit,
-    onNavigate,
+    navigateAfterAcceptance,
     onReload,
     resetSavedTimer,
     restoreFocus,
@@ -297,6 +329,12 @@ export function InlineEditText({
       <InlineEditTextIndicator state={state} message={message} />
     </div>
   );
+}
+
+function reportNotificationFailure(stage: 'navigation' | 'reload'): void {
+  emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
+    metadata: { surface: 'inline-edit-text', stage },
+  });
 }
 
 /** Resolve keyboard input into the editor's save, move, or cancel command. */

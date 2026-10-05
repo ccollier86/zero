@@ -6,6 +6,7 @@
  */
 
 export { OBS_CODES } from './codes';
+export { ObservabilityConfigurationError } from './configuration-error';
 export type { ObservabilityCodeName } from './codes';
 export { ConsoleSink, formatConsoleEvent } from './console-sink';
 export { CompositeSink } from './composite-sink';

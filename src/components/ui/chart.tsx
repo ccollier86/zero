@@ -1,5 +1,12 @@
 'use client';
 
+/**
+ * chart.tsx
+ *
+ * Composes themed Recharts containers, series labels, tooltip and legend
+ * presentation. It does not fetch, aggregate or authorize metric data.
+ */
+
 import * as React from 'react';
 import { ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
@@ -76,17 +83,15 @@ function ChartStyle({ id, config }: { id: string; config: ChartConfig }) {
   return (
     <style
       dangerouslySetInnerHTML={{
-        __html: `
-[data-chart="${id}"] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color = itemConfig.color ?? itemConfig.theme?.['dark'] ?? '';
-    return color ? `  --color-${key}: ${color};` : null;
-  })
-  .filter(Boolean)
-  .join('\n')}
-}
-`,
+        __html: Object.entries({ light: '', dark: '.dark ' }).map(([theme, prefix]) => {
+          const colors = colorConfig.map(([key, itemConfig]) => {
+            // Preserve the explicit shared color's precedence; themed colors
+            // otherwise apply only in their corresponding light/dark lane.
+            const color = itemConfig.color ?? itemConfig.theme?.[theme];
+            return color ? `  --color-${key}: ${color};` : null;
+          }).filter(Boolean).join('\n');
+          return colors ? `${prefix}[data-chart="${id}"] {\n${colors}\n}` : '';
+        }).filter(Boolean).join('\n'),
       }}
     />
   );
@@ -107,6 +112,7 @@ type ChartTooltipContentProps = React.ComponentProps<'div'> & {
   hideIndicator?: boolean;
   indicator?: 'line' | 'dot' | 'dashed';
   nameKey?: string;
+  /** Config entry whose label replaces the raw heading unless a formatter owns it. */
   labelKey?: string;
   labelFormatter?: (label: string, payload: PayloadItem[]) => React.ReactNode;
   formatter?: (
@@ -128,6 +134,7 @@ function ChartTooltipContent({
   label,
   labelFormatter,
   nameKey,
+  labelKey,
   formatter,
 }: ChartTooltipContentProps) {
   const { config } = useChart();
@@ -138,7 +145,7 @@ function ChartTooltipContent({
     ? null
     : labelFormatter
       ? labelFormatter(String(label), payload)
-      : label;
+      : (labelKey ? config[labelKey]?.label : undefined) ?? label;
 
   return (
     <div

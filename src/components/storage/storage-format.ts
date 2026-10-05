@@ -40,9 +40,11 @@ export function parseAllowedMimeTypes(value: unknown): string[] | undefined {
   return raw.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
-/** Parse a non-negative storage byte limit, using zero for empty/unlimited. */
+/** Parse a non-negative safe integer byte limit; blank/invalid drafts are omitted. */
 export function parseStorageLimit(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  if (typeof value === 'string' && value.trim().length === 0) return undefined;
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, numeric) : undefined;
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : undefined;
 }

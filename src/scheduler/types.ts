@@ -5,7 +5,7 @@ export interface JobDefinition {
   name: string;
   /** Cron expression (6-field with seconds, or @daily/@hourly/etc). */
   pattern: string;
-  /** The work to run. Receives the job name for logging. */
+  /** The work to run. Capture any required app-local dependencies in this callback. */
   run: () => void | Promise<void>;
   /** IANA timezone. Default: system timezone. */
   timezone?: string;
@@ -13,7 +13,10 @@ export interface JobDefinition {
   paused?: boolean;
   /** Prevent overlapping runs. Default: true. */
   protect?: boolean;
-  /** Catch errors instead of crashing. Default: true. */
+  /**
+   * Catch and report callback errors. False reports, then rethrows to the
+   * runtime. Default: true.
+   */
   catchErrors?: boolean;
 }
 

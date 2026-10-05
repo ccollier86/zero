@@ -15,6 +15,19 @@ import { runPlatformDoctor } from './platform-doctor';
 import { runUsageAudit } from './usage-audit';
 
 describe('runUsageAudit', () => {
+  test('excludes nested test/generated source and applies recursive allow entries', async () => {
+    await withTempProject(async (projectRoot) => {
+      await writeSource(projectRoot, 'app/deep/deeper/widget.test.tsx', 'export const widget = <button />;');
+      await writeSource(projectRoot, 'app/deep/generated/deeper/widget.tsx', 'export const widget = <button />;');
+      await writeSource(projectRoot, 'app/allowed/deep/page.tsx', 'export const page = <button />;');
+      await writeSource(projectRoot, 'app/ordinary/deep/page.tsx', 'export const page = <button />;');
+      const findings = runUsageAudit({ projectRoot, resolvedConfig: resolveConfig(baseConfig()),
+        options: { allow: [{ code: 'usage.frontend.raw_button', path: 'app/allowed/**' }] } });
+      expect(findings.filter(finding => finding.code === 'usage.frontend.raw_button').map(finding => finding.path))
+        .toEqual(['app/ordinary/deep/page.tsx:1']);
+    });
+  });
+
   test('reports frontend raw controls, custom UI, imports, and large files', async () => {
     await withTempProject(async (projectRoot) => {
       await writeSource(projectRoot, 'app/page.tsx', [

@@ -15,7 +15,6 @@ import type {
   ResolvedAuthApiKeyConfig,
   ResolvedAuthTenancyConfig,
 } from './types';
-import { isRoleAssignableToTenantKind } from './authorization-registry';
 import { resolveAuthApiKeyExpiry } from './auth-api-key-time';
 
 const API_KEY_FIELDS = [
@@ -96,10 +95,15 @@ export function resolveAuthApiKeyConfig(
   });
 }
 
-/** Validate role eligibility against the completed authorization registry. */
+/**
+ * Validate the global key-eligibility allowlist against the completed registry.
+ * Administration-only roles are valid eligible subjects in the Administration
+ * Organization. Their assignment remains fenced by membership/role services,
+ * and credential authority remains live, tenant-bound and ceiling-constrained.
+ */
 export function validateAuthApiKeyRoles(
   config: ResolvedAuthApiKeyConfig,
-  tenancy: ResolvedAuthTenancyConfig,
+  _tenancy: ResolvedAuthTenancyConfig,
   authorization: ResolvedAuthAuthorizationConfig,
 ): void {
   if (!config.eligibleScopeRoles || authorization.mode !== 'advanced') return;
@@ -107,12 +111,6 @@ export function validateAuthApiKeyRoles(
     if (!authorization.roles[roleKey]) {
       throw new Error(
         `[auth] API key eligible scope role is not declared: "${roleKey}".`,
-      );
-    }
-    if (tenancy.mode === 'multi'
-      && !isRoleAssignableToTenantKind(roleKey, 'organization', authorization)) {
-      throw new Error(
-        `[auth] API key eligible scope role must be assignable to organization tenants: "${roleKey}".`,
       );
     }
   }

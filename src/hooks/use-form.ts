@@ -25,6 +25,8 @@ import {
   useAuthorizationScopeBoundary,
 } from '../frontend/client/authorization-scope-hooks';
 import { areFormValuesEqual } from './form-value-utils';
+import { emitFrontendCode } from '../frontend/client/observability';
+import { OBS_CODES } from '../observability/codes';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -37,7 +39,9 @@ export interface UseFormOptions<T extends Row = Row> {
   /** Optional field allow-list for generated forms and submitted payloads. */
   includeFields?: readonly string[];
   onSubmit?: (data: T) => void | Promise<void>;
+  /** Called after custom submission resolves or a collection write is acknowledged. */
   onSuccess?: () => void;
+  /** Called when custom submission or an acknowledged collection write fails. */
   onError?: (error: string) => void;
 }
 
@@ -125,6 +129,7 @@ export function useForm<T extends Row = Row>(
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionRef = useRef<object | null>(null);
   const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const initialRef = useRef(initialValues);
   const fieldRefs = useRef<Map<string, HTMLElement | null>>(new Map());
@@ -152,6 +157,7 @@ export function useForm<T extends Row = Row>(
     setErrors({});
     setTouched(new Set());
     setIsSubmitting(false);
+    submissionRef.current = null;
   }, [authorizationBoundary.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Edit mode: load existing row from collection ─────────────────
@@ -260,7 +266,9 @@ export function useForm<T extends Row = Row>(
           if (target.type === 'checkbox') {
             newValue = target.checked;
           } else if (target.type === 'number') {
-            newValue = target.value === '' ? '' : Number(target.value);
+            newValue = target.value === ''
+              ? schema.fields.get(name)?.required === false ? null : ''
+              : Number(target.value);
           } else {
             newValue = target.value;
           }
@@ -304,7 +312,7 @@ export function useForm<T extends Row = Row>(
   const handleSubmit = useCallback(
     async (e?: FormEvent) => {
       e?.preventDefault();
-      if (!isCurrentScope() || isSubmitting) return;
+      if (!isCurrentScope() || submissionRef.current !== null) return;
       const operationBoundaryKey = callbackBoundaryKey;
       const operationIsCurrent = () => isAuthorizationScopeCallbackCurrent(
         boundaryKeyRef.current,
@@ -326,6 +334,8 @@ export function useForm<T extends Row = Row>(
         return;
       }
 
+      const submission = {};
+      submissionRef.current = submission;
       setIsSubmitting(true);
       try {
         const data = schema.encodeRow(
@@ -340,18 +350,30 @@ export function useForm<T extends Row = Row>(
           if (mode === 'edit' && editId) {
             const updateData = { ...data } as Record<string, unknown>;
             delete updateData[schema.primaryKey];
-            collection.update(editId, updateData as Partial<T>);
+            await collection.updateAsync(editId, updateData as Partial<T>);
           } else {
-            collection.insert(data);
+            await collection.insertAsync(data);
           }
         }
 
-        if (operationIsCurrent()) onSuccess?.();
+        if (operationIsCurrent()) {
+          try {
+            await onSuccess?.();
+          } catch {
+            // This notification failed after the write was accepted. Sending
+            // it to onError would misclassify the write and invite a duplicate
+            // retry. Keep standard observability value-free and scope-fenced.
+            if (operationIsCurrent()) emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
+              metadata: { surface: 'use-form', stage: 'accepted-callback' },
+            });
+          }
+        }
       } catch (err) {
         if (!operationIsCurrent()) return;
         const message = err instanceof Error ? err.message : 'Submit failed';
         onError?.(message);
       } finally {
+        if (submissionRef.current === submission) submissionRef.current = null;
         if (operationIsCurrent()) setIsSubmitting(false);
       }
     },
@@ -361,7 +383,6 @@ export function useForm<T extends Row = Row>(
       editId,
       fieldNames,
       isCurrentScope,
-      isSubmitting,
       mode,
       onError,
       onSubmit,

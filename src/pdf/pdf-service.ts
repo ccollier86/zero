@@ -31,6 +31,8 @@ const PDF_SIGNATURE = new TextEncoder().encode('%PDF-');
 export interface PdfServiceOptions {
   renderer?: PdfRenderer;
   storage?: PdfStorageWriter;
+  /** Owning app's operational emitter; standalone composition defaults to compatibility. */
+  emitCode?: typeof emitPlatformCode;
 }
 
 /** High-level Zero API for rendering and optionally storing browser-grade PDFs. */
@@ -38,12 +40,14 @@ export class PdfService {
   private readonly renderer: PdfRenderer;
   private readonly storage: PdfStorageWriter;
   private readonly queue: PdfRenderQueue;
+  private readonly emitCode: typeof emitPlatformCode;
   private closed = false;
 
   constructor(
     private readonly config: ResolvedPdfConfig,
     options: PdfServiceOptions = {}
   ) {
+    this.emitCode = options.emitCode ?? emitPlatformCode;
     this.renderer = options.renderer
       ?? config.renderer
       ?? new PlaywrightPdfRenderer(config.browser);
@@ -61,7 +65,7 @@ export class PdfService {
     validateComposedInputSize(input, options, this.config.limits.maxHtmlBytes);
     const startedAt = performance.now();
 
-    emitPlatformCode(OBS_CODES.PDF_RENDER_STARTED, {
+    this.emitCode(OBS_CODES.PDF_RENDER_STARTED, {
       metadata: {
         renderer: this.renderer.name,
         htmlBytes: utf8Length(input.html),
@@ -89,7 +93,7 @@ export class PdfService {
         size: output.bytes.byteLength,
         renderer: output.renderer,
       };
-      emitPlatformCode(OBS_CODES.PDF_RENDER_COMPLETED, {
+      this.emitCode(OBS_CODES.PDF_RENDER_COMPLETED, {
         metadata: {
           renderer: result.renderer,
           size: result.size,
@@ -99,7 +103,7 @@ export class PdfService {
       return result;
     } catch (error) {
       const normalized = normalizePdfError(error);
-      emitPlatformCode(OBS_CODES.PDF_RENDER_FAILED, {
+      this.emitCode(OBS_CODES.PDF_RENDER_FAILED, {
         error: normalized,
         metadata: {
           renderer: this.renderer.name,
@@ -125,7 +129,7 @@ export class PdfService {
         bytes: rendered.bytes,
         renderer: rendered.renderer,
       });
-      emitPlatformCode(OBS_CODES.PDF_STORED, {
+      this.emitCode(OBS_CODES.PDF_STORED, {
         metadata: {
           renderer: rendered.renderer,
           driveId: target.driveId,
@@ -136,7 +140,7 @@ export class PdfService {
       return { ...rendered, file };
     } catch (error) {
       const normalized = normalizePdfStorageError(error);
-      emitPlatformCode(OBS_CODES.PDF_STORAGE_FAILED, {
+      this.emitCode(OBS_CODES.PDF_STORAGE_FAILED, {
         error: normalized,
         metadata: {
           renderer: rendered.renderer,

@@ -28,6 +28,7 @@ export interface WorkflowMemoryContext {
   has(key: string): boolean;
   set(key: string, value: unknown): void;
   update(key: string, updater: (value: WorkflowJsonValue) => unknown): void;
+  /** Delete an attempt-visible key; return true only if it existed before deletion. */
   delete(key: string): boolean;
   entries(): Array<readonly [string, WorkflowJsonValue]>;
   toJSON(): Record<string, WorkflowJsonValue>;
@@ -183,7 +184,7 @@ class AttemptMemoryContext implements WorkflowMemoryAttemptContext {
     const prior = this.snapshot.get(key);
     if (!prior) {
       this.staged.delete(key);
-      return false;
+      return exists;
     }
     this.staged.set(key, { deleted: true, baseVersion: prior.version });
     return exists;

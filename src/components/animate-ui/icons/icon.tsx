@@ -430,6 +430,7 @@ function AnimateIcon({
         animate,
         initialOnAnimateEnd,
         completeOnStop,
+        persistOnAnimateEnd,
         delay,
       }}
     >
@@ -542,6 +543,7 @@ function IconWrapper<T extends string>({
           active: parentActive,
           animate: parentAnimate,
           initialOnAnimateEnd: parentInitialOnAnimateEnd,
+          persistOnAnimateEnd: parentPersistOnAnimateEnd,
           delay: parentDelay,
           completeOnStop: parentCompleteOnStop,
         }}
@@ -577,6 +579,8 @@ function IconWrapper<T extends string>({
         animation={animationProp}
         loop={loop}
         loopDelay={loopDelay}
+        initialOnAnimateEnd={initialOnAnimateEnd}
+        persistOnAnimateEnd={persistOnAnimateEnd}
         delay={delay}
         completeOnStop={completeOnStop}
         asChild

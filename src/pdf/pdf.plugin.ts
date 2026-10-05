@@ -8,12 +8,13 @@
 import { Elysia } from 'elysia';
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
 import { PdfError } from './pdf-error';
 import { PdfService, type PdfServiceOptions } from './pdf-service';
+import { ZeroPdfStorageWriter } from './pdf-storage-writer';
 import type { ResolvedPdfConfig } from './pdf-types';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
-import { ZERO_PDF_SERVICE } from '../runtime/service-keys';
+import { ZERO_OBSERVABILITY_RUNTIME, ZERO_PDF_SERVICE, ZERO_STORAGE_SERVICE } from '../runtime/service-keys';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
 const pdfProviders = new CompatibilityProviderRegistry<PdfService>('PDF service');
@@ -33,29 +34,50 @@ export interface PdfPluginConfig extends PdfServiceOptions {
  * first render, and closes any renderer process during app shutdown.
  */
 export function createPdfPlugin(options: PdfPluginConfig) {
-  const service = options.service ?? new PdfService(options.config, options);
+  const runtime = options.runtime;
+  const observability = runtime?.require(ZERO_OBSERVABILITY_RUNTIME) ?? null;
+  const emitCode: typeof emitPlatformCode = observability
+    ? (definition, event) => emitPlatformCodeTo(observability, definition, event)
+    : options.emitCode ?? emitPlatformCode;
+  const storage = options.storage ?? (runtime
+    ? new ZeroPdfStorageWriter(() => runtime.get(ZERO_STORAGE_SERVICE))
+    : undefined);
+  const service = options.service ?? new PdfService(options.config, { ...options, storage, emitCode });
   const owner = {};
   let started = false;
   const registration = pdfProviders.register(owner, () => started ? service : null);
-  options.runtime?.set(ZERO_PDF_SERVICE, service);
-  options.onServiceCreated?.(service);
   let cleanupPromise: Promise<void> | null = null;
   const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
     try {
       await service.close();
     } finally {
       started = false;
-      options.runtime?.clear(ZERO_PDF_SERVICE, service);
+      runtime?.clear(ZERO_PDF_SERVICE, service);
       registration.unregister();
     }
   })();
-  options.runtime?.addCleanup(cleanup);
+  try {
+    // Install teardown ownership before publishing to any caller-controlled callback.
+    runtime?.addCleanup(cleanup);
+    runtime?.set(ZERO_PDF_SERVICE, service);
+    options.onServiceCreated?.(service);
+  } catch (error) {
+    void cleanup().catch(() => {
+      emitCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
+        error: new Error('PDF startup cleanup failed.'),
+        metadata: { phase: 'start', plugin: 'zero-platform-pdf' },
+      });
+    });
+    throw new PdfError('PDF service composition failed.', 'PDF_CONFIG_INVALID', {
+      stage: 'composition',
+    }, { cause: error });
+  }
 
   return new Elysia({ name: 'zero-platform-pdf' })
     .decorate('pdf', service)
     .onStart(() => {
       started = true;
-      emitPlatformCode(OBS_CODES.PDF_CONFIGURED, {
+      emitCode(OBS_CODES.PDF_CONFIGURED, {
         metadata: {
           renderer: service.status().renderer,
           remoteResources: options.config.resources.remote,
@@ -65,7 +87,7 @@ export function createPdfPlugin(options: PdfPluginConfig) {
     })
     .onStop(async () => {
       await cleanup();
-      emitPlatformCode(OBS_CODES.PDF_STOPPED, {
+      emitCode(OBS_CODES.PDF_STOPPED, {
         metadata: { renderer: service.status().renderer },
       });
     });

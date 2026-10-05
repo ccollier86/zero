@@ -5,7 +5,7 @@
  * starting Elysia.
  */
 
-import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
+import { beforeEach, afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   configureObservability,
   emitPlatformCode,
@@ -46,6 +46,22 @@ afterEach(() => {
 });
 
 describe('AuthActionTokenService', () => {
+  test('rejects exact expiry in platform-backed and direct action-token composition', async () => {
+    const user = await store.createUser({ username: 'expiry-boundary', email: 'expiry@example.test', password: 'password123' });
+    const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      for (const tokens of [platformTokens, null]) {
+        clock.mockReturnValue(1_700_000_000_000);
+        const action = new AuthActionTokenService(store, '1s', '5m', tokens);
+        const created = action.create({ userId: user.userId, type: 'password_reset', skipCooldown: true });
+        clock.mockReturnValue(created.record.expiresAt);
+        expect(() => action.inspect(created.rawToken)).toThrow('expired');
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test('creates a raw token while storing only the hash', async () => {
     const user = await store.createUser({
       username: 'alice',

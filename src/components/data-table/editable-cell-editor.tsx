@@ -240,7 +240,7 @@ function EditorControl({
       disabled={pending}
       onChange={(event) => {
         const next = type === 'number'
-          ? event.target.value === '' ? '' : Number(event.target.value)
+          ? event.target.value === '' ? fieldMeta?.required === false ? null : '' : Number(event.target.value)
           : event.target.value;
         setDraft(next);
       }}

@@ -55,7 +55,7 @@ function useDataState<T extends HTMLElement = HTMLElement>(
     return () => observer.disconnect();
   };
 
-  const value = React.useSyncExternalStore(subscribe, getSnapshot);
+  const value = React.useSyncExternalStore(subscribe, getSnapshot, () => null);
 
   React.useEffect(() => {
     if (onChange) onChange(value);

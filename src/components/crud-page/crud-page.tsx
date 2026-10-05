@@ -1,5 +1,11 @@
 'use client';
 
+/**
+ * Composes schema-backed CRUD table/detail layouts. Source actions and the
+ * shared mutation runner own acknowledged writes, cancellation and failures;
+ * this component owns forms, action placement and accepted UI effects only.
+ */
+
 import { createElement, useCallback, useMemo } from 'react';
 import type { ComponentType, ReactNode } from 'react';
 import type { Row } from '../../sync/types';
@@ -10,8 +16,11 @@ import type {
   NavigationAction,
   RecordPrimaryAction,
 } from '../ui/record-navigation-bar';
-import { useCollection, useLazyCollection } from '../../frontend/client/data-hooks';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
+import { useDataTableSource, type DataTableSourceActions } from '../data-table/data-table-source';
+import { invokeDataTableSourceWrite } from '../data-table/data-table-source-action-guard';
+import { mutationCancelledError } from '../data-table/use-data-table-mutation';
+import { useCrudMutation, type CrudMutationRunner } from './use-crud-mutation';
 import { DataTable } from '../data-table';
 import type {
   DataTableSearchOptions,
@@ -167,35 +176,18 @@ export interface CrudPageProps<T extends Row = Row> {
  * ```
  */
 export function CrudPage<T extends Row = Row>(props: CrudPageProps<T>) {
-  if (props.lazy) {
-    return createElement(CrudPageLazy<T>, props);
-  }
-  return createElement(CrudPageFull<T>, props);
-}
-
-function CrudPageLazy<T extends Row = Row>(props: CrudPageProps<T>) {
-  const result = useLazyCollection<T>(props.table, props.filters, props.lazyOptions);
-  return createElement(CrudPageCore<T>, {
-    ...props,
-    data: result.data,
-    insert: result.insert,
-    update: result.update,
-    remove: result.remove,
-    isLoading: result.isLoading,
-    error: result.error,
+  const result = useDataTableSource<T>({
+    collection: props.table,
+    lazy: props.lazy,
+    filters: props.filters,
+    lazyOptions: props.lazyOptions,
   });
-}
-
-function CrudPageFull<T extends Row = Row>(props: CrudPageProps<T>) {
-  const result = useCollection<T>(props.table);
   return createElement(CrudPageCore<T>, {
     ...props,
     data: result.data,
-    insert: result.insert,
-    update: result.update,
-    remove: result.remove,
-    isLoading: false,
-    error: null,
+    actions: result.actions,
+    isLoading: result.isLoading,
+    error: result.error ? (result.error instanceof Error ? result.error : new Error(result.error)) : null,
   });
 }
 
@@ -203,9 +195,7 @@ function CrudPageFull<T extends Row = Row>(props: CrudPageProps<T>) {
 
 interface CrudPageCoreProps<T extends Row> extends CrudPageProps<T> {
   data: T[];
-  insert: (row: T) => void;
-  update: (id: string, partial: Partial<T>) => void;
-  remove: (id: string) => void;
+  actions: DataTableSourceActions<T> | null;
   isLoading: boolean;
   error: Error | null;
 }
@@ -223,11 +213,12 @@ function CrudError({ error }: { error: Error }) {
 
 function CrudPageCore<T extends Row = Row>(props: CrudPageCoreProps<T>) {
   const layout = props.layout ?? 'table';
+  const mutation = useCrudMutation(JSON.stringify([props.table, layout]));
 
   if (layout === 'master-detail') {
-    return createElement(MasterDetailLayout<T>, props);
+    return createElement(MasterDetailLayout<T>, { ...props, mutation });
   }
-  return createElement(TableLayout<T>, props);
+  return createElement(TableLayout<T>, { ...props, mutation });
 }
 
 // ─── Table Layout ───────────────────────────────────────────────────────────
@@ -239,9 +230,8 @@ function TableLayout<T extends Row = Row>({
   primaryKey: primaryKeyOverride,
   resourceFields,
   data,
-  insert,
-  update,
-  remove,
+  actions,
+  mutation,
   isLoading,
   error,
   title,
@@ -267,41 +257,43 @@ function TableLayout<T extends Row = Row>({
   modalSize = 'lg',
   toolbar,
   className,
-}: CrudPageCoreProps<T>) {
+}: CrudPageCoreProps<T> & { mutation: CrudMutationRunner }) {
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
 
   const openCreateModal = useCallback(() => {
-    modals.open({
+    const modalId = modals.open({
       title: createLabel,
       size: modalSize,
-      content: createElement(AutoForm, {
+      content: createElement(AutoForm<T>, {
         schema,
         mode: 'create',
         columns: formColumns,
         fields: createFields,
         includeFields: resourceFields?.create,
         submitLabel: createLabel,
-        onSubmit: (formData: any) => {
-          const draft = onBeforeCreate ? onBeforeCreate(formData as T) : formData as T;
-          const row = ensureRowPrimaryKey(draft, primaryKey, {
-            table,
-            identity: schema.identity,
+        onSubmit: async (formData: T) => {
+          let row!: T;
+          await mutation.run(JSON.stringify(['create', modalId]), ({ signal }) => {
+            const draft = onBeforeCreate ? onBeforeCreate(formData) : formData;
+            row = ensureRowPrimaryKey(draft, primaryKey, { table, identity: schema.identity });
+            return invokeDataTableSourceWrite('insert', true, actions ? () => actions.insert(row, { signal }) : undefined);
+          },
+          () => {
+            toast.success(`${createLabel} successful`);
+            try { onAfterCreate?.(row); }
+            finally { modals.close(modalId); }
           });
-          insert(row);
-          toast.success(`${createLabel} successful`);
-          onAfterCreate?.(row);
-          modals.closeLast();
         },
       }),
     });
-  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, insert, onBeforeCreate, onAfterCreate, primaryKey]);
+  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, actions, mutation, onBeforeCreate, onAfterCreate, primaryKey]);
 
   const openEditModal = useCallback((row: T) => {
     const rowId = requireRowPrimaryKey(row, primaryKey);
-    modals.open({
+    const modalId = modals.open({
       title: 'Edit',
       size: modalSize,
-      content: createElement(AutoForm, {
+      content: createElement(AutoForm<T>, {
         schema,
         mode: 'edit',
         defaultValues: row,
@@ -309,34 +301,40 @@ function TableLayout<T extends Row = Row>({
         fields: editFields,
         includeFields: resourceFields?.update,
         submitLabel: 'Save',
-        onSubmit: (formData: any) => {
+        onSubmit: async (formData: T) => {
           const id = rowId;
-          const updateData = stripRowPrimaryKey(formData as Partial<T>, primaryKey);
-          const changes = onBeforeUpdate
-            ? onBeforeUpdate(id, updateData)
-            : updateData;
-          update(id, stripRowPrimaryKey(changes, primaryKey));
-          toast.success('Updated successfully');
-          modals.closeLast();
+          await mutation.run(JSON.stringify(['edit', modalId]), ({ signal }) => {
+            const updateData = stripRowPrimaryKey(formData as Partial<T>, primaryKey);
+            const changes = onBeforeUpdate ? onBeforeUpdate(id, updateData) : updateData;
+            return invokeDataTableSourceWrite('update', true, actions ? () => actions.update(id, stripRowPrimaryKey(changes, primaryKey), { signal }) : undefined);
+          },
+          () => {
+            toast.success('Updated successfully');
+            modals.close(modalId);
+          });
         },
       }),
     });
-  }, [schema, modalSize, formColumns, editFields, resourceFields, update, onBeforeUpdate, primaryKey]);
+  }, [schema, modalSize, formColumns, editFields, resourceFields, actions, mutation, onBeforeUpdate, primaryKey]);
 
   const handleDelete = useCallback(async (row: T) => {
     const id = requireRowPrimaryKey(row, primaryKey);
-    const confirmed = await modals.confirm({
-      title: 'Delete record?',
-      description: 'This action cannot be undone.',
-      variant: 'destructive',
-      holdToConfirm: true,
-    });
-    if (confirmed) {
-      remove(id);
-      toast.success('Deleted successfully');
-      onAfterDelete?.(id);
+    try {
+      await mutation.run(JSON.stringify(['delete', id]), async ({ signal }) => {
+        const confirmed = await modals.confirm({
+          title: 'Delete record?', description: 'This action cannot be undone.',
+          variant: 'destructive', holdToConfirm: true,
+        });
+        if (!confirmed || signal.aborted) throw mutationCancelledError();
+        await invokeDataTableSourceWrite('remove', true, actions ? () => actions.remove(id, { signal }) : undefined);
+      }, () => {
+        toast.success('Deleted successfully');
+        onAfterDelete?.(id);
+      });
+    } catch {
+      // The shared runner owns safe errors, observability and cancellation.
     }
-  }, [remove, onAfterDelete, primaryKey]);
+  }, [actions, mutation, onAfterDelete, primaryKey]);
 
   const allActions = useMemo((): RowAction<T>[] => {
     const defaults: RowAction<T>[] = [];
@@ -404,9 +402,8 @@ function MasterDetailLayout<T extends Row = Row>({
   primaryKey: primaryKeyOverride,
   resourceFields,
   data,
-  insert,
-  update,
-  remove,
+  actions,
+  mutation,
   isLoading,
   error,
   title,
@@ -437,41 +434,45 @@ function MasterDetailLayout<T extends Row = Row>({
   listWidth,
   detailWidth,
   className,
-}: CrudPageCoreProps<T>) {
+}: CrudPageCoreProps<T> & { mutation: CrudMutationRunner }) {
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
 
   const openCreateModal = useCallback(() => {
-    modals.open({
+    const modalId = modals.open({
       title: createLabel,
       size: modalSize,
-      content: createElement(AutoForm, {
+      content: createElement(AutoForm<T>, {
         schema,
         mode: 'create',
         columns: formColumns,
         fields: createFields,
         includeFields: resourceFields?.create,
         submitLabel: createLabel,
-        onSubmit: (formData: any) => {
-          const draft = onBeforeCreate ? onBeforeCreate(formData as T) : formData as T;
-          const row = ensureRowPrimaryKey(draft, primaryKey, {
-            table,
-            identity: schema.identity,
+        onSubmit: async (formData: T) => {
+          let row!: T;
+          await mutation.run(JSON.stringify(['create', modalId]), ({ signal }) => {
+            const draft = onBeforeCreate ? onBeforeCreate(formData) : formData;
+            row = ensureRowPrimaryKey(draft, primaryKey, { table, identity: schema.identity });
+            return invokeDataTableSourceWrite('insert', true, actions ? () => actions.insert(row, { signal }) : undefined);
+          },
+          () => {
+            toast.success(`${createLabel} successful`);
+            try { onAfterCreate?.(row); }
+            finally { modals.close(modalId); }
           });
-          insert(row);
-          toast.success(`${createLabel} successful`);
-          onAfterCreate?.(row);
-          modals.closeLast();
         },
       }),
     });
-  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, insert, onBeforeCreate, onAfterCreate, primaryKey]);
+  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, actions, mutation, onBeforeCreate, onAfterCreate, primaryKey]);
 
-  const handleUpdate = useCallback((id: string, changes: Partial<T>) => {
-    const updateData = stripRowPrimaryKey(changes, primaryKey);
-    const final = onBeforeUpdate ? onBeforeUpdate(id, updateData) : updateData;
-    update(id, stripRowPrimaryKey(final, primaryKey));
-    toast.success('Updated successfully');
-  }, [update, onBeforeUpdate, primaryKey]);
+  const handleUpdate = useCallback(async (id: string, changes: Partial<T>) => {
+    await mutation.run(JSON.stringify(['detail-update', id]), ({ signal }) => {
+      const updateData = stripRowPrimaryKey(changes, primaryKey);
+      const final = onBeforeUpdate ? onBeforeUpdate(id, updateData) : updateData;
+      return invokeDataTableSourceWrite('update', true, actions ? () => actions.update(id, stripRowPrimaryKey(final, primaryKey), { signal }) : undefined);
+    },
+    () => toast.success('Updated successfully'));
+  }, [actions, mutation, onBeforeUpdate, primaryKey]);
 
   // Build navigation actions — inject delete if not hidden
   const navActions = useCallback((item: T | null) => {
@@ -483,23 +484,28 @@ function MasterDetailLayout<T extends Row = Row>({
         label: 'Delete',
         icon: createElement(Trash2, { className: 'size-4' }),
         variant: 'destructive' as const,
+        disabled: mutation.isPending(JSON.stringify(['delete', requireRowPrimaryKey(item, primaryKey)])),
         onClick: async () => {
           const id = requireRowPrimaryKey(item, primaryKey);
-          const confirmed = await modals.confirm({
-            title: 'Delete record?',
-            description: 'This action cannot be undone.',
-            variant: 'destructive',
-            holdToConfirm: true,
-          });
-          if (confirmed) {
-            remove(id);
-            toast.success('Deleted successfully');
-            onAfterDelete?.(id);
+          try {
+            await mutation.run(JSON.stringify(['delete', id]), async ({ signal }) => {
+              const confirmed = await modals.confirm({
+                title: 'Delete record?', description: 'This action cannot be undone.',
+                variant: 'destructive', holdToConfirm: true,
+              });
+              if (!confirmed || signal.aborted) throw mutationCancelledError();
+              await invokeDataTableSourceWrite('remove', true, actions ? () => actions.remove(id, { signal }) : undefined);
+            }, () => {
+              toast.success('Deleted successfully');
+              onAfterDelete?.(id);
+            });
+          } catch {
+            // The shared runner owns safe errors, observability and cancellation.
           }
         },
       },
     ];
-  }, [navigationActions, hideDelete, remove, onAfterDelete, primaryKey]);
+  }, [navigationActions, hideDelete, actions, mutation, onAfterDelete, primaryKey]);
 
   // Build primary action — default to create button if not provided and not hidden
   const resolvedPrimaryAction = primaryAction ?? (!hideCreate ? {

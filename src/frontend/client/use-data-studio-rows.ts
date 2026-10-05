@@ -28,7 +28,7 @@ interface RetainedVisibleRowPage {
   readonly page: DataStudioRowPage;
 }
 
-export function useDataStudioRows(input: {
+export interface DataStudioRowsInput {
   readonly surface: DataStudioSdkSurface | null;
   readonly boundary: AuthorizationScopeBoundary;
   readonly scopeAvailable: boolean;
@@ -46,7 +46,9 @@ export function useDataStudioRows(input: {
   readonly offsetHistory: readonly number[];
   readonly setOffsetState: React.Dispatch<React.SetStateAction<number>>;
   readonly setOffsetHistory: React.Dispatch<React.SetStateAction<readonly number[]>>;
-}) {
+}
+
+export function useDataStudioRows(input: DataStudioRowsInput) {
   const [rowsLoading, setRowsLoading] = React.useState(false);
   const [rowsError, setRowsError] = React.useState<Error | null>(null);
   const rowsRequest = React.useRef(0);

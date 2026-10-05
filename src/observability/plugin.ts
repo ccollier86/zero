@@ -7,7 +7,7 @@
  * sink helpers instead.
  */
 
-import { Elysia, ValidationError, t } from 'elysia';
+import { Elysia, ParseError, ValidationError, status, t } from 'elysia';
 import { OBS_CODES } from './codes';
 import {
   emitPlatformCodeTo,
@@ -23,6 +23,8 @@ import type {
   PlatformEventSource,
 } from './types';
 import { getSafeRequestPath } from './safe-request-path';
+import { enforceFrontendPayloadBytes } from './frontend-ingest-body';
+import { ObservabilityConfigurationError } from './configuration-error';
 
 const DEFAULT_BASE_PATH = '/api/_zero/observability';
 const DEFAULT_FRONTEND_MAX_PAYLOAD_BYTES = 32_768;
@@ -54,10 +56,17 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
   const readMode = endpoint.read ?? (options.authEnabled ? 'admin' : 'development');
   const frontendIngest = endpoint.frontendIngest !== false;
   const maxPayloadBytes = endpoint.maxPayloadBytes ?? DEFAULT_FRONTEND_MAX_PAYLOAD_BYTES;
+  if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes <= 0) {
+    throw new ObservabilityConfigurationError('Observability maxPayloadBytes must be a positive safe integer.');
+  }
+  const oversizedRequests = new WeakSet<Request>();
   const traceConfig = config.trace === false ? undefined : config.trace;
 
   const app = new Elysia({ name: 'observability' })
     .onError({ as: 'global' }, function reportPlatformError({ code, error, request, set }) {
+      if (oversizedRequests.has(request)) {
+        return status(413, { error: 'Payload too large' });
+      }
       if (code === 'VALIDATION' || code === 'PARSE') {
         const responseFailure = code === 'VALIDATION'
           && error instanceof ValidationError
@@ -157,16 +166,6 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
           return { error: 'Not found' };
         }
 
-        const contentLength = Number(request.headers.get('content-length') ?? 0);
-        if (contentLength > maxPayloadBytes) {
-          set.status = 413;
-          emitPlatformCodeTo(runtime, OBS_CODES.OBSERVABILITY_FRONTEND_REJECTED, {
-            level: 'warn',
-            metadata: { reason: 'payload_too_large', contentLength, maxPayloadBytes },
-          });
-          return { error: 'Payload too large' };
-        }
-
         emitPlatformEventTo(runtime, {
           source: 'frontend',
           level: body.level ?? 'error',
@@ -187,6 +186,26 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
         return { ok: true };
       },
       {
+        async parse({ request }) {
+          await enforceFrontendPayloadBytes(request, maxPayloadBytes, (observedBytes) => {
+            oversizedRequests.add(request);
+            emitPlatformCodeTo(runtime, OBS_CODES.OBSERVABILITY_FRONTEND_REJECTED, {
+              level: 'warn',
+              metadata: { reason: 'payload_too_large', observedBytes, maxPayloadBytes },
+            });
+          });
+          // Dynamic Elysia parsing does not consistently classify JSON syntax
+          // errors. Parse only this known media type and keep failures safe and
+          // classified as request errors; all other media use Elysia's parser.
+          const mediaType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+          if (mediaType === 'application/json') {
+            try {
+              return await request.json();
+            } catch {
+              throw new ParseError(new Error('Invalid JSON body'));
+            }
+          }
+        },
         body: t.Object({
           level: t.Optional(t.Union([
             t.Literal('debug'),
@@ -296,9 +315,9 @@ async function canReadEvents(
   }
 
   if (mode === 'disabled') return false;
-  if (mode === 'development') return process.env.NODE_ENV !== 'production';
+  if (mode === 'development') return Bun.env.NODE_ENV !== 'production';
   if (mode === 'admin') return authContext?.role === 'admin';
-  return authContext?.role === 'admin' || process.env.NODE_ENV !== 'production';
+  return authContext?.role === 'admin' || Bun.env.NODE_ENV !== 'production';
 }
 
 function parseLevelFilter(level: string | undefined): PlatformEventLevel | PlatformEventLevel[] | undefined {

@@ -184,10 +184,13 @@ function TabsTrigger({
 type TabsContentsProps = HTMLMotionProps<'div'> & {
   children: React.ReactNode;
   transition?: Transition;
+  /** Content animates its natural height; fill uses a bounded parent for independently scrolling panes. */
+  heightMode?: 'content' | 'fill';
 };
 
 function TabsContents({
   children,
+  heightMode = 'content',
   transition = {
     type: 'spring',
     stiffness: 300,
@@ -244,6 +247,7 @@ function TabsContents({
       roRef.current = null;
     }
 
+    if (heightMode === 'fill') return;
     const pane = itemRefs.current[activeIndex];
     const container = containerRef.current;
     if (!pane || !container) return;
@@ -263,26 +267,28 @@ function TabsContents({
       ro.disconnect();
       roRef.current = null;
     };
-  }, [activeIndex, childrenArray.length, measure]);
+  }, [activeIndex, childrenArray.length, heightMode, measure]);
 
   React.useLayoutEffect(() => {
-    if (height === 0 && activeIndex >= 0) {
+    if (heightMode === 'content' && height === 0 && activeIndex >= 0) {
       const next = measure(activeIndex);
       if (next !== 0) setHeight(next);
     }
-  }, [activeIndex, height, measure]);
+  }, [activeIndex, height, heightMode, measure]);
 
   return (
     <motion.div
       ref={containerRef}
       data-slot="tabs-contents"
       style={{ overflow: 'hidden' }}
-      animate={{ height }}
+      // Clearing the target entirely leaves Motion's previous inline height in place.
+      // Explicit auto restores parent-owned flex/grid sizing when switching to fill.
+      animate={heightMode === 'content' ? { height } : { height: 'auto' }}
       transition={transition}
       {...props}
     >
       <motion.div
-        className="flex -mx-2"
+        className={heightMode === 'fill' ? 'flex h-full min-h-0 -mx-2' : 'flex -mx-2'}
         animate={{ x: activeIndex * -100 + '%' }}
         transition={transition}
       >

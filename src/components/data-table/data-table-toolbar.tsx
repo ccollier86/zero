@@ -26,6 +26,7 @@ import {
 import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
 import { DataTableControls } from './data-table-controls';
+import { selectedDataTablePageRows } from './data-table-selection';
 import {
   DataTableColumnFilter,
   getDataTableColumnLabel,
@@ -122,7 +123,7 @@ export function DataTableToolbar<TData>({
     table.resetColumnFilters(true);
     onGlobalFilterChange('');
   }, [onGlobalFilterChange, table]);
-  const selectedRows = table.getSelectedRowModel().rows;
+  const selectedRows = selectedDataTablePageRows(table);
   const context = React.useMemo<DataTableToolbarContext<TData>>(() => ({
     table,
     query: globalFilter,

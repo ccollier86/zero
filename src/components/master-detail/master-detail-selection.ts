@@ -26,6 +26,7 @@ export function resolveMasterDetailSelection<T extends Row>(
   primaryKey: string,
   requestedId: string | null | undefined,
   autoSelectFirst = true,
+  getRowId?: (row: T, index: number) => string | number,
 ): MasterDetailSelection<T> {
   if (rows.length === 0) {
     return {
@@ -35,7 +36,9 @@ export function resolveMasterDetailSelection<T extends Row>(
     };
   }
 
-  const rowIds = rows.map((row) => requireRowPrimaryKey(row, primaryKey));
+  const rowIds = rows.map((row, index) => getRowId
+    ? String(getRowId(row, index))
+    : requireRowPrimaryKey(row, primaryKey));
   const requested = requestedId ?? null;
   const resolvedId = requested && rowIds.includes(requested)
     ? requested

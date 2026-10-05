@@ -43,10 +43,18 @@ export function resolveSQLiteStorageConfig(input: SQLiteStorageConfig = {}): Res
     bufferPool: input.bufferPool === false
       ? false
       : {
-          maxPoolSize: input.bufferPool?.maxPoolSize ?? 100,
+          maxPoolSize: normalizePoolSize(input.bufferPool?.maxPoolSize ?? 100),
           preallocate: input.bufferPool?.preallocate ?? true,
         },
   };
+}
+
+/** Validate before opening SQLite so rejected buffer policy owns no handle. */
+function normalizePoolSize(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError('SQLite bufferPool maxPoolSize must be a non-negative safe integer.');
+  }
+  return value;
 }
 
 function resolveMode(input: SQLiteStorageConfig): SQLiteStorageMode {

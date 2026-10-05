@@ -47,10 +47,14 @@ official external documentation may inform the rebuild. Reconcile disagreements
 against the supported public contract and record unresolved findings. Never
 copy an existing claim into the new reference without checking applicability.
 
-Auditing documentation is not permission to alter runtime code, application
-projects, databases, storage, credentials, or deployments. Actual defects must
-be raised for discussion and correction; do not recast them as intentional
-limitations or introduce an unapproved application workaround.
+Auditing documentation alone is not permission to alter runtime code,
+application projects, databases, storage, credentials, or deployments. For this
+rebuild the user explicitly authorized correction of all confirmed platform
+defects with focused regression tests, without asking for each fix. Record
+reproductions, corrections and review evidence in the internal audit ledger;
+do not recast defects as intentional limitations or introduce app workarounds.
+This authorization does not include app changes, live data, deployment,
+publication or the implementation of unrelated roadmap features.
 
 ## Organization And Authority
 

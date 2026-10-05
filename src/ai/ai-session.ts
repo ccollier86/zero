@@ -19,6 +19,12 @@ import type {
   AITextResult,
 } from './ai-types';
 import type { AIAnyOutput, AIOutputSpec } from './ai-output';
+import { AIError } from './ai-errors';
+import {
+  snapshotAISessionControls,
+  snapshotAISessionMessage,
+  validateAISessionRetention,
+} from './ai-session-snapshot';
 
 interface AIConversationSessionRunner<
   Tools extends ToolSet,
@@ -36,6 +42,9 @@ export class AIConversationSessionBuilder<
   RuntimeContext extends Context = Context,
 > implements AIConversationSession<Tools, RuntimeContext> {
   private readonly messageList: AIMessage[] = [];
+  private readonly options: AIConversationSessionOptions<Tools, RuntimeContext>;
+  private tail: Promise<void> = Promise.resolve();
+  private historyRevision = 0;
 
   /**
    * Create a session over an AIService-like runner.
@@ -45,17 +54,23 @@ export class AIConversationSessionBuilder<
    */
   constructor(
     private readonly runner: AIConversationSessionRunner<Tools, RuntimeContext>,
-    private readonly options: AIConversationSessionOptions<Tools, RuntimeContext> = {}
+    options: AIConversationSessionOptions<Tools, RuntimeContext> = {}
   ) {
-    if (options.system) this.messageList.push({ role: 'system', content: options.system });
-    if (options.messages) this.messageList.push(...options.messages);
+    validateAISessionRetention(options);
+    const { messages, maxMessages, maxCharacters, ...generation } = options;
+    this.options = { ...snapshotAISessionControls(generation),
+      maxMessages: options.maxMessages, maxCharacters: options.maxCharacters,
+    };
+    if (this.options.system) this.messageList.push({ role: 'system', content: this.options.system });
+    if (messages) this.messageList.push(...messages.map(snapshotAISessionMessage));
     this.trim();
   }
 
   /** Append a message to the local history and apply configured bounds. */
   append(message: AIMessage): this {
-    this.messageList.push(message);
-    this.trim();
+    const snapshot = snapshotAISessionMessage(message);
+    this.historyRevision += 1;
+    this.appendOwned(snapshot);
     return this;
   }
 
@@ -71,11 +86,12 @@ export class AIConversationSessionBuilder<
 
   /** Return the current bounded message list. */
   messages(): readonly AIMessage[] {
-    return [...this.messageList];
+    return this.messageList.map(snapshotAISessionMessage);
   }
 
   /** Clear all messages except the configured system message, when present. */
   clear(): this {
+    this.historyRevision += 1;
     this.messageList.length = 0;
     if (this.options.system) this.messageList.push({ role: 'system', content: this.options.system });
     return this;
@@ -83,22 +99,42 @@ export class AIConversationSessionBuilder<
 
   /**
    * Append one user input, generate a response with all current messages, and
-   * append the assistant text result back into the local history.
+   * append the assistant text result back into the local history. Sends execute
+   * FIFO within this session; manual history replacement fences old completions.
    */
   async send<Output extends AIOutputSpec = AIAnyOutput>(
     content: AIMessageContent,
     options: Omit<AIGenerationOptions<Tools, RuntimeContext, Output>, 'tools'> = {}
   ): Promise<AITextResult<Tools, RuntimeContext, Output>> {
-    this.user(content);
-    const result = await this.runner.generateConversation({
-      ...this.options,
-      ...options,
-      messages: this.messageList,
-      tools: this.options.tools,
-      toolChoice: this.options.toolChoice,
+    const message = snapshotAISessionMessage({ role: 'user', content });
+    const controls = snapshotAISessionControls(options);
+    const revision = this.historyRevision;
+    const operation = this.tail.then(async () => {
+      if (revision !== this.historyRevision) {
+        throw new AIError('Session history changed before the queued request started.', 'AI_REQUEST_ABORTED', 499);
+      }
+      this.appendOwned(message);
+      const result = await this.runner.generateConversation({
+        ...this.options,
+        ...controls,
+        messages: this.messages(),
+        tools: this.options.tools,
+        toolChoice: this.options.toolChoice,
+      });
+      if (revision === this.historyRevision) {
+        this.appendOwned({ role: 'assistant', content: result.text });
+      }
+      return result;
     });
-    this.assistant(result.text);
-    return result;
+    // Only the queue dependency consumes failure; the caller's operation keeps
+    // its rejection, and later work is not poisoned by an earlier failed turn.
+    this.tail = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private appendOwned(message: AIMessage): void {
+    this.messageList.push(message);
+    this.trim();
   }
 
   private trim(): void {

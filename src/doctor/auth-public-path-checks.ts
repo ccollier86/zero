@@ -14,7 +14,14 @@ export function authPublicPathFindings(
   if (resolved.auth === false || resolved.routeAuth === 'explicit') return [];
   let auth;
   try {
-    auth = resolveAuthBehaviorConfig(resolved.auth);
+    // Managed token TTLs belong to createApp, not the strict Guardian behavior
+    // object. Their presence must not silently suppress unrelated path checks.
+    const {
+      accessTokenTTL: _accessTokenTTL,
+      refreshTokenTTL: _refreshTokenTTL,
+      ...behavior
+    } = resolved.auth;
+    auth = resolveAuthBehaviorConfig(behavior);
   } catch {
     // The owning config check reports the invalid auth value. Doctor checks
     // must remain composable rather than turning one bad field into a crash.

@@ -11,10 +11,10 @@ import type { Table } from '@tanstack/react-table';
 export function exportDataTableCsv<TData>(table: Table<TData>, filename: string) {
   const columns = table.getVisibleFlatColumns();
   const headers = columns.map((column) =>
-    typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id,
+    escapeCsv(typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id),
   );
   const rows = table.getFilteredRowModel().rows.map((row) =>
-    columns.map((column) => escapeCsv(String(row.getValue(column.id) ?? ''))),
+    columns.map((column) => escapeCsv(row.getValue(column.id))),
   );
 
   const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
@@ -27,9 +27,16 @@ export function exportDataTableCsv<TData>(table: Table<TData>, filename: string)
   URL.revokeObjectURL(url);
 }
 
-function escapeCsv(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
+function escapeCsv(value: unknown): string {
+  const text = String(value ?? '');
+  // Keep actual numeric cells numeric. Formula-looking text is a literal
+  // spreadsheet value, not an instruction: quote it with apostrophe + tab as
+  // defense in depth for spreadsheet import and Excel save/reopen behavior.
+  // Leading whitespace/control and locale variants must not bypass the guard.
+  const literalText = typeof value !== 'number' && typeof value !== 'bigint'
+    && (/^\s*[=+\-@＝＋－＠]/u.test(text) || /^[\u0000-\u001f]/u.test(text));
+  const content = literalText ? `'\t${text}` : text;
+  return literalText || /[",\r\n]/u.test(content)
+    ? `"${content.replaceAll('"', '""')}"`
+    : content;
 }

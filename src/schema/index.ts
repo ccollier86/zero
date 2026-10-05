@@ -1,4 +1,5 @@
 export { field } from './field-types';
+export { SchemaConfigurationError } from './schema-configuration-error';
 export type {
   FieldType,
   FieldMeta,

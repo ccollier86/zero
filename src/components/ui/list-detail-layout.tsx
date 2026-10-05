@@ -4,8 +4,9 @@ import * as React from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Button } from '#zero/components/ui/button';
-import { Separator } from '#zero/components/ui/separator';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './resizable';
 import { cn } from '#zero/lib/utils';
+import { useListDetailPanels } from './use-list-detail-panels';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,10 @@ export interface ListDetailLayoutProps {
   listWidth?: string;
   /** Width ratio for detail panel. Default: '2fr' */
   detailWidth?: string;
+  /** Desktop detail visibility; mobile selected-record inspection remains independent. Default: true. */
+  detailVisible?: boolean;
+  /** Enable a pointer/keyboard desktop separator. Existing widths apply until resized. */
+  resizable?: boolean;
   className?: string;
 }
 
@@ -59,19 +64,25 @@ function ListDetailLayout({
   detail,
   bottomBar,
   hasSelection = false,
-  mobileDetailOpen = hasSelection,
+  mobileDetailOpen,
   onMobileBack,
   mobileBackLabel = 'Back to list',
   selectedKey,
   listWidth = '3fr',
   detailWidth = '2fr',
+  detailVisible = true,
+  resizable = false,
   className,
 }: ListDetailLayoutProps) {
-  const showMobileDetail = hasSelection && mobileDetailOpen;
+  const [mobileDismissed, setMobileDismissed] = React.useState(false);
+  const showMobileDetail = hasSelection && (mobileDetailOpen ?? !mobileDismissed);
   const listPanelRef = React.useRef<HTMLDivElement>(null);
   const mobileBackRef = React.useRef<HTMLButtonElement>(null);
   const restoreFocusRef = React.useRef<HTMLElement | null>(null);
   const previousMobileDetailOpenRef = React.useRef(false);
+  const panels = useListDetailPanels(listWidth, detailWidth, detailVisible, showMobileDetail);
+  const canResize = resizable && detailVisible && !panels.mobile;
+  React.useEffect(() => { setMobileDismissed(false); }, [hasSelection, selectedKey]);
 
   const rememberListTarget = React.useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) return;
@@ -94,6 +105,7 @@ function ListDetailLayout({
   }, [showMobileDetail]);
 
   const handleMobileBack = React.useCallback(() => {
+    if (mobileDetailOpen === undefined) setMobileDismissed(true);
     onMobileBack?.();
     requestAnimationFrame(() => {
       const listPanel = listPanelRef.current;
@@ -106,21 +118,30 @@ function ListDetailLayout({
       if (isVisiblyRendered(fallback)) fallback.focus();
       else if (isVisiblyRendered(listPanel)) listPanel.focus();
     });
-  }, [onMobileBack]);
+  }, [mobileDetailOpen, onMobileBack]);
 
   return (
     <div
       data-slot="list-detail-layout"
-      className={cn('flex h-full flex-col', className)}
+      className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden', className)}
     >
       {/* One shared tree prevents duplicate effects, form state, and DOM IDs. */}
-      <div
-        className="flex min-h-0 flex-1 flex-col md:grid"
-        style={{ gridTemplateColumns: `${listWidth} auto ${detailWidth}` }}
+      <ResizablePanelGroup
+        elementRef={panels.elementRef}
+        groupRef={panels.groupRef}
+        orientation={panels.mobile ? 'vertical' : 'horizontal'}
+        disabled={!canResize}
+        onLayoutChanged={panels.onLayoutChanged}
+        data-slot="list-detail-panes"
+        className="min-h-0 min-w-0 flex-1 overflow-hidden"
       >
         {/* List panel */}
+        <ResizablePanel id={panels.listId} minSize={canResize ? '12rem' : '0%'}
+          maxSize={panels.listVisible ? '100%' : '0%'} aria-hidden={!panels.listVisible}
+          inert={!panels.listVisible} className="flex min-h-0 min-w-0 flex-col" style={{ overflow: 'hidden' }}>
         <div
           ref={listPanelRef}
+          data-slot="list-detail-list"
           tabIndex={-1}
           className={cn(
             'min-h-0 min-w-0 flex-1 overflow-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
@@ -131,22 +152,29 @@ function ListDetailLayout({
         >
           {list}
         </div>
+        </ResizablePanel>
 
         {/* Vertical separator */}
-        <Separator orientation="vertical" className="hidden md:block" />
+        <ResizableHandle aria-label="Resize list and detail panels" disabled={!canResize}
+          withHandle={canResize} className={cn('hidden md:flex', (!detailVisible || panels.mobile) && 'md:hidden', canResize && 'w-2 bg-muted/15 hover:bg-accent')} />
 
         {/* Detail panel */}
-        <div className={cn(
-          'relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex',
+        <ResizablePanel id={panels.detailId} minSize={canResize ? '16rem' : '0%'}
+          maxSize={panels.detailShown ? '100%' : '0%'} aria-hidden={!panels.detailShown}
+          inert={!panels.detailShown} className="flex min-h-0 min-w-0 flex-col" style={{ overflow: 'hidden' }}>
+        <div data-slot="list-detail-detail" className={cn(
+          'relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
           showMobileDetail ? 'flex' : 'hidden',
+          detailVisible ? 'md:flex' : 'md:hidden',
         )}>
-          {showMobileDetail && onMobileBack && (
+          {showMobileDetail && (
             <div className="shrink-0 border-b border-border bg-background px-2 py-1.5 md:hidden">
               <Button
                 ref={mobileBackRef}
                 type="button"
                 variant="ghost"
                 size="sm"
+                disabled={mobileDetailOpen !== undefined && !onMobileBack}
                 onClick={handleMobileBack}
               >
                 <ArrowLeft aria-hidden="true" />
@@ -161,17 +189,19 @@ function ListDetailLayout({
               initial="initial"
               animate="animate"
               exit="exit"
-              className="h-full min-h-0 flex-1"
+              data-slot="list-detail-detail-scroll"
+              className="min-h-0 min-w-0 flex-1 overflow-auto"
             >
               {detail}
             </motion.div>
           </AnimatePresence>
         </div>
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       {/* Bottom bar */}
       {bottomBar && (
-        <div className="shrink-0 border-t border-border">{bottomBar}</div>
+        <div data-slot="list-detail-bottom-bar" className="z-10 shrink-0 border-t border-border bg-background">{bottomBar}</div>
       )}
     </div>
   );

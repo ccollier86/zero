@@ -67,6 +67,8 @@ const defaultZvecLoader: ZvecModuleLoader = () => import('@zvec/zvec');
 export interface ZvecAdapterOptions {
   config: ResolvedVectorIndexConfig;
   loader?: ZvecModuleLoader;
+  /** Owning app emitter; standalone use preserves the ambient compatibility default. */
+  emitCode?: typeof emitPlatformCode;
 }
 
 /** zvec-backed implementation of one Zero vector index. */
@@ -74,6 +76,7 @@ export class ZvecAdapter implements VectorIndexStore {
   readonly config: ResolvedVectorIndexConfig;
 
   private readonly loader: ZvecModuleLoader;
+  private readonly emitCode: typeof emitPlatformCode;
   private module: ZvecModule | null = null;
   private collection: ZVecCollection | null = null;
   private initialization: Promise<ZVecCollection> | null = null;
@@ -82,6 +85,7 @@ export class ZvecAdapter implements VectorIndexStore {
   constructor(options: ZvecAdapterOptions) {
     this.config = options.config;
     this.loader = options.loader ?? defaultZvecLoader;
+    this.emitCode = options.emitCode ?? emitPlatformCode;
   }
 
   /** Insert or update records in zvec after validating vector dimensions. */
@@ -229,10 +233,10 @@ export class ZvecAdapter implements VectorIndexStore {
       emitVectorIndexReady({
         index: this.config.name,
         documents: this.collection.stats.docCount,
-      });
+      }, this.emitCode);
       return this.collection;
     } catch (error) {
-      emitPlatformCode(OBS_CODES.VECTOR_INDEX_FAILED, {
+      this.emitCode(OBS_CODES.VECTOR_INDEX_FAILED, {
         error,
         metadata: { index: this.config.name, path: this.config.path },
       });

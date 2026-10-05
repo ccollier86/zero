@@ -13,6 +13,8 @@ interface OTPInputProps {
   value: string;
   onChange: (value: string) => void;
   onComplete?: (value: string) => void;
+  /** Prevent editing or completing another code while an operation is pending. */
+  disabled?: boolean;
   error?: boolean;
   className?: string;
 }
@@ -61,6 +63,7 @@ function OTPInput({
   value,
   onChange,
   onComplete,
+  disabled = false,
   error = false,
   className,
 }: OTPInputProps) {
@@ -77,6 +80,7 @@ function OTPInput({
         value={value}
         onChange={onChange}
         onComplete={onComplete}
+        disabled={disabled}
         maxLength={length}
         containerClassName="flex min-w-full w-max items-center justify-center gap-1 sm:gap-1.5"
         render={({ slots }) => (

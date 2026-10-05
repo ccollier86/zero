@@ -82,7 +82,7 @@ export function isEmailDeliveryReady(
   if (typeof config.provider === 'object') return true;
   const provider = config.provider ?? 'resend';
   if (provider === 'resend') {
-    return Boolean(config.resend?.apiKey?.trim() || Bun.env.RESEND_API_KEY?.trim());
+    return candidate.provider instanceof ResendEmailProvider && candidate.provider.isConfigured();
   }
 
   return provider !== 'noop';

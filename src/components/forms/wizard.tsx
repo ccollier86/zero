@@ -1,5 +1,11 @@
 'use client';
 
+/**
+ * Owns schema-backed multi-step form presentation and navigation. Step
+ * configuration is validated before rendering; useForm owns values and submit
+ * state, while the caller owns completion effects and backend authorization.
+ */
+
 import * as React from 'react';
 import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,6 +36,11 @@ export interface WizardStep {
 
 export interface WizardProps<T extends Row = Row> {
   schema: SchemaDescriptor;
+  /**
+   * At least one step; every declared field must exist in the schema.
+   * Replacing the schema or step titles/fields resets navigation and completion,
+   * not the form instance. Equivalent step arrays retain navigation.
+   */
   steps: WizardStep[];
   defaultValues?: Partial<T>;
   onComplete: (data: T) => void | Promise<void>;
@@ -153,6 +164,11 @@ const slideTransition = {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
+/**
+ * Presents validated schema fields across steps, retaining form values when the
+ * step layout changes while reconciling navigation before rendering that layout.
+ * Completion delegates to useForm's awaited caller-owned onComplete callback.
+ */
 function Wizard<T extends Row = Row>({
   schema,
   steps,
@@ -163,9 +179,36 @@ function Wizard<T extends Row = Row>({
   columns = 1,
   className,
 }: WizardProps<T>) {
-  const [currentStep, setCurrentStep] = useState(0);
-  const [direction, setDirection] = useState(0);
-  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+  if (steps.length === 0) {
+    throw new Error('Wizard requires at least one step.');
+  }
+  for (const [stepIndex, step] of steps.entries()) {
+    for (const fieldName of step.fields) {
+      if (!schema.fields.has(fieldName)) {
+        throw new Error(
+          `Wizard step ${stepIndex + 1} references unknown schema field '${fieldName}'.`,
+        );
+      }
+    }
+  }
+
+  const stepLayout = JSON.stringify(steps.map(({ title, fields }) => [title, fields]));
+  const [navigation, setNavigation] = useState(() => ({
+    schema,
+    stepLayout,
+    currentStep: 0,
+    direction: 0,
+    completedSteps: new Set<number>(),
+  }));
+  // Reconcile before indexing/rendering the replacement props. An effect alone
+  // would leave one render using a stale index (and potentially crash).
+  const configurationChanged = navigation.schema !== schema
+    || navigation.stepLayout !== stepLayout;
+  const activeNavigation = configurationChanged
+    ? { schema, stepLayout, currentStep: 0, direction: 0, completedSteps: new Set<number>() }
+    : navigation;
+  if (configurationChanged) setNavigation(activeNavigation);
+  const { currentStep, direction, completedSteps } = activeNavigation;
 
   const form = useForm<T>({
     schema,
@@ -209,8 +252,11 @@ function Wizard<T extends Row = Row>({
 
   const goToStep = useCallback(
     (target: number) => {
-      setDirection(target > currentStep ? 1 : -1);
-      setCurrentStep(target);
+      setNavigation((previous) => ({
+        ...previous,
+        direction: target > currentStep ? 1 : -1,
+        currentStep: target,
+      }));
       onStepChange?.(target);
     },
     [currentStep, onStepChange],
@@ -218,7 +264,10 @@ function Wizard<T extends Row = Row>({
 
   const handleNext = useCallback(() => {
     if (!validateCurrentStep()) return;
-    setCompletedSteps((prev) => new Set(prev).add(currentStep));
+    setNavigation((previous) => ({
+      ...previous,
+      completedSteps: new Set(previous.completedSteps).add(currentStep),
+    }));
     goToStep(currentStep + 1);
   }, [validateCurrentStep, currentStep, goToStep]);
 
@@ -228,7 +277,10 @@ function Wizard<T extends Row = Row>({
 
   const handleSubmit = useCallback(async () => {
     if (!validateCurrentStep()) return;
-    setCompletedSteps((prev) => new Set(prev).add(currentStep));
+    setNavigation((previous) => ({
+      ...previous,
+      completedSteps: new Set(previous.completedSteps).add(currentStep),
+    }));
     await form.handleSubmit();
   }, [validateCurrentStep, currentStep, form]);
 

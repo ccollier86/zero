@@ -106,7 +106,7 @@ export async function executeAIGenerateVideo(
       poll,
       webhook,
     });
-    const output = validateAIGenerateVideoResult(result, maxBytes);
+    const output = validateAIGenerateVideoResult(result, maxBytes, validated.n);
     telemetry.complete();
     return output;
   } catch (error) {

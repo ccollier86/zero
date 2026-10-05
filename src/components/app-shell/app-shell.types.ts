@@ -152,6 +152,8 @@ export interface AppShellProps {
   currentPath?: string;
   className?: string;
   contentClassName?: string;
+  /** Bounded independently scrolling workspace, or natural document flow. */
+  contentMode?: 'workspace' | 'document';
   children: React.ReactNode;
   defaultSidebarOpen?: boolean;
   sidebarOpen?: boolean;

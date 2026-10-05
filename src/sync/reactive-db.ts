@@ -183,10 +183,10 @@ export interface ReactiveDBRowScope {
 }
 
 /**
- * ReactiveDB — SQLite wrapper that makes every write observable.
+ * ReactiveDB — SQLite wrapper that makes managed row writes observable.
  *
  * Define a table, get prepared CRUD statements and change events for free.
- * One instance per application.
+ * Each instance belongs to one concrete data plane; Fabric may own many.
  *
  * File-backed instances share durable sequence allocation through SQLite.
  * Listeners and sync epochs remain instance-local, while the opt-in external

@@ -486,6 +486,12 @@ describe('Data Studio app composition', () => {
       expect(replayedRow).toEqual(createdRow);
       const rowId = createdRow.body.row.rowId as string;
       expect(rowId).toBeString();
+      const insertedPage = await jsonRequest(baseUrl, 'GET', `${BASE_PATH}/tables/${tableId}/rows`, manager.accessToken);
+      expect(insertedPage.status).toBe(200);
+      expect(Number.isSafeInteger(insertedPage.body.readSequence)).toBe(true);
+      expect(insertedPage.body.rows[0]?.revision).toBe(1);
+      const stablePage = await jsonRequest(baseUrl, 'GET', `${BASE_PATH}/tables/${tableId}/rows`, manager.accessToken);
+      expect(stablePage.body.readSequence).toBe(insertedPage.body.readSequence);
 
       const inserted = await waitForDataStudioRowChange(
         sync,
@@ -524,6 +530,9 @@ describe('Data Studio app composition', () => {
           },
         },
       });
+      const replacedPage = await jsonRequest(baseUrl, 'GET', `${BASE_PATH}/tables/${tableId}/rows`, manager.accessToken);
+      expect(replacedPage.body.readSequence).toBeGreaterThan(insertedPage.body.readSequence);
+      expect(replacedPage.body.rows[0]?.revision).toBe(2);
       const updated = await waitForDataStudioRowChange(
         sync,
         tableId,

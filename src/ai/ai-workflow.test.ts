@@ -188,6 +188,60 @@ describe('createAIWorkflowHandler', () => {
     await expect(pending).rejects.toBe(reason);
     expect(providerCalls).toBe(0);
   });
+
+  test('forwards every declared provider-neutral request control without handler settings', async () => {
+    let request: AIGenerateConversationRequest | undefined;
+    const controls = {
+      model: 'smart', maxRetries: 0, timeout: 1234,
+      headers: { 'x-workflow': 'captured' }, temperature: 0.2, topP: 0.8,
+      topK: 20, presencePenalty: 0.1, frequencyPenalty: 0.3, seed: 42,
+      reasoning: 'low' as const, maxOutputTokens: 256, stopSequences: ['END'],
+      providerOptions: { synthetic: { mode: 'test' } }, metadata: { source: 'test' },
+    };
+    const handler = createAIWorkflowHandler({
+      ...controls, output: 'text', prompt: 'A prompt.',
+      service: { async generateConversation(input) {
+        request = input;
+        return { text: 'ok' } as AITextResult;
+      } },
+    });
+    await handler({
+      input: {}, workflowInput: {}, instanceId: 'wf_controls', stepIndex: 0,
+      attempt: 0, execution: TEST_EXECUTION, zero: null, assertCurrentAuthority() {},
+    });
+    expect(request).toMatchObject(controls);
+    expect(request).not.toHaveProperty('service');
+    expect(request).not.toHaveProperty('output');
+    expect(request).not.toHaveProperty('prompt');
+  });
+
+  test('detaches configured controls before asynchronous prompt derivation', async () => {
+    let release!: (value: string) => void;
+    const prompt = new Promise<string>(resolve => { release = resolve; });
+    const headers = { 'x-workflow': 'original' };
+    const providerOptions = { synthetic: { mode: 'original' } };
+    const stopSequences = ['original'];
+    let request: AIGenerateConversationRequest | undefined;
+    const handler = createAIWorkflowHandler({
+      headers, providerOptions, stopSequences, prompt: () => prompt,
+      service: { async generateConversation(input) {
+        request = input;
+        return { text: 'ok' } as AITextResult;
+      } },
+    });
+    const pending = handler({
+      input: {}, workflowInput: {}, instanceId: 'wf_snapshot', stepIndex: 0,
+      attempt: 0, execution: TEST_EXECUTION, zero: null, assertCurrentAuthority() {},
+    });
+    headers['x-workflow'] = 'mutated';
+    providerOptions.synthetic.mode = 'mutated';
+    stopSequences[0] = 'mutated';
+    release('Prompt.');
+    await pending;
+    expect(request?.headers).toEqual({ 'x-workflow': 'original' });
+    expect(request?.providerOptions).toEqual({ synthetic: { mode: 'original' } });
+    expect(request?.stopSequences).toEqual(['original']);
+  });
 });
 
 const TEST_EXECUTION = Object.freeze({

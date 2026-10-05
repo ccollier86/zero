@@ -1,5 +1,7 @@
 # AppShell
 
+[Frontend index](./README.md) · [Master/detail layouts](./master-detail.md) · [Data Studio](../data-studio.md)
+
 `AppShell` is Zero's app-ready layout surface for dashboards, admin tools,
 internal apps, CRUD products, and data-driven workspaces. The default preset
 uses Zero's packaged Animate UI/Radix sidebar with an integrated inset header
@@ -128,6 +130,43 @@ Hide the row for full-screen tools:
 | `topbar` | Public flows or apps that need a top row without a sidebar. |
 | `minimal` | Login, reset password, public token flows, embedded tools. |
 | `custom` | Use the dashboard provider/inset but supply your own sidebar content. |
+
+## Content Height And Scrolling
+
+`contentMode` selects the shell's content-height contract:
+
+| Mode | Behavior | Preset default |
+| --- | --- | --- |
+| `workspace` | A viewport-bounded, shrinkable flex content area. Inner workspaces own scrolling rather than stretching the page. | `dashboard`, `auth-dashboard`, `simple-sidebar`, `custom` |
+| `document` | Natural-height document flow for long pages and forms. | `topbar`, `minimal` |
+
+```tsx
+<AppShell contentMode="workspace" nav={nav}>
+  <DataStudio />
+</AppShell>
+```
+
+Data Studio and the [master/detail components](./master-detail.md#bounded-workspace-composition)
+fill that available height, scroll the panes independently and keep bottom
+actions anchored. Intermediate app wrappers should use
+`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden`; page headings outside
+the workspace should be `shrink-0`. A wide inner grid scrolls inside its own
+region rather than widening the shell.
+
+For a long settings or document page under a dashboard preset, explicitly
+choose document mode:
+
+```tsx
+<AppShell contentMode="document" nav={nav}>
+  <SettingsPage />
+</AppShell>
+```
+
+Alternatively, retain workspace chrome and give the document a bounded
+scrolling child (`className="min-h-0 flex-1 overflow-auto"`). After upgrading,
+make this choice for pages that previously depended on dashboard content growing
+without a height constraint. The shell's header and navigation configuration
+remain unchanged; `contentClassName` still styles its inner content wrapper.
 
 ## Workspace Switcher
 

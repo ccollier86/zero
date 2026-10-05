@@ -50,6 +50,7 @@ export function useMutation<Args extends unknown[], Result>(
   const lifecycleRevisionRef = useRef(0);
   const nextOperationRef = useRef(0);
   const activeOperationsRef = useRef(new Set<number>());
+  const mountedRef = useRef(true);
   boundaryKeyRef.current = authorizationBoundary.key;
   boundaryReadyRef.current = authorizationBoundary.ready;
   const callbackBoundaryKey = authorizationBoundary.key;
@@ -64,16 +65,22 @@ export function useMutation<Args extends unknown[], Result>(
   metadataRef.current = options.metadata;
 
   useEffect(() => {
+    mountedRef.current = true;
     lifecycleRevisionRef.current += 1;
     activeOperationsRef.current.clear();
     setLoadedBoundaryKey(authorizationBoundary.key);
     setPending(false);
     setError(null);
     setResult(null);
+    return () => {
+      mountedRef.current = false;
+      lifecycleRevisionRef.current += 1;
+      activeOperationsRef.current.clear();
+    };
   }, [authorizationBoundary.key]);
 
   const reset = useCallback(() => {
-    if (!boundaryReadyRef.current
+    if (!mountedRef.current || !boundaryReadyRef.current
       || boundaryKeyRef.current !== callbackBoundaryKey) return;
     lifecycleRevisionRef.current += 1;
     activeOperationsRef.current.clear();
@@ -87,6 +94,7 @@ export function useMutation<Args extends unknown[], Result>(
   // scope A dispatch the newest scope-B action after an account or tenant
   // switch. The captured boundary key makes old handlers fail closed.
   const run = useCallback(async (...args: Args) => {
+    if (!mountedRef.current) throw new Error('Mutations are unavailable after the hook is unmounted.');
     if (!boundaryReadyRef.current
       || boundaryKeyRef.current !== callbackBoundaryKey) {
       throw new Error('Mutations are unavailable during an authorization scope transition.');
@@ -108,7 +116,7 @@ export function useMutation<Args extends unknown[], Result>(
 
     const scopeIsCurrent = () => boundaryReadyRef.current
       && boundaryKeyRef.current === operationBoundaryKey;
-    const stateIsCurrent = () => scopeIsCurrent()
+    const stateIsCurrent = () => mountedRef.current && scopeIsCurrent()
       && lifecycleRevisionRef.current === lifecycleRevision;
 
     try {
@@ -118,7 +126,18 @@ export function useMutation<Args extends unknown[], Result>(
       }
       if (stateIsCurrent()) {
         setResult(value);
-        onSuccess(value);
+        try {
+          await onSuccess(value);
+        } catch {
+          // The writer already accepted. A notification failure cannot turn
+          // that into a rejected mutation and invite a duplicate retry.
+          if (stateIsCurrent() && emitErrorsRef.current) {
+            reportMutationCallbackFailure('accepted-callback');
+          }
+        }
+        if (!scopeIsCurrent()) {
+          throw new Error('The authorization scope changed before the mutation completed.');
+        }
       }
       return value;
     } catch (err) {
@@ -127,8 +146,17 @@ export function useMutation<Args extends unknown[], Result>(
       }
       if (stateIsCurrent()) {
         setError(err);
-        onError(err);
-        if (emitErrorsRef.current) {
+        try {
+          await onError(err);
+        } catch {
+          if (stateIsCurrent() && emitErrorsRef.current) {
+            reportMutationCallbackFailure('error-callback');
+          }
+        }
+        if (!scopeIsCurrent()) {
+          throw new Error('The authorization scope changed before the mutation completed.');
+        }
+        if (stateIsCurrent() && emitErrorsRef.current) {
           emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
             error: err,
             metadata: metadataRef.current,
@@ -158,4 +186,11 @@ export function useMutation<Args extends unknown[], Result>(
     run,
     reset,
   };
+}
+
+/** Callback diagnostics never retain arbitrary notification messages or payloads. */
+function reportMutationCallbackFailure(stage: 'accepted-callback' | 'error-callback'): void {
+  emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
+    metadata: { surface: 'use-mutation', stage },
+  });
 }

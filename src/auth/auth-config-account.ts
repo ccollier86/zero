@@ -16,6 +16,7 @@ import type {
   ResolvedAuthBootstrapConfig,
   ResolvedAuthMfaConfig,
 } from './types';
+import { AuthError } from './types';
 import {
   assertOnlyKeys,
   assertOptionalBoolean,
@@ -159,6 +160,15 @@ export function normalizeAuthMfa(config: AuthMfaConfig = {}): ResolvedAuthMfaCon
     ['recoveryCodes', config.recoveryCodes],
   ] as const) {
     assertOptionalBoolean(value, `MFA config ${field}`);
+  }
+  for (const feature of ['rememberDevice', 'recoveryCodes'] as const) {
+    if (config[feature] === true) {
+      throw new AuthError(
+        `[auth] MFA config ${feature} is reserved and cannot be enabled.`,
+        'AUTH_CONFIG_UNSUPPORTED_FEATURE',
+        422,
+      );
+    }
   }
   assertOptionalString(config.challengeTTL, 'MFA config challengeTTL');
   assertOptionalString(config.challengeCooldown, 'MFA config challengeCooldown');

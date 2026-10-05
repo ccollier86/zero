@@ -16,6 +16,7 @@ import {
 } from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
 import type { DataTableServerPage } from './data-table-server-types';
+import { selectedDataTablePageRows } from './data-table-selection';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export function DataTablePagination<TData>({
     ? Boolean(serverPage?.hasMore) && (serverPage?.mode !== 'cursor' || serverPage.nextCursor != null)
     : table.getCanNextPage());
   const canJumpToLast = pageCount !== undefined && serverPage?.mode !== 'cursor';
+  const selectedCount = selectedDataTablePageRows(table).length;
 
   return (
     <div
@@ -64,9 +66,9 @@ export function DataTablePagination<TData>({
         {count > 0
           ? `Showing ${start}-${end}${totalRows === undefined ? '' : ` of ${totalRows}`}`
           : loading ? 'Loading records…' : 'No results'}
-        {table.getFilteredSelectedRowModel().rows.length > 0 && (
+        {selectedCount > 0 && (
           <span className="ml-2">
-            ({table.getFilteredSelectedRowModel().rows.length} selected)
+            ({selectedCount} selected)
           </span>
         )}
       </div>

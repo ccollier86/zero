@@ -97,6 +97,58 @@ afterAll(async () => {
 });
 
 describe('notification receipt routes', () => {
+  test('rejects malformed targeting, metadata and display enums without creating a notice', async () => {
+    const { token } = await createUser('admin');
+    const invalidBodies = [
+      { title: 'Invalid metadata syntax', metadata: '{' },
+      { title: 'Invalid metadata shape', metadata: '[]' },
+      { title: 'Invalid recipients syntax', targetType: 'users', targetValue: '{' },
+      { title: 'Invalid recipients shape', targetType: 'users', targetValue: '"recipient"' },
+      { title: 'Invalid empty recipients', targetType: 'users', targetValue: '[]' },
+      { title: 'Invalid recipient element', targetType: 'users', targetValue: '[1]' },
+      { title: 'Invalid target mode', targetType: 'unknown' },
+      { title: 'Invalid type', type: 'unknown' },
+      { title: 'Invalid priority', priority: 'unknown' },
+    ];
+    const countBefore = db.query('notifications').length;
+    for (const body of invalidBodies) {
+      const response = await fetch(`${baseUrl}/notifications`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect([400, 422]).toContain(response.status);
+    }
+    for (const path of ['/broadcast', '/notify/recipient', '/notify-role/member']) {
+      const response = await fetch(`${baseUrl}/notifications${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Invalid shortcut type', type: 'unknown' }),
+      });
+      expect(response.status).toBe(422);
+    }
+    expect(db.query('notifications').length).toBe(countBefore);
+  });
+
+  test('retains valid JSON-encoded recipients and metadata in the create contract', async () => {
+    const { user, token } = await createUser('admin');
+    const response = await fetch(`${baseUrl}/notifications`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Valid audience', type: 'success', priority: 'high',
+        targetType: 'users', targetValue: JSON.stringify([user.userId]),
+        metadata: JSON.stringify({ kind: 'synthetic' }),
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { notification: NotificationRecord };
+    expect(JSON.parse(body.notification.target_value!)).toEqual([user.userId]);
+    expect(JSON.parse(body.notification.metadata!)).toEqual({ kind: 'synthetic' });
+    expect(body.notification.type).toBe('success');
+    expect(body.notification.priority).toBe('high');
+  });
+
   test('canonical service aliases create, read, list, and delete notifications', async () => {
     const { user } = await createUser();
     const service = getNotificationService()!;

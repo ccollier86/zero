@@ -63,7 +63,7 @@ export function extractSimpleEqualityMetadata(filter: VectorFilter | undefined):
       metadata[field] = value;
       continue;
     }
-    if (isOperatorObject(value) && 'eq' in value && isVectorScalar(value.eq)) {
+    if (isOperatorObject(value) && 'eq' in value && (value.eq === null || isVectorScalar(value.eq))) {
       metadata[field] = value.eq;
     }
   }

@@ -13,7 +13,7 @@ import type { FieldDef } from './field-types';
  * });
  *
  * type Todo = InferSchemaType<typeof todoSchema>;
- * // { title: string; done?: boolean }
+ * // { title: string; done: boolean } — an optional default fills parsed output.
  * ```
  */
 export type InferSchemaType<T extends SchemaDescriptor> =

@@ -70,7 +70,10 @@ export class DefaultPlatformSQLiteService implements PlatformSQLiteService {
     this.emitTelemetry = resolved.emitTelemetry ?? true;
     this.observability = hooks.observability;
     this.statements = new StatementCache(this.raw, resolved.statementCacheSize);
-    this.transactions = new TransactionManager(this.raw);
+    this.transactions = new TransactionManager(this.raw, {
+      emitTelemetry: this.emitTelemetry,
+      observability: this.observability,
+    });
     this.snapshot = resolved.mode === 'hot' && resolved.snapshotPath
       ? new SnapshotManager(
           this.raw,

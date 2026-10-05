@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import {
   DataStudioOperationTracker,
   resolveDataStudioAccess,
@@ -14,6 +14,7 @@ import {
   type DataStudioTable,
 } from './data-studio-client';
 import { canonicalizeDataStudioMutationInput } from './data-studio-mutation-key';
+import { createHookContainer, installMinimalHookDom } from './test-fixtures/react-hook-dom';
 import {
   settlePostMutationRefreshes,
   useDataStudioMutations,
@@ -227,7 +228,10 @@ describe('Data Studio controller policy', () => {
       return null;
     }
 
-    renderToStaticMarkup(createElement(Capture));
+    const restore = installMinimalHookDom();
+    const root = createRoot(createHookContainer());
+    await act(async () => root.render(createElement(Capture)));
+    try {
     let markRefreshEntered!: () => void;
     let releaseRefresh!: () => void;
     const refreshEntered = new Promise<void>((resolve) => { markRefreshEntered = resolve; });
@@ -276,6 +280,10 @@ describe('Data Studio controller policy', () => {
       'rows', 'table',
       'rows', 'table',
     ]);
+    } finally {
+      await act(async () => root.unmount());
+      restore();
+    }
   });
 
   test('bounds a hung post-commit refresh without rejecting the verified mutation', async () => {

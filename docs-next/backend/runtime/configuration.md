@@ -1,0 +1,122 @@
+---
+id: zero.runtime.configuration
+type: reference
+audience: [developer, agent, operator]
+owner: platform-runtime
+status: draft
+visibility: internal
+system: platform-runtime
+feature: configuration
+maturity: supported
+applies_to: ["2.1.1 source; new documentation under review"]
+modes: [managed-server, standalone-extension]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.1.1"
+  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  snapshot: clean
+  date: "2026-10-05"
+  evidence_level: source-observed
+---
+
+# Runtime And Extension Configuration
+
+[Runtime index](./index.md) · [Documentation index](../../index.md)
+
+Import helpers/types from `@zero/framework/server`. The declarations below are
+trusted server code; they are read during construction/composition, not loaded
+as user-authored scripts from a database. Changing runtime declarations normally
+requires re-composition/restart and any relevant data migration.
+
+## Managed Directories
+
+| AppConfig option | Omitted value | Responsibility |
+| --- | --- | --- |
+| appDir | ./app | file-router/frontend application |
+| outDir | ./.build | generated build output |
+| generatedDir | ./.zero/generated | generated platform glue |
+| serverPluginsDir | ./server/plugins | app plugin modules |
+| serverMiddlewareDir | ./server/middleware | app middleware modules |
+| serverEndpointsDir | ./server/endpoints | endpoint modules |
+| serverRoutesDir | ./server/routes | grouped/raw route modules |
+| serverResourcesDir | ./server/resources | declarative resources |
+| port |3000| resolved listener setting used by the entry point |
+
+Each server discovery directory accepts false to disable its area. Do not use
+false for an unrelated string-only path option. Configured paths are admitted
+for isolation before managed data/build work. A directory is not a URL prefix.
+See [discovery](./discovery.md) for execution and export conventions.
+
+There is no generic runtime config-file deep merge, database-backed configuration
+editor or `serverOnly:true` switch supplied by this reference. Subsystem
+configuration owns its actual environment binding and precedence.
+
+## Endpoint Options
+
+| Option | Contract |
+| --- | --- |
+| method | required GET/POST/PUT/PATCH/DELETE/OPTIONS/HEAD or lowercase form |
+| path | required absolute-style path; relative to enclosing router prefix |
+| handler | required callback over typed Zero lifecycle context; sync or async result |
+| name | optional stable diagnostic/plugin name |
+| auth | shared AccessRequirement; omitted inherits parent/root optional policy |
+| body, query, params, headers | transport validation schemas; static schema types infer handler inputs |
+| cookie, response | Elysia cookie/response validation contracts |
+| detail | Elysia route metadata |
+| parse, transform, beforeHandle, afterHandle, mapResponse, error | lifecycle callback or callback array; may be async |
+
+Access admission is prepended before app beforeHandle work. Protected multipart
+admission also runs before file parsing. Custom hooks must preserve that boundary
+and safe error handling; [endpoint guidance](./endpoints.md) owns the flow.
+
+## Router Options
+
+`defineRouter` accepts required name, optional prefix/auth, and endpoints/routes
+child arrays. When both child arrays are present, endpoints precede routes.
+Prefixes compose through nested routers. Names govern Elysia deduplication;
+use stable distinct names rather than random names for identical plugins.
+See [router policy](./routers.md).
+
+## Middleware Options
+
+`defineMiddleware` accepts required name/run, optional top-level path/auth and
+optional structured matcher. `run` may be async. The matcher accepts path,
+method, predicate, auth, role and properties. Explicit matcher fields take
+precedence over matching legacy aliases.
+
+Path/method/predicate determine applicability; auth/role/properties enforce
+policy on a matching request. Scalar property requirements accept direct values,
+arrays or equals/in/not/exists objects. Trusted predicates may execute code and
+must not be mistaken for browser-supplied rules. The [middleware guide](./middleware.md)
+owns matching/enforcement and credential-reset behavior.
+
+## Plugin Options
+
+`defineZeroPlugin` requires name and setup. Setup receives app and the privileged
+app-local setup zero services, may be async, and returns an Elysia plugin or void.
+The compiler awaits it and mounts the returned child or supplied app. It is not
+the same capability set later exposed to a tenant request.
+
+Advanced bundle/app helpers accept an extension array, optional stable name and
+an app-local runtime binding. `applyServerExtension` additionally accepts inherited
+auth and route-prefix context. Managed discovery supplies these bindings; do not
+import an internal runtime constructor merely to avoid normal composition.
+
+## Read Time, Projection And Diagnostics
+
+Declarations normalize method/path/access during construction and compile against
+the app-local Guardian kernel at composition. Live request admission still
+revalidates current authority; compiled configuration is not an everlasting grant.
+The server configuration is not serialized wholesale into browser config.
+
+Configuration and resource discovery imports execute trusted modules. Doctor
+uses selected trusted config/resource paths; it is not a static-only guarantee.
+Run synthetic fixtures without env-file loading when testing declarations.
+
+## Related Guides And Next Steps
+
+- [Composition](./composition.md) separates configuration from startup/listening.
+- [Discovery](./discovery.md) explains actual module execution/order.
+- [Service boundaries](../../concepts/service-boundaries.md) separates setup,
+  request and verified background capabilities.
+- [Roadmap](./roadmap.md) labels proposed configuration/scaffolding work.

@@ -231,12 +231,19 @@ export class DataStudioService {
         ? {}
         : { sortDirection: request.sortDirection }),
     };
-    return await this.#query(
-      DATA_STUDIO_QUERY_NAMES.listRows,
-      input,
-      readDataStudioRowPage,
-      request.signal,
-    );
+    try {
+      // The token belongs to the same actor read snapshot as this bounded page.
+      // No extra query, shared counter, database migration or authority bypass.
+      const result = await this.#data.query(
+        DATA_STUDIO_QUERY_NAMES.listRows,
+        dataStudioOperationPayload(input),
+        { signal: request.signal, consistency: { mode: 'strong' } },
+      );
+      const page = readDataStudioOperationResult(result.value, readDataStudioRowPage);
+      return Object.freeze({ ...page, readSequence: result.sequence.seq });
+    } catch (error) {
+      throw mapDataStudioDatabaseFailure(error, 'read');
+    }
   }
 
   async getRow(

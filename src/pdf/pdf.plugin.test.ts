@@ -7,8 +7,9 @@ import { resolvePdfConfig } from './pdf-config';
 import { createPdfPlugin, getPdfService } from './pdf.plugin';
 import { PdfService } from './pdf-service';
 import type { PdfRenderer, PreparedPdfRenderInput } from './pdf-types';
-import { ZERO_PDF_SERVICE } from '../runtime/service-keys';
+import { ZERO_OBSERVABILITY_RUNTIME, ZERO_PDF_SERVICE } from '../runtime/service-keys';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import { MemoryEventStore } from '../observability';
 
 describe('createPdfPlugin', () => {
   test('decorates handlers and closes the renderer on app stop', async () => {
@@ -68,6 +69,8 @@ describe('createPdfPlugin', () => {
     if (config === false) throw new Error('Expected PDF config.');
     const service = new PdfService(config, { renderer });
     const runtime = new ZeroAppRuntime('pdf-stop-barrier');
+    const events = new MemoryEventStore();
+    runtime.set(ZERO_OBSERVABILITY_RUNTIME, { sink: events, store: events, config: { console: false } });
     createPdfPlugin({ config, service, runtime });
 
     const disposing = runtime.dispose();

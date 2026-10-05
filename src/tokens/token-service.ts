@@ -25,7 +25,7 @@ import type {
 } from './token-types';
 import { PLATFORM_TOKEN_DEFAULTS, PlatformTokenError } from './token-types';
 import { PlatformTokenStore, type StoredPlatformActionTokenRecord, type StoredPlatformResumeTokenRecord } from './token-store';
-import { createOpaqueToken, hashToken, parseTokenTTL } from './token-utils';
+import { createOpaqueToken, hashToken, parseTokenTTL, tokenExpiryAt } from './token-utils';
 
 /** Stable emission boundary for standalone or app-bound platform token services. */
 export type PlatformTokenCodeEmitter = typeof emitPlatformCode;
@@ -78,14 +78,14 @@ export class PlatformTokenService {
     }
 
     const rawToken = createOpaqueToken();
-    const ttlMs = parseTokenTTL(options.ttl ?? this.actionTokenTTL, 'action token TTL');
+    const expiresAt = tokenExpiryAt(now, options.ttl ?? this.actionTokenTTL, 'action token TTL');
     const stored = this.store.storeActionToken({
       tokenId: `zat_${crypto.randomUUID()}`,
       purpose,
       tokenHash: hashToken(rawToken),
       subject,
       scope,
-      expiresAt: now + ttlMs,
+      expiresAt,
       createdAt: now,
       createdBy: options.createdBy ?? null,
       metadata,
@@ -185,7 +185,7 @@ export class PlatformTokenService {
     const subject = normalizeSubject(options.subject);
     const now = Date.now();
     const rawToken = createOpaqueToken();
-    const ttlMs = parseTokenTTL(options.ttl ?? this.resumeTokenTTL, 'resume token TTL');
+    const expiresAt = tokenExpiryAt(now, options.ttl ?? this.resumeTokenTTL, 'resume token TTL');
 
     this.cleanupExpiredResumeTokens();
     const stored = this.store.storeResumeToken({
@@ -194,7 +194,7 @@ export class PlatformTokenService {
       tokenHash: hashToken(rawToken),
       resource,
       subject,
-      expiresAt: now + ttlMs,
+      expiresAt,
       createdAt: now,
       createdBy: options.createdBy ?? null,
       metadata: options.metadata ?? {},
@@ -256,7 +256,7 @@ export class PlatformTokenService {
     const stored = this.requireValidResumeTokenByHash(hashToken(rawToken), options);
     const rawReplacement = createOpaqueToken();
     const now = Date.now();
-    const ttlMs = parseTokenTTL(options.ttl ?? this.resumeTokenTTL, 'resume token TTL');
+    const expiresAt = tokenExpiryAt(now, options.ttl ?? this.resumeTokenTTL, 'resume token TTL');
     const replacement = this.store.rotateResumeToken({
       previousTokenId: stored.tokenId,
       tokenId: `zrt_${crypto.randomUUID()}`,
@@ -264,7 +264,7 @@ export class PlatformTokenService {
       tokenHash: hashToken(rawReplacement),
       resource: stored.resource,
       subject: stored.subject,
-      expiresAt: now + ttlMs,
+      expiresAt,
       createdAt: now,
       createdBy: options.createdBy ?? stored.createdBy,
       rotatedFrom: stored.tokenId,
@@ -359,7 +359,7 @@ export class PlatformTokenService {
       throw new PlatformTokenError('Action token has already been used', 'TOKEN_CONSUMED', 400);
     }
 
-    if (stored.expiresAt < Date.now()) {
+    if (stored.expiresAt <= Date.now()) {
       emitTokenRejected(this.emitCode, 'action', stored, 'expired');
       throw new PlatformTokenError('Action token has expired', 'TOKEN_EXPIRED', 400);
     }
@@ -394,7 +394,7 @@ export class PlatformTokenService {
       throw new PlatformTokenError('Resume token has been revoked', 'TOKEN_REVOKED', 400);
     }
 
-    if (stored.expiresAt < Date.now()) {
+    if (stored.expiresAt <= Date.now()) {
       emitTokenRejected(this.emitCode, 'resume', stored, 'expired');
       throw new PlatformTokenError('Resume token has expired', 'TOKEN_EXPIRED', 400);
     }

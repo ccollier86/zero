@@ -10,6 +10,7 @@ import {
 } from '../sync/types';
 import { assertIdentityFields } from '../sync/identity';
 import { decodeFieldValue, encodeFieldValue } from './field-codecs';
+import { attachDeclaredTableSyncMode } from './table-sync-metadata';
 import {
   attachGuardianTableReferences,
   type GuardianFieldReference,
@@ -18,13 +19,16 @@ import {
 
 export type { ClientTableDef };
 
+/** Preserve each field's logical validator rather than widening every entry to unknown. */
+type FieldSchemas<T extends Record<string, FieldDef>> = { -readonly [Name in keyof T]: T[Name]['_schema'] };
+
 export interface SchemaDescriptor<
   T extends Record<string, FieldDef> = Record<string, FieldDef>,
   TPk extends string = string,
 > {
   /** Valibot object schema for full-record validation. */
   readonly schema: v.ObjectSchema<
-    v.ObjectEntries,
+    FieldSchemas<T>,
     undefined
   >;
   /** Field metadata indexed by name. */
@@ -56,7 +60,7 @@ export interface SchemaDescriptor<
   /** Convert UI row values into ReactiveDB row values for collection writes. */
   encodeRow(row: Record<string, unknown>): Record<string, unknown>;
   /** Validate data against the schema. */
-  validate(data: unknown): v.SafeParseResult<v.ObjectSchema<v.ObjectEntries, undefined>>;
+  validate(data: unknown): v.SafeParseResult<v.ObjectSchema<FieldSchemas<T>, undefined>>;
 }
 
 export interface TableDefinition<
@@ -130,7 +134,10 @@ export function defineSchema<
     ...(needsMembership ? ['membership' as const] : []),
   ]);
 
-  const schema = v.object(entries as v.ObjectEntries);
+  // The loop copies each exact validator under its original field key. This
+  // construction assertion restores that mapped key relation; it does not
+  // replace or cast an untyped validator into a different logical schema.
+  const schema = v.object(entries as FieldSchemas<T>);
 
   return {
     schema,
@@ -205,14 +212,25 @@ export function defineSchema<
         const meta = fieldDefs[name]!._meta;
         if (meta.defaultValue !== undefined) {
           defaults[name] = meta.defaultValue;
-        } else if (meta.type === 'boolean') {
-          defaults[name] = false;
-        } else if (meta.type === 'number') {
-          defaults[name] = 0;
-        } else if (meta.type === 'multiSelect') {
-          defaults[name] = [];
         } else {
-          defaults[name] = '';
+          const omitted = v.safeParse(fieldDefs[name]!._schema, undefined);
+          if (omitted.success) {
+            defaults[name] = omitted.output;
+          } else if (meta.type === 'boolean') {
+            defaults[name] = false;
+          } else if (meta.type === 'number') {
+            defaults[name] = 0;
+          } else if (meta.type === 'multiSelect' || meta.type === 'tags' || (meta.type === 'combobox' && meta.multiple)) {
+            defaults[name] = [];
+          } else if (meta.type === 'dateRange') {
+            defaults[name] = ['', ''];
+          } else if (meta.type === 'json') {
+            defaults[name] = null;
+          } else if (fieldDefs[name]!._guardianReference) {
+            defaults[name] = undefined;
+          } else {
+            defaults[name] = '';
+          }
         }
       }
       return defaults;
@@ -260,7 +278,7 @@ export function defineSchema<
  * ```ts
  * const todos = defineTable('todos', {
  *   title: field.text({ required: true }),
- *   done: field.boolean({ default: false }),
+ *   done: field.boolean({ defaultValue: false }),
  * });
  *
  * // Full-stack app
@@ -280,6 +298,7 @@ export function defineTable<
 ): TableDefinition<T, TPk> {
   const desc = defineSchema(fieldDefs, { pk: opts?.pk, identity: opts?.identity });
   const serverTable = desc.toTableSchema({ identity: opts?.identity });
+  attachDeclaredTableSyncMode(serverTable, opts?.sync);
   return {
     name,
     schema: desc,
@@ -312,13 +331,13 @@ export interface SchemaConfig {
  * `createApp()` / `createClient()`, plus `definitions` for runtime
  * validation and metadata access.
  *
- * The `_types` phantom property is used by the Register pattern to
- * infer table names and row types at compile time.
+ * The `_types` phantom property retains the original declaration's type;
+ * use the explicit inference aliases to derive logical or stored row shapes.
  */
 export interface Schema<T extends SchemaConfig> {
   readonly serverTables: { [K in keyof T]: TableSchema };
   readonly clientTables: { [K in keyof T]: ClientTableDef };
-  readonly definitions: { [K in keyof T]: SchemaDescriptor };
+  readonly definitions: { [K in keyof T]: SchemaDescriptor<T[K]['fields'], T[K] extends { pk: infer Pk extends string } ? Pk : 'id'> };
   /** @internal Type-level phantom — not used at runtime. */
   readonly _types: T;
 }
@@ -327,8 +346,9 @@ export interface Schema<T extends SchemaConfig> {
  * Define a complete schema for all tables. Returns everything needed for
  * both server (ReactiveDB) and client (createClient) in one object.
  *
- * Use with the Register pattern to get typed table names + row types
- * across all hooks and collection calls.
+ * Use the explicit inference aliases for logical and stored row types. The
+ * optional Register pattern resolves TableNames/TableRow aliases; hooks and
+ * collection calls still receive an explicit row generic.
  *
  * @example
  * ```ts
@@ -336,7 +356,7 @@ export interface Schema<T extends SchemaConfig> {
  *   todos: {
  *     fields: {
  *       title: field.text({ required: true }),
- *       done: field.boolean({ default: false }),
+ *       done: field.boolean({ defaultValue: false }),
  *     },
  *     sync: 'full',
  *   },
@@ -353,10 +373,10 @@ export interface Schema<T extends SchemaConfig> {
  * createApp({ tables: db.serverTables });
  *
  * // Client
- * createClient({ schema: db });
+ * createClient({ tables: db.clientTables });
  * ```
  */
-export function schema<T extends SchemaConfig>(config: T): Schema<T> {
+export function schema<const T extends SchemaConfig>(config: T): Schema<T> {
   const serverTables = {} as Record<string, TableSchema>;
   const clientTables = {} as Record<string, ClientTableDef>;
   const definitions = {} as Record<string, SchemaDescriptor>;
@@ -365,6 +385,7 @@ export function schema<T extends SchemaConfig>(config: T): Schema<T> {
     const desc = defineSchema(tableDef.fields, { pk: tableDef.pk, identity: tableDef.identity });
     definitions[name] = desc;
     serverTables[name] = desc.toTableSchema({ identity: tableDef.identity });
+    attachDeclaredTableSyncMode(serverTables[name]!, tableDef.sync);
     clientTables[name] = desc.toClientTableDef({ sync: tableDef.sync, identity: tableDef.identity });
   }
 

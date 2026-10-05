@@ -8,6 +8,7 @@ import {
   type TableSchema,
 } from '../../sync/types';
 import type { SyncPolicy } from '../../sync/sync-policy';
+import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
@@ -115,7 +116,7 @@ export type AutoLazyAction = 'lazy' | 'warn' | 'reject';
 /**
  * Per-table sync default override.
  *
- * `mode` controls how an omitted schema/client `_sync` value is interpreted.
+ * An explicit `mode` overrides this table's schema/client declaration.
  * `rowLimit`, `action`, and `persist` override the global auto-lazy settings
  * for this table only.
  */
@@ -127,7 +128,7 @@ export interface TableSyncDefaultConfig {
 }
 
 /**
- * Sync defaults used when a table does not explicitly declare `_sync`.
+ * App-wide loading defaults plus explicit per-table overrides.
  *
  * Defaults are intentionally forgiving: omitted table sync mode means `auto`,
  * and `auto` switches a table to lazy once the row limit is crossed.
@@ -404,11 +405,12 @@ export interface AppConfig {
   resourceRoutes?: boolean | ResourceCrudRoutesConfig;
 
   /**
-   * Default sync behavior for tables that do not explicitly declare `_sync`.
+   * App-wide loading defaults plus explicit per-table overrides.
    *
    * By default omitted mode is `auto`: startup counts rows, keeps small tables
-   * in full sync, and switches oversized tables to lazy sync. Explicit
-   * `sync: 'full'` and `sync: 'lazy'` declarations always win.
+   * in full sync, and switches oversized tables to lazy sync. An explicit
+   * per-table syncDefaults mode wins over schema/client loading intent; that
+   * declaration otherwise wins over the app-wide defaultMode.
    */
   syncDefaults?: SyncDefaultsConfig;
 
@@ -994,13 +996,17 @@ function normalizeRowLimit(value: number | undefined, fallback: number): number 
   return Math.floor(value);
 }
 
-/** Extract a table's client `_sync` declaration when createApp received it. */
+/** Read shared declaration intent without treating loading metadata as SQL columns. */
 function getClientTableSyncMode(def: AppTableInput): DeclaredSyncMode | undefined {
   if (def && typeof def === 'object') {
     const clientTable = (def as { clientTable?: unknown }).clientTable;
     if (clientTable && typeof clientTable === 'object') {
-      return (clientTable as ClientTableDef)._sync;
+      const mode = (clientTable as ClientTableDef)._sync;
+      if (mode !== undefined) return mode;
     }
+    const serverTable = 'serverTable' in def && def.serverTable && typeof def.serverTable === 'object'
+      ? def.serverTable : def;
+    return getDeclaredTableSyncMode(serverTable);
   }
   return undefined;
 }

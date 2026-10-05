@@ -36,6 +36,8 @@ export interface DataStudioAccess {
 }
 
 export interface UseDataStudioOptions {
+  /** Hook compatibility defaults to paged; the connected Studio defaults to progressive. */
+  readonly rowLoading?: 'paged' | 'progressive';
   readonly enabled?: boolean;
   readonly initialTableId?: string | null;
   readonly tableStatus?: DataStudioTableStatus | 'all';
@@ -45,6 +47,8 @@ export interface UseDataStudioOptions {
 }
 
 export interface UseDataStudioResult {
+  /** Presentation boundary identity; never a caller-supplied database selector. */
+  readonly scopeKey?: string;
   readonly status: DataStudioControllerStatus;
   readonly capabilities: DataStudioCapabilities | null;
   readonly access: DataStudioAccess;
@@ -67,6 +71,12 @@ export interface UseDataStudioResult {
   readonly pageSize: number;
   readonly isLoading: boolean;
   readonly isLoadingRows: boolean;
+  readonly isLoadingMore?: boolean;
+  readonly hasMoreRows?: boolean;
+  readonly rowsNeedRefresh?: boolean;
+  readonly loadMoreError?: Error | null;
+  /** Changes when query/table/scope changes, not on same-query reconciliation. */
+  readonly rowWindowKey?: string;
   readonly isMutating: boolean;
   readonly error: Error | null;
   readonly mutationError: DataStudioMutationError | Error | null;
@@ -83,10 +93,11 @@ export interface UseDataStudioResult {
   goToNextPage(): void;
   reload(): Promise<void>;
   reloadRows(): Promise<DataStudioRowPage | void>;
+  loadMoreRows?(): Promise<void>;
   createTable(input: DataStudioTableCreate): Promise<DataStudioTable>;
-  updateTable(input: Omit<DataStudioTableUpdate, 'expectedRevision'>): Promise<DataStudioTable>;
-  updateSchema(schema: DataStudioSchema): Promise<DataStudioTable>;
-  changeTableStatus(status: DataStudioTableStatus): Promise<DataStudioTable>;
+  updateTable(input: Omit<DataStudioTableUpdate, 'expectedRevision'>, options?: { readonly expectedRevision: number }): Promise<DataStudioTable>;
+  updateSchema(schema: DataStudioSchema, options?: { readonly expectedRevision: number }): Promise<DataStudioTable>;
+  changeTableStatus(status: DataStudioTableStatus, options?: { readonly expectedRevision: number }): Promise<DataStudioTable>;
   createRow(values: Readonly<Record<string, unknown>>): Promise<DataStudioRow>;
   replaceRow(row: DataStudioRow, values: Readonly<Record<string, unknown>>): Promise<DataStudioRow>;
   updateCell(row: DataStudioRow, columnId: string, value: DataStudioValue): Promise<DataStudioRow>;

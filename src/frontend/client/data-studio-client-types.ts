@@ -50,7 +50,7 @@ export interface DataStudioRowQuery {
   readonly limit?: number;
   readonly offset?: number;
   readonly search?: string;
-  /** Server-evaluated filters addressed by immutable public column key. */
+  /** Server-evaluated filters addressed by the column API key in the current schema revision. */
   readonly filters?: readonly DataStudioRowFilter[];
   readonly sortColumnId?: string;
   readonly sortDirection?: 'asc' | 'desc';
@@ -74,6 +74,8 @@ export interface DataStudioRowFilter {
 }
 
 export interface DataStudioRowPage {
+  /** Same-snapshot sequence used to reject shifted offset continuations. */
+  readonly readSequence?: number;
   readonly rows: readonly DataStudioRow[];
   readonly total: number;
   readonly limit: number;

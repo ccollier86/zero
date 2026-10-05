@@ -71,6 +71,8 @@ export function DataStudioInlineCell({
   const initialDraft = React.useRef(draft);
   const draftDirty = React.useRef(false);
   const editCommit = React.useRef(onCommit);
+  const mounted = React.useRef(false);
+  const commitPending = React.useRef(false);
 
   const clearSavedTimer = React.useCallback(() => {
     if (!savedTimer.current) return;
@@ -82,7 +84,10 @@ export function DataStudioInlineCell({
     if (!editing && state !== 'pending') setDraft(dataStudioValueDraft(value, column));
   }, [column, editing, state, value]);
 
-  React.useEffect(() => clearSavedTimer, [clearSavedTimer]);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; saveRevision.current += 1; clearSavedTimer(); };
+  }, [clearSavedTimer]);
 
   React.useEffect(() => {
     if (!editing) return;
@@ -92,7 +97,7 @@ export function DataStudioInlineCell({
 
   const beginEdit = React.useCallback(() => {
     onSelect?.();
-    if (disabled || state === 'pending') return;
+    if (disabled || commitPending.current || !mounted.current) return;
     saveRevision.current += 1;
     clearSavedTimer();
     skipBlur.current = false;
@@ -117,7 +122,7 @@ export function DataStudioInlineCell({
     setMessage(null);
     setState('idle');
     setEditing(false);
-    requestAnimationFrame(() => triggerRef.current?.focus());
+    requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
   }, [clearSavedTimer, column, value]);
 
   const showAuthoritativeConflict = React.useCallback(() => {
@@ -130,7 +135,7 @@ export function DataStudioInlineCell({
     setEditing(false);
     setState('conflict');
     setMessage('This record changed elsewhere. The latest value was restored.');
-    requestAnimationFrame(() => triggerRef.current?.focus());
+    requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
   }, [clearSavedTimer, column, value]);
 
   React.useEffect(() => {
@@ -151,8 +156,8 @@ export function DataStudioInlineCell({
     setEditing(false);
     setMessage(null);
     setState('idle');
-    if (move) requestAnimationFrame(() => onNavigate?.(move));
-    else if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus());
+    if (move) requestAnimationFrame(() => { if (mounted.current) onNavigate?.(move); });
+    else if (restoreFocus) requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
   }, [onNavigate]);
 
   const saveValue = React.useCallback(async (
@@ -161,7 +166,8 @@ export function DataStudioInlineCell({
     restoreFocus = false,
     commit: DataStudioInlineCellProps['onCommit'] = editCommit.current,
   ) => {
-    if (state === 'pending') return;
+    if (commitPending.current || !mounted.current) return;
+    commitPending.current = true;
     clearSavedTimer();
     const requestRevision = ++saveRevision.current;
     skipBlur.current = true;
@@ -169,20 +175,20 @@ export function DataStudioInlineCell({
     setMessage(null);
     try {
       await commit(nextValue);
-      if (saveRevision.current !== requestRevision) return;
+      if (!mounted.current || saveRevision.current !== requestRevision) return;
       editRevision.current = null;
       draftDirty.current = false;
       setEditing(false);
       setState('saved');
       savedTimer.current = setTimeout(() => {
-        if (saveRevision.current !== requestRevision) return;
+        if (!mounted.current || saveRevision.current !== requestRevision) return;
         savedTimer.current = null;
         setState('idle');
       }, 1200);
-      if (move) requestAnimationFrame(() => onNavigate?.(move));
-      else if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus());
+      if (move) requestAnimationFrame(() => { if (mounted.current) onNavigate?.(move); });
+      else if (restoreFocus) requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
     } catch (cause) {
-      if (saveRevision.current !== requestRevision) return;
+      if (!mounted.current || saveRevision.current !== requestRevision) return;
       editRevision.current = null;
       draftDirty.current = false;
       const conflict = isDataStudioRevisionConflict(cause);
@@ -198,7 +204,11 @@ export function DataStudioInlineCell({
         // Preserve the original mutation error; the controller also exposes
         // the reload failure at the workspace boundary.
       }
-      if (restoreFocus || move) requestAnimationFrame(() => triggerRef.current?.focus());
+      if (mounted.current && saveRevision.current === requestRevision && (restoreFocus || move)) {
+        requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
+      }
+    } finally {
+      commitPending.current = false;
     }
   }, [clearSavedTimer, column, onNavigate, onReload, state, value]);
 

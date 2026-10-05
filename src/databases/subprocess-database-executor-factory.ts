@@ -151,6 +151,7 @@ export function createSubprocessDatabaseExecutorFactory(
   const prefix = normalizeLaunch(record.launch, actorFlag);
   const env = normalizeEnvironment(record.env);
   const executor = normalizeExecutorPolicy(record.executor);
+  const isolateWorkingDirectory = requireDataRecord(record.launch).kind === 'bundle';
 
   const factory: SubprocessDatabaseExecutorFactory = (context) => {
     const contextRecord = requireDataRecord(context);
@@ -165,7 +166,7 @@ export function createSubprocessDatabaseExecutorFactory(
       role: identity.role,
       slot: identity.slot,
       ...executor,
-    });
+    }, isolateWorkingDirectory);
   };
   return Object.freeze(factory);
 }
@@ -182,7 +183,9 @@ function normalizeLaunch(
         record.runtimeExecutable ?? process.execPath,
       );
       const entrypoint = normalizeEntrypoint(record.entrypoint);
-      return Object.freeze([runtimeExecutable, entrypoint]);
+      // Bun otherwise loads cwd dotenv files even with an empty spawn env.
+      // Actor credentials must come only from the explicit launch allowlist.
+      return Object.freeze([runtimeExecutable, '--no-env-file', entrypoint]);
     }
     case 'bundle': {
       assertOnlyFields(record, BUNDLE_FIELDS);

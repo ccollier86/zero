@@ -112,7 +112,7 @@ export function normalizeValueForDataStudioColumn(
         );
       }
       const timestamp = Date.parse(value);
-      if (!Number.isFinite(timestamp)) {
+      if (!isCanonicalCalendarDate(value.slice(0, 10)) || !Number.isFinite(timestamp)) {
         throw invalidDataStudioValue('Data Studio datetime value is invalid.');
       }
       return new Date(timestamp).toISOString();

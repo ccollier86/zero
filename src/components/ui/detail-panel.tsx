@@ -35,7 +35,7 @@ function DetailPanel({
       <div
         data-slot="detail-panel"
         className={cn(
-          'flex h-full items-center justify-center text-muted-foreground',
+          'flex h-full min-h-0 min-w-0 items-center justify-center overflow-auto text-muted-foreground',
           className,
         )}
       >
@@ -49,7 +49,7 @@ function DetailPanel({
   return (
     <div
       data-slot="detail-panel"
-      className={cn('flex h-full flex-col', className)}
+      className={cn('flex h-full min-h-0 min-w-0 flex-col overflow-hidden', className)}
     >
       {/* Sticky header */}
       {header && (
@@ -57,8 +57,8 @@ function DetailPanel({
       )}
 
       {/* Scrollable body */}
-      <ScrollArea className="flex-1">
-        <div className="p-4">{children}</div>
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
+        <div className="min-w-0 p-4">{children}</div>
       </ScrollArea>
 
       {/* Sticky footer */}

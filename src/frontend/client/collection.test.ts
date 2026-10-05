@@ -112,6 +112,11 @@ function createFakeSyncClient(
 }
 
 describe('createCollection schema contracts', () => {
+  test('exposes the declared primary-key metadata without assuming id', () => {
+    const { client } = createFakeSyncClient();
+    const collection = createCollection('memberships', client, membershipTable);
+    expect(collection.primaryKey).toBe('membership_id');
+  });
   test('generates an omitted custom primary key and keeps booleans logical at the API boundary', () => {
     const toggles = defineTable('toggles', {
       label: field.text({ required: true }),

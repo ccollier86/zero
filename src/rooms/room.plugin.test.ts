@@ -85,6 +85,52 @@ afterAll(async () => {
 });
 
 describe('room route authorization', () => {
+  test('rejects malformed room metadata without creating room or owner membership', async () => {
+    const owner = await createUser();
+    const roomsBefore = db.query('rooms').length;
+    const membersBefore = db.query('room_members').length;
+    for (const metadata of ['{', '[]', 'null', '"not-an-object"']) {
+      const result = await requestJson<{ code: string }>('/rooms', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Invalid metadata', metadata }),
+      }, owner.token);
+      expect(result.status).toBe(400);
+      expect(result.data.code).toBe('BAD_REQUEST');
+    }
+    expect(db.query('rooms').length).toBe(roomsBefore);
+    expect(db.query('room_members').length).toBe(membersBefore);
+  });
+
+  test('retains valid JSON-object room metadata and automatic owner membership', async () => {
+    const owner = await createUser();
+    const result = await requestJson<{ room: RoomRecord }>('/rooms', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Valid metadata', metadata: '{"kind":"synthetic"}' }),
+    }, owner.token);
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.data.room.metadata!)).toEqual({ kind: 'synthetic' });
+    expect(getRoomService()!.getMember(result.data.room.room_id, owner.user.userId)?.role).toBe('owner');
+  });
+
+  test('rejects room capacity that cannot contain its required owner', async () => {
+    const owner = await createUser();
+    const roomsBefore = db.query('rooms').length;
+    for (const maxMembers of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const result = await requestJson('/rooms', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Invalid capacity', maxMembers }),
+      }, owner.token);
+      expect(result.status).toBe(422);
+      expect(() => getRoomService()!.create(owner.user.userId, {
+        name: 'Invalid direct capacity', maxMembers,
+      })).toThrow('Room capacity must be a positive safe integer');
+    }
+    expect(db.query('rooms').length).toBe(roomsBefore);
+  });
+
   test('requires authentication for room detail, members, and join', async () => {
     const owner = await createUser();
     const room = await createRoom(owner.token, 'Authenticated room');

@@ -108,8 +108,8 @@ function resolveIndexes(
       textField,
       metadataField,
       metadata,
-      metric: config.metric ?? 'cosine',
-      indexType: config.indexType ?? 'hnsw',
+      metric: normalizeChoice(config.metric ?? 'cosine', ['cosine', 'ip', 'l2'], `${name}.metric`),
+      indexType: normalizeChoice(config.indexType ?? 'hnsw', ['hnsw', 'flat', 'ivf', 'diskann'], `${name}.indexType`),
       readOnly: config.readOnly ?? false,
       enableMMAP: config.enableMMAP ?? true,
       insertBatchSize: normalizePositiveInteger(config.insertBatchSize ?? DEFAULT_BATCH_SIZE, `${name}.insertBatchSize`),
@@ -208,6 +208,19 @@ function normalizePositiveInteger(value: number, label: string): number {
     throw new VectorError('VECTOR_CONFIG_INVALID', `Vector ${label} must be a positive integer.`, { value });
   }
   return value;
+}
+
+function normalizeChoice<T extends string>(
+  value: unknown,
+  choices: readonly T[],
+  label: string,
+): T {
+  if (typeof value !== 'string' || !choices.includes(value as T)) {
+    throw new VectorError('VECTOR_CONFIG_INVALID', `Vector ${label} is invalid.`, {
+      field: label,
+    });
+  }
+  return value as T;
 }
 
 function parseOptionalInteger(value: string | undefined): number | undefined {

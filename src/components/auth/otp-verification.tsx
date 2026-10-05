@@ -4,12 +4,12 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { cn } from '#zero/lib/utils';
-import { Button } from '#zero/components/ui/button';
 import { AuthHeader } from '#zero/components/auth/auth-header';
 import { OTPInput } from '#zero/components/auth/otp-input';
 import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
+import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   authFeedbackAnimate,
   authFeedbackExit,
@@ -46,9 +46,17 @@ function OTPVerification({
 }: OTPVerificationProps) {
   const [code, setCode] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const [resending, setResending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [hasError, setHasError] = React.useState(false);
   const [countdown, setCountdown] = React.useState(0);
+  const pending = React.useRef(false);
+  const mounted = React.useRef(true);
+
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   // Countdown timer
   React.useEffect(() => {
@@ -60,29 +68,41 @@ function OTPVerification({
   }, [countdown]);
 
   async function handleVerify(value: string) {
+    if (pending.current || !mounted.current) return;
+    pending.current = true;
     setError(null);
     setHasError(false);
     setLoading(true);
     try {
       await onVerify(value);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid code');
+      reportAuthUiError('verifyOtp', err);
+      if (!mounted.current) return;
+      setError(getAuthDisplayMessage(err, 'Invalid code'));
       setHasError(true);
       setCode('');
     } finally {
-      setLoading(false);
+      pending.current = false;
+      if (mounted.current) setLoading(false);
     }
   }
 
   async function handleResend() {
-    if (countdown > 0 || !onResend) return;
+    if (pending.current || !mounted.current || countdown > 0 || !onResend) return;
+    pending.current = true;
+    setResending(true);
     try {
       await onResend();
+      if (!mounted.current) return;
       setCountdown(resendCooldown);
       setError(null);
       setHasError(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resend');
+      reportAuthUiError('resendOtp', err);
+      if (mounted.current) setError(getAuthDisplayMessage(err, 'Failed to resend'));
+    } finally {
+      pending.current = false;
+      if (mounted.current) setResending(false);
     }
   }
 
@@ -103,6 +123,7 @@ function OTPVerification({
           }}
           onComplete={handleVerify}
           error={hasError}
+          disabled={loading || resending}
         />
 
         {loading && (
@@ -149,9 +170,11 @@ function OTPVerification({
             <button
               type="button"
               onClick={handleResend}
-              className="text-xs text-primary hover:underline"
+              disabled={loading || resending}
+              aria-busy={resending}
+              className="text-xs text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Resend code
+              {resending ? 'Resending code' : 'Resend code'}
             </button>
           )}
         </div>

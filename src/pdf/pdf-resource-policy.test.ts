@@ -37,6 +37,15 @@ describe('evaluatePdfResource', () => {
     expect(evaluatePdfResource('https://cdn.example.com/logo.png', 'https://app.example.com/', sameOrigin).allowed).toBe(false);
   });
 
+  test('blocks private IPv6 literals and IPv4-mapped loopback without blocking similarly named domains', () => {
+    const resources = policy({ resources: { remote: 'allow' } });
+    for (const url of ['http://[::]/', 'http://[::ffff:127.0.0.1]/', 'http://[::ffff:10.0.0.1]/', 'http://[fe90::1]/', 'http://[febf::1]/']) {
+      expect(evaluatePdfResource(url, undefined, resources)).toEqual({ allowed: false, reason: 'private-network' });
+    }
+    expect(evaluatePdfResource('https://fcdn.example.test/logo.png', undefined, resources).allowed).toBe(true);
+    expect(evaluatePdfResource('http://[::ffff:8.8.8.8]/', undefined, resources).allowed).toBe(true);
+  });
+
   test('sanitizes credentials and query strings before diagnostics', () => {
     expect(sanitizePdfResourceUrl('https://user:pass@example.com/a.png?token=secret#x'))
       .toBe('https://example.com/a.png');

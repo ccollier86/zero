@@ -7,6 +7,7 @@
  */
 
 import type { OutputInterface } from 'ai';
+import type { AIAnyOutput } from '../ai-output';
 
 import type { AIAgentDefinition, AnyAIAgentDefinition } from './ai-agent-definition';
 import { AIAgentRegistry } from './ai-agent-registry';
@@ -38,9 +39,9 @@ export class AIAgentService {
   /** Execute one registered definition by exact version. */
   generate<
     RUNTIME_CONTEXT extends AIAgentContext,
-    EXECUTION_CONTEXT,
-    TOOLS extends AIAgentToolSet<RUNTIME_CONTEXT, EXECUTION_CONTEXT>,
-    OUTPUT extends OutputInterface,
+    EXECUTION_CONTEXT = undefined,
+    TOOLS extends AIAgentToolSet<RUNTIME_CONTEXT, EXECUTION_CONTEXT> = AIAgentToolSet<RUNTIME_CONTEXT, EXECUTION_CONTEXT>,
+    OUTPUT extends OutputInterface = AIAnyOutput,
   >(
     reference: AIAgentReference,
     input: AIAgentRunInput<RUNTIME_CONTEXT, EXECUTION_CONTEXT, TOOLS>,
@@ -57,9 +58,9 @@ export class AIAgentService {
   /** Start one streaming run for a registered exact version. */
   stream<
     RUNTIME_CONTEXT extends AIAgentContext,
-    EXECUTION_CONTEXT,
-    TOOLS extends AIAgentToolSet<RUNTIME_CONTEXT, EXECUTION_CONTEXT>,
-    OUTPUT extends OutputInterface,
+    EXECUTION_CONTEXT = undefined,
+    TOOLS extends AIAgentToolSet<RUNTIME_CONTEXT, EXECUTION_CONTEXT> = AIAgentToolSet<RUNTIME_CONTEXT, EXECUTION_CONTEXT>,
+    OUTPUT extends OutputInterface = AIAnyOutput,
   >(
     reference: AIAgentReference,
     input: AIAgentRunInput<RUNTIME_CONTEXT, EXECUTION_CONTEXT, TOOLS>,

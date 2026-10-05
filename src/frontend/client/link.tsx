@@ -1,6 +1,8 @@
 'use client';
 
-import { createElement, useCallback, useRef } from 'react';
+/** Owns local browser navigation and optional route-module prefetch; server policy remains authoritative. */
+
+import { createElement, useCallback, useEffect, useRef } from 'react';
 import type { MouseEvent, AnchorHTMLAttributes, ReactNode } from 'react';
 import { useRouter } from './router-context';
 
@@ -40,7 +42,20 @@ export function Link({
   ...rest
 }: LinkProps) {
   const { push, replace, prefetch: doPrefetch } = useRouter();
-  const prefetched = useRef(false);
+  const prefetchedPath = useRef<string | null>(null);
+  const nativeDownload = rest.download !== undefined && rest.download !== false;
+  const nativeTarget = Boolean(rest.target && rest.target !== '_self');
+  const prefetchDestination = useCallback(() => {
+    if (nativeDownload || nativeTarget) return;
+    const pathname = localNavigationPath(href);
+    if (pathname === null || pathname === prefetchedPath.current) return;
+    prefetchedPath.current = pathname;
+    doPrefetch(pathname);
+  }, [doPrefetch, href, nativeDownload, nativeTarget]);
+
+  useEffect(() => {
+    if (prefetch === 'render') prefetchDestination();
+  }, [prefetch, prefetchDestination]);
 
   const handleClick = useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
@@ -54,11 +69,11 @@ export function Link({
       // Don't intercept non-left clicks
       if (e.button !== 0) return;
 
-      // Don't intercept external links
-      if (isExternal(href)) return;
+      // Downloads and non-local schemes keep the browser's native behavior.
+      if (nativeDownload || localNavigationPath(href) === null) return;
 
       // Don't intercept links with target
-      if (rest.target && rest.target !== '_self') return;
+      if (nativeTarget) return;
 
       e.preventDefault();
 
@@ -68,19 +83,16 @@ export function Link({
         push(href);
       }
     },
-    [href, doReplace, push, replace, onClick, rest.target]
+    [href, doReplace, push, replace, onClick, nativeDownload, nativeTarget]
   );
 
   const handleMouseEnter = useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
       onMouseEnter?.(e);
 
-      if (prefetch === 'intent' && !prefetched.current) {
-        prefetched.current = true;
-        doPrefetch(href);
-      }
+      if (prefetch === 'intent' && !e.defaultPrevented) prefetchDestination();
     },
-    [href, prefetch, doPrefetch, onMouseEnter]
+    [prefetch, prefetchDestination, onMouseEnter]
   );
 
   return createElement(
@@ -97,14 +109,14 @@ export function Link({
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function isExternal(href: string): boolean {
-  if (href.startsWith('http://') || href.startsWith('https://')) {
-    try {
-      const url = new URL(href);
-      return url.origin !== window.location.origin;
-    } catch {
-      return false;
-    }
+/** Resolve only same-origin HTTP(S) routes; prefetch keys exclude query/hash. */
+function localNavigationPath(href: string): string | null {
+  try {
+    const url = new URL(href, window.location.href);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:')
+      || url.origin !== window.location.origin) return null;
+    return url.pathname;
+  } catch {
+    return null;
   }
-  return href.startsWith('mailto:') || href.startsWith('tel:');
 }

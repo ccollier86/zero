@@ -71,8 +71,21 @@ function decision(allowed: boolean, deniedReason: string): PdfResourceDecision {
 function isPrivateNetworkHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
-  if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) return true;
+  if (host.includes(':')) {
+    if (host === '::' || host === '::1') return true;
+    const firstWord = Number.parseInt(host.split(':', 1)[0] || '0', 16);
+    if ((firstWord & 0xfe00) === 0xfc00 || (firstWord & 0xffc0) === 0xfe80) return true;
+    // URL normalizes IPv4-mapped literals into two final hexadecimal words.
+    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(host);
+    if (!mapped) return false;
+    const high = Number.parseInt(mapped[1], 16);
+    const low = Number.parseInt(mapped[2], 16);
+    return isPrivateIpv4Host(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+  }
+  return isPrivateIpv4Host(host);
+}
 
+function isPrivateIpv4Host(host: string): boolean {
   const parts = host.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
     return false;

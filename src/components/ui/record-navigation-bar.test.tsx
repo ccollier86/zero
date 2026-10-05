@@ -22,10 +22,10 @@ describe('RecordNavigationBar', () => {
       />,
     );
 
-    expect(markup).toContain('flex-wrap');
+    expect(markup).toContain('flex-nowrap');
     expect(markup).toContain('gap-2');
     expect(markup).toContain('overflow-x-auto');
-    expect(markup).toContain('@sm/wrapper:overflow-visible');
+    expect(markup).not.toContain('@sm/wrapper:overflow-visible');
     expect(markup).toContain('>Reset password</span>');
     expect(markup).toContain('>Revoke sessions</span>');
     expect(markup).toContain('>Suspend account</span>');

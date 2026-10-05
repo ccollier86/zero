@@ -5,6 +5,7 @@
  * opaque values, hashes raw tokens, and parses duration strings; it does not
  * persist tokens or decide token policy.
  */
+import { PlatformTokenError } from './token-types';
 
 /** Create a high-entropy opaque token suitable for URLs and email links. */
 export function createOpaqueToken(bytes = 32): string {
@@ -27,22 +28,28 @@ export function hashToken(rawToken: string): string {
  * config mistakes fail before weak token lifetimes reach production.
  */
 export function parseTokenTTL(ttl: string, label = 'token TTL'): number {
+  if (typeof ttl !== 'string') {
+    throw new PlatformTokenError(`Invalid ${label} format`, 'TOKEN_INPUT_INVALID', 400);
+  }
   const match = ttl.match(/^(\d+)(s|m|h|d)$/);
-  if (!match) throw new Error(`Invalid ${label} format: ${ttl}`);
+  if (!match) throw new PlatformTokenError(`Invalid ${label} format`, 'TOKEN_INPUT_INVALID', 400);
 
   const value = Number.parseInt(match[1], 10);
-  switch (match[2]) {
-    case 's':
-      return value * 1_000;
-    case 'm':
-      return value * 60_000;
-    case 'h':
-      return value * 3_600_000;
-    case 'd':
-      return value * 86_400_000;
-    default:
-      throw new Error(`Invalid ${label} unit: ${match[2]}`);
+  const multiplier = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as 's' | 'm' | 'h' | 'd'];
+  const milliseconds = value * multiplier;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
+    throw new PlatformTokenError(`Invalid ${label} duration`, 'TOKEN_INPUT_INVALID', 400);
   }
+  return milliseconds;
+}
+
+/** Resolve a representable expiry without permitting lifetime arithmetic overflow. */
+export function tokenExpiryAt(now: number, ttl: string, label: string): number {
+  const expiresAt = now + parseTokenTTL(ttl, label);
+  if (!Number.isSafeInteger(expiresAt)) {
+    throw new PlatformTokenError(`Invalid ${label} expiry`, 'TOKEN_INPUT_INVALID', 400);
+  }
+  return expiresAt;
 }
 
 /** Parse JSON metadata defensively. */

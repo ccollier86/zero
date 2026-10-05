@@ -93,19 +93,27 @@ export function useStorageBrowser(
   const [path, setPathState] = useState(cleanPath(initialPath));
   const [selected, setSelected] = useState<FileInfo | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const browserKey = JSON.stringify([authorizationBoundary.key, driveId]);
+  const [loadedBrowserKey, setLoadedBrowserKey] = useState(browserKey);
+  const browserKeyRef = useRef(browserKey);
+  browserKeyRef.current = browserKey;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const boundaryKeyRef = useRef(authorizationBoundary.key);
   const boundaryReadyRef = useRef(authorizationBoundary.ready);
   boundaryKeyRef.current = authorizationBoundary.key;
   boundaryReadyRef.current = authorizationBoundary.ready;
   const callbackBoundaryKey = authorizationBoundary.key;
   const isCurrentScope = useCallback(
-    () => isAuthorizationScopeCallbackCurrent(
+    () => mountedRef.current && browserKeyRef.current === browserKey && isAuthorizationScopeCallbackCurrent(
       boundaryKeyRef.current,
       boundaryReadyRef.current,
       callbackBoundaryKey,
     ),
-    [callbackBoundaryKey],
+    [browserKey, callbackBoundaryKey],
   );
   const folder = useStorageFolder(driveId, path);
   const actions = useStorageActions();
@@ -115,8 +123,8 @@ export function useStorageBrowser(
     setPathState(cleanPath(initialPath));
     setSelected(null);
     setActionError(null);
-    setLoadedBoundaryKey(authorizationBoundary.key);
-  }, [authorizationBoundary.key, initialPath]);
+    setLoadedBrowserKey(browserKey);
+  }, [browserKey, initialPath]);
 
   const runStorageAction = useCallback(
     async <T,>(name: string, action: () => Promise<T>): Promise<T | null> => {
@@ -125,12 +133,12 @@ export function useStorageBrowser(
       setActionError(null);
       try {
         const result = await action();
-        if (!boundaryReadyRef.current
+        if (!isCurrentScope() || !boundaryReadyRef.current
           || boundaryKeyRef.current !== requestBoundaryKey) return null;
         folder.refresh();
         return result;
       } catch (err) {
-        if (!boundaryReadyRef.current
+        if (!isCurrentScope() || !boundaryReadyRef.current
           || boundaryKeyRef.current !== requestBoundaryKey) throw err;
         const message = err instanceof Error ? err.message : 'Storage action failed';
         setActionError(message);
@@ -200,7 +208,7 @@ export function useStorageBrowser(
     if (!isCurrentScope()) return;
     const requestBoundaryKey = callbackBoundaryKey;
     await runStorageAction('deleteSelected', () => actions.deleteFile(selected.driveId, selected.path));
-    if (boundaryReadyRef.current
+    if (isCurrentScope() && boundaryReadyRef.current
       && boundaryKeyRef.current === requestBoundaryKey) setSelected(null);
   }, [actions, callbackBoundaryKey, isCurrentScope, runStorageAction, selected]);
 
@@ -211,7 +219,7 @@ export function useStorageBrowser(
       const requestBoundaryKey = callbackBoundaryKey;
       const result = await runStorageAction('moveSelected', () =>
         actions.moveFile(selected.driveId, selected.path, to));
-      if (boundaryReadyRef.current
+      if (isCurrentScope() && boundaryReadyRef.current
         && boundaryKeyRef.current === requestBoundaryKey) setSelected(result);
       return result;
     },
@@ -232,7 +240,7 @@ export function useStorageBrowser(
   }, [folder.refresh, isCurrentScope]);
 
   const visible = authorizationBoundary.ready
-    && loadedBoundaryKey === authorizationBoundary.key;
+    && loadedBrowserKey === browserKey;
 
   return useMemo(
     () => ({

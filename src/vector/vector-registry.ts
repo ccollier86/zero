@@ -8,6 +8,7 @@
 
 import { VectorError } from './vector-error';
 import { ZvecAdapter } from './zvec-adapter';
+import type { emitPlatformCode } from '../observability/sink';
 import type {
   ResolvedVectorConfig,
   ResolvedVectorIndexConfig,
@@ -22,6 +23,8 @@ export type VectorIndexStoreFactory = (config: ResolvedVectorIndexConfig) => Vec
 export interface VectorRegistryOptions {
   config: ResolvedVectorConfig;
   storeFactory?: VectorIndexStoreFactory;
+  /** Owning app emitter for the default adapter; custom factories own their telemetry. */
+  emitCode?: typeof emitPlatformCode;
 }
 
 /** Lazy registry of configured vector indexes. */
@@ -31,7 +34,7 @@ export class VectorRegistry {
 
   /** Create a registry from resolved vector config. */
   constructor(private readonly options: VectorRegistryOptions) {
-    this.storeFactory = options.storeFactory ?? ((config) => new ZvecAdapter({ config }));
+    this.storeFactory = options.storeFactory ?? ((config) => new ZvecAdapter({ config, emitCode: options.emitCode }));
   }
 
   /** Return the configured default index name. */

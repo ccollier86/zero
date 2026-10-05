@@ -46,7 +46,15 @@ export function useStorageFile(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const requestKey = JSON.stringify([authorizationBoundary.key, driveId, path]);
+  const [loadedRequestKey, setLoadedRequestKey] = useState(requestKey);
+  const requestKeyRef = useRef(requestKey);
+  requestKeyRef.current = requestKey;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const requestRef = useRef(0);
   const boundaryKeyRef = useRef(authorizationBoundary.key);
   const boundaryReadyRef = useRef(authorizationBoundary.ready);
@@ -54,18 +62,18 @@ export function useStorageFile(
   boundaryReadyRef.current = authorizationBoundary.ready;
   const callbackBoundaryKey = authorizationBoundary.key;
   const isCurrentScope = useCallback(
-    () => isAuthorizationScopeCallbackCurrent(
+    () => mountedRef.current && requestKeyRef.current === requestKey && isAuthorizationScopeCallbackCurrent(
       boundaryKeyRef.current,
       boundaryReadyRef.current,
       callbackBoundaryKey,
     ),
-    [callbackBoundaryKey],
+    [callbackBoundaryKey, requestKey],
   );
 
   useEffect(() => {
     const requestId = ++requestRef.current;
     const controller = new AbortController();
-    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLoadedRequestKey(requestKey);
     setFile(null);
     setError(null);
     if (!client || !driveId || !path || !authorizationBoundary.ready) {
@@ -80,13 +88,16 @@ export function useStorageFile(
       { signal: controller.signal },
     )
       .then((result) => {
-        if (requestRef.current === requestId
+        if (mountedRef.current && !controller.signal.aborted
+          && requestRef.current === requestId
+          && requestKeyRef.current === requestKey
           && boundaryReadyRef.current
           && boundaryKeyRef.current === authorizationBoundary.key) setFile(result);
       })
       .catch((err) => {
-        if (controller.signal.aborted
+        if (!mountedRef.current || controller.signal.aborted
           || requestRef.current !== requestId
+          || requestKeyRef.current !== requestKey
           || !boundaryReadyRef.current
           || boundaryKeyRef.current !== authorizationBoundary.key) return;
         const nextError = err instanceof Error ? err : new Error(String(err));
@@ -97,8 +108,9 @@ export function useStorageFile(
         });
       })
       .finally(() => {
-        if (!controller.signal.aborted
+        if (mountedRef.current && !controller.signal.aborted
           && requestRef.current === requestId
+          && requestKeyRef.current === requestKey
           && boundaryReadyRef.current
           && boundaryKeyRef.current === authorizationBoundary.key) {
           setLoading(false);
@@ -112,6 +124,7 @@ export function useStorageFile(
     client,
     driveId,
     path,
+    requestKey,
     refreshKey,
   ]);
 
@@ -125,10 +138,10 @@ export function useStorageFile(
     const requestBoundaryKey = callbackBoundaryKey;
     try {
       await actions.deleteFile(driveId, path);
-      if (boundaryReadyRef.current
+      if (isCurrentScope() && boundaryReadyRef.current
         && boundaryKeyRef.current === requestBoundaryKey) setFile(null);
     } catch (err) {
-      if (!boundaryReadyRef.current
+      if (!isCurrentScope() || !boundaryReadyRef.current
         || boundaryKeyRef.current !== requestBoundaryKey) throw err;
       emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
         error: err,
@@ -143,12 +156,12 @@ export function useStorageFile(
     const requestBoundaryKey = callbackBoundaryKey;
     try {
       await actions.setVisibility(driveId, isPublic, path);
-      if (boundaryReadyRef.current
+      if (isCurrentScope() && boundaryReadyRef.current
         && boundaryKeyRef.current === requestBoundaryKey) {
         setFile((current) => current ? { ...current, isPublic } : current);
       }
     } catch (err) {
-      if (!boundaryReadyRef.current
+      if (!isCurrentScope() || !boundaryReadyRef.current
         || boundaryKeyRef.current !== requestBoundaryKey) throw err;
       emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
         error: err,
@@ -166,7 +179,7 @@ export function useStorageFile(
   );
 
   const visible = authorizationBoundary.ready
-    && loadedBoundaryKey === authorizationBoundary.key;
+    && loadedRequestKey === requestKey;
 
   return {
     file: visible ? file : null,

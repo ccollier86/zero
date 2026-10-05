@@ -273,6 +273,60 @@ describe('preview AI video service', () => {
       status: 400,
     });
   });
+
+  test('rejects a provider that returns more videos than requested', async () => {
+    const context = videoContext({
+      'model-a': videoModel('model-a', {
+        async doGenerate() {
+          return {
+            videos: [1, 2].map(value => ({
+              type: 'binary' as const, data: new Uint8Array([value]), mediaType: 'video/mp4',
+            })),
+            warnings: [], response: responseMetadata('model-a'),
+          };
+        },
+      }),
+    });
+    await expect(executeAIGenerateVideo({ prompt: 'One video.', n: 1 }, context))
+      .rejects.toMatchObject({ code: 'AI_PROVIDER_RESPONSE_INVALID', status: 502 });
+  });
+
+  test('rejects an empty materialized video', async () => {
+    const context = videoContext({
+      'model-a': videoModel('model-a', {
+        async doGenerate() {
+          return {
+            videos: [{ type: 'binary', data: new Uint8Array(), mediaType: 'video/mp4' }],
+            warnings: [], response: responseMetadata('model-a'),
+          };
+        },
+      }),
+    });
+    await expect(executeAIGenerateVideo({ prompt: 'A video.' }, context))
+      .rejects.toMatchObject({ code: 'AI_PROVIDER_RESPONSE_INVALID', status: 502 });
+  });
+
+  test.each(['binary', 'base64'] as const)('rejects empty completed %s media', async type => {
+    const context = videoContext({
+      'model-a': videoModel('model-a', {
+        async doStart() {
+          return { operation: {}, warnings: [], response: responseMetadata('model-a') };
+        },
+        async doStatus() {
+          return {
+            status: 'completed',
+            videos: [type === 'binary'
+              ? { type, data: new Uint8Array(), mediaType: 'video/mp4' }
+              : { type, data: '', mediaType: 'video/mp4' }],
+            warnings: [], response: responseMetadata('model-a'),
+          };
+        },
+      }),
+    });
+    await expect(executeAIGetVideoStatus({ operation: {
+      version: 1, resolvedModel: 'video-provider/model-a', operation: {},
+    } }, context)).rejects.toMatchObject({ code: 'AI_PROVIDER_RESPONSE_INVALID', status: 502 });
+  });
 });
 
 function videoModel(

@@ -92,8 +92,11 @@ export function matchesPathPattern(relativePath: string, pattern: string): boole
 
   const escaped = pattern
     .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '.*')
-    .replace(/\*/g, '[^/]*');
+    // Replace caller wildcards in one pass so a globstar's generated regex
+    // cannot be processed again as a segment-local star. A globstar followed
+    // by slash also matches no directory (for root-level excluded files).
+    .replace(/\*\*\/|\*\*|\*/g, wildcard => wildcard === '**/'
+      ? '(?:.*/)?' : wildcard === '**' ? '.*' : '[^/]*');
   return new RegExp(`^${escaped}$`).test(relativePath);
 }
 

@@ -26,6 +26,10 @@ import { MigrationLedger } from './migration-ledger';
 import { SchemaHistory } from './schema-history';
 import { inspectDatabaseSchema } from './schema-inspector';
 import { hashMigration, hashSchemaSnapshot } from './schema-snapshot';
+import {
+  assertSynchronousMigrationHandler,
+  runSynchronousMigrationHandler,
+} from './migration-handler-boundary';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type {
@@ -174,7 +178,7 @@ export class Migrator {
         batch = attemptBatch;
         attemptStarted = true;
         if (backup) this.recordBackupArtifact(migration, backup);
-        migration.up(this.db);
+        runSynchronousMigrationHandler(migration.up, this.db, 'up', migration);
 
         const durationMs = Math.round(performance.now() - start);
         const snapshot = inspectDatabaseSchema(this.db);
@@ -293,7 +297,7 @@ export class Migrator {
         batch = attemptBatch;
         attemptStarted = true;
         if (backup) this.recordBackupArtifact(migration, backup);
-        migration.down!(this.db);
+        runSynchronousMigrationHandler(migration.down!, this.db, 'down', migration);
         const durationMs = Math.round(performance.now() - start);
         const snapshot = inspectDatabaseSchema(this.db);
         const schemaHash = hashSchemaSnapshot(snapshot);
@@ -637,6 +641,8 @@ export function createMigrationRegistry(
 function validateMigrationRegistry(migrations: readonly Readonly<Migration>[]): void {
   let previous: string | null = null;
   for (const migration of migrations) {
+    assertSynchronousMigrationHandler(migration.up, 'up');
+    if (migration.down !== undefined) assertSynchronousMigrationHandler(migration.down, 'down');
     if (migration.version.trim().length === 0) {
       throw new Error('[migrator] Migration versions must not be empty.');
     }

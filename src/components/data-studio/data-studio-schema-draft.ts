@@ -1,3 +1,4 @@
+/** Local visual schema drafts and canonical column conversion; no persistence or transport. */
 import {
   DATA_STUDIO_SCHEMA_VERSION,
   type DataStudioColumn,
@@ -10,6 +11,7 @@ import {
   normalizeDataStudioValueForColumn,
 } from '../../data-studio/data-studio-codec';
 import { dataStudioValueDraft, parseDataStudioValueDraft } from './data-studio-value';
+import { createDataStudioOperationId } from '../../frontend/client/data-studio-mutation';
 
 export type DataStudioDefaultMode = 'none' | 'null' | 'value';
 
@@ -29,12 +31,12 @@ export interface DataStudioEditableColumn {
 export function dataStudioEditableColumns(
   table?: DataStudioTable | null,
 ): DataStudioEditableColumn[] {
-  return table?.schema.columns.map((column) => editableColumn(column, true))
+  return table?.schema.columns.map((column) => editableDataStudioColumn(column, true))
     ?? [newDataStudioEditableColumn(0)];
 }
 
 export function newDataStudioEditableColumn(index: number): DataStudioEditableColumn {
-  const suffix = `${Date.now().toString(36)}_${index}`.slice(-24);
+  const suffix = createDataStudioOperationId();
   return {
     columnId: `column_${suffix}`,
     key: index === 0 ? 'name' : `field_${index + 1}`,
@@ -140,9 +142,9 @@ export function normalizeDataStudioKey(value: string): string {
     .slice(0, 64);
 }
 
-function editableColumn(
+export function editableDataStudioColumn(
   column: DataStudioColumn,
-  persisted: boolean,
+  persisted = true,
 ): DataStudioEditableColumn {
   const hasDefault = Object.hasOwn(column, 'defaultValue');
   const defaultMode: DataStudioDefaultMode = !hasDefault

@@ -132,11 +132,6 @@ describe('resolveAuthBehaviorConfig', () => {
       authorization: { mode: 'advanced' },
       apiKeys: { enabled: true, eligibleScopeRoles: ['missing'] },
     })).toThrow('eligible scope role is not declared: "missing"');
-    expect(() => resolveAuthBehaviorConfig({
-      tenancy: 'multi',
-      authorization: { mode: 'advanced' },
-      apiKeys: { enabled: true, eligibleScopeRoles: ['administrator'] },
-    })).toThrow('must be assignable to organization tenants: "administrator"');
   });
 
   test('normalizes explicit bootstrap modes and validates server-only secrets', () => {

@@ -216,21 +216,30 @@ function Shell({
   const pathname = usePathname();
   const { setParams, setIsNavigating } = useRouter();
   const prevPathname = useRef(pathname);
+  const navigationGeneration = useRef(0);
 
   useEffect(() => {
     if (pathname === prevPathname.current) return;
     prevPathname.current = pathname;
+    const generation = ++navigationGeneration.current;
+    let active = true;
+    const isCurrentNavigation = () => active
+      && generation === navigationGeneration.current
+      && window.location.pathname === pathname;
 
     if (isServerRoute(pathname, serverRoutes)) {
-      window.location.href = pathname;
+      // History has already committed the safe local destination. Reload that
+      // complete URL instead of dropping its query or fragment via pathname.
+      window.location.reload();
       return;
     }
 
     setIsNavigating(true);
 
     navigateTo(pathname).then((result) => {
+      if (!isCurrentNavigation()) return;
       if (!result) {
-        window.location.href = pathname;
+        window.location.reload();
         return;
       }
 
@@ -243,19 +252,22 @@ function Shell({
       ]);
 
       startTransition(() => {
-        setCurrent({
+        if (!isCurrentNavigation()) return;
+        const next = {
           Page: result.module.default,
           layouts: layoutComponents,
           params: result.params,
           loaderData: undefined,
           routeAuthRequirement,
-        });
+        };
+        setCurrent((previous) => isCurrentNavigation() ? next : previous);
         setParams(result.params);
         setIsNavigating(false);
       });
     }).catch(() => {
-      setIsNavigating(false);
+      if (isCurrentNavigation()) setIsNavigating(false);
     });
+    return () => { active = false; };
   }, [pathname, serverRoutes, setParams, setIsNavigating]);
 
   let element: ReactNode = createElement(current.Page, {

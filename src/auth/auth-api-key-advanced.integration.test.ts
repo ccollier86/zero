@@ -48,6 +48,44 @@ afterEach(async () => {
 });
 
 describe('Guardian API keys in advanced authorization profiles', () => {
+  test('administration-only eligibility allows bound user keys without weakening customer or credential fences', async () => {
+    const harness = await start('multi', ['administrator']);
+    const owner = await register(harness, 'admin-eligible-owner', 'Administration');
+    const subject = await register(harness, 'admin-eligible-user', 'Subject workspace');
+    const customer = await register(harness, 'customer-eligible-user', 'Customer');
+    const membershipId = addOrganizationMember(harness, owner, subject, ['administrator', 'record-reader']);
+    const adminSession = await switchTenant(harness, subject.refreshToken, owner.tenant!.tenantId);
+    const issued = await request(harness, 'POST', '/auth/api-keys', { label: 'Administration-scoped user automation' }, adminSession.accessToken);
+    expect(issued).toMatchObject({ status: 200, body: { apiKey: {
+      userId: subject.user.userId, scopeKind: 'tenant', tenantId: owner.tenant!.tenantId,
+      membershipId, status: 'active',
+    } } });
+    const secret = issued.body.secret as string;
+    expect(await request(harness, 'GET', '/api/records', undefined, secret)).toMatchObject({
+      status: 200, body: { tenantId: owner.tenant!.tenantId, credentialKind: 'api-key' },
+    });
+    // Platform management is deliberately session-only, even for an eligible
+    // user whose live role projects platform authority.
+    expect(await request(harness, 'GET', '/auth/admin/users', undefined, secret)).toMatchObject({ status: 401, body: { code: 'UNAUTHORIZED' } });
+    expect(await request(harness, 'POST', '/auth/api-keys', { label: 'Cannot bootstrap a credential from a key' }, secret)).toMatchObject({ status: 401, body: { code: 'UNAUTHORIZED' } });
+    expect((await request(harness, 'POST', '/auth/tenant/members', {
+      email: subject.user.email, roles: ['administrator'],
+    }, customer.accessToken)).status).toBe(422);
+    expect((await request(harness, 'POST', '/auth/api-keys', { label: 'Customer owner not on allowlist' }, customer.accessToken)).status).toBe(403);
+
+    replaceTenantRoles(harness, owner, membershipId, ['administrator']);
+    expect((await request(harness, 'GET', '/api/records', undefined, secret)).status).toBe(403);
+    expect((await request(harness, 'GET', '/api/api-key-probe', undefined, secret)).status).toBe(200);
+    replaceTenantRoles(harness, owner, membershipId, ['record-reader']);
+    expect((await request(harness, 'GET', '/api/api-key-probe', undefined, secret)).status).toBe(401);
+    expect((await request(harness, 'GET', '/api/records', undefined, secret)).status).toBe(401);
+    // Removing platform authority also fences the old administration session;
+    // use the unchanged owner session to inspect the key's live disposition.
+    expect((await request(harness, 'GET', '/auth/api-keys', undefined, adminSession.accessToken)).status).toBe(401);
+    const unavailable = await request(harness, 'GET', `/auth/tenant/members/${membershipId}/api-keys`, undefined, owner.accessToken);
+    expect(unavailable).toMatchObject({ status: 200, body: { apiKeys: [{ status: 'unavailable' }] } });
+  }, 60_000);
+
   test('single/advanced reuses live permissions, eligibility, and administrator authority', async () => {
     const harness = await start('single');
     const owner = await register(harness, 'single-owner');
@@ -578,7 +616,7 @@ describe('Guardian API keys in advanced authorization profiles', () => {
   }, 60_000);
 });
 
-async function start(tenancy: 'single' | 'multi'): Promise<Harness> {
+async function start(tenancy: 'single' | 'multi', eligibleScopeRoles: readonly string[] = ['automation']): Promise<Harness> {
   const db = createReactiveDB({ mode: 'memory' });
   let runtime: AuthRuntime | null = null;
   const config: AuthBehaviorConfig = {
@@ -608,7 +646,7 @@ async function start(tenancy: 'single' | 'multi'): Promise<Harness> {
       enabled: true,
       selfService: true,
       administratorIssuance: true,
-      eligibleScopeRoles: ['automation'],
+      eligibleScopeRoles,
     },
   };
   const recordAccess = tenancy === 'single'

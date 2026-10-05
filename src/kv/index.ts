@@ -1,9 +1,9 @@
 /**
  * index.ts
  *
- * Public KV/cache barrel for server-side Zero code. Exports the memory-engine
- * slice and contracts only; persistence and Elysia integration are added in
- * later slices.
+ * Public KV/cache barrel for server-side Zero code. Exports memory, persistence,
+ * service, and Elysia integration surfaces; behavior is implemented by the
+ * corresponding modules and composed into managed apps by the server package.
  */
 
 export { ManualKvClock, systemKvClock } from './kv-clock';

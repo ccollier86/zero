@@ -18,7 +18,7 @@ import {
   PlatformTokenError,
 } from '../tokens';
 import type { CreatedPlatformActionToken, PlatformActionTokenRecord } from '../tokens';
-import { createOpaqueToken, hashToken, parseTokenTTL } from '../tokens/token-utils';
+import { createOpaqueToken, hashToken, parseTokenTTL, tokenExpiryAt } from '../tokens/token-utils';
 import {
   assertActionTokenIdentity,
   bindActionTokenIdentity,
@@ -41,7 +41,6 @@ export interface AuthActionTokenInspection {
 export class AuthActionTokenService {
   private readonly ttl: string;
   private readonly requestCooldown: string;
-  private readonly ttlMs: number;
   private readonly cooldownMs: number;
 
   constructor(
@@ -53,7 +52,7 @@ export class AuthActionTokenService {
   ) {
     this.ttl = ttl;
     this.requestCooldown = requestCooldown;
-    this.ttlMs = parseTokenTTL(ttl, 'auth action token TTL');
+    parseTokenTTL(ttl, 'auth action token TTL');
     this.cooldownMs = parseTokenTTL(requestCooldown, 'auth action token cooldown');
     if (this.platformTokens
       && this.platformTokens.getTransactionDomain() !== this.store.getTransactionDomain()) {
@@ -136,7 +135,7 @@ export class AuthActionTokenService {
       userId: params.userId,
       type: params.type,
       tokenHash: hashToken(rawToken),
-      expiresAt: now + this.ttlMs,
+      expiresAt: tokenExpiryAt(now, this.ttl, 'auth action token TTL'),
       createdAt: now,
       createdBy: params.createdBy,
       metadata,
@@ -367,7 +366,7 @@ export class AuthActionTokenService {
       throw new AuthError('Action token has already been used', 'ACTION_TOKEN_CONSUMED', 400);
     }
 
-    if (record.expiresAt < Date.now()) {
+    if (record.expiresAt <= Date.now()) {
       this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
         userId: record.userId,
         metadata: { tokenId: record.tokenId, reason: 'expired' },

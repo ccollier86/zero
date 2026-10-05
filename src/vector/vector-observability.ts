@@ -21,29 +21,29 @@ export interface VectorEventMetadata {
 }
 
 /** Emit that vector runtime was configured. */
-export function emitVectorConfigured(metadata: VectorEventMetadata): void {
-  emitPlatformCode(OBS_CODES.VECTOR_CONFIGURED, {
+export function emitVectorConfigured(metadata: VectorEventMetadata, emit = emitPlatformCode): void {
+  emit(OBS_CODES.VECTOR_CONFIGURED, {
     metadata: safeVectorMetadata(metadata),
   });
 }
 
 /** Emit that a zvec index was opened and is ready. */
-export function emitVectorIndexReady(metadata: VectorEventMetadata): void {
-  emitPlatformCode(OBS_CODES.VECTOR_INDEX_READY, {
+export function emitVectorIndexReady(metadata: VectorEventMetadata, emit = emitPlatformCode): void {
+  emit(OBS_CODES.VECTOR_INDEX_READY, {
     metadata: safeVectorMetadata(metadata),
   });
 }
 
 /** Emit successful vector operation completion without record text or vectors. */
-export function emitVectorOperationCompleted(metadata: VectorEventMetadata): void {
-  emitPlatformCode(OBS_CODES.VECTOR_OPERATION_COMPLETED, {
+export function emitVectorOperationCompleted(metadata: VectorEventMetadata, emit = emitPlatformCode): void {
+  emit(OBS_CODES.VECTOR_OPERATION_COMPLETED, {
     metadata: safeVectorMetadata(metadata),
   });
 }
 
 /** Emit vector operation failure without record text or vectors. */
-export function emitVectorOperationFailed(error: unknown, metadata: VectorEventMetadata): void {
-  emitPlatformCode(OBS_CODES.VECTOR_OPERATION_FAILED, {
+export function emitVectorOperationFailed(error: unknown, metadata: VectorEventMetadata, emit = emitPlatformCode): void {
+  emit(OBS_CODES.VECTOR_OPERATION_FAILED, {
     error,
     metadata: safeVectorMetadata(metadata),
   });

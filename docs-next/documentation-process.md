@@ -83,11 +83,13 @@ For each finding, record what was observed, the expected public contract,
 evidence, affected modes/versions, and whether it concerns implementation,
 documentation, release status, or missing verification.
 
-Discuss actual platform defects and required behavior instead of documenting
-around them. Code fixes require appropriate task authority and normal engineering
-review. Keep drafts visibly unresolved when a correct contract cannot yet be
-established; never mark them verified through a workaround or a caveat that
-conceals the defect.
+Correct confirmed platform defects rather than documenting around them: the
+user has explicitly authorized these fixes and focused regression tests for
+this rebuild without per-defect questions. Preserve normal engineering review
+and record expected behavior, the failing reproduction and verification. This
+does not authorize unrelated roadmap implementation or app/live-data changes.
+Keep drafts visibly unresolved when a correct contract cannot yet be established;
+never mark them verified through a workaround or a caveat that conceals a defect.
 
 ## Write One System At A Time
 

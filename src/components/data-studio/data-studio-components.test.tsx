@@ -136,7 +136,10 @@ describe('Data Studio inline grid', () => {
         onChange={() => undefined}
       />,
     );
-    expect(numberMarkup).toContain('type="number"');
+    // Text + decimal keyboard preserves an invalid local draft for validation;
+    // native number inputs silently replace incompatible drafts with an empty value.
+    expect(numberMarkup).toContain('type="text"');
+    expect(numberMarkup).toContain('inputMode="decimal"');
     expect(numberMarkup).toContain('step="any"');
     expect(numberMarkup).toContain('value="42.5"');
   });

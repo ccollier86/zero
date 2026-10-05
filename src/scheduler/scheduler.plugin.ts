@@ -1,5 +1,12 @@
+/**
+ * Mounts Scheduler's named Elysia plugin, live admin guards and lifecycle.
+ * The service owns cron behavior; this transport preserves existing HTTP error
+ * contracts and cleans up failed app-local composition before publishing it.
+ */
+
 import { Elysia, t } from 'elysia';
 import { SchedulerService } from './scheduler-service';
+import { SchedulerError } from './scheduler-error';
 import { AuthError } from '../auth/types';
 import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import { createAuthMiddleware } from '../auth/auth.middleware';
@@ -72,8 +79,6 @@ export function createSchedulerPlugin(
   const owner = {};
   let registration: ReturnType<typeof schedulerProviders.register> | null = null;
   let cleanedUp = false;
-  config?.runtime?.set(ZERO_SCHEDULER_SERVICE, scheduler);
-  config?.onServiceCreated?.(scheduler);
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
@@ -85,7 +90,16 @@ export function createSchedulerPlugin(
       registration = null;
     }
   };
-  config?.runtime?.addCleanup(cleanup);
+  let removeRuntimeCleanup: (() => void) | undefined;
+  try {
+    config?.runtime?.set(ZERO_SCHEDULER_SERVICE, scheduler);
+    removeRuntimeCleanup = config?.runtime?.addCleanup(cleanup);
+    config?.onServiceCreated?.(scheduler);
+  } catch (error) {
+    removeRuntimeCleanup?.();
+    cleanup();
+    throw error;
+  }
 
   return new Elysia({ name: 'scheduler', prefix })
 
@@ -93,7 +107,7 @@ export function createSchedulerPlugin(
 
     .onStart(() => {
       if (cleanedUp) {
-        throw new Error('[scheduler] Cannot start after its app runtime has stopped.');
+        throw new SchedulerError('SCHEDULER_STOPPED', '[scheduler] Cannot start after its app runtime has stopped.');
       }
       registration = schedulerProviders.register(owner, () => scheduler);
       emitPlatformCode(OBS_CODES.SCHEDULER_STARTED);
@@ -112,6 +126,10 @@ export function createSchedulerPlugin(
       if (error instanceof AuthError) {
         set.status = error.status;
         return { error: getPublicAuthErrorMessage(error), code: error.code };
+      }
+      if (error instanceof SchedulerError) {
+        set.status = error.code === 'SCHEDULER_JOB_BUSY' ? 409 : 400;
+        return { error: error.message, code: error.code };
       }
     })
 
@@ -163,7 +181,10 @@ export function createSchedulerPlugin(
       ({ requireAdmin, params }) => {
         requireAdmin();
         const ok = scheduler.trigger(params.name);
-        if (!ok) throw new AuthError('Job not found', 'NOT_FOUND', 404);
+        if (!ok) {
+          if (!scheduler.has(params.name)) throw new AuthError('Job not found', 'NOT_FOUND', 404);
+          throw new SchedulerError('SCHEDULER_JOB_BUSY', 'Job is already running.');
+        }
         return { ok: true };
       },
       { params: t.Object({ name: t.String({ minLength: 1 }) }) }

@@ -2,9 +2,14 @@ import * as React from "react"
 
 import { cn } from "#zero/lib/utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/** The wrapper scrolls by default; override its class when an ancestor owns scrolling. */
+interface TableProps extends React.ComponentProps<"table"> {
+  containerClassName?: string;
+}
+
+function Table({ className, containerClassName, ...props }: TableProps) {
   return (
-    <div className="relative w-full overflow-auto">
+    <div data-slot="table-container" className={cn("relative w-full overflow-auto", containerClassName)}>
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-sm", className)}
@@ -105,4 +110,5 @@ export {
   TableHead,
   TableHeader,
   TableRow,
+  type TableProps,
 }

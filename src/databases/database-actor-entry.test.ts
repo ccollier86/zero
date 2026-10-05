@@ -91,6 +91,7 @@ describe('database actor same-entry contract', () => {
     const child = Bun.spawn({
       cmd: [
         process.execPath,
+        '--no-env-file',
         SAME_ENTRY_FIXTURE_PATH,
         DATABASE_ACTOR_CHILD_FLAG,
         'writer',
@@ -106,7 +107,7 @@ describe('database actor same-entry contract', () => {
 });
 
 describe('database actor subprocess executor factory', () => {
-  test('builds source, bundle, and explicit-prefix commands with only the actor suffix', () => {
+  test('builds source, bundle, and explicit-prefix commands with a hermetic source runtime and actor suffix', () => {
     expect(buildDatabaseActorCommand({
       launch: {
         kind: 'source',
@@ -116,6 +117,7 @@ describe('database actor subprocess executor factory', () => {
       slot: 4,
     })).toEqual([
       process.execPath,
+      '--no-env-file',
       SAME_ENTRY_FIXTURE_PATH,
       DATABASE_ACTOR_CHILD_FLAG,
       'writer',

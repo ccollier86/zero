@@ -1,5 +1,12 @@
+/**
+ * Owns the in-process named cron registry and job control. Croner provides
+ * scheduling; Zero observability reports lifecycle/failures. HTTP authority,
+ * persistence and distributed scheduling are outside this service.
+ */
+
 import { Cron } from 'croner';
 import type { JobDefinition, JobStatus } from './types';
+import { SchedulerError } from './scheduler-error';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 
@@ -28,37 +35,56 @@ export class SchedulerService {
    * Register a new scheduled job.
    * Throws if a job with the same name is already registered.
    */
-  register(def: JobDefinition): void {
+  register(definition: JobDefinition): void {
+    // Scheduling, callbacks and status must share the identity/options admitted
+    // at registration, not a caller-owned object that can change afterward.
+    const def: JobDefinition = Object.freeze({ ...definition });
     if (this.jobs.has(def.name)) {
-      throw new Error(`[scheduler] Job '${def.name}' is already registered`);
+      throw new SchedulerError(
+        'SCHEDULER_JOB_ALREADY_REGISTERED',
+        `[scheduler] Job '${def.name}' is already registered`,
+      );
     }
 
-    const cronInstance = new Cron(
-      def.pattern,
-      {
-        timezone: def.timezone,
-        paused: def.paused ?? false,
-        protect: def.protect ?? true,
-        catch: def.catchErrors ?? true
-          ? (err: unknown) => {
-              emitPlatformCode(OBS_CODES.SCHEDULER_JOB_FAILED, {
-                error: err,
-                metadata: { name: def.name, pattern: def.pattern },
-              });
-            }
-          : undefined,
-      },
-      async () => {
-        try {
-          await def.run();
-        } catch (err) {
-          emitPlatformCode(OBS_CODES.SCHEDULER_JOB_UNHANDLED_FAILED, {
-            error: err,
-            metadata: { name: def.name, pattern: def.pattern },
-          });
-        }
-      },
-    );
+    const catchErrors = def.catchErrors ?? true;
+
+    let cronInstance: Cron;
+    try {
+      cronInstance = new Cron(
+        def.pattern,
+        {
+          timezone: def.timezone,
+          paused: def.paused ?? false,
+          protect: def.protect ?? true,
+          catch: catchErrors
+            ? (err: unknown) => {
+                emitPlatformCode(OBS_CODES.SCHEDULER_JOB_FAILED, {
+                  error: err,
+                  metadata: { name: def.name, pattern: def.pattern },
+                });
+              }
+            : undefined,
+        },
+        async () => {
+          if (catchErrors) {
+            await def.run();
+            return;
+          }
+
+          try {
+            await def.run();
+          } catch (err) {
+            emitPlatformCode(OBS_CODES.SCHEDULER_JOB_UNHANDLED_FAILED, {
+              error: err,
+              metadata: { name: def.name, pattern: def.pattern },
+            });
+            throw err;
+          }
+        },
+      );
+    } catch {
+      throw new SchedulerError('SCHEDULER_JOB_INVALID', '[scheduler] Invalid job schedule or options.');
+    }
 
     this.jobs.set(def.name, { cron: cronInstance, def });
     const state = def.paused ? 'paused' : 'scheduled';
@@ -112,6 +138,9 @@ export class SchedulerService {
   trigger(name: string): boolean {
     const entry = this.jobs.get(name);
     if (!entry) return false;
+    // Croner's explicit trigger bypasses its scheduled-overrun check. Preserve
+    // Zero's protect contract for both scheduled and immediate executions.
+    if ((entry.def.protect ?? true) && entry.cron.isBusy()) return false;
     entry.cron.trigger();
     return true;
   }
@@ -150,7 +179,7 @@ export class SchedulerService {
 
   /** Stop all jobs. Called on plugin shutdown. */
   stopAll(): void {
-    for (const [name, entry] of this.jobs) {
+    for (const entry of this.jobs.values()) {
       entry.cron.stop();
     }
     this.jobs.clear();

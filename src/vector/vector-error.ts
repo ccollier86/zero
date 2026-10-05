@@ -13,6 +13,8 @@ export type VectorErrorCode =
   | 'VECTOR_DIMENSION_MISMATCH'
   | 'VECTOR_FILTER_INVALID'
   | 'VECTOR_METADATA_INVALID'
+  | 'VECTOR_SCOPE_CONFLICT'
+  | 'VECTOR_BACKPRESSURE'
   | 'VECTOR_OPERATION_FAILED';
 
 /** Domain error thrown by vector config, filters, services, and adapters. */

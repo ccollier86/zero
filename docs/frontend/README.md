@@ -195,10 +195,12 @@ call wires it all.
 | [Text Effects](./text-effects.md) | Public text effects for Hero titles, landing-page copy, docs headers, and content pages |
 | [Streaming Text](./streaming-text.md) | Accessible live text for AI responses, async string streams, caller-owned progressive output, and demos |
 | [Secret Field](./secret-field.md) | Display-only, masked, revealable, and copyable API keys, tokens, and other authorized browser-held secrets |
+| [JSON Editor](./json-editor.md) | Token-themed structured JSON and retained text drafts, synchronous local admission, and separate domain persistence |
 | [Public Components](./public-components.md) | Feature sections, code blocks, FAQ, expandable cards, bento grids, and animated lists for public landing/content sections |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |
 | [DataTableView](./data-table.md) | Schema-aware table organism with full-sync/lazy/data/isolated-server sources, offset or cursor pagination, controlled state, acknowledged inline and bulk actions, compact composable controls, and stable sizing |
+| [Data Studio](../data-studio.md) | Organization-owned spreadsheet workspace, progressive bounded reads, contextual schema editing, Visual/JSON drafts and Guardian/Fabric-authorized writes |
 | [KanbanBoard](./kanban.md) | Tokenized drag-and-drop board organism for ordered records grouped by caller-owned columns |
 | [LaunchBoard](./launchboard.md) | Reference app showing AppShell + ReactiveDB + KanbanBoard + platform modals in one package-mode example |
 | [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |

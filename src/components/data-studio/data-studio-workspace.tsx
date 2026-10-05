@@ -1,290 +1,164 @@
 'use client';
 
+/** Compose the packaged schema-first Studio; scoped data and mutations stay in its controller. */
 import * as React from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, Database, LoaderCircle, Trash2 } from 'lucide-react';
-import {
-  resolveDataStudioAccess,
-  type DataStudioAccess,
-  type UseDataStudioResult,
-} from '../../frontend/client/data-studio-hooks';
-import type {
-  DataStudioColumn,
-  DataStudioValue,
-} from '../../frontend/client/data-studio-client';
+import { AlertTriangle, Database, LoaderCircle, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { resolveDataStudioAccess, type DataStudioAccess, type UseDataStudioResult } from '../../frontend/client/data-studio-controller-types';
+import type { DataStudioColumn, DataStudioRow, DataStudioTableStatus, DataStudioValue } from '../../frontend/client/data-studio-client';
+import { reportDataStudioFrontendFailure } from '../../frontend/client/data-studio-observability';
 import { Button } from '../ui/button';
 import { ListDetailLayout } from '../ui/list-detail-layout';
-import { RecordNavigationBar } from '../ui/record-navigation-bar';
 import { cn } from '../../lib/utils';
-import {
-  DataStudioConfirmDialog,
-  DataStudioRowDialog,
-  DataStudioTableDialog,
-} from './data-studio-dialogs';
 import { DataStudioGrid } from './data-studio-grid';
 import { DataStudioFilterControl } from './data-studio-filter-control';
 import { DataStudioInspector } from './data-studio-inspector';
 import { DataStudioToolbar } from './data-studio-toolbar';
+import { DataStudioWorkspaceActions } from './data-studio-workspace-actions';
+import { DataStudioWorkspaceDialogs } from './data-studio-workspace-dialogs';
 
 export interface DataStudioWorkspaceProps {
   readonly controller: UseDataStudioResult;
-  /** UI-only narrowing. `true` never widens a permission denied by the server. */
+  /** UI-only narrowing; never grants server permission. */
   readonly capabilities?: Partial<DataStudioAccess>;
   readonly title?: string;
   readonly description?: string;
   readonly className?: string;
   readonly emptyState?: React.ReactNode;
+  /** Optional controlled desktop inspector visibility. */
+  readonly detailsOpen?: boolean;
+  /** The default prioritizes the grid; opening details never replaces its schema headers. */
+  readonly defaultDetailsOpen?: boolean;
+  readonly onDetailsOpenChange?: (open: boolean) => void;
+  readonly resizableDetails?: boolean;
 }
 
-/** Adaptive organization Table Studio composed around one ListDetailLayout. */
-export function DataStudioWorkspace({
-  controller,
-  capabilities: capabilityNarrowing,
-  title = 'Data Studio',
-  description = 'Build logical tables and work with organization records.',
-  className,
-  emptyState,
+/** Retire drafts, confirmations and callbacks synchronously on table/authority replacement. */
+export function DataStudioWorkspace(props: DataStudioWorkspaceProps) {
+  const boundary = JSON.stringify([props.controller.scopeKey, props.controller.selectedTableId]);
+  return <DataStudioWorkspaceBody key={boundary} {...props} />;
+}
+
+function DataStudioWorkspaceBody({
+  controller: c, capabilities: narrowing, title = 'Data Studio',
+  description = 'Create tables and edit your workspace’s records.', className, emptyState,
+  detailsOpen, defaultDetailsOpen = false, onDetailsOpenChange, resizableDetails = true,
 }: DataStudioWorkspaceProps) {
-  const access = React.useMemo(
-    () => resolveDataStudioAccess(controller.capabilities, capabilityNarrowing),
-    [capabilityNarrowing, controller.capabilities],
-  );
+  const access = React.useMemo(() => resolveDataStudioAccess(c.capabilities, narrowing), [c.capabilities, narrowing]);
+  const [localDetails, setLocalDetails] = React.useState(defaultDetailsOpen);
+  const showDetails = detailsOpen ?? localDetails;
   const [mobileDetailOpen, setMobileDetailOpen] = React.useState(false);
+  const mobileRecord = React.useRef(false);
   const [createTableOpen, setCreateTableOpen] = React.useState(false);
-  const [editTableOpen, setEditTableOpen] = React.useState(false);
+  const [schemaOpen, setSchemaOpen] = React.useState(false);
+  const [startWithNewColumn, setStartWithNewColumn] = React.useState(false);
   const [createRowOpen, setCreateRowOpen] = React.useState(false);
-  const [deleteRowOpen, setDeleteRowOpen] = React.useState(false);
-  const [statusDialogOpen, setStatusDialogOpen] = React.useState(false);
-
+  const [deleteTarget, setDeleteTarget] = React.useState<DataStudioRow | null>(null);
+  const [statusTarget, setStatusTarget] = React.useState<{ status: DataStudioTableStatus; revision: number } | null>(null);
+  const setDetails = (open: boolean) => {
+    if (detailsOpen === undefined) setLocalDetails(open);
+    onDetailsOpenChange?.(open);
+  };
   React.useEffect(() => {
-    if (!controller.selectedRow) setMobileDetailOpen(false);
-  }, [controller.selectedRow]);
-
-  const selectRow = React.useCallback((rowId: string) => {
-    controller.selectRow(rowId);
-    setMobileDetailOpen(true);
-  }, [controller.selectRow]);
-
+    if (mobileRecord.current && !c.selectedRow) setMobileDetailOpen(false);
+  }, [c.selectedRow]);
+  const inspect = () => { setDetails(true); mobileRecord.current = !!c.selectedRow; setMobileDetailOpen(true); };
+  const openSchema = (add = false) => { setStartWithNewColumn(add); setSchemaOpen(true); };
   const refresh = React.useCallback(() => {
-    void Promise.all([controller.reload(), controller.reloadRows()]);
-  }, [controller.reload, controller.reloadRows]);
+    void Promise.all([c.reload(), c.reloadRows()]).catch(cause => reportDataStudioFrontendFailure('row-page.load', 'load', cause));
+  }, [c.reload, c.reloadRows]);
+  const table = c.selectedTable;
+  const schemaEditable = access.canManage && table?.status === 'active' && !c.isMutating;
+  const canAddColumn = !!table && table.schema.columns.length < (c.capabilities?.limits.maxColumns ?? 128);
+  const writeSchema = (columns: readonly DataStudioColumn[], revision?: number) => {
+    if (!table || !schemaEditable) return Promise.reject(new Error('Table editing is currently unavailable.'));
+    return c.updateSchema({ ...table.schema, columns }, { expectedRevision: revision ?? table.revision });
+  };
+  const updateColumn = (next: DataStudioColumn, revision?: number) => {
+    if (!table?.schema.columns.some(column => column.columnId === next.columnId)) {
+      return Promise.reject(new Error('This column is no longer available.'));
+    }
+    return writeSchema(table.schema.columns.map(column => column.columnId === next.columnId ? next : column), revision);
+  };
+  const moveColumn = (id: string, direction: 'left' | 'right', revision?: number) => {
+    const columns = [...(table?.schema.columns ?? [])], from = columns.findIndex(column => column.columnId === id);
+    const to = from + (direction === 'left' ? -1 : 1);
+    if (from < 0 || to < 0 || to >= columns.length) return Promise.reject(new Error('This column cannot move further.'));
+    [columns[from], columns[to]] = [columns[to]!, columns[from]!];
+    return writeSchema(columns, revision);
+  };
+  const removeColumn = (id: string, revision?: number) => writeSchema(
+    table?.schema.columns.filter(column => column.columnId !== id) ?? [], revision,
+  );
+  if (c.status !== 'ready' || !access.canRead) return <DataStudioBoundaryState status={c.status === 'ready' ? 'denied' : c.status} error={c.error}
+    onRetry={() => { void c.reload().catch(cause => reportDataStudioFrontendFailure('capabilities-and-catalog.load', 'load', cause)); }}
+    className={className}>{emptyState}</DataStudioBoundaryState>;
 
-  if (controller.status !== 'ready') {
-    return (
-      <DataStudioBoundaryState
-        status={controller.status}
-        error={controller.error}
-        onRetry={() => { void controller.reload(); }}
-        className={className}
-      >
-        {emptyState}
-      </DataStudioBoundaryState>
-    );
-  }
-
-  const list = (
-    <div className="flex h-full min-h-0 flex-col">
-      <DataStudioToolbar
-        tables={controller.tables}
-        selectedTableId={controller.selectedTableId}
-        tableStatus={controller.tableStatus}
-        search={controller.search}
-        loadedCount={controller.rows.length}
-        totalRows={controller.totalRows}
-        canManage={access.canManage}
-        filterControl={(
-          <DataStudioFilterControl
-            columns={controller.selectedTable?.schema.columns ?? []}
-            filters={controller.filters}
-            disabled={controller.isMutating}
-            onChange={controller.setFilters}
-          />
-        )}
-        loading={controller.isLoading || controller.isLoadingRows}
-        busy={controller.isMutating}
-        onTableChange={controller.selectTable}
-        onStatusChange={controller.setTableStatus}
-        onSearchChange={controller.setSearch}
-        onCreateTable={() => setCreateTableOpen(true)}
-        onRefresh={refresh}
-      />
-      {(controller.error || controller.mutationError) && (
-        <div role="alert" className="flex items-center justify-between gap-3 border-b border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span className="min-w-0 truncate">
-            {(controller.mutationError ?? controller.error)?.message}
-          </span>
-          <Button type="button" size="sm" variant="outline" onClick={refresh}>Retry</Button>
-        </div>
-      )}
-      <DataStudioGrid
-        className="min-h-0 flex-1"
-        table={controller.selectedTable}
-        rows={controller.rows}
-        selectedRowId={controller.selectedRowId}
-        editable={access.canWrite
-          && controller.selectedTable?.status === 'active'
-          && !controller.isMutating}
-        loading={controller.isLoadingRows}
-        sortColumnId={controller.sortColumnId}
-        sortDirection={controller.sortDirection}
-        onSelectRow={selectRow}
-        onSort={controller.setSort}
-        onCommit={(row, column, value) => controller.updateCell(row, column.columnId, value)}
-        onReload={controller.reloadRows}
-      />
+  const list = <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    <div className="shrink-0">
+      <DataStudioToolbar tables={c.tables} selectedTableId={c.selectedTableId} tableStatus={c.tableStatus}
+        search={c.search} loadedCount={c.rows.length} totalRows={c.totalRows}
+        canManage={access.canManage} loading={c.isLoading || c.isLoadingRows} busy={c.isMutating}
+        filterControl={<DataStudioFilterControl columns={table?.schema.columns ?? []} filters={c.filters}
+          disabled={c.isMutating} onChange={c.setFilters} />}
+        onTableChange={c.selectTable} onStatusChange={c.setTableStatus} onSearchChange={c.setSearch}
+        onCreateTable={() => setCreateTableOpen(true)} onRefresh={refresh} />
     </div>
-  );
-
-  const detail = (
-    <DataStudioInspector
-      table={controller.selectedTable}
-      row={controller.selectedRow}
-      canManage={access.canManage}
-      busy={controller.isMutating}
-      onEditSchema={() => setEditTableOpen(true)}
-      onChangeStatus={() => setStatusDialogOpen(true)}
-    />
-  );
-
-  return (
-    <section
-      data-slot="data-studio"
-      className={cn('flex min-h-[36rem] flex-col gap-3', className)}
-      aria-busy={controller.isLoading || controller.isLoadingRows || controller.isMutating}
-    >
-      <header className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Database className="size-4" aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
-            <p className="truncate text-sm text-muted-foreground">{description}</p>
-          </div>
-        </div>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-background shadow-sm">
-        <ListDetailLayout
-          list={list}
-          detail={detail}
-          hasSelection={controller.selectedRow !== null}
-          mobileDetailOpen={mobileDetailOpen}
-          onMobileBack={() => setMobileDetailOpen(false)}
-          mobileBackLabel="Back to records"
-          selectedKey={controller.selectedRow?.rowId ?? controller.selectedTable?.tableId}
-          listWidth="minmax(0, 3fr)"
-          detailWidth="minmax(18rem, 2fr)"
-          bottomBar={(
-            <div className="flex min-w-0 flex-col gap-1 p-2 lg:flex-row lg:items-center">
-              <RecordNavigationBar
-                className="min-w-0 flex-1"
-                currentIndex={Math.max(0, controller.selectedRowIndex)}
-                totalCount={controller.rows.length}
-                onPrevious={() => {
-                  controller.selectPreviousRow();
-                  setMobileDetailOpen(true);
-                }}
-                onNext={() => {
-                  controller.selectNextRow();
-                  setMobileDetailOpen(true);
-                }}
-                actions={access.canWrite
-                  && controller.selectedTable?.status === 'active'
-                  && controller.selectedRow ? [{
-                  icon: <Trash2 className="size-4" aria-hidden="true" />,
-                  label: 'Delete record',
-                  variant: 'destructive',
-                  disabled: controller.isMutating,
-                  onClick: () => setDeleteRowOpen(true),
-                }] : []}
-                primaryAction={access.canWrite && controller.selectedTable?.status === 'active' ? {
-                  label: 'New record',
-                  ariaHasPopup: 'dialog',
-                  disabled: controller.isMutating,
-                  onClick: () => setCreateRowOpen(true),
-                } : undefined}
-              />
-              <div className="flex shrink-0 items-center justify-center gap-1 px-1 text-xs text-muted-foreground" aria-label="Record pages">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="size-8"
-                  disabled={controller.previousOffset === null || controller.isLoadingRows}
-                  aria-label="Previous record page"
-                  onClick={controller.goToPreviousPage}
-                >
-                  <ChevronLeft className="size-4" aria-hidden="true" />
-                </Button>
-                <span className="min-w-20 text-center tabular-nums">
-                  {controller.totalRows === 0
-                    ? '0 records'
-                    : `${Math.min(controller.offset + 1, controller.totalRows)}–${Math.min(controller.offset + controller.rows.length, controller.totalRows)} of ${controller.totalRows}`}
-                </span>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="size-8"
-                  disabled={controller.nextOffset === null || controller.isLoadingRows}
-                  aria-label="Next record page"
-                  onClick={controller.goToNextPage}
-                >
-                  <ChevronRight className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </div>
-          )}
-        />
+    {(c.error || c.mutationError) && <div role="alert"
+      className="flex shrink-0 items-center justify-between gap-3 border-b border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+      <span className="min-w-0 break-words">{(c.mutationError ?? c.error)?.message}</span>
+      <Button size="sm" variant="outline" onClick={refresh}>Refresh</Button>
+    </div>}
+    <DataStudioGrid queryKey={c.rowWindowKey}
+      className="min-h-0 min-w-0 flex-1" table={table} rows={c.rows} selectedRowId={c.selectedRowId}
+      editable={access.canWrite && table?.status === 'active' && !c.isMutating}
+      schemaEditable={schemaEditable} onAddColumn={canAddColumn ? () => openSchema(true) : undefined}
+      onUpdateColumn={updateColumn} onMoveColumn={moveColumn} onRemoveColumn={removeColumn}
+      loading={c.isLoadingRows} sortColumnId={c.sortColumnId} sortDirection={c.sortDirection}
+      onSelectRow={c.selectRow}
+      onInspectRow={() => { mobileRecord.current = true; setMobileDetailOpen(true); }}
+      onSort={c.setSort} onCommit={(row, column, value) => c.updateCell(row, column.columnId, value)}
+      onReload={c.reloadRows} hasMore={c.hasMoreRows} loadingMore={c.isLoadingMore}
+      onLoadMore={c.loadMoreRows} loadMoreError={c.loadMoreError?.message}
+      refreshRequired={c.rowsNeedRefresh} />
+  </div>;
+  const detail = <DataStudioInspector table={table} row={c.selectedRow} canManage={access.canManage}
+    busy={c.isMutating} onEditSchema={() => openSchema()}
+    onChangeStatus={() => { if (table) setStatusTarget({ status: table.status === 'active' ? 'archived' : 'active', revision: table.revision }); }} />;
+  return <section data-slot="data-studio"
+    className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden', className)}
+    aria-busy={c.isLoading || c.isLoadingRows || c.isMutating}>
+    <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Database className="size-4" aria-hidden="true" /></span>
+        <div className="min-w-0"><h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+          <p className="text-sm text-muted-foreground">{description}</p></div>
       </div>
-
-      <DataStudioTableDialog
-        open={createTableOpen}
-        busy={controller.isMutating}
-        onOpenChange={setCreateTableOpen}
-        onCreate={controller.createTable}
-      />
-      <DataStudioTableDialog
-        key={controller.selectedTable?.tableId ?? 'no-table'}
-        open={editTableOpen}
-        table={controller.selectedTable}
-        busy={controller.isMutating}
-        onOpenChange={setEditTableOpen}
-        onUpdate={controller.updateTable}
-      />
-      <DataStudioRowDialog
-        open={createRowOpen}
-        table={controller.selectedTable}
-        busy={controller.isMutating}
-        onOpenChange={setCreateRowOpen}
-        onCreate={controller.createRow}
-      />
-      <DataStudioConfirmDialog
-        open={deleteRowOpen}
-        title="Delete record?"
-        description="This permanently removes the selected logical record from this organization."
-        confirmLabel="Delete record"
-        destructive
-        busy={controller.isMutating}
-        onOpenChange={setDeleteRowOpen}
-        onConfirm={() => controller.deleteRow()}
-      />
-      <DataStudioConfirmDialog
-        open={statusDialogOpen}
-        title={controller.selectedTable?.status === 'active' ? 'Archive table?' : 'Restore table?'}
-        description={controller.selectedTable?.status === 'active'
-          ? 'Archived tables become read-only and leave the active catalog.'
-          : 'Restoring makes this table available for record changes again.'}
-        confirmLabel={controller.selectedTable?.status === 'active' ? 'Archive table' : 'Restore table'}
-        destructive={controller.selectedTable?.status === 'active'}
-        busy={controller.isMutating}
-        onOpenChange={setStatusDialogOpen}
-        onConfirm={() => controller.changeTableStatus(
-          controller.selectedTable?.status === 'active' ? 'archived' : 'active',
-        )}
-      />
-    </section>
-  );
+      <Button size="sm" variant="outline" disabled={!table} aria-expanded={showDetails}
+        onClick={() => { setDetails(!showDetails); mobileRecord.current = false; setMobileDetailOpen(!showDetails); }}>
+        {showDetails ? <PanelRightClose aria-hidden="true" /> : <PanelRightOpen aria-hidden="true" />}
+        {showDetails ? 'Hide details' : 'Show details'}
+      </Button>
+    </header>
+    <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border bg-background shadow-sm">
+      <ListDetailLayout list={list} detail={detail}
+        hasSelection={c.selectedRow !== null || mobileDetailOpen} mobileDetailOpen={mobileDetailOpen}
+        onMobileBack={() => setMobileDetailOpen(false)} mobileBackLabel="Back to records"
+        selectedKey={c.selectedRow?.rowId ?? table?.tableId}
+        listWidth="minmax(0, 1fr)" detailWidth="minmax(18rem, 22rem)"
+        detailVisible={showDetails} resizable={resizableDetails}
+        bottomBar={<div className="min-w-0 p-2"><DataStudioWorkspaceActions controller={c} access={access}
+          onAddRecord={() => setCreateRowOpen(true)} onAddColumn={() => openSchema(true)}
+          onEditSchema={() => openSchema()} onInspect={inspect}
+          onDeleteRecord={() => setDeleteTarget(c.selectedRow)}
+          onChangeStatus={() => { if (table) setStatusTarget({ status: table.status === 'active' ? 'archived' : 'active', revision: table.revision }); }}
+        /></div>} />
+    </div>
+    <DataStudioWorkspaceDialogs controller={c} createTableOpen={createTableOpen} onCreateTableOpen={setCreateTableOpen}
+      schemaOpen={schemaOpen} startWithNewColumn={startWithNewColumn} onSchemaOpen={setSchemaOpen}
+      createRowOpen={createRowOpen} onCreateRowOpen={setCreateRowOpen}
+      deleteTarget={deleteTarget} onDeleteClose={() => setDeleteTarget(null)}
+      statusTarget={statusTarget} onStatusClose={() => setStatusTarget(null)} />
+  </section>;
 }
 
 function DataStudioBoundaryState({

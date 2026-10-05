@@ -13,6 +13,7 @@ import type {
   PlatformEventStore,
   PlatformEventLevel,
 } from './types';
+import { ObservabilityConfigurationError } from './configuration-error';
 
 /** Bounded in-memory event store. */
 export class MemoryEventStore implements PlatformEventStore {
@@ -20,7 +21,11 @@ export class MemoryEventStore implements PlatformEventStore {
   private readonly maxEvents: number;
 
   constructor(options: { maxEvents?: number } = {}) {
-    this.maxEvents = Math.max(1, options.maxEvents ?? 1000);
+    const maxEvents = options.maxEvents ?? 1000;
+    if (!Number.isSafeInteger(maxEvents) || maxEvents <= 0) {
+      throw new ObservabilityConfigurationError('Observability maxEvents must be a positive safe integer');
+    }
+    this.maxEvents = maxEvents;
   }
 
   /** Store one event and prune old events past the retention limit. */

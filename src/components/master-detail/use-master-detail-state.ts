@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import type { Row } from '../../sync/types';
@@ -96,11 +97,40 @@ export function useMasterDetailState<T extends Row>({
     filters,
     lazyOptions,
   });
+  return useMasterDetailSelection({
+    resolvedSource, primaryKey, selectedId: selectedIdProp, defaultSelectedId,
+    autoSelectFirst, onSelect, onSelectedIdChange,
+  });
+}
+
+/** Select within one already-resolved result without installing a second query owner. */
+export function useMasterDetailSelection<T extends Row>({
+  resolvedSource,
+  primaryKey,
+  selectedId: selectedIdProp,
+  defaultSelectedId,
+  autoSelectFirst = true,
+  onSelect,
+  onSelectedIdChange,
+  boundaryKey,
+  getRowId,
+}: Pick<UseMasterDetailStateOptions<T>,
+  'primaryKey' | 'selectedId' | 'defaultSelectedId' | 'autoSelectFirst' | 'onSelect' | 'onSelectedIdChange'
+> & {
+  resolvedSource: DataTableSourceState<T>;
+  boundaryKey?: string;
+  getRowId?: (row: T, index: number) => string | number;
+}): UseMasterDetailStateReturn<T> {
   const data = resolvedSource.data;
   const isControlled = selectedIdProp !== undefined;
-  const [internalSelectedId, setInternalSelectedId] = useState<string | null>(
-    defaultSelectedId ?? null,
-  );
+  const [internalSelection, setInternalSelection] = useState(() => ({
+    boundaryKey, id: defaultSelectedId ?? null,
+  }));
+  const internalSelectedId = internalSelection.boundaryKey === boundaryKey
+    ? internalSelection.id
+    : null;
+  const currentBoundary = useRef(boundaryKey);
+  currentBoundary.current = boundaryKey;
 
   const selection = useMemo(
     () => resolveMasterDetailSelection(
@@ -108,17 +138,21 @@ export function useMasterDetailState<T extends Row>({
       primaryKey,
       isControlled ? selectedIdProp : internalSelectedId,
       !isControlled && autoSelectFirst,
+      getRowId,
     ),
-    [autoSelectFirst, data, internalSelectedId, isControlled, primaryKey, selectedIdProp],
+    [autoSelectFirst, data, getRowId, internalSelectedId, isControlled, primaryKey, selectedIdProp],
   );
 
   useEffect(() => {
-    if (isControlled || selection.selectedId === internalSelectedId) return;
+    if (isControlled || (internalSelection.boundaryKey === boundaryKey
+      && selection.selectedId === internalSelectedId)) return;
 
-    setInternalSelectedId(selection.selectedId);
+    setInternalSelection({ boundaryKey, id: selection.selectedId });
     onSelectedIdChange?.(selection.selectedId, selection.selectedItem);
   }, [
     internalSelectedId,
+    internalSelection.boundaryKey,
+    boundaryKey,
     isControlled,
     onSelectedIdChange,
     selection.selectedId,
@@ -127,26 +161,30 @@ export function useMasterDetailState<T extends Row>({
 
   const commitSelection = useCallback(
     (id: string | null, item: T | null) => {
-      if (!isControlled) setInternalSelectedId(id);
+      if (currentBoundary.current !== boundaryKey) return;
+      if (!isControlled) setInternalSelection({ boundaryKey, id });
       onSelectedIdChange?.(id, item);
       if (item) onSelect?.(item);
     },
-    [isControlled, onSelect, onSelectedIdChange],
+    [boundaryKey, isControlled, onSelect, onSelectedIdChange],
   );
 
   const selectRow = useCallback(
     (row: T) => {
-      commitSelection(requireRowPrimaryKey(row, primaryKey), row);
+      const index = data.indexOf(row);
+      commitSelection(getRowId
+        ? String(getRowId(row, index))
+        : requireRowPrimaryKey(row, primaryKey), row);
     },
-    [commitSelection, primaryKey],
+    [commitSelection, data, getRowId, primaryKey],
   );
 
   const selectId = useCallback(
     (id: string | null) => {
-      const next = resolveMasterDetailSelection(data, primaryKey, id, false);
+      const next = resolveMasterDetailSelection(data, primaryKey, id, false, getRowId);
       commitSelection(next.selectedId, next.selectedItem);
     },
-    [commitSelection, data, primaryKey],
+    [commitSelection, data, getRowId, primaryKey],
   );
 
   const selectPrevious = useCallback(() => {

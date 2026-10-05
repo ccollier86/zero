@@ -69,6 +69,7 @@ export type {
   SchemaSnapshot,
 } from './types';
 export { MigrationLedger } from './migration-ledger';
+export { MigrationHandlerError } from './migration-handler-boundary';
 export { SchemaHistory } from './schema-history';
 export { inspectDatabaseSchema } from './schema-inspector';
 export {

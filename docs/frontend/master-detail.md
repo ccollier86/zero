@@ -1,5 +1,7 @@
 # MasterDetailView
 
+[Frontend index](./README.md) · [AppShell](./app-shell.md) · [Data Studio](../data-studio.md)
+
 `MasterDetailView` is Zero's reusable list/detail organism. It combines a
 schema-aware `DataTableView`, responsive list/detail layout, a sticky detail
 panel, generated edit forms, record navigation, and custom action slots.
@@ -274,13 +276,52 @@ If no custom empty state is supplied, the lower-level `DetailPanel` shows
   listColumns={['number', 'customer', 'status']}
   listWidth="2fr"
   detailWidth="3fr"
+  detailVisible={detailsOpen}
+  resizable
   className="h-[42rem]"
 />
 ```
 
-Desktop uses a side-by-side grid. Mobile shows the list first, then slides the
-detail panel into view after selection. The bottom navigation bar remains below
-the main content.
+Desktop places the panes side by side with independent scrolling. `listWidth`
+and `detailWidth` retain their CSS-track defaults (`3fr` and `2fr`).
+`detailVisible={false}` hides the desktop pane and returns that space to the
+list; it does not prevent selected-record inspection on mobile. `resizable`
+defaults to false and enables a pointer/keyboard separator on desktop when both
+panes are visible. Resizing delegates to the packaged resizable-panel library;
+the normal selection/form tree is not duplicated across responsive modes.
+
+On mobile, selection opens details, and **Back to list** returns to the list
+while retaining selection and restoring focus where possible. The bottom
+action bar is a non-scrolling sibling of the panes. Long records do not stretch
+the whole page or push actions beneath the details.
+
+## Bounded Workspace Composition
+
+Independent pane scrolling needs a bounded height chain, not only
+`overflow-auto` on a child. [AppShell](./app-shell.md#content-height-and-scrolling)
+supplies it in workspace mode. Keep intermediate wrappers shrinkable:
+
+```tsx
+import { AppShell, MasterDetailView } from '@zero/framework/react';
+
+<AppShell contentMode="workspace">
+  <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <header className="shrink-0">Clients</header>
+    <MasterDetailView
+      schema={clientTable.schema}
+      collection="clients"
+      listColumns={['name', 'email', 'status']}
+      resizable
+    />
+  </section>
+</AppShell>
+```
+
+The shell bounds the content; the workspace and animated detail wrapper retain
+`min-h-0`/`min-w-0`; the list and detail children own their scroll regions; the
+bottom bar stays outside those regions. In document mode, give the workspace a
+deliberate height such as the `h-[42rem]` example above. Avoid a new `min-height`
+or auto-height wrapper that forces the workspace to grow with its records.
 
 ## Low-Level Detail Primitives
 
@@ -322,9 +363,23 @@ Primitive responsibilities:
 
 | Primitive | Responsibility |
 | --- | --- |
-| `ListDetailLayout` | Responsive list/detail shell and panel transition |
-| `DetailPanel` | Sticky header, scrollable detail body, sticky footer, empty state |
-| `RecordNavigationBar` | Previous/next controls, record actions, primary action |
+| `ListDetailLayout` | Bounded independent panes, responsive detail transition, optional desktop resizing and anchored bottom bar |
+| `DetailPanel` | Non-scrolling header/footer, bounded scrollable body and empty state |
+| `RecordNavigationBar` | Loaded-record navigation, optional status, record actions and primary action |
+
+`ListDetailLayout` accepts `detailVisible` (desktop, default true) and
+`resizable` (default false). Mobile visibility defaults to `hasSelection`; use
+`mobileDetailOpen` with `onMobileBack` when inspection must be separate from
+selection, as in a spreadsheet editor. `mobileBackLabel` changes the visible
+return label. When controlling mobile visibility, supply the return callback
+so the Back action can close it.
+
+`RecordNavigationBar.showNavigation={false}` hides the record counter and
+Previous/Next without hiding actions. `status` supplies a separate accessible
+scope/count message. `secondaryPrimaryAction` adds an adjacent primary workflow.
+These are record/action controls, not a data-source pagination mechanism. At
+narrow widths, actions remain reachable in their horizontal strip and primary
+workflows reflow beneath it.
 
 ## Public Exports
 

@@ -6,9 +6,9 @@ import type { Row } from '../sync/types';
  * Global type registry for the platform SDK.
  *
  * Apps augment this interface via `declare module` to register their
- * table types. Once registered, hooks like `useCollection()` and
- * `useQuery()` automatically infer the correct row type from the
- * table name — no manual generics needed.
+ * table types. `TableNames` and `TableRow<Name>` then resolve those declarations.
+ * SDK collection/hooks currently accept explicit row generics; registration
+ * does not automatically bind a literal table argument to its row type.
  *
  * @example
  * ```ts
@@ -18,7 +18,7 @@ import type { Row } from '../sync/types';
  *   users: { id: string; name: string; email: string };
  * }
  *
- * declare module '@zero/framework/react' {
+ * declare module '@zero/framework/schema' {
  *   interface Register {
  *     tables: Tables;
  *   }

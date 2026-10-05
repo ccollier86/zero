@@ -8,8 +8,8 @@
  */
 
 import { VectorError } from './vector-error';
+import { emitPlatformCode } from '../observability/sink';
 import {
-  extractSimpleEqualityMetadata,
   getVectorFilterFields,
   mergeVectorFilters,
   recordMatchesVectorFilter,
@@ -19,22 +19,38 @@ import {
   emitVectorOperationFailed,
 } from './vector-observability';
 import { VectorRegistry } from './vector-registry';
+import { VectorOperationBoundary } from './vector-operation-boundary';
+import { assertStoredVectorsInScope, prepareScopedVectorRecords, snapshotVectorFilter,
+  snapshotVectorRecords } from './vector-scope-write';
 import type {
   StoredVectorRecord,
   VectorDeleteResult,
   VectorFetchOptions,
   VectorFilter,
-  VectorMetadata,
   VectorQueryOptions,
   VectorRecord,
   VectorStats,
   VectorWriteResult,
 } from './vector-types';
 
+type ScopedVectorWrite = (index: string, records: VectorRecord | readonly VectorRecord[], filter: VectorFilter) => Promise<VectorWriteResult>;
+const scopedVectorWrites = new WeakMap<VectorService, ScopedVectorWrite>();
+
+/** Optional construction dependencies; prebuilt services keep their emitter ownership. */
+export interface VectorServiceOptions {
+  emitCode?: typeof emitPlatformCode;
+}
+
 /** Framework-neutral API for app-owned vector storage and search. */
 export class VectorService {
+  private readonly operations = new VectorOperationBoundary();
+  private readonly emitCode: typeof emitPlatformCode;
+  private disposal: Promise<void> | null = null;
   /** Create a vector service from a registry of named indexes. */
-  constructor(private readonly registry: VectorRegistry) {}
+  constructor(private readonly registry: VectorRegistry, options: VectorServiceOptions = {}) {
+    this.emitCode = options.emitCode ?? emitPlatformCode;
+    scopedVectorWrites.set(this, (index, records, filter) => this.writeRecords(index, records, filter));
+  }
 
   /** List configured index names without opening collections. */
   listIndexes(): string[] {
@@ -54,19 +70,32 @@ export class VectorService {
     maybeRecords?: VectorRecord | readonly VectorRecord[]
   ): Promise<VectorWriteResult> {
     const { index, value } = parseIndexAndValue(indexOrRecords, maybeRecords);
-    const records = arrayOf(value);
-    return this.runOperation('upsert', index, records.length, undefined, async () => {
-      const result = await this.registry.getIndex(index).upsert(records);
+    return this.writeRecords(index ?? this.registry.defaultIndex, value);
+  }
+
+  private writeRecords(index: string, input: VectorRecord | readonly VectorRecord[], filter?: VectorFilter): Promise<VectorWriteResult> {
+    // No yield between this cheap capacity check and snapshotting. The actual
+    // queue admission below checks again, including reentrant caller getters.
+    this.operations.assertWriteAdmission(index);
+    const records = filter
+      ? prepareScopedVectorRecords(filter, arrayOf(input))
+      : snapshotVectorRecords(arrayOf(input));
+    return this.runOperation('upsert', index, records.length, filter, () => this.operations.write(index, async () => {
+      const store = this.registry.getIndex(index);
+      if (filter && records.length > 0) {
+        assertStoredVectorsInScope(await store.fetch(records.map(record => record.id)), filter);
+      }
+      const result = await store.upsert(records);
       if (!result.ok) {
         emitVectorOperationFailed(new VectorError('VECTOR_OPERATION_FAILED', 'Vector upsert returned errors.'), {
           index: index ?? this.registry.defaultIndex,
           operation: 'upsert',
           documents: result.count,
           errors: result.errors.length,
-        });
+        }, this.emitCode);
       }
       return result;
-    });
+    }));
   }
 
   /** Search an index using vector similarity, scalar filters, or both. */
@@ -77,7 +106,9 @@ export class VectorService {
     maybeOptions?: VectorQueryOptions
   ): Promise<StoredVectorRecord[]> {
     const { index, value: options } = parseIndexAndValue(indexOrOptions, maybeOptions);
-    return this.runOperation('query', index, undefined, options.filter, () => this.registry.getIndex(index).query(options));
+    const admitted = { ...options, ...(options.filter ? { filter: snapshotVectorFilter(options.filter) } : {}) };
+    return this.runOperation('query', index, undefined, admitted.filter,
+      () => this.operations.read(() => this.registry.getIndex(index).query(admitted)));
   }
 
   /** Search alias for query(). */
@@ -102,7 +133,8 @@ export class VectorService {
     maybeOptions?: VectorFetchOptions
   ): Promise<StoredVectorRecord[]> {
     const { index, ids, options } = parseFetchArgs(indexOrIds, maybeIdsOrOptions, maybeOptions);
-    return this.runOperation('fetch', index, ids.length, undefined, () => this.registry.getIndex(index).fetch(ids, options));
+    return this.runOperation('fetch', index, ids.length, undefined,
+      () => this.operations.read(() => this.registry.getIndex(index).fetch(ids, options)));
   }
 
   /** Canonical get alias for fetch(). */
@@ -127,7 +159,8 @@ export class VectorService {
     maybeIds?: string | readonly string[]
   ): Promise<VectorDeleteResult> {
     const { index, ids } = parseDeleteArgs(indexOrIds, maybeIds);
-    return this.runOperation('delete', index, ids.length, undefined, async () => {
+    return this.runOperation('delete', index, ids.length, undefined,
+      () => this.operations.write(index ?? this.registry.defaultIndex, async () => {
       const result = await this.registry.getIndex(index).delete(ids);
       if (!result.ok) {
         emitVectorOperationFailed(new VectorError('VECTOR_OPERATION_FAILED', 'Vector delete returned errors.'), {
@@ -135,10 +168,10 @@ export class VectorService {
           operation: 'delete',
           documents: result.count,
           errors: result.errors.length,
-        });
+        }, this.emitCode);
       }
       return result;
-    });
+    }));
   }
 
   /** Delete records that match a scalar filter. */
@@ -149,14 +182,17 @@ export class VectorService {
     maybeFilter?: VectorFilter
   ): Promise<VectorDeleteResult> {
     const { index, value: filter } = parseIndexAndValue(indexOrFilter, maybeFilter);
-    return this.runOperation('deleteWhere', index, undefined, filter, () => this.registry.getIndex(index).deleteWhere(filter));
+    const admitted = snapshotVectorFilter(filter);
+    return this.runOperation('deleteWhere', index, undefined, admitted,
+      () => this.operations.write(index ?? this.registry.defaultIndex,
+        () => this.registry.getIndex(index).deleteWhere(admitted)));
   }
 
   /** Return zvec stats for one index or every configured index. */
   stats(): Promise<VectorStats[]>;
   stats(index: string): Promise<VectorStats>;
   stats(index?: string): Promise<VectorStats | VectorStats[]> {
-    return this.registry.stats(index);
+    return this.operations.read(() => this.registry.stats(index));
   }
 
   /** Canonical status alias for stats(). */
@@ -176,7 +212,8 @@ export class VectorService {
   /** Optimize one index or every configured index. */
   async optimize(index?: string): Promise<void> {
     if (index) {
-      await this.runOperation('optimize', index, undefined, undefined, () => this.registry.getIndex(index).optimize());
+      await this.runOperation('optimize', index, undefined, undefined,
+        () => this.operations.write(index, () => this.registry.getIndex(index).optimize()));
       return;
     }
     await Promise.all(this.registry.listIndexes().map((name) => this.optimize(name)));
@@ -192,7 +229,11 @@ export class VectorService {
 
   /** Close all opened vector indexes. */
   dispose(): Promise<void> {
-    return this.registry.dispose();
+    if (this.disposal) return this.disposal;
+    const disposal = this.operations.close().then(() => this.registry.dispose());
+    this.disposal = disposal;
+    void disposal.catch(() => { if (this.disposal === disposal) this.disposal = null; });
+    return disposal;
   }
 
   private async runOperation<T>(
@@ -211,7 +252,7 @@ export class VectorService {
         documents,
         durationMs: Date.now() - startedAt,
         filterFields: getVectorFilterFields(filter),
-      });
+      }, this.emitCode);
       return result;
     } catch (error) {
       emitVectorOperationFailed(error, {
@@ -220,7 +261,7 @@ export class VectorService {
         documents,
         durationMs: Date.now() - startedAt,
         filterFields: getVectorFilterFields(filter),
-      });
+      }, this.emitCode);
       throw error;
     }
   }
@@ -228,21 +269,17 @@ export class VectorService {
 
 /** Index-bound helper that enforces a required scalar filter on operations. */
 export class VectorScope {
+  private readonly filter: VectorFilter;
   /** Create a scoped vector helper from a service, index, and required filter. */
   constructor(
     private readonly service: VectorService,
     private readonly index: string,
-    private readonly filter: VectorFilter
-  ) {}
+    filter: VectorFilter
+  ) { this.filter = snapshotVectorFilter(filter); }
 
   /** Insert records after stamping simple equality values from the scope. */
   upsert(records: VectorRecord | readonly VectorRecord[]): Promise<VectorWriteResult> {
-    const scopeMetadata = extractSimpleEqualityMetadata(this.filter);
-    const scopedRecords = arrayOf(records).map((record) => ({
-      ...record,
-      metadata: mergeScopeMetadata(scopeMetadata, record.metadata),
-    }));
-    return this.service.upsert(this.index, scopedRecords);
+    return scopedVectorWrites.get(this.service)!(this.index, records, this.filter);
   }
 
   /** Query this scope by ANDing the scope filter with caller filters. */
@@ -343,17 +380,4 @@ function isStringArray(value: unknown): value is readonly string[] {
 
 function isFetchOptions(value: unknown): value is VectorFetchOptions {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function mergeScopeMetadata(scope: VectorMetadata, metadata: VectorMetadata | undefined): VectorMetadata {
-  const merged: VectorMetadata = { ...(metadata ?? {}) };
-  for (const [key, value] of Object.entries(scope)) {
-    if (merged[key] !== undefined && merged[key] !== value) {
-      throw new VectorError('VECTOR_METADATA_INVALID', `Vector scope metadata conflict for "${key}".`, {
-        field: key,
-      });
-    }
-    merged[key] = value;
-  }
-  return merged;
 }

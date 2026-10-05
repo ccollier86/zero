@@ -49,6 +49,32 @@ describe('resolveVectorConfig', () => {
     expect(() => resolveVectorConfig({ indexes: { docs: 0 } }, {})).toThrow(VectorError);
   });
 
+  it('rejects an invalid metric instead of silently using cosine', () => {
+    expect(() => resolveVectorConfig({
+      indexes: { default: { dimensions: 3, metric: 'not-a-metric' as 'cosine' } },
+    }, {})).toThrow(VectorError);
+  });
+
+  it('rejects an invalid index family instead of silently using HNSW', () => {
+    expect(() => resolveVectorConfig({
+      indexes: { default: { dimensions: 3, indexType: 'not-an-index' as 'hnsw' } },
+    }, {})).toThrow(VectorError);
+  });
+
+  it('preserves every supported metric and index family', () => {
+    for (const metric of ['cosine', 'ip', 'l2'] as const) {
+      for (const indexType of ['hnsw', 'flat', 'ivf', 'diskann'] as const) {
+        const config = resolveVectorConfig({
+          indexes: { default: { dimensions: 3, metric, indexType } },
+        }, {});
+        expect(config).not.toBe(false);
+        if (config === false) continue;
+        expect(config.indexes.default.metric).toBe(metric);
+        expect(config.indexes.default.indexType).toBe(indexType);
+      }
+    }
+  });
+
   it('rejects metadata field collisions with reserved fields', () => {
     expect(() => resolveVectorConfig({
       indexes: {

@@ -679,6 +679,8 @@ export type {
   WavyBackgroundProps,
 } from '../components/hero';
 export { CodeBlock } from '../components/code-block';
+export { JsonEditor } from '../components/json-editor';
+export type { JsonEditorProps, JsonEditorHandle, JsonEditorCommitResult } from '../components/json-editor';
 export type {
   CodeBlockFile,
   CodeBlockProps,
@@ -923,6 +925,7 @@ export type { StatCardProps } from '../components/ui/stat-card';
 // ─── Layout Components ──────────────────────────────────────────────────
 export { ListDetailLayout } from '../components/ui/list-detail-layout';
 export type { ListDetailLayoutProps } from '../components/ui/list-detail-layout';
+export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../components/ui/resizable';
 export { DetailPanel } from '../components/ui/detail-panel';
 export type { DetailPanelProps } from '../components/ui/detail-panel';
 export { RecordNavigationBar } from '../components/ui/record-navigation-bar';

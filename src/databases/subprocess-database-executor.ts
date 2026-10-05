@@ -36,6 +36,7 @@ import {
 } from './subprocess-database-executor-lifecycle';
 import { SubprocessDatabaseRequestRegistry } from './subprocess-database-request-registry';
 import { SubprocessDatabaseTelemetryState } from './subprocess-database-telemetry-state';
+import { SubprocessDatabaseWorkingDirectory } from './subprocess-database-working-directory';
 import {
   normalizeSubprocessDatabaseExecutorRequest,
   parseSubprocessDatabaseExecutorEvent,
@@ -93,12 +94,17 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   private disconnectObserved = false;
   private lastFailure: DatabaseError | null = null;
   private eventListener: DatabaseExecutorEventListener | null = null;
+  private readonly workingDirectory: SubprocessDatabaseWorkingDirectory | null;
+  private workingDirectoryFailure: DatabaseError | null = null;
 
-  constructor(options: SubprocessDatabaseExecutorOptions) {
+  constructor(options: SubprocessDatabaseExecutorOptions, isolateWorkingDirectory = false) {
     this.options = normalizeSubprocessDatabaseExecutorOptions(options);
     this.slot = this.options.slot;
     this.generation = allocateGeneration();
+    this.workingDirectory = isolateWorkingDirectory
+      ? new SubprocessDatabaseWorkingDirectory() : null;
     this.processSettlement = new DatabaseExecutorProcessSettlement(() => {
+      this.releaseWorkingDirectory();
       if (this.state === 'quarantined') {
         this.state = this.closeRequested ? 'closed' : 'failed';
       }
@@ -199,7 +205,10 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   close(): Promise<void> {
     this.closeRequested = true;
     if (this.closeTask) return this.closeTask;
-    const task = this.closeOnce();
+    const task = this.closeOnce().then(() => {
+      if (this.processSettlement.settledObserved) this.releaseWorkingDirectory();
+      if (this.workingDirectoryFailure) throw this.workingDirectoryFailure;
+    });
     this.closeTask = task;
     // A quarantined process has not completed shutdown. Preserve successful
     // close idempotency, but let an explicit later close retry termination.
@@ -255,6 +264,10 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
         child = Bun.spawn({
           cmd: this.options.command,
           env: this.options.env,
+          // Compiled Bun executables can auto-load cwd dotenv/bunfig before
+          // application code; runtime --no-env-file is not effective there.
+          // Default bundle actors therefore start in an owned empty directory.
+          cwd: this.workingDirectory?.prepare(),
           // The app process owns terminal signal handling and coordinates
           // actor drain over IPC. Keep actors outside its process group so a
           // terminal SIGINT/SIGTERM does not race that ordered shutdown.
@@ -716,6 +729,11 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
 
   private recordFailure(error: DatabaseError): void {
     this.lastFailure ??= error;
+  }
+
+  private releaseWorkingDirectory(): void {
+    this.workingDirectoryFailure = this.workingDirectory?.release() ?? null;
+    if (this.workingDirectoryFailure) this.recordFailure(this.workingDirectoryFailure);
   }
 
   private hasFailed(): boolean {

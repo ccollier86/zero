@@ -394,6 +394,46 @@ export default function OrganizationDataPage() {
 schema-management permission. Its optional `capabilities` prop can only narrow
 the UI, such as `capabilities={{ canManage: false }}`; it cannot grant access.
 
+## Packaged Table Workspace
+
+The connected `DataStudio` defaults to a spreadsheet-style workspace. Schema
+headers remain visible when a table has no records. Each header shows its name,
+type and required marker; clicking it opens the column editor. Its visible menu
+button and right-click menu offer the authorized edit, sort, reorder and remove
+actions. Column resizing and wide-table scrolling stay inside the grid. An
+add-column action is available at the end of the headers and in the bottom bar.
+
+Records load in bounded batches as the grid scrolls, with virtualized rendering
+for large loaded windows. `pageSize` sets the requested batch size, subject to
+the server's row/byte limits; it does not download the whole table. Search,
+filters and sorting remain server-owned. The workspace has loading, retry,
+empty, end-of-results and refresh-required states, not page navigation buttons.
+Previous/Next **record** actions in the bottom bar move through loaded records.
+
+The optional inspector has **Record**, **Table**, and **Code** tabs. Record
+shows complete selected values; Table shows the description, stable key,
+record/column counts, revisions and lifecycle metadata; Code shows a copyable
+typed SDK example. Schema editing stays in column headers and the full schema
+dialog rather than a permanent list of schema cards.
+
+| Presentation prop | Default | Behavior |
+| --- | --- | --- |
+| `defaultDetailsOpen` | `false` | Give the grid the full desktop width initially. |
+| `detailsOpen` / `onDetailsOpenChange` | Uncontrolled | Control desktop inspector visibility. |
+| `resizableDetails` | `true` | Allow desktop pane resizing while the inspector is open. |
+
+These props also apply to `DataStudioWorkspace`. On mobile, editing a cell stays
+in the grid; explicit record inspection opens the details view, with **Back to
+records** to return. The bottom action bar remains reachable while either pane
+scrolls. Its add-record, add-column, inspect, delete, archive and restore
+controls follow server capabilities, selection, pending writes and table state.
+
+Place the component in a bounded workspace. [AppShell content
+modes](./frontend/app-shell.md#content-height-and-scrolling) and the shared
+[master/detail composition](./frontend/master-detail.md#bounded-workspace-composition)
+explain the public height/scroll pattern. A natural document page can instead
+give the component an explicit height such as `className="h-[42rem]"`.
+
 ## Guardian Permissions
 
 | Permission | Server authority |
@@ -459,19 +499,35 @@ Main methods:
 
 `useDataStudio()` is the React controller used by the packaged component. It
 owns catalog/table/row loading, authorization-scope partitioning, selection,
-search, filters, sorting, byte-aware pagination, mutations, conflict reloads,
+search, filters, sorting, bounded row loading, mutations, conflict reloads,
 and capability-derived actions. Use `DataStudioWorkspace` with that controller
 when the standard organism needs a custom outer shell. Lower-level exports
 include `DataStudioGrid`, `DataStudioToolbar`, `DataStudioFilterControl`,
 `DataStudioInspector`, and `DataStudioInlineCell`. The table, row, and
 confirmation dialogs are also exported as `DataStudioTableDialog`,
 `DataStudioRowDialog`, and `DataStudioConfirmDialog` for custom control planes.
-The inspector's Record, Schema, and Code tabs keep detail work compact; its
-Code tab renders a syntax-highlighted, copyable typed SDK example for the
-selected logical table. The schema dialog exposes descriptions, explicit
-none/null/type-aware defaults, and presentation-order controls. Editing a
-persisted label does not silently rename its public key; key changes are an
-explicit contract edit.
+The hook retains `rowLoading: 'paged'` as its default for existing custom
+controllers; their `offset`, `previousOffset`, `nextOffset`,
+`goToPreviousPage()` and `goToNextPage()` contracts remain available. Use
+`useDataStudio({ rowLoading: 'progressive' })` when composing the new workspace.
+The connected `<DataStudio>` chooses progressive mode by default. The general
+[DataTable](./frontend/data-table.md) keeps its independent pagination modes.
+
+Progressive controllers expose `hasMoreRows`, `isLoadingMore`, `loadMoreRows()`,
+`loadMoreError` and `rowsNeedRefresh`. Their ordered result window is separate
+from the shared record cache: rows loaded by another query are not membership
+in this grid. Superseded queries and authorization-scope changes retire old
+requests, rows and selection before replacement data becomes visible.
+
+`listRows()` now supplies an optional `readSequence` from the same strong Fabric
+read as its rows and count. Progressive continuation requires a contiguous,
+unique window with the same sequence and total. If concurrent writes shift the
+snapshot, the controller requires a refresh instead of silently skipping or
+deduplicating records. Refresh rebuilds the previously loaded prefix in bounded
+batches and publishes it atomically; one retry is allowed on snapshot drift.
+The sequence is consistency metadata, not a credential or a database selector.
+An older response without it can still be read as a single page, but cannot be
+safely joined into a multi-batch progressive window.
 
 `DataStudioToolbar` uses the same `DataTableSearch` control as Zero's table
 toolbars. Search is the first control before table selection and filters,
@@ -479,6 +535,31 @@ collapses to 112 px, and expands to 216 px on focus or while a query is active.
 The existing controller value/change contract is unchanged, so applications
 using `DataStudio`, `DataStudioWorkspace`, or `DataStudioToolbar` do not need a
 call-site rewrite.
+
+## Visual And JSON Schema Editing
+
+Table creation and full-schema editing share one draft with **Visual** and
+**JSON** modes. Visual mode provides compact column selection, inline display
+names, supported types, required state, descriptions, typed defaults and
+reordering. JSON mode uses Zero's reusable [JsonEditor](./frontend/json-editor.md)
+over the actual `DataStudioSchema` representation. It is structured JSON/text
+editing, not a general-purpose syntax-highlighted code editor.
+
+Switching modes validates the complete schema and preserves unfinished work.
+Invalid JSON syntax or schema shape keeps the draft visible with an actionable
+error. Existing `columnId` values survive label/key edits and reordering; a
+display-name change does not silently rename a persisted API key. A key change
+is an explicit contract edit. Removing fields or changing their stored type
+requires confirmation. Closing a dirty draft offers Save, Discard or Stay.
+
+The dialog captures the table revision when opened and sends that revision on
+save. It does not replace it with a newer background revision and overwrite
+concurrent work. Mutation acknowledgment, operation IDs and Guardian/Fabric
+authority remain the existing server contracts. Applications implementing a
+custom `DataStudioTableDialog.onUpdate` callback should honor its additive
+second argument, `{ expectedRevision }`, when calling the SDK/controller writer.
+For custom header editors, `updateSchema(schema, { expectedRevision })` and
+`updateTable(input, { expectedRevision })` accept the same captured precondition.
 
 ## Inline Editing Contract
 
@@ -694,7 +775,8 @@ tables.
 
 The browser SDK keeps dedicated-API result caches partitioned by the complete
 Guardian authorization boundary and clears them on tenant/session replacement.
-Own mutations refresh the relevant schema/catalog/row page. `useDataStudio()`
+Own mutations refresh the relevant schema/catalog/row page or progressive
+window. `useDataStudio()`
 subscribes to generic Sync metadata and invalidates/reloads the affected full
 reads. Apps that consume the public Sync rows directly must treat them only as
 read-only reconciliation signals, never as complete logical records, and use

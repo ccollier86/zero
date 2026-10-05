@@ -5,6 +5,7 @@ export { ROOM_MANAGE_PERMISSION, canManageRoomScope } from './room-access';
 
 // ─── Server: Room Service ───────────────────────────────────────────────
 export { RoomOwnerCannotLeaveError, RoomService } from './room-service';
+export { RoomInputError } from './room-error';
 
 // ─── Server: Presence Service ───────────────────────────────────────────
 export { PresenceService } from './presence-service';

@@ -47,6 +47,7 @@ classes through the component tree.
 | Public text effects | Public landing/docs/content text motion. | `@zero/framework/components/text-effects` or `@zero/framework/react` | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` |
 | Streaming and agent output | Accessible text that follows a real string stream or caller-owned progressive value. | `@zero/framework/components/streaming-text` or `@zero/framework/react` | `StreamingText` |
 | Sensitive-value display | Display-only masking, reveal policy, and full-value copy for a secret already authorized into browser memory. | `@zero/framework/components/secret-field` or `@zero/framework/react` | `SecretField` |
+| Structured JSON editing | Controlled local document, retained unfinished text and explicit complete-document admission; domain controllers own persistence. | `@zero/framework/components/json-editor` or `@zero/framework/react` | [`JsonEditor`](./json-editor.md) |
 | Public content sections | Landing/docs/content sections using the public token lane. | `@zero/framework/components/*` or `@zero/framework/react` | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
@@ -172,6 +173,7 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `Combobox` | `ui/combobox.tsx` | Searchable select, including grouped/multi options. |
 | `TagInput` | `ui/tag-input.tsx` | Chip-based tag entry. |
 | `SecretField` | `secret-field/secret-field.tsx` | Display-only secret with bounded prefix/suffix masking, controlled or uncontrolled reveal state, and full-value copy. The raw value remains in authorized browser memory; see [Secret Field](./secret-field.md). |
+| `JsonEditor` | `json-editor/json-editor.tsx` | Token-themed `json-edit-react` wrapper with structured/text drafts, validation and local commit handle. It does not save, run code or deploy schemas; see [JSON Editor](./json-editor.md). |
 
 ## Feedback And Status
 
@@ -215,7 +217,7 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `KanbanBoard`, `KanbanTaskCard` | `kanban/kanban-board.tsx` | Drag-and-drop board organism for status/work queues. |
 | `MasterDetailView`, `MasterDetailPage` | `master-detail/master-detail-page.tsx` | List/table + detail organism with DataTable-compatible `source`, search options, and `tableToolbarSlots` support. |
 | `CrudPage` | `crud-page/crud-page.tsx` | Schema CRUD page/organism using DataTable, generated forms, and forwarded `tableToolbarSlots`. |
-| `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioFilterControl`, `DataStudioInspector`, `DataStudioInlineCell`, `DataStudio*Dialog` | `data-studio/*` | Guardian/Fabric organization-owned logical-table control plane. The connected organism adapts to server capabilities; the inline editor overlays the cell with inherited styling so editing does not change row/column geometry. |
+| `DataStudio`, `DataStudioWorkspace`, `DataStudioGrid`, `DataStudioToolbar`, `DataStudioFilterControl`, `DataStudioInspector`, `DataStudioInlineCell`, `DataStudio*Dialog` | `data-studio/*` | Guardian/Fabric organization-owned spreadsheet control plane with schema headers, progressive bounded reads, acknowledged cell editing, contextual columns, Visual/JSON schema drafts and optional record/table inspector. See [Data Studio](../data-studio.md). |
 
 ## Platform Domain Organisms
 

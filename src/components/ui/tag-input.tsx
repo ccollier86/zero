@@ -45,18 +45,26 @@ function TagInput({
 
   const tags = value;
 
-  const addTag = React.useCallback(
-    (tag: string) => {
-      const trimmed = tag.trim();
-      if (!trimmed) return;
-      if (!allowDuplicates && tags.includes(trimmed)) return;
-      if (maxTags != null && tags.length >= maxTags) return;
-      onChange?.([...tags, trimmed]);
+  const addTags = React.useCallback(
+    (candidates: readonly string[]) => {
+      const next = [...tags];
+      for (const tag of candidates) {
+        const trimmed = tag.trim();
+        if (!trimmed || (!allowDuplicates && next.includes(trimmed))) continue;
+        if (maxTags != null && next.length >= maxTags) break;
+        next.push(trimmed);
+      }
+      if (next.length === tags.length) return;
+      // A delimiter event is one controlled replacement. Every candidate sees
+      // previously admitted tags, including batch duplicates and capacity.
+      onChange?.(next);
       setInputValue('');
       setShowSuggestions(false);
     },
     [tags, onChange, allowDuplicates, maxTags],
   );
+
+  const addTag = React.useCallback((tag: string) => addTags([tag]), [addTags]);
 
   const removeTag = React.useCallback(
     (index: number) => {
@@ -87,9 +95,7 @@ function TagInput({
       // Check for delimiter
       if (delimiter && val.includes(delimiter)) {
         const parts = val.split(delimiter);
-        for (const part of parts) {
-          addTag(part);
-        }
+        addTags(parts);
         return;
       }
 
@@ -98,7 +104,7 @@ function TagInput({
       // Don't gate on current suggestions length — async onSearch may populate them later
       setShowSuggestions(val.length > 0);
     },
-    [delimiter, addTag, onSearch],
+    [delimiter, addTags, onSearch],
   );
 
   const filteredSuggestions = React.useMemo(() => {

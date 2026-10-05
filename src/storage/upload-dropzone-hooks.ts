@@ -10,7 +10,6 @@ import { useCallback, useRef } from 'react';
 import {
   useDropzone,
   type Accept,
-  type DropEvent,
   type DropzoneOptions,
   type DropzoneState,
   type FileRejection,
@@ -25,6 +24,7 @@ import { useClientMaybe } from '../frontend/client/client-context';
 import type { FileInfo } from './types';
 import { useUploadQueue, type UploadQueueFilesOptions, type UseUploadQueueReturn } from './upload-queue-hooks';
 import { joinStorageObjectPath } from './storage-paths';
+import { admitStorageDrop } from './upload-drop-admission';
 
 export interface UseUploadDropzoneOptions {
   driveId: string | null;
@@ -115,11 +115,13 @@ export function useUploadDropzone(options: UseUploadDropzoneOptions): UseUploadD
   );
 
   const onDrop = useCallback<NonNullable<DropzoneOptions['onDrop']>>(
-    (acceptedFiles: File[], fileRejections: FileRejection[], event: DropEvent) => {
-      if (!isCurrentScope()) return;
-      if (fileRejections.length > 0) options.onRejected?.(fileRejections);
-      if (acceptedFiles.length === 0 || disabled) return;
-      void uploadFiles(acceptedFiles);
+    (acceptedFiles: File[], fileRejections: FileRejection[]) => {
+      admitStorageDrop({
+        isCurrent: isCurrentScope,
+        disabled,
+        onRejected: options.onRejected,
+        upload: uploadFiles,
+      }, acceptedFiles, fileRejections);
     },
     [disabled, isCurrentScope, options, uploadFiles],
   );

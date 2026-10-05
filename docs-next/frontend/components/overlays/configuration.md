@@ -1,0 +1,72 @@
+---
+id: zero.frontend.overlays.configuration
+type: reference
+audience: [developer, agent, operator]
+owner: frontend-components
+status: draft
+visibility: internal
+system: frontend-components
+feature: configuration
+maturity: supported
+applies_to: ["2.1.1 source with audited interaction/token corrections; publication qualification pending"]
+modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.1.1"
+  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  snapshot: dirty
+  date: "2026-10-05"
+  evidence_level: source-observed
+---
+
+# Overlay And Navigation Props
+
+[Overlays index](./index.md) · [Documentation index](../../../index.md)
+
+No env settings, DB tables or Doctor-specific overlay configuration are created.
+React props and local provider state resolve at render/interaction time.
+
+## Public Paths
+
+| Family | Supported import | Public option shape |
+| --- | --- | --- |
+| DropdownMenu* | root/react or /components/dropdown-menu | named matching Props exports |
+| Popover/Trigger/Content/Close | root/react or /components/popover | named matching Props exports |
+| Tooltip/Trigger/Content | /components/tooltip | TooltipProps/TriggerProps/ContentProps; **not root/react** |
+| Collapsible/Trigger/Content/useCollapsible | root/react or /components/collapsible | Props and CollapsibleContextType |
+| Sidebar* / useSidebar | root/react or /components/sidebar | infer React ComponentProps; no named sidebar Props barrel promised |
+| RadialMenu | root/react or /components/radial-menu | RadialMenuProps/RadialMenuItem |
+
+Private Radix/Motion portal/anchor/arrow/highlight components are not added to
+those public families merely because their source files export them.
+
+## Owned Defaults And Extensions
+
+| Control | Default / specific options |
+| --- | --- |
+| Dropdown content | sideOffset4; spring300/damping25 in primitive; item variant default or destructive, inset optional |
+| Dropdown checkbox | checked supported; inset optional; indicator wrapper supplies check icon |
+| Dropdown label/subtrigger | inset optional |
+| Dropdown submenu content | duration0.2s; controlled/default-open subroot and positioning options |
+| PopoverContent | align center; sideOffset4; width72 utility; spring300/damping25; className/position/collision/focus callbacks |
+| Tooltip | delayDuration0; followCursor false or true/x/y; follow spring200/damping17 |
+| TooltipContent | inherited positioning/Motion props; spring300/damping25; wrapper supplies arrow/portal |
+| CollapsibleContent | keepRendered false; transition duration0.35s/easeInOut |
+| SidebarProvider | defaultOpen true; optional open/onOpenChange; desktop widths16rem/icon3rem |
+| Sidebar | side left, variant sidebar, collapsible offcanvas, animateOnHover true; spring350/damping35 |
+| Sidebar mobile | below768px; width18rem, independent mobile open state |
+| SidebarMenuButton | asChild false, isActive false, variant default (outline available), size default (sm/lg), tooltip optional |
+| SidebarMenuAction | asChild false, showOnHover false |
+| SidebarMenuSkeleton | showIcon false |
+| SidebarMenuSubButton | asChild false, size md (sm available), isActive false |
+| RadialMenu | size240, iconSize18, bandWidth50, innerGap8, outerGap8, outerRingWidth12 |
+
+Inherited root/trigger props retain their installed Radix/React contract:
+open/defaultOpen/onOpenChange, disabled and asChild where declared.
+Styled animated content intentionally owns its rendered Motion element;
+unsupported forceMount/asChild props are not escape hatches. Native dependency
+defaults not overridden by Zero remain the installed dependency's contract.
+
+[Feature guides](./index.md) explain state/authority/lifecycle. The
+[design-system configuration](../../design-system/configuration.md) owns tokens,
+themes and ordinary icon triggers.

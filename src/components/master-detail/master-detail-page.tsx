@@ -12,7 +12,9 @@ import * as React from 'react';
 import { useMemo, useCallback } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { Row } from '../../sync/types';
-import { DataTable } from '#zero/components/data-table';
+import { DataTableContent } from '../data-table/data-table';
+import { useDataTableController } from '../data-table/use-data-table-controller';
+import { invokeDataTableSourceWrite } from '../data-table/data-table-source-action-guard';
 import type {
   DataTableSearchOptions,
   DataTableToolbarSlots,
@@ -36,7 +38,7 @@ import {
 import { Skeleton } from '#zero/components/ui/skeleton';
 import { cn } from '#zero/lib/utils';
 import {
-  useMasterDetailState,
+  useMasterDetailSelection,
   type MasterDetailLiveActions,
 } from './use-master-detail-state';
 
@@ -132,7 +134,7 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   tableToolbarLabel?: string;
   /** Enable column sorting. Default: true. */
   sortable?: boolean;
-  /** Enable pagination. Default: false. */
+  /** Enable pagination. Defaults to true for server sources, otherwise false. */
   paginated?: boolean | { pageSize?: number };
 
   // ── Form config ─────────────────────────────────────────────────
@@ -158,6 +160,10 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   listWidth?: string;
   /** Width ratio for detail panel. Default: '2fr'. */
   detailWidth?: string;
+  /** Desktop detail visibility; mobile record inspection remains available. Default: true. */
+  detailVisible?: boolean;
+  /** Enable a keyboard/pointer resizable desktop pane separator. Default: false. */
+  resizable?: boolean;
   className?: string;
 }
 
@@ -190,7 +196,7 @@ function MasterDetailPage<T extends Row = Row>({
   tableToolbarSlots,
   tableToolbarLabel,
   sortable = true,
-  paginated = false,
+  paginated = source?.type === 'server',
   formColumns = 2,
   submitLabel = 'Save Changes',
   detailFooter,
@@ -200,17 +206,30 @@ function MasterDetailPage<T extends Row = Row>({
   errorState,
   listWidth,
   detailWidth,
+  detailVisible,
+  resizable,
   className,
 }: MasterDetailPageProps<T>) {
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
-  const state = useMasterDetailState<T>({
+  const tableOptions = {
+    schema, columns: listColumns, primaryKey,
     data: dataProp,
     collection,
     source,
     lazy,
     filters,
     lazyOptions,
-    primaryKey,
+    searchable, sortable, paginated,
+    toolbarSlots: tableToolbarSlots, toolbarLabel: tableToolbarLabel,
+    loadingState, errorState,
+  };
+  const tableController = useDataTableController<T>(tableOptions);
+  const partitionRef = React.useRef(tableController.partition);
+  partitionRef.current = tableController.partition;
+  const getRowId = source?.type === 'server' ? source.getRowId : undefined;
+  const state = useMasterDetailSelection<T>({
+    resolvedSource: tableController.resolved,
+    primaryKey, getRowId, boundaryKey: tableController.partition,
     selectedId: selectedIdProp,
     defaultSelectedId,
     autoSelectFirst,
@@ -276,12 +295,23 @@ function MasterDetailPage<T extends Row = Row>({
   );
 
   const submitDetailChanges = useCallback(
-    (item: T, changes: Partial<T>) => {
-      const id = requireRowPrimaryKey(item, primaryKey);
-      if (onUpdate) return onUpdate(id, changes);
-      liveActions?.update(id, changes);
+    async (item: T, changes: Partial<T>) => {
+      const id = getRowId
+        ? String(getRowId(item, data.indexOf(item)))
+        : requireRowPrimaryKey(item, primaryKey);
+      await invokeDataTableSourceWrite(
+        'update',
+        partitionRef.current === tableController.partition,
+        onUpdate ? () => onUpdate(id, changes)
+          : liveActions ? () => liveActions.update(id, changes) : undefined,
+      );
+      // Acceptance belongs to the result partition that started the write;
+      // a late callback cannot report completion into a replacement source.
+      if (partitionRef.current !== tableController.partition) {
+        await invokeDataTableSourceWrite('update', false);
+      }
     },
-    [liveActions, onUpdate, primaryKey],
+    [data, getRowId, liveActions, onUpdate, primaryKey, tableController.partition],
   );
 
   const renderContext = useMemo<MasterDetailRenderContext<T>>(
@@ -343,33 +373,28 @@ function MasterDetailPage<T extends Row = Row>({
   );
 
   const listContent = useMemo(() => {
-    if (isLoading && data.length === 0) {
+    if (!tableController.server && isLoading && data.length === 0) {
       return loadingState ?? <MasterDetailLoadingState />;
     }
 
-    if (error && data.length === 0) {
+    if (!tableController.server && error && data.length === 0) {
       return errorState
         ? errorState(error, refresh)
         : <MasterDetailErrorState error={error} onRetry={refresh} />;
     }
 
     return (
-      <DataTable<T>
-        schema={schema}
-        data={data}
-        columns={listColumns}
-        primaryKey={primaryKey}
-        searchable={searchable}
-        toolbarSlots={tableToolbarSlots}
-        toolbarLabel={tableToolbarLabel}
-        sortable={sortable}
-        paginated={paginated}
+      <DataTableContent<T>
+        {...tableOptions}
+        controller={tableController}
         onRowClick={selectRowAndOpenDetail}
         highlightedRowId={selectedId ?? undefined}
         className="h-full"
       />
     );
   }, [
+    tableController,
+    tableOptions,
     data,
     error,
     errorState,
@@ -391,7 +416,7 @@ function MasterDetailPage<T extends Row = Row>({
   // ─── Render ───────────────────────────────────────────────────────
 
   return (
-    <div className={cn('h-full', className)}>
+    <div className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden', className)}>
       <ListDetailLayout
         hasSelection={selectedItem != null}
         mobileDetailOpen={mobileDetailOpen}
@@ -399,6 +424,8 @@ function MasterDetailPage<T extends Row = Row>({
         selectedKey={selectedId ?? undefined}
         listWidth={listWidth}
         detailWidth={detailWidth}
+        detailVisible={detailVisible}
+        resizable={resizable}
         list={listContent}
         detail={
           <DetailPanel
@@ -421,7 +448,7 @@ function MasterDetailPage<T extends Row = Row>({
                   renderDetail(selectedItem, renderContext)
                 ) : (
                   <AutoForm
-                    key={`${selectedId}:${String(selectedItem.updatedAt ?? '')}`}
+                    key={`${tableController.partition}:${selectedId}:${String(selectedItem.updatedAt ?? '')}`}
                     schema={schema}
                     mode="edit"
                     defaultValues={selectedItem as Record<string, unknown>}
@@ -436,7 +463,9 @@ function MasterDetailPage<T extends Row = Row>({
                         : values;
                       return submitDetailChanges(selectedItem, changes as Partial<T>);
                     }}
-                    onError={onUpdateError}
+                    onError={(message) => {
+                      if (partitionRef.current === tableController.partition) onUpdateError?.(message);
+                    }}
                     submitLabel={submitLabel}
                     className="mt-2"
                   />

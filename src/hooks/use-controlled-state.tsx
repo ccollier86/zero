@@ -43,5 +43,7 @@ export function useControlledState<T, Rest extends any[] = []>(
     [onChange],
   );
 
-  return [state, setState] as const;
+  // A controlled change is a request: the parent remains authoritative until
+  // it commits a new value. Local state is only the uncontrolled fallback.
+  return [value !== undefined ? value : state, setState] as const;
 }

@@ -31,12 +31,13 @@ import { createAIVideoOperationEnvelope } from './ai-video-operation-envelope';
 /** Validate materialized generated files and their per-file byte ceiling. */
 export function validateAIGenerateVideoResult(
   result: GenerateVideoResult,
-  maxBytes: number
+  maxBytes: number,
+  requested: number,
 ): AIGenerateVideoResult {
   if (!isRecord(result)
     || !Array.isArray(result.videos)
     || result.videos.length === 0
-    || result.videos.length > 4
+    || result.videos.length > requested
     || result.video !== result.videos[0]
     || !Array.isArray(result.warnings)
     || !Array.isArray(result.responses)) {
@@ -46,7 +47,8 @@ export function validateAIGenerateVideoResult(
     if (!isRecord(video)
       || typeof video.mediaType !== 'string'
       || video.mediaType.length === 0
-      || !(video.uint8Array instanceof Uint8Array)) {
+      || !(video.uint8Array instanceof Uint8Array)
+      || video.uint8Array.byteLength === 0) {
       throw invalidProviderResponse('AI video provider returned an invalid generated file.');
     }
     if (video.uint8Array.byteLength > maxBytes) throw videoLimit();
@@ -163,13 +165,13 @@ function snapshotStatusVideo(
     return Object.freeze({ ...video, url: video.url });
   }
   if (video.type === 'binary') {
-    if (!(video.data instanceof Uint8Array)) {
+    if (!(video.data instanceof Uint8Array) || video.data.byteLength === 0) {
       throw invalidProviderResponse('AI video provider returned invalid binary media.');
     }
     if (video.data.byteLength > maxBytes) throw videoLimit();
     return Object.freeze({ ...video, data: new Uint8Array(video.data) });
   }
-  if (typeof video.data !== 'string') {
+  if (typeof video.data !== 'string' || video.data.length === 0) {
     throw invalidProviderResponse('AI video provider returned invalid base64 media.');
   }
   // The encoded length is a conservative allocation-free upper bound.

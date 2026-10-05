@@ -30,46 +30,51 @@ export function AppShell({
   currentPath,
   className,
   contentClassName,
+  contentMode,
   children,
   defaultSidebarOpen,
   sidebarOpen,
   onSidebarOpenChange,
 }: AppShellProps) {
+  const headerConfig = resolveHeaderConfig(header, breadcrumbs, actions);
+  const hideHeader = header === false || headerConfig.hide;
+  const workspace = (contentMode ?? (preset === 'minimal' || preset === 'topbar' ? 'document' : 'workspace')) === 'workspace';
+  const frame = workspace ? 'flex h-svh min-h-0 min-w-0 flex-col overflow-hidden' : 'min-h-screen';
+  const content = workspace ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : '';
+
   if (preset === 'minimal') {
     return (
-      <main className={cn('min-h-screen bg-background text-foreground', className)}>
-        <div className={cn('min-h-screen', contentClassName)}>{children}</div>
+      <main data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
+        <div data-slot="app-shell-content" className={cn(workspace ? content : 'min-h-screen', contentClassName)}>{children}</div>
       </main>
     );
   }
 
   if (preset === 'topbar') {
     return (
-      <main className={cn('min-h-screen bg-background text-foreground', className)}>
-        <AppShellHeader
-          {...resolveHeaderConfig(header, breadcrumbs, actions)}
-          showSidebarTrigger={false}
-        />
-        <div className={cn('p-4 pt-0', contentClassName)}>{children}</div>
+      <main data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
+        {!hideHeader ? (
+          <AppShellHeader {...headerConfig} showSidebarTrigger={false} />
+        ) : null}
+        <div data-slot="app-shell-content" className={cn(content, 'p-4 pt-0', contentClassName)}>{children}</div>
       </main>
     );
   }
 
   if (preset === 'simple-sidebar') {
     return (
-      <main className={cn('min-h-screen bg-background text-foreground', className)}>
-        <div className="flex min-h-screen flex-col lg:flex-row">
+      <main data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
+        <div className={cn('flex min-w-0 flex-col lg:flex-row', workspace ? 'min-h-0 flex-1 overflow-hidden' : 'min-h-screen')}>
           {sidebar ? (
-            <aside className="w-full shrink-0 border-b border-border bg-muted/25 lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r">
+            <aside className={cn('w-full shrink-0 border-b border-border bg-muted/25 lg:w-72 lg:border-b-0 lg:border-r', workspace ? 'min-h-0 max-h-[25svh] overflow-auto lg:max-h-none lg:h-full' : 'lg:min-h-screen')}>
               {sidebar}
             </aside>
           ) : null}
-          <section className="flex min-w-0 flex-1 flex-col">
-            <AppShellHeader
-              {...resolveHeaderConfig(header, breadcrumbs, actions)}
-              showSidebarTrigger={false}
-            />
-            <div className={cn('min-h-0 flex-1 p-4 pt-0', contentClassName)}>
+          <section className={cn('flex min-h-0 min-w-0 flex-1 flex-col', workspace && 'overflow-hidden')}>
+            {!hideHeader ? (
+              <AppShellHeader {...headerConfig} showSidebarTrigger={false} />
+            ) : null}
+            <div data-slot="app-shell-content" className={cn('min-h-0 flex-1 p-4 pt-0', content, contentClassName)}>
               {children}
             </div>
           </section>
@@ -78,15 +83,13 @@ export function AppShell({
     );
   }
 
-  const headerConfig = resolveHeaderConfig(header, breadcrumbs, actions);
-  const hideHeader = header === false || headerConfig.hide;
-
   return (
     <SidebarProvider
       defaultOpen={defaultSidebarOpen}
       open={sidebarOpen}
       onOpenChange={onSidebarOpenChange}
-      className={className}
+      data-content-mode={workspace ? 'workspace' : 'document'}
+      className={cn(workspace && 'h-svh min-h-0 overflow-hidden', className)}
     >
       {sidebar !== false ? (
         <AppShellSidebar
@@ -102,9 +105,9 @@ export function AppShell({
         />
       ) : null}
 
-      <SidebarInset>
+      <SidebarInset className={cn('min-h-0 min-w-0', workspace && 'overflow-hidden')}>
         {!hideHeader ? <AppShellHeader {...headerConfig} /> : null}
-        <div className={cn('flex flex-1 flex-col gap-4 p-4 pt-0', contentClassName)}>
+        <div data-slot="app-shell-content" className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-4 p-4 pt-0', workspace && 'overflow-hidden', contentClassName)}>
           {children}
         </div>
       </SidebarInset>

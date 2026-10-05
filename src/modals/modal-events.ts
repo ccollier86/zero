@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { modalStore } from './modal-store';
+import { notifyModalClosed } from './modal-close-callback';
 import type {
   OpenModalOptions,
   OpenConfirmOptions,
@@ -82,9 +83,9 @@ function close(id: string): void {
   const modal = state.modals.find((m) => m.id === id);
   if (!modal || state.closingIds.includes(id)) return;
 
-  modal._resolve?.(false);
-  modal.onClose?.();
   modalStore.send({ type: 'close', id });
+  modal._resolve?.(false);
+  notifyModalClosed(modal);
 }
 
 /**
@@ -103,10 +104,10 @@ function closeLast(): void {
  */
 function closeAll(): void {
   const state = modalStore.getSnapshot().context;
-  for (const m of state.modals) {
-    m.onClose?.();
-  }
   modalStore.send({ type: 'closeAll' });
+  for (const modal of state.modals) {
+    if (!state.closingIds.includes(modal.id)) notifyModalClosed(modal);
+  }
 }
 
 /**

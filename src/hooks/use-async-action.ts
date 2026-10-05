@@ -5,8 +5,10 @@
  * action lifecycle state only; callers provide the actual side effect.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStableCallback } from './use-stable-callback';
+import { emitFrontendCode } from '../frontend/client/observability';
+import { OBS_CODES } from '../observability/codes';
 
 export interface UseAsyncActionOptions<Result> {
   /** Called after the action resolves successfully. */
@@ -42,33 +44,67 @@ export function useAsyncAction<Args extends unknown[], Result>(
   const onSuccess = useStableCallback((value: Result) => options.onSuccess?.(value));
   const onError = useStableCallback((err: unknown) => options.onError?.(err));
   const resetOnRun = options.resetOnRun ?? true;
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  const active = useRef(new Set<number>());
+  const nextOperation = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; generation.current += 1; active.current.clear(); };
+  }, []);
 
   const reset = useCallback(() => {
+    if (!mounted.current) return;
+    generation.current += 1;
+    active.current.clear();
     setError(null);
     setResult(null);
     setPending(false);
   }, []);
 
   const run = useStableCallback(async (...args: Args) => {
+    if (!mounted.current) throw new Error('This async action is unavailable after its component unmounted.');
     if (resetOnRun) {
+      generation.current += 1;
+      active.current.clear();
       setError(null);
       setResult(null);
     }
 
     setPending(true);
+    const capturedGeneration = generation.current;
+    const operation = ++nextOperation.current;
+    active.current.add(operation);
+    const current = () => mounted.current && generation.current === capturedGeneration;
     try {
-      const value = await actionRef(...args);
-      setResult(value);
-      onSuccess(value);
+      let value: Result;
+      try {
+        value = await actionRef(...args);
+      } catch (error) {
+        if (current()) {
+          setError(error);
+          try { await onError(error); }
+          catch { if (current()) reportCallbackFailure('error-callback'); }
+        }
+        throw error;
+      }
+      if (current()) {
+        setResult(value);
+        try { await onSuccess(value); }
+        catch { if (current()) reportCallbackFailure('accepted-callback'); }
+      }
       return value;
-    } catch (err) {
-      setError(err);
-      onError(err);
-      throw err;
     } finally {
-      setPending(false);
+      active.current.delete(operation);
+      if (current()) setPending(active.current.size > 0);
     }
   });
 
   return { pending, error, result, run, reset };
+}
+
+function reportCallbackFailure(stage: 'accepted-callback' | 'error-callback'): void {
+  emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
+    metadata: { surface: 'use-async-action', stage },
+  });
 }

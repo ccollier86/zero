@@ -6,9 +6,10 @@ import {
   type DataStudioAccess,
   type UseDataStudioOptions,
 } from '../../frontend/client/data-studio-hooks';
-import { DataStudioWorkspace } from './data-studio-workspace';
+import { DataStudioWorkspace, type DataStudioWorkspaceProps } from './data-studio-workspace';
 
-export interface DataStudioProps extends UseDataStudioOptions {
+export interface DataStudioProps extends UseDataStudioOptions, Pick<DataStudioWorkspaceProps,
+  'detailsOpen' | 'defaultDetailsOpen' | 'onDetailsOpenChange' | 'resizableDetails'> {
   /** UI-only permission narrowing; the server remains authoritative. */
   readonly capabilities?: Partial<DataStudioAccess>;
   readonly title?: string;
@@ -23,6 +24,7 @@ export function DataStudio({
   initialTableId,
   tableStatus,
   pageSize,
+  rowLoading = 'progressive',
   initialSearch,
   initialFilters,
   capabilities,
@@ -30,12 +32,17 @@ export function DataStudio({
   description,
   className,
   emptyState,
+  detailsOpen,
+  defaultDetailsOpen,
+  onDetailsOpenChange,
+  resizableDetails,
 }: DataStudioProps) {
   const controller = useDataStudio({
     enabled,
     initialTableId,
     tableStatus,
     pageSize,
+    rowLoading,
     initialSearch,
     initialFilters,
   });
@@ -47,6 +54,10 @@ export function DataStudio({
       description={description}
       className={className}
       emptyState={emptyState}
+      detailsOpen={detailsOpen}
+      defaultDetailsOpen={defaultDetailsOpen}
+      onDetailsOpenChange={onDetailsOpenChange}
+      resizableDetails={resizableDetails}
     />
   );
 }

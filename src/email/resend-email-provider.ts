@@ -27,6 +27,11 @@ export class ResendEmailProvider implements EmailProvider {
     this.baseUrl = config.baseUrl ?? 'https://api.resend.com';
   }
 
+  /** Whether this adapter captured a non-blank credential at construction. */
+  isConfigured(): boolean {
+    return Boolean(this.apiKey?.trim());
+  }
+
   /**
    * Send one message through Resend.
    *
@@ -34,7 +39,7 @@ export class ResendEmailProvider implements EmailProvider {
    * response. Raw provider credentials are never included in thrown metadata.
    */
   async send(message: EmailMessage): Promise<EmailSendResult> {
-    if (!this.apiKey) {
+    if (!this.isConfigured()) {
       throw new EmailError('Resend API key is required', 'EMAIL_PROVIDER_MISCONFIGURED', 500);
     }
 

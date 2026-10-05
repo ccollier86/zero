@@ -135,6 +135,8 @@ function isHeroBackgroundOptions(
 ): value is HeroBackgroundOptions {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   return (
+    Object.keys(value).length === 0 ||
+    'className' in value ||
     'preset' in value ||
     'custom' in value ||
     'overlay' in value ||

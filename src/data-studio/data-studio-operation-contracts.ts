@@ -134,6 +134,8 @@ export interface DataStudioSchemaVersionListInput {
 }
 
 export interface DataStudioRowPage {
+  /** Fabric snapshot ordering token; compare before joining progressive batches. */
+  readonly readSequence?: number;
   readonly rows: readonly DataStudioRow[];
   readonly total: number;
   readonly limit: number;

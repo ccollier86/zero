@@ -27,6 +27,21 @@ afterEach(() => {
 });
 
 describe('EmailService', () => {
+  test('rejects blank Resend credentials consistently without making a request', async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return Response.json({ id: 'synthetic' });
+    }) as unknown as typeof fetch;
+    const provider = new ResendEmailProvider({ apiKey: '   ' });
+    expect(provider.isConfigured()).toBe(false);
+    await expect(provider.send({
+      from: 'sender@example.test', to: 'recipient@example.test',
+      subject: 'Synthetic', text: 'No delivery',
+    })).rejects.toMatchObject({ code: 'EMAIL_PROVIDER_MISCONFIGURED' });
+    expect(requests).toBe(0);
+  });
+
   test('applies default sender and delegates to provider', async () => {
     configureObservability({ console: false, store: false });
     const provider = new MemoryEmailProvider();
@@ -186,6 +201,52 @@ describe('configureEmail', () => {
       restoreEnv('EMAIL_FROM', previous.from);
       restoreEnv('EMAIL_REPLY_TO', previous.replyTo);
       restoreEnv('RESEND_API_KEY', previous.apiKey);
+    }
+  });
+
+  test('readiness follows the Resend credential captured by the adapter', () => {
+    const previous = Bun.env.RESEND_API_KEY;
+    Bun.env.RESEND_API_KEY = 'captured_key';
+
+    try {
+      const runtime = createEmailRuntime({
+        from: 'sender@example.test',
+        provider: 'resend',
+        resend: { apiKey: '' },
+      }, {});
+
+      // Explicit empty config takes precedence over the ambient key, exactly
+      // as it does in ResendEmailProvider's nullish fallback.
+      expect(isEmailDeliveryReady(runtime)).toBe(false);
+
+      const capturedRuntime = createEmailRuntime({
+        from: 'sender@example.test',
+        provider: 'resend',
+      }, {});
+      expect(isEmailDeliveryReady(capturedRuntime)).toBe(true);
+
+      Bun.env.RESEND_API_KEY = '';
+      expect(isEmailDeliveryReady(capturedRuntime)).toBe(true);
+    } finally {
+      restoreEnv('RESEND_API_KEY', previous);
+    }
+  });
+
+  test('later environment credentials do not make an unconfigured adapter ready', () => {
+    const previous = Bun.env.RESEND_API_KEY;
+    Bun.env.RESEND_API_KEY = '';
+
+    try {
+      const runtime = createEmailRuntime({
+        from: 'sender@example.test',
+        provider: 'resend',
+      }, {});
+      expect(isEmailDeliveryReady(runtime)).toBe(false);
+
+      Bun.env.RESEND_API_KEY = 'added_later';
+      expect(isEmailDeliveryReady(runtime)).toBe(false);
+    } finally {
+      restoreEnv('RESEND_API_KEY', previous);
     }
   });
 

@@ -2,6 +2,74 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.2.0 - 2026-10-05
+
+This release adds the redesigned Data Studio and shared workspace layout, plus
+the focused correctness fixes found while rebuilding documentation against the
+source. It continues the Zero 2.x Guardian/Fabric/Torrent architecture. Updating
+from 2.1.1 adds no system migration or logical-table data conversion. See the
+[2.2 upgrade guide](./docs/upgrading-2.2.md) for configuration and layout checks.
+The maintained 1.3 line is not changed by this release.
+
+### Added And Improved
+
+- Data Studio now uses a schema-first spreadsheet workspace with visible
+  empty-table headers, type/required indicators, sticky headings, local horizontal
+  scrolling, TanStack column sizing and virtual rows, contextual column editing,
+  accessible menu actions, and sleek revision-aware typed inline edits.
+- Connected Data Studio defaults to bounded progressive reads rather than page
+  buttons. Continuations share a same-read Fabric sequence fence, and reactive
+  changes reconstruct the loaded prefix atomically. Changed sequences require a
+  coherent refresh instead of silently joining shifted offsets. The standalone
+  `useDataStudio` hook retains its paged default for existing custom screens.
+- The optional inspector shows full record values or compact table metadata,
+  starts hidden on desktop, and supports resizing. Mobile cell editing remains
+  in the grid; explicit inspection opens details with a clear return action.
+- The substantial Visual/JSON schema dialog shares one draft, preserves stable
+  column IDs and unfinished JSON, captures its opening revision, handles
+  save/discard/stay and schema-impact review, and keeps headings/actions visible.
+- Added the token-themed reusable `JsonEditor` over `json-edit-react`, exported
+  from the React/root and focused component entrypoints. It validates local
+  drafts; domain controllers still own authorization and accepted persistence.
+  A general-purpose code editor remains future work.
+- Shared master/detail panes scroll independently with an anchored action bar.
+  Additive `detailVisible`, `resizable`, navigation status/visibility and AppShell
+  `contentMode` options provide a bounded workspace or an explicit document page.
+  Resizing delegates to `react-resizable-panels`, not a custom pointer engine.
+- Added the isolated, source-audited documentation tree in `docs-next`, with
+  system inventories, detailed feature/configuration guides, indexes/backlinks,
+  task examples and agent onboarding. It remains separate from the packaged
+  documentation until an explicit publication cutover.
+
+### Fixed
+
+- Fenced stale, duplicate and unmounted UI work across forms, CRUD, tables,
+  master/detail, storage, OTP, confirmations and navigation. Accepted writes
+  remain accepted when a later notification callback fails.
+- Preserved server-query membership/order separately from the shared row cache,
+  corrected table selection/filter/control state, and hardened CSV escaping,
+  formula-like text export, numeric inline clears and schema default inference.
+- Corrected Scheduler error propagation for `catchErrors: false`, protected
+  overlapping execution and cleaned partial setup failures with standard errors.
+- Hardened synchronous SQL transaction and migration callback admission,
+  rollback/depth recovery, quoted/default field validation and declared loading
+  intent. Async migration callbacks now fail closed instead of reporting an
+  unconfirmed commit.
+- Corrected Guardian API-key role eligibility in the Administration Organization
+  without granting customer organizations platform roles. Reserved MFA
+  `rememberDevice` and `recoveryCodes` flags now reject `true` explicitly rather
+  than projecting nonexistent features as enabled.
+- Hardened AI session FIFO/history snapshots and stale-result fences, forwarded
+  declared workflow AI controls, preserved typed agent context and rejected
+  malformed/empty or excess generated video results.
+- Corrected notification/room JSON and capacity admission, token expiry/lifetime
+  arithmetic, observability body/retention bounds, PDF and vector app-local
+  ownership, vector scope replacement/backpressure, and Fabric actor dotenv
+  isolation. Events continue through Zero's standardized observability boundary.
+- Corrected theme/tooltip/icon/sidebar/progress presentation and keyboard access,
+  bounded animated tabs when changing layout modes, and excluded UI test/fixture
+  modules from public wildcard resolution.
+
 ## 2.1.1 - 2026-10-04
 
 This fix-forward release contains the complete 2.1.0 feature set below. The

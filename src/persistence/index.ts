@@ -1,9 +1,9 @@
 /**
  * index.ts
  *
- * Public persistence foundation barrel. Exports SQL storage primitives only;
- * app-factory composition and ReactiveDB integration are implemented in later
- * slices.
+ * Public persistence foundation barrel. Exports SQL storage primitives;
+ * managed application composition and ReactiveDB bind these through their
+ * own service/lifecycle boundaries.
  */
 
 export { BufferPool } from './buffer-pool';
@@ -27,6 +27,7 @@ export {
 export { StatementCache } from './statement-cache';
 export { resolveSQLiteStorageConfig } from './storage-config';
 export { TransactionManager } from './transaction-manager';
+export type { TransactionManagerOptions } from './transaction-manager';
 export type {
   BufferPoolConfig,
   LegacySQLiteStorageMode,

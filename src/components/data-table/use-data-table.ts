@@ -62,6 +62,7 @@ export interface UseDataTableOptions<T extends Row> {
   editable?: string[];
   selectable?: boolean;
   pageSize?: number;
+  /** Initial search shorthand; initialState and controlled state take precedence. */
   globalFilter?: string;
   primaryKey?: string;
   /** Stable identity for custom server results without the schema primary key. */
@@ -118,7 +119,7 @@ export function useDataTable<T extends Row>(
   // ─── State ──────────────────────────────────────────────────────────
 
   const controls = useDataTableState({
-    initialState,
+    initialState: { ...initialState, globalFilter: initialState?.globalFilter ?? options.globalFilter },
     state: options.state,
     onStateChange: options.onStateChange,
     pageSize,

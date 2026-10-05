@@ -25,6 +25,7 @@ import { useDataStudioCatalog } from './use-data-studio-catalog';
 import { useDataStudioMutations } from './use-data-studio-mutations';
 import { useDataStudioReconciliation } from './use-data-studio-reconciliation';
 import { useDataStudioRows } from './use-data-studio-rows';
+import { useDataStudioProgressiveRows } from './use-data-studio-progressive-rows';
 
 /** Load and operate the active organization's logical tables and rows. */
 export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudioResult {
@@ -32,6 +33,8 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
   const boundary = useAuthorizationScopeBoundary(client);
   const surface = client?.dataStudio ?? null;
   const enabled = options.enabled !== false;
+  const progressive = options.rowLoading === 'progressive';
+  const ignoreSelection = React.useCallback(() => {}, []);
   const query = useDataStudioQueryState(options);
   const [mutationError, setMutationError] = React.useState<
     DataStudioMutationError | Error | null
@@ -93,10 +96,10 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
     debouncedSearch: query.debouncedSearch,
     sortColumnId: query.sortColumnId,
     sortDirection: query.sortDirection,
-    offset: query.offset,
+    offset: progressive ? 0 : query.offset,
     requestedPageSize: query.requestedPageSize,
   });
-  const rowState = useDataStudioRows({
+  const rowInput = {
     surface,
     boundary,
     scopeAvailable: catalog.scopeAvailable,
@@ -114,7 +117,15 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
     offsetHistory: query.offsetHistory,
     setOffsetState: query.setOffsetState,
     setOffsetHistory: query.setOffsetHistory,
+  };
+  const pagedRows = useDataStudioRows({
+    ...rowInput,
+    canRead: !progressive && rowInput.canRead,
+    shouldLoad: !progressive && rowInput.shouldLoad,
+    setSelectedRowId: progressive ? ignoreSelection : query.setSelectedRowId,
   });
+  const progressiveRows = useDataStudioProgressiveRows({ ...rowInput, enabled: progressive });
+  const rowState = progressive ? progressiveRows : pagedRows;
 
   const loadCatalogRef = React.useRef(catalog.loadCatalog);
   const loadTableRef = React.useRef(catalog.loadTable);
@@ -195,6 +206,7 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
 
   shouldUseSsrFallback(client, 'useDataStudio');
   return {
+    scopeKey: boundary.key,
     status: resolveDataStudioStatus({
       enabled,
       shouldLoad: catalog.shouldLoad,
@@ -223,6 +235,14 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
     pageSize: rowQuery.limit ?? query.requestedPageSize,
     isLoading: catalog.catalogLoading,
     isLoadingRows: catalog.tableLoading || rowState.rowsLoading,
+    ...(progressive ? {
+      isLoadingMore: progressiveRows.isLoadingMore,
+      hasMoreRows: progressiveRows.hasMoreRows,
+      rowsNeedRefresh: progressiveRows.rowsNeedRefresh,
+      loadMoreError: progressiveRows.loadMoreError,
+      rowWindowKey: progressiveRows.rowWindowKey,
+      loadMoreRows: progressiveRows.loadMoreRows,
+    } : {}),
     isMutating: pendingMutations > 0,
     error: catalog.catalogError ?? catalog.tableError ?? rowState.rowsError,
     mutationError,

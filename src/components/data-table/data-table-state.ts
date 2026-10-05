@@ -70,7 +70,7 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
     ? undefined : stableValueKey(options.state.rowSelection);
   const controlledPaginationKey = options.state?.pagination === undefined
     ? undefined : stableValueKey(options.state.pagination);
-  const candidate = { ...local, ...options.state };
+  const candidate = mergeProvidedFacets(local, options.state);
   const criteria = queryCriteriaKey(candidate);
   const previousCriteria = useRef(criteria);
   const changedCriteria = previousCriteria.current !== criteria;
@@ -84,7 +84,7 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
     base = { ...local, pagination: { ...local.pagination, pageIndex: 0 }, rowSelection: {} };
     setLocal(base);
   }
-  const state = { ...base, ...options.state };
+  const state = mergeProvidedFacets(base, options.state);
   if (changedScope || changedCriteria || (blockedSelection.current !== undefined
     && blockedSelection.current === controlledSelectionKey)) {
     state.rowSelection = {};
@@ -137,6 +137,12 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
 
 function queryCriteriaKey(state: DataTableState): string {
   return stableValueKey([state.globalFilter, state.columnFilters, state.sorting, state.pagination.pageSize]);
+}
+
+/** Undefined partial facets are omitted controls, not replacements for defaults. */
+function mergeProvidedFacets(base: DataTableState, controlled?: Partial<DataTableState>): DataTableState {
+  const defined = Object.fromEntries(Object.entries(controlled ?? {}).filter(([, value]) => value !== undefined));
+  return { ...base, ...defined };
 }
 
 function createInitialState(options: DataTableStateOptions): DataTableState {

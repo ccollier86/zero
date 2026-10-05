@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Archive, Braces, Columns3, FileJson2, Pencil, RotateCcw } from 'lucide-react';
+import { Archive, Braces, Database, FileJson2, Pencil, RotateCcw } from 'lucide-react';
 import type {
   DataStudioRow,
   DataStudioTable,
@@ -13,7 +13,7 @@ import {
   TabsContents,
   TabsList,
   TabsTrigger,
-} from '../animate-ui/components/animate/tabs';
+} from '../animate-ui/components/radix/tabs';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
@@ -31,7 +31,7 @@ export interface DataStudioInspectorProps {
   readonly className?: string;
 }
 
-/** Record, schema, and browser API views for the current selection. */
+/** Full record values, compact table metadata, and browser API examples in one bounded inspector. */
 export function DataStudioInspector({
   table,
   row,
@@ -41,10 +41,10 @@ export function DataStudioInspector({
   onChangeStatus,
   className,
 }: DataStudioInspectorProps) {
-  const [tab, setTab] = React.useState(row ? 'record' : 'schema');
+  const [tab, setTab] = React.useState(row ? 'record' : 'table');
   React.useEffect(() => {
-    if (!row && tab === 'record') setTab('schema');
-  }, [row, tab]);
+    setTab(row ? 'record' : 'table');
+  }, [row?.rowId, table?.tableId]);
 
   if (!table) {
     return (
@@ -71,7 +71,7 @@ export function DataStudioInspector({
               size="sm"
               variant="outline"
               className="h-8 shrink-0 px-2"
-              disabled={busy}
+              disabled={busy || table.status !== 'active'}
               aria-haspopup="dialog"
               onClick={onEditSchema}
             >
@@ -88,23 +88,23 @@ export function DataStudioInspector({
             <TabsTrigger value="record" disabled={!row}>
               <FileJson2 aria-hidden="true" /> Record
             </TabsTrigger>
-            <TabsTrigger value="schema">
-              <Columns3 aria-hidden="true" /> Schema
+            <TabsTrigger value="table">
+              <Database aria-hidden="true" /> Table
             </TabsTrigger>
             <TabsTrigger value="code">
               <Braces aria-hidden="true" /> Code
             </TabsTrigger>
           </TabsList>
         </div>
-        <TabsContents className="min-h-0 flex-1">
+        <TabsContents mode="layout" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <TabsContent value="record" className="h-full">
             <ScrollArea className="h-full">
               {row ? <RecordInspector table={table} row={row} /> : null}
             </ScrollArea>
           </TabsContent>
-          <TabsContent value="schema" className="h-full">
+          <TabsContent value="table" className="h-full">
             <ScrollArea className="h-full">
-              <SchemaInspector table={table} />
+              <TableInspector table={table} />
             </ScrollArea>
           </TabsContent>
           <TabsContent value="code" className="h-full">
@@ -166,7 +166,7 @@ function RecordInspector({ table, row }: { table: DataStudioTable; row: DataStud
                 <p className="truncate font-mono text-[11px] text-muted-foreground">{column.key}</p>
               </div>
               <p className={cn(
-                'min-w-0 break-words text-right font-mono text-xs',
+                'min-w-0 whitespace-pre-wrap break-words text-right font-mono text-xs [overflow-wrap:anywhere]',
                 value == null && 'italic text-muted-foreground',
               )}>
                 {value === undefined ? 'Not set' : formatDataStudioValue(value, column)}
@@ -179,32 +179,22 @@ function RecordInspector({ table, row }: { table: DataStudioTable; row: DataStud
   );
 }
 
-function SchemaInspector({ table }: { table: DataStudioTable }) {
+function TableInspector({ table }: { table: DataStudioTable }) {
   return (
     <div className="space-y-3 p-3">
       {table.description && <p className="text-sm text-muted-foreground">{table.description}</p>}
-      <div className="grid grid-cols-3 gap-2 rounded-lg border bg-muted/20 p-3 text-xs">
+      <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-xs">
+        <Metadata label="Table ID" value={table.tableId} mono />
+        <Metadata label="Table key" value={table.key} mono />
+        <Metadata label="Table revision" value={String(table.revision)} />
         <Metadata label="Schema revision" value={String(table.schemaRevision)} />
         <Metadata label="Columns" value={String(table.schema.columns.length)} />
         <Metadata label="Rows" value={String(table.rowCount)} />
-      </div>
-      <ul className="space-y-2" aria-label="Table columns">
-        {table.schema.columns.map((column) => (
-          <li key={column.columnId} className="rounded-lg border p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{column.label}</p>
-                <p className="truncate font-mono text-xs text-muted-foreground">{column.key}</p>
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Badge variant="outline">{column.type}</Badge>
-                {column.required && <Badge variant="secondary">required</Badge>}
-              </div>
-            </div>
-            {column.description && <p className="mt-2 text-xs text-muted-foreground">{column.description}</p>}
-          </li>
-        ))}
-      </ul>
+        <Metadata label="Lifecycle" value={table.status} />
+        <Metadata label="Created" value={formatTimestamp(table.createdAt)} />
+        <Metadata label="Updated" value={formatTimestamp(table.updatedAt)} />
+      </dl>
+      <p className="text-xs leading-relaxed text-muted-foreground">Edit individual columns from their grid headers. Use Edit schema to work on the full table definition.</p>
     </div>
   );
 }

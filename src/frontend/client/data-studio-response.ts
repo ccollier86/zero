@@ -128,6 +128,9 @@ export function parseRowPage(value: unknown, schema?: DataStudioSchema): DataStu
     limit,
     offset,
     nextOffset,
+    ...(record.readSequence === undefined ? {} : {
+      readSequence: responseNonNegativeInteger(record.readSequence, 'row page'),
+    }),
   });
 }
 

@@ -67,13 +67,20 @@ export function useDataStudioMutations(input: {
     expectedScopeKey: string,
   ) => Promise<void>;
 }) {
+  const mounted = React.useRef(false);
+  React.useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const isCurrent = () => mounted.current && input.boundaryReadyRef.current
+    && input.boundaryKeyRef.current === input.boundaryKey;
   const runMutation = React.useCallback(async <T,>(
     operation: DataStudioFrontendOperation,
     key: string,
     action: (operationId: string) => Promise<T>,
     reconciliation: PostMutationReconciliation = {},
   ): Promise<T> => {
-    if (!input.boundaryReadyRef.current || input.boundaryKeyRef.current !== input.boundaryKey) {
+    if (!isCurrent()) {
       throw new Error('Data Studio is unavailable while the organization scope changes.');
     }
     const tracker = input.operationTracker.current;
@@ -84,13 +91,13 @@ export function useDataStudioMutations(input: {
       let result: T;
       try {
         result = await action(operationId);
-        if (!input.boundaryReadyRef.current || input.boundaryKeyRef.current !== input.boundaryKey) {
+        if (!isCurrent()) {
           throw new Error('Discarded a Data Studio response from a previous organization scope.');
         }
       } catch (cause) {
         tracker.fail(key, cause, operationId);
         const error = toDataStudioError(cause);
-        if (input.boundaryKeyRef.current === input.boundaryKey) {
+        if (isCurrent()) {
           input.setMutationError(error);
           reportDataStudioFrontendFailure(operation, 'mutation', cause);
         }
@@ -102,7 +109,7 @@ export function useDataStudioMutations(input: {
       await settlePostMutationRefreshes(operation, reconciliation.afterSuccess ?? []);
       return result;
     } finally {
-      if (input.boundaryKeyRef.current === input.boundaryKey) {
+      if (isCurrent()) {
         input.setPendingMutations((count) => Math.max(0, count - 1));
       }
     }
@@ -120,23 +127,29 @@ export function useDataStudioMutations(input: {
     if (!input.surface) throw unavailable();
     const table = await runMutation('table.create', mutationKey('table:create', tableInput), (operationId) =>
       input.surface!.createTable(tableInput, { operationId }));
+    if (!isCurrent()) return table;
     try {
       await input.surface.listTables(input.tableStatus);
     } catch (cause) {
-      input.setCatalogError(toDataStudioError(cause));
-      reportDataStudioFrontendFailure('table-summary.refresh', 'load', cause);
+      if (isCurrent()) {
+        input.setCatalogError(toDataStudioError(cause));
+        reportDataStudioFrontendFailure('table-summary.refresh', 'load', cause);
+      }
     }
-    input.setTableStatusState('active');
-    input.setSelectedTableId(table.tableId);
+    if (isCurrent()) {
+      input.setTableStatusState('active');
+      input.setSelectedTableId(table.tableId);
+    }
     return table;
   }, [input.access.canManage, input.surface, input.tableStatus, runMutation]);
 
   const updateTable = React.useCallback(async (
     tableInput: Omit<DataStudioTableUpdate, 'expectedRevision'>,
+    options?: { readonly expectedRevision: number },
   ) => {
     requireCapability(input.access.canManage, 'Schema management');
     if (!input.surface || !input.selectedTable) throw unavailable();
-    const update = { ...tableInput, expectedRevision: input.selectedTable.revision };
+    const update = { ...tableInput, expectedRevision: options?.expectedRevision ?? input.selectedTable.revision };
     return runMutation(
       'table.update',
       mutationKey(`table:update:${input.selectedTable.tableId}`, update),
@@ -149,29 +162,33 @@ export function useDataStudioMutations(input: {
   }, [input.access.canManage, input.selectedTable, input.surface, runMutation]);
 
   const updateSchema = React.useCallback(
-    (schema: DataStudioSchema) => updateTable({ schema }),
+    (schema: DataStudioSchema, options?: { readonly expectedRevision: number }) => updateTable({ schema }, options),
     [updateTable],
   );
 
-  const changeTableStatus = React.useCallback(async (status: DataStudioTableStatus) => {
+  const changeTableStatus = React.useCallback(async (status: DataStudioTableStatus, options?: { readonly expectedRevision: number }) => {
     requireCapability(input.access.canManage, 'Schema management');
     if (!input.surface || !input.selectedTable) throw unavailable();
-    const statusInput = { expectedRevision: input.selectedTable.revision, status };
+    const expectedRevision = options?.expectedRevision ?? input.selectedTable.revision;
+    const statusInput = { expectedRevision, status };
     const table = await runMutation(
       'table-status.update',
       mutationKey(`table:status:${input.selectedTable.tableId}`, statusInput),
       (operationId) => input.surface!.setTableStatus(
         input.selectedTable!.tableId,
-        input.selectedTable!.revision,
+        expectedRevision,
         status,
         { operationId },
       ),
     );
+    if (!isCurrent()) return table;
     try {
       await input.surface.listTables(input.tableStatus);
     } catch (cause) {
-      input.setCatalogError(toDataStudioError(cause));
-      reportDataStudioFrontendFailure('table-summary.refresh', 'load', cause);
+      if (isCurrent()) {
+        input.setCatalogError(toDataStudioError(cause));
+        reportDataStudioFrontendFailure('table-summary.refresh', 'load', cause);
+      }
     }
     return table;
   }, [input.access.canManage, input.selectedTable, input.surface, input.tableStatus, runMutation]);
@@ -190,7 +207,7 @@ export function useDataStudioMutations(input: {
       (operationId) => input.surface!.createRow(tableId, values, { operationId }),
       { afterSuccess: refreshes, afterFailure: refreshes },
     );
-    if (input.selectedTableIdRef.current === tableId) input.setSelectedRowId(row.rowId);
+    if (isCurrent() && input.selectedTableIdRef.current === tableId) input.setSelectedRowId(row.rowId);
     return row;
   }, [
     input.access.canWrite,
@@ -249,7 +266,7 @@ export function useDataStudioMutations(input: {
 
   const deleteRow = React.useCallback(async (row = input.selectedRow ?? undefined) => {
     requireCapability(input.access.canWrite, 'Row editing');
-    if (!input.surface || !input.selectedTable || !row) throw unavailable();
+    if (!input.surface || !input.selectedTable || !row || row.tableId !== input.selectedTable.tableId) throw unavailable();
     const tableId = input.selectedTable.tableId;
     const refreshes = [
       () => input.refreshRowsAfterMutation(tableId, input.boundaryKey),

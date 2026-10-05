@@ -26,6 +26,22 @@ afterEach(() => {
 });
 
 describe('workflow scratch memory', () => {
+  test('delete reports whether the key exists in the attempt overlay', () => {
+    store.set(SCOPE, 'persisted', 'before');
+    const attempt = createWorkflowMemoryContext(store, {
+      scope: SCOPE, stepId: 'step-delete', attemptId: 'attempt-delete',
+    });
+    expect(attempt.memory.delete('missing')).toBe(false);
+    attempt.memory.set('new', 'staged');
+    expect(attempt.memory.delete('new')).toBe(true);
+    expect(attempt.memory.delete('new')).toBe(false);
+    expect(attempt.memory.has('new')).toBe(false);
+    expect(attempt.memory.delete('persisted')).toBe(true);
+    expect(attempt.memory.delete('persisted')).toBe(false);
+    attempt.commit(() => true);
+    expect(store.list(SCOPE)).toEqual([]);
+  });
+
   test('provides atomic optimistic set, update, delete, and transaction operations', () => {
     const created = store.set(SCOPE, 'counter', 0, { expectedVersion: null });
     expect(created).toMatchObject({ value: 0, version: 1, updatedAt: NOW });

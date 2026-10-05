@@ -161,7 +161,7 @@ export interface ObservabilityEndpointConfig {
 export interface ObservabilityConfig {
   /** Disable the platform observability runtime entirely. */
   enabled?: boolean;
-  /** Replace the default event sink. */
+  /** Add a sink to the configured console/store composite. Disable those explicitly for custom-only output. */
   sink?: PlatformSink;
   /** Replace or disable the default readable event store. */
   store?: PlatformEventStore | false;

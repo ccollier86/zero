@@ -111,7 +111,7 @@ function renderInput(
           value={value === '' || value == null ? '' : String(value)}
           onChange={(e) => {
             const v = e.target.value;
-            onChange(v === '' ? '' : Number(v));
+            onChange(v === '' ? (meta.required ? '' : null) : Number(v));
           }}
           onBlur={onBlur}
           ref={ref as any}

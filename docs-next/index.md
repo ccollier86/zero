@@ -1,72 +1,83 @@
 ---
 id: zero.docs-next
 type: index
-audience: [developer, agent, maintainer]
+audience: [developer, agent, operator, maintainer]
 owner: zero-documentation
 status: draft
 visibility: internal
 ---
 
-# Zero Documentation — Next
+# Zero Documentation
 
-This is the isolated workspace for Zero's next production-quality developer
-and coding-agent documentation. It is not yet the replacement for the current
-documentation shipped with Zero.
+Zero is a Bun/Elysia full-stack platform with a React frontend. Compose shared
+schemas, live authority, scoped services, realtime data and reusable controls.
+Use the existing platform contracts as the foundation for an app.
 
-The rebuild begins with a source-backed inventory of every system and public
-surface. Detailed feature guides, subsystem indexes, configuration references,
-and roadmaps will be written against that inventory. Completion means readers
-can find, understand, use, and verify the supported contracts—not merely that
-Markdown files exist.
+This is the isolated next documentation set, reviewed against the 2.1.1 source
+baseline and explicitly identified audited working corrections. It is still in
+review and does not replace the documentation shipped with an installed release.
 
-## Authoring And Review
+## Start With A Task
 
-Read these documents before adding or reorganizing material in this tree:
+- [Start Here](./start-here.md): the high-level model and a short path into the
+  right system references.
+- [Build and operate an app](./guides/index.md): new projects, mode selection,
+  real user ownership, organization apps, control planes, automation and upgrades.
+- [Coding-agent guidance](./agents/index.md): use-first onboarding, exact public
+  imports, existing instructions/tooling and proportionate verification.
+- [Shared concepts](./concepts/index.md): data planes, live service authority
+  and how tracked changes become reactive UI.
 
-1. [Documentation Standards](./documentation-standards.md): the agreed rules
-   for quality, structure, indexes, backlinks, examples, applicability, and
-   isolation.
-2. [Documentation Process](./documentation-process.md): the audit-first
-   workflow, maintenance procedures, review gates, and eventual publication
-   handoff.
-3. [Working Evidence And Templates](./_work/index.md): inventories and review
-   material used to prepare the reader-facing documentation.
+## System References
 
-This preparation index and its authoring links are internal while the reader
-guides are being built. Before it becomes the public main index, replace the
-preparation navigation with the verified reader section indexes. Public pages
-must never link to excluded internal material.
-
-## Planned Reader Navigation
-
-The following destinations describe the agreed organization. They are not
-links or claims that the guides are already complete:
-
-| Destination | Purpose |
+| Area | What you will find |
 | --- | --- |
-| `start-here.md` | Concise orientation and the shortest verified path to a working Zero application. |
-| `guides/` | Task-oriented application-building, operations, upgrade, and extension guides. |
-| `concepts/` | Shared concepts such as authority, data planes, reactivity, service boundaries, and observability. |
-| `backend/` | System indexes and feature-level backend contracts. |
-| `frontend/` | Public components, hooks, client SDKs, routing, providers, and design-system guidance. |
-| `cli/` | Commands, options, trust boundaries, side effects, and operational procedures. |
-| `agents/` | Agent onboarding and documentation of instructions, rules, hooks, skills, scripts, and tools. |
+| [Backend](./backend/index.md) | Guardian, Schema/Resources, ReactiveDB/Fabric, Sync, Torrent, AI, Storage and optional services |
+| [Frontend](./frontend/index.md) | Providers/SDK/router, data/forms/control planes, UI primitives, hooks, tokens and domain organisms |
+| [CLI](./cli/index.md) | Creation, dependency updates, committed release provenance, Doctor and safe operational boundaries |
+| [Agents](./agents/index.md) | Agent onboarding, existing instruction bundles, scripts/hooks and clearly labeled future tooling |
 
-Each actual section will have an `index.md`. Backend system folders will also
-have a configuration reference when applicable, a roadmap, and focused feature
-guides. Navigation will offer both system-based and task-based paths.
+Every system index connects its features, configuration and roadmap. Follow
+those links to the canonical contract instead of copying an older example or
+guessing an internal import.
 
-## Isolation And Status
+## Choose The Right Boundaries
 
-- Existing `docs/`, README, agent bundles, instructions, and hooks remain
-  unchanged by this documentation rebuild unless a later change is explicitly
-  approved.
-- Existing documentation is research input, not an automatically authoritative
-  description of current behavior.
-- No new system audit or feature guide is marked complete by creating this
-  workspace. The audit and review gates are described in the
-  [process](./documentation-process.md#audit-every-system-before-feature-rewriting).
-- Audit findings do not authorize application changes, deployments, database
-  access, migrations, or unrelated platform fixes.
-- Replacing the current documentation or changing package/site/agent entry
-  points is a separate, deliberate handoff.
+Guardian tenancy/RBAC, Fabric topology, persistence placement and table loading
+are independent choices. [Choose modes](./guides/choose-modes.md) before building
+ownership around the wrong assumption.
+
+Canonical platform data stays in the system database. Application/tenant data
+uses declared resources and admitted services. Local identity anchors support
+foreign keys; they are not permission caches.
+
+Optimistic UI is not an accepted server write. Use receipt-aware operations when
+reporting success, and retire old rows, selections, drafts and callbacks when
+authentication or organization scope changes.
+
+## Find The Exact Contract
+
+Feature guides state applicability and source baseline. A roadmap item is not an
+implemented API. Source tests, example typechecks and exact installed-package
+qualification are different evidence; [verification](./guides/verification.md)
+explains what each proves.
+
+Use the documentation matching your installed version when upgrading.
+[Upgrade guidance](./guides/upgrade.md) separates dependency replacement from
+schema, identity, tenant and workflow changes.
+
+## Maintainer Preparation Area
+
+This section is internal and must be excluded from the eventual public reader
+projection, search and production agent bundle:
+
+- [Documentation standards](./documentation-standards.md): quality, metadata,
+  canonical ownership, indexes, backlinks and evidence.
+- [Documentation process](./documentation-process.md): audit, authoring,
+  maintenance, review and publication gates.
+- [Working evidence](./_work/index.md): inventories, catalogs, checks, findings
+  and templates—not application-building prerequisites.
+
+Current docs, README, package documentation entries and active agent
+instructions/hooks remain unchanged. Current-doc/site/package/agent cutover
+requires a separate approved handoff after qualification.

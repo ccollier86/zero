@@ -17,14 +17,18 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Whole-platform audit](./audits/index.md): source-backed inventories,
+  public-surface catalogs, findings, and the execution ledger.
 - [Templates](./templates/index.md): reusable system-inventory and feature-guide
   checklists. Templates do not establish implemented capabilities.
+- [Documentation checks](./checks/index.md): read-only Bun authoring checks and
+  synthetic parser regressions; not public Zero commands.
 
-## Planned Working Sections
+## Working Status
 
-`audits/systems/` will contain one inventory per system and a linked index of
-the whole-platform map. Findings and review evidence will be added as the audit
-actually runs. These paths are plans, not existing audits or completed checks.
+The whole-platform audit is in progress. Its indexes distinguish existing
+evidence from planned inventories and guides; none of those plans should be
+read as a completed audit or qualification result.
 
 Inventories link to final feature guides once available. Do not maintain a
 second detailed contract here or turn an implementation defect into a published

@@ -80,18 +80,27 @@ export function StorageDriveSettingsPanel({
         toast.error('Drive name is required');
         return;
       }
+      const driveLimit = parseStorageLimit(maxSize.trim() || 0);
+      const fileLimit = parseStorageLimit(maxFileSize.trim() || 0);
+      if (driveLimit === undefined || fileLimit === undefined) {
+        toast.error('Storage limits must be non-negative whole byte counts. Use 0 for unlimited.');
+        return;
+      }
 
       setSaving(true);
       try {
         await onSave({
           name: trimmedName,
-          max_size_bytes: parseStorageLimit(maxSize) ?? 0,
-          max_file_size_bytes: parseStorageLimit(maxFileSize) ?? 0,
+          max_size_bytes: driveLimit,
+          max_file_size_bytes: fileLimit,
           allowed_mime_types: allowedMimeTypes,
           ...(allowPublicVisibility || (driveIsPublic && visibility === '0')
             ? { public: visibility }
             : {}),
         });
+      } catch {
+        // The owning mutation/controller presents and observes the failure.
+        // React's form event cannot await its rejected save callback.
       } finally {
         setSaving(false);
       }

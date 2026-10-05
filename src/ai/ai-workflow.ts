@@ -11,6 +11,8 @@ import type { ToolSet } from 'ai';
 import type { StepContext, StepHandler } from '../workflows/types';
 import { getAI } from './ai.plugin';
 import { AIError } from './ai-errors';
+import { normalizeAIProviderOptions } from './ai-provider-options';
+import { snapshotAIHeaders, snapshotAIStringList, snapshotAITimeout } from './ai-request-snapshot';
 import type {
   AIGenerateConversationRequest,
   AIMessage,
@@ -52,13 +54,35 @@ export interface AIWorkflowHandlerOptions<TInput = unknown> extends AIRequestOpt
 export function createAIWorkflowHandler<TInput = unknown>(
   options: AIWorkflowHandlerOptions<TInput>
 ): StepHandler {
+  const {
+    service: configuredService,
+    system: configuredSystem,
+    messages: configuredMessages,
+    prompt: configuredPrompt,
+    tools: configuredTools,
+    toolChoice,
+    output,
+    ...requestOptions
+  } = options;
+  // Capture the declared request controls at handler construction, using the
+  // same bounded snapshots as ordinary generation. Handler-only settings must
+  // never become SDK request options, and async derivation must not race them.
+  const request = {
+    ...requestOptions,
+    headers: snapshotAIHeaders(requestOptions.headers),
+    timeout: snapshotAITimeout(requestOptions.timeout),
+    stopSequences: snapshotAIStringList(requestOptions.stopSequences, 'AI stop sequences'),
+    providerOptions: normalizeAIProviderOptions(requestOptions.providerOptions),
+    metadata: { ...requestOptions.metadata },
+  };
+  const messageOptions = { messages: configuredMessages, prompt: configuredPrompt };
   return async (context) => {
     const ctx = context as StepContext<TInput>;
-    const service = resolveWorkflowAIService(options.service);
-    const messages = await resolveWorkflowMessages(options, ctx);
-    const system = await resolveMaybe(options.system, ctx);
-    const tools = await resolveMaybe(options.tools, ctx);
-    const abort = combineWorkflowAbortSignals(ctx.signal, options.abortSignal);
+    const service = resolveWorkflowAIService(configuredService);
+    const messages = await resolveWorkflowMessages(messageOptions, ctx);
+    const system = await resolveMaybe(configuredSystem, ctx);
+    const tools = await resolveMaybe(configuredTools, ctx);
+    const abort = combineWorkflowAbortSignals(ctx.signal, request.abortSignal);
 
     try {
       // Prompt/tool derivation may yield. Revalidate at the external-effect
@@ -67,25 +91,20 @@ export function createAIWorkflowHandler<TInput = unknown>(
       abort.signal?.throwIfAborted();
       ctx.assertCurrentAuthority();
       const result = await service.generateConversation({
-        model: options.model,
+        ...request,
         system,
         messages,
         tools,
-        toolChoice: options.toolChoice,
-        temperature: options.temperature,
-        topP: options.topP,
-        maxOutputTokens: options.maxOutputTokens,
-        stopSequences: options.stopSequences,
+        toolChoice,
         abortSignal: abort.signal,
-        providerOptions: options.providerOptions,
         metadata: {
           workflowInstanceId: ctx.instanceId,
           workflowStepIndex: ctx.stepIndex,
-          ...(options.metadata ?? {}),
+          ...request.metadata,
         },
       });
 
-      return options.output === 'result' ? result : result.text;
+      return output === 'result' ? result : result.text;
     } finally {
       abort.dispose();
     }
@@ -134,7 +153,7 @@ function resolveWorkflowAIService(
 }
 
 async function resolveWorkflowMessages<TInput>(
-  options: AIWorkflowHandlerOptions<TInput>,
+  options: Pick<AIWorkflowHandlerOptions<TInput>, 'messages' | 'prompt'>,
   ctx: StepContext<TInput>
 ): Promise<readonly AIMessage[]> {
   const explicitMessages = await resolveMaybe(options.messages, ctx);

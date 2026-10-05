@@ -1,5 +1,7 @@
 'use client';
 
+/** Renders confirmation options; modal lifecycle and caller actions stay outside. */
+
 import { useCallback } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '#zero/components/ui/button';
@@ -48,6 +50,8 @@ export function ConfirmModalContent({ modal, onResult }: ConfirmModalContentProp
           <HoldButton
             onConfirm={handleConfirm}
             holdDuration={opts.holdDuration ?? 1500}
+            label={opts.confirmLabel ?? 'Hold to Confirm'}
+            holdingLabel="Confirming..."
           />
         </div>
       ) : null}

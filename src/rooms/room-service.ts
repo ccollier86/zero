@@ -2,6 +2,7 @@ import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { Row } from '../sync/types';
 import type { RoomRecord, RoomMemberRecord, CreateRoomParams, RoomRole } from './types';
+import { RoomInputError } from './room-error';
 import {
   applicationServiceDataScope,
   serviceDataTenantId,
@@ -91,6 +92,10 @@ export class RoomService {
     commitFence?: RoomCommitFence,
   ): RoomRecord {
     const boundary = this.requireScope(scope);
+    if (params.maxMembers !== undefined
+      && (!Number.isSafeInteger(params.maxMembers) || params.maxMembers < 1)) {
+      throw new RoomInputError('Room capacity must be a positive safe integer');
+    }
     const roomId = `room_${crypto.randomUUID()}`;
     const now = Date.now();
 

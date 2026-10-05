@@ -3,22 +3,18 @@
 /** Composes table state, data-source policy, mutation lifecycle, and presentation. */
 
 import * as React from 'react';
+import { toast } from 'sonner';
 import { encodeFieldValue } from '../../schema/field-codecs';
+import { emitFrontendCode } from '../../frontend/client/observability';
+import { OBS_CODES } from '../../observability/codes';
 import type { Row } from '../../sync/types';
-import { useClientMaybe } from '../../frontend/client/client-context';
-import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
-import { stableValueKey } from '../../frontend/client/query-params';
-import { useDataTable } from './use-data-table';
-import { useDataTableState } from './data-table-state';
-import { useDataTableSource } from './data-table-source';
 import { DataTableToolbar } from './data-table-toolbar';
 import { DataTablePagination } from './data-table-pagination';
 import { DataTableGrid } from './data-table-grid';
-import { useDataTableCursorHistory, useDataTableAcceptedCursors } from './data-table-cursor-history';
-import { dataTableServerSourceIdentity } from './data-table-server-source-identity';
 import { DataTableBulkActions } from './data-table-bulk-actions';
-import { useDataTableMutationRunner, type DataTableMutationContext } from './data-table-mutation';
-import { getSchemaPrimaryKey } from './row-identity';
+import { selectedDataTablePageRows } from './data-table-selection';
+import type { DataTableMutationContext } from './data-table-mutation';
+import { useDataTableController, type DataTableController } from './use-data-table-controller';
 import type { DataTableProps } from './data-table-types';
 import { Button } from '#zero/components/ui/button';
 import { cn } from '#zero/lib/utils';
@@ -26,18 +22,16 @@ import { cn } from '#zero/lib/utils';
 export type { DataTableProps } from './data-table-types';
 
 /** The same controls serve arrays, complete reactive collections, and server queries. */
-export function DataTable<T extends Row = Row>({
+export function DataTable<T extends Row = Row>(props: DataTableProps<T>) {
+  const controller = useDataTableController(props);
+  return <DataTableContent {...props} controller={controller} />;
+}
+
+/** Internal view for organisms that already own the shared query/result controller. */
+export function DataTableContent<T extends Row = Row>({
+  controller,
   schema,
   source,
-  data: dataProp,
-  collection: collectionName,
-  lazy = false,
-  filters,
-  lazyOptions,
-  columns: visibleColumns,
-  primaryKey: primaryKeyOverride,
-  editable = [],
-  columnOverrides,
   tableLayout = 'auto',
   actions,
   bulkActions,
@@ -47,15 +41,11 @@ export function DataTable<T extends Row = Row>({
   filterColumns,
   paginated = source?.type === 'server',
   selectable = false,
-  onSelectionChange,
   onCellEdit,
   onCellCommit,
   onRowClick,
   onRowDoubleClick,
   highlightedRowId,
-  initialState,
-  state,
-  onStateChange,
   toolbarActions,
   toolbarSlots,
   toolbarLabel,
@@ -69,64 +59,10 @@ export function DataTable<T extends Row = Row>({
   errorState,
   getRowClassName,
   className,
-}: DataTableProps<T>) {
-  const client = useClientMaybe();
-  const boundary = useAuthorizationScopeBoundary(client);
-  const server = source?.type === 'server';
-  const sourceTable = source && 'table' in source ? source.table : collectionName;
-  const mode = server ? source.pagination ?? 'offset' : 'offset';
-  const partition = stableValueKey([
-    boundary.key, source?.type ?? (collectionName ? 'collection' : 'data'), sourceTable,
-    server ? dataTableServerSourceIdentity(source) : null, mode,
-  ]);
-  const pageSize = typeof paginated === 'object' ? paginated.pageSize ?? 20 : 20;
-  const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
-  const interaction = useDataTableState({ initialState, state, onStateChange, pageSize, boundaryKey: partition });
-  const current = interaction.state;
-  const queryShape = stableValueKey([partition, current.globalFilter, current.columnFilters, current.sorting, current.pagination.pageSize]);
-  const cursors = useDataTableCursorHistory(queryShape);
-  const searchFields = typeof searchable === 'object' && searchable.fields
-    ? searchable.fields
-    : (visibleColumns ?? schema.fieldNames).filter((name) => {
-        const type = schema.fields.get(name)?.type;
-        return type === 'text' || type === 'email' || type === 'url' || type === 'textarea';
-      });
-  const resolved = useDataTableSource<T>({
-    source, data: dataProp, collection: collectionName, lazy, filters, lazyOptions, primaryKey,
-    query: {
-      search: searchable ? current.globalFilter : '',
-      filters: current.columnFilters,
-      sorting: current.sorting,
-      pagination: {
-        mode,
-        ...current.pagination,
-        ...(mode === 'cursor' ? { cursor: cursors.current.cursors.get(current.pagination.pageIndex) ?? null } : {}),
-      },
-      searchFields,
-    },
-  });
-  useDataTableAcceptedCursors(cursors, current.pagination.pageIndex, resolved.page);
-  const dt = useDataTable<T>({
-    schema, data: resolved.data, columns: visibleColumns, editable, selectable, pageSize,
-    primaryKey, columnOverrides, state: current, onStateChange: interaction.replace,
-    paginated: !!paginated, sortable, manualQuery: server, boundaryKey: partition,
-    rowCount: server ? resolved.page?.total : undefined,
-    pageCount: server && resolved.page?.total === undefined ? -1 : undefined,
-    searchableFields: typeof searchable === 'object' ? searchable.fields : undefined,
-    getRowId: server ? source.getRowId : undefined,
-  });
-  const mutationRunner = useDataTableMutationRunner({ refresh: resolved.refresh, boundaryKey: partition });
+}: DataTableProps<T> & { controller: DataTableController<T> }) {
+  const { dt, current, resolved, partition, mutationRunner, server } = controller;
   const partitionRef = React.useRef(partition);
   partitionRef.current = partition;
-
-  const selectedIds = dt.table.getSelectedRowModel().rows.map((row) => row.id);
-  const selectionKey = stableValueKey(selectedIds);
-  const selectionNotification = React.useRef({ callback: onSelectionChange, ids: selectedIds });
-  selectionNotification.current = { callback: onSelectionChange, ids: selectedIds };
-  React.useEffect(() => {
-    const { callback, ids } = selectionNotification.current;
-    callback?.(ids);
-  }, [selectionKey]);
 
   const saveCell = React.useCallback(async (
     rowId: string,
@@ -143,7 +79,18 @@ export function DataTable<T extends Row = Row>({
       await resolved.actions.update(rowId, { [columnId]: encoded } as Partial<T>, { signal: context?.signal });
       // Preserve the legacy collection auto-write plus edit notification contract.
       if (partitionRef.current === capturedPartition && !context?.signal.aborted) {
-        await onCellEdit?.(rowId, columnId, encoded, context);
+        try {
+          await onCellEdit?.(rowId, columnId, encoded, context);
+        } catch {
+          // The source update already succeeded. A follow-up error must not
+          // make the mutation runner repeat that accepted write on Retry.
+          if (partitionRef.current === capturedPartition && !context?.signal.aborted) {
+            emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
+              metadata: { surface: 'data-table', stage: 'accepted-callback' },
+            });
+            toast.error('The change was saved, but a follow-up action failed.');
+          }
+        }
       }
     } else if (onCellEdit) {
       await onCellEdit(rowId, columnId, encoded, context);
@@ -172,7 +119,7 @@ export function DataTable<T extends Row = Row>({
 
   const showControls = showToolbar ?? Boolean(searchable || filterable || toolbarActions != null
     || toolbarSlots?.controls || toolbarSlots?.actions || toolbarSlots?.supplemental || bulkActions?.length);
-  const selectionRows = dt.table.getSelectedRowModel().rows;
+  const selectionRows = selectedDataTablePageRows(dt.table);
 
   return (
     <div className={cn('min-w-0 space-y-3', className)}>

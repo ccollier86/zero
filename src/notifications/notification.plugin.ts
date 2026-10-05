@@ -43,6 +43,18 @@ import {
   canManageNotificationScope,
   notificationAudienceRoles,
 } from './notification-access';
+import { parseNotificationMetadata, parseNotificationUserIds } from './notification-input';
+
+const notificationTypeSchema = t.Union([
+  t.Literal('info'), t.Literal('warning'), t.Literal('success'),
+  t.Literal('error'), t.Literal('system'),
+]);
+const notificationPrioritySchema = t.Union([
+  t.Literal('low'), t.Literal('normal'), t.Literal('high'), t.Literal('urgent'),
+]);
+const notificationTargetSchema = t.Union([
+  t.Literal('all'), t.Literal('user'), t.Literal('users'), t.Literal('role'),
+]);
 
 // ─── Legacy Compatibility Getter ─────────────────────────────────────────────
 
@@ -264,12 +276,12 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         requireNotificationManager(access, scope);
 
         const params = {
-          type: body.type as any,
-          priority: body.priority as any,
+          type: body.type,
+          priority: body.priority,
           title: body.title,
           body: body.body,
           actionUrl: body.actionUrl,
-          metadata: body.metadata ? JSON.parse(body.metadata) : undefined,
+          metadata: parseNotificationMetadata(body.metadata),
           expiresAt: body.expiresAt,
         };
 
@@ -281,7 +293,7 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
             break;
           case 'users':
             if (!body.targetValue) throw new AuthError('targetValue required', 'BAD_REQUEST', 400);
-            notification = svc.notifyUsers(JSON.parse(body.targetValue), params, auth.userId, scope);
+            notification = svc.notifyUsers(parseNotificationUserIds(body.targetValue), params, auth.userId, scope);
             break;
           case 'role':
             if (!body.targetValue) throw new AuthError('targetValue required', 'BAD_REQUEST', 400);
@@ -297,9 +309,9 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         body: t.Object({
           title: t.String({ minLength: 1 }),
           body: t.Optional(t.String()),
-          type: t.Optional(t.String()),
-          priority: t.Optional(t.String()),
-          targetType: t.Optional(t.String()),
+          type: t.Optional(notificationTypeSchema),
+          priority: t.Optional(notificationPrioritySchema),
+          targetType: t.Optional(notificationTargetSchema),
           targetValue: t.Optional(t.String()),
           actionUrl: t.Optional(t.String()),
           metadata: t.Optional(t.String()),
@@ -317,7 +329,7 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         const scope = requestScope(access);
         requireNotificationManager(access, scope);
         const notification = svc.broadcast(
-          { title: body.title, body: body.body, type: body.type as any, priority: body.priority as any },
+          { title: body.title, body: body.body, type: body.type, priority: body.priority },
           auth.userId,
           scope,
         );
@@ -327,8 +339,8 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         body: t.Object({
           title: t.String({ minLength: 1 }),
           body: t.Optional(t.String()),
-          type: t.Optional(t.String()),
-          priority: t.Optional(t.String()),
+          type: t.Optional(notificationTypeSchema),
+          priority: t.Optional(notificationPrioritySchema),
         }),
       }
     )
@@ -343,7 +355,7 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         requireNotificationManager(access, scope);
         const notification = svc.notify(
           params.userId,
-          { title: body.title, body: body.body, type: body.type as any, priority: body.priority as any },
+          { title: body.title, body: body.body, type: body.type, priority: body.priority },
           auth.userId,
           scope,
         );
@@ -354,8 +366,8 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         body: t.Object({
           title: t.String({ minLength: 1 }),
           body: t.Optional(t.String()),
-          type: t.Optional(t.String()),
-          priority: t.Optional(t.String()),
+          type: t.Optional(notificationTypeSchema),
+          priority: t.Optional(notificationPrioritySchema),
         }),
       }
     )
@@ -370,7 +382,7 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         requireNotificationManager(access, scope);
         const notification = svc.notifyRole(
           params.role,
-          { title: body.title, body: body.body, type: body.type as any, priority: body.priority as any },
+          { title: body.title, body: body.body, type: body.type, priority: body.priority },
           auth.userId,
           scope,
         );
@@ -381,8 +393,8 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
         body: t.Object({
           title: t.String({ minLength: 1 }),
           body: t.Optional(t.String()),
-          type: t.Optional(t.String()),
-          priority: t.Optional(t.String()),
+          type: t.Optional(notificationTypeSchema),
+          priority: t.Optional(notificationPrioritySchema),
         }),
       }
     )

@@ -71,6 +71,15 @@ describe('VectorService', () => {
     const aliased = await service.scope('docs', { bucket: 'docs' }).get(['a', 'b']);
     expect(aliased.map((record) => record.id)).toEqual(['a']);
   });
+
+  it('a scoped write cannot replace another scope record by guessing its id', async () => {
+    const { service, store } = createTestService();
+    store.seed([{ id: 'existing', text: 'original', metadata: { tenantId: 'tenant-a' } }]);
+    const target = service.scope('docs', { tenantId: 'tenant-b' });
+    await expect(target.upsert({ id: 'existing', vector: [1, 2, 3], text: 'replacement' }))
+      .rejects.toMatchObject({ code: 'VECTOR_SCOPE_CONFLICT' });
+    expect(store.records.get('existing')).toMatchObject({ text: 'original', metadata: { tenantId: 'tenant-a' } });
+  });
 });
 
 function createTestService() {

@@ -230,7 +230,11 @@ import {
   RoomOwnerCannotLeaveError,
   createRoomPlugin,
 } from '@zero/framework/rooms';
-import { createSchedulerPlugin } from '@zero/framework/scheduler';
+import {
+  createSchedulerPlugin,
+  SchedulerError,
+  type SchedulerErrorCode,
+} from '@zero/framework/scheduler';
 import {
   defineTable,
   encodeFieldValue,
@@ -312,6 +316,7 @@ import {
   RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT,
   tenantKindPolicy,
   tenantRealm,
+  SchedulerError as ServerSchedulerError,
   runDatabaseActorIfRequested,
   verifyUploadGrantToken,
 } from '@zero/framework/server';
@@ -344,6 +349,7 @@ import type {
   ScopedStoragePermissionApi,
   ScopedStorageService,
   ScopedStorageUploadGrantApi,
+  SchedulerErrorCode as ServerSchedulerErrorCode,
   StorageAdapterOperationOptions as ServerStorageAdapterOperationOptions,
   StorageBlobWriteResult as ServerStorageBlobWriteResult,
   StoragePendingBlobPublication as ServerStoragePendingBlobPublication,

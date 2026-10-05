@@ -11,6 +11,7 @@ export { createAIVectorBridge } from './vector-ai-bridge';
 export { createVectorPlugin, getVectorStore } from './vector.plugin';
 export { VectorRegistry } from './vector-registry';
 export { VectorScope, VectorService } from './vector-service';
+export type { VectorServiceOptions } from './vector-service';
 export { ZvecAdapter } from './zvec-adapter';
 export {
   buildZvecFilter,

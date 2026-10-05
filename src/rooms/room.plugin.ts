@@ -30,6 +30,8 @@ import {
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { ensureNullableTenantColumn } from '../runtime/tenant-schema';
 import { canManageRoomScope } from './room-access';
+import { parseRoomMetadata } from './room-input';
+import { RoomInputError } from './room-error';
 
 // ─── Legacy Compatibility Getter ────────────────────────────────────────────
 
@@ -166,6 +168,10 @@ export function createRoomPlugin(config: RoomPluginConfig) {
 
     // ─── Error handler ────────────────────────────────
     .onError(({ error, set }) => {
+      if (error instanceof RoomInputError) {
+        set.status = error.status;
+        return { error: error.message, code: error.code };
+      }
       if (error instanceof RoomOwnerCannotLeaveError) {
         set.status = 409;
         return {
@@ -197,7 +203,7 @@ export function createRoomPlugin(config: RoomPluginConfig) {
         const room = svc.create(auth.userId, {
           name: body.name,
           type: body.type,
-          metadata: body.metadata ? JSON.parse(body.metadata) : undefined,
+          metadata: parseRoomMetadata(body.metadata),
           maxMembers: body.maxMembers,
         }, scope);
         return { room };
@@ -207,7 +213,7 @@ export function createRoomPlugin(config: RoomPluginConfig) {
           name: t.String({ minLength: 1 }),
           type: t.Optional(t.String()),
           metadata: t.Optional(t.String()),
-          maxMembers: t.Optional(t.Number()),
+          maxMembers: t.Optional(t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
         }),
       }
     )

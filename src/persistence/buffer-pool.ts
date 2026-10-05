@@ -25,11 +25,17 @@ export class BufferPool {
   /** Create a buffer pool and optionally preallocate standard buckets. */
   constructor(config: BufferPoolConfig = {}) {
     this.maxPoolSize = config.maxPoolSize ?? 100;
+    if (!Number.isSafeInteger(this.maxPoolSize) || this.maxPoolSize < 0) {
+      throw new RangeError('BufferPool maxPoolSize must be a non-negative safe integer.');
+    }
     if (config.preallocate ?? true) this.warmup();
   }
 
   /** Acquire a zeroable buffer of at least the requested size. */
   acquire(minSize: number): Uint8Array {
+    if (!Number.isSafeInteger(minSize) || minSize < 0) {
+      throw new RangeError('BufferPool minSize must be a non-negative safe integer.');
+    }
     const size = this.findSuitableSize(minSize);
     let pool = this.pools.get(size);
     if (!pool) {
@@ -46,11 +52,11 @@ export class BufferPool {
   release(buffer: Uint8Array): void {
     if (!this.inUse.has(buffer)) return;
     this.inUse.delete(buffer);
+    buffer.fill(0);
 
     const pool = this.pools.get(buffer.length);
     if (!pool || pool.length >= this.maxPoolSize) return;
 
-    buffer.fill(0);
     pool.push(buffer);
   }
 
@@ -68,7 +74,7 @@ export class BufferPool {
     for (const size of Object.values(BufferPool.SIZES)) {
       this.pools.set(
         size,
-        Array.from({ length: 10 }, () => new Uint8Array(size))
+        Array.from({ length: Math.min(10, this.maxPoolSize) }, () => new Uint8Array(size))
       );
     }
   }
@@ -80,4 +86,3 @@ export class BufferPool {
     return Math.pow(2, Math.ceil(Math.log2(minSize)));
   }
 }
-

@@ -1,0 +1,43 @@
+'use client';
+
+/** Existing Zero controls adapted to the package's text/select slots. */
+import * as React from 'react';
+import type { TextEditorProps, SelectProps } from 'json-edit-react';
+import { Textarea } from '../ui/textarea';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/select';
+
+export interface JsonTextDraftContextValue {
+  readonly raw: React.RefObject<string | null>;
+  readonly change: (text: string) => void;
+  readonly disabled: boolean;
+  readonly label: string;
+}
+export const JsonTextDraftContext = React.createContext<JsonTextDraftContextValue | null>(null);
+
+/** No custom editor primitive or highlighting layer: this is Zero's existing Textarea. */
+export function JsonTextEditor({ value, onChange, onKeyDown }: TextEditorProps) {
+  const context = React.useContext(JsonTextDraftContext);
+  const [text, setText] = React.useState(() => context?.raw.current ?? value);
+  const input = React.useRef<HTMLTextAreaElement>(null);
+  React.useEffect(() => {
+    input.current?.focus();
+    if (context?.raw.current !== null && context?.raw.current !== undefined) onChange(context.raw.current);
+    // Restore only on this slot's mount, not every controlled object re-render.
+  }, []);
+  return <Textarea ref={input} aria-label={context?.label ?? 'JSON text'} value={text}
+    disabled={context?.disabled} spellCheck={false} rows={Math.max(14, text.split('\n').length + 1)} wrap="off"
+    style={{ overflowY: 'hidden' }}
+    className="min-h-64 resize-none font-mono text-xs leading-5"
+    onKeyDown={onKeyDown} onChange={event => {
+      const next = event.target.value; setText(next); context?.change(next); onChange(next);
+    }} />;
+}
+
+export function JsonSelect({ options, value, defaultValue, onChange, onKeyDown, autoFocus, placeholder, name, className }: SelectProps) {
+  const context = React.useContext(JsonTextDraftContext);
+  return <Select value={value} defaultValue={defaultValue} onValueChange={onChange} disabled={context?.disabled}>
+    <SelectTrigger aria-label={name ?? 'JSON value type'} onKeyDown={onKeyDown}
+      autoFocus={autoFocus} className={className}><SelectValue placeholder={placeholder} /></SelectTrigger>
+    <SelectContent>{options.filter(Boolean).map(option => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
+  </Select>;
+}

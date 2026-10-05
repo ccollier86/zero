@@ -32,7 +32,7 @@ export interface StorageStudioDefaultGrantConfig {
   permission: PermissionLevel;
 }
 
-/** Drive-count and byte policies applied by the future provisioning service. */
+/** Drive-count and byte policies applied by Storage Studio provisioning. */
 export interface StorageStudioLimitsConfig {
   maxOrganizationDrives?: number;
   maxPersonalDrivesPerUser?: number;
