@@ -1,22 +1,38 @@
 /**
- * Narrow HTTP route values that Elysia has already schema-validated into the
- * exact Storage domain types consumed by the service layer. The checks remain
- * here so direct handler invocation and future schema drift still fail closed.
+ * Narrow HTTP route values into the exact Storage domain types consumed by
+ * the service layer. Owns decoding and canonicalizing Elysia's raw wildcard
+ * paths before authorization; does not inspect authority or mutate Storage.
  */
 
 import { StorageDomainError } from './storage-domain-error';
+import { normalizeStoragePath } from './storage-input';
 import type {
   GrantType,
   ListOptions,
   PermissionLevel,
 } from './types';
 
+/** Decode raw HTTP path segments exactly once, then validate the logical path. */
 export function readStorageWildcardPath(params: object): string {
   const wildcard: unknown = Reflect.get(params, '*');
   if (typeof wildcard !== 'string' || wildcard.length === 0) {
     throw invalidStorageHttpInput('Storage path is invalid.');
   }
-  return `/${wildcard}`;
+  const segments = wildcard.split('/').map((segment) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw invalidStorageHttpInput('Storage path encoding is invalid.');
+    }
+    // A transport segment must not create another logical folder boundary.
+    // Literal percent-escape text remains a filename after this single decode.
+    if (decoded.includes('/')) {
+      throw invalidStorageHttpInput('Storage path contains an encoded separator.');
+    }
+    return decoded;
+  });
+  return normalizeStoragePath(`/${segments.join('/')}`);
 }
 
 export function readStorageListType(value: unknown): ListOptions['type'] {

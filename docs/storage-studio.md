@@ -394,6 +394,25 @@ Custom controllers may project `currentPathAccess` so Upload and New Folder use
 the open folder's effective ACL. Omitting it retains the legacy controller
 fallback.
 
+### File paths and deletion
+
+Pass logical paths, such as the `path` returned by `FileInfo`, directly to the
+Storage hooks and SDK actions. Do not URI-encode them first. The official
+transport encodes each path segment; the HTTP wildcard boundary decodes it
+exactly once before canonical path validation, authorization and lookup. This
+applies to downloads, file information, metadata updates and deletion.
+
+Spaces, Unicode, `%`, `#`, `?` and `+` in filenames remain part of the logical
+name. For example, `/report 1.txt` and `/report%201.txt` identify different
+objects. Invalid URI escapes, encoded folder separators and traversal paths
+are rejected with `STORAGE_INPUT_INVALID` (400); an authorized lookup of a
+genuinely missing object still returns `STORAGE_NOT_FOUND` (404).
+
+The packaged file browser keeps its hold-to-confirm Delete interaction. A
+completed hold awaits the normal authenticated delete, then clears selection
+and refreshes the folder. Early release or cancellation does not delete a
+file. The path correction requires no component-prop changes or data migration.
+
 ### Public downloads: drive-wide or individual files
 
 Storage Studio already supports both choices. Enable publication deliberately

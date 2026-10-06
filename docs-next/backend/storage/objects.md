@@ -8,13 +8,13 @@ visibility: internal
 system: storage
 feature: objects
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.2.1 development source with HTTP path correction; not package-qualified"]
 modes: [single, multi, application, organization, personal, shared-cas]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
+  version: "2.2.1"
+  commit: "b4a47cab24839a4b2033c093df315d14cc47b627"
+  snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
 ---
@@ -27,6 +27,32 @@ Objects have stable IDs and canonical logical paths within a drive.
 Folders form the hierarchy; bytes are separately content-addressed.
 The engine rejects ambiguous/path-traversal/reserved invalid input rather than
 mapping caller text directly to a filesystem path.
+
+## Logical Paths And HTTP Encoding
+
+Services and official SDK/hook actions accept logical paths. Pass the path
+returned by `FileInfo` without URI-encoding it. For example, `/report 1.txt`
+and `/report%201.txt` are distinct objects; the percent characters in the
+second path are literal filename text.
+
+The official transport encodes each URL path segment. The shared HTTP wildcard
+reader decodes each segment **exactly once**, then uses the existing canonical
+path validator. Downloads, information reads, metadata updates and deletion
+use this same decoded path for authorization and the operation. Multipart
+upload paths, JSON-body paths and direct service paths are already logical
+paths and are not decoded again.
+
+Spaces, Unicode, percent signs, hashes, question marks and plus signs work as
+filename text. Malformed escapes, encoded `/` separators, backslashes,
+control characters, `.`/`..` segments and paths exceeding the existing bounds
+are rejected with `STORAGE_INPUT_INVALID` (400). Literal escape text such as
+`%2F` is preserved after the one transport decode; it is not turned into a
+folder boundary. An authorized operation on a genuinely absent object still
+returns `STORAGE_NOT_FOUND` (404).
+
+See [frontend actions](../../frontend/storage/storage-hooks.md#actions),
+[downloads](./downloads.md) and [errors](./errors.md). This HTTP-boundary fix
+does not change storage keys, ACLs, component props or persisted data.
 
 ## Operations
 

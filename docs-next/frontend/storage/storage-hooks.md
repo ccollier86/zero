@@ -8,12 +8,12 @@ visibility: internal
 system: storage
 feature: storage-hooks
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.2.1 development source with HTTP path correction; not package-qualified"]
 modes: [single-tenant, multi-tenant, guardian-enabled, storage-enabled]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "b4a47cab24839a4b2033c093df315d14cc47b627"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -66,6 +66,13 @@ export function FolderNames({ driveId }: { driveId: string | null }) {
 - createFolder(driveId, path, isPublic?), deleteFile(driveId, path), moveFile(driveId, from, to), copyFile(driveId, from, to).
 - updateFileMetadata(driveId, path, metadata), setVisibility(driveId, isPublic, path?).
 - getFileUrl(driveId, path), a synchronous URL builder, **not** an authenticated/presigned download promise.
+
+Pass raw logical paths, normally `FileInfo.path`, to these methods; do not
+pre-encode filenames. The hook encodes URL segments and the shared HTTP
+boundary decodes them exactly once. `/invoice 1.txt` and `/invoice%201.txt`
+remain distinct targets, including when deleting an uploaded file through the
+packaged hold-to-confirm interaction. See the canonical
+[logical-path contract](../../backend/storage/objects.md#logical-paths-and-http-encoding).
 
 Async actions fence admission and response against the current scope. A response rejected after scope change can represent an accepted server write; do not assume browser rejection rolled back persistence. Core actions do not implement native Studio owner/key/revision/receipt lifecycle; use client.storageStudio for that contract.
 

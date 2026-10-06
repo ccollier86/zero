@@ -729,3 +729,33 @@ Work one numbered item at a time. For each item:
 6. Check the change against `docs/engineering-standards.md`.
 7. Update the relevant product, architecture, or API documentation in the same pass.
 8. Update this document with status and any decisions.
+
+## 13. Storage HTTP Wildcard Path Correction (2026-10-05)
+
+Status: implemented on the record-editor feature branch, not yet published on
+main. Real isolated HTTP requests reproduced uploaded filenames with spaces,
+Unicode or percent-escape text returning `STORAGE_NOT_FOUND` during deletion.
+The SDK encoded the URL correctly, but Elysia's wildcard parameter remained
+encoded and the server looked up that transport text as a logical filename.
+
+The shared Storage HTTP reader now decodes each segment exactly once and then
+applies the existing canonical validator. Download, information, metadata and
+delete routes use the same corrected path for their authorization and operation.
+Encoded separators and invalid input are rejected with the existing safe
+400 classification; literal percent-escape names stay distinct. No alternate
+authentication path, UI prop change or migration is introduced.
+
+Focused verification covers all affected HTTP operations, ACL target identity,
+confusable filenames, malformed input, blob cleanup and the existing managed
+storage mutation/ingress contracts. A disposable browser fixture exercises
+SDK login, multipart upload, the packaged StorageManagement component and the
+actual hold-to-confirm modal, including canceled/early holds and one delete per
+completed hold. No live application, database or storage directory was used.
+Product and SDK guides in both documentation trees describe the logical-path
+contract. This is focused regression qualification, not a full platform audit.
+
+Final checks: 65 backend tests / 632 assertions across five focused files;
+one end-to-end browser test / 46 assertions; full `bun run typecheck`; and the
+documentation navigation/metadata checker (696 pages, zero problems). The
+existing hold-button and related scope/modal suites also passed; their counts
+are separate rather than a claimed complete-platform test total.

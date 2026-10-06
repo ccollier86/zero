@@ -3004,6 +3004,13 @@ use `XMLHttpRequest` for progress events, but each attempt receives its bearer
 from the same auth controller, waits for restoration, retries once after a
 successful refresh, and aborts when the account or tenant boundary changes.
 
+Storage action paths are logical paths, not pre-encoded URLs. Pass
+`FileInfo.path` directly to `deleteFile`, `updateFileMetadata`, `getFileUrl` and
+other path-taking actions. The transport encodes URL segments and the server
+decodes them exactly once before authorization and lookup, so spaces/Unicode
+and literal percent-escape text remain distinct filenames. See
+[file paths and deletion](./storage-studio.md#file-paths-and-deletion).
+
 Storage drive responses include an `access` object for the current caller:
 `effectiveAccess`, `canRead`, `canWrite`, `canAdmin`, `isOwner`,
 `isPlatformAdmin`, and `isPublic`. Use that for UI state only; the backend still

@@ -13,6 +13,7 @@ import type { UserRecord } from '../auth/types';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { StorageDomainError } from './storage-domain-error';
 import { createStoragePlugin, getStorageService } from './storage.plugin';
+import { encodeStoragePath } from './storage-paths';
 import type {
   DriveRecord,
   DriveRecordWithAccess,
@@ -657,6 +658,160 @@ describe('storage route auth', () => {
     expect(oversized.data.code).toBe('STORAGE_METADATA_INVALID');
     expect(service.objects.get(drive.drive_id, '/records/note.txt')?.metadata)
       .toEqual({ version: 2, reviewed: true });
+  });
+
+  test('round-trips encoded wildcard names across info, download, metadata, and delete routes', async () => {
+    const owner = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Encoded wildcard paths' });
+    const paths = [
+      '/space folder/hello world.txt',
+      '/unicode-✓-日本語.txt',
+      '/percent%.txt',
+      '/hash#query?plus+.txt',
+      '/report 1.txt',
+      '/report%201.txt',
+      '/slash/name.txt',
+      '/slash%2Fname.txt',
+      '/literal%20.txt',
+      '/literal%2F.txt',
+    ];
+    const checksums: string[] = [];
+    for (const path of paths) {
+      const info = await service.objects.upload(
+        drive.drive_id,
+        path,
+        new TextEncoder().encode(path),
+        path.split('/').pop()!,
+        owner.user.userId,
+      );
+      checksums.push(info.checksum!);
+    }
+
+    for (const [index, path] of paths.entries()) {
+      const encoded = encodeStoragePath(path);
+      const info = await requestJson<FileInfo>(
+        `/storage/drives/${drive.drive_id}/info/${encoded}`, {}, owner.token,
+      );
+      expect(info.status).toBe(200);
+      expect(info.data.path).toBe(path);
+
+      const download = await app!.handle(new Request(
+        `${baseUrl}/storage/drives/${drive.drive_id}/files/${encoded}`,
+        { headers: { Authorization: `Bearer ${owner.token}` } },
+      ));
+      expect(download.status).toBe(200);
+      expect(await download.text()).toBe(path);
+
+      const metadata = await requestJson<FileInfo>(
+        `/storage/drives/${drive.drive_id}/info/${encoded}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ metadata: { reviewedPath: path } }),
+        },
+        owner.token,
+      );
+      expect(metadata.status).toBe(200);
+      expect(metadata.data.path).toBe(path);
+      expect(metadata.data.metadata).toEqual({ reviewedPath: path });
+
+      const removed = await requestJson<{ ok: boolean }>(
+        `/storage/drives/${drive.drive_id}/files/${encoded}`,
+        { method: 'DELETE' }, owner.token,
+      );
+      expect(removed.status).toBe(200);
+      expect(removed.data).toEqual({ ok: true });
+      expect(service.objects.get(drive.drive_id, path)).toBeNull();
+      // Encoded-looking siblings must survive a mutation of the decoded name.
+      for (const untouched of paths.slice(index + 1)) {
+        expect(service.objects.get(drive.drive_id, untouched)?.path).toBe(untouched);
+      }
+    }
+    await service.retryBlobCleanup();
+    for (const checksum of checksums) {
+      expect(db.prepare('SELECT * FROM _storage_blobs WHERE checksum = ?').get(checksum))
+        .toBeNull();
+    }
+
+    const missing = await requestJson<{ code: string; error: string }>(
+      `/storage/drives/${drive.drive_id}/files/${encodeStoragePath(paths[0]!)}`,
+      { method: 'DELETE' }, owner.token,
+    );
+    expect(missing.status).toBe(404);
+    expect(missing.data).toMatchObject({
+      code: 'STORAGE_NOT_FOUND', error: 'Storage resource was not found.',
+    });
+  });
+
+  test('authorizes encoded wildcard mutations against the exact decoded object', async () => {
+    const owner = await createUser();
+    const collaborator = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Encoded ACL boundaries' });
+    for (const [allowedPath, siblingPath] of [
+      ['/report 1.txt', '/report%201.txt'],
+      ['/folder/file.txt', '/folder%2Ffile.txt'],
+    ]) {
+      for (const path of [allowedPath!, siblingPath!]) {
+        await service.objects.upload(
+          drive.drive_id, path, new TextEncoder().encode(path),
+          path.split('/').pop()!, owner.user.userId,
+        );
+      }
+      const permission = service.permissions.grant(drive.drive_id, {
+        objectPath: allowedPath!, grantType: 'user',
+        grantValue: collaborator.user.userId, permission: 'write',
+      });
+      const allowed = await requestJson<FileInfo>(
+        `/storage/drives/${drive.drive_id}/info/${encodeStoragePath(allowedPath!)}`,
+        {}, collaborator.token,
+      );
+      expect(allowed.status).toBe(200);
+      expect(allowed.data.path).toBe(allowedPath);
+
+      const forbidden = await requestJson<{ code: string }>(
+        `/storage/drives/${drive.drive_id}/files/${encodeStoragePath(siblingPath!)}`,
+        { method: 'DELETE' }, collaborator.token,
+      );
+      expect(forbidden.status).toBe(403);
+      expect(forbidden.data.code).toBe('STORAGE_AUTHORITY_REQUIRED');
+
+      const removed = await requestJson<{ ok: boolean }>(
+        `/storage/drives/${drive.drive_id}/files/${encodeStoragePath(allowedPath!)}`,
+        { method: 'DELETE' }, collaborator.token,
+      );
+      expect(removed.status).toBe(200);
+      expect(removed.data.ok).toBe(true);
+      expect(service.objects.get(drive.drive_id, allowedPath!)).toBeNull();
+      expect(service.objects.get(drive.drive_id, siblingPath!)?.path).toBe(siblingPath);
+      expect(service.permissions.get(permission.permission_id)).toBeNull();
+    }
+  });
+
+  test('rejects malformed and encoded-unsafe wildcard paths before object mutations', async () => {
+    const owner = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Invalid HTTP paths' });
+    await service.objects.upload(
+      drive.drive_id, '/folder/file.txt', new Uint8Array([1]), 'file.txt', owner.user.userId,
+    );
+    for (const wildcard of [
+      'folder%2Ffile.txt', 'folder%5Cfile.txt', 'folder/%2E%2E%2Ffile.txt',
+      'nul%00.txt', 'bad%GG.txt', 'bad%C3%28.txt',
+    ]) {
+      for (const method of ['GET', 'DELETE']) {
+        const rejected = await requestJson<{ code: string; error: string }>(
+          `/storage/drives/${drive.drive_id}/files/${wildcard}`,
+          { method }, owner.token,
+        );
+        expect(rejected.status).toBe(400);
+        expect(rejected.data).toMatchObject({
+          code: 'STORAGE_INPUT_INVALID', error: 'Storage input is invalid.',
+        });
+      }
+    }
+    expect(service.objects.get(drive.drive_id, '/folder/file.txt')).not.toBeNull();
   });
 
   test('requires destination write authority for copy and move routes', async () => {
