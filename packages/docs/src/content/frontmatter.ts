@@ -51,7 +51,7 @@ export function admitDocsFrontmatter(source: string, sourcePath: string, maximum
   const known = new Set(['title', 'description', 'slug', 'id', 'navigation', 'sidebar', 'order', 'label', 'hideFromNavigation', 'search', 'searchable', 'redirects', 'visibility', 'access', 'status', 'draft']);
   for (const [key, value] of Object.entries(record)) {
     if (known.has(key)) continue;
-    if (/^x[-_.:]|^[a-z][a-z0-9-]*[.:]/iu.test(key) || ['audience', 'applies_to', 'reviewed_against', 'maturity', 'system', 'feature', 'owner', 'type', 'version', 'license', 'tags'].includes(key)) extra[key] = safeMetadataValue(value, sourcePath, 0);
+    if (/^x[-_.:]|^[a-z][a-z0-9-]*[.:]/iu.test(key) || ['audience', 'applies_to', 'modes', 'reviewed_against', 'related_packages', 'maturity', 'system', 'feature', 'owner', 'type', 'version', 'license', 'tags'].includes(key)) extra[key] = safeMetadataValue(value, sourcePath, 0);
     else docsFailure('DOCS_METADATA_INVALID', 'Frontmatter contains an unknown option; custom metadata must use a namespace.', { sourcePath, field: key });
   }
   return freezeDocsValue({ admitted: true, body, metadata: {

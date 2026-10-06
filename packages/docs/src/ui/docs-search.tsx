@@ -51,7 +51,7 @@ export function DocsSearch({ presentation }: { readonly presentation: DocsPresen
       <CommandInput value={query} onValueChange={setQuery} placeholder="Search documentation…" maxLength={200} onKeyDownCapture={newTab} />
       <div className="zero-docs-search-body" onKeyDownCapture={newTab}>
       <CommandList aria-busy={search.status === 'loading'} label="Documentation search results">
-        {[...groups].map(([path, results]) => <CommandGroup key={path} heading={<span className="zero-docs-search-group"><strong><DocsSearchMark text={results[0]!.title} ranges={results[0]!.matches?.title ?? docsMatchRanges(results[0]!.title, terms)} /></strong><small>{path}</small></span>}>
+        {[...groups].map(([path, results]) => <CommandGroup key={path} heading={<span className="zero-docs-search-group"><strong><DocsSearchMark text={results[0]!.title} ranges={results[0]!.matches?.title.length ? results[0]!.matches!.title : docsMatchRanges(results[0]!.title, terms)} /></strong><small>{path}</small></span>}>
           {results.map(result => <DocsSearchResultItem key={`${result.route}:${result.passageId ?? ''}`} result={result} query={query} navigate={navigate} />)}
         </CommandGroup>)}
         {search.status === 'error' ? <div className="zero-docs-search-state" role="alert">Search couldn’t load. <Button type="button" variant="ghost" onClick={search.retry}>Try again</Button></div>
@@ -69,6 +69,7 @@ function DocsSearchResultItem({ result, query, navigate }: {
 }) {
   const pointer = useRef(false), terms = docsSearchTerms(query);
   const label = result.section ?? result.title;
+  const labelMatches = result.section ? result.matches?.section : result.matches?.title;
   return <CommandItem asChild value={`${result.route}:${result.passageId ?? ''}`} aria-label={`${label} ${result.excerpt}`} onSelect={() => {
     if (pointer.current) { pointer.current = false; return; }
     navigate(result);
@@ -76,9 +77,9 @@ function DocsSearchResultItem({ result, query, navigate }: {
     <a href={result.route} onClick={event => {
       pointer.current = true; queueMicrotask(() => { pointer.current = false; }); navigate(result, event);
     }}>
-      <div className="zero-docs-search-result"><span><DocsSearchMark text={label} ranges={(result.section ? result.matches?.section : result.matches?.title) ?? docsMatchRanges(label, terms)} /></span>
+      <div className="zero-docs-search-result"><span><DocsSearchMark text={label} ranges={labelMatches?.length ? labelMatches : docsMatchRanges(label, terms)} /></span>
         {!!result.sectionPath?.length && <small>{result.sectionPath.join(' › ')}</small>}
-        <p><DocsSearchMark text={result.excerpt} ranges={result.matches?.excerpt ?? docsMatchRanges(result.excerpt, terms)} /></p>
+        <p><DocsSearchMark text={result.excerpt} ranges={result.matches?.excerpt.length ? result.matches.excerpt : docsMatchRanges(result.excerpt, terms)} /></p>
       </div><ArrowRight aria-hidden="true" />
     </a>
   </CommandItem>;

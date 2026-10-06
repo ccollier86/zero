@@ -81,9 +81,13 @@ disagree with it.
 Classification keys are documented in [publication](./publication.md). Unknown
 settings fail with a source-relative diagnostic; custom data must be namespaced
 (for example `x-acme` or `acme.topic`). Safe shared documentation metadata such
-as `audience`, `reviewed_against`, `system`, `feature`, `owner` and `type` is
-retained as data, not executable instructions. YAML aliases/custom tags are
-rejected.
+as `audience`, `applies_to`, `modes`, `reviewed_against`, `related_packages`,
+`maturity`, `system`, `feature`, `owner` and `type` is retained as bounded data,
+not executable instructions or application settings. The standard `modes` list
+and `related_packages` entries (`package`, `version`, `maturity`) do not need a
+custom namespace. Supporting these fields never publishes internal, draft or
+`_work/` content; the publication rules still run first. Other custom keys must
+remain namespaced. YAML aliases/custom tags are rejected.
 
 ## Links And Attachments
 

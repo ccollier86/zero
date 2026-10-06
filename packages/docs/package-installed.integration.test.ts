@@ -8,8 +8,8 @@ const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const artifactRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/docs-plugin';
 const image = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg=='), character => character.charCodeAt(0));
 
-async function command(cmd: readonly string[], cwd: string, maximum = 60_000): Promise<string> {
-  const child = Bun.spawn([...cmd], { cwd, stdout: 'pipe', stderr: 'pipe' });
+async function command(cmd: readonly string[], cwd: string, maximum = 60_000, environment?: Record<string, string | undefined>): Promise<string> {
+  const child = Bun.spawn([...cmd], { cwd, env: environment, stdout: 'pipe', stderr: 'pipe' });
   const out = new Response(child.stdout).text(), error = new Response(child.stderr).text();
   const timeout = setTimeout(() => child.kill('SIGKILL'), maximum);
   try { const code = await child.exited; const [stdout, stderr] = await Promise.all([out, error]); if (code !== 0) throw new Error(`Synthetic package command failed (${code}): ${stderr.slice(-8_000)}\n${stdout.slice(-2_000)}`); return stdout; }
@@ -137,10 +137,19 @@ test('fresh framework/docs archives qualify public imports and normal/compiled s
   for (const [directory, executable] of [[normal, false], [compiled, true]] as const) {
     expect(await Bun.file(join(directory, 'node_modules/package.json')).exists()).toBe(false); expect(await Bun.file(join(directory, 'documentation/index.md')).exists()).toBe(false);
     const server = await startDeployment(directory, executable);
-    try { (provenance.deployments as unknown[]).push({ directory, executable, url: server.url, ...(await verifyDeployment(server.url)) }); }
+    try {
+      (provenance.deployments as unknown[]).push({ directory, executable, url: server.url, ...(await verifyDeployment(server.url)) });
+      if (executable) {
+        // HTTP/SSR success does not prove emitted split JavaScript can hydrate. Qualify the actual archive.
+        const browser = await command(['bun', '--no-env-file', 'test', join(repository, 'packages/docs/package-browser.integration.test.ts')], repository, 120_000,
+          { ...Bun.env, ZERO_DOCS_INSTALLED_BROWSER_URL: server.url + '/docs' });
+        await Bun.write(join(evidence, 'compiled-browser.log'), browser);
+        provenance.compiledBrowser = { passed: true, log: join(evidence, 'compiled-browser.log') };
+      }
+    }
     finally { const stopped = await server.stop(); expect(stopped.stderr).not.toContain('PRIVATE_INSTALLED'); }
     expect(JSON.parse(await Bun.file(join(directory, 'extension-drained.json')).text())).toEqual({ alive: 1, awaited: true });
   }
   await Bun.write(join(evidence, 'provenance.json'), JSON.stringify(provenance, null, 2));
   console.log(JSON.stringify({ docsInstalledEvidence: evidence, compiled, work }));
-}, 240_000);
+}, 300_000);

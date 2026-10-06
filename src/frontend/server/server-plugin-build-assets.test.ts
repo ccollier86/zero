@@ -80,4 +80,17 @@ describe('browser entry snapshot admission', () => {
       await expect(readPluginBuildFile(projectRoot, { name: 'directory', path: 'allowed' })).rejects.toMatchObject({ code: 'APP_PLUGIN_BUILD_CONFIG_INVALID' });
     } finally { await rm(projectRoot, { recursive: true, force: true }); }
   });
+
+  test('production ESM preserves imported serializer aliases across the dependency graph', async () => {
+    const { projectRoot, context } = await fixture();
+    try {
+      const serializer = Bun.resolveSync('@shikijs/core', import.meta.dir);
+      const source = `import { hastToHtml } from ${JSON.stringify(serializer)};
+export const html = hastToHtml({ type: 'root', children: [{ type: 'element', tagName: 'p', properties: {}, children: [{ type: 'text', value: '<admitted & escaped>' }] }] });`;
+      await Bun.write(join(projectRoot, 'entry[owned].ts'), source);
+      const assets = await buildPluginFrontendAssets(context, { browserEntries: [{ name: 'reader', path: 'entry[owned].ts', sourceRoot: projectRoot, contentHash: hash(source) }] });
+      const module = await import(join(context.assetOutDir, basename(assets.reader!.publicPath)));
+      expect(module.html).toBe('<p>&#x3C;admitted &#x26; escaped></p>');
+    } finally { await rm(projectRoot, { recursive: true, force: true }); }
+  });
 });

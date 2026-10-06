@@ -61,10 +61,13 @@ suite('installed compiled DocsApp browser boundary', () => {
       await page.keyboard.press('Control+k');
       const dialog = page.getByRole('dialog', { name: 'Search documentation', exact: true }); await dialog.waitFor();
       await dialog.getByRole('combobox').fill('integration');
-      await dialog.getByRole('option').filter({ hasText: 'Start' }).waitFor();
+      await dialog.getByRole('option', { name: /Details Public package integration details/ }).waitFor();
       await dialog.getByRole('combobox').press('Enter');
-      await page.waitForURL('**/docs/guides/start');
+      await page.waitForURL('**/docs/guides/start#details');
       await page.getByRole('heading', { name: 'Start', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Clear highlights' }).waitFor();
+      expect(await page.locator('[data-docs-search-target]').innerText()).toContain('Public package integration details.');
+      expect(new URL(page.url()).search).toBe('');
       expect(failures.get(page)).toEqual([]);
       const previous = page.getByRole('navigation', { name: 'Previous and next pages' }).getByRole('link', { name: 'Previous page Guides' });
       await previous.click(); await page.getByRole('heading', { name: 'Guides', exact: true }).waitFor();

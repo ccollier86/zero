@@ -110,8 +110,14 @@ describe('Docs reader actual browser layout and behavior', () => {
       await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Close documentation navigation');
       const link = page.getByRole('navigation', { name: 'Documentation', exact: true }).getByRole('link', { name: 'Build an app', exact: true });
       const modifier = await page.evaluate(() => navigator.platform.includes('Mac') ? 'Meta' as const : 'Control' as const);
-      const popup = page.waitForEvent('popup'); await link.click({ modifiers: [modifier] }); const child = await popup;
-      try { await child.waitForLoadState(); } finally { await child.close(); }
+      await page.evaluate(() => { (window as Window & { docsSentinel?: number }).docsSentinel = 42; });
+      // Native background-tab gestures emit BrowserContext.page, not necessarily opener.popup.
+      const background = page.context().waitForEvent('page');
+      await link.click({ modifiers: [modifier] }); const child = await background;
+      try { await child.waitForURL(`${baseUrl}/docs/guide`); await child.waitForLoadState(); expect(child.url()).toBe(`${baseUrl}/docs/guide`); }
+      finally { await child.close(); }
+      expect(await close.isVisible()).toBe(true);
+      expect(await page.evaluate(() => (window as Window & { docsSentinel?: number }).docsSentinel)).toBe(42);
       expect(await close.isVisible()).toBe(true);
       await close.click(); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open documentation navigation');
       expect(failures.get(page)).toEqual([]);

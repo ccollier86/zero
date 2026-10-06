@@ -5,6 +5,33 @@ source-audit correctness fixes described in the [changelog](../CHANGELOG.md).
 This guide applies to existing Zero 2.x applications. It is not the legacy
 1.3-to-2.x system-database migration guide.
 
+## 2.5 Documentation And CodeBlock Update
+
+Use the normal `zero-update` from main and rebuild/restart normally. All 2.4.1–2.4.3
+corrections remain included. This update adds no database migration and does not
+enable a docs route or install Markdown dependencies into existing apps.
+
+The optional [Markdown docs plugin](./plugins/markdown-docs.md) lives in its own
+package, `@zero/plugin-docs` 0.1.0, with framework peer `>=2.5.0 <3`. Source/local
+archive installs are qualified separately from any future registry publication.
+Register it in the ordinary server-plugin directory and point `contentDir` at
+the folder you deliberately want to publish. Internal/draft documents remain
+excluded; installing the plugin is not permission to publish the new docs tree.
+
+Existing public `CodeBlock`/`CodeTabs` imports stay behind the same framework
+facade. The old private renderer files are removed; code that directly imported
+them should use the [public CodeBlock family](./frontend/code-block.md) instead.
+Ordinary props do not need a rewrite. Custom server-prepared transformers that
+cross a serialization boundary should use an explicit versioned
+`transformerIdentity` and supply the same identity to the consuming browser.
+Change that identity when the custom configuration changes; it is not a sanitizer.
+
+For docs or other declared plugin build contributions, run the documented
+[normal build](./app-build.md) before deploying. The build admits the declared
+entry's exact bytes, preserves relative imports/chunks and supplies immutable
+public/private artifacts. Source-file app routes keep their existing deployment
+requirements; a compiled docs-only deployment does not compile arbitrary app pages.
+
 ## 2.4.2 Trigger Production Update
 
 This release includes **all 2.4.1 array-policy fixes** plus the trigger budget

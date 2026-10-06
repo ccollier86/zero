@@ -37,10 +37,13 @@ export async function buildPluginFrontendAssets(context: ZeroPluginBuildContext,
 async function bundleEntry(context: ZeroPluginBuildContext, file: ZeroPluginBuildFile): Promise<string> {
   const admitted = await readPluginBuildFile(context.projectRoot, file);
   const loader = browserEntryLoader(admitted.path);
+  // Intercept only the admitted entry. Bun 1.3.14's broad file callbacks can
+  // discard dependency links even when they return undefined for other files.
+  const entryFilter = new RegExp(`^${admitted.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
   const snapshot: Bun.BunPlugin = { name: 'zero-admitted-plugin-entry', setup(build) {
-    build.onResolve({ filter: /.*/, namespace: 'file' }, args => args.kind === 'entry-point-build'
+    build.onResolve({ filter: entryFilter, namespace: 'file' }, args => args.kind === 'entry-point-build'
       ? { path: admitted.path, namespace: 'file' } : undefined);
-    build.onLoad({ filter: /.*/, namespace: 'file' }, args => args.path === admitted.path
+    build.onLoad({ filter: entryFilter, namespace: 'file' }, args => args.path === admitted.path
       ? { contents: admitted.bytes, loader, resolveDir: dirname(admitted.path) } : undefined);
   } };
   const result = await Bun.build({
