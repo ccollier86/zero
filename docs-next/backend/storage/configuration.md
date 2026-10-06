@@ -8,13 +8,13 @@ visibility: internal
 system: storage
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.2.1 development source; package qualification pending"]
 modes: [single, multi, application, organization, personal, shared-cas]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
+  snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
 ---
@@ -46,6 +46,15 @@ AppStorageConfig options:
 Property default grants require grantKey; role/user grants may not use it.
 Duplicate grants and unknown/malformed keys fail admission.
 Enabled Studio needs at least one owner mode.
+
+Both `publicAccess` booleans are opt-in publication ceilings, not default
+visibility. `allowPublicDrives: true` requires `allowPublicObjects: true` because
+public drives expose their existing/future objects. Object-only publication may
+be enabled while drives remain private. Use [public-read configuration and UI
+guidance](./public-access.md#studio-ceilings) for an exact module and drive/file
+examples. Anonymous writes/ACL edits remain forbidden; disabling publication
+does not prevent an authorized administrator from clearing an existing public
+flag. Restart after changing the captured server configuration.
 
 ## Studio Limits
 

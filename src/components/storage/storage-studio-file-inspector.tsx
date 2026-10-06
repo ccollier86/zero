@@ -170,29 +170,32 @@ export function StorageStudioFileSharing({
   const pending = controller.busy || controller.loading || controller.status === 'loading';
   return (
     <div className="space-y-5">
-      {(publicObjectsAllowed || effectivePublic || file.isPublic) && (
-        <StorageInspectorSection title="Public visibility" description="Effective visibility and the object-level flag are tracked separately.">
-          <div className="flex items-center gap-3 rounded-lg border border-border/80 bg-muted/20 p-3">
+        <StorageInspectorSection title="Public visibility" description="Public files can be downloaded without signing in. Temporary links are managed separately.">
+          <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border/80 bg-muted/20 p-3">
             {effectivePublic
               ? <Globe2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
               : <LockKeyhole className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">
-                {effectivePublic ? 'Effectively public' : 'Effectively private'}
+                {effectivePublic ? 'Public downloads enabled' : 'Private downloads'}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {drivePublic
                   ? `Inherited from the public drive. Object flag: ${file.isPublic ? 'public' : 'private'}. Make the drive private before restricting this object.`
-                  : `Object flag: ${file.isPublic ? 'public' : 'private'}. ${canAdmin ? 'You can change durable object visibility.' : 'Storage ACL admin access is required to change it.'}`}
+                  : !publicObjectsAllowed && !file.isPublic
+                    ? 'Public files are disabled by this app’s storage policy. An app configuration change is required before publishing files.'
+                    : `Object flag: ${file.isPublic ? 'public' : 'private'}. ${canAdmin ? 'Publishing allows anyone with the file URL to download it.' : 'Storage ACL admin access is required to change it.'}`}
               </p>
             </div>
-            {(publicObjectsAllowed || file.isPublic) && controller.operations.setFileVisibility && (
+            {controller.operations.setFileVisibility && (
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!canAdmin || pending || drivePublic}
+                disabled={!canAdmin || pending || drivePublic || (!publicObjectsAllowed && !file.isPublic)}
+                className="shrink-0"
+                title={!publicObjectsAllowed && !file.isPublic ? 'Public files are disabled by application policy' : undefined}
                 onClick={() => {
-                  void Promise.resolve(
+                  void Promise.resolve().then(() =>
                     controller.operations.setFileVisibility?.(file, !file.isPublic),
                   ).catch(() => {
                     // Controller state and standardized observability surface failures.
@@ -204,7 +207,6 @@ export function StorageStudioFileSharing({
             )}
           </div>
         </StorageInspectorSection>
-      )}
       <StorageInspectorSection title="Temporary link" description="Short-lived links do not change durable object visibility.">
         <div className="flex items-start gap-3 rounded-lg border border-border/80 bg-muted/20 p-3">
           <KeyRound className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />

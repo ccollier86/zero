@@ -8,12 +8,12 @@ visibility: internal
 system: data-studio
 feature: toolbar
 maturity: supported
-applies_to: ["2.1.1 source; package qualification pending"]
+applies_to: ["2.2.1 development source with temporal-editor changes; package qualification pending"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -46,6 +46,12 @@ Controls are optional composition pieces, not automatic endpoint provision.
 Changing a custom filter requires changing the actual controller query.
 Busy state narrows interactions; it does not cancel an accepted write.
 Visibility defaults and source-dependent behavior remain controller contracts.
+
+Date/datetime operands reuse the same Zero calendar/time editor as record and
+schema-default forms. Choosing an operand changes the filter draft; it does not
+apply a record mutation. Invalid typed values remain visible until corrected;
+the filter validator still decides which predicates can be sent to the server.
+See [logical values](./values.md) for calendar/time precision and admission.
 
 ## Related Guides And Next Steps
 

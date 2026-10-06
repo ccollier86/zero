@@ -96,6 +96,15 @@ individual clearing. Column controls toggle presentation, not field authorizatio
 DataTableColumnHeader composes a column's sortable label; server sources translate
 that interaction into a query, local sources execute it in the browser.
 
+Generated date/datetime column filters compose Zero's DatePicker instead of a
+browser-native date input, retaining their existing calendar-date filter
+semantics. A valid choice sets a canonical date; clearing removes the filter.
+Invalid typed text remains visible and does not emit a new filter, so an
+already-applied valid filter remains until explicitly changed or cleared.
+This picker is not a new range/timestamp query API and does not change a
+source's local/server filtering behavior. See [date primitives](../../components/primitives/dates-and-time.md)
+and [server sources](./server-sources.md) for those separate boundaries.
+
 ## Accurate Pagination
 
 DataTablePagination takes table, optional pageSizes/className/serverPage/loading.

@@ -4,6 +4,10 @@ import type {
   DataStudioValue,
 } from '../../frontend/client/data-studio-client';
 import { DATA_STUDIO_MAX_PAGE_SIZE } from '../../data-studio/data-studio-operation-contracts';
+import { parseDataStudioTemporalDraft } from './data-studio-temporal-value';
+import { normalizeDataStudioValueForColumn } from '../../data-studio/data-studio-codec';
+
+const STRICT_ZONED_DATETIME = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/u;
 
 /** Format a typed cell without collapsing null into a misleading string. */
 export function formatDataStudioValue(
@@ -19,7 +23,7 @@ export function formatDataStudioValue(
   return String(value);
 }
 
-/** Format the value used by a native inline editor. */
+/** Format the value used by a local inline editor without dropping timestamp precision. */
 export function dataStudioValueDraft(
   value: DataStudioValue | undefined,
   column: DataStudioColumn,
@@ -63,12 +67,21 @@ export function parseDataStudioValueDraft(
         if (!column.required) return null;
         throw new Error(`${column.label} requires a date.`);
       }
-      return draft;
+      try { return parseDataStudioTemporalDraft(draft, 'date'); }
+      catch { throw new Error(`${column.label} requires a valid date.`); }
     case 'datetime': {
       if (!draft && !column.required) return null;
-      const date = new Date(draft);
-      if (Number.isNaN(date.getTime())) throw new Error(`${column.label} requires a date and time.`);
-      return date.toISOString();
+      try {
+        // Public callers may already own an ISO instant rather than a picker
+        // wall-time draft. Keep that contract, but reject clock rollover before
+        // the shared domain codec checks the calendar and canonicalizes it.
+        if (/(?:Z|[+-]\d{2}:\d{2})$/u.test(draft)) {
+          if (!STRICT_ZONED_DATETIME.test(draft)) throw new TypeError('Invalid timestamp.');
+          return normalizeDataStudioValueForColumn(column, draft);
+        }
+        return parseDataStudioTemporalDraft(draft, 'datetime');
+      }
+      catch { throw new Error(`${column.label} requires a valid local date and time.`); }
     }
     case 'json':
       if (draft.trim() === '' && !column.required) return null;

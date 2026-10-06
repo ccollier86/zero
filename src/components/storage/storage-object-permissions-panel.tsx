@@ -4,6 +4,7 @@
 
 import * as React from 'react';
 import { toast } from 'sonner';
+import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import type {
   FileInfo,
   GrantPermissionParams,
@@ -19,7 +20,8 @@ import { Separator } from '../ui/separator';
 import { reportStorageActionError } from './storage-observability';
 import { storageObjectPermissionGroups } from './storage-studio-controller-values';
 import { StoragePermissionGrantForm } from './storage-permission-grant-form';
-import { StoragePermissionRow } from './storage-permission-row';
+import { StoragePermissionList } from './storage-permission-list';
+import { useStoragePermissionOperationSession } from './use-storage-permission-operation-session';
 
 export interface StorageObjectPermissionsPanelProps {
   readonly driveId: string;
@@ -41,7 +43,9 @@ export function StorageObjectPermissionsPanel({
     canAdmin ? file.path : undefined,
   );
   const actions = useStorageActions();
-  const [busy, setBusy] = React.useState(false);
+  const session = useStoragePermissionOperationSession({ targetKey: JSON.stringify([driveId, file.id, file.path]),
+    canAdmin, boundary: useAuthorizationScopeBoundary() });
+  const busy = session.busy;
   const { direct, inherited } = React.useMemo(
     () => storageObjectPermissionGroups(permissions, file.id),
     [file.id, permissions],
@@ -50,47 +54,51 @@ export function StorageObjectPermissionsPanel({
   const grant = React.useCallback(async (
     value: Omit<GrantPermissionParams, 'objectPath'>,
   ) => {
-    setBusy(true);
+    const ticket = session.begin();
+    if (!ticket) throw new Error('This permission editor cannot start another operation right now.');
     try {
       await actions.grantPermission(driveId, { ...value, objectPath: file.path });
+      if (!ticket.isCurrent()) return;
       refresh();
-      onChanged?.();
-      toast.success('Object permission granted');
+      ticket.notifyChanged(onChanged);
+      if (ticket.isCurrent()) toast.success('Object permission granted');
     } catch (cause) {
       const normalized = reportStorageActionError('grantObjectPermission', cause, {
         driveId,
         objectId: file.id,
         objectType: file.type,
       });
-      toast.error(normalized.message);
+      if (ticket.isCurrent()) toast.error(normalized.message);
       throw normalized;
     } finally {
-      setBusy(false);
+      ticket.finish();
     }
-  }, [actions, driveId, file.id, file.path, file.type, onChanged, refresh]);
+  }, [actions, driveId, file.id, file.path, file.type, onChanged, refresh, session.begin]);
 
   const revoke = React.useCallback(async (permission: PermissionRecord) => {
     if (permission.object_id !== file.id) return;
-    setBusy(true);
+    const ticket = session.begin();
+    if (!ticket) return;
     try {
       await actions.revokePermission(permission.permission_id);
+      if (!ticket.isCurrent()) return;
       refresh();
-      onChanged?.();
-      toast.success('Object permission revoked');
+      ticket.notifyChanged(onChanged);
+      if (ticket.isCurrent()) toast.success('Object permission revoked');
     } catch (cause) {
       const normalized = reportStorageActionError('revokeObjectPermission', cause, {
         driveId,
         objectId: file.id,
         permissionId: permission.permission_id,
       });
-      toast.error(normalized.message);
+      if (ticket.isCurrent()) toast.error(normalized.message);
     } finally {
-      setBusy(false);
+      ticket.finish();
     }
-  }, [actions, driveId, file.id, onChanged, refresh]);
+  }, [actions, driveId, file.id, onChanged, refresh, session.begin]);
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-3">
       <EffectiveObjectAccess access={access} />
       {!canAdmin ? (
         <div className="rounded-lg border border-border/80 bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
@@ -99,6 +107,7 @@ export function StorageObjectPermissionsPanel({
       ) : (
         <>
           <StoragePermissionGrantForm
+            key={session.key}
             title="Add object grant"
             description={file.type === 'folder'
               ? 'Grant access to this folder and its descendants. Parent and drive grants remain unchanged.'
@@ -200,17 +209,8 @@ function PermissionGroup({
       ) : permissions.length === 0 ? (
         <p className="p-4 text-sm text-muted-foreground">{empty}</p>
       ) : (
-        <div className="divide-y divide-border/80">
-          {permissions.map((permission) => (
-            <StoragePermissionRow
-              key={permission.permission_id}
-              permission={permission}
-              scopeLabel={onRevoke ? 'This object' : permission.object_id ? 'Parent object' : 'Drive'}
-              disabled={busy}
-              onRevoke={onRevoke}
-            />
-          ))}
-        </div>
+        <StoragePermissionList permissions={permissions} label={title} disabled={busy}
+          scopeLabel={(permission) => onRevoke ? 'This object' : permission.object_id ? 'Parent object' : 'Drive'} onRevoke={onRevoke} />
       )}
     </section>
   );

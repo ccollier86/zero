@@ -8,12 +8,12 @@ visibility: internal
 system: data-studio
 feature: values
 maturity: supported
-applies_to: ["2.1.1 source; package qualification pending"]
+applies_to: ["2.2.1 development source with record-editor changes; package qualification pending"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -41,10 +41,30 @@ The visual schema editor distinguishes no default (the `defaultValue` property
 is absent), explicit null and a custom typed value. Zero never substitutes truthy
 checks that would drop valid zero or false defaults. Required fields reject null.
 JSON defaults use the existing multiline Textarea; boolean defaults use Select;
-date/datetime drafts use native date controls (datetimes retain millisecond
-precision with step 0.001). Numeric defaults use a text input with decimal input
+date/datetime drafts reuse Zero's [DatePicker and TimePicker](../components/primitives/dates-and-time.md).
+Date fields offer typed input and calendar selection; datetime fields also offer
+hour/minute/period selectors and a seconds field that preserves milliseconds
+(for example, `37.123`). These controls use the application's design tokens in
+both themes rather than browser-native date/time inputs. Numeric defaults use a text input with decimal input
 mode so unfinished/incompatible text remains visible rather than being silently
 cleared by a native number control. Final admission still requires a finite number.
+
+Date-only drafts remain calendar dates and are admitted as `YYYY-MM-DD`, without
+a UTC-midnight conversion. Datetime drafts are local wall-clock values; admission
+requires a valid, representable local time and converts it to a canonical UTC ISO
+timestamp. Impossible dates, out-of-range time parts and local daylight-saving
+gaps reject rather than normalize to another day/time. Changing the date, hour
+or minute preserves existing seconds/milliseconds. Incomplete or invalid typed
+date/precision text remains in the draft and blocks saving instead of silently
+reusing the last valid value. Clearing an optional field explicitly produces
+null; simply focusing/leaving an untouched blank is not an edit.
+
+The public `parseDataStudioValueDraft()` helper also accepts a strictly valid
+ISO datetime with `Z` or an explicit numeric offset, for integrations that
+already own an instant rather than a local picker draft. It validates calendar
+and clock parts before canonicalizing to UTC and retaining millisecond precision;
+an impossible ISO date does not silently roll into the next month. This broader
+helper input does not change the shared picker's local-wall-time draft contract.
 
 Renaming a persisted display label never changes its public field key automatically.
 An explicit field-key edit keeps the stable column ID but changes what API callers

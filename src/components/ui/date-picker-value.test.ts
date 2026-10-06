@@ -8,6 +8,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   formatDatePickerValue,
   parseDatePickerInput,
+  formatDatePickerCalendarValue,
+  parseDatePickerCalendarValue,
 } from './date-picker-value';
 
 describe('DatePicker value contract', () => {
@@ -43,5 +45,14 @@ describe('DatePicker value contract', () => {
 
   test('formats an empty selection as an empty input', () => {
     expect(formatDatePickerValue(undefined)).toBe('');
+  });
+
+  test('accepts canonical ISO calendar dates without shifting their local day', () => {
+    const parsed = parseDatePickerInput('2026-01-04')!;
+    expect(parsed.getDate()).toBe(4);
+    expect(parsed.getMonth()).toBe(0);
+    expect(formatDatePickerCalendarValue(parsed)).toBe('2026-01-04');
+    expect(parseDatePickerCalendarValue('2026-02-30')).toBeUndefined();
+    expect(parseDatePickerInput('2026-02-30')).toBeNull();
   });
 });

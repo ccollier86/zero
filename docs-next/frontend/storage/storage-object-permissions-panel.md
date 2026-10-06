@@ -8,12 +8,12 @@ visibility: internal
 system: storage
 feature: storage-object-permissions-panel
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.2.1 development source with compact grant controls; not package-qualified"]
 modes: [single-tenant, multi-tenant, guardian-enabled, storage-enabled]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -50,5 +50,23 @@ The permission request includes file.path. Direct grant grouping compares permis
 Without resolved canAdmin, the component does not inspect/alter grants; it still shows available effective access summary. Passing a forged capability object cannot bypass the backend.
 
 Mutations await the SDK action, refresh both permissions and parent via onChanged, and report normalized failures through the shared Storage observability path and toast. Grant failure rethrows to the internal form, which retains input; revoke failure stays in owning panel presentation. This is not a blanket organization role assignment or invitation action.
+
+The panel reads the normal AppProvider/ClientProvider authorization boundary.
+One synchronous reservation covers grant and revoke together. Replacing
+drive/object ID or path, changing scope, or losing/regaining admin capability
+retires the old operation lifetime and resets the grant draft. Late outcomes
+cannot refresh/toast/notify a successor or clear its pending operation—even if
+the original target/scope is selected again. Rejected retired requests still
+emit safe captured-target failure accounting; they do not display stale toasts.
+An `onChanged` notification failure is not a rejected server mutation. Unmount
+retires UI work but cannot undo a completed server write.
+
+The shared grant form wraps according to the inspector's available width.
+Direct and inherited grants use separate compact, labeled scroll regions,
+each bounded to 20rem and keyboard-focusable. Long targets truncate visually
+without widening the pane; row titles expose the full target. Direct revoke
+buttons name the target and access level. Inherited rows have no revoke action:
+their source drive/folder must be edited instead. This visual layout preserves
+the existing exact-object and live-capability boundaries.
 
 [Family index](./index.md) · [Drive grants](./storage-drive-permissions-panel.md) · [Backend hierarchical ACLs](../../backend/storage/permissions.md) · [Native inspector](./storage-studio-inspector.md)

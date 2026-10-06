@@ -8,12 +8,12 @@ visibility: internal
 system: storage
 feature: storage-drive-settings-panel
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.2.1 development source with explicit visibility UI; not package-qualified"]
 modes: [single-tenant, multi-tenant, guardian-enabled, storage-enabled]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -34,7 +34,15 @@ reviewed_against:
 
 The form refreshes drafts when drive changes. Name is trimmed and required. Empty MIME tags serialize as wildcard '*'; tags are suggestions, not authoritative MIME validation. Byte limits must be non-negative safe whole byte counts. Malformed, negative, fractional and unsafe drafts fail validation before onSave rather than becoming unlimited. Explicit blank/zero means unlimited subject to backend policy. Save awaits onSave and keeps local saving state until completion. The parent owns transport-error presentation; it must not resolve a rejected server operation as success. The form event observes a parent-reported rejection without inventing success or emitting an unhandled browser promise.
 
-The visibility selector is hidden when public issuance is disabled and the current drive is private. An already public drive remains visible so it can be remediated to private; enabling public is not allowed under that policy. Passing true to a UI prop never overrides server ceilings.
+The Visibility selector remains visible when public issuance is disabled, with
+an explanatory policy message. A private drive's selector is disabled under
+that ceiling. An already-public drive remains editable so it can be remediated
+to Private, while the Public read choice is unavailable. When enabled, the
+public-read hint explains that **all existing and future files** can be
+downloaded without signing in. An object's private flag does not override a
+public drive. Passing true to a UI prop never overrides server ceilings or
+permits anonymous upload/admin actions. See [public-access configuration](../../backend/storage/public-access.md)
+for the exact app settings and individual-file sharing alternative.
 
 ```tsx
 import { StorageDriveSettingsPanel } from '@zero/framework/components/storage';

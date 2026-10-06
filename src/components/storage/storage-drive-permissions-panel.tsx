@@ -10,6 +10,8 @@
 
 import * as React from 'react';
 import { toast } from 'sonner';
+import { RefreshCw } from 'lucide-react';
+import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import {
@@ -22,7 +24,8 @@ import type {
 } from '../../storage/types';
 import { reportStorageActionError } from './storage-observability';
 import { StoragePermissionGrantForm } from './storage-permission-grant-form';
-import { StoragePermissionRow } from './storage-permission-row';
+import { StoragePermissionList } from './storage-permission-list';
+import { useStoragePermissionOperationSession } from './use-storage-permission-operation-session';
 
 export interface StorageDrivePermissionsPanelProps {
   driveId: string;
@@ -40,50 +43,56 @@ export function StorageDrivePermissionsPanel({
     canAdmin ? driveId : null,
   );
   const actions = useStorageActions();
-  const [busy, setBusy] = React.useState(false);
+  const session = useStoragePermissionOperationSession({ targetKey: driveId, canAdmin,
+    boundary: useAuthorizationScopeBoundary() });
+  const busy = session.busy;
 
   const handleGrant = React.useCallback(
     async (grant: Omit<GrantPermissionParams, 'objectPath'>) => {
-      setBusy(true);
+      const ticket = session.begin();
+      if (!ticket) throw new Error('This permission editor cannot start another operation right now.');
       try {
         await actions.grantPermission(driveId, grant);
+        if (!ticket.isCurrent()) return;
         refresh();
-        onChanged?.();
-        toast.success('Storage permission granted');
+        ticket.notifyChanged(onChanged);
+        if (ticket.isCurrent()) toast.success('Storage permission granted');
       } catch (err) {
         const normalized = reportStorageActionError('grantPermission', err, {
           driveId,
           grantType: grant.grantType,
           grantKey: grant.grantKey,
         });
-        toast.error(normalized.message);
+        if (ticket.isCurrent()) toast.error(normalized.message);
         throw normalized;
       } finally {
-        setBusy(false);
+        ticket.finish();
       }
     },
-    [actions, driveId, onChanged, refresh],
+    [actions, driveId, onChanged, refresh, session.begin],
   );
 
   const revokePermission = React.useCallback(
     async (item: PermissionRecord) => {
-      setBusy(true);
+      const ticket = session.begin();
+      if (!ticket) return;
       try {
         await actions.revokePermission(item.permission_id);
+        if (!ticket.isCurrent()) return;
         refresh();
-        onChanged?.();
-        toast.success('Storage permission revoked');
+        ticket.notifyChanged(onChanged);
+        if (ticket.isCurrent()) toast.success('Storage permission revoked');
       } catch (err) {
         const normalized = reportStorageActionError('revokePermission', err, {
           driveId,
           permissionId: item.permission_id,
         });
-        toast.error(normalized.message);
+        if (ticket.isCurrent()) toast.error(normalized.message);
       } finally {
-        setBusy(false);
+        ticket.finish();
       }
     },
-    [actions, driveId, onChanged, refresh],
+    [actions, driveId, onChanged, refresh, session.begin],
   );
 
   if (!canAdmin) {
@@ -95,24 +104,25 @@ export function StorageDrivePermissionsPanel({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-3">
       <StoragePermissionGrantForm
+        key={session.key}
         title="Add access grant"
-        description="Grant drive access by role, exact user ID, or a trusted auth property."
+        description="Choose who can access this drive and what they can do."
         disabled={busy}
         onGrant={handleGrant}
       />
 
-      <div className="rounded-lg border border-border/80 bg-background">
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <h3 className="text-sm font-semibold">Current grants</h3>
-            <p className="text-sm text-muted-foreground">
-              These rules are evaluated after owner, platform admin, and public access.
+      <div className="min-w-0 overflow-hidden rounded-lg border border-border/80 bg-background">
+        <div className="flex items-start justify-between gap-2 px-3 py-2.5">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">Current grants {!loading && <span className="ml-1 text-xs font-normal text-muted-foreground">({permissions.length})</span>}</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              Explicit access. Ownership, platform access, and public access still apply.
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={refresh} disabled={loading || busy}>
-            Refresh
+          <Button size="icon-sm" variant="ghost" aria-label="Refresh grants" title="Refresh grants" onClick={refresh} disabled={loading || busy} className="shrink-0">
+            <RefreshCw className="size-3.5" aria-hidden="true" />
           </Button>
         </div>
         <Separator />
@@ -128,16 +138,7 @@ export function StorageDrivePermissionsPanel({
         ) : permissions.length === 0 ? (
           <div className="p-4 text-sm text-muted-foreground">No explicit grants yet.</div>
         ) : (
-          <div className="divide-y">
-            {permissions.map((item) => (
-              <StoragePermissionRow
-                key={item.permission_id}
-                permission={item}
-                disabled={busy}
-                onRevoke={revokePermission}
-              />
-            ))}
-          </div>
+          <StoragePermissionList permissions={permissions} label="Current drive grants" disabled={busy} onRevoke={revokePermission} />
         )}
       </div>
     </div>

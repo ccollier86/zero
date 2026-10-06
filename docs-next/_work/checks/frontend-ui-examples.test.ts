@@ -3,6 +3,8 @@ import { expect, test } from 'bun:test';
 import ts from 'typescript';
 
 const selected: Record<string, number[]> = {
+  'backend/storage/public-access.md': [0],
+  'frontend/storage/storage-studio-inspector.md': [0],
   'frontend/app-shell/presets.md': [0],
   'frontend/app-shell/navigation.md': [0],
   'frontend/app-shell/workspaces.md': [0],

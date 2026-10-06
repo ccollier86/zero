@@ -33,6 +33,7 @@ test('Guardian/Storage and service Markdown examples compile against actual publ
       '@zero/framework/react/hooks': [`${repo}src/frontend/client/hooks.ts`],
       '@zero/framework/components/storage': [`${repo}src/components/storage/index.ts`],
       '@zero/framework/components/auth': [`${repo}src/components/auth/index.ts`],
+      '@zero/framework/server': [`${repo}src/frontend/server.ts`],
       '@zero/framework/email': [`${repo}src/email/index.ts`],
       '@zero/framework/tokens': [`${repo}src/tokens/index.ts`],
       '@zero/framework/pdf': [`${repo}src/pdf/index.ts`],
@@ -51,6 +52,6 @@ test('Guardian/Storage and service Markdown examples compile against actual publ
       ? diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1 : undefined;
     return `${diagnostic.file?.fileName.split('/').at(-1) ?? 'compiler'}${line ? `:${line}` : ''} TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`;
   });
-  expect(fixtures.size).toBe(50);
+  expect(fixtures.size).toBe(51);
   expect(diagnostics).toEqual([]);
 }, 30_000);

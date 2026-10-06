@@ -354,6 +354,23 @@ inherited drive and ancestor grants are shown read-only and must be changed at
 their source; folder grants inherit to descendants. Actions are projected from
 live server capabilities; hiding a button is never the authorization boundary.
 
+Access forms wrap according to the **inspector width**, not the overall desktop
+viewport, keeping grant type, target and access-level controls reachable in a
+narrow pane. Current/direct/inherited grants render as compact rows inside
+labeled, keyboard-focusable scroll regions bounded to 20rem. Long target IDs
+truncate rather than widen the workspace, with their full value available via
+the row title. Revoke buttons identify their target; inherited rows remain
+read-only and must be changed at their source. This presentation change keeps
+the existing public component props and ACL semantics unchanged.
+
+Drive/object permission panels reserve one grant-or-revoke operation before
+React paints pending state, then await the SDK action. Target, organization/
+authorization boundary or admin-capability replacement retires the old UI
+lifetime. Late outcomes cannot notify/refresh a successor or unlock its pending
+operation. Failure accounting stays safe and target-bound without stale toasts;
+`onChanged` notification failure does not convert an accepted mutation to a
+failed/retryable one. These are presentation guards, not server rollback.
+
 The packaged preview uses a short-lived presigned download URL. Built-in
 renderers cover raster images, audio, video, sandboxed PDF, and escaped text
 bounded to 512 KiB; SVG and HTML are not rendered. Supply the `filePreview`
@@ -376,6 +393,47 @@ preview, settings, usage, or job content without forking the shell.
 Custom controllers may project `currentPathAccess` so Upload and New Folder use
 the open folder's effective ACL. Omitting it retains the legacy controller
 fallback.
+
+### Public downloads: drive-wide or individual files
+
+Storage Studio already supports both choices. Enable publication deliberately
+inside the existing app configuration:
+
+```ts
+import type { AppStorageConfig } from '@zero/framework/server';
+
+export const storage: AppStorageConfig = {
+  studio: {
+    enabled: true,
+    publicAccess: {
+      allowPublicDrives: true,
+      allowPublicObjects: true,
+    },
+  },
+};
+```
+
+Merge this storage module with the application's other normal configuration
+and restart through its normal update workflow. These policy switches permit
+publishing; they do not automatically make a resource public. Both default
+false. Public drives require public objects to be enabled; object-only
+publication may be enabled while drive publication remains disabled.
+
+For a whole drive, select it and use **Settings → Visibility → Public read →
+Save settings**. All existing and future files then permit anonymous downloads.
+For an individual file in a private drive, select it and use **Sharing → Public
+visibility → Make public**. **Make private** clears the object's own flag, but
+does not override public access inherited from a public drive. Make the drive
+private to remove that inherited public access. A public folder's flag does not
+automatically publish its children; inherited ancestor ACL grants are a separate
+access mechanism.
+
+The packaged visibility controls stay visible when publishing is disabled and
+explain the policy requirement. Public resources retain their private
+remediation action after policy tightening. Live Storage ACL/admin and managed
+control-plane checks remain enforced. Public download access never enables
+anonymous upload, mutation, or permission changes; expiring presigned links are
+still a separate alternative for sharing private files.
 
 ## Scoped server API
 

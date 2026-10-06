@@ -87,7 +87,7 @@ export function DataStudioGrid({ table, rows, selectedRowId, editable, loading =
     virtual.navigate(Math.floor(next / columns.length), next % columns.length);
   };
   if (!table) return <GridState title="Choose a table" description="Select an organization table to browse its records." />;
-  const addColumn = schemaActions.schemaEditable && !!schemaActions.onAddColumn;
+  const addColumn = schemaActions.schemaEditable === true && !!schemaActions.onAddColumn;
   const span = Math.max(1, columns.length + Number(addColumn));
   const totalWidth = sizing.totalWidth + (addColumn ? 44 : 0);
   const rendered: React.ReactNode[] = [];

@@ -561,12 +561,45 @@ second argument, `{ expectedRevision }`, when calling the SDK/controller writer.
 For custom header editors, `updateSchema(schema, { expectedRevision })` and
 `updateTable(input, { expectedRevision })` accept the same captured precondition.
 
+## Adding Records
+
+The packaged **Add record** dialog identifies the selected table and generates
+typed fields from its schema. The wide, responsive form shows type icons,
+required markers, descriptions and server defaults, with full-width JSON and
+datetime fields. Its header and actions stay visible while the field body
+scrolls; mobile uses a single column.
+
+Untouched optional/defaulted fields are omitted, so server defaults apply.
+Explicit zero, False, empty text and null remain distinct from omission. Invalid
+numeric/JSON/date drafts remain visible, with field feedback and focus on the
+first error. Dates use Zero's DatePicker; datetimes combine it with TimePicker
+and a seconds/milliseconds field. Changing the date or minute does not truncate
+timestamp precision. Date-only values remain `YYYY-MM-DD`; local datetime
+drafts must represent a valid local time before becoming canonical UTC timestamps.
+
+`DataStudioRowDialog` accepts optional `scopeKey: string | number`; the packaged
+workspace supplies its scoped controller identity. Standalone uses should pass
+their authorization/source identity. Table/scope replacement starts a fresh
+form and retires late outcomes. Schema-only replacement preserves the opening
+draft, blocks creation and offers **Reload fields**, with deliberate discard
+confirmation when necessary. Closing an entered draft similarly offers Keep
+editing, Discard draft or Create record.
+
+Creation awaits the writer and fences same-tick duplicate submission. Pending
+work disables editing and dismissal. Rejected writes keep the values and show
+a safe error, never a raw callback exception. An ambiguous SDK mutation result
+locks the exact input for **Retry request** using the existing idempotency
+contract. These UI protections do not replace Guardian/Fabric admission,
+operation IDs, mutation acknowledgement or server validation.
+
 ## Inline Editing Contract
 
 Inline editing is intentionally cell-like. Entering edit mode does not swap a
 cell for the framework's decorated form input or change row height/column
-width. A transparent native editor overlays the exact cell box, inherits its
-typography, and leaves hidden display text in flow to preserve geometry.
+width. Text, numeric and JSON cells use a transparent editor over the cell box,
+inherit its typography, and leave hidden display text in flow to preserve
+geometry. Date/datetime cells retain the same cell-sized display and open a
+focused, anchored Zero calendar/time editor instead of a native date input.
 
 - Click selects a cell and opens its editor when permitted. A keyboard-focused
   cell opens the same editor when activated with `Enter` or `Space`.
@@ -574,8 +607,14 @@ typography, and leaves hidden display text in flow to preserve geometry.
 - `Tab` saves a changed draft and moves forward; `Shift+Tab` does the same
   backward.
 - `Escape` restores the displayed value without writing.
-- Blur commits a changed, valid draft. An unchanged `Enter`, `Tab`, or blur is
-  an exact no-op, preserving absent cells, stored nulls, and datetime precision.
+- Text/numeric/JSON blur commits a changed, valid draft. An unchanged `Enter`,
+  `Tab`, or blur is an exact no-op, preserving absent cells and stored nulls.
+- Date/datetime popovers use **Apply** and **Cancel**. Calendar/time selection
+  changes only the draft; portal blur does not save. Enter in the date field
+  validates it; Enter on a calendar day/time choice only selects that choice.
+  Use Apply to save the cell.
+  Outside dismissal cancels; a nested picker consumes its own Escape first.
+  The explicit seconds field retains existing millisecond precision.
 - Boolean cells use an in-place tokenized toggle and preserve nullable state.
 - Pending, saved, validation-error, and revision-conflict states use small
   indicators without expanding the cell.

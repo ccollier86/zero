@@ -268,6 +268,31 @@ describe('StorageStudioWorkspace', () => {
     );
     expect(markup).toContain('Make private');
   });
+
+  test('explains private-file publishing policy rather than hiding public visibility', () => {
+    const file = fileFixture();
+    const markup = renderToStaticMarkup(<StorageStudioFileSharing file={file} controller={controllerFixture({
+      view: 'files', selectedFile: file, selectedFileAccess: driveFixture().drive.access,
+      operations: { setFileVisibility: () => undefined },
+    })} />);
+    expect(markup).toContain('Public visibility');
+    expect(markup).toContain('Public files are disabled');
+    expect(markup).toContain('Make public');
+    expect(markup).toContain('disabled=""');
+  });
+
+  test('does not claim a private object flag restricts downloads inherited from a public drive', () => {
+    const file = fileFixture();
+    const drive = driveFixture();
+    const markup = renderToStaticMarkup(<StorageStudioFileSharing file={file} controller={controllerFixture({
+      view: 'files', selectedFile: file, selectedDrive: { ...drive, drive: { ...drive.drive, public: 1 } },
+      selectedFileAccess: drive.drive.access, operations: { setFileVisibility: () => undefined },
+    })} />);
+    expect(markup).toContain('Public downloads enabled');
+    expect(markup).toContain('Make the drive private before restricting this object');
+    expect(markup).toContain('Drive is public');
+    expect(markup).toContain('disabled=""');
+  });
 });
 
 function controllerFixture(

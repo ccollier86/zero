@@ -3,6 +3,7 @@
 /** Shared, policy-aware grant input for drive and exact-object ACL editors. */
 
 import * as React from 'react';
+import { LoaderCircle, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AuthAdminUserPropertyConfig } from '../../frontend/client/auth-client';
 import type {
@@ -44,6 +45,7 @@ export function StoragePermissionGrantForm({
   const [grantValue, setGrantValue] = React.useState('');
   const [permission, setPermission] = React.useState<PermissionLevel>('read');
   const [submitting, setSubmitting] = React.useState(false);
+  const submitPending = React.useRef(false);
   const policyProperties = React.useMemo(
     () => Object.values(config?.userProperties ?? {})
       .filter((field) => field.useInPolicies),
@@ -75,6 +77,7 @@ export function StoragePermissionGrantForm({
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (disabled || submitPending.current) return;
     const value = grantValue.trim();
     const key = grantKey.trim();
     if (!value) {
@@ -91,6 +94,7 @@ export function StoragePermissionGrantForm({
       toast.error('Choose a configured role');
       return;
     }
+    submitPending.current = true;
     setSubmitting(true);
     try {
       await onGrant({
@@ -103,19 +107,20 @@ export function StoragePermissionGrantForm({
     } catch {
       // The owning panel reports standardized storage errors and retains input.
     } finally {
+      submitPending.current = false;
       setSubmitting(false);
     }
   };
 
   return (
-    <form className="rounded-lg border border-border/80 bg-card p-4" onSubmit={submit}>
-      <div className="mb-4">
+    <form data-slot="storage-permission-grant-form" className="min-w-0 rounded-lg border border-border/80 bg-card p-3" onSubmit={submit} aria-busy={submitting}>
+      <div className="mb-3 min-w-0">
         <h3 className="text-sm font-semibold">{title}</h3>
-        <p className="text-sm text-muted-foreground">{description}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
       </div>
-      <div className="grid gap-3 lg:grid-cols-[9rem_1fr_10rem_auto]">
+      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2.5">
         <PermissionField label="Grant type">
-          <Select
+          {(id) => <Select
             value={grantType}
             disabled={disabled || submitting}
             onValueChange={(value) => {
@@ -123,50 +128,50 @@ export function StoragePermissionGrantForm({
               setGrantValue('');
             }}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger id={id} className="min-w-0"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="role">Role</SelectItem>
               <SelectItem value="user">User ID</SelectItem>
               {policyProperties.length > 0 && <SelectItem value="property">User property</SelectItem>}
             </SelectContent>
-          </Select>
+          </Select>}
         </PermissionField>
-
-        <GrantTargetField
-          grantType={grantType}
-          grantKey={grantKey}
-          grantValue={grantValue}
-          selectedProperty={selectedProperty}
-          policyProperties={policyProperties}
-          configuredRoles={configuredRoles}
-          disabled={disabled || submitting}
-          onGrantKeyChange={(value) => {
-            setGrantKey(value);
-            setGrantValue('');
-          }}
-          onGrantValueChange={setGrantValue}
-        />
-
-        <PermissionField label="Permission">
-          <Select
+        <PermissionField label="Access level">
+          {(id) => <Select
             value={permission}
             disabled={disabled || submitting}
             onValueChange={(value) => setPermission(value as PermissionLevel)}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger id={id} className="min-w-0"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="read">Read</SelectItem>
               <SelectItem value="write">Write</SelectItem>
               <SelectItem value="admin">Admin</SelectItem>
             </SelectContent>
-          </Select>
+          </Select>}
         </PermissionField>
-
-        <div className="flex items-end">
-          <Button type="submit" disabled={disabled || submitting} className="w-full lg:w-auto">
-            {submitting ? 'Saving…' : 'Grant'}
-          </Button>
+      </div>
+      <div className="mt-2.5 flex min-w-0 flex-wrap items-end gap-2.5">
+        <div className="min-w-0 flex-1 basis-48">
+          <GrantTargetField
+            grantType={grantType}
+            grantKey={grantKey}
+            grantValue={grantValue}
+            selectedProperty={selectedProperty}
+            policyProperties={policyProperties}
+            configuredRoles={configuredRoles}
+            disabled={disabled || submitting}
+            onGrantKeyChange={(value) => {
+              setGrantKey(value);
+              setGrantValue('');
+            }}
+            onGrantValueChange={setGrantValue}
+          />
         </div>
+        <Button type="submit" size="sm" disabled={disabled || submitting || !grantValue.trim()} className="h-9 shrink-0">
+          {submitting ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Plus className="size-3.5" aria-hidden="true" />}
+          {submitting ? 'Saving…' : 'Grant'}
+        </Button>
       </div>
       {!configLoading && policyProperties.length === 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
@@ -202,10 +207,10 @@ function GrantTargetField({
 }) {
   if (grantType !== 'property') {
     return (
-      <PermissionField label={grantType === 'role' ? 'Role name' : 'User ID'}>
-        {grantType === 'role' && configuredRoles.length > 0 ? (
+      <PermissionField label={grantType === 'role' ? 'Role' : 'User ID'}>
+        {(id) => grantType === 'role' && configuredRoles.length > 0 ? (
           <Select value={grantValue} disabled={disabled} onValueChange={onGrantValueChange}>
-            <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+            <SelectTrigger id={id} className="min-w-0"><SelectValue placeholder="Select role" /></SelectTrigger>
             <SelectContent>
               {configuredRoles.map((role) => (
                 <SelectItem key={role.key} value={role.key}>{role.label}</SelectItem>
@@ -214,6 +219,8 @@ function GrantTargetField({
           </Select>
         ) : (
           <Input
+            id={id}
+            className="min-w-0"
             value={grantValue}
             disabled={disabled}
             maxLength={grantType === 'role' ? 100 : 200}
@@ -226,21 +233,21 @@ function GrantTargetField({
   }
   const propertyValues = selectedProperty?.values ?? [];
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2.5">
       <PermissionField label="Property key">
-        <Select value={grantKey} disabled={disabled} onValueChange={onGrantKeyChange}>
-          <SelectTrigger><SelectValue placeholder="Select property" /></SelectTrigger>
+        {(id) => <Select value={grantKey} disabled={disabled} onValueChange={onGrantKeyChange}>
+          <SelectTrigger id={id} className="min-w-0"><SelectValue placeholder="Select property" /></SelectTrigger>
           <SelectContent>
             {policyProperties.map((field) => (
               <SelectItem key={field.key} value={field.key}>{field.label ?? field.key}</SelectItem>
             ))}
           </SelectContent>
-        </Select>
+        </Select>}
       </PermissionField>
       <PermissionField label="Property value">
-        {propertyValues.length > 0 ? (
+        {(id) => propertyValues.length > 0 ? (
           <Select value={grantValue} disabled={disabled} onValueChange={onGrantValueChange}>
-            <SelectTrigger><SelectValue placeholder="Select value" /></SelectTrigger>
+            <SelectTrigger id={id} className="min-w-0"><SelectValue placeholder="Select value" /></SelectTrigger>
             <SelectContent>
               {propertyValues.map((value) => (
                 <SelectItem key={value} value={value}>{value}</SelectItem>
@@ -249,6 +256,8 @@ function GrantTargetField({
           </Select>
         ) : (
           <Input
+            id={id}
+            className="min-w-0"
             value={grantValue}
             disabled={disabled}
             maxLength={200}
@@ -278,11 +287,12 @@ function configuredStorageRoles(config: unknown): readonly { key: string; label:
     })));
 }
 
-function PermissionField({ label, children }: { label: string; children: React.ReactNode }) {
+function PermissionField({ label, children }: { label: string; children: (id: string) => React.ReactNode }) {
+  const id = React.useId();
   return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      {children}
+    <div className="min-w-0 space-y-1.5">
+      <Label htmlFor={id} className="text-xs font-medium">{label}</Label>
+      {children(id)}
     </div>
   );
 }

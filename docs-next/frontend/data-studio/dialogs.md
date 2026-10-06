@@ -8,12 +8,12 @@ visibility: internal
 system: data-studio
 feature: dialogs
 maturity: supported
-applies_to: ["2.1.1 source; package qualification pending"]
+applies_to: ["2.2.1 development source with record-editor changes; package qualification pending"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -94,11 +94,46 @@ An absent writer rejects instead of pretending creation succeeded.
 ## Record Creation
 
 RowDialog requires open, table (or null), onOpenChange and onCreate(values);
-busy defaults false. Drafts reset on opening/new table identity.
-Values are keyed by immutable public column keys. Untouched optional/defaulted
-fields are omitted so server defaults apply; untouched required fields without
-defaults reject. Explicit edits use typed parsing, including null/boolean
-semantics. onCreate is awaited before closing.
+busy defaults false. The packaged controller supplies `scopeKey`; standalone
+composition should pass a stable string/number identifying the current
+authorization/source context. Opening, changing table identity or changing
+scope starts a new draft lifetime. A retired request cannot close, populate or
+report its failure into a replacement lifetime, including A→B→A transitions.
+
+The title identifies the destination table. A responsive 52rem frame presents
+typed fields with recognizable type icons, required markers, descriptions and
+default hints. Desktop fields use two columns; JSON and datetime fields use
+the full width. On narrow screens fields stack. Only the body scrolls; the
+heading, close control and action/error footer remain reachable.
+
+Values are submitted by public column **key**; local drafts use stable
+`columnId` identities. Untouched optional/defaulted fields are omitted so
+server defaults apply. Required fields without defaults need explicit values.
+True/False/Empty (null) choices distinguish boolean false from an absent field
+or null. Numeric/JSON input retains incomplete text until validation rather
+than losing it to a native number control. Date/datetime fields reuse Zero's
+calendar/time controls and preserve seconds/milliseconds; see [values](./values.md).
+Validation highlights and focuses the first invalid field without discarding
+other values. Client feedback does not replace backend schema/authority checks.
+
+Opening captures a detached schema and `schemaRevision`. A background schema
+change keeps the entered values, blocks Create and offers **Reload fields**.
+Reloading a dirty draft requires **Discard and reload** or **Keep editing**.
+Record counts and unrelated table metadata do not reinterpret the draft.
+
+`onCreate` is awaited. A synchronous admission guard prevents same-tick
+duplicate submissions; pending work disables fields, Cancel, Escape and outside
+dismissal. Failure keeps the draft, shows a content-free message and uses Zero's
+frontend observability, without copying callback exceptions or field values
+into logs. An ambiguous `DataStudioMutationError` retains the exact payload for
+**Retry request** and prevents editing that request. The supplied writer must
+preserve the SDK's same-idempotency-key retry contract; a UI promise is not
+itself an idempotency or rollback mechanism. Accepted close-notification failure
+is not reclassified as a rejected creation or made resubmittable.
+
+Closing an entered draft asks the author to keep editing, discard it or create
+the record. Archived tables and changed schemas remain blocked; no dialog
+choice can bypass Guardian or Fabric isolation.
 
 ## Confirmation
 

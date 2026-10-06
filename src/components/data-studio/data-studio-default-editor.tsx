@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '../ui/select';
 import type { DataStudioEditableColumn } from './data-studio-schema-draft';
+import { DataStudioTemporalInput } from './data-studio-temporal-input';
 
 export function DataStudioDefaultEditor({
   column,
@@ -52,19 +53,15 @@ export function DataStudioDefaultEditor({
       </Select>
     );
   }
+  if (column.type === 'date' || column.type === 'datetime') {
+    return <DataStudioTemporalInput type={column.type} value={column.defaultDraft}
+      disabled={disabled} onValueChange={onChange} aria-label={`${column.label} default value`} />;
+  }
   return (
     <Input
-      type={column.type === 'date'
-          ? 'date'
-          : column.type === 'datetime'
-            ? 'datetime-local'
-            : 'text'}
+      type="text"
       inputMode={column.type === 'number' ? 'decimal' : undefined}
-      step={column.type === 'number'
-        ? 'any'
-        : column.type === 'datetime'
-          ? '0.001'
-          : undefined}
+      step={column.type === 'number' ? 'any' : undefined}
       value={column.defaultDraft}
       disabled={disabled}
       className="min-w-0 flex-1"

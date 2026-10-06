@@ -70,7 +70,6 @@ export function StorageDriveSettingsPanel({
   const readonly = disabled || busy || saving;
   const allowedMimeTypes = mimeTypes.length > 0 ? mimeTypes.join(',') : '*';
   const driveIsPublic = isStoragePublic(drive.public);
-  const showVisibility = allowPublicVisibility || driveIsPublic;
 
   const handleSubmit = React.useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -117,7 +116,7 @@ export function StorageDriveSettingsPanel({
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] gap-4">
         <StorageSettingField label="Drive name" htmlFor="storage-drive-name">
           <Input
             id="storage-drive-name"
@@ -128,13 +127,11 @@ export function StorageDriveSettingsPanel({
           />
         </StorageSettingField>
 
-        {showVisibility && (
           <StorageSettingField
             label="Visibility"
-            hint={allowPublicVisibility ? 'Durable read policy' : 'Public access is disabled by policy'}
           >
-            <Select value={visibility} onValueChange={setVisibility} disabled={readonly}>
-              <SelectTrigger aria-label="Drive visibility">
+            <Select value={visibility} onValueChange={setVisibility} disabled={readonly || (!allowPublicVisibility && !driveIsPublic)}>
+              <SelectTrigger aria-label="Drive visibility" className="min-w-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -142,8 +139,16 @@ export function StorageDriveSettingsPanel({
                 <SelectItem value="1" disabled={!allowPublicVisibility}>Public read</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {!allowPublicVisibility
+                ? driveIsPublic
+                  ? 'Public access is disabled by policy. You can still make this drive private.'
+                  : 'Public access is disabled by policy. The app must enable public drives before you can publish this drive.'
+                : visibility === '1'
+                  ? 'Anyone with a file URL can download it. This includes all existing and future files in the drive.'
+                  : 'Files require authorized access unless published individually. Public downloads never allow anonymous uploads.'}
+            </p>
           </StorageSettingField>
-        )}
 
         <StorageSettingField
           label="Drive limit"
@@ -220,8 +225,8 @@ function StorageSettingField({
   className?: string;
 }) {
   return (
-    <div className={cn('space-y-2', className)}>
-      <div className="flex items-center justify-between gap-3">
+    <div className={cn('min-w-0 space-y-2', className)}>
+      <div className="flex min-w-0 items-center justify-between gap-3">
         <Label htmlFor={htmlFor}>{label}</Label>
         {hint && <span className="truncate text-xs text-muted-foreground">{hint}</span>}
       </div>

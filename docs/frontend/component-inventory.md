@@ -166,7 +166,7 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | Component | File | Role |
 | --- | --- | --- |
 | `Calendar` | `ui/calendar.tsx` | Calendar primitive backed by react-day-picker. |
-| `DatePicker` | `ui/date-picker.tsx` | Typed U.S. numeric date input + popover + calendar. Valid `M/D/YYYY` and `M-D-YYYY` input normalizes to the long display; `calendarProps` owns bounded month/year navigation and disabled dates. |
+| `DatePicker` | `ui/date-picker.tsx` | Typed date input + popover + calendar. Valid numeric dates normalize to the long display; `calendarProps` owns bounded month/year navigation and disabled dates. Optional `inputValue`/`onInputValueChange` retain parent-owned invalid/incomplete buffers; `inputProps` supplies native field/ARIA attributes; `readOnly` disables mutations without hiding the value. |
 | `DateRangePicker` | `ui/date-range-picker.tsx` | Range picker composition. |
 | `TimePicker` | `ui/time-picker.tsx` | Accessible hour/minute/period input that emits canonical `HH:mm`. |
 | `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut` | `ui/command.tsx` | cmdk command palette primitives. |

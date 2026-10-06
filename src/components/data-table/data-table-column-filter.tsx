@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from '#zero/components/ui/select';
 import type { FieldMeta } from '../../schema/field-types';
+import { DatePicker } from '../ui/date-picker';
+import { parseDatePickerCalendarValue, formatDatePickerCalendarValue } from '../ui/date-picker-value';
 
 export interface DataTableColumnFilterProps<TData> {
   column: Column<TData, unknown>;
@@ -99,16 +101,12 @@ export function DataTableColumnFilter<TData>({
 
   if (meta?.type === 'date' || meta?.type === 'datetime') {
     return (
-      <div className="w-[10rem] shrink-0">
-        <Input
-          aria-label={ariaLabel}
-          type="date"
-          value={typeof value === 'string' ? value : ''}
-          placeholder={label}
-          onChange={(event) => {
-            column.setFilterValue(event.target.value || undefined);
-          }}
-          className="h-8"
+      <div className="w-[14rem] shrink-0">
+        <DatePicker
+          value={typeof value === 'string' ? parseDatePickerCalendarValue(value) : undefined}
+          onChange={(next) => column.setFilterValue(next ? formatDatePickerCalendarValue(next) : undefined)}
+          inputProps={{ 'aria-label': ariaLabel, className: 'h-8 text-sm' }}
+          triggerClassName="size-8"
         />
       </div>
     );

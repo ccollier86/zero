@@ -1,6 +1,6 @@
 /** Real-browser coverage for Data Studio's non-negotiable inline-edit contract. */
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Browser, Page } from 'playwright';
@@ -11,7 +11,7 @@ import {
   type PlaywrightTestBrowserLease,
 } from '../../test-support/playwright-test-browser';
 
-const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
+const browserTest = test;
 const TEST_TIMEOUT = 60_000;
 let browser: Browser | undefined;
 let browserLease: PlaywrightTestBrowserLease | undefined;
@@ -20,27 +20,31 @@ let bundlePath: string | undefined;
 let stylesheetPath: string | undefined;
 
 beforeAll(async () => {
-  if (!playwrightTestBrowserAvailable) return;
+  if (!playwrightTestBrowserAvailable) throw new Error('Inline editor acceptance requires the existing Chromium fixture browser.');
   browserLease = await acquirePlaywrightTestBrowser();
   browser = browserLease.browser;
-  const scratchRoot = join(process.cwd(), '.zero');
+  const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
   await mkdir(scratchRoot, { recursive: true });
   buildDir = await mkdtemp(join(scratchRoot, 'data-studio-cell-browser-'));
   const entrypoint = join(buildDir, 'entry.tsx');
   bundlePath = join(buildDir, 'bundle.js');
-  await writeFile(entrypoint, fixtureSource(
+  await Bun.write(entrypoint, fixtureSource(
     join(import.meta.dir, 'data-studio-inline-cell.tsx'),
     join(import.meta.dir, '../../frontend/client/data-studio-client.ts'),
   ));
-  const result = await Bun.build({
-    entrypoints: [entrypoint],
-    root: process.cwd(),
-    outdir: buildDir,
+  const builder = join(buildDir, 'build.ts');
+  await Bun.write(builder, `const result = await Bun.build({
+    entrypoints: [${JSON.stringify(entrypoint)}],
+    root: ${JSON.stringify(process.cwd())},
+    outdir: ${JSON.stringify(buildDir)},
     naming: 'bundle.js',
     target: 'browser',
     format: 'iife',
   });
-  if (!result.success) throw new Error(result.logs.map((log) => log.message).join('\n'));
+  if (!result.success) { console.error(result.logs.map((log) => log.message).join('\\n')); process.exit(1); }`);
+  const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', builder], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, status] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
+  if (status !== 0) throw new Error(`${stdout}\n${stderr}`);
   stylesheetPath = (await buildPlatformStyles(buildDir, join(buildDir, 'missing-app'))).cssPath;
 }, TEST_TIMEOUT);
 
@@ -176,7 +180,10 @@ describe('DataStudioInlineCell browser contract', () => {
         await page.getByRole('button', { name: new RegExp(`Edit ${label}`) }).click();
         const editor = page.locator(`input[aria-label="Edit ${label}"]`);
         await editor.waitFor({ state: 'visible' });
-        await page.getByRole('button', { name: 'Next cell' }).click();
+        if (fixture === 'optional-date-undefined' || fixture === 'precise-datetime') {
+          // The floating picker may cover the synthetic next-cell button.
+          await page.mouse.click(650, 500);
+        } else await page.getByRole('button', { name: 'Next cell' }).click();
         await editor.waitFor({ state: 'detached' });
 
         expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
@@ -192,15 +199,13 @@ describe('DataStudioInlineCell browser contract', () => {
     try {
       await page.evaluate(() => window.__dataStudioCellHarness.configure('precise-datetime'));
       await page.getByRole('button', { name: /Edit Precise datetime/ }).click();
-      const editor = page.locator('input[aria-label="Edit Precise datetime"]');
-      const draft = await editor.inputValue();
-      expect(draft).toMatch(/:37\.123$/u);
-      const changedDraft = draft.replace(
-        /:(\d{2}):37\.123$/u,
-        (_match, minute: string) => `:${String(Number(minute) + 1).padStart(2, '0')}:37.123`,
-      );
-      await editor.fill(changedDraft);
-      await editor.press('Enter');
+      const seconds = page.getByRole('textbox', { name: 'Edit Precise datetime seconds', exact: true });
+      expect(await seconds.inputValue()).toBe('37.123');
+      await page.getByRole('combobox', { name: 'Edit Precise datetime time minute', exact: true }).click();
+      await page.getByRole('option', { name: '46', exact: true }).click();
+      expect(await seconds.inputValue()).toBe('37.123');
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      await page.getByRole('button', { name: 'Apply', exact: true }).click();
       await page.waitForFunction(() => (
         document.querySelector('[data-slot="data-studio-inline-cell"]')
           ?.getAttribute('data-save-state') === 'pending'
@@ -216,6 +221,32 @@ describe('DataStudioInlineCell browser contract', () => {
     } finally {
       await page.close();
     }
+  }, TEST_TIMEOUT);
+
+  browserTest('keyboard calendar and time choices remain drafts and do not bubble into surrounding row actions', async () => {
+    const page = await openHarness(); try {
+      await page.evaluate(() => window.__dataStudioCellHarness.configure('precise-datetime'));
+      await page.getByRole('button', { name: /Edit Precise datetime/ }).click();
+      await page.getByRole('button', { name: 'Open date picker', exact: true }).click();
+      await page.evaluate(() => window.__dataStudioCellHarness.resetOuterClicks());
+      await page.getByRole('button', { name: /February 4th, 2026/ }).press('Enter');
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.outerClicks())).toBe(0);
+      expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
+      await page.getByRole('combobox', { name: 'Edit Precise datetime time minute', exact: true }).click();
+      await page.getByRole('option', { name: '46', exact: true }).press('Enter');
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.outerClicks())).toBe(0);
+      await page.getByRole('button', { name: 'Open date picker', exact: true }).click();
+      await page.keyboard.press('Escape');
+      expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
+      await page.getByRole('combobox', { name: 'Edit Precise datetime time minute', exact: true }).click();
+      await page.keyboard.press('Escape');
+      expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.current())).toEqual({ present: true, value: '2026-02-03T17:45:37.123Z' });
+    } finally { await page.close(); }
   }, TEST_TIMEOUT);
 
   browserTest('distinguishes an untouched blank from an intentionally emptied text value', async () => {
@@ -288,7 +319,8 @@ describe('DataStudioInlineCell browser contract', () => {
 
 async function openHarness(): Promise<Page> {
   if (!browser || !bundlePath || !stylesheetPath) throw new Error('Browser harness unavailable');
-  const page = await browser.newPage();
+  const page = await browser.newPage({ timezoneId: 'UTC' });
+  page.setDefaultTimeout(4_000);
   await page.setContent('<div id="root"></div>');
   await page.addStyleTag({ path: stylesheetPath });
   await page.addScriptTag({ path: bundlePath });
@@ -298,8 +330,8 @@ async function openHarness(): Promise<Page> {
 
 function fixtureSource(componentPath: string, clientPath: string): string {
   return `
-import * as React from 'react';
-import { createRoot } from 'react-dom/client';
+import * as React from ${JSON.stringify(Bun.resolveSync('react', import.meta.dir))};
+import { createRoot } from ${JSON.stringify(Bun.resolveSync('react-dom/client', import.meta.dir))};
 import { DataStudioInlineCell } from ${JSON.stringify(componentPath)};
 import { DataStudioMutationError } from ${JSON.stringify(clientPath)};
 
@@ -312,6 +344,7 @@ let mode = 'pending';
 let pending = null;
 let commitValues = [];
 let reloadCount = 0;
+let outerClicks = 0;
 const root = createRoot(document.getElementById('root'));
 
 function commit(next) {
@@ -333,6 +366,7 @@ function commit(next) {
 function render() {
   root.render(React.createElement('div', {
     style: { width: '240px', fontFamily: 'system-ui', fontSize: '14px' },
+    onClick(){ outerClicks += 1; },
   }, React.createElement(DataStudioInlineCell, {
     value,
     column,
@@ -380,6 +414,8 @@ window.__dataStudioCellHarness = {
   },
   commits() { return commitValues; },
   reloads() { return reloadCount; },
+  outerClicks() { return outerClicks; },
+  resetOuterClicks() { outerClicks = 0; },
 };
 render();
 `;
@@ -395,6 +431,8 @@ declare global {
       current(): { present: boolean; value?: unknown };
       commits(): unknown[];
       reloads(): number;
+      outerClicks(): number;
+      resetOuterClicks(): void;
     };
   }
 }

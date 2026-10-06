@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StorageDriveRow } from './storage-management-types';
 import { StorageDriveSettingsPanel } from './storage-drive-settings-panel';
 
-test('drive settings never advertise public visibility when server policy disallows it', () => {
+test('drive settings explain disabled public policy without offering a usable publishing control', () => {
   const blocked = renderToStaticMarkup(createElement(StorageDriveSettingsPanel, {
     drive: drive(),
     allowPublicVisibility: false,
@@ -16,8 +16,18 @@ test('drive settings never advertise public visibility when server policy disall
     onSave: () => undefined,
   }));
 
-  expect(blocked).not.toContain('aria-label="Drive visibility"');
+  expect(blocked).toContain('aria-label="Drive visibility"');
+  expect(blocked).toContain('Public access is disabled by policy');
+  expect(blocked).toContain('disabled=""');
   expect(allowed).toContain('aria-label="Drive visibility"');
+});
+
+test('public drive settings describe inherited downloads for existing and future files', () => {
+  const markup = renderToStaticMarkup(createElement(StorageDriveSettingsPanel, {
+    drive: { ...drive(), public: 1 }, onSave: () => undefined,
+  }));
+  expect(markup).toContain('Anyone with a file URL can download it.');
+  expect(markup).toContain('all existing and future files');
 });
 
 test('an existing public drive can still be made private after policy is tightened', () => {

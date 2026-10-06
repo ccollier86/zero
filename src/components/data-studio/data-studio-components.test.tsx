@@ -47,6 +47,16 @@ const row: DataStudioRow = {
 };
 
 describe('Data Studio inline grid', () => {
+  test('an empty schema grid has valid spans when optional schema actions are omitted', () => {
+    const markup = renderToStaticMarkup(<DataStudioGrid table={table} rows={[]}
+      selectedRowId={null} editable={false} onSelectRow={() => undefined}
+      onCommit={async () => undefined} onReload={async () => undefined} />);
+    expect(markup).toContain('colSpan="2"');
+    expect(markup).not.toContain('NaN');
+    expect(markup).toContain('Name');
+    expect(markup).toContain('Score');
+  });
+
   test('keeps logical values inside fixed, editable table cells', () => {
     const markup = renderToStaticMarkup(
       <DataStudioGrid
@@ -115,9 +125,11 @@ describe('Data Studio inline grid', () => {
         onChange={() => undefined}
       />,
     );
-    expect(markup).toContain('type="datetime-local"');
-    expect(markup).toContain('step="0.001"');
-    expect(markup).toContain('value="2026-02-03T17:45:37.123"');
+    expect(markup).not.toContain('type="datetime-local"');
+    expect(markup).toContain('data-slot="date-picker"');
+    expect(markup).toContain('data-slot="time-picker"');
+    expect(markup).toContain('aria-label="Meeting at default value seconds"');
+    expect(markup).toContain('value="37.123"');
 
     const numberMarkup = renderToStaticMarkup(
       <DataStudioDefaultEditor
@@ -194,8 +206,9 @@ describe('Data Studio control plane presentation', () => {
     expect(markup).toContain('Record');
     expect(markup).toContain('Schema');
     expect(markup).toContain('Code');
-    expect(markup).toContain('client.dataStudio.listRows');
     const example = dataStudioCodeExample(table);
+    // Inactive animated tabs are intentionally not mounted during SSR.
+    expect(example).toContain('client.dataStudio.listRows');
     expect(example).toContain('limit: 25');
     expect(example).not.toContain('limit: 50');
     expect(example.toLowerCase()).not.toContain('select ');

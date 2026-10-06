@@ -1,18 +1,22 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, Check, LoaderCircle, Minus, RefreshCw } from 'lucide-react';
+import { Check, Minus } from 'lucide-react';
 import {
+  isDataStudioMutationError,
   isDataStudioRevisionConflict,
   type DataStudioColumn,
   type DataStudioValue,
 } from '../../frontend/client/data-studio-client';
+import { reportDataStudioFrontendFailure } from '../../frontend/client/data-studio-observability';
 import { cn } from '../../lib/utils';
 import {
   dataStudioValueDraft,
   formatDataStudioValue,
   parseDataStudioValueDraft,
 } from './data-studio-value';
+import { DataStudioTemporalCellEditor } from './data-studio-temporal-cell-editor';
+import { DataStudioCellStateIndicator } from './data-studio-cell-state-indicator';
 
 export type DataStudioCellSaveState =
   | 'idle'
@@ -44,7 +48,8 @@ export interface DataStudioInlineCellProps {
 /**
  * Edit a value in place without swapping in the framework's decorated Input.
  * The hidden display text keeps the cell's geometry stable while the native
- * editor overlays the same box with inherited typography.
+ * editor overlays the same box with inherited typography. Date/time values use
+ * the existing Zero calendar and time controls in an anchored draft editor.
  */
 export function DataStudioInlineCell({
   value,
@@ -189,6 +194,7 @@ export function DataStudioInlineCell({
       else if (restoreFocus) requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
     } catch (cause) {
       if (!mounted.current || saveRevision.current !== requestRevision) return;
+      reportDataStudioFrontendFailure('row.replace', 'mutation', cause);
       editRevision.current = null;
       draftDirty.current = false;
       const conflict = isDataStudioRevisionConflict(cause);
@@ -197,7 +203,9 @@ export function DataStudioInlineCell({
       setState(conflict ? 'conflict' : 'error');
       setMessage(conflict
         ? 'This record changed elsewhere. The latest value was restored.'
-        : errorMessage(cause));
+        : isDataStudioMutationError(cause) && cause.requiresSameIdempotencyKey
+          ? 'The save could not be confirmed. Reconcile the pending operation before trying again.'
+          : 'The save was not accepted. The previous value was restored.');
       try {
         await onReload?.();
       } catch {
@@ -260,6 +268,7 @@ export function DataStudioInlineCell({
 
   const display = formatDataStudioValue(value, column);
   const isBoolean = column.type === 'boolean';
+  const isTemporal = column.type === 'date' || column.type === 'datetime';
   const booleanValue = value === true ? true : value === false ? false : null;
   const nextBooleanValue = booleanValue === true
     ? false
@@ -315,12 +324,26 @@ export function DataStudioInlineCell({
             className={cn(
               'block min-h-5 truncate whitespace-nowrap',
               value == null && 'text-muted-foreground/70 italic',
-              editing && 'invisible',
+              editing && !isTemporal && 'invisible',
             )}
           >
             {display || '\u00a0'}
           </span>
-          {!editing && (
+          {isTemporal ? (
+            <DataStudioTemporalCellEditor open={editing} type={column.type as 'date' | 'datetime'}
+              label={column.label} required={column.required} value={draft} disabled={disabled}
+              pending={state === 'pending'} error={editing ? message : null}
+              onOpenChange={(open) => { if (open) beginEdit(); else cancel(); }}
+              onValueChange={(next) => { draftDirty.current = true; setDraft(next); }}
+              onApply={() => { void saveDraft(undefined, true); }} onCancel={cancel}>
+              <button ref={triggerRef} type="button" data-data-studio-cell="true"
+                className="absolute inset-0 size-full cursor-pointer rounded-sm bg-transparent p-0 text-left outline-none ring-inset hover:bg-accent/25 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
+                disabled={state === 'pending'}
+                aria-label={`${disabled ? 'Select' : 'Edit'} ${column.label}${display ? `, current value ${display}` : ''}`}>
+                <span className="sr-only">Edit {column.label}</span>
+              </button>
+            </DataStudioTemporalCellEditor>
+          ) : !editing && (
             <button
               ref={triggerRef}
               type="button"
@@ -333,15 +356,11 @@ export function DataStudioInlineCell({
               <span className="sr-only">Edit {column.label}</span>
             </button>
           )}
-          {editing && (
+          {editing && !isTemporal && (
             <input
               ref={inputRef}
               type={inlineInputType(column)}
-              step={column.type === 'number'
-                ? 'any'
-                : column.type === 'datetime'
-                  ? '0.001'
-                  : undefined}
+              step={column.type === 'number' ? 'any' : undefined}
               value={draft}
               disabled={disabled || state === 'pending'}
               aria-label={`Edit ${column.label}`}
@@ -363,7 +382,7 @@ export function DataStudioInlineCell({
           )}
         </>
       )}
-      <CellStateIndicator state={state} message={message} />
+      <DataStudioCellStateIndicator state={state} message={message} />
     </div>
   );
 }
@@ -380,50 +399,9 @@ export function resolveDataStudioCellKeyAction(
   return null;
 }
 
-function CellStateIndicator({
-  state,
-  message,
-}: {
-  state: DataStudioCellSaveState;
-  message: string | null;
-}) {
-  if (state === 'idle') return null;
-  const Icon = state === 'pending'
-    ? LoaderCircle
-    : state === 'saved'
-      ? Check
-      : state === 'conflict'
-        ? RefreshCw
-        : AlertCircle;
-  const label = state === 'pending'
-    ? 'Saving'
-    : state === 'saved'
-      ? 'Saved'
-      : state === 'conflict'
-        ? 'Conflict; latest value restored'
-        : message ?? 'Save failed; previous value restored';
-  return (
-    <span
-      role={state === 'error' || state === 'conflict' ? 'alert' : 'status'}
-      className={cn(
-        'pointer-events-none absolute right-0.5 top-0.5 z-10 rounded-full bg-background/90 p-0.5 shadow-sm',
-        state === 'saved' && 'text-success',
-        state === 'pending' && 'text-muted-foreground',
-        state === 'error' && 'text-destructive',
-        state === 'conflict' && 'text-warning',
-      )}
-    >
-      <Icon className={cn('size-3', state === 'pending' && 'animate-spin')} aria-hidden="true" />
-      <span className="sr-only">{label}</span>
-    </span>
-  );
-}
-
 function inlineInputType(column: DataStudioColumn): React.HTMLInputTypeAttribute {
   switch (column.type) {
     case 'number': return 'number';
-    case 'date': return 'date';
-    case 'datetime': return 'datetime-local';
     default: return 'text';
   }
 }

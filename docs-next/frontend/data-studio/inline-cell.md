@@ -8,12 +8,12 @@ visibility: internal
 system: data-studio
 feature: inline-cell
 maturity: supported
-applies_to: ["2.1.1 source; package qualification pending"]
+applies_to: ["2.2.1 development source with temporal-editor changes; package qualification pending"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -23,10 +23,11 @@ reviewed_against:
 
 [Data Studio index](./index.md) · [Documentation index](../../index.md)
 
-DataStudioInlineCell edits in place: a native editor overlays the same typographic
-box while hidden display content preserves geometry. It does not switch the
-whole cell into a decorated framework Input. Import from the Studio subpath or
-root/React barrel.
+DataStudioInlineCell preserves the grid cell's typographic box and geometry.
+Text, numeric and JSON editors overlay the cell without turning it into a
+decorated framework Input. Date/datetime cells keep their compact display and
+open an anchored editor using Zero's calendar/time controls. Import from the
+Studio subpath or root/React barrel.
 
 Required props: value (DataStudioValue or undefined), column, revision and
 onCommit(value):Promise<unknown>. Optional disabled/selected (false), onSelect,
@@ -34,11 +35,32 @@ onReload():Promise<unknown>, onNavigate(-1|1) and className.
 Capture the authoritative revision and writer at edit start, not a later unrelated
 row/callback. The connected controller already supplies revision-aware writes.
 
-DataStudioCellSaveState is idle/pending/saved/error/conflict. Enter saves;
-Tab/Shift+Tab save then move forward/back; Escape cancels. Composition input
+DataStudioCellSaveState is idle/pending/saved/error/conflict. For in-cell text,
+numeric and JSON editing, Enter saves; Tab/Shift+Tab save then move forward/back;
+Escape cancels, and blur saves a changed valid draft. Composition input
 suppresses those shortcut decisions. resolveDataStudioCellKeyAction(key,
 shiftKey=false,isComposing=false) returns save/save-and-move/cancel or null.
 It is a public pure helper; it does not execute a write.
+
+## Date And Datetime Cells
+
+The focused popover has **Apply** and **Cancel** controls. Choosing a calendar
+date or changing a time selector only changes the local draft; leaving a portal
+control does not implicitly save. Apply validates and
+awaits the captured writer. Enter in the date field normalizes/validates that
+field; it does not commit the cell. Enter on a calendar day or time choice selects
+that choice without saving the cell. An unconsumed Enter in the precision text
+field can Apply; use the explicit Apply button for the common save path.
+Escape, Cancel or outside dismissal discards
+the local change. A nested calendar/selector consumes its own Escape before the
+cell editor closes. Pending saves block dismissal and duplicate interaction.
+
+Datetime editors include explicit seconds/milliseconds, so changing a minute
+does not truncate an existing timestamp's precision. Invalid typed values remain
+editable with field feedback. Unchanged Apply is an exact no-op, including
+absent values and explicit null. The [value contract](./values.md) describes
+calendar/local-time admission; the [shared primitives](../components/primitives/dates-and-time.md)
+describe picker options.
 
 A changed authoritative row revision while editing restores the latest value
 and reports a conflict instead of overwriting it. Commit awaits acceptance;

@@ -8,12 +8,12 @@ visibility: internal
 system: storage
 feature: storage-studio-inspector
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.2.1 development source with explicit visibility UI; not package-qualified"]
 modes: [single-tenant, multi-tenant, guardian-enabled, storage-enabled]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -45,7 +45,49 @@ Tabs are Preview, Details, Access and Sharing. Details include path/type/size/ch
 
 Preview is rendered by [StorageFilePreview](./storage-file-preview.md), unless a slot replaces it. Exact-object ACLs use [StorageObjectPermissionsPanel](./storage-object-permissions-panel.md) in native composition.
 
-Sharing separates an object's own public flag from effective visibility inherited through a public drive/path. An object's private flag does not negate a public drive. Durable visibility changes require ACL admin and policy permission; temporary links do not change visibility. A public drive disables the object's restrictive toggle until the drive is private.
+Sharing separates an object's own public flag from effective visibility inherited
+through a public drive. An object's private flag does not negate a public drive.
+Public folder flags do not automatically publish child objects; inherited
+ancestor ACL grants are a separate access mechanism. Durable visibility changes
+require ACL admin and policy permission; temporary links do not change visibility.
+A public drive disables the object's restrictive toggle until the drive is private.
+
+## Public Downloads
+
+Enable `storage.studio.publicAccess` deliberately before publishing:
+
+```ts
+import type { AppStorageConfig } from '@zero/framework/server';
+
+export const storage: AppStorageConfig = {
+  studio: {
+    enabled: true,
+    publicAccess: {
+      allowPublicDrives: true,
+      allowPublicObjects: true,
+    },
+  },
+};
+```
+
+Merge this module into the app's existing configuration; the normal server
+configuration update/restart applies. See [public access](../../backend/storage/public-access.md)
+for policy ceilings and inheritance rather than treating a UI prop as authority.
+
+- Select a drive, open **Settings**, choose **Public read** under Visibility and
+  save. Existing and future files inherit public downloads.
+- Select an individual file in a private drive, open **Sharing**, and choose
+  **Make public** under Public visibility. This sets the object's own flag.
+- Visibility stays visible when publishing is disabled, with an explanatory
+  disabled control. Existing public resources still offer **Make private** after
+  policy tightening. A public drive must be made private before an object's
+  private flag can restrict access. A public folder flag does not automatically
+  publish its children; descendant access via ancestor ACL grants is distinct.
+
+These controls do not permit anonymous upload, editing or permission changes.
+File publication requires live ACL admin; managed drive settings require the
+live control-plane authority. Short-lived download links remain a separate
+sharing option and do not change durable visibility.
 
 ## Slots And Composition
 

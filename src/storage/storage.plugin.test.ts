@@ -30,6 +30,10 @@ let app: ReturnType<typeof createApp> | null = null;
 let baseUrl = '';
 
 function createTestAdapter(): StorageAdapter {
+  const blobs = new Map<string, Uint8Array>();
+  const stream = (bytes: Uint8Array) => new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(bytes.slice()); controller.close(); },
+  });
   return {
     writeShutdownSafety: 'cooperative',
     async writeBlob(data, maxSize) {
@@ -41,25 +45,29 @@ function createTestAdapter(): StorageAdapter {
           { outcome: 'not-committed' },
         );
       }
+      const checksum = `test_${crypto.randomUUID()}`;
+      blobs.set(checksum, bytes.slice());
       return {
-        checksum: `test_${crypto.randomUUID()}`,
+        checksum,
         size: bytes.length,
         headBytes: bytes.slice(0, 512),
       };
     },
-    async readBlob() {
-      return null;
+    async readBlob(checksum) {
+      const bytes = blobs.get(checksum);
+      return bytes ? stream(bytes) : null;
     },
-    async readBlobRange() {
-      return null;
+    async readBlobRange(checksum, start, end) {
+      const bytes = blobs.get(checksum);
+      return bytes ? stream(bytes.slice(start, end + 1)) : null;
     },
-    async removeBlob() {},
-    removeBlobSync() {},
-    async blobExists() {
-      return true;
+    async removeBlob(checksum) { blobs.delete(checksum); },
+    removeBlobSync(checksum) { blobs.delete(checksum); },
+    async blobExists(checksum) {
+      return blobs.has(checksum);
     },
-    async blobSize() {
-      return 0;
+    async blobSize(checksum) {
+      return blobs.get(checksum)?.byteLength ?? 0;
     },
   };
 }
@@ -273,7 +281,7 @@ describe('storage route auth', () => {
   });
 
   test('keeps public drives readable without auth', async () => {
-    const { token } = await createUser();
+    const { token, user } = await createUser();
     const created = await createDrive(token, { name: 'Public docs', public: true });
 
     expect(created.status).toBe(200);
@@ -286,6 +294,13 @@ describe('storage route auth', () => {
     const fetched = await requestJson<DriveRecord>(`/storage/drives/${created.data.drive_id}`);
     expect(fetched.status).toBe(200);
     expect(fetched.data.drive_id).toBe(created.data.drive_id);
+    const content = 'Public via drive; no separate file publication required.';
+    const info = await getStorageService()!.objects.upload(created.data.drive_id,
+      '/readme.txt', new TextEncoder().encode(content), 'readme.txt', user.userId);
+    expect(info.isPublic).toBe(false);
+    const download = await fetch(`${baseUrl}/storage/drives/${created.data.drive_id}/files/readme.txt`);
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe(content);
   });
 
   test('allows anonymous read for public objects inside private drives', async () => {
@@ -309,6 +324,18 @@ describe('storage route auth', () => {
     expect(anonymousInfo.status).toBe(200);
     expect(anonymousInfo.data.path).toBe(info.path);
     expect(anonymousInfo.data.isPublic).toBe(true);
+    const download = await fetch(`${baseUrl}/storage/drives/${drive.drive_id}/files/public/readme.txt`);
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe('ok');
+    await service.objects.upload(drive.drive_id, '/private.txt', new TextEncoder().encode('private'),
+      'private.txt', user.userId);
+    const privateDownload = await fetch(`${baseUrl}/storage/drives/${drive.drive_id}/files/private.txt`);
+    expect(privateDownload.status).toBe(401);
+    const removal = await fetch(`${baseUrl}/storage/drives/${drive.drive_id}/files/public/readme.txt`, { method: 'DELETE' });
+    expect(removal.status).toBe(401);
+    service.objects.setVisibility(drive.drive_id, '/public/readme.txt', false);
+    const unpublished = await fetch(`${baseUrl}/storage/drives/${drive.drive_id}/files/public/readme.txt`);
+    expect(unpublished.status).toBe(401);
   });
 
   test('protects private read endpoints and allows the owner', async () => {

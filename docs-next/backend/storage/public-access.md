@@ -8,13 +8,13 @@ visibility: internal
 system: storage
 feature: public
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.2.1 development source with explicit visibility UI; package qualification pending"]
 modes: [single, multi, application, organization, personal, shared-cas]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
+  snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
 ---
@@ -34,9 +34,54 @@ false. A client requesting public:true cannot override those server ceilings.
 Provision/update/object visibility is admitted against current owner/capability
 policy.
 
-An object's visibility can differ from its parent drive subject to the admitted
-public-object policy; neither flag is authority to enumerate every private
-metadata row.
+To allow both drive-wide and individual-file publication, use this storage
+configuration module in the existing application configuration:
+
+```ts
+import type { AppStorageConfig } from '@zero/framework/server';
+
+export const storage: AppStorageConfig = {
+  studio: {
+    enabled: true,
+    publicAccess: {
+      allowPublicDrives: true,
+      allowPublicObjects: true,
+    },
+  },
+};
+```
+
+The application still supplies its other normal Guardian/Fabric/storage
+configuration. Settings are captured at server setup; changing this policy
+requires the normal configuration update/restart. `allowPublicDrives` requires
+`allowPublicObjects`; individual-object publication can be enabled without
+allowing public drives. These switches permit publication but do not themselves
+publish any drive/file or grant anonymous write/admin authority.
+
+## Drive And Object Visibility
+
+In the packaged Studio, select a drive and open **Settings → Visibility → Public
+read**, then Save settings. A public drive permits anonymous downloads of all
+its existing and future files; it is not a one-time copy of current permissions.
+An individual object's private flag cannot override its public drive. Make the
+drive private before restricting individual files.
+
+For a private drive, select a file and open **Sharing → Public visibility → Make
+public**. Only that object's own public flag changes; publishing a folder does
+not automatically publish its children. **Make private** clears
+the selected object's flag but does not negate a still-public drive.
+File visibility requires the current Storage ACL admin capability; managed
+drive settings require current Studio control-management authority. Both are
+admitted against their applicable server policy. Neither flag permits anonymous uploads, mutation or
+ACL editing, or authority to enumerate unrelated private metadata.
+
+When publication policy is off, the UI keeps the visibility controls visible
+with a disabled-public-action explanation, rather than silently omitting them.
+An already-public drive/object still offers the private remediation action after
+policy tightening. The control's presence is never backend authorization.
+See the [Studio inspector](../../frontend/storage/storage-studio-inspector.md)
+for the packaged control locations and [permissions](./permissions.md) for
+hierarchical grant/public-read composition.
 
 ## Signed Access Instead
 

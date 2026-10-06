@@ -28,7 +28,7 @@ export function DataStudioWorkspaceDialogs({ controller: c, ...p }: DataStudioWo
     <DataStudioTableDialog open={p.schemaOpen} table={c.selectedTable} busy={c.isMutating}
       maxColumns={c.capabilities?.limits.maxColumns}
       startWithNewColumn={p.startWithNewColumn} onOpenChange={p.onSchemaOpen} onUpdate={c.updateTable} />
-    <DataStudioRowDialog open={p.createRowOpen} table={c.selectedTable} busy={c.isMutating}
+    <DataStudioRowDialog open={p.createRowOpen} table={c.selectedTable} scopeKey={c.scopeKey} busy={c.isMutating}
       onOpenChange={p.onCreateRowOpen} onCreate={c.createRow} />
     <DataStudioConfirmDialog open={p.deleteTarget !== null} title="Delete this record?"
       operationKey={p.deleteTarget ? `${p.deleteTarget.rowId}:${p.deleteTarget.revision}` : undefined}

@@ -37,6 +37,15 @@ export interface DatePickerProps {
   onChange?: (date: Date | undefined) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** Read-only inputs remain inspectable; the calendar cannot mutate their value. */
+  readOnly?: boolean;
+  /** Optional controlled text buffer; retains invalid/incomplete parent-owned drafts. */
+  inputValue?: string;
+  /** Called for user text edits before the valid Date selection callback. */
+  onInputValueChange?: (value: string) => void;
+  /** Native field attributes and handlers without replacing picker-owned value handling. */
+  inputProps?: Omit<React.ComponentProps<typeof Input>, 'value' | 'defaultValue' | 'onChange' | 'type' | 'disabled' | 'readOnly' | 'placeholder'>;
+  triggerClassName?: string;
   className?: string;
   transition?: Transition;
   calendarProps?: DatePickerCalendarProps;
@@ -48,6 +57,11 @@ function DatePicker({
   onChange,
   placeholder = 'Pick a date',
   disabled = false,
+  readOnly = false,
+  inputValue: controlledInput,
+  onInputValueChange,
+  inputProps,
+  triggerClassName,
   className,
   transition,
   calendarProps,
@@ -62,12 +76,23 @@ function DatePicker({
     setInputInvalid(false);
   }, [formattedValue]);
 
+  React.useEffect(() => {
+    // A caller may reset an invalid buffer without changing the selected Date.
+    if (controlledInput !== undefined) setInputInvalid(false);
+  }, [controlledInput]);
+
+  React.useEffect(() => {
+    if (disabled || readOnly) setOpen(false);
+  }, [disabled, readOnly]);
+
   const commitInput = React.useCallback((candidate: string) => {
+    if (disabled || readOnly) return false;
     const trimmed = candidate.trim();
     if (!trimmed) {
       setInputValue('');
       setInputInvalid(false);
       onChange?.(undefined);
+      onInputValueChange?.('');
       return true;
     }
     if (trimmed === formattedValue) {
@@ -89,35 +114,45 @@ function DatePicker({
     setInputValue(formatDatePickerValue(parsed));
     setInputInvalid(false);
     onChange?.(parsed);
+    onInputValueChange?.(formatDatePickerValue(parsed));
     return true;
-  }, [calendarProps?.disabled, formattedValue, onChange]);
+  }, [calendarProps?.disabled, formattedValue, onChange, onInputValueChange, disabled, readOnly]);
 
   const handleInputChange = React.useCallback(
     (nextValue: string) => {
+      if (disabled || readOnly) return;
       setInputValue(nextValue);
       setInputInvalid(false);
+      onInputValueChange?.(nextValue);
       if (parseDatePickerInput(nextValue)) commitInput(nextValue);
     },
-    [commitInput],
+    [commitInput, disabled, readOnly, onInputValueChange],
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(next) => { if (!next || (!disabled && !readOnly)) setOpen(next); }}>
       <div
         data-slot="date-picker"
         className={cn('flex w-full min-w-0 items-center gap-2', className)}
       >
         <Input
+          {...inputProps}
           type="text"
           autoComplete="off"
           disabled={disabled}
-          value={inputValue}
+          readOnly={readOnly}
+          value={controlledInput ?? inputValue}
           placeholder={placeholder}
-          aria-invalid={inputInvalid || undefined}
-          aria-label={placeholder}
+          aria-invalid={inputInvalid || inputProps?.['aria-invalid'] || undefined}
+          aria-label={inputProps?.['aria-label'] ?? placeholder}
           onChange={(event) => handleInputChange(event.target.value)}
-          onBlur={(event) => commitInput(event.currentTarget.value)}
+          onBlur={(event) => {
+            commitInput(event.currentTarget.value);
+            inputProps?.onBlur?.(event);
+          }}
           onKeyDown={(event) => {
+            inputProps?.onKeyDown?.(event);
+            if (event.defaultPrevented || disabled || readOnly) return;
             if (event.key === 'Enter') {
               event.preventDefault();
               commitInput(event.currentTarget.value);
@@ -125,6 +160,7 @@ function DatePicker({
             if (event.key === 'Escape') {
               setInputValue(formattedValue);
               setInputInvalid(false);
+              if ((controlledInput ?? inputValue) !== formattedValue) onInputValueChange?.(formattedValue);
             }
           }}
         />
@@ -134,7 +170,8 @@ function DatePicker({
           type="button"
           variant="outline"
           size="icon"
-          disabled={disabled}
+          className={triggerClassName}
+          disabled={disabled || readOnly}
           aria-label="Open date picker"
           aria-invalid={inputInvalid || undefined}
         >
@@ -149,9 +186,11 @@ function DatePicker({
           defaultMonth={calendarProps?.month ? undefined : value ?? calendarProps?.defaultMonth}
           selected={value}
           onSelect={(date) => {
+            if (disabled || readOnly) return;
             setInputValue(formatDatePickerValue(date));
             setInputInvalid(false);
             onChange?.(date);
+            onInputValueChange?.(formatDatePickerValue(date));
             setOpen(false);
           }}
           autoFocus

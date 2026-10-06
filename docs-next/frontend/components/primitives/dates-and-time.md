@@ -8,12 +8,12 @@ visibility: internal
 system: frontend-components
 feature: date-time-inputs
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.2.1 development source with controlled-date-buffer additions; package qualification pending"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.2.1"
+  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
   snapshot: dirty
   date: "2026-10-05"
   evidence_level: source-observed
@@ -31,7 +31,7 @@ Use [schema codecs](../../../backend/schema/index.md) at the persistence boundar
 ## DatePicker
 
 DatePickerProps: value?:Date; onChange(Date|undefined); placeholder='Pick a date';
-disabled=false; className/transition/calendarProps. calendarProps omits mode,
+disabled=false; readOnly=false; className/transition/calendarProps. calendarProps omits mode,
 selected,onSelect,autoFocus because this component owns single selection.
 Typed numeric dates accept M/D/YYYY or M-D-YYYY, require matching separators,
 a four-digit year at least 1000, and reject invalid calendar days. The long
@@ -43,6 +43,21 @@ An empty value clears to undefined. Invalid or calendarProps.disabled-matching
 input remains marked invalid without committing. Escape restores the formatted
 parent value. Calendar selection emits a Date and closes the popover. Required,
 range, timezone and business rules remain server/form validation duties.
+
+For a form/controller that owns an unfinished text buffer, supply `inputValue`
+and `onInputValueChange(text)`. The text callback runs for user edits before valid
+Date selection is notified, so incomplete/invalid input can remain visible; the
+Date callback still admits only a valid date. This is additive: omitting these
+props retains the ordinary Date-controlled behavior. `inputProps` forwards
+native field ID, name, required, ARIA attributes and focus/blur/key handlers,
+without replacing picker-owned value/change/type handling. `triggerClassName`
+styles the calendar trigger; `readOnly` keeps the text inspectable but prevents
+typing/calendar changes. `disabled` still disables both input and trigger.
+
+Data Studio composes this picker with TimePicker and a separate precision field
+for typed date/datetime drafts. See [logical values](../../data-studio/values.md)
+for canonical date/UTC timestamp admission and precision; TimePicker itself
+continues to represent `HH:mm` rather than silently expanding its public format.
 
 ## DateRangePicker And Calendar
 
