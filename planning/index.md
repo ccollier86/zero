@@ -14,12 +14,12 @@ are not in the framework's current package publication list.
   and the actual public/internal Zero component reuse boundaries.
 - [Documentation/search review](./documentation-search-review.md): confirmed
   corrections, section-aware search, reader polish and regression evidence.
-  Implementation has resumed; final browser/archive release checks are tracked
+  Implementation and correction qualification pass; exact release checks are tracked
   in the qualification ledger below.
 
-The documentation reader and shared CodeBlock replacement are implemented on
-`feature/markdown-documentation-plugin`, targeting framework 2.5.0 and optional
-package 0.1.0. They are not published or merged to main. The plans retain the
+The documentation reader and shared CodeBlock replacement were implemented on
+`feature/markdown-documentation-plugin` for framework 2.5.0 and optional
+package 0.1.0, retaining main's intervening 2.4.1–2.4.3 fixes. The plans retain the
 original design record; supported usage belongs in the
 [plugin guide](../docs/plugins/markdown-docs.md) and
 [CodeBlock guide](../docs/frontend/code-block.md), with focused checks recorded

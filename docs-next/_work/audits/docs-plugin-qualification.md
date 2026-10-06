@@ -15,11 +15,12 @@ visibility: internal
 
 ## Identity And Scope
 
-Inspected 2026-10-06 on `feature/markdown-documentation-plugin`, based on
-committed main `636b1c01b3484317df56ce624c7cd57976ee417c` (framework 2.4.0).
-The additive working tree targets framework **2.5.0** and optional
-`@zero/plugin-docs` **0.1.0**. This is a dirty-source/archive qualification,
-not a clean release-commit qualification, registry publication or main merge.
+Inspected 2026-10-06 on `feature/markdown-documentation-plugin`. Implementation
+commit `d342418` includes the feature plus current main `b960920` (2.4.3),
+retaining the intervening array-policy, trigger and sidebar corrections.
+The source release targets framework **2.5.0** and optional
+`@zero/plugin-docs` **0.1.0**. Final archive/browser qualification is tracked
+separately below; no npm registry publication or public docs-tree cutover is inferred.
 The original whole-platform 2.1.1 audit baseline remains historical.
 
 All checks used synthetic content, isolated browser contexts and disposable
@@ -42,19 +43,21 @@ gate checks that no obsolete renderer files are shipped.
 The follow-up [reader/search review](../../../planning/documentation-search-review.md)
 found correctness gaps after the initial gates below. User-authorized fixes are
 now implemented across HTTP/artifact admission, compiler/search, reader and
-shared CodeBlock/build tracks. **Final UI acceptance and rebuilt installed-artifact
-qualification are in progress.** This ledger must not claim the current tree is
-ready merely because an older archive passed.
+shared CodeBlock/build tracks. Source UI acceptance and **rebuilt installed-artifact
+qualification now pass** at implementation commit `d342418`. A release-commit
+repeat retains exact provenance outside the repository; earlier artifacts are
+not substituted for that final gate.
 
 | Current gate | Executed evidence / remaining boundary |
 | --- | --- |
 | HTTP/artifact/server | `bun --no-env-file test packages/docs/src/server`: 35 passed / 312 assertions, zero failures, eight files. Includes frontend-reference invalidation, nonce/CSP no-store, exact projection validators, GET/HEAD, pending SSR retirement and strict search metadata admission. |
-| Integrated unit/content/server/search | Root-reported latest closeout: 96 passed / 592 assertions, followed by eight passing title/metadata regressions. These overlap earlier focused gates and are not additive coverage totals. |
+| Integrated unit/content/server/search | Final closeout: 104 passed /618 assertions, zero failures; includes title/description and standard frontmatter regressions. These overlap earlier focused gates and are not additive coverage totals. |
 | Compiler/search/text | Owner-reported focused gate: 19 passed / 56 assertions. Earlier broad compiler/search/server/SSR gate: 76 / 482; retained as earlier checkpoints, not current totals. |
-| UI response/range/selection helpers | Owner-reported 18 passed / 101 assertions. Real styled-browser acceptance remains pending. |
-| Framework TypeScript | HTTP/artifact checkpoint passed with no diagnostics. Final integrated checkpoint remains required. |
-| Reader browser/SSR closeout | In progress: short visual viewport, mobile keyboard geometry, nested drawer/search focus, native modified links, destination highlights and title/description cases. |
-| CodeBlock/build/rebuilt archive | Final owner-reported regressions and a newly built installed/compiled artifact identity must be recorded. Historical hashes below do not qualify these corrections. |
+| UI response/range/selection helpers | 18 passed /101 assertions; included in integrated unit closeout. |
+| Framework TypeScript | Integrated root and optional package checks passed with no diagnostics after the main merge. |
+| Reader browser/SSR closeout | 23 passed /180 assertions including the existing sidebar suite: short viewports, independent scrolling, named controls, nested drawer/search focus and two-modal landing, native links, destination highlights, syntax preservation, reduced motion and no-JS reading. |
+| CodeBlock/build | 45 focused tests /235 assertions; 11 CodeBlock browser tests /66 assertions. Native build/scaffold/UI examples: 24 /264. Subsequent exact-entry production serializer gate: 13 /67, including root/hash/replacement/chunks regressions. |
+| Rebuilt archive | Fresh clean-implementation archive gate passed 1 /131 assertions, including an awaited five-test compiled-reader browser suite. Checks cover public package imports, normal CLI, copied/compiled source-free deployment, private admission, actual nonce-CSP hydration, section search/landing, mobile focus/motion, clipboard and no-JS reading. |
 | Documentation | Current package/plugin/search/cache guides reconciled with source. Structural traversal: 715 pages/IDs/reachable, zero problems; `git diff --check` clean. Final combined example/closeout gate remains required. |
 
 Current HTTP logs: `docs-http-server-final.log` and `docs-http-typecheck.log`
@@ -62,6 +65,19 @@ under the configured project logs root. `docs-http-cache-red.log` records the
 unchanged pre-fix cache reproduction (zero passing/five failing tests), not a
 current failure. Source and helper counts establish narrow contracts; they do
 not imply a clean release commit, registry publication or whole-platform audit.
+
+Corrected implementation archives are retained in `installed-k9QBpw` under the
+external docs-plugin diagnostics root. `provenance.json` binds source commit
+`d342418`, Bun 1.3.14, exact framework/docs archives and their SHA-256 to copied
+and compiled deployment checks. The compiled-reader gate is now mandatory in
+the installed test, so an HTTP-only success cannot hide a broken browser graph.
+The release-commit repeat writes its own archive identities/provenance alongside
+these records, without self-referential archive hashes inside the package.
+
+Final source logs: `docs-reader-browser-qualified-final.log` (23 /180),
+`docs-plugin-final-unit-qualification.log` (104 /618),
+`docs-plugin-final-installed-qualification.log` (archive + compiled browser),
+`docs-plugin-final-root-typecheck.log` and `docs-plugin-final-package-typecheck.log`.
 
 ## Historical Initial Evidence
 
@@ -117,9 +133,11 @@ Current follow-up corrections:
 | Pending SSR could outlive the publication snapshot. | Final generation admission follows full async GET/HEAD rendering; controlled retirement barrier passes. |
 | Compiled passages/headings/labels could be oversized or inconsistent with rendered AST. | Per-page bounds and canonical annotation/text/order/ancestry validation reject stale/orphaned data; old snapshots without additive metadata derive from admitted AST. Five focused admission cases pass. |
 | Lowercase offsets, merged cells, missing visible labels and formatted heading identity corrupted search. | NFC-aware original-text ranges, boundary-preserving visible-text passages and heading anchors; compiler/search/text regressions pass. |
-| Search ranking/targeting lacked section context and descriptions. | Bounded per-page section results, ancestry, visible labels/descriptions, original-text highlights, immutable index windows and per-manifest bounded query cache. Source tests pass; final interaction/archive checks pending. |
-| Search viewport, nested focus, input naming and modifier navigation were broken. | Reader/shared Command corrections implemented; final real styled-browser acceptance in progress. |
-| CodeBlock transformer/build entry identities were incomplete. | Owned by the shared CodeBlock/build correction track; source implementation present, final regression/archive evidence pending. |
+| Search ranking/targeting lacked section context and descriptions. | Bounded per-page section results, ancestry, visible labels/descriptions, original-text highlights, immutable index windows and bounded query cache; unit and real-browser interactions pass. |
+| Search viewport, nested focus, input naming and modifier navigation were broken. | Reader/shared Command and coordinated drawer-close corrections pass actual styled-browser acceptance. |
+| CodeBlock transformer/build entry identities were incomplete. | Exact captured live hooks, explicit portable configuration identity and canonical/hash-bound entry snapshots pass focused unit/browser regressions. |
+| Broad entry snapshot callbacks broke Shiki linkage in real production output. | Exact anchored entry filters restore Bun's dependency graph without disabling minification or splitting. Production ESM serializer regression is red→green; installed gate now requires browser hydration. |
+| Standard `modes`/`related_packages` metadata was rejected. | Only those documented keys added to bounded safe metadata admission; actual Guardian frontmatter and private-publication regressions pass. |
 
 The following rows retain the initial correction history; their tests do not
 substitute for follow-up qualification above.
@@ -144,9 +162,10 @@ Staged features are product boundaries, not workarounds for broken implemented b
 
 ## Release And Remaining Boundaries
 
-- V1 correction implementation is being qualified. Final UI/build/installed-
-  artifact closeout is in progress; no registry publish or main merge was
-  performed by the checks recorded here.
+- V1 implementation and correction qualification pass. The main-branch release
+  retains all 2.4.1–2.4.3 fixes; the release-commit archive repeat is required
+  before its tag/push. No npm registry or documentation-site publication is
+  implied by source/local release qualification.
 - Local unpublished Bun archive consumers use an exact framework archive root
   override to resolve the optional package's framework peer, without patching
   package sources/imports. This is not a claim that an unpublished version exists

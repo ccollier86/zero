@@ -24,6 +24,13 @@ import { docs } from '@zero/plugin-docs';
 export default docs({ contentDir: './documentation' });
 ```
 
+For unpublished source/local installs, pack this directory using
+`bun pm pack --ignore-scripts --filename /absolute/artifacts/zero-plugin-docs-0.1.0.tgz`
+and add that archive from the app root. If the framework is also a saved archive,
+the app's root framework dependency and override must identify the same archive
+for this package's framework peer. A normal framework update alone does not
+install the optional docs package.
+
 Add `documentation/index.md` and other `.md` files. The default mount is `/docs`.
 The root is relative to Zero's captured application project root, not the
 request's current working directory. Production must use the declared app-build

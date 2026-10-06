@@ -8,11 +8,11 @@ const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const artifactRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/docs-plugin';
 const image = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg=='), character => character.charCodeAt(0));
 
-async function command(cmd: readonly string[], cwd: string, maximum = 60_000, environment?: Record<string, string | undefined>): Promise<string> {
+async function command(cmd: readonly string[], cwd: string, maximum = 60_000, environment?: Record<string, string | undefined>, captureStderr = false): Promise<string> {
   const child = Bun.spawn([...cmd], { cwd, env: environment, stdout: 'pipe', stderr: 'pipe' });
   const out = new Response(child.stdout).text(), error = new Response(child.stderr).text();
   const timeout = setTimeout(() => child.kill('SIGKILL'), maximum);
-  try { const code = await child.exited; const [stdout, stderr] = await Promise.all([out, error]); if (code !== 0) throw new Error(`Synthetic package command failed (${code}): ${stderr.slice(-8_000)}\n${stdout.slice(-2_000)}`); return stdout; }
+  try { const code = await child.exited; const [stdout, stderr] = await Promise.all([out, error]); if (code !== 0) throw new Error(`Synthetic package command failed (${code}): ${stderr.slice(-8_000)}\n${stdout.slice(-2_000)}`); return captureStderr ? stdout + '\n' + stderr : stdout; }
   finally { clearTimeout(timeout); }
 }
 async function write(root: string, name: string, contents: string | Uint8Array): Promise<void> {
@@ -142,7 +142,7 @@ test('fresh framework/docs archives qualify public imports and normal/compiled s
       if (executable) {
         // HTTP/SSR success does not prove emitted split JavaScript can hydrate. Qualify the actual archive.
         const browser = await command(['bun', '--no-env-file', 'test', join(repository, 'packages/docs/package-browser.integration.test.ts')], repository, 120_000,
-          { ...Bun.env, ZERO_DOCS_INSTALLED_BROWSER_URL: server.url + '/docs' });
+          { ...Bun.env, ZERO_DOCS_INSTALLED_BROWSER_URL: server.url + '/docs' }, true);
         await Bun.write(join(evidence, 'compiled-browser.log'), browser);
         provenance.compiledBrowser = { passed: true, log: join(evidence, 'compiled-browser.log') };
       }

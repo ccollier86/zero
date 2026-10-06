@@ -8,13 +8,13 @@ visibility: internal
 system: docs-plugin
 feature: search
 maturity: preview
-applies_to: ["@zero/framework 2.5.0 candidate with @zero/plugin-docs 0.1.0 candidate"]
+applies_to: ["@zero/framework 2.5.0 source/local release with @zero/plugin-docs 0.1.0"]
 modes: [public read-only, development, production]
 reviewed_against:
   package: "@zero/framework"
   version: "2.5.0"
-  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
-  snapshot: dirty
+  commit: "d342418408d7a3753d55b18a4882f76fc9eaee4b"
+  snapshot: committed
   date: "2026-10-06"
   evidence_level: source-observed
 ---

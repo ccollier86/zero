@@ -2,10 +2,37 @@
 
 [Optional plugins](./index.md)
 
-The working 2.5.0 framework integration introduces the separately installed
+The 2.5.0 source/local framework release introduces the separately installed
 `@zero/plugin-docs` 0.1.0 package. It provides a public, read-only docs section
 from a Markdown folder. Registry publication/release qualification is separate
-from implementation; do not assume a released 2.4.0 package has this build seam.
+from implementation; do not assume a 2.4.x package has this build seam.
+
+## Source And Local Archive Installation
+
+The framework remains updateable through the normal main-branch `zero-update`.
+The optional plugin is a separate package in the Zero repository's
+`packages/docs` directory; it is not implicitly installed by that updater.
+Do not assume an npm registry release exists. For the qualified source/local
+channel, build its archive from the selected Zero checkout:
+
+```sh
+cd /path/to/zero/packages/docs
+bun pm pack --ignore-scripts --filename /path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+```
+
+Then, from the consuming application's root:
+
+```sh
+bun add file:/path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+```
+
+Use framework 2.5.0 or newer within major 2. If the framework is itself an
+unpublished saved archive, keep the root `@zero/framework` dependency and root
+override pointing to that same archive so Bun resolves the plugin's framework
+peer to the installed package. The normal updater preserves that override
+relationship. Do not patch the plugin's imports or its installed framework copy.
+See [upgrading](../upgrading-2.2.md#25-documentation-and-codeblock-update) and
+[package qualification](../../docs-next/_work/audits/docs-plugin-qualification.md).
 
 ## Minimal Usage
 
@@ -56,7 +83,10 @@ links/fragments and unsafe/excluded assets reject publication.
 
 Frontmatter is optional. It can set `title`, `description`, `slug`, `id`,
 `navigation: {label, order, hidden}`, `searchable`, `redirects`, and explicit
-publication classification. Custom metadata is namespaced.
+publication classification. Standard bounded documentation metadata such as
+`modes`, `related_packages`, `audience` and `reviewed_against` is retained as data;
+other custom metadata is namespaced. None of these fields grants publication
+permission or configures the application.
 
 The selected content-root `.docsignore` uses Git patterns and ordered negation.
 It does not read ambient `.gitignore` or global Git state. Mandatory internal

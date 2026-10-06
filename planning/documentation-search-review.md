@@ -8,11 +8,15 @@ Recorded 2026-10-06 against the uncommitted
 `636b1c01b3484317df56ce624c7cd57976ee417c` (2.4.0), targeting framework 2.5.0
 and optional docs package 0.1.0.
 
-Status: correction implementation and documentation are in progress on
-2026-10-06 after user approval. Backend search/content and HTTP/artifact admission
-are implemented and passing their focused source regressions. Reader interaction,
-CodeBlock/build and rebuilt installed-artifact qualification require their owner’s
-final recorded gates; UI acceptance is **in progress**, not yet a release claim.
+Status: all original corrections and search polish are implemented after user
+approval. Source implementation is committed as `d342418` after merging main's
+2.4.1–2.4.3 corrections. The final reader/sidebar browser gate passes 23 tests /
+180 assertions; compiler/runtime/search/UI-unit closeout passes 104 / 618.
+Production bundle qualification additionally found and corrected an entry-hook
+dependency-graph defect. Fresh archive + compiled-reader qualification has
+passed at the implementation commit, including the actual compiled reader's
+five browser cases. The release-commit repeat records its own exact archive
+provenance; source success is not a claim that an older archive is usable.
 No confirmed defect is accepted as a documentation-only limitation. The original
 review was read-only; the authorized correction pass is not.
 
@@ -96,12 +100,14 @@ pre-correction implementation, not the new supported contract below.
 | Findings | Current state and acceptance boundary |
 | --- | --- |
 | 1: HTTP deployment/nonce cache | Corrected. Complete rendered HTML identity, nonce-matched no-store policy, GET/HEAD, quoted validators and exact text projections pass controlled cache regressions. |
-| 2–5: palette sizing, nested focus, naming, native navigation | Implemented in the reader/shared Command composition. Final real styled-browser acceptance remains in progress; source presence alone is not a browser pass. |
+| 2–5: palette sizing, nested focus, naming, native navigation | Corrected. Actual styled-browser qualification passes, including constrained viewports, named combobox, Escape-to-drawer return, native background-tab links, and closing both modal lifecycles before same-page landing. |
 | 6–10: Unicode, projections/headings, bounds, description | Corrected in compiler/search with focused regression coverage, including original-text ranges, separated cells and displayed labels. Eight title/metadata follow-up regressions also pass. |
-| 11: custom CodeBlock identity | Correction owned by the shared CodeBlock track; final regression/rebuilt-package evidence must be recorded before closeout. |
-| 12: browser-entry admission | Source now uses the shared canonical/hash-bound admitted-byte reader before bundling, without claiming a transitive import sandbox. Final build/archive evidence must be recorded before closeout. |
+| 11: custom CodeBlock identity | Corrected. Exact captured hooks, mutable-option/generation fences and versioned portable identity pass 45 focused tests /235 assertions plus 11 CodeBlock browser tests /66 assertions. |
+| 12: browser-entry admission | Corrected. Canonical/hash-bound byte admission and exact entry-only loader hooks preserve ordinary dependency analysis, relative imports and lazy chunks. Production serializer/root/hash/path-replacement tests pass; final rebuilt archive follows below. |
 | Additional: compiled search metadata | Artifact admission validates bounded passage IDs/text/order/ancestry against the admitted AST; rejects orphaned/stale/inconsistent metadata and supports legacy snapshots without additive annotations. Focused regressions pass. |
 | Additional: pending SSR retirement | GET and fully rendered HEAD cannot return a snapshot retired while asynchronous SSR was pending. Controlled generation-barrier regression passes. |
+| Additional: native production bundle | Broad snapshot callbacks dropped Shiki's serializer binding even without minification/splitting. Anchored entry-only callbacks restore the full graph; the failing production ESM serializer test now passes without disabling optimizations. Installed qualification now requires actual compiled-browser hydration. |
+| Additional: standard documentation metadata | Bounded `modes` and `related_packages` admission supports the documentation standards without publishing internal/draft/_work content or admitting arbitrary metadata keys. Four focused regressions pass. |
 
 See the [qualification ledger](../docs-next/_work/audits/docs-plugin-qualification.md)
 for exact evidence. Old archives/screenshots predate these changes and cannot
@@ -122,7 +128,7 @@ qualify the current runtime by implication.
 | Highlighting | Safe original-text ranges in result text; native CSS text highlights, focus and outline in the destination. Code/inline markup preserved; explicit clear/Escape/navigation cleanup. |
 | Privacy | Query absent from canonical links/history and standard failure events; one-use, five-minute per-tab/mount handoff bound to pageHash. HTTP q still requires proxy access-log redaction. |
 | Native links/focus | Modified clicks/new tabs preserve browser behavior; Escape restores actual invoker, including an open mobile drawer. |
-| Viewport | Input/footer pinned, results independently scroll, palette follows current visual viewport; final browser acceptance in progress. |
+| Viewport | Input/footer pinned, results independently scroll, palette follows current visual viewport; real short-screen/mobile browser checks pass. |
 | Lifecycles | Query/base-path ownership, abort/late-result fencing, loading/empty/error/retry states. |
 | Index lifetime | Prebuilt bounded passage windows and at most 32 cached query results per immutable manifest; new publication cannot reuse retired results. |
 | Publication | One admitted immutable manifest; no separate private-source search scanner. |
@@ -130,8 +136,8 @@ qualify the current runtime by implication.
 ## Focused Search Polish Delivery
 
 Implemented contracts are documented in the [search guide](../docs-next/plugins/docs/search.md).
-Checked entries mean source implementation exists; final browser/archive gates
-remain separately required.
+Checked entries are implemented and source-browser verified. The installed
+archive gate additionally executes the compiled reader under its nonce CSP.
 
 - [x] Index passages with nearest heading and section ancestry.
 - [x] Return a useful section target and passage-centered excerpt.
@@ -156,8 +162,9 @@ search are optional later features, not prerequisites for this pass.
 
 Current correction gates:
 
-- Root-reported integrated unit/content/server/search closeout: 96 passed /
-  592 assertions, followed by eight passing title/metadata regressions. Earlier
+- Final integrated unit/content/server/search/UI closeout: 104 passed /
+  618 assertions. Actual reader + existing collapsed-sidebar browser closeout:
+  23 passed /180 assertions. Earlier
   focused checkpoints below overlap and are not additive coverage totals.
 
 - `bun --no-env-file test packages/docs/src/server`: 35 passed, zero failed,
@@ -168,8 +175,9 @@ Current correction gates:
   these overlap and are not additive totals.
 - UI range/route/selection helpers: 18 passed / 101 assertions, as reported by
   their owner. Helpers are not a substitute for real styled-browser behavior.
-- Full framework TypeScript passed after HTTP/artifact changes. Final integrated
-  typecheck/browser/build/archive gates remain the root owner’s closeout.
+- Integrated framework and optional-package TypeScript passed after the main merge.
+  Native build/scaffold/UI example gate: 24 passed /264 assertions; the subsequent
+  exact-entry production serializer gate: 13 passed /67 assertions.
 
 The following evidence and timing are **historical pre-correction observations**.
 They explain why the work was requested, not the performance or release status

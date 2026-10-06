@@ -8,13 +8,13 @@ visibility: internal
 system: docs-plugin
 feature: overview
 maturity: preview
-applies_to: ["2.5.0 working implementation; search/cache corrections under qualification; publication pending"]
+applies_to: ["2.5.0 source/local release with @zero/plugin-docs 0.1.0"]
 modes: [public read-only, development, production]
 reviewed_against:
   package: "@zero/framework"
   version: "2.5.0"
-  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
-  snapshot: dirty
+  commit: "d342418408d7a3753d55b18a4882f76fc9eaee4b"
+  snapshot: committed
   date: "2026-10-06"
   evidence_level: source-observed
 related_packages:
@@ -52,9 +52,10 @@ Add `documentation/index.md` and other `.md` pages. The default mount is `/docs`
 Relative paths resolve against the captured app configuration root, not whatever
 directory happens to be current when a request arrives.
 
-The documented implementation targets the next framework release; a released
-2.4.0 package does not contain its new build integration. This draft is not an
-instruction to install a nonexistent registry version.
+The build integration is available in the 2.5.0 source/local release; a 2.4.x
+package does not contain it. The optional package is qualified through fresh
+archives, not assumed to exist in a public registry. Follow the
+[installation boundary](../../../docs/plugins/markdown-docs.md#source-and-local-archive-installation).
 
 ## Guides And References
 
