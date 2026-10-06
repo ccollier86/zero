@@ -89,6 +89,11 @@ The exact Administration Organization contract is documented in
 
 ## Create A Local App
 
+For a collaborator setting up a Mac from the private `CollabMDorg/zero` clone,
+use the [Mac CLI setup kit](./cli-tools/README.md). It includes a portable
+installer for the four commands and [Codex setup instructions](./cli-tools/CODEX_SETUP.md)
+that record the recipient's checkout and installation paths.
+
 Install the local tools once, then generate a package-mode app from the saved
 committed-`main` package:
 
