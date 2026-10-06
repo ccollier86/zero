@@ -5,6 +5,22 @@ source-audit correctness fixes described in the [changelog](../CHANGELOG.md).
 This guide applies to existing Zero 2.x applications. It is not the legacy
 1.3-to-2.x system-database migration guide.
 
+## 2.4.1 Exact Array Authorization
+
+Update using the normal saved-main package workflow. This update requires no
+Zero migration or change to existing scalar constraints, table components or
+unfiltered Fabric `list` calls. Applications choosing the new predicate own
+their row projections and trusted membership-grant updates.
+
+`ResourceDataConstraint` and Fabric `DatabaseFindFilter` accept
+`operator: 'arrayOverlaps'` with a bounded string-array value. Empty scope matches
+nothing; stored malformed/mixed/non-array/oversized values deny the entire row.
+Returned row constraints now guard get/update/delete and receipt replay: an
+application callback returning `allowed: true` cannot bypass its own constraint.
+Read the [complete array-policy guide](../docs-next/backend/resources/array-overlap.md)
+before enabling it. New platform/agent work should start in
+[`docs-next/start-here.md`](../docs-next/start-here.md).
+
 ## 2.4 Button Group And Context Menu
 
 Zero 2.4.0 adds the optional [Button Group](./frontend/button-group.md) and

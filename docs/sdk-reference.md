@@ -4432,10 +4432,12 @@ deliberate `zero.unsafe.system` escape hatch, and workflow/background contexts
 do not receive it. Ordinary app code should use Guardian and platform service
 APIs instead.
 
-`list(table, { limit, after? })` reads 1–500 rows in declared-primary-key
+`list(table, { limit, after?, filters? })` reads 1–500 rows in declared-primary-key
 ascending order. `after` is an exclusive primary-key cursor, so passing the
 last row ID from one page cannot duplicate it in the next page. Use `find()`
-for projection, filtering, ordering, or offset pagination.
+for projection, custom ordering, or offset pagination. Optional `filters` use
+the same `DatabaseFindFilter` contract and apply before cursor paging; omitted
+filters preserve existing calls.
 
 `mutate()` accepts exactly four exported `DatabaseMutation` shapes:
 
@@ -4478,7 +4480,7 @@ const result = await zero.data.find('projects', {
 | --- | --- |
 | `select?` | Non-empty unique projection; at most 128 registered fields. Omitting it still requires the table catalog itself to fit that bound. |
 | `filters?` | Top-level predicates are ANDed. A predicate is a field filter or a non-empty nested `allOf`/`anyOf` group. |
-| field operators | `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `contains`, and `in`. `like`/`contains` require strings; ordered comparisons reject `null`; `in` accepts 1–50 scalars. |
+| field operators | `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `contains`, `in` and `arrayOverlaps`. `like`/`contains` require strings; ordered comparisons reject `null`; `in` accepts 1–50 scalars; `arrayOverlaps` accepts 0–50 exact strings and empty values match nothing. |
 | `match?: 'exact'` | Reserved exact storage-class/BINARY comparison for framework-owned `eq`/`ne` authorization constraints. |
 | `order?` | Non-empty unique registered fields; at most 8 terms. The actor adds the primary key as the deterministic tie-breaker. |
 | `limit` / `offset?` | `limit` is 1–1,001; `offset` is 0–1,000,000. |
@@ -4490,6 +4492,14 @@ payload size at 1 MiB, one string at 256 KiB, one object at 1,024 properties,
 and one array at 10,000 items. Invalid shape is
 `DATABASE_PAYLOAD_INVALID`; an exceeded hard budget is
 `DATABASE_PAYLOAD_LIMIT`.
+
+`DatabaseFindArrayOverlapFilter` is exported alongside the existing extensible
+`DatabaseFindFieldFilter` interface. Resource policies use the separately
+exported `ResourceArrayOverlapConstraint`. SQL and realtime row matchers accept
+bounded JSON string arrays, reject invalid retained data as a whole, and compare
+elements with case-sensitive BINARY semantics. Read the
+[complete array-policy contract](../docs-next/backend/resources/array-overlap.md)
+before deriving scope values; caller filters are not authority.
 
 `batch()` accepts exported `DatabaseAssertion` preconditions evaluated in the
 same transaction, in declaration order, before its mutations:

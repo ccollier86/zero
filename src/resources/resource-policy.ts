@@ -37,6 +37,7 @@ export type {
   OwnerPolicyCreateMode,
   OwnerPolicyOptions,
   ResourceAction,
+  ResourceArrayOverlapConstraint,
   ResourceDataConstraint,
   ResourceFieldConstraint,
   ResourceMetadataRequirement,

@@ -321,6 +321,29 @@ describe('DatabaseReaderRuntime', () => {
     ]);
   });
 
+  test('shares strict array-overlap find and filtered-list results across reader/writer lanes', () => {
+    for (const [id, value] of [
+      ['a', '["hidden"]'], ['b', '["group_A"]'], ['c', '["GROUP_A"]'],
+      ['d', '["group_A", 1]'], ['e', '["group_A", "Nڀ"]'],
+      ['f', '["group_A", "x\\u0000\\ud800"]'], ['g', '["group_A", "group_A"]'],
+    ]) writer.db.createStrict('flags', { id: id!, value: value! });
+    const engine = new DatabaseWriterOperationEngine({ runtime: writer, realm });
+    const filters = [{
+      type: 'field', field: 'value', operator: 'arrayOverlaps', value: ['group_A'],
+    }];
+    const find = { type: 'find', table: 'flags', select: ['id'], limit: 10, filters };
+    expect(reader.execute(find).value).toEqual([{ id: 'b' }, { id: 'e' }, { id: 'g' }]);
+    expect(engine.execute(find).value).toEqual(reader.execute(find).value);
+    const list = { type: 'list', table: 'flags', limit: 1, after: 'b', filters };
+    expect(reader.execute(list).value).toEqual({
+      rows: [{ id: 'e', value: '["group_A", "Nڀ"]' }], nextCursor: 'e',
+    });
+    expect(engine.execute(list).value).toEqual(reader.execute(list).value);
+    expect(reader.execute({ ...list, after: 'e' }).value).toEqual({
+      rows: [{ id: 'g', value: '["group_A", "group_A"]' }], nextCursor: null,
+    });
+  });
+
   test('reads the previous committed WAL value while another writer is uncommitted', () => {
     const external = new Database(filePath);
     try {

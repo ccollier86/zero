@@ -496,6 +496,7 @@ export function anyOf(...policies: ResourcePolicy[]): ResourcePolicy {
 
       for (const policy of policies) {
         const decision = await evaluateResourcePolicy(policy, context);
+        if (decision.reason === 'policy-invalid') return decision;
         if (decision.allowed) {
           allowedDecisions.push(decision);
         } else {

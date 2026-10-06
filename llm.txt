@@ -1,3 +1,6 @@
 # Zero Agent Guide
 
-The canonical agent-facing guide is [llms.txt](./llms.txt).
+Start at [the new Zero documentation](./docs-next/start-here.md), then use its
+[system index](./docs-next/index.md) and [coding-agent guide](./docs-next/agents/index.md).
+The [llms.txt](./llms.txt) bundle remains a compatibility orientation, not a
+replacement for the current feature/version reference.

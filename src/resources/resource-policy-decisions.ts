@@ -14,6 +14,7 @@ import type {
   ResourcePolicyDenyReason,
   ResourcePolicyScalar,
 } from './resource-policy-types';
+import { inspectResourcePolicyOutput } from './resource-policy-output-validation';
 
 /** Create an allowed policy decision with optional constraints or stamped input. */
 export function allowResourcePolicyDecision(
@@ -48,14 +49,15 @@ export function normalizeResourcePolicyDecision(
   if (input === true) return allowResourcePolicyDecision();
   if (input === false) return denyResourcePolicyDecision('forbidden', 403, 'Forbidden');
 
-  if (input.allowed) return allowResourcePolicyDecision(input);
+  const decision = inspectResourcePolicyOutput(input);
+  if (decision.allowed) return allowResourcePolicyDecision(decision);
 
   return {
-    ...input,
+    ...decision,
     allowed: false,
-    status: input.status ?? 403,
-    message: input.message ?? 'Forbidden',
-    reason: input.reason ?? 'forbidden',
+    status: decision.status ?? 403,
+    message: decision.message ?? 'Forbidden',
+    reason: decision.reason ?? 'forbidden',
   };
 }
 

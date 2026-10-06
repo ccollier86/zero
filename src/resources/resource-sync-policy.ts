@@ -37,8 +37,8 @@ import type {
   ResourceDataConstraint,
   ResourcePolicyAuthConfig,
   ResourcePolicyDecision,
-  ResourcePolicyScalar,
 } from './resource-policy-types';
+import { matchesResourceDataConstraints } from './resource-constraint-matcher';
 import type { RegisteredResourceDefinition, ResourceRegistry } from './resource-registry';
 import {
   isResourceTenantRowScope,
@@ -513,30 +513,7 @@ function policyDenied(decision: ResourcePolicyDecision): ResourceSyncDenyDecisio
 function createConstraintRowFilter(constraints: readonly ResourceDataConstraint[]): SyncRowFilter {
   return {
     matches(row) {
-      return constraints.every((constraint) => matchesConstraint(row, constraint));
+      return matchesResourceDataConstraints(row, constraints);
     },
   };
-}
-
-function matchesConstraint(row: Row, constraint: ResourceDataConstraint): boolean {
-  if (constraint.type === 'field') {
-    return scalarEquals(row[constraint.field], constraint.value);
-  }
-
-  if (constraint.type === 'anyOf') {
-    return constraint.constraints.some((child) => matchesConstraint(row, child));
-  }
-
-  return constraint.constraints.every((child) => matchesConstraint(row, child));
-}
-
-function scalarEquals(actual: unknown, expected: ResourcePolicyScalar): boolean {
-  if (typeof expected === 'boolean') {
-    return actual === expected ||
-      actual === (expected ? 1 : 0) ||
-      actual === (expected ? '1' : '0') ||
-      actual === String(expected);
-  }
-
-  return actual === expected;
 }

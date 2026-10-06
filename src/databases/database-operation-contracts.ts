@@ -131,6 +131,8 @@ export interface DatabaseListOperation {
   readonly table: string;
   readonly limit: number;
   readonly after?: string;
+  /** Schema-validated predicates applied before the cursor and page limit. */
+  readonly filters?: readonly DatabaseFindFilter[];
   readonly consistency?: DatabaseReadConsistency;
 }
 
@@ -144,13 +146,14 @@ export type DatabaseFindFilterOperator =
   | 'lte'
   | 'like'
   | 'contains'
-  | 'in';
+  | 'in'
+  | 'arrayOverlaps';
 
-/** One schema-validated field predicate. */
+/** One existing scalar/in predicate; array overlap has a separate value type. */
 export interface DatabaseFindFieldFilter {
   readonly type: 'field';
   readonly field: string;
-  readonly operator: DatabaseFindFilterOperator;
+  readonly operator: Exclude<DatabaseFindFilterOperator, 'arrayOverlaps'>;
   readonly value: DatabaseSerializableScalar | readonly DatabaseSerializableScalar[];
   /**
    * Framework-owned equality constraints may require storage-class and BINARY
@@ -158,6 +161,18 @@ export interface DatabaseFindFieldFilter {
    * predicate. It is intentionally valid only for eq/ne.
    */
   readonly match?: 'exact';
+}
+
+/** Named scalar/in view of the original extensible field-filter interface. */
+export type DatabaseFindScalarFieldFilter = DatabaseFindFieldFilter;
+
+/** ANY exact, bounded string intersection with a retained JSON string array. */
+export interface DatabaseFindArrayOverlapFilter {
+  readonly type: 'field';
+  readonly field: string;
+  readonly operator: 'arrayOverlaps';
+  readonly value: readonly string[];
+  readonly match?: never;
 }
 
 /** A non-empty nested conjunction or disjunction of find predicates. */
@@ -169,6 +184,7 @@ export interface DatabaseFindFilterGroup {
 /** Recursive, declarative find predicate with no raw SQL escape hatch. */
 export type DatabaseFindFilter =
   | DatabaseFindFieldFilter
+  | DatabaseFindArrayOverlapFilter
   | DatabaseFindFilterGroup;
 
 /** One deterministic structured-find ordering term. */
@@ -331,6 +347,8 @@ export type DatabaseListPage = Readonly<{
 export interface DatabaseListPageOptions {
   readonly limit: number;
   readonly after?: string;
+  /** Top-level predicates are joined with AND before keyset pagination. */
+  readonly filters?: readonly DatabaseFindFilter[];
 }
 
 /** Public convenience input for one structured find. */

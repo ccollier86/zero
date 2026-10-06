@@ -8,6 +8,11 @@ reuse the same contract for static validation and safety guidance.
 
 Import from the server surface:
 
+For exact multi-group row visibility in 2.4.1+, see the
+[array-overlap authorization guide](../../docs-next/backend/resources/array-overlap.md).
+It includes public `ResourceDataConstraint`/Fabric filter examples, bounded
+string-array semantics, row-action enforcement and live Sync behavior.
+
 ```ts
 import {
   adminOnly,

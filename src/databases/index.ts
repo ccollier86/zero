@@ -219,6 +219,8 @@ export type {
   DatabaseBatchInput,
   DatabaseCommitResult,
   DatabaseFindFieldFilter,
+  DatabaseFindArrayOverlapFilter,
+  DatabaseFindScalarFieldFilter,
   DatabaseFindFilter,
   DatabaseFindFilterGroup,
   DatabaseFindFilterOperator,

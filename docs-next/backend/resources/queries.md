@@ -53,6 +53,9 @@ Server realm/policy equality uses exact storage-class/BINARY matching where
 needed so SQLite affinity/collation does not broaden an authorization predicate.
 
 Server constraints are ANDed with client controls, never replaced by them.
+`arrayOverlaps` adds exact string-array membership to server-owned resource
+constraints and Fabric finds/lists. It is not a serialized-JSON search operator;
+see [array authorization](./array-overlap.md) for semantics, bounds and examples.
 Projected output is distinct from the full server row used for authorization.
 Do not filter or sort hidden columns to infer protected values.
 

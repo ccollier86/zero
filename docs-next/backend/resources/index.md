@@ -41,6 +41,7 @@ isolation replaces resource policy.
 - [Policies](./policies.md): public/authenticated/owner/metadata/custom helpers.
 - [Guardian integration](./guardian-integration.md): live RBAC, actor references and tenant kinds.
 - [Policy composition](./policy-composition.md): constraints/stamps under AND/OR.
+- [Array overlap](./array-overlap.md): exact, bounded group-membership constraints across HTTP, Fabric and Sync.
 - [Field access](./field-access.md): read/write/filter/order allowlists.
 - [Input validation](./input-validation.md): scalar bodies and immutable identities.
 

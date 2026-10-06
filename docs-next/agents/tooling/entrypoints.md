@@ -23,8 +23,10 @@ reviewed_against:
 
 [Tooling index](./index.md) · [Documentation index](../../index.md)
 
-The compatibility entry file llm.txt points readers at the comprehensive llms.txt
-bundle. These are shipped knowledge files, not commands, runtime agents or
+The compatibility entry files `llm.txt`, `llms.txt` and `docs/start-here.md`
+route readers to [the new Start Here guide](../../start-here.md),
+[system index](../../index.md) and [agent guidance](../index.md).
+These are shipped knowledge files, not commands, runtime agents or
 policy-enforcement mechanisms. They do not automatically execute a browser,
 Doctor, migration, deployment or code generator.
 

@@ -3,7 +3,7 @@
 import type { ServerWebSocket } from 'bun';
 import { resolveSyncAuthContext, sameSyncAuthContext } from './sync-auth';
 import { resolveSyncSocketAccess } from './sync-socket-access';
-import type { SyncAuthContext, SyncSocketData } from './types';
+import type { SyncAuthContext, SyncSocketData, SyncTokenVerifier } from './types';
 import type { createSyncSocketAuthRuntime } from './sync-socket-auth';
 
 const DEFAULT_REVALIDATION_MS = 30_000;
@@ -199,11 +199,21 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
       closeInvalidSocket(socket, 4001, 'Auth context changed');
       return false;
     }
-    if (!data.authContext) return validateReadAuthority(socket);
-    const verifier = options.auth.getTokenVerifier();
+    return validateDurableAuthority(socket, options.auth.getTokenVerifier(), true);
+  }
+
+  /** Share the durable-session fence without duplicating bearer/profile resolution. */
+  function validateDurableAuthority(
+    socket: ServerWebSocket<SyncSocketData>,
+    verifier: SyncTokenVerifier | null | undefined,
+    includeReadAuthority: boolean,
+  ): boolean {
+    const data = socket.data;
+    if (disposed || !isSocketActive(socket) || !data.authResolved) return false;
+    if (!data.authContext) return !includeReadAuthority || validateReadAuthority(socket);
     const reference = data.authAuthorityReference ?? null;
     if (!reference || !verifier?.resolveAuthContextAuthority) {
-      if (!options.requireDurableAuthority) return validateReadAuthority(socket);
+      if (!options.requireDurableAuthority) return !includeReadAuthority || validateReadAuthority(socket);
       closeInvalidSocket(socket, 1011, 'Durable Sync authority unavailable');
       return false;
     }
@@ -214,7 +224,7 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
         closeInvalidSocket(socket, 4001, 'Auth context changed');
         return false;
       }
-      return validateReadAuthority(socket);
+      return !includeReadAuthority || validateReadAuthority(socket);
     } catch {
       closeInvalidSocket(socket, 1011, 'Sync authority revalidation failed');
       return false;
@@ -226,8 +236,14 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
     generation: number,
   ): Promise<boolean> {
     const data = socket.data;
+    // Token expiry may permit a same-authority refresh with retained caches;
+    // durable session/membership revocation must instead invalidate the data
+    // boundary, even when the bearer resolver subsequently reports only an
+    // invalid token. Fence both sides of that asynchronous lookup.
+    if (!validateDurableAuthority(socket, options.auth?.getTokenVerifier(), false)) return false;
     const current = await resolveSyncAuthContext(data.authToken, options.auth);
     if (!isCurrent(socket, generation)) return false;
+    if (!validateDurableAuthority(socket, options.auth?.getTokenVerifier(), false)) return false;
     if (!current.ok || !current.authContext) {
       closeInvalidSocket(socket, current.ok ? 4001 : current.closeCode,
         current.ok ? 'Auth context changed' : current.reason);

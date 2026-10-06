@@ -76,6 +76,8 @@ export interface RegisteredResourceDefinition extends Omit<
   'primaryKey' | 'exposure'
 > {
   readonly primaryKey: string;
+  /** Detached full server columns used to validate policy output, including unreadable fields. */
+  readonly columns?: readonly string[];
   readonly exposure: RegisteredResourceExposure;
   readonly storage: RegisteredResourceStorage;
 }
@@ -190,6 +192,7 @@ export class ResourceRegistry {
       const registered: RegisteredResourceDefinition = Object.freeze({
         ...resource,
         primaryKey,
+        columns: Object.freeze(getResourceTableColumns(context.tables[resource.table])),
         exposure: normalizeRegisteredResourceExposure(resource.exposure),
         storage: normalizeRegisteredResourceStorage(resource, isolation),
       });

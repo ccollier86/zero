@@ -2,6 +2,38 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.4.1 - 2026-10-06
+
+This compatible authorization update adds exact string-array overlap across
+Resources, bound Fabric queries and realtime Sync. It does not include the
+unfinished documentation website/CodeBlock feature, UI redesign or changes to
+Pantheon data. No framework database migration is required. Applications still
+own their group-label/projection migration and trusted grant derivation.
+
+### Added And Fixed
+
+- Public `ResourceArrayOverlapConstraint` and `DatabaseFindArrayOverlapFilter`
+  with `operator: 'arrayOverlaps'` and bounded string-array values. Resource
+  SQL/find translation preserves this operator, ANDs it with tenant/client
+  constraints, and applies it before ordered paging. Filtered Fabric cursor
+  lists add optional `filters` without changing existing call sites.
+- Shared SQL/in-memory exact matching rejects malformed, mixed-type, oversized
+  and non-array retained data; empty allowed lists deny access. Case-sensitive
+  element matching has no substring, affinity or scalar-coercion behavior.
+  Guarded JSON traversal and bounded payload validation preserve actor and
+  reader/executor admission.
+- Validated returned resource constraints guard loaded get/update/delete rows
+  and receipt replay as well as list queries. Full/lazy Sync, catch-up, live
+  membership-label changes and live authority invalidation retain the predicate.
+- Periodic Sync revalidation now checks durable authority before and after
+  asynchronous bearer verification. Revoked memberships purge cached rows
+  instead of being misclassified as an ordinary expired-token refresh; the
+  existing same-authority refresh behavior is preserved.
+- Updated resource/Fabric/Sync documentation, a complete
+  [array-policy guide](./docs-next/backend/resources/array-overlap.md),
+  and primary documentation routing from README, agent knowledge files,
+  the compatibility Start Here page and generated app READMEs to `docs-next`.
+
 ## 2.4.0 - 2026-10-06
 
 This additive component release includes Button Group and Context Menu with

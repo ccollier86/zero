@@ -2,6 +2,14 @@
 
 JSON messages over WebSocket. Every message has a `type` field. The server assigns a monotonic sequence number to every data change. Clients track their position in the sequence to handle reconnect without data loss.
 
+Resource `arrayOverlaps` constraints need no new wire message. Snapshot,
+catch-up and live row delivery apply the same exact array policy as HTTP/Fabric;
+changed labels or live member authority can remove cached rows. Periodic bearer
+revalidation checks durable authority before and after its async lookup, so
+known membership revocation purges the data boundary rather than being mistaken
+for ordinary token expiry. Same-authority token refresh retains its existing
+behavior. See [array authorization](../../../docs-next/backend/resources/array-overlap.md).
+
 > **Advanced engine docs:** This page describes the standalone sync wire
 > protocol. Full Zero apps usually consume this through `@zero/framework/react`
 > hooks (`useCollection`, `useLazyCollection`, `useStatus`) instead of the

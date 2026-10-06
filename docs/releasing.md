@@ -18,6 +18,8 @@ Before publishing to npm, verify the package `files` allowlist includes:
 - `examples/package-mode`
 - `examples/native-auth`
 - `docs`
+- `docs-next` (the primary feature/agent documentation tree; review metadata and
+  internal preparation material remain explicitly labeled)
 - `scripts/install-local-tools.sh`
 - `.env.example`
 - `README.md`
