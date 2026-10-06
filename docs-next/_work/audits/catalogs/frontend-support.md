@@ -31,6 +31,24 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Authorized Working-Source Signature Helpers
+
+These additions accompany the unreleased signature UI on top of Zero 2.2.1;
+they are not part of the original clean-baseline helper count.
+
+| Named symbol | Exact import alternatives | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `getSignaturePadStrokePath` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `getSignaturePadBounds` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `signaturePadToSVG` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `signaturePadToDataURL` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `signaturePadToBlob` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `serializeSignaturePad` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `snapshotSignaturePadStrokes` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+| `hasSignaturePadInk` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
+
+### Original Baseline
+
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical planned guide |
 | --- | --- | --- | --- |
 | `toast` | `@zero/framework`, `@zero/framework/react` | External re-export `sonner`; [frontend barrel](../../../../src/frontend/index.ts) (external) | `frontend/notifications/components.md` |

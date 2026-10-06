@@ -39,6 +39,7 @@ not part of the original clean-baseline hook count.
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical guide |
 | --- | --- | --- | --- |
 | `useCascaderSelection` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/cascader-context.ts](../../../../src/components/cascader/cascader-context.ts) | [Cascader](../../../frontend/components/cascader.md#full-path-chips-and-custom-summaries) |
+| `useSignaturePad` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/signature-pad` | [src/components/signature-pad/signature-pad-context.ts](../../../../src/components/signature-pad/signature-pad-context.ts) | [Signature Pad](../../../frontend/components/signature-pad.md#drawing-state-api-and-export-configuration) |
 
 ### Original Baseline
 

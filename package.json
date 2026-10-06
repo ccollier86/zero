@@ -422,6 +422,10 @@
       "types": "./src/components/cascader/index.ts",
       "import": "./src/components/cascader/index.ts"
     },
+    "./components/signature-pad": {
+      "types": "./src/components/signature-pad/index.ts",
+      "import": "./src/components/signature-pad/index.ts"
+    },
     "./components/sidebar": {
       "types": "./src/components/sidebar/index.ts",
       "import": "./src/components/sidebar/index.ts"
@@ -467,7 +471,7 @@
     "build": "bun build src/frontend/index.ts src/frontend/server.ts src/cli/run.ts src/create-zero/run.ts --target bun --outdir dist",
     "build:binary": "bun build --compile src/cli/run.ts --outfile zero",
     "typecheck": "tsc --noEmit",
-    "test:package": "bun test --parallel=4 --timeout 120000 src/create-zero/scaffold.test.ts src/update/bun-lock-integrity.test.ts src/update/local-archive-resolution.test.ts src/update/run.test.ts src/package-exports.test.ts src/native-package-recipes.test.ts src/package-distribution.test.ts src/build-scripts.test.ts && bun test --timeout 120000 src/update/local-archive-resolution.integration.test.ts src/update/local-archive-workspace.integration.test.ts && bun --no-env-file test src/frontend/server/fabric-sync-metadata.package.test.ts && bun --no-env-file test src/components/cascader/cascader.package.test.ts",
+    "test:package": "bun test --parallel=4 --timeout 120000 src/create-zero/scaffold.test.ts src/update/bun-lock-integrity.test.ts src/update/local-archive-resolution.test.ts src/update/run.test.ts src/package-exports.test.ts src/native-package-recipes.test.ts src/package-distribution.test.ts src/build-scripts.test.ts && bun test --timeout 120000 src/update/local-archive-resolution.integration.test.ts src/update/local-archive-workspace.integration.test.ts && bun --no-env-file test src/frontend/server/fabric-sync-metadata.package.test.ts && bun --no-env-file test src/components/cascader/cascader.package.test.ts && bun --no-env-file test src/components/signature-pad/signature-pad.package.test.ts",
     "doctor": "bun run src/doctor/run.ts",
     "migrate": "bun run src/migrations/run.ts",
     "migrate:status": "bun run src/migrations/run.ts --status",

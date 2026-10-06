@@ -197,6 +197,7 @@ call wires it all.
 | [Secret Field](./secret-field.md) | Display-only, masked, revealable, and copyable API keys, tokens, and other authorized browser-held secrets |
 | [JSON Editor](./json-editor.md) | Token-themed structured JSON and retained text drafts, synchronous local admission, and separate domain persistence |
 | [Cascader](./cascader.md) | Hierarchical leaf selection, capped checkboxes, full-path search/chips, async drill-down, and pinned side-import commands |
+| [Signature Pad](./signature-pad.md) | Mouse/pen/touch signature capture, pinned actions, history, SVG form fields, acknowledged agreements and compact clause initials |
 | [Public Components](./public-components.md) | Feature sections, code blocks, FAQ, expandable cards, bento grids, and animated lists for public landing/content sections |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |

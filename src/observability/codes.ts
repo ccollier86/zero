@@ -402,6 +402,8 @@ export const OBS_CODES = {
   FRONTEND_RESOURCE_ACTION_FAILED: code('frontend', 'resource.action_failed', 'error', 'Frontend generated-resource action failed.'),
   FRONTEND_CASCADER_LOAD_FAILED: code('frontend', 'cascader.load_failed', 'error', 'Cascader options could not be loaded.'),
   FRONTEND_CASCADER_CALLBACK_FAILED: code('frontend', 'cascader.callback_failed', 'error', 'Cascader callback failed.'),
+  FRONTEND_SIGNATURE_PAD_SAVE_FAILED: code('frontend', 'signature_pad.save_failed', 'error', 'Signature capture could not be saved.'),
+  FRONTEND_SIGNATURE_PAD_CALLBACK_FAILED: code('frontend', 'signature_pad.callback_failed', 'error', 'Signature capture callback failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
   FRONTEND_MODAL_CALLBACK_FAILED: code('frontend', 'modal_callback.failed', 'error', 'A modal close callback failed after dismissal.'),
   FRONTEND_WORKFLOW_TOPOLOGY_FAILED: code('frontend', 'workflow.topology_failed', 'error', 'Workflow topology query failed.'),

@@ -39,6 +39,7 @@ does not create a package import; use each guide's actual public entrance.
 | Browser-held secret masking/copy and QR matrix props | [Sensitive display](./sensitive-display.md). |
 | Structured JSON/text drafts, validation and local commit handles | [JSON editor](./json-editor.md). |
 | Hierarchical choices, single/multi selection, async levels and full-path chips | [Cascader](./cascader.md#composition-configuration-and-interaction). |
+| Pointer ink, history, SVG/JSON form fields, receipt-locked agreements and initials | [Signature Pad](./signature-pad.md#drawing-state-api-and-export-configuration). |
 | Bottom anchoring refs/spring/context | [Scroll anchoring](./scroll-anchoring.md). |
 | Outer app frame/workspace/menu/header descriptors | [AppShell configuration](../app-shell/configuration.md). |
 | Theme, semantic tokens, icons and style building | [Design-system configuration](../design-system/configuration.md). |

@@ -88,6 +88,26 @@ retired request cannot update a new scope's picker. Frontend observation is
 still best-effort reporting, not a Guardian audit, permission grant or accepted
 mutation receipt.
 
+## Signature Pad Content-Free Failure Events
+
+The [Signature Pad family](./components/signature-pad.md) is another authorized
+unreleased source addition on top of Zero 2.2.1, not part of the page's original
+2.1.1 baseline or the saved 2.2.1 archive.
+
+| Symbol / event code | Safe fields |
+| --- | --- |
+| `FRONTEND_SIGNATURE_PAD_SAVE_FAILED` / `frontend.signature_pad.save_failed` | Bounded `operation`, such as `save` or `agreement-sign`. |
+| `FRONTEND_SIGNATURE_PAD_CALLBACK_FAILED` / `frontend.signature_pad.callback_failed` | Bounded local action/notification operation, without the callback exception. |
+
+Static messages and bounded metadata omit strokes, SVG, signer names, private
+exceptions and agreement content. Save/sign feedback follows the submitted
+draft; local change/stroke notifications follow the document/scope lifetime,
+so accepted-edit notification failures remain observable until that scope is
+retired. No completion updates or reports into a different UI lifetime.
+These events do not establish a
+legally verified signer, server persistence, a trusted date or an audit receipt.
+Those remain application-owned signing/authorization boundaries.
+
 ## Verification And Related Guides
 
 Use a synthetic custom sink to verify one safe event and failure containment,

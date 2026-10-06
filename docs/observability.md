@@ -236,6 +236,27 @@ Stale requests and retired UI completions do not update the new picker lifetime.
 An app-supplied import/mutation callback still owns its acknowledged server
 operation and cannot treat a browser event as proof of persistence.
 
+### Signature Pad Operational Failures
+
+The [Signature Pad family](./frontend/signature-pad.md) reports UI/adapter
+failures through the same frontend boundary. It never sends the drawing or
+the application-owned signing record to the sink.
+
+| Code symbol | Event code | Safe metadata |
+| --- | --- | --- |
+| `FRONTEND_SIGNATURE_PAD_SAVE_FAILED` | `frontend.signature_pad.save_failed` | A bounded `operation`, such as `save` or `agreement-sign`. |
+| `FRONTEND_SIGNATURE_PAD_CALLBACK_FAILED` | `frontend.signature_pad.callback_failed` | A bounded notification/action operation; no callback exception. |
+
+Events use static framework messages and omit strokes, serialized SVG, signer
+names, agreement content, raw errors, document identifiers and credentials.
+Save feedback is tied to the exact submitted draft. Local change/stroke
+notifications use the document/scope lifetime instead: a rejection after an
+accepted edit is still observed, but scope retirement or unmount suppresses
+late reports.
+An application-owned accepted write is not rolled back by this UI lifetime
+fence. Receipt validity, durable signing and audit evidence belong to the
+application server; a frontend event is not proof of acceptance.
+
 ## Auth Operational Failure Contract
 
 Auth keeps operational events separate from its durable

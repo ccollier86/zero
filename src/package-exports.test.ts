@@ -34,6 +34,10 @@ describe('package exports', () => {
     await buildSmokeEntry('cascader.tsx', cascaderSmokeSource, 'browser');
   }, 120_000);
 
+  test('signature capture primitives and agreement/initials prefabs build through public browser exports', async () => {
+    await buildSmokeEntry('signature.tsx', signatureSmokeSource, 'browser');
+  }, 120_000);
+
   test('native auth package subpath builds without React or server imports', async () => {
     await buildSmokeEntry('native.ts', nativeSmokeSource, 'browser');
   }, 120_000);
@@ -109,6 +113,23 @@ export const cascaderPublicSurface = {
   CascaderTrigger,
   CascaderValue,
   useCascaderSelection,
+};
+`;
+
+const signatureSmokeSource = `
+import { SignaturePad as RootPad, SignatureAgreementCard as RootAgreement } from '@zero/framework';
+import { SignaturePad as ReactPad, ClauseInitials as ReactInitials } from '@zero/framework/react';
+import {
+  SignaturePad, SignaturePadArea, SignaturePadControls, SignaturePadGuide,
+  SignaturePadPlaceholder, SignaturePadPreview, useSignaturePad,
+  SignaturePadClear, SignaturePadUndo, SignaturePadRedo, SignaturePadSave,
+  SignatureAgreementCard, ClauseInitials,
+} from '@zero/framework/components/signature-pad';
+export const signaturePublicSurface = {
+  RootPad, RootAgreement, ReactPad, ReactInitials, SignaturePad, SignaturePadArea,
+  SignaturePadControls, SignaturePadGuide, SignaturePadPlaceholder,
+  SignaturePadPreview, useSignaturePad, SignaturePadClear, SignaturePadUndo, SignaturePadRedo,
+  SignaturePadSave, SignatureAgreementCard, ClauseInitials,
 };
 `;
 

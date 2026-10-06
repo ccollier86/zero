@@ -35,6 +35,8 @@ persistence simply because they are exported by Zero.
   local admission before a caller-owned server save.
 - [Cascader](./cascader.md) combines nested selection, capped checkboxes,
   complete-path search, async levels, pinned commands and external chips.
+- [Signature Pad](./signature-pad.md) covers immutable handwritten ink, pinned
+  actions/history, native SVG fields, acknowledged agreements and clause initials.
 - [Text](./text/index.md) covers static, animated and streamed strings with
   explicit source ownership.
 - [Scroll anchoring](./scroll-anchoring.md) follows transcript growth without

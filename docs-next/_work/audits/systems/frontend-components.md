@@ -45,6 +45,7 @@ The [internal bindings catalog](../catalogs/frontend-internal-bindings.md) recor
 | Text presentation | FlipWords/TextGenerateEffect/TypewriterEffect/StreamingText, StreamSource and status/props; [src/components/text-effects/index.ts](../../../../src/components/text-effects/index.ts), [src/components/streaming-text/index.ts](../../../../src/components/streaming-text/index.ts) | `frontend/components/text/index.md` |
 | Sensitive display/QR | SecretField/SecretFieldProps, QRCode/QRCodeProps; [src/components/secret-field/secret-field.tsx](../../../../src/components/secret-field/secret-field.tsx), [src/components/qr-code/index.ts](../../../../src/components/qr-code/index.ts) | `frontend/components/sensitive-display.md` |
 | Hierarchical selection | Cascader composition, typed node/search/selection contracts and useCascaderSelection; [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| Handwritten signature capture | SignaturePad composition, SVG/JSON/native forms, useSignaturePad, SignatureAgreementCard, ClauseInitials; [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md) |
 | Guardian forms/gates/control planes | Every auth/admin organism individually cataloged; useGate/usePropertyGate/native continuation/invitation hooks; [src/components/auth/index.ts](../../../../src/components/auth/index.ts) and adaptive user management | `frontend/guardian/index.md` |
 | Storage organisms | StorageManagement/StorageStudioManagement/StorageStudioWorkspace/FileBrowser/DriveList/UploadDropzone and all named storage catalog rows; [src/components/storage/index.ts](../../../../src/components/storage/index.ts) | `frontend/storage/index.md` |
 | Data/Studio forms and organisms | DataTable/DataStudio/CrudPage/MasterDetail/Kanban; separate data-controls/form inventories | `frontend/data-controls/index.md` |
@@ -62,6 +63,35 @@ existed in the clean 2.1.1 inventory. Its guide and source own nested leaf
 selection, a multi-selection cap, path-aware local/remote search, asynchronous
 drill-down, pinned commands and optional external chips. It composes existing
 Zero controls rather than introducing another authorization or transport layer.
+
+The Signature Pad row is also a separately authorized unreleased source addition
+on top of that 2.2.1 baseline, alongside committed Cascader `9032797`. It captures
+validated immutable ink and composes existing tokenized controls; application
+servers retain identity, authorization, trusted dates and durable signing. Its
+guide distinguishes SVG native fields from acknowledged agreement receipts and
+clause completion. It introduces no automatic backend route or migration.
+
+Supplemental Signature Pad checks were executed on the unreleased source on
+2026-10-05, not on an application or live signing/storage service. The real
+styled synthetic Chromium suite passed **33 tests / 175 assertions**, covering
+mouse/capture, native touch, synthetic pen pressure, cancelled gestures,
+ink-option retirement, local history shortcuts, disabled/read-only imperative
+guards, native required fields and reset (including cancelled reset and batched
+multi-clause reset), asynchronous duplicate/save locks and retired generations,
+accepted-change notification failures with content-free scope retirement,
+controlled interior-point replacements, acknowledged dates, safe receipt
+rendering, clause counts, and light/dark/mobile geometry. Screenshots were
+stored outside the source tree in the designated diagnostics root; checked
+consent motion was allowed to settle before visual evidence.
+
+An actual freshly installed packed public consumer passed **1 test / 9
+assertions**, proving 13 signature-family runtime exports through the root,
+React and focused component paths, browser bundling, SSR, an initial native SVG
+field, the public hook, agreement and clause compositions. The broader actual
+UI Markdown example compiler check, including six signature examples, passed
+**1 test / 46 assertions**. Docs traversal passed **695 pages / IDs / reachable
+pages with zero problems**. These are focused source/fixture checks, not a
+legal/compliance certification, npm publication, or proof of a shipped archive.
 
 ## Configuration And Integration Inventory
 
