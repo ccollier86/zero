@@ -17,6 +17,38 @@ and produces an immutable snapshot before runtime setup. A failed required
 contribution rejects the build/startup; it does not render an empty successful
 site or publish arbitrary source files.
 
+## Source And Local Archive Installation
+
+The optional package requires `@zero/framework >=2.5.0 <3`, `react` and
+`react-dom >=19.2.0 <20`, and Bun 1.3.14+. A normal framework update does not
+install this separate package. A source/local release does not imply an npm
+registry publication.
+
+From the selected Zero checkout's optional-package directory, create its archive:
+
+```sh
+cd /path/to/zero/packages/docs
+bun pm pack --ignore-scripts --filename /path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+```
+
+Then, from the consuming application root:
+
+```sh
+bun add file:/path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+```
+
+If the framework is also an unpublished saved archive, keep the application's
+root `@zero/framework` dependency and root override pointing at that same archive
+so Bun resolves the plugin's framework peer consistently. Do not patch package
+imports or installed framework sources. If compatible registry versions are
+published, install those separately; creating or qualifying a local archive
+does not publish that registry version.
+
+Add the [normal server declaration](./index.md#start-with-a-folder) and public
+Markdown files. Development startup handles declared preparation; production
+uses the [required build](#production) below. These commands install dependencies
+or write an archive; they do not register a mount, deploy or migrate a database.
+
 ## Development
 
 Ordinary app startup discovers the plugin declaration once, builds its
@@ -136,8 +168,11 @@ there if that is part of the application's privacy requirements.
    mobile drawer, test native modified links and clear destination highlights.
 
 Source tests, actual styled-browser checks and installed artifact qualification
-prove different things. This document remains a draft until its release evidence
-is recorded; it is not itself proof that all release gates passed.
+prove different things. The [qualification ledger](../../_work/audits/docs-plugin-qualification.md)
+records the completed 2.5.0 reader/build release checks separately from earlier
+checkpoints. This guide remains internal/draft pending documentation publication
+review; that status does not mean the released reader's tests are pending or
+that the whole package-local documentation tree is approved for a public site.
 
 ## Related Guides And Next Steps
 

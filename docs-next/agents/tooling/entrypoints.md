@@ -45,6 +45,9 @@ may govern an individual workspace, but is not a Zero package capability.
 - Auth/tenancy/permissions → [Guardian](../../backend/guardian/index.md).
 - Physical database placement → [Fabric](../../backend/fabric/index.md).
 - UI/client interaction → [frontend](../../frontend/index.md).
+- Markdown documentation → [optional docs plugin](../../plugins/docs/index.md)
+  and [search/result navigation](../../plugins/docs/search.md).
+- Code examples → [shared CodeBlock family](../../frontend/components/public-pages/code-block.md).
 - Workflow execution → [Torrent](../../backend/torrent/index.md).
 - Provider/model/tools → [AI](../../backend/ai/index.md).
 

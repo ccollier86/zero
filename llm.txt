@@ -4,3 +4,8 @@ Start at [the new Zero documentation](./docs-next/start-here.md), then use its
 [system index](./docs-next/index.md) and [coding-agent guide](./docs-next/agents/index.md).
 The [llms.txt](./llms.txt) bundle remains a compatibility orientation, not a
 replacement for the current feature/version reference.
+
+For Markdown documentation, use the optional
+[docs plugin](./docs-next/plugins/docs/index.md) and its
+[search guide](./docs-next/plugins/docs/search.md). For app-owned code examples,
+use the shared [CodeBlock family](./docs-next/frontend/components/public-pages/code-block.md).

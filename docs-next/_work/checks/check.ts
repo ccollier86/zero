@@ -1,6 +1,7 @@
 /** Read-only structural gate for docs-next; not a shipped CLI command. */
 
 import { extractMarkdownLinks, parseDocumentationPage, type DocumentationPage } from './markdown';
+import { validateReviewEvidence } from './review-evidence';
 
 const root = new URL('../../', import.meta.url);
 const pages = new Map<string, DocumentationPage>();
@@ -18,10 +19,11 @@ for (const path of new Bun.Glob('**/*.md').scanSync({ cwd: decodeURIComponent(ro
     const id = String(page.metadata.id ?? '');
     if (ids.has(id)) problems.push(`${path}: duplicate ID with ${ids.get(id)}`);
     ids.set(id, path);
-    if (!types.has(String(page.metadata.type))) problems.push(`${path}: unknown page type`);
-    if (!['draft', 'in-review', 'verified'].includes(String(page.metadata.status))) problems.push(`${path}: invalid review status`);
-    if (!['public', 'internal'].includes(String(page.metadata.visibility))) problems.push(`${path}: invalid visibility`);
+    if (typeof page.metadata.type !== 'string' || !types.has(page.metadata.type)) problems.push(`${path}: unknown page type`);
+    if (typeof page.metadata.status !== 'string' || !['draft', 'in-review', 'verified'].includes(page.metadata.status)) problems.push(`${path}: invalid review status`);
+    if (typeof page.metadata.visibility !== 'string' || !['public', 'internal'].includes(page.metadata.visibility)) problems.push(`${path}: invalid visibility`);
     if (!Array.isArray(page.metadata.audience)) problems.push(`${path}: audience must be a list`);
+    for (const problem of validateReviewEvidence(page.metadata)) problems.push(`${path}: ${problem}`);
     if (path.startsWith('_work/') && page.metadata.visibility !== 'internal') problems.push(`${path}: working evidence must be internal`);
   } catch (error) {
     problems.push(`${path}: ${error instanceof Error ? error.message : 'parse failed'}`);

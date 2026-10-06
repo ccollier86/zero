@@ -37,11 +37,12 @@ against code, public exports, runtime composition and actual checks.
   virtual/progressive grid contracts, source-identity correction and focused evidence.
 - [Documentation-plugin qualification](./docs-plugin-qualification.md): supplemental
   optional reader, shared CodeBlock replacement, native builds, confirmed fixes
-  and actual source/browser/installed/compiled evidence; not a main/registry release.
+  and actual source/browser/installed/compiled evidence for the main-branch 2.5.0
+  release; Git release, registry publication and public-tree cutover are separate.
 - [Informal naming candidates](./naming.md): approved aliases and unapproved
   suggestions, explicitly separate from API/import/config names.
 
-## Baseline And Scope
+## Original Baseline And Scope
 
 Runtime source: clean committed `main`
 `a3a5f726768dac890f241a3899c0a1acb66265d9`, framework `2.1.1`.
@@ -54,7 +55,8 @@ Source-observed is not package-qualified. Audit scripts read source declarations
 only: they do not evaluate application config, read real environment files,
 open databases, run Doctor, invoke providers or launch apps. Separate SDKs retain
 their own version/commit/maturity records. Current docs, release settings,
-active agent instructions and applications remain unchanged. The user approved
+active agent instructions and applications remained unchanged during that
+original inventory pass. The user approved
 correction of all confirmed defects; working runtime/package diffs are recorded
 separately in the findings ledger.
 
@@ -62,3 +64,17 @@ Detailed feature rewriting begins after the complete inventory is reconciled
 and independently reviewed. Actual implementation defects are corrected under
 the granted authority, not converted to documentation caveats. Material new
 feature or publication decisions retain their separate approval boundaries.
+
+## Current Documentation Checkpoint
+
+The first draft and subsequent feature guides are now package-local on `main`.
+The approved 2.4.1 handoff routes README, Start Here, knowledge files and scaffold
+guidance to the new tree while preserving compatibility docs. The 2.5.0
+documentation reader/search and CodeBlock release has separate final archive
+and compiled-browser evidence in its qualification ledger.
+
+Those later approvals supersede the original no-cutover scope only where
+explicitly recorded. They do not mark every draft guide verified, authorize
+public-site publication, or erase the original source baseline. The
+[execution ledger](./execution.md) separates completed navigation/writing from
+remaining whole-set qualification.

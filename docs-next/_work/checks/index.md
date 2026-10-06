@@ -22,14 +22,25 @@ load environment files, run Doctor, open databases or call providers.
   `bun --no-env-file docs-next/_work/checks/check.ts`.
 - [Markdown evidence parser](./markdown.ts): strips fenced examples from link
   checks and extracts explicit links, front matter and GitHub-style headings.
+- [Review-evidence validator](./review-evidence.ts) and
+  [regressions](./review-evidence.test.ts): reject nonstandard review states and
+  artifact-qualified claims without a matching package version, source commit
+  and SHA-256. Integrated into the navigation check. This validates declared
+  evidence shape, not the truth of a test result or archive contents. Run
+  `bun --no-env-file test docs-next/_work/checks/review-evidence.test.ts`.
 - [Inventory placement report](./coverage.ts): measures which inventoried
   feature groups have their declared draft guide on disk and reports remaining
-  gaps per system. This does not measure source accuracy, example depth, review
+  gaps per system. Missing homes or empty/unparseable inventories cause a
+  nonzero exit instead of silently passing. This does not measure source accuracy, example depth, review
   or release readiness. Run
   `bun --no-env-file docs-next/_work/checks/coverage.ts`.
 - [Inventory parser](./coverage-parser.ts) and
   [regressions](./coverage-parser.test.ts): preserve feature-prefixed names,
-  differently ordered columns and rooted/section-relative guide plans.
+  differently ordered columns and rooted/section-relative guide plans, including
+  optional-plugin homes. The [placement summary](./coverage-summary.ts) and
+  [regressions](./coverage-summary.test.ts) keep unmeasured and incomplete
+  systems distinct from fully placed ones. Run both test files with
+  `bun --no-env-file test docs-next/_work/checks/coverage-parser.test.ts docs-next/_work/checks/coverage-summary.test.ts`.
 - [Named-symbol home check](./catalog-homes.ts),
   [parser](./catalog-home-parser.ts) and [tests](./catalog-home-parser.test.ts):
   ensure every catalogued component/hook/support/SDK record has a real reader

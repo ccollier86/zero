@@ -13,8 +13,8 @@ modes: [public read-only, development, production]
 reviewed_against:
   package: "@zero/framework"
   version: "2.5.0"
-  commit: "d342418408d7a3753d55b18a4882f76fc9eaee4b"
-  snapshot: committed
+  commit: "0ef2cb30d47788722627014c7a28da616f33b5c8"
+  snapshot: clean
   date: "2026-10-06"
   evidence_level: source-observed
 ---
@@ -122,7 +122,8 @@ private content.
 
 | Boundary | Limit |
 | --- | --- |
-| Query | First 200 UTF-16 code units; at most eight distinct literal terms |
+| HTTP query | At most 200 UTF-16 code units, with no U+0000–U+001F controls; invalid input returns 400 |
+| Matching terms | At most eight distinct literal terms from the admitted query |
 | Reader minimum / debounce | Two trimmed characters / 180ms |
 | Results | At most 20, with at most three distinct section targets per page |
 | Title, section and each heading ancestry label | At most 256 UTF-16 code units |
@@ -130,7 +131,7 @@ private content.
 | Excerpt | At most 240 UTF-16 code units, including ellipses |
 | Public page pathname | At most 4,096 UTF-16 code units |
 | Match ranges | At most 16 original-text ranges per result field |
-| Index windows / query cache | At most 2,048 characters per window; 32 results cached per immutable manifest |
+| Index windows / query cache | At most 2,048 characters per window; 32 query-result sets cached per immutable manifest |
 | Destination handoff | Five-minute, one-use, per-tab/mount receipt |
 
 `GET /docs/_api/search?q=token` returns `{results}`. `DocsSearchResult` contains
@@ -138,6 +139,16 @@ private content.
 `sectionPath`, `passageId`, `pageHash` and `matches`. The packaged server supplies
 the page hash and bounded match ranges. `path` is a public pathname, not a local
 filesystem path. `route` may add an encoded heading fragment.
+
+The default input caps its value at 200 UTF-16 code units; its request hook trims
+and bounds the query before fetching. That reader behavior is not the HTTP
+admission contract: a direct API request with more than 200 code units or any
+U+0000–U+001F control character is rejected with `400 DOCS_SEARCH_INVALID`, not
+silently truncated. Shorten the query and remove controls before retrying.
+The two-character minimum and debounce apply to the reader only; an absent or
+empty API query returns an empty result set. A disabled search endpoint returns
+`404 DOCS_NOT_FOUND`, and a retired/pending snapshot returns
+`503 DOCS_REBUILD_PENDING` until a valid publication is admitted.
 
 Each match range is `{start, end}`: zero-based, end-exclusive UTF-16 offsets into
 the corresponding **original** title, section or excerpt. Normalized matching is

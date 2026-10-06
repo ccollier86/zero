@@ -15,12 +15,12 @@ visibility: internal
 
 ## Identity And Scope
 
-Inspected 2026-10-06 on `feature/markdown-documentation-plugin`. Implementation
-commit `d342418` includes the feature plus current main `b960920` (2.4.3),
-retaining the intervening array-policy, trigger and sidebar corrections.
-The source release targets framework **2.5.0** and optional
-`@zero/plugin-docs` **0.1.0**. Final archive/browser qualification is tracked
-separately below; no npm registry publication or public docs-tree cutover is inferred.
+Qualified 2026-10-06 at release commit
+`0ef2cb30d47788722627014c7a28da616f33b5c8`, framework **2.5.0** and optional
+`@zero/plugin-docs` **0.1.0**. The release includes implementation commit
+`d342418` and the 2.4.1–2.4.3 array-policy, trigger and sidebar corrections.
+It is merged and pushed to the existing repository's `main` and tagged
+`v2.5.0`. No npm registry publication or public docs-tree cutover is inferred.
 The original whole-platform 2.1.1 audit baseline remains historical.
 
 All checks used synthetic content, isolated browser contexts and disposable
@@ -44,9 +44,9 @@ The follow-up [reader/search review](../../../planning/documentation-search-revi
 found correctness gaps after the initial gates below. User-authorized fixes are
 now implemented across HTTP/artifact admission, compiler/search, reader and
 shared CodeBlock/build tracks. Source UI acceptance and **rebuilt installed-artifact
-qualification now pass** at implementation commit `d342418`. A release-commit
-repeat retains exact provenance outside the repository; earlier artifacts are
-not substituted for that final gate.
+qualification pass** at implementation commit `d342418` and the final release
+commit `0ef2cb3`. The completed release-commit repeat retains exact provenance
+outside the repository; earlier artifacts are not substituted for that gate.
 
 | Current gate | Executed evidence / remaining boundary |
 | --- | --- |
@@ -57,8 +57,8 @@ not substituted for that final gate.
 | Framework TypeScript | Integrated root and optional package checks passed with no diagnostics after the main merge. |
 | Reader browser/SSR closeout | 23 passed /180 assertions including the existing sidebar suite: short viewports, independent scrolling, named controls, nested drawer/search focus and two-modal landing, native links, destination highlights, syntax preservation, reduced motion and no-JS reading. |
 | CodeBlock/build | 45 focused tests /235 assertions; 11 CodeBlock browser tests /66 assertions. Native build/scaffold/UI examples: 24 /264. Subsequent exact-entry production serializer gate: 13 /67, including root/hash/replacement/chunks regressions. |
-| Rebuilt archive | Fresh clean-implementation archive gate passed 1 /131 assertions, including an awaited five-test compiled-reader browser suite. Checks cover public package imports, normal CLI, copied/compiled source-free deployment, private admission, actual nonce-CSP hydration, section search/landing, mobile focus/motion, clipboard and no-JS reading. |
-| Documentation | Current package/plugin/search/cache guides reconciled with source. Structural traversal: 715 pages/IDs/reachable, zero problems; `git diff --check` clean. Final combined example/closeout gate remains required. |
+| Rebuilt archive | Both implementation and final release-commit gates passed 1 /131 assertions. The release gate includes the mandatory compiled-reader browser suite: 5 passed /49 assertions. Checks cover public package imports, normal CLI, copied/compiled source-free deployment, private admission, actual nonce-CSP hydration, section search/landing, mobile focus/motion, clipboard and no-JS reading. |
+| Documentation | Release traversal: 719 pages/IDs/reachable, zero problems; current plugin/search/cache guides reconciled with source. Selected UI Markdown examples compile against public source facades as part of the 24 /264 native build/scaffold/example gate. This is not an installed-package check of every example in the whole documentation tree. |
 
 Current HTTP logs: `docs-http-server-final.log` and `docs-http-typecheck.log`
 under the configured project logs root. `docs-http-cache-red.log` records the
@@ -71,13 +71,44 @@ external docs-plugin diagnostics root. `provenance.json` binds source commit
 `d342418`, Bun 1.3.14, exact framework/docs archives and their SHA-256 to copied
 and compiled deployment checks. The compiled-reader gate is now mandatory in
 the installed test, so an HTTP-only success cannot hide a broken browser graph.
-The release-commit repeat writes its own archive identities/provenance alongside
-these records, without self-referential archive hashes inside the package.
+The completed release-commit repeat is recorded below, without self-referential
+archive hashes inside the package.
 
 Final source logs: `docs-reader-browser-qualified-final.log` (23 /180),
 `docs-plugin-final-unit-qualification.log` (104 /618),
 `docs-plugin-final-installed-qualification.log` (archive + compiled browser),
 `docs-plugin-final-root-typecheck.log` and `docs-plugin-final-package-typecheck.log`.
+
+## Final Release Artifact Record
+
+The release-commit gate is recorded in
+`docs-plugin-release-commit-qualification.log` under the project logs root.
+Its artifacts are retained in
+`diagnostics/docs-plugin/installed-nQpEUD` under the project artifacts root;
+`provenance.json` binds the source commit, package versions and hashes to both
+deployments. `compiled-browser.log` records the mandatory 5 /49 browser checks.
+The optional package TypeScript repeat passed in
+`docs-plugin-release-commit-typecheck.log`.
+
+| Qualified archive | Version | SHA-256 |
+| --- | --- | --- |
+| Framework installed by the qualification fixture | 2.5.0 | `36958acbd4e8b29e17d02be6033f3b1977d37d992263b2852491e18496206fab` |
+| Optional documentation package | 0.1.0 | `a8bc51b0ea1d4ede38d6d01a30cf5c11a4f14666830f03c50f1fcbd7ca62c0ae` |
+
+A separate fresh, clean checkout of the same release commit produced the
+framework archive with SHA-256
+`f6ba4964268d27c38b509b64233bac72afbdbfd5e6cf90edf679517c2d3155f8`.
+Its file inventory and all 3,976 regular-file payload hashes match the qualified
+framework archive; only archive-container bytes differ. The optional-package
+archive bytes match exactly. The comparison is retained in
+`diagnostics/docs-plugin/clean-pack-dKbXmD/verification.json`.
+The normal main-branch release cache uses that fresh framework archive.
+
+This qualifies the documentation reader, shared CodeBlock and tested build
+seams. It does not establish exact-package verification for every original
+whole-platform guide or every Guardian/Fabric mode. Source visibility remains
+unchanged: the package-local rebuild contains classified internal material,
+and pointing the reader at it does not make those pages public.
 
 ## Historical Initial Evidence
 
@@ -162,10 +193,9 @@ Staged features are product boundaries, not workarounds for broken implemented b
 
 ## Release And Remaining Boundaries
 
-- V1 implementation and correction qualification pass. The main-branch release
-  retains all 2.4.1–2.4.3 fixes; the release-commit archive repeat is required
-  before its tag/push. No npm registry or documentation-site publication is
-  implied by source/local release qualification.
+- V1 implementation, correction and final release-commit qualification pass.
+  `main` and `v2.5.0` contain the release plus all 2.4.1–2.4.3 fixes. No npm
+  registry or documentation-site publication is implied by the Git release.
 - Local unpublished Bun archive consumers use an exact framework archive root
   override to resolve the optional package's framework peer, without patching
   package sources/imports. This is not a claim that an unpublished version exists

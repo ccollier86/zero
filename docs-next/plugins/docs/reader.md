@@ -51,8 +51,11 @@ See [Search and result navigation](./search.md) for ranking, Unicode ranges,
 keyboard behavior, query privacy and clear-highlight semantics.
 
 Heading and code-line links are normal keyboard-reachable anchors. The page
-provides a skip-to-content link, named navigation/TOC landmarks, a single title,
+provides a skip-to-content link, named navigation/TOC landmarks, a primary page title,
 semantic tables/callouts and escaped non-executable content.
+When frontmatter supplies a different title, an authored first H1 remains
+visible and searchable in the body rather than being discarded; see
+[Authoring](./authoring.md#folders-and-navigation).
 
 ## Tokens
 

@@ -43,6 +43,11 @@ needs them. They do not replace each system's exact reference.
 - [Correlated workflow replies](./correlated-workflow.md): compose a private
   record, verified webhook, atomic update and durable event for one exact run.
 - [Extensions](./extensions.md): integrate at the public Elysia/service boundary.
+- [Add a Markdown docs reader](../plugins/docs/index.md): declare the optional
+  package, admit public content and build its reader with
+  [section-targeted search](../plugins/docs/search.md).
+- [Present code examples](../frontend/components/public-pages/code-block.md): reuse
+  the shared CodeBlock family for files, copy controls and prepared highlights.
 - [Upgrade safely](./upgrade.md): dependency updates versus real data/model changes.
 - [Verification](./verification.md): proportionate source, fixture and deployment checks.
 

@@ -26,3 +26,32 @@ test('agent and command inventory variants retain their real feature rows', () =
 | Agent entrance | \`agents/tooling/entrypoints.md\` |
 `)).toEqual([{ feature: 'Agent entrance', destination: 'docs-next/agents/tooling/entrypoints.md' }]);
 });
+
+test('optional plugin guide destinations use the same literal/link contract as existing sections', () => {
+  expect(inventoryFeatureDestinations(`## Features And Documentation Coverage
+| Feature | Evidence | Guide | Review status |
+| --- | --- | --- | --- |
+| Public reader | source | [Reader](../../../plugins/docs/reader.md) | Authored |
+| Publication | source | \`docs-next/plugins/docs/publication.md\` | Authored |
+| Search | source | \`plugins/docs/search.md\` | Authored |
+| Internal note | source | [Working note](../../../_work/plugins/private.md) | Internal |
+`)).toEqual([
+    { feature: 'Public reader', destination: '../../../plugins/docs/reader.md' },
+    { feature: 'Publication', destination: 'docs-next/plugins/docs/publication.md' },
+    { feature: 'Search', destination: 'docs-next/plugins/docs/search.md' },
+    { feature: 'Internal note' },
+  ]);
+});
+
+test('the actual docs-plugin inventory has a measured feature table with existing canonical homes', async () => {
+  const inventory = new URL('../audits/systems/docs-plugin.md', import.meta.url);
+  const rows = inventoryFeatureDestinations(await Bun.file(inventory).text());
+  expect(rows).toHaveLength(21);
+  for (const row of rows) {
+    expect(row.destination, row.feature).toBeDefined();
+    const target = row.destination?.startsWith('docs-next/')
+      ? new URL('../../' + row.destination.slice('docs-next/'.length), import.meta.url)
+      : new URL(row.destination!, inventory);
+    expect(await Bun.file(target).exists(), row.feature).toBe(true);
+  }
+});

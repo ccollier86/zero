@@ -63,7 +63,7 @@ the repository, merge ambient `.gitignore` rules or infer Guardian permissions.
 
 | `limits` field | Default | Unit |
 | --- | --- | --- |
-| `maxDocuments` | 5,000 | Admitted file budget |
+| `maxDocuments` | 5,000 | Markdown candidates admitted by path policy, before frontmatter classification |
 | `maxDocumentBytes` | 512,000 | UTF-8 bytes per Markdown input |
 | `maxFrontmatterBytes` | 32,768 | Bytes per YAML header |
 | `maxAssetBytes` | 8,388,608 | Bytes per referenced attachment |
@@ -72,6 +72,12 @@ the repository, merge ambient `.gitignore` rules or infer Guardian permissions.
 Each override must be a positive safe integer, no greater than eight times its
 default. Parsing also bounds node/depth/code-fence/metadata expansion. Increasing
 a limit does not bypass publication, safe URLs or path containment.
+
+`maxDocuments` counts path-admitted `.md` candidates, not passive attachments or
+only final published pages. A candidate later excluded by frontmatter still
+counts toward discovery's document limit. Use path exclusions for large private
+subtrees rather than assuming their classification makes discovery unlimited.
+Attachments are bounded separately by asset/total byte budgets.
 
 Separate fixed admission bounds apply to inferred and explicit labels: page
 titles, navigation labels, headings/anchors, code titles and footnote IDs are at

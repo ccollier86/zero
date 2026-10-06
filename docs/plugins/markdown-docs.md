@@ -26,7 +26,8 @@ Then, from the consuming application's root:
 bun add file:/path/to/artifacts/zero-plugin-docs-0.1.0.tgz
 ```
 
-Use framework 2.5.0 or newer within major 2. If the framework is itself an
+Use framework 2.5.0 or newer within major 2, React/React DOM 19.2 or newer within
+major 19, and Bun 1.3.14+. If the framework is itself an
 unpublished saved archive, keep the root `@zero/framework` dependency and root
 override pointing to that same archive so Bun resolves the plugin's framework
 peer to the installed package. The normal updater preserves that override
@@ -112,7 +113,7 @@ Under the mount, GET/HEAD readers include:
 
 Successful reads use explicit content types, `nosniff` and representation-specific
 validators. Errors return safe stable code/error bodies and are not cached.
-nonce-bearing HTML uses `private, no-store` and never returns 304; its ETag
+Nonce-bearing HTML uses `private, no-store` and never returns 304; its ETag
 identifies fully rendered bytes, including actual reader script/CSS URLs and
 nonce. Each request's CSP matches its markup. Public text projections and
 admitted attachments use `public, max-age=0, must-revalidate` with their own
@@ -135,8 +136,12 @@ drawer rather than an inaccessible header behind it.
 
 The server indexes admitted titles, descriptions, heading ancestry and visible
 passages, including code titles, table rows and callout labels. Matching uses
-NFC-normalized, case-insensitive literal terms, with at most 200 UTF-16 code
-units/eight distinct terms. Exact titles, whole words and prefixes rank ahead
+NFC-normalized, case-insensitive literal terms, with at most eight distinct
+terms. The reader bounds input at 200 UTF-16 code units; direct API queries above
+that limit or containing U+0000–U+001F controls return `400 DOCS_SEARCH_INVALID`,
+not a silently truncated search. Shorten/remove controls before retrying.
+The two-character minimum and debounce are reader-only; empty API queries return
+no results. Exact titles, whole words and prefixes rank ahead
 of weaker substrings. At most 20 hits and three distinct sections per page are
 grouped by page with public path, ancestry and bounded excerpts. This is
 matching as you type, not query completion, typo tolerance or semantic search.

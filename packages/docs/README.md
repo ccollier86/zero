@@ -7,10 +7,11 @@ page navigation using Zero's shared controls and current public design tokens.
 
 ## Prerequisites
 
-This package targets Zero framework **2.5.0 or newer within major 2**, React 19.2
-or newer within major 19, and Bun 1.3.14+. Its parser dependencies belong to this
-optional package, not the framework's required runtime dependencies. Install it
-only alongside the compatible framework release. A working checkout or archive
+This package targets Zero framework **2.5.0 or newer within major 2**, React and
+React DOM 19.2 or newer within major 19, and Bun 1.3.14+. Its parser dependencies
+belong to this optional package, not the framework's required runtime
+dependencies. Install it only alongside the compatible framework release.
+A working checkout or archive
 is not evidence that a registry version has been published.
 
 ## Use
@@ -30,6 +31,12 @@ and add that archive from the app root. If the framework is also a saved archive
 the app's root framework dependency and override must identify the same archive
 for this package's framework peer. A normal framework update alone does not
 install the optional docs package.
+
+From the consuming app root, the local-archive install command is:
+
+```sh
+bun add file:/absolute/artifacts/zero-plugin-docs-0.1.0.tgz
+```
 
 Add `documentation/index.md` and other `.md` files. The default mount is `/docs`.
 The root is relative to Zero's captured application project root, not the
@@ -99,8 +106,12 @@ Two trimmed characters start a 180ms-debounced request; obsolete requests are
 cancelled or ignored. Loading, no results, failures and retry are explicit.
 
 Matching is NFC-normalized, case-insensitive literal search, not semantic or
-typo-tolerant search. It considers the first 200 UTF-16 code units and eight
-distinct terms. Exact titles, whole words and prefixes rank ahead of weaker
+typo-tolerant search. The reader caps its query at 200 UTF-16 code units; matching
+considers at most eight distinct terms. Direct HTTP requests exceeding 200 code
+units or containing U+0000–U+001F controls return `400 DOCS_SEARCH_INVALID`, not
+a truncated search. Shorten the query/remove controls before retrying. The
+two-character minimum and debounce are reader-only; an empty API query returns
+an empty result set. Exact titles, whole words and prefixes rank ahead of weaker
 substring matches. Up to 20 hits are grouped by page, with at most three distinct
 section targets per page, path/ancestry context and excerpts up to 240 characters.
 Safe original-text ranges highlight title, section and excerpt matches.
@@ -143,6 +154,21 @@ enforce their source-root and content-hash admission before bundling admitted
 bytes; this is not a sandbox for arbitrary imported app dependencies. Development
 rebuilds retire the previous snapshot before replacement, so old search/HTML/
 attachment endpoints cannot retain content removed by a publication change.
+
+From an installed app root, use Zero's declared build command, adjusting the
+config and entry paths to match the existing application:
+
+```sh
+zero build --config ./zero.config.ts --entry ./app/server.ts --outdir ./dist
+bun ./dist/server.js
+```
+
+Replace an existing bare `bun build` script when adding required plugin content;
+a framework update does not rewrite app-owned build scripts. Build imports run
+trusted config/plugin code and write output, but do not deploy or migrate the
+application. Copy the **complete** output directory for JavaScript deployments,
+not only `server.js`. Apps with file-routed pages retain their existing source/
+dependency deployment requirements; the source-free case is docs/plugin-only.
 
 Keep private content and attachments outside public `/_build`; do not replace
 admitted routes with a static content-folder mount. A CDN or service worker must

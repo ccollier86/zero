@@ -150,6 +150,15 @@ artifact's version, source commit, and SHA-256 under `reviewed_against.artifact`
 It must verify public exports, relevant examples, and the actual packaged docs.
 Keep detailed check results in sanitized working evidence rather than metadata.
 
+For a package-qualified page, the artifact mapping uses `version` and `commit`
+matching the reviewed package, and `sha256` identifying the actual archive.
+Do not use descriptive snapshot aliases such as `committed`: the required
+`clean`/`dirty` value is separate from the full source commit. Historical dirty
+source observations remain valid draft evidence; they must not be silently
+promoted to implementation or package verification. The
+[authoring check](./_work/checks/index.md) validates these declarations, not the
+underlying tests or artifact bytes.
+
 For separately maintained SDKs/packages, add `related_packages` entries with
 `package`, `version`, and `maturity`; do not assume the core Zero version proves
 their compatibility. Do not invent a version range or imply that every

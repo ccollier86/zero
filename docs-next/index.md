@@ -67,6 +67,12 @@ The 2.4.2 update includes [exact array policy](./backend/resources/array-overlap
 [retry-safe Torrent starts](./backend/torrent/system-starts.md). Begin at those
 feature guides for the current integration rather than older flattened bundles.
 
+The 2.5.0 release adds the optional [Markdown documentation reader](./plugins/docs/index.md),
+its [section-aware search](./plugins/docs/search.md), and the shared
+[CodeBlock family](./frontend/components/public-pages/code-block.md). The reader
+requires the separately installed plugin and normal build integration; it does
+not publish this internal/draft documentation tree automatically.
+
 Feature guides state applicability and source baseline. A roadmap item is not an
 implemented API. Source tests, example typechecks and exact installed-package
 qualification are different evidence; [verification](./guides/verification.md)

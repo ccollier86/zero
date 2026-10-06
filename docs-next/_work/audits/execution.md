@@ -11,7 +11,7 @@ visibility: internal
 
 [Audit index](./index.md) · [Documentation index](../../index.md)
 
-## Scope And Baseline
+## Original Scope And Baseline
 
 Documentation is isolated in `docs-next/` on
 `feature/production-documentation-foundation`.
@@ -22,7 +22,11 @@ Those runtime/package working diffs are recorded separately. No app, deployment,
 live database, current docs or active agent entrypoint changes are in scope.
 Config imports and Doctor are not assumed static or safe against a real project.
 
-## Stage Gates
+## Whole-Set Stage Gates
+
+These track the original rebuild, not just the later documentation plugin.
+Historical checkpoint sections below record what was known at that time. The
+current checkpoint distinguishes later approvals and focused release evidence.
 
 - [x] Read authoring process, standards, project instructions and storage policy.
 - [x] Record branch/version/source baseline and preserve unrelated work.
@@ -33,7 +37,7 @@ Config imports and Doctor are not assumed static or safe against a real project.
 - [ ] Resolve/discuss implementation findings and publication decisions.
 - [x] Write first-draft system guides, config references, indexes and roadmaps.
 - [x] Write first-draft concepts, tasks, Start Here and compact agent onboarding.
-- [ ] Validate navigation, metadata, reciprocal links, indexes and coverage.
+- [x] Validate structural navigation, required metadata, indexes, backlinks and feature placement; contextual usefulness still requires review.
 - [ ] Verify representative examples against exact package artifact.
 - [ ] Verify public-only projection/archive/search/agent content isolation.
 - [ ] Perform fresh-reader tasks across relevant modes.
@@ -62,7 +66,7 @@ The latest complete source TypeScript check,
 exit 0 after the approved runtime corrections and fixture typing corrections.
 It does not qualify an installed artifact or a full application.
 
-## Checks Not Yet Performed
+## Checks Not Yet Performed At First-Draft Handoff
 
 Focused synthetic regressions and typecheck have now been run for approved
 defect fixes; the [findings ledger](./findings.md) records scope/results.
@@ -122,6 +126,48 @@ Fresh-history reader tasks, exact committed artifact qualification and an
 explicit public-only publication projection remain separate later gates.
 Current documentation, package/site entries, active agent files, apps and
 deployments have not been retargeted. No publication/cutover is implied.
+
+## Current Checkpoint: Main-Branch 2.5.0
+
+The original first draft is complete. Later authorized work added Data Studio
+UI, array policies, trigger corrections, shared controls and the optional docs
+reader. Release commit `0ef2cb30d47788722627014c7a28da616f33b5c8` is on `main`
+and tagged `v2.5.0`; it does not replace each original feature's review baseline.
+
+The approved 2.4.1 entrypoint handoff makes `docs-next/` the package-local starting
+point for README, Start Here, knowledge files and generated app guidance. Older
+guides remain compatibility references. No public website, production agent
+bundle or wholesale page-visibility cutover was performed.
+
+The latest navigation check passes 719 pages, 719 unique IDs and 719 reachable
+pages with no problems. The individual frontend/component/hook/support/SDK
+catalog resolves 956 records to 153 documentation homes without placement
+problems. The [placement report](../checks/index.md) measures all 451 feature
+groups across 37 system inventories, with every group assigned an existing
+home and no unmeasured inventories. The 21 newly counted plugin groups were
+already implemented; the previous report skipped its nonstandard inventory
+table. These counts establish navigation and homes, not verified behavior for
+every symbol.
+
+The [reader qualification ledger](./docs-plugin-qualification.md) records the
+completed exact-release archive/deployment and mandatory compiled-browser
+gates. It qualifies those tested seams, including public content projection and
+search exclusions; it is not an exact-package check of every whole-platform
+example. Representative fresh-history tasks across Guardian/Fabric modes and a
+complete public-only docs/site/agent projection remain separate whole-set work.
+
+The documentation follow-up preserves historical evidence while correcting
+stale release language, canonical installation guidance and HTTP search
+admission details. It does not reopen unrelated product roadmap implementation.
+
+Follow-up authoring gates now reject incomplete/unmeasured inventories and
+malformed review provenance. Historical descriptive snapshot aliases were
+normalized to `clean` without changing their original commit, date or source-only
+evidence. No dirty observation was silently promoted to release qualification.
+The focused checker regression suite and current UI Markdown snippet compiler
+are recorded in `docs-resume-authoring-tests.log` and
+`docs-resume-ui-examples.log` under the configured project logs root. They read
+synthetic inputs/source and do not run an application, provider or live database.
 
 ## Subsequent Authorized Data Studio UI Implementation
 

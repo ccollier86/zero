@@ -9,6 +9,11 @@ and evidence metadata against the installed package. This file and the older
 
 For 2.4.1's multi-group authorization update, read
 [exact string-array overlap](../docs-next/backend/resources/array-overlap.md).
+For 2.5.0's optional Markdown reader, start with the
+[docs plugin](../docs-next/plugins/docs/index.md) and its
+[search guide](../docs-next/plugins/docs/search.md). The shared
+[CodeBlock family](../docs-next/frontend/components/public-pages/code-block.md)
+also supports app-owned code examples without installing the plugin.
 
 Zero is a Bun/Elysia full-stack app platform. The goal is fast data-driven app
 development without wiring separate backend services for Guardian auth,
@@ -24,9 +29,10 @@ Before platform work, read:
 4. [Releasing Zero](./releasing.md)
 
 For a fresh repo orientation, read the root [README](../README.md). For
-agent-assisted app development, give the agent [llms.txt](../llms.txt) before
-it starts planning so it reaches for Zero surfaces before rebuilding existing
-pieces.
+agent-assisted app development, start with the compact
+[coding-agent guidance](../docs-next/agents/index.md) and load the owning feature
+guides as needed. [llms.txt](../llms.txt) is an optional compatibility bundle,
+not a replacement for the current package contract.
 
 For future product direction, use the
 [Zero Product Roadmap](./platform-roadmap.md). It is a living, unordered idea

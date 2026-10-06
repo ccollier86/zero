@@ -15,7 +15,11 @@ The user authorized correction of all confirmed defects found during this
 source-backed rebuild. Missing roadmap features are not automatically defects;
 applications, live data and deployments remain out of scope. Original main
 baseline: `a3a5f726768dac890f241a3899c0a1acb66265d9`, 2.1.1. Targeted
-working fixes below are not released-artifact claims.
+working fixes below are not released-artifact claims. Their review-state wording
+records the original audit checkpoint, not a claim that those tasks are still
+running on the current branch. Later authorized releases and qualification have
+separate records in the [execution ledger](./execution.md) and
+[2.5.0 reader qualification](./docs-plugin-qualification.md).
 
 ## Confirmed Corrections
 
@@ -86,7 +90,7 @@ Recorded runs use Bun 1.3.14 with env-file autoloading disabled and synthetic
 fixtures. Counts overlap and must not be summed into a unique suite count.
 No provider calls, app config evaluation or live database access occurred.
 
-## Under Reproduction Or Review
+## Review State At The Original Audit Checkpoint
 
 - UI and session corrections await final integrated independent diff review.
 - Schema corrections passed independent source review, isolated type/runtime/form
@@ -111,16 +115,23 @@ No provider calls, app config evaluation or live database access occurred.
 - PDF unknown-key/scale behavior must follow the resolver, not guessed defaults.
 - Current llms migration example omits required application --db; its Doctor
   introduction treats implemented checks as planned. New docs correct these;
-  current entrypoints stay untouched until approved cutover.
+  current entrypoints stayed untouched during the original audit. The later
+  approved 2.4.1 handoff routes them to the new documentation tree.
 
 ## Missing Features Versus Defects
 
-Guardian service-HMAC credentials, org vector-store provisioning, live
+At the original source baseline, Guardian service-HMAC credentials,
+org vector-store provisioning, live
 model/pricing catalogs, database-backed providers, a generic workflow visual
 editor and coding-agent MCP/hooks are not established current exports. Record
 actual maturity and sourced product direction, not invented APIs.
 
-## Remaining Gates
+## Whole-Set Gates Not Closed By A Focused Release
+
+The plugin qualification record closes its own checks, not every correction
+and example in this historical whole-platform table. Keep per-system review and
+artifact evidence explicit rather than checking these boxes because `main` has
+advanced or one package-consumer fixture passes.
 
 - [ ] Every confirmed defect corrected and independently reviewed.
 - [ ] Relevant regressions and updated typecheck pass.

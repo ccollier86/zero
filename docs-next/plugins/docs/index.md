@@ -13,8 +13,8 @@ modes: [public read-only, development, production]
 reviewed_against:
   package: "@zero/framework"
   version: "2.5.0"
-  commit: "d342418408d7a3753d55b18a4882f76fc9eaee4b"
-  snapshot: committed
+  commit: "0ef2cb30d47788722627014c7a28da616f33b5c8"
+  snapshot: clean
   date: "2026-10-06"
   evidence_level: source-observed
 related_packages:
@@ -55,7 +55,7 @@ directory happens to be current when a request arrives.
 The build integration is available in the 2.5.0 source/local release; a 2.4.x
 package does not contain it. The optional package is qualified through fresh
 archives, not assumed to exist in a public registry. Follow the
-[installation boundary](../../../docs/plugins/markdown-docs.md#source-and-local-archive-installation).
+[installation boundary](./operations.md#source-and-local-archive-installation).
 
 ## Guides And References
 

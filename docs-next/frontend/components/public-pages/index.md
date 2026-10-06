@@ -43,11 +43,13 @@ setting. The [router](../../router/authentication.md) still owns route access.
 Keep public copy/assets genuinely public. A component does not hide private data
 from a visitor or turn raw application input into a safe URL/image automatically.
 
-The CodeBlock guides include a separately authorized working-source expansion
-targeting 2.5.0 on the 2.4.0 baseline. Their own metadata and the
+The CodeBlock guides describe the shared replacement family in the 2.5.0
+source/local release. Their own metadata and the
 [qualification ledger](../../../_work/audits/docs-plugin-qualification.md)
 record focused archive/compiled checks without asserting publication; the
 original 2.1.1 review is not retroactively treated as evidence of the new parts.
+The optional [Markdown docs reader](../../../plugins/docs/index.md) uses this
+same family for fences alongside its [search experience](../../../plugins/docs/search.md).
 
 ## Related Guides And Next Steps
 

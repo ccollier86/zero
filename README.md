@@ -240,9 +240,14 @@ apps. Start with the
 - [Framework Developer Surface](./docs/framework-developer-surface.md):
   canonical imports and app-owned extension examples.
 - [Optional Plugins](./docs/plugins/index.md): explicitly installed features,
-  including the working folder-driven Markdown documentation integration.
-- [CodeBlock](./docs/frontend/code-block.md): the shared replacement system,
-  composable tools, server preparation and syntax-highlighted examples.
+  with compatibility references for separately installed packages.
+- [Markdown documentation](./docs-next/plugins/docs/index.md): the optional
+  `@zero/plugin-docs` public reader, publication boundaries and
+  [passage-aware search](./docs-next/plugins/docs/search.md). Read its local-archive
+  installation guidance; registry publication is not assumed.
+- [CodeBlock](./docs-next/frontend/components/public-pages/code-block.md): the shared
+  code-example family, composable tools, server preparation and syntax highlights;
+  the [compatibility reference](./docs/frontend/code-block.md) remains available.
 - [ReactiveDB Fabric](./docs/framework/multi-database-architecture.md):
   supported multi-database topology, actor isolation, file/WAL and bounded
   hot placement, tenant routing, realtime behavior, capacity, durability, and
@@ -340,7 +345,7 @@ backend app code, or grows source files past the responsibility threshold.
 
 ## Current Package State
 
-Zero 2.0 is Bun-first and exports TypeScript source through the package export
+Zero 2.5.0 is Bun-first and exports TypeScript source through the package export
 map. Bun 1.3.14 is the minimum encoded runtime for this source/local release.
 That is intentional for package-mode development. Public npm publication also
 requires the maintainers to select the repository license and complete the

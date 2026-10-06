@@ -48,6 +48,15 @@ If a requested capability already exists, configure/compose it before inventing
 a parallel implementation. If it does not exist, explain the extension boundary
 and scope of the app-owned service rather than claim a planned API is shipped.
 
+For a Markdown documentation task, use the optional
+[docs plugin](../../plugins/docs/index.md) and its
+[search contract](../../plugins/docs/search.md) before building a custom reader.
+Its public, read-only reader does not require Guardian session restoration or
+`AppProvider`. For app-owned code examples, reuse the shared
+[CodeBlock family](../../frontend/components/public-pages/code-block.md) directly.
+Check the plugin's separate package version, installation source and required
+build; a framework dependency alone does not install or declare it.
+
 ## Related Guides And Next Steps
 
 [Building conventions](./building-conventions.md) gives engineering boundaries,

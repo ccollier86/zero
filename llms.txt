@@ -11,6 +11,15 @@ are historical: use the owning feature guide and actual public exports when
 they differ from these summaries. For 2.4.1's array authorization, read
 [exact string-array overlap](docs-next/backend/resources/array-overlap.md).
 
+For 2.5.0 Markdown documentation tasks, use the optional
+[@zero/plugin-docs guide](docs-next/plugins/docs/index.md), including
+[search and result navigation](docs-next/plugins/docs/search.md). Check its
+separate package/version, local-archive installation and required build rather
+than assuming registry publication or automatic installation with the framework.
+For code examples, use the shared
+[CodeBlock family](docs-next/frontend/components/public-pages/code-block.md)
+through the framework's public exports; it does not require the docs plugin.
+
 ## Product Summary
 
 Zero is a Bun/Elysia full-stack app framework for building serious web apps

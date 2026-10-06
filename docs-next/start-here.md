@@ -58,8 +58,17 @@ families are listed in the [backend index](./backend/index.md).
   not a data split, tenant conversion or workflow-definition migration.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
   canonical feature/config page. Respect the app's actual instructions and scope.
+- **Markdown documentation:** install and declare the optional
+  [docs plugin](./plugins/docs/index.md); its public reader includes
+  [passage-aware search](./plugins/docs/search.md) and uses the shared
+  [CodeBlock family](./frontend/components/public-pages/code-block.md).
 - **Specific capability:** use [backend](./backend/index.md),
-  [frontend](./frontend/index.md) or [CLI](./cli/index.md).
+  [frontend](./frontend/index.md), [CLI](./cli/index.md) or
+  [optional plugins](./plugins/index.md).
+
+The docs plugin is a separately versioned preview package for the 2.5.0
+source/local release. Follow its installation and build guidance; neither this
+entrance nor installing the framework publishes documentation automatically.
 
 ## Four Ideas To Learn Once
 

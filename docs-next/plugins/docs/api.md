@@ -41,9 +41,15 @@ For the default `/docs` mount, GET and HEAD are read-only:
 | `/docs/sitemap.xml` | Public canonical URLs, with `siteUrl` or trusted app `publicUrl` |
 | Manifest-owned `/_assets/...` routes under the mount | Referenced admitted passive attachments |
 
-Search considers at most eight distinct literal terms from the first 200 UTF-16
-code units and returns at most 20 hits, with at most three distinct section
-targets per page. Disabling `search` hides both its UI and endpoint. Lightweight manifest pages expose
+Search accepts queries of at most 200 UTF-16 code units without U+0000–U+001F
+control characters. Invalid input returns `400 DOCS_SEARCH_INVALID`; shorten
+the query and remove controls rather than expecting server-side truncation.
+Matching considers at most eight distinct literal terms and returns at most 20
+hits, with at most three distinct section targets per page. The two-character
+minimum and 180ms debounce are reader behavior, not an API minimum; empty API
+queries return `{results: []}`. Disabling `search` hides its UI and returns
+`404 DOCS_NOT_FOUND` from its endpoint. A retired/pending snapshot returns
+`503 DOCS_REBUILD_PENDING`. Lightweight manifest pages expose
 `route`, `title`, `description`, `headings` and optional semantic ID—not private
 filesystem roots or a dump of all source/metadata.
 

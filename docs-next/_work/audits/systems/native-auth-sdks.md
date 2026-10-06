@@ -12,7 +12,7 @@ reviewed_against:
   package: "@zero/framework"
   version: "2.1.1"
   commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: committed-baseline-clean
+  snapshot: clean
   date: "2026-10-04"
   evidence_level: source-observed
 related_packages:
