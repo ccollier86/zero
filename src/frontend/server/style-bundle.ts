@@ -7,9 +7,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const PLATFORM_SOURCE_DIR = resolve(import.meta.dir, '../..');
 const PLATFORM_CSS_ENTRYPOINT = resolve(import.meta.dir, '../styles/globals.css');
@@ -59,7 +59,8 @@ export interface StyleBundleResult {
  */
 export async function buildPlatformStyles(
   outDir: string,
-  appDir: string = './app'
+  appDir: string = './app',
+  extraSources: readonly string[] = [],
 ): Promise<StyleBundleResult> {
   const absOut = resolve(outDir);
   if (!existsSync(absOut)) mkdirSync(absOut, { recursive: true });
@@ -74,7 +75,7 @@ export async function buildPlatformStyles(
     from: entrypoint,
     onDependency() {},
   });
-  const candidates = scanTailwindCandidates(appDir);
+  const candidates = scanTailwindCandidates(appDir, extraSources);
   const output = compiler.build(candidates);
   const hash = createHash('sha256').update(output).digest('hex').slice(0, 12);
   const fileName = `${STYLE_FILE_PREFIX}${hash}${STYLE_FILE_SUFFIX}`;
@@ -95,7 +96,7 @@ export async function buildPlatformStyles(
  * Missing app directories are ignored so backend-only apps can still start and
  * receive the platform base stylesheet.
  */
-export function scanTailwindCandidates(appDir: string = './app'): string[] {
+export function scanTailwindCandidates(appDir: string = './app', extraSources: readonly string[] = []): string[] {
   const { Scanner } = loadTailwindScanner();
   const sources: SourceEntry[] = [
     { base: PLATFORM_SOURCE_DIR, pattern: '**/*.{ts,tsx,js,jsx}', negated: false },
@@ -104,6 +105,12 @@ export function scanTailwindCandidates(appDir: string = './app'): string[] {
 
   if (existsSync(resolvedAppDir)) {
     sources.push({ base: resolvedAppDir, pattern: '**/*.{ts,tsx,js,jsx}', negated: false });
+  }
+  for (const source of extraSources) {
+    const resolvedSource = resolve(source);
+    if (!existsSync(resolvedSource)) throw new Error('Declared plugin stylesheet source is missing.');
+    const directory = statSync(resolvedSource).isDirectory();
+    sources.push({ base: directory ? resolvedSource : dirname(resolvedSource), pattern: directory ? '**/*.{ts,tsx,js,jsx}' : basename(resolvedSource), negated: false });
   }
 
   return new Scanner({ sources }).scan();

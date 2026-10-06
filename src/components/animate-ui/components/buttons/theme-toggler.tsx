@@ -21,6 +21,7 @@ import {
 import { buttonVariants } from '#zero/components/animate-ui/components/buttons/icon';
 import { ThemeMorphIcon, ThemeMorphIconStyles } from './theme-morph-icon';
 import { cn } from '#zero/lib/utils';
+import { useMounted } from '#zero/hooks/use-mounted';
 
 const DEFAULT_MODES: ThemeSelection[] = ['light', 'dark', 'system'];
 
@@ -56,9 +57,12 @@ function ThemeTogglerButton({
   ...props
 }: ThemeTogglerButtonProps) {
   const { theme, resolvedTheme, setTheme } = useTheme();
+  const mounted = useMounted();
   const availableModes = modes.length > 0 ? modes : DEFAULT_MODES;
-  const resolved = resolveTheme(resolvedTheme);
-  const currentTheme = resolveCurrentTheme(theme, resolved, availableModes);
+  // Persisted browser preferences are unknown on the server. Keep the first
+  // hydration render identical, then reflect the real preference after mount.
+  const resolved = resolveTheme(mounted ? resolvedTheme : undefined);
+  const currentTheme = resolveCurrentTheme(mounted ? theme : undefined, resolved, availableModes);
   const previousResolved = React.useRef(resolved);
   const [animateIcon, setAnimateIcon] = React.useState(false);
 
@@ -88,7 +92,7 @@ function ThemeTogglerButton({
               data-state={transitioning ? 'transitioning' : 'idle'}
               className={cn(buttonVariants({ variant, size, className }))}
               type={type}
-              disabled={disabled || transitioning}
+              disabled={disabled || !mounted || transitioning}
               title={title ?? actionLabel}
               aria-label={ariaLabel ?? actionLabel}
               aria-busy={ariaBusy ?? (transitioning || undefined)}

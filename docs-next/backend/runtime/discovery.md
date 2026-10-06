@@ -8,14 +8,14 @@ visibility: internal
 system: platform-runtime
 feature: discovery
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.5.0 development source; publication qualification pending"]
 modes: [managed-server, standalone-extension]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -26,6 +26,14 @@ reviewed_against:
 Managed apps discover app-owned server extensions from configured directories.
 This is trusted dynamic module import and composition—not static metadata
 inspection, sandboxed user code or a serverless function registry.
+
+From the 2.5.0 native build integration, managed construction discovers these
+declarations **once before app assets**. Required
+[build contributions](./build-contributions.md) prepare next; runtime setup is
+awaited only after managed services exist. The normal
+[build command](../../cli/tooling/build.md) statically bundles the same discovered
+declarations and disables duplicate runtime file discovery. Imports still run
+trusted module top-level code; preparation is not a sandbox.
 
 ## Files And Exports
 
@@ -87,6 +95,10 @@ paths or raw import errors into public responses.
 listener. `collectServerRouteFiles` performs file discovery without executing
 those modules. Lower-level helpers remain trusted server APIs, not browser
 module-discovery endpoints.
+
+`normalizeServerRouteModule` is the public trusted module-export normalization
+seam used by the normal build adapter. It does not admit untrusted JavaScript
+or bypass setup/request authority boundaries.
 
 ## Related Guides And Next Steps
 

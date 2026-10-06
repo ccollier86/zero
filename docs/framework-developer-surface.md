@@ -116,7 +116,10 @@ commands replace scaffold targets.
 | `@zero/framework/components/auth` | Auth UI blocks and gates. Also exported from `react`. |
 | `@zero/framework/components/animated-list` | Public animated list and event-card skin. Also exported from `react`. |
 | `@zero/framework/components/bento-grid` | Public bento grid layout and cards. Also exported from `react`. |
-| `@zero/framework/components/code-block` | Public Shiki code block with tabs, line numbers, and copy action. Also exported from `react`. |
+| `@zero/framework/components/code-block` | Complete tokenized code-example family: composable parts, file tabs, copy controls, inline/package-manager blocks, Markdown adapters and shared Shiki highlights. Also exported from `react`; see [CodeBlock](frontend/code-block.md). |
+| `@zero/framework/components/code-block/server` | Pure `prepareCodeBlock()` and relevant types for synchronous Bun SSR/build preparation. |
+| `@zero/framework/components/code-block/highlight` | Pure shared highlighter, escaped fallback and highlight option/result types. |
+| `@zero/framework/components/code-block/metadata` | Pure bounded fence metadata/range helpers, without React rendering. |
 | `@zero/framework/components/cta` | Public call-to-action section with Hero-compatible actions. Also exported from `react`. |
 | `@zero/framework/components/data-table` | Data table primitives. Also exported from `react`. |
 | `@zero/framework/components/data-studio` | Organization-owned logical-table control plane, workspace pieces, dialogs, value helpers, and geometry-stable inline cells. Primary control-plane exports are also available from `react`; use this narrow subpath for dialogs and value helpers. |
@@ -1784,7 +1787,7 @@ Supported source-copy targets:
 | `components/auth` | Auth forms, password flows, and auth visibility gates. |
 | `components/animated-list` | Public animated list, list item, event-card skin, and motion dependencies. |
 | `components/bento-grid` | Public bento grid layout, item, skeleton, and dependencies. |
-| `components/code-block` | Public Shiki code block, tabs, copy action, and dependencies. |
+| `components/code-block` | Complete public code-example family, tokenized Shiki transforms, file/package-manager controls, and server/Markdown adapters. |
 | `components/cta` | Public call-to-action section with Hero-compatible actions and dependencies. |
 | `components/data-table` | Data table, toolbar, pagination, row actions, and dependencies. |
 | `components/expandable-card` | Public shared-layout expandable cards and close/outside-click dependencies. |

@@ -3470,7 +3470,8 @@ targets, see [Component Inventory](frontend/component-inventory.md).
 |-----------|-------------|
 | `AppShell`, `AppShellHeader`, `AppShellBreadcrumbs`, `AppShellSidebar` | App-ready dashboard/admin shell with Animate UI/Radix sidebar, optional breadcrumbs/header content, workspace switcher, nested nav, item action menus, footer user menu, and shell presets |
 | `SidebarProvider`, `Sidebar`, `SidebarInset`, `SidebarTrigger`, `SidebarContent`, `SidebarHeader`, `SidebarFooter`, `SidebarRail`, `SidebarMenu`, `SidebarMenuButton`, `SidebarMenuAction` | Low-level sidebar primitives for custom shells |
-| `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` | Public route sections for landing pages, docs, content pages, and public flows |
+| `ResizableNavbar`, `Hero`, `FeaturesSection`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` | Public route sections for landing pages, docs, content pages, and public flows |
+| `CodeBlock` and composable code-example family | Tokenized Shiki highlights, file tabs, awaited copy, inline/package-manager blocks and server/Markdown adapters; see [CodeBlock](frontend/code-block.md) for exact imports/options |
 | `Breadcrumb`, `BreadcrumbList`, `BreadcrumbItem`, `BreadcrumbLink`, `BreadcrumbPage`, `BreadcrumbSeparator`, `BreadcrumbEllipsis` | Tokenized breadcrumb primitives used by `AppShellBreadcrumbs` |
 | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | Card container with semantic sections |
 | `ScrollArea`, `ScrollBar` | Custom scrollable container |
@@ -3699,7 +3700,7 @@ import { Magnetic } from '@/components/animate-ui/primitives/effects/magnetic';
 | Component | Description |
 |-----------|-------------|
 | `AvatarGroup`, `AvatarGroupTooltip` | Overlapping avatar stack with tooltips |
-| `Code`, `CodeBlock`, `CodeTabs` | Syntax-highlighted code blocks with animations |
+| Legacy source-local Animate UI `Code`, `CodeBlock`, `CodeTabs` | Retired in the 2.5 replacement; no public runtime consumers. Application examples use [Zero's one shared CodeBlock family](frontend/code-block.md) |
 | `CursorProvider`, `Cursor`, `CursorFollow` | Custom animated cursor |
 | `MotionGrid` | Animated CSS grid |
 | `ScrollProgress` | Scroll position indicator |
@@ -4979,6 +4980,14 @@ are accepted with `POST /api/_zero/observability/events` when frontend ingest
 is enabled. See [Observability](observability.md).
 
 #### Plugins
+
+Optional native plugins can contribute prepared content/browser assets through
+`defineZeroPlugin({ build, setup })`. Public `prepareAppBuild` and
+`renderServerPage` are exported from `@zero/framework/server`; setup receives
+the immutable actual frontend manifest and plugin-private file references.
+Use the normal `zero build` command, not a bare server bundle, when a plugin
+requires compilation. See [app build and native plugin
+content](./app-build.md) for signatures, trusted boundaries and deployment.
 
 `createApp()` already mounts Scheduler before Notifications, plus Rooms,
 Torrent workflows, and the other enabled platform plugins in their required order. Do

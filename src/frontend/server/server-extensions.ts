@@ -7,6 +7,8 @@
  */
 
 import type { AnyElysia, MaybePromise } from 'elysia';
+import { join } from 'node:path';
+import { emitPlatformCode, emitPlatformCodeTo } from '../../observability';
 
 import {
   createProtectedMultipartRequestGuard,
@@ -59,7 +61,12 @@ import {
   ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_OBSERVABILITY_RUNTIME,
 } from '../../runtime/service-keys';
+import type { ResolvedAppFrontendAssets, ZeroPluginBuildContribution } from './server-plugin-build-types';
+import { AppPluginBuildError } from './server-plugin-build-error';
+import { pluginBuildNamespace } from './server-plugin-build-assets';
+import type { AppIdentityConfig } from '../../email/types';
 
 export const ZERO_SERVER_EXTENSION_KIND = Symbol.for('zero.server.extension.kind');
 
@@ -236,12 +243,28 @@ export interface ZeroMiddlewareDefinition<
 export interface ZeroPluginSetupContext {
   app: ReturnType<typeof createServerRoute>;
   zero: ServerRouteServices;
+  /** Immutable application/configuration origin captured before plugin compilation. */
+  readonly projectRoot: string;
+  /** Actual configured app route directory for consuming-app SSR dependency resolution. */
+  readonly appDir: string;
+  /** App-level public identity; plugins must not couple branding to the email subsystem. */
+  readonly appIdentity: Readonly<AppIdentityConfig>;
+  /** Plugin-owned private generated root for bounded development snapshots/watchers. */
+  readonly generatedDir: string;
+  /** This plugin's declared private attachment references; serving still requires its own admission. */
+  readonly files: Readonly<Record<string, string | URL>>;
+  /** App-bound observability for runtime rendering/watchers; no process-global ownership. */
+  readonly emitCode: typeof emitPlatformCode;
+  /** Resolved shared/plugin URLs and private compiled content, not filesystem guesses. */
+  readonly frontend: ResolvedAppFrontendAssets;
 }
 
 /** Options accepted by defineZeroPlugin(). */
 export interface ZeroPluginOptions {
   /** Stable plugin name used by Elysia deduplication and traces. */
   name: string;
+  /** Optional declared build phase; never invoked through privileged runtime setup. */
+  build?: ZeroPluginBuildContribution;
   /** Configures and returns an optional child Elysia plugin. */
   setup: (context: ZeroPluginSetupContext) => MaybePromise<AnyElysia | void>;
 }
@@ -263,6 +286,16 @@ export type ZeroServerExtension =
 
 export type ZeroRouterChild = ZeroServerExtension | ServerRoutePlugin;
 export type ZeroServerExtensionMountable = ZeroServerExtension | ServerRoutePlugin;
+
+/** Build artifacts supplied once to a server-extension composition boundary. */
+export interface ServerExtensionFrontendContext {
+  readonly projectRoot: string;
+  readonly appDir?: string;
+  readonly appIdentity?: Readonly<AppIdentityConfig>;
+  readonly generatedDir?: string;
+  readonly pluginBuildFiles?: Readonly<Record<string, Readonly<Record<string, string | URL>>>>;
+  readonly frontend: ResolvedAppFrontendAssets;
+}
 
 /** Create a validated Zero-native endpoint definition. */
 export function defineEndpoint<
@@ -317,6 +350,11 @@ export function defineMiddleware<
 /** Create a validated Zero-native plugin definition. */
 export function defineZeroPlugin(options: ZeroPluginOptions): ZeroPluginDefinition {
   assertExtensionName(options.name, 'plugin');
+  if (options.build !== undefined && (!options.build || typeof options.build.prepare !== 'function'
+    || (options.build.required !== undefined && typeof options.build.required !== 'boolean')
+    || (options.build.identity !== undefined && (typeof options.build.identity !== 'string' || options.build.identity.length === 0)))) {
+    throw new AppPluginBuildError('APP_PLUGIN_BUILD_CONFIG_INVALID', `Plugin "${options.name}" has an invalid build declaration.`);
+  }
 
   return markExtension('plugin', options);
 }
@@ -346,6 +384,7 @@ export function createServerExtensionBundle(options: {
   extensions: ZeroServerExtensionMountable[];
   name?: string;
   runtime?: ZeroAppRuntime;
+  frontendContext?: ServerExtensionFrontendContext;
 }): ServerRoutePlugin {
   const extensions = [...options.extensions];
   const name = options.name ?? 'zero.app.server-extensions';
@@ -355,6 +394,7 @@ export function createServerExtensionBundle(options: {
       extensions,
       name,
       runtime: options.runtime,
+      frontendContext: options.frontendContext,
     });
     return (parent as AnyElysia & { use(plugin: ServerRoutePlugin): AnyElysia }).use(app);
   };
@@ -365,6 +405,7 @@ export async function createServerExtensionApp(options: {
   extensions: ZeroServerExtensionMountable[];
   name?: string;
   runtime?: ZeroAppRuntime;
+  frontendContext?: ServerExtensionFrontendContext;
 }): Promise<AnyElysia> {
   const kernel = resolveAuthorizationKernel(options.runtime);
   const rootAccess = createRootAccessPlan('optional', kernel);
@@ -373,6 +414,10 @@ export async function createServerExtensionApp(options: {
     options.runtime,
   ) as AnyElysia;
   app = applyServerExtensionErrorHandler(app);
+  const frontendContext = options.frontendContext ?? Object.freeze({
+    projectRoot: process.cwd(),
+    frontend: Object.freeze({ plugins: Object.freeze({}) }),
+  });
 
   for (const extension of options.extensions) {
     app = await applyServerExtensionWithPlan(
@@ -382,6 +427,7 @@ export async function createServerExtensionApp(options: {
       kernel,
       options.runtime,
       '',
+      frontendContext,
     );
   }
 
@@ -395,6 +441,7 @@ export async function applyServerExtension(
   inheritedAuth: AccessRequirement | CompiledAccessRequirement = 'optional',
   runtime?: ZeroAppRuntime,
   routePrefix = '',
+  frontendContext?: ServerExtensionFrontendContext,
 ): Promise<AnyElysia> {
   const kernel = resolveAuthorizationKernel(runtime);
   return applyServerExtensionWithPlan(
@@ -404,6 +451,7 @@ export async function applyServerExtension(
     kernel,
     runtime,
     routePrefix,
+    frontendContext ?? Object.freeze({ projectRoot: process.cwd(), frontend: Object.freeze({ plugins: Object.freeze({}) }) }),
   );
 }
 
@@ -419,6 +467,7 @@ async function applyServerExtensionWithPlan(
   kernel: AuthorizationKernel | null,
   runtime?: ZeroAppRuntime,
   routePrefix = '',
+  frontendContext?: ServerExtensionFrontendContext,
 ): Promise<AnyElysia> {
   if (isServerRoutePlugin(extension) && !isZeroServerExtension(extension)) {
     return usePlugin(app, extension);
@@ -432,11 +481,11 @@ async function applyServerExtensionWithPlan(
     case 'endpoint':
       return applyEndpoint(app, extension, inheritedAccess, kernel, runtime, routePrefix);
     case 'router':
-      return applyRouter(app, extension, inheritedAccess, kernel, runtime, routePrefix);
+      return applyRouter(app, extension, inheritedAccess, kernel, runtime, routePrefix, frontendContext);
     case 'middleware':
       return applyMiddleware(app, extension, inheritedAccess, kernel, runtime);
     case 'plugin':
-      return applyPlugin(app, extension, runtime);
+      return applyPlugin(app, extension, runtime, frontendContext);
   }
 }
 
@@ -482,6 +531,7 @@ async function applyRouter(
   kernel: AuthorizationKernel | null,
   runtime?: ZeroAppRuntime,
   routePrefix = '',
+  frontendContext?: ServerExtensionFrontendContext,
 ): Promise<AnyElysia> {
   const access = mergeAccessPlan(inheritedAccess, router.auth, kernel);
   const fullPrefix = joinRoutePaths(routePrefix, router.prefix ?? '');
@@ -504,6 +554,7 @@ async function applyRouter(
       kernel,
       runtime,
       fullPrefix,
+      frontendContext,
     );
   }
 
@@ -563,12 +614,30 @@ async function applyPlugin(
   app: AnyElysia,
   plugin: ZeroPluginDefinition,
   runtime?: ZeroAppRuntime,
+  frontendContext?: ServerExtensionFrontendContext,
 ): Promise<AnyElysia> {
   const child = createServerRoute({ name: `zero.plugin.${plugin.name}` }, runtime);
-  const result = await plugin.setup({
+  if (plugin.build?.required !== false && plugin.build && !frontendContext?.frontend.plugins[plugin.name]) {
+    throw new AppPluginBuildError('APP_PLUGIN_BUILD_MISSING', `Required build artifact is missing for plugin "${plugin.name}".`);
+  }
+  const observability = runtime?.get(ZERO_OBSERVABILITY_RUNTIME);
+  const projectRoot = frontendContext?.projectRoot ?? process.cwd();
+  const generatedRoot = frontendContext?.generatedDir ?? join(projectRoot, '.zero/generated');
+  const privateAssets = frontendContext?.frontend.plugins[plugin.name]?.privateAssets ?? {};
+  const files = Object.fromEntries(Object.entries(privateAssets).map(([name, asset]) => [name, frontendContext?.pluginBuildFiles?.[plugin.name]?.[name] ?? join(generatedRoot, asset.artifactPath)]));
+  const result = await plugin.setup(Object.freeze({
     app: child,
     zero: createLazyServerRouteServices(runtime),
-  });
+    projectRoot,
+    appDir: frontendContext?.appDir ?? join(projectRoot, 'app'),
+    appIdentity: Object.freeze({ ...(frontendContext?.appIdentity ?? {}) }),
+    generatedDir: join(generatedRoot, 'plugins', pluginBuildNamespace(plugin.name)),
+    files: Object.freeze(files),
+    emitCode: observability
+      ? emitPlatformCodeTo.bind(null, observability)
+      : emitPlatformCode,
+    frontend: frontendContext?.frontend ?? Object.freeze({ plugins: Object.freeze({}) }),
+  }));
 
   return usePlugin(app, result ?? child);
 }

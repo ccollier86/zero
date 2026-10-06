@@ -45,6 +45,8 @@ target/
 .gradle/
 .build/
 build/
+!src/build/
+!src/build/**
 dist/
 out/
 .next/

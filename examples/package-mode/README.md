@@ -17,7 +17,8 @@ Backend code can live in:
 Run from the repository root while this starter is being developed:
 
 ```sh
-bun build examples/package-mode/app/server.ts --target bun --outdir .zero/package-mode-fixture-build
+bun run src/cli/run.ts build --config ./examples/package-mode/zero.config.ts \
+  --entry ./app/server.ts --outdir ./dist
 ```
 
 Create a new app from this shape with:
@@ -50,6 +51,14 @@ zero add components/kanban
 
 Generated starter projects should use the same structure, but with Zero
 installed as a dependency instead of living in this repository.
+
+Generated apps use `zero build --config ./zero.config.ts --entry ./app/server.ts
+--outdir ./dist`. It prepares required native plugin content before bundling the
+existing entry. Existing apps must change their own build script when adding
+that capability. Copy the full JavaScript output directory and retain app-owned
+file-route sources/runtime dependencies for ordinary file-page deployments;
+docs/plugin-only no-source compilation is a separate qualified mode. See the
+packaged [build guide](../../docs/app-build.md).
 
 The root layout owns `AppProvider` and receives the shared `tables` object from
 `db/schema.ts`. Keep that shared shape in generated apps: `createApp()` extracts

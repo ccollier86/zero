@@ -1,5 +1,5 @@
 import { resolve, relative, dirname, basename } from 'path';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,10 @@ const ROUTE_FILES = new Set([
  */
 export function scanRoutes(appDir: string): ScannedFile[] {
   const absDir = resolve(appDir);
+  // The file router is optional for plugin-only/backend apps. A missing source
+  // directory has no routes; an existing non-directory remains a config error.
+  if (!existsSync(absDir)) return [];
+  if (!statSync(absDir).isDirectory()) throw new Error('File-router appDir must be a directory.');
   const glob = new Bun.Glob('**/{page,layout,route,not-found}.{ts,tsx}');
   const files: ScannedFile[] = [];
 

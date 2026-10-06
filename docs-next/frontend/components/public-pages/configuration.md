@@ -35,7 +35,8 @@ public visual lane does not make an authenticated page public automatically.
 | CtaSection | /components/cta |
 | FooterSection | /components/footer |
 | Faq | /components/faq |
-| CodeBlock | /components/code-block |
+| CodeBlock and complete composable family | /components/code-block |
+| Pure CodeBlock preparation/highlight/metadata helpers | /components/code-block/server, /components/code-block/highlight, /components/code-block/metadata |
 | BentoGrid/BentoGridItem/BentoGridSkeleton | /components/bento-grid |
 | AnimatedList/AnimatedListItem/AnimatedListCard | /components/animated-list |
 | ExpandableCards | /components/expandable-card |
@@ -50,6 +51,14 @@ Class slots merge with token-based defaults; they are not configuration preceden
 for server permissions. Component-local expansion/tab/timer state is ephemeral.
 A controlled ID and its change callback lets the app coordinate another panel;
 it does not persist a setting or run a source query by itself.
+
+The 2.5.0 working-source CodeBlock expansion adds an explicit exception for
+optional browser preference: package-manager controls may opt into local-storage
+with `persist`; it is off by default and is not a tenant or server setting.
+The [composition](./code-block-composition.md), [rendering](./code-block-rendering.md)
+and [examples](./code-block-examples.md) guides own every option and precedence.
+Server pre-highlighting is a build/render action through a pure public helper,
+not environment discovery or automatic Doctor configuration.
 
 ## Related Guides And Next Steps
 

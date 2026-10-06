@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { resolve } from 'node:path';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import { defineDatabaseAutomations } from '../../database-automations/database-automations';
 import { defineDatabaseFunction } from '../../database-automations/database-function';
@@ -370,12 +371,13 @@ describe('resolveConfig', () => {
     expect(config.stateSync).toBe(true);
     expect(config.syncAuth).toBe('required');
     expect(config.syncAuthDefaulted).toBe(true);
-    expect(config.generatedDir).toBe('./.zero/generated');
-    expect(config.serverPluginsDir).toBe('./server/plugins');
-    expect(config.serverMiddlewareDir).toBe('./server/middleware');
-    expect(config.serverEndpointsDir).toBe('./server/endpoints');
-    expect(config.serverRoutesDir).toBe('./server/routes');
-    expect(config.serverResourcesDir).toBe('./server/resources');
+    expect(config.projectRoot).toBe(resolve(process.cwd()));
+    expect(config.generatedDir).toBe(resolve(config.projectRoot, '.zero/generated'));
+    expect(config.serverPluginsDir).toBe(resolve(config.projectRoot, 'server/plugins'));
+    expect(config.serverMiddlewareDir).toBe(resolve(config.projectRoot, 'server/middleware'));
+    expect(config.serverEndpointsDir).toBe(resolve(config.projectRoot, 'server/endpoints'));
+    expect(config.serverRoutesDir).toBe(resolve(config.projectRoot, 'server/routes'));
+    expect(config.serverResourcesDir).toBe(resolve(config.projectRoot, 'server/resources'));
     expect(config.resourceRoutes).toEqual({});
     expect(config.routeAuth).toBe('protected-by-default');
     expect(config.postLoginPath).toBe('/');

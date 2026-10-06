@@ -14,6 +14,18 @@
 
 // ─── App Factory ────────────────────────────────────────────────────────
 export { createApp } from './server/app-factory';
+export { prepareAppBuild } from './server/app-build';
+export type { PreparedAppBuild } from './server/app-build';
+export { renderServerPage } from './server/server-page-renderer';
+export type { RenderServerPageOptions } from './server/server-page-renderer';
+export { AppPluginBuildError } from './server/server-plugin-build-error';
+export { isReservedAppRoutePath, RESERVED_APP_ROUTE_PREFIXES } from './server/server-plugin-build-route-ownership';
+export type {
+  AppFrontendBuildManifest, ResolvedAppFrontendAssets,
+  ResolvedZeroPluginFrontendAssets, ResolvedZeroPluginFrontendAsset,
+  ZeroPluginBuildContext, ZeroPluginBuildOutput, ZeroPluginBuildContribution,
+  ZeroPluginBuildFile, ZeroPluginJsonValue,
+} from './server/server-plugin-build-types';
 export type { App } from './server/app-factory';
 export { defineZeroConfig, resolveConfig } from './server/types';
 export type {
@@ -337,6 +349,7 @@ export {
   ServerRouteLoaderError,
   collectServerRouteFiles,
   loadServerRoutePlugins,
+  normalizeServerRouteModule,
 } from './server/server-route-loader';
 export type { ServerRouteLoaderOptions, ServerRoutePlugin } from './server/server-route-loader';
 

@@ -79,3 +79,22 @@ projection. A collapsed nav never changes backend access.
 [Sidebar menu](./sidebar-menu.md) owns active labels/actions/loading. Verify
 desktop/mobile, keyboard toggle, focus and responsive sheet behavior in the
 actual app; source inspection is not full mobile/device qualification.
+
+## 2.5 Working Mobile Composition Additions
+
+The documentation-reader work extends this same Sidebar rather than building a
+second mobile drawer. `className` and `style` reach the actual mobile Sheet
+surface, so scoped token aliases and width constraints can follow the portal.
+Optional `mobileTransition` and `mobileOverlayTransition` control its content and
+overlay Motion transitions without changing desktop Highlight behavior.
+`onMobileCloseAutoFocus` receives the native close-focus event; custom triggers
+can deliberately restore keyboard focus. These additions preserve default
+behavior for existing consumers.
+
+Honor reduced motion on both animated surfaces; changing CSS duration alone
+does not control JavaScript-driven effects. Do not steal focus after navigation
+to a new page. The [docs reader](../../../plugins/docs/reader.md) demonstrates a
+complete custom navigation composition. Its source and installed-browser checks
+are recorded separately in the
+[2.5 qualification ledger](../../../_work/audits/docs-plugin-qualification.md),
+not inferred from the historical 2.1.1 audit metadata above.

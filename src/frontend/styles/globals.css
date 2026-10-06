@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "./code-block-tokens.css";
+@import "../../components/code-block/code-block.styles.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -282,46 +284,5 @@
 
   :focus-visible {
     outline-color: var(--color-ring);
-  }
-}
-
-@layer components {
-  .zero-code-block .shiki {
-    margin: 0;
-    min-width: max-content;
-    overflow: visible;
-    background: transparent !important;
-    color: var(--color-public-muted-foreground);
-    font-family: var(--font-platform-mono);
-    font-size: 0.8125rem;
-    line-height: 1.75;
-  }
-
-  .zero-code-block .shiki code {
-    display: block;
-    min-width: max-content;
-    counter-reset: zero-code-line;
-  }
-
-  .zero-code-block .shiki .line {
-    display: block;
-    min-height: 1.75em;
-    padding-inline: 1rem;
-  }
-
-  .zero-code-block[data-line-numbers="true"] .shiki .line::before {
-    display: inline-block;
-    width: 2.75rem;
-    padding-right: 1rem;
-    color: var(--color-public-muted-foreground);
-    content: counter(zero-code-line);
-    counter-increment: zero-code-line;
-    opacity: 0.52;
-    text-align: right;
-    user-select: none;
-  }
-
-  .dark .zero-code-block .shiki span {
-    color: var(--shiki-dark, inherit) !important;
   }
 }

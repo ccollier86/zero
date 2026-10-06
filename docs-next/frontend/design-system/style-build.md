@@ -8,14 +8,14 @@ visibility: internal
 system: design-system
 feature: style-build
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.5.0 development source; publication qualification pending"]
 modes: ["React browser UI", "SSR markup", "managed frontend styling"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -41,6 +41,13 @@ Configured appDir is the app scanning boundary; arbitrary separate custom
 source trees are not implicitly new scan roots. Apps using their own CSS build
 pipeline may import @zero/framework/styles.css and deliberately configure their
 pipeline's candidates.
+
+The 2.5.0 optional native plugin build contract explicitly contributes
+`styleSources` (source files or directories), prebuilt scoped `styles` and
+tokenized browser enhancements. Those declared sources join the managed scan;
+missing required inputs or a required style failure aborts preparation.
+They do not silently add arbitrary content folders to Tailwind scanning.
+See [build contributions](../../backend/runtime/build-contributions.md).
 
 Source-local buildPlatformStyles/scanTailwindCandidates are internal helpers,
 not supported public application imports. Do not use node_modules/src to invoke

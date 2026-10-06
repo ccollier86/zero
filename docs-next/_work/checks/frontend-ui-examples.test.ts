@@ -41,6 +41,9 @@ const selected: Record<string, number[]> = {
   'frontend/components/public-pages/sections.md': [0],
   'frontend/components/public-pages/faq.md': [0],
   'frontend/components/public-pages/code-block.md': [0],
+  'frontend/components/public-pages/code-block-composition.md': [0],
+  'frontend/components/public-pages/code-block-rendering.md': [0, 1],
+  'frontend/components/public-pages/code-block-examples.md': [0, 1],
   'frontend/components/public-pages/collections.md': [0],
 };
 

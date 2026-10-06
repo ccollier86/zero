@@ -32,6 +32,9 @@ against code, public exports, runtime composition and actual checks.
   explicitly not a fresh-history or installed-package qualification.
 - [Data Studio UI follow-up](./data-studio-ui-review.md): scoped component reuse,
   virtual/progressive grid contracts, source-identity correction and focused evidence.
+- [Documentation-plugin qualification](./docs-plugin-qualification.md): supplemental
+  optional reader, shared CodeBlock replacement, native builds, confirmed fixes
+  and actual source/browser/installed/compiled evidence; not a main/registry release.
 - [Informal naming candidates](./naming.md): approved aliases and unapproved
   suggestions, explicitly separate from API/import/config names.
 

@@ -74,12 +74,37 @@ export class ServerRouteLoaderError extends Error {
 export async function loadServerRoutePlugins(
   options: ServerRouteLoaderOptions = {}
 ): Promise<ServerRoutePlugin[]> {
+  const extensions = await loadServerRouteExtensions(options);
+  return extensions.length === 0
+    ? []
+    : [await createServerExtensionApp({ extensions: [...extensions], runtime: options.runtime })];
+}
+
+/**
+ * Discover declarations without invoking plugin setup or opening services.
+ * Managed builds reuse this exact immutable list when runtime mounting begins.
+ */
+export async function loadServerRouteExtensions(
+  options: ServerRouteLoaderOptions = {},
+): Promise<readonly ZeroServerExtensionMountable[]> {
+  return (await loadServerRouteDiscovery(options)).extensions;
+}
+
+/** Build-time discovery result; source module paths let the server bundler include declarations statically. */
+export interface ServerRouteDiscovery {
+  readonly extensions: readonly ZeroServerExtensionMountable[];
+  readonly modulePaths: readonly string[];
+}
+
+/** Discover once without setup and retain source identities for a normal production build. */
+export async function loadServerRouteDiscovery(options: ServerRouteLoaderOptions = {}): Promise<ServerRouteDiscovery> {
   const observability = options.runtime?.get(ZERO_OBSERVABILITY_RUNTIME);
   const emit = observability
     ? emitPlatformCodeTo.bind(null, observability)
     : emitPlatformCode;
   const directories = resolveExtensionDirectories(options);
   const loadedFiles: string[] = [];
+  const seenFiles = new Set<string>();
   const extensions: ZeroServerExtensionMountable[] = [];
 
   for (const directory of directories) {
@@ -90,6 +115,8 @@ export async function loadServerRoutePlugins(
 
     const files = await collectServerRouteFiles(resolvedDir);
     for (const filePath of files) {
+      if (seenFiles.has(filePath)) continue;
+      seenFiles.add(filePath);
       try {
         const routeModule = await import(pathToFileURL(filePath).href);
         extensions.push(...normalizeServerRouteModule(routeModule, filePath));
@@ -115,9 +142,7 @@ export async function loadServerRoutePlugins(
     });
   }
 
-  return extensions.length === 0
-    ? []
-    : [await createServerExtensionApp({ extensions, runtime: options.runtime })];
+  return Object.freeze({ extensions: Object.freeze(extensions), modulePaths: Object.freeze(loadedFiles) });
 }
 
 /**
@@ -165,7 +190,7 @@ function isRouteModuleFile(fileName: string): boolean {
   return false;
 }
 
-function normalizeServerRouteModule(module: unknown, filePath: string): ZeroServerExtensionMountable[] {
+export function normalizeServerRouteModule(module: unknown, filePath: string): ZeroServerExtensionMountable[] {
   const extensions = getRouteExports(module);
 
   if (extensions.length === 0 || extensions.some((extension) => !isValidServerExtensionExport(extension))) {

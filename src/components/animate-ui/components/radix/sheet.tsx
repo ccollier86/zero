@@ -55,6 +55,8 @@ function SheetClose(props: SheetCloseProps) {
 
 type SheetContentProps = SheetContentPrimitiveProps & {
   showCloseButton?: boolean;
+  /** Scoped composition policy for the portalled overlay, independent of content motion. */
+  overlayTransition?: SheetOverlayPrimitiveProps['transition'];
 };
 
 function SheetContent({
@@ -62,11 +64,12 @@ function SheetContent({
   children,
   side = 'right',
   showCloseButton = true,
+  overlayTransition,
   ...props
 }: SheetContentProps) {
   return (
     <SheetPortalPrimitive>
-      <SheetOverlay />
+      <SheetOverlay transition={overlayTransition} />
       <SheetContentPrimitive
         className={cn(
           'bg-background text-foreground fixed z-50 flex flex-col gap-4 shadow-lg',

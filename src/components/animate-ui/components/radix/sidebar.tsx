@@ -159,6 +159,10 @@ type SidebarProps = React.ComponentProps<'div'> & {
   containerClassName?: string;
   animateOnHover?: boolean;
   transition?: Transition;
+  /** Mobile sheet composition hooks; desktop Highlight motion remains unchanged. */
+  mobileTransition?: React.ComponentProps<typeof SheetContent>['transition'];
+  mobileOverlayTransition?: React.ComponentProps<typeof SheetContent>['overlayTransition'];
+  onMobileCloseAutoFocus?: React.ComponentProps<typeof SheetContent>['onCloseAutoFocus'];
 };
 
 function Sidebar({
@@ -167,9 +171,13 @@ function Sidebar({
   collapsible = 'offcanvas',
   className,
   children,
+  style,
   animateOnHover = true,
   containerClassName,
   transition = { type: 'spring', stiffness: 350, damping: 35 },
+  mobileTransition,
+  mobileOverlayTransition,
+  onMobileCloseAutoFocus,
   ...props
 }: SidebarProps) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
@@ -190,6 +198,7 @@ function Sidebar({
             'bg-sidebar text-sidebar-foreground flex h-full w-(--sidebar-width) flex-col',
             className,
           )}
+          style={style}
           {...props}
         >
           {children}
@@ -205,13 +214,17 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="bg-sidebar text-sidebar-foreground w-(--sidebar-width) p-0 [&>button]:hidden"
+          className={cn('bg-sidebar text-sidebar-foreground w-(--sidebar-width) p-0 [&>button]:hidden', className)}
           style={
             {
               '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
+              ...style,
             } as React.CSSProperties
           }
           side={side}
+          transition={mobileTransition}
+          overlayTransition={mobileOverlayTransition}
+          onCloseAutoFocus={onMobileCloseAutoFocus}
         >
           <SheetHeader className="sr-only">
             <SheetTitle>Sidebar</SheetTitle>
@@ -266,6 +279,7 @@ function Sidebar({
             : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l',
           className,
         )}
+        style={style}
         {...props}
       >
         <Highlight

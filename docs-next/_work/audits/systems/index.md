@@ -64,6 +64,7 @@ supplemental working-tree runtime/package fixes separately. See the
 | CLI tooling | Scaffolding, update/add/migration/local tooling and command side effects. | [Source/contract inventory](./cli-tooling.md) |
 | Doctor | Public checks, report contracts, trusted config imports and read-only data inspection. | [Source/contract inventory](./doctor.md) |
 | Agent tooling | Existing agent files, onboarding artifacts and future discovery tools. | [Source/contract inventory](./agent-tooling.md) |
+| Optional documentation plugin | Admitted Markdown manifests, reader/search/projections and native build artifacts; supplemental 2.5.0 working feature. | [Source/package inventory](./docs-plugin.md) |
 
 ## Completeness Gates
 

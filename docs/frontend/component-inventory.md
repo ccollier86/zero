@@ -117,7 +117,7 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Hero`, `HeroBackground`, `HeroImageBackground`, `WavyBackground` | `components/hero` | Public-page hero section with tokenized background presets, custom background slot, actions, wavy canvas background, and rich title support. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `components/text-effects` | Public text effects for Hero titles, landing copy, docs headers, and content pages. |
 | `StreamingText` | `components/streaming-text` | Accessible static, replayed, caller-owned, or async streamed text for AI and agent output. The default cursor uses the semantic `foreground` token. |
-| `CodeBlock` | `components/code-block` | Tokenized Shiki code block with tabs, line numbers, copy action, and observability-backed fallback. |
+| `CodeBlock` family | `components/code-block` | Tokenized Shiki examples, composable parts, file tabs, awaited copy tools, inline/package-manager blocks and server/Markdown adapters; [full guide](./code-block.md). |
 | `CtaSection` | `components/cta` | Public call-to-action section with title, supporting copy, and Hero-compatible actions. |
 | `FooterSection` | `components/footer` | Full-width public footer band with brand, labeled nav links, Hero-compatible actions, supporting action copy, copyright, and animated icon links. |
 | `FeaturesSection` | `components/features` | Public feature showcase with icon bullets and a flexible image/code/custom visual slot. |
@@ -138,7 +138,7 @@ radius, font, and light/dark behavior used by dashboard components.
 | `WavyBackground` | `hero/wavy-background.tsx` | Canvas-driven wave background used by the `wavy` Hero preset and available for custom Hero backgrounds. |
 | `ResizableNavbar` | `navbar/resizable-navbar.tsx` | Fixed public navbar that detaches into a floating blurred capsule after scroll, includes desktop magnetic hover state, mobile menu, brand slot, links, and actions. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `text-effects/*` | Motion text effects for public headings, Hero slots, and content page accents. |
-| `CodeBlock` | `code-block/code-block.tsx` | Public code surface with Shiki highlighting, optional file tabs, line numbers, and copy action. |
+| `CodeBlock` family | `code-block/` | Public convenience/composable code surfaces and shared highlighter/preparation controllers, distinct from source-local Animate UI code utilities. |
 | `CtaSection` | `cta/cta-section.tsx` | Compact public CTA surface with optional eyebrow, title, description, and Hero-compatible actions. |
 | `FooterSection` | `footer/footer-section.tsx` | Full-width public footer band with brand block, optional link/action/social labels, optional action copy, social links, and copyright text. |
 | `FeaturesSection` | `features/features-section.tsx` | Public feature section with content column, icon bullets, and flexible visual slot for images, screenshots, code blocks, charts, or custom React. |

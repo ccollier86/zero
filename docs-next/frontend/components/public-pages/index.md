@@ -32,13 +32,22 @@ setting. The [router](../../router/authentication.md) still owns route access.
 - [Backgrounds](./backgrounds.md) configures decorative presets/images/canvas waves.
 - [Sections](./sections.md) covers FeaturesSection, CtaSection and FooterSection.
 - [FAQ](./faq.md) groups question/answer disclosure with optional animated text.
-- [CodeBlock](./code-block.md) presents escaped/highlighted multi-file examples.
+- [CodeBlock](./code-block.md) introduces the complete shared code-example family.
+- [CodeBlock composition](./code-block-composition.md) covers parts, props, file tabs and awaited copy.
+- [CodeBlock rendering](./code-block-rendering.md) covers highlights/metadata, safe SSR and Markdown adapters.
+- [CodeBlock examples](./code-block-examples.md) covers compact snippets and optional package-manager preferences.
 - [Collections](./collections.md) covers BentoGrid, AnimatedList and ExpandableCards.
 - [Configuration](./configuration.md) lists import/type/prop ownership.
 - [Roadmap](./roadmap.md) distinguishes known richer public/editor/plugin ideas.
 
 Keep public copy/assets genuinely public. A component does not hide private data
 from a visitor or turn raw application input into a safe URL/image automatically.
+
+The CodeBlock guides include a separately authorized working-source expansion
+targeting 2.5.0 on the 2.4.0 baseline. Their own metadata and the
+[qualification ledger](../../../_work/audits/docs-plugin-qualification.md)
+record focused archive/compiled checks without asserting publication; the
+original 2.1.1 review is not retroactively treated as evidence of the new parts.
 
 ## Related Guides And Next Steps
 

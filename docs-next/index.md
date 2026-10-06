@@ -36,6 +36,7 @@ review and does not replace the documentation shipped with an installed release.
 | [Frontend](./frontend/index.md) | Providers/SDK/router, data/forms/control planes, UI primitives, hooks, tokens and domain organisms |
 | [CLI](./cli/index.md) | Creation, dependency updates, committed release provenance, Doctor and safe operational boundaries |
 | [Agents](./agents/index.md) | Agent onboarding, existing instruction bundles, scripts/hooks and clearly labeled future tooling |
+| [Optional plugins](./plugins/index.md) | Separately installed capabilities, starting with folder-driven Markdown documentation |
 
 Every system index connects its features, configuration and roadmap. Follow
 those links to the canonical contract instead of copying an older example or

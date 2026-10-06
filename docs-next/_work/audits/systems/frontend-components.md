@@ -302,6 +302,61 @@ Canonical reader homes are [list/detail](../../../frontend/components/primitives
 [master/detail](../../../frontend/data-controls/master-detail.md), and
 [AppShell configuration](../../../frontend/app-shell/configuration.md).
 
+## Shared CodeBlock Upgrade — 2026-10-06 Working-Source Supplement
+
+The user-authorized pheralb-inspired upgrade replaces CodeBlock's rendering and
+compositions with one shared implementation while preserving its existing
+convenience props. It does not retain a parallel legacy renderer or install a
+second UI system. Additive native parts, file tabs, package-manager tabs/select,
+copy/morph controls, inline/Markdown/trusted-pre adapters and server preparation
+now have focused homes under [CodeBlock](../../../frontend/components/public-pages/code-block.md).
+The composition, rendering and examples pages distinguish browser fallback,
+trusted generated HTML, app-owned authorization and optional preference storage.
+The catalog supplements preserve the earlier baseline's historical counts.
+
+Qualification exposed and corrected concrete integration defects rather than
+loosening acceptance checks:
+
+| Responsibility | Correction and focused evidence |
+| --- | --- |
+| Syntax engine / embedded grammars | Bun's JavaScript-regex renderer misclassified a TypeScript string/comment boundary. The existing single Oniguruma engine renders it correctly; lazy embedded Markdown grammars retain their actual nested syntax. No second engine is loaded. |
+| Highlight annotations / anchors | Inserting line anchors before Shiki's notation transform broke comment parsing. Anchors now attach after the code transforms; highlights, word marks, diff/focus, numbering and copied source remain coherent. |
+| Tokenized controls / syntax | Old global dark styles flattened variable syntax colors, and inherited Button utility styles overrode action sizing. Scoped styles and native token-valued action defaults now honor actual runtime metrics, syntax colors, focus, hover and reduced motion. Radius defaults use real runtime variables rather than unavailable theme aliases. |
+| Metadata budgets / server publication | Fence ranges clamp to actual code lines, and word decorations have explicit bounded budgets. Strict server preparation remains available; an explicit escaped fallback with an app-owned error callback prevents an unsupported language from breaking an entire documentation publication. |
+| Native adapters / copy lifetime | Trusted-pre native classes/events/attributes stay on the actual pre element, without copied decorative anchors. Copy awaits the operation, prevents duplicate clicks, reports failure, respects prevented events and reacts to reset-duration changes. |
+
+The final focused CodeBlock run passed **32 tests / 170 assertions**, comprising
+unit/highlighter/SSR tests and **10 isolated Chromium cases**. The browser cases
+exercise desktop/mobile light/dark rendering, actual runtime token values,
+keyboard file tabs, copy outcomes, stale-result fencing, wrapping, manager
+preferences, trusted-pre/native behavior, reactive copy reset and useful no-JS
+server-rendered source. Fixtures use synthetic code and generated platform CSS;
+they do not open application sessions, providers or databases. The in-app browser
+bootstrap was unavailable, so the established disposable Bun/Elysia/Chromium
+harness was used; this does not imply a whole-device accessibility certification.
+
+The working source's complete TypeScript check passed. The expanded UI example
+checker passed **1 test / 59 assertions**, compiling five new CodeBlock snippets
+through the public source facades without executing applications. The structural
+documentation check observed **712 pages / 712 IDs / 712 reachable / 0 problems**
+at that check's point in this changing documentation tree. These observations
+describe the dirty `feature/markdown-documentation-plugin` source based on
+`636b1c01b3484317df56ce624c7cd57976ee417c`, not a published or installed 2.4.0
+archive. Exact-package/export and combined plugin qualification remain separate.
+
+Subsequent actual 2.5.0 framework/0.1.0 optional-package archive and compiled
+reader gates passed and are recorded in the
+[documentation-plugin qualification ledger](../docs-plugin-qualification.md).
+The shared renderer also copied/prepared code successfully from the source-free
+compiled reader under nonce CSP. This is focused working-archive evidence, not
+registry publication, a clean release commit or whole-library qualification.
+
+Sources: [component family](../../../../src/components/code-block/index.ts),
+[transformer tests](../../../../src/components/code-block/code-block-transformers.test.ts),
+[browser tests](../../../../src/components/code-block/code-block.browser.test.ts),
+[rendering guide](../../../frontend/components/public-pages/code-block-rendering.md),
+and [upstream notice](../../../../THIRD_PARTY_NOTICES.md).
+
 Planned section entrance/configuration/roadmap and per-feature homes above require their parent indexes, contextual links and useful reciprocal guides. Keep these working inventories out of public publication. See the [process](../../../documentation-process.md) and [standards](../../../documentation-standards.md).
 
 - [x] Source-backed feature groups, public routes, and planned homes recorded.

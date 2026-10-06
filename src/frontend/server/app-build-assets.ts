@@ -20,6 +20,7 @@ export interface AppBuildAssets {
 export async function buildAppAssets(
   config: Pick<ResolvedConfig, 'outDir' | 'appDir' | 'generatedDir'>,
   emitCode: typeof emitPlatformCode,
+  options: { readonly styleSources?: readonly string[]; readonly requiredStyles?: boolean } = {},
 ): Promise<AppBuildAssets> {
   let clientEntry: string | undefined;
   let cssPath: string | undefined;
@@ -39,15 +40,16 @@ export async function buildAppAssets(
   }
 
   try {
-    const styles = await buildPlatformStyles(config.outDir, config.appDir);
+    const styles = await buildPlatformStyles(config.outDir, config.appDir, options.styleSources);
     cssPath = styles.publicPath;
     emitCode(OBS_CODES.APP_STYLES_READY, {
       metadata: { publicPath: styles.publicPath },
     });
-  } catch {
+  } catch (error) {
     emitCode(OBS_CODES.APP_STYLES_FAILED, {
       metadata: { stage: 'style-bundle' },
     });
+    if (options.requiredStyles) throw error;
   }
 
   return {

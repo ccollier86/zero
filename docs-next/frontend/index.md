@@ -69,6 +69,8 @@ the final authority over operations.
   logical/stored types and form/table presentation metadata.
 - [Runtime composition](../backend/runtime/index.md) explains how server plugins,
   service layers and application/tenant data planes connect to the browser.
+- [Optional documentation reader](../plugins/docs/index.md) supplies a standalone
+  public Markdown section using shared controls and public design tokens.
 - [Guardian](../backend/guardian/index.md) owns authentication/authorization;
   frontend gates and controls improve presentation but never grant access.
 

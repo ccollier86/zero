@@ -11,9 +11,10 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 import { scaffoldZeroApp } from './scaffold';
+import { buildZeroApp } from '../build/build-app';
 
 async function createTempRoot(): Promise<string> {
-  const baseDir = join(process.cwd(), '.zero');
+  const baseDir = '/Volumes/code-bank/tmp/scratch/zero-platform';
   await mkdir(baseDir, { recursive: true });
   return mkdtemp(join(baseDir, 'test-create-zero-'));
 }
@@ -52,6 +53,7 @@ describe('scaffoldZeroApp', () => {
       };
       expect(packageJson.dependencies['@zero/framework']).toBe('file:../zero-framework');
       expect(packageJson.scripts.doctor).toBe('zero doctor --config ./zero.config.ts');
+      expect(packageJson.scripts.build).toBe('zero build --config ./zero.config.ts --entry ./app/server.ts --outdir ./dist');
       expect(packageJson.scripts.migrate)
         .toBe('zero migrate --db ./data/zero.system.db');
       expect(packageJson.scripts['migrate:status'])
@@ -108,16 +110,17 @@ describe('scaffoldZeroApp', () => {
 
       await linkFrameworkPackage(targetDir);
 
-      const build = await Bun.build({
-        entrypoints: [join(targetDir, 'app/server.ts')],
-        outdir,
-        target: 'bun',
+      const build = await buildZeroApp({
+        configPath: join(targetDir, 'zero.config.ts'),
+        entryPath: './app/server.ts',
+        outDir: outdir,
       });
-      expect(build.success).toBe(true);
+      expect(await Bun.file(build.serverPath).exists()).toBe(true);
+      expect(build.publicAssetCount).toBeGreaterThan(0);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test('rejects non-empty target directories unless force is enabled', async () => {
     const rootDir = await createTempRoot();
@@ -144,4 +147,9 @@ async function linkFrameworkPackage(targetDir: string): Promise<void> {
   const scopeDir = join(targetDir, 'node_modules/@zero');
   await mkdir(scopeDir, { recursive: true });
   await symlink(process.cwd(), join(scopeDir, 'framework'), 'dir');
+  // Simulate the app-owned peer dependencies that a real scaffold install
+  // provides, instead of relying on a fixture nested beneath repo node_modules.
+  for (const dependency of ['react', 'react-dom']) {
+    await symlink(join(process.cwd(), 'node_modules', dependency), join(targetDir, 'node_modules', dependency), 'dir');
+  }
 }

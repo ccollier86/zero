@@ -1,0 +1,5 @@
+**/*.test.*
+**/*.fixture.*
+**/*-fixture.ts
+**/*-fixture.tsx
+tsconfig.json

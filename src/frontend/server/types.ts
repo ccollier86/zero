@@ -8,6 +8,9 @@ import {
   type TableSchema,
 } from '../../sync/types';
 import type { SyncPolicy } from '../../sync/sync-policy';
+import type { AppFrontendBuildManifest } from './server-plugin-build-types';
+import type { ZeroServerExtensionMountable } from './server-extensions';
+import { resolveAppOwnedPath, resolveAppProjectRoot } from './app-project-root';
 import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
@@ -256,6 +259,16 @@ export interface AppWorkflowsConfig {
  * building a full-stack app with the platform.
  */
 export interface AppConfig {
+  /** Immutable configuration origin for file/build inputs; defaults to the ordinary launch root. */
+  projectRoot?: string | URL;
+  /** Explicit native declarations in addition to optional directory discovery. */
+  serverExtensions?: readonly ZeroServerExtensionMountable[];
+  /** Precompiled frontend/content artifact supplied by the normal production build. */
+  frontendBuild?: AppFrontendBuildManifest;
+  /** Build-generated file-loader references for copied or self-contained public frontend assets. */
+  frontendAssetFiles?: Readonly<Record<string, string | URL>>;
+  /** Build-generated private plugin file references; these have no public static route. */
+  pluginBuildFiles?: Readonly<Record<string, Readonly<Record<string, string | URL>>>>;
   /** App identity used by system UI and platform emails. */
   app?: AppIdentityConfig;
 
@@ -547,6 +560,11 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
+  readonly projectRoot: string;
+  readonly serverExtensions: readonly ZeroServerExtensionMountable[];
+  readonly frontendBuild?: AppFrontendBuildManifest;
+  readonly frontendAssetFiles: Readonly<Record<string, string | URL>>;
+  readonly pluginBuildFiles: Readonly<Record<string, Readonly<Record<string, string | URL>>>>;
   app: AppIdentityConfig;
   db: ReactiveDBConfig;
   systemDb: ReactiveDBConfig;
@@ -609,6 +627,7 @@ export function resolveConfig(
   config: AppConfig,
   env?: Record<string, string | undefined>
 ): ResolvedConfig {
+  const projectRoot = resolveAppProjectRoot(config);
   const auth = config.auth === true
     ? {}
     : config.auth === false || config.auth === undefined
@@ -715,7 +734,7 @@ export function resolveConfig(
     );
   }
   const storageDir = config.storageDir ?? '.storage';
-  const outDir = config.outDir ?? './.build';
+  const outDir = resolveAppOwnedPath(projectRoot, config.outDir ?? './.build');
   if (databaseTopology.mode === 'multiple') {
     assertDatabaseDirectoryIsolation({
       rootDirectory: databaseTopology.rootDirectory,
@@ -757,6 +776,11 @@ export function resolveConfig(
   }
 
   return {
+    projectRoot,
+    serverExtensions: Object.freeze([...(config.serverExtensions ?? [])]),
+    ...(config.frontendBuild ? { frontendBuild: config.frontendBuild } : {}),
+    frontendAssetFiles: Object.freeze({ ...(config.frontendAssetFiles ?? {}) }),
+    pluginBuildFiles: Object.freeze(Object.fromEntries(Object.entries(config.pluginBuildFiles ?? {}).map(([name, files]) => [name, Object.freeze({ ...files })]))),
     app: config.app ?? {},
     db: config.db,
     systemDb,
@@ -785,14 +809,14 @@ export function resolveConfig(
     syncDefaults,
     storageDir,
     storage,
-    appDir: config.appDir ?? './app',
-    outDir,
-    generatedDir: config.generatedDir ?? './.zero/generated',
-    serverPluginsDir: config.serverPluginsDir ?? './server/plugins',
-    serverMiddlewareDir: config.serverMiddlewareDir ?? './server/middleware',
-    serverEndpointsDir: config.serverEndpointsDir ?? './server/endpoints',
-    serverRoutesDir: config.serverRoutesDir ?? './server/routes',
-    serverResourcesDir: config.serverResourcesDir ?? './server/resources',
+    appDir: resolveAppOwnedPath(projectRoot, config.appDir ?? './app'),
+    outDir: resolveAppOwnedPath(projectRoot, outDir),
+    generatedDir: resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated'),
+    serverPluginsDir: config.serverPluginsDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverPluginsDir ?? './server/plugins'),
+    serverMiddlewareDir: config.serverMiddlewareDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverMiddlewareDir ?? './server/middleware'),
+    serverEndpointsDir: config.serverEndpointsDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverEndpointsDir ?? './server/endpoints'),
+    serverRoutesDir: config.serverRoutesDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverRoutesDir ?? './server/routes'),
+    serverResourcesDir: config.serverResourcesDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverResourcesDir ?? './server/resources'),
     port: config.port ?? 3000,
     migrate: config.migrate ?? true,
     observability: config.observability,

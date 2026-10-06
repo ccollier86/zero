@@ -917,7 +917,7 @@ safety sweep and restart fallback.
 | `src/components/hero/hero-background.tsx` | Hero preset/custom/image background helpers |
 | `src/components/hero/wavy-background.tsx` | Canvas-driven wavy Hero background preset/helper |
 | `src/components/navbar/resizable-navbar.tsx` | Public-page `<ResizableNavbar>` using the frontend public token lane |
-| `src/components/code-block/code-block.tsx` | Public-page `<CodeBlock>` with Shiki highlighting, tabs, line numbers, and copy |
+| `src/components/code-block/` | Complete public `<CodeBlock>` family: convenience/composable shells, bounded Shiki transforms, file/package-manager controls and server/Markdown adapters |
 | `src/components/cta/cta-section.tsx` | Public-page `<CtaSection>` with Hero-compatible actions |
 | `src/components/footer/footer-section.tsx` | Full-width public-page `<FooterSection>` with brand, labeled nav, action copy, actions, and social links |
 | `src/components/features/features-section.tsx` | Public-page `<FeaturesSection>` with icon bullets and a flexible visual slot |

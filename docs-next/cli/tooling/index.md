@@ -8,14 +8,14 @@ visibility: internal
 system: cli-tooling
 feature: tooling
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.5.0 development source; publication qualification pending"]
 modes: ["Bun package-mode applications", "trusted local development"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -35,6 +35,7 @@ source-copy customization is deliberate app ownership.
 | Know what is installed and routed | [Dispatch](./dispatch.md) |
 | Create a new application | [Create](./create.md) |
 | Understand generated files/scripts | [Scaffolding](./scaffolding.md) |
+| Build the existing app and declared plugin content | [Build](./build.md) |
 | Copy selected reusable source | [Add](./add.md) and [source targets](./source-copy.md) |
 | Update an existing package-mode application | [Update](./update.md) |
 | Install workstation launchers | [Local install](./local-install.md) |

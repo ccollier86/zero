@@ -35,3 +35,6 @@ release_keep_latest = 5
 soft_profile = "standard"
 deep_profile = "code-only"
 archive_before_deep_clean = true
+
+[nested]
+parent_owned = ["packages/docs"]

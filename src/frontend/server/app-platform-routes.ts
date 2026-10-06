@@ -38,7 +38,8 @@ import {
   getAppStopHooks,
   type AppStopHook,
 } from './app-stop-lifecycle';
-import { createServerExtensionApp } from './server-extensions';
+import { createServerExtensionApp, type ZeroServerExtensionMountable } from './server-extensions';
+import type { ResolvedAppFrontendAssets } from './server-plugin-build-types';
 import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 import type { ResolvedConfig } from './types';
 
@@ -54,6 +55,8 @@ interface MountPlatformRoutesInput {
   readonly clientEntry?: string;
   readonly cssPath?: string;
   readonly identityProjectionRuntime: AppIdentityProjectionRuntime | null;
+  readonly serverExtensions?: readonly ZeroServerExtensionMountable[];
+  readonly frontend?: ResolvedAppFrontendAssets;
 }
 
 /**
@@ -75,6 +78,8 @@ export async function mountPlatformRoutes({
   clientEntry,
   cssPath,
   identityProjectionRuntime,
+  serverExtensions,
+  frontend,
 }: MountPlatformRoutesInput): Promise<readonly AppStopHook[]> {
   const getAuthStore = () => runtime.get(ZERO_AUTH_STORE);
   const getTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
@@ -164,7 +169,7 @@ export async function mountPlatformRoutes({
     }) as any);
   }
 
-  const serverRoutePlugins = await loadServerRoutePlugins({
+  const serverRoutePlugins = serverExtensions === undefined ? await loadServerRoutePlugins({
     runtime,
     extensionDirs: [
       { kind: 'plugins', dir: config.serverPluginsDir },
@@ -172,7 +177,10 @@ export async function mountPlatformRoutes({
       { kind: 'endpoints', dir: config.serverEndpointsDir },
       { kind: 'routes', dir: config.serverRoutesDir },
     ],
-  });
+  }) : serverExtensions.length === 0 ? [] : [await createServerExtensionApp({
+    extensions: [...serverExtensions], runtime,
+    frontendContext: { projectRoot: config.projectRoot, appDir: config.appDir, appIdentity: config.app, generatedDir: config.generatedDir, pluginBuildFiles: config.pluginBuildFiles, frontend: frontend ?? Object.freeze({ plugins: Object.freeze({}) }) },
+  })];
   const hooksBeforeAppExtensions = new Set(getAppStopHooks(app));
   for (const serverRoutePlugin of serverRoutePlugins) {
     app.use(serverRoutePlugin as any);
@@ -191,6 +199,7 @@ export async function mountPlatformRoutes({
     outDir: config.outDir,
     clientEntry,
     cssPath,
+    assetFiles: config.frontendAssetFiles,
     platformConfig: {
       url: '',
       auth: config.auth !== false,

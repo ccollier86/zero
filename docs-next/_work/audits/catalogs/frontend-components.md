@@ -530,6 +530,36 @@ The related `buttonGroupVariants` class composer is a helper, not another UI
 component. It has the same three group imports and is documented in the
 [Button Group guide](../../../frontend/components/primitives/button-group.md#public-parts-and-configuration).
 
+## Complete CodeBlock Working-Source Expansion
+
+These records supplement the pinned 2.1.1 catalog and the committed 2.4.0
+baseline (`636b1c01b3484317df56ce624c7cd57976ee417c`); the feature branch is dirty
+and these catalog records alone do not qualify the package. Subsequent focused
+archive/compiled-reader evidence is recorded in the
+[2.5 qualification ledger](../docs-plugin-qualification.md). The existing `CodeBlock` is the same facade, now
+backed by one composable renderer rather than a second legacy implementation.
+Corresponding Props, highlight/file/result and preference types are owned by
+the focused guide pages. `CodeBlockClient` is an alias, not a second engine.
+
+| Symbol | Public imports | Evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `CodeBlockRoot` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockHeader` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockTitle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockIcon` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockCode` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `CodeBlockClient` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `CodeBlockFiles` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockCopyButton` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-composition.md` |
+| `CodeBlockInline` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-examples.md` |
+| `CodeBlockCopyText` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-examples.md` |
+| `CodeBlockMarkdown` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `CodeBlockPre` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `CodeBlockPackageManager` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-examples.md` |
+| `CodeBlockPackageManagerSelector` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-examples.md` |
+
 ## Reconciliation And Review
 
 Packaging disposition: the original UI wildcard also resolves card.test, record-navigation-bar.test and list-detail-layout.test modules. They are test files, not supported components, and therefore are not rows or planned teaching targets here. The package export inventory records them as a finding; the user subsequently authorized a working-tree packaging correction. Export topology/counts here remain the pinned source baseline, not a claim that test-module exposure is supported.

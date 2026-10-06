@@ -678,7 +678,7 @@ export type {
   HeroProps,
   WavyBackgroundProps,
 } from '../components/hero';
-export { CodeBlock } from '../components/code-block';
+export * from '../components/code-block';
 export { JsonEditor } from '../components/json-editor';
 export type { JsonEditorProps, JsonEditorHandle, JsonEditorCommitResult } from '../components/json-editor';
 export type {
@@ -922,6 +922,7 @@ export {
   Command, CommandDialog, CommandInput, CommandList, CommandEmpty,
   CommandGroup, CommandItem, CommandSeparator, CommandShortcut,
 } from '../components/ui/command';
+export type { CommandDialogProps } from '../components/ui/command';
 
 // ─── Combobox ───────────────────────────────────────────────────────────
 export { Combobox } from '../components/ui/combobox';

@@ -8,6 +8,8 @@ import { cn } from '#zero/lib/utils';
 import {
   Dialog,
   DialogContent,
+  DialogTitle,
+  DialogDescription,
 } from '#zero/components/animate-ui/components/radix/dialog';
 
 // ─── Command Root ────────────────────────────────────────────────────────
@@ -32,13 +34,25 @@ function Command({
 
 interface CommandDialogProps extends React.ComponentProps<typeof Dialog> {
   children?: React.ReactNode;
+  title?: string;
+  description?: string;
+  /** Public composition hooks, including token aliases on the portalled content. */
+  contentClassName?: string;
+  contentStyle?: React.CSSProperties;
+  /** Disable client filtering when an authoritative server query supplies the results. */
+  shouldFilter?: boolean;
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>['onCloseAutoFocus'];
+  contentTransition?: React.ComponentProps<typeof DialogContent>['transition'];
+  overlayTransition?: React.ComponentProps<typeof DialogContent>['overlayTransition'];
 }
 
-function CommandDialog({ children, ...props }: CommandDialogProps) {
+function CommandDialog({ children, title = 'Commands', description = 'Search and choose a command.', contentClassName, contentStyle, shouldFilter = true, onCloseAutoFocus, contentTransition, overlayTransition, ...props }: CommandDialogProps) {
   return (
     <Dialog {...props}>
-      <DialogContent className="overflow-hidden p-0" showCloseButton={false}>
-        <Command className="[&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:size-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3">
+      <DialogContent className={cn('overflow-hidden p-0', contentClassName)} style={contentStyle} onCloseAutoFocus={onCloseAutoFocus} transition={contentTransition} overlayTransition={overlayTransition} showCloseButton={false}>
+        <DialogTitle className="sr-only">{title}</DialogTitle>
+        <DialogDescription className="sr-only">{description}</DialogDescription>
+        <Command label={title} shouldFilter={shouldFilter} className="[&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:size-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3">
           {children}
         </Command>
       </DialogContent>
@@ -181,3 +195,4 @@ export {
   CommandSeparator,
   CommandShortcut,
 };
+export type { CommandDialogProps };

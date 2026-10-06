@@ -8,14 +8,14 @@ visibility: internal
 system: platform-runtime
 feature: plugins
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.5.0 development source; publication qualification pending"]
 modes: [managed-server, standalone-extension]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -49,6 +49,12 @@ declarations](./endpoints.md) or explicitly enforce the raw route's policy.
 `setup` receives `{ app, zero }`; zero is the trusted app-local setup service
 surface. It can supply dependencies to a domain service. It must not be copied
 into every request as if it were already tenant-scoped.
+
+The 2.5.0 build contract also supplies readonly `projectRoot`, `appDir`,
+`appIdentity`, `generatedDir`, plugin-private `files`, actual resolved `frontend`
+and app-bound `emitCode`. Use the declared frontend manifest instead of guessing
+hashed asset paths. See [native build contributions](./build-contributions.md)
+for optional `build.prepare`, public/private files and shared public SSR.
 
 Request handlers receive a different projected service view. Multi-tenant raw
 services are blocked unless code deliberately uses the unsafe boundary; strict
@@ -92,5 +98,6 @@ not a supported untrusted dynamic module loader.
 
 - [Composition](./composition.md) owns app startup/listening.
 - [Discovery](./discovery.md) explains module exports and load order.
+- [Build contributions](./build-contributions.md) compiles optional package content before runtime setup.
 - [Middleware](./middleware.md) adds cross-cutting request behavior.
 - [Configuration](./configuration.md#plugin-options) lists setup options.

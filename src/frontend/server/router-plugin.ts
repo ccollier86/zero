@@ -58,6 +58,8 @@ export interface RouterPluginOptions {
   clientEntry?: string;
   /** Public URL path to the CSS file */
   cssPath?: string;
+  /** Build-generated exact public asset references, including Bun embedded files. */
+  assetFiles?: Readonly<Record<string, string | URL>>;
   /** Platform config injected into HTML for client hydration */
   platformConfig?: PlatformConfig;
   /**
@@ -132,7 +134,8 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         return new Response('Forbidden', { status: 403 });
       }
 
-      const file = Bun.file(filePath);
+      const declaredFile = options.assetFiles?.[`/_build/${(params as any)['*']}`];
+      const file = Bun.file(declaredFile ?? filePath);
       if (await file.exists()) {
         // Return Response with headers directly — Elysia doesn't merge
         // set.headers into raw Response objects, so we must set them here.

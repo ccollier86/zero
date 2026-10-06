@@ -46,6 +46,17 @@ This is a UI composition example, not a complete app/startup config. The
 provider owns browser persistence/system selection; server markup cannot know
 all client theme state before hydration.
 
+### Working 2.5.0 Hydration Correction
+
+The working 2.5.0 replacement/docs integration also fixes the toggle's saved-theme
+hydration boundary. Server markup and the first browser render use the same
+placeholder appearance/action. The existing `useMounted` hook then admits the
+actual persisted theme; the button is disabled until that happens. This avoids
+stale labels/SVG attributes or a saved-dark hydration mismatch without suppressing
+React warnings. The main source baseline above remains historical; the correction
+is separately covered by focused SSR and real styled-browser tests on the
+unreleased working branch.
+
 ## Transition Behavior
 
 Click cycles configured modes. Empty modes resets to light/dark/system.

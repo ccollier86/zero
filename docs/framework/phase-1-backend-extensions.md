@@ -183,6 +183,15 @@ export default defineZeroPlugin({
 Plugins are for advanced app integration. Regular API routes should prefer
 `defineEndpoint()` or `defineRouter()`.
 
+Plugins can also declare optional native `build` contributions: compilation
+prepares admitted content, enhancements, scoped styles and private attachments
+before assets, while `setup` remains the awaited runtime step after services
+exist. Setup receives actual readonly `frontend`, private `files`, captured
+`projectRoot`/`appDir`, `appIdentity`, `generatedDir` and app-bound `emitCode`
+alongside `app`/`zero`. See [building apps and declared plugin
+content](../app-build.md) for exact types, normal `zero build` usage and public
+SSR/deployment boundaries. Required production content is not silently rebuilt.
+
 ## Backend Context
 
 The app-owned backend context now exposes canonical service names while keeping

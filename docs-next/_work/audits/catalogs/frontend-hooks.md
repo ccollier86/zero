@@ -177,6 +177,18 @@ not part of the original clean-baseline hook count.
 | `useStickToBottom` | `@zero/framework`, `@zero/framework/react` | External re-export `use-stick-to-bottom`; [frontend barrel](../../../../src/frontend/index.ts) (external) | `frontend/components/scroll-anchoring.md` |
 | `useStickToBottomContext` | `@zero/framework`, `@zero/framework/react` | External re-export `use-stick-to-bottom`; [frontend barrel](../../../../src/frontend/index.ts) (external) | `frontend/components/scroll-anchoring.md` |
 
+## CodeBlock Working-Source Preference Hook
+
+This is a 2.4.0-baseline feature-branch addition, not part of the original
+pinned hook count or a qualified artifact. Persistence is opt-in UI state.
+Subsequent focused package/compiled-reader checks are recorded in the
+[2.5 qualification ledger](../docs-plugin-qualification.md), not inferred from
+this source catalog or expanded to all historical hooks.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `useCodeBlockPackageManager` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [Preference hook](../../../../src/components/code-block/code-block-package-preference.ts) | `frontend/components/public-pages/code-block-examples.md` |
+
 ## Reconciliation And Review
 
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

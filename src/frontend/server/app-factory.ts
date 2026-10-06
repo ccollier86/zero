@@ -35,7 +35,7 @@ import {
 } from './identity-projection-runtime';
 import { createManagedAppDatabasePlanes } from './app-database-planes';
 import { mountPlatformApp } from './app-platform-mount';
-import { buildAppAssets } from './app-build-assets';
+import { discoverAppServerExtensions, resolveAppFrontendBuild } from './app-build';
 import { AppDatabaseBootstrap } from './app-database-bootstrap';
 import { composeAppResources } from './app-resource-composition';
 import { mountAppSyncEngine } from './app-sync-mount';
@@ -112,6 +112,10 @@ export async function createApp(userConfig: AppConfig) {
     observabilityRuntime,
   );
   try {
+    // Declarations are discovered once before asset compilation; privileged
+    // plugin setup remains below, after live service composition is complete.
+    const serverExtensions = await discoverAppServerExtensions(config, { runtime });
+    const frontend = await resolveAppFrontendBuild(config, serverExtensions, emitCode);
     const {
       application: sqlite,
       system: controlSqlite,
@@ -135,7 +139,7 @@ export async function createApp(userConfig: AppConfig) {
     });
 
     // ─── Build client bundle ────────────────────────────────
-    const { clientEntry, cssPath } = await buildAppAssets(config, emitCode);
+    const { clientEntry, cssPath } = frontend;
 
     // ─── Build the database runtime boundary ───────────────────
     // System authority is opened and migrated before the application plane.
@@ -209,6 +213,8 @@ export async function createApp(userConfig: AppConfig) {
       clientEntry,
       cssPath,
       identityProjectionRuntime,
+      serverExtensions,
+      frontend,
     });
     installAppDatabaseAutomationDispatcher({
       app: mounted.app,

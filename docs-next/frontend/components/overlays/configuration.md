@@ -58,6 +58,7 @@ ItemIndicator; this does not change the existing DropdownMenu export contract.
 | SidebarProvider | defaultOpen true; optional open/onOpenChange; desktop widths16rem/icon3rem |
 | Sidebar | side left, variant sidebar, collapsible offcanvas, animateOnHover true; spring350/damping35 |
 | Sidebar mobile | below768px; width18rem, independent mobile open state |
+| Sidebar mobile composition (2.5 working addition) | optional `mobileTransition`, `mobileOverlayTransition`, `onMobileCloseAutoFocus`; caller class/style reach the portalled mobile surface; defaults unchanged |
 | SidebarMenuButton | asChild false, isActive false, variant default (outline available), size default (sm/lg), tooltip optional |
 | SidebarMenuAction | asChild false, showOnHover false |
 | SidebarMenuSkeleton | showIcon false |

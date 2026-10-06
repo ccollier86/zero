@@ -156,6 +156,29 @@ authority or asynchronous-action behavior.
 | --- | --- | --- | --- |
 | `buttonGroupVariants` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Group styles](../../../../src/components/button-group/button-group-styles.ts) | `frontend/components/primitives/button-group.md` |
 
+## Complete CodeBlock Working-Source Helpers
+
+These supplement the original pinned helper counts; source is dirty on the
+2.4.0 baseline, not an installed-package qualification. The pure server/highlight/
+metadata paths avoid React rendering. Corresponding types have the same homes.
+Subsequent focused installed/compiled checks are recorded separately in the
+[2.5 qualification ledger](../docs-plugin-qualification.md); they do not qualify
+every helper in the original pinned counts.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `prepareCodeBlock` | `@zero/framework/components/code-block/server`; root/React/family | [Server preparation](../../../../src/components/code-block/code-block-server.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `highlightCodeBlock` | `@zero/framework/components/code-block/highlight`; root/React/family | [Shared renderer](../../../../src/components/code-block/code-block-highlight.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `highlightCodeBlockHtml` | `@zero/framework/components/code-block/highlight`; root/React/family | [Shared renderer](../../../../src/components/code-block/code-block-highlight.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `buildFallbackCodeBlockHtml` | `@zero/framework/components/code-block/highlight`; root/React/family | [Escaped fallback](../../../../src/components/code-block/code-block-highlight.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `normalizeCodeBlockLineHtml` | `@zero/framework/components/code-block/highlight` | [Line normalization](../../../../src/components/code-block/code-block-highlight.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `readCodeBlockMetadata` | `@zero/framework/components/code-block/metadata`; root/React/family | [Bounded metadata](../../../../src/components/code-block/code-block-metadata.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `parseCodeBlockLineRanges` | `@zero/framework/components/code-block/metadata`; root/React/family | [Bounded ranges](../../../../src/components/code-block/code-block-metadata.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `codeBlockHighlightKey` | `@zero/framework/components/code-block/metadata` | [Non-security fingerprint](../../../../src/components/code-block/code-block-metadata.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `normalizeStartLine` | `@zero/framework/components/code-block/metadata` | [Number normalization](../../../../src/components/code-block/code-block-metadata.ts) | `frontend/components/public-pages/code-block-rendering.md` |
+| `getCodeBlockPackageCommand` | root/React/`@zero/framework/components/code-block` | [Displayed command helper](../../../../src/components/code-block/code-block-package-manager.tsx) | `frontend/components/public-pages/code-block-examples.md` |
+| `CODE_BLOCK_PACKAGE_MANAGERS` | root/React/`@zero/framework/components/code-block` | [Supported managers](../../../../src/components/code-block/code-block-package-preference.ts) | `frontend/components/public-pages/code-block-examples.md` |
+
 ## Reconciliation And Review
 
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

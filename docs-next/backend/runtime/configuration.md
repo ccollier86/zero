@@ -8,14 +8,14 @@ visibility: internal
 system: platform-runtime
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.5.0 development source; publication qualification pending"]
 modes: [managed-server, standalone-extension]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -33,8 +33,8 @@ requires re-composition/restart and any relevant data migration.
 | AppConfig option | Omitted value | Responsibility |
 | --- | --- | --- |
 | appDir | ./app | file-router/frontend application |
-| outDir | ./.build | generated build output |
-| generatedDir | ./.zero/generated | generated platform glue |
+| outDir | ./.build | public browser assets, served under /_build |
+| generatedDir | ./.zero/generated | private generated glue and plugin content snapshots |
 | serverPluginsDir | ./server/plugins | app plugin modules |
 | serverMiddlewareDir | ./server/middleware | app middleware modules |
 | serverEndpointsDir | ./server/endpoints | endpoint modules |
@@ -46,6 +46,27 @@ Each server discovery directory accepts false to disable its area. Do not use
 false for an unrelated string-only path option. Configured paths are admitted
 for isolation before managed data/build work. A directory is not a URL prefix.
 See [discovery](./discovery.md) for execution and export conventions.
+
+## Build And Root Options
+
+The following additions apply to the 2.5.0 development source:
+
+| AppConfig option | Contract |
+| --- | --- |
+| `projectRoot` | Optional absolute string/file URL. Otherwise capture the parent of an absolute appDir, or ordinary launch cwd, once. Relative frontend/discovery/generated paths use this root; database/storage settings retain their own behavior. |
+| `serverExtensions` | Optional readonly explicit native/raw extension array; combined with configured discovery, with explicit entries preceding discovered modules. |
+| `frontendBuild` | Trusted version-1 prepared manifest; required for production plugins declaring required compiled content. |
+| `frontendAssetFiles` | Trusted public URL → file reference map injected by normal build for copied/embedded assets. Not a tenant selector. |
+| `pluginBuildFiles` | Trusted plugin name → declared private name → file reference map; never exposed by the public static router. |
+
+The [build CLI](../../cli/tooling/build.md) captures the config-directory root
+during preparation and preserves an explicitly configured runtime root. Without
+an explicit root its generated wrapper captures deployment cwd, not the build
+machine's absolute path. Apps with copied file-page sources therefore keep their
+normal relocated routing. Production requires matching content and file
+references; missing private artifacts are not a source rebuild fallback.
+See [build contributions](./build-contributions.md) for validation, read time,
+immutability and separation from the public static directory.
 
 There is no generic runtime config-file deep merge, database-backed configuration
 editor or `serverOnly:true` switch supplied by this reference. Subsystem
@@ -96,6 +117,13 @@ owns matching/enforcement and credential-reset behavior.
 app-local setup zero services, may be async, and returns an Elysia plugin or void.
 The compiler awaits it and mounts the returned child or supplied app. It is not
 the same capability set later exposed to a tenant request.
+
+Optional `build` declares `prepare`, `required` (default true), `identity` and
+`mountPaths`; it executes before browser assets and before runtime setup.
+Setup additionally receives readonly `projectRoot`, `appDir`, `appIdentity`,
+`generatedDir`, private `files`, resolved `frontend` and app-bound `emitCode`.
+[Build contributions](./build-contributions.md) owns these fields and the
+JSON/file admission rules. They are build-time configuration, not live grants.
 
 Advanced bundle/app helpers accept an extension array, optional stable name and
 an app-local runtime binding. `applyServerExtension` additionally accepts inherited

@@ -191,6 +191,35 @@ a newly exported token helper.
 Token expiry helper, notification/room JSON parsers and modal callback helper
 remain implementation-private; no public import is inferred from their files.
 
+## Complete CodeBlock Working-Source Paths
+
+The original table/JSON is historical 2.1.1 extraction. The 2.4.0-baseline
+feature branch adds these exact pure paths and expands the existing CodeBlock
+family entry/root/React re-export. It remains dirty and must be extracted again
+against the frozen artifact; these records do not assert publication.
+
+| Package path | Public target | Canonical guide |
+| --- | --- | --- |
+| `@zero/framework/components/code-block` | [Complete family](../../../../src/components/code-block/index.ts) | [Overview](../../../frontend/components/public-pages/code-block.md) |
+| `@zero/framework/components/code-block/server` | [Pure preparation](../../../../src/components/code-block/code-block-server.ts) | [Server/rendering](../../../frontend/components/public-pages/code-block-rendering.md) |
+| `@zero/framework/components/code-block/highlight` | [Shared highlighting](../../../../src/components/code-block/code-block-highlight.ts) | [Highlighting](../../../frontend/components/public-pages/code-block-rendering.md) |
+| `@zero/framework/components/code-block/metadata` | [Bounded metadata](../../../../src/components/code-block/code-block-metadata.ts) | [Metadata](../../../frontend/components/public-pages/code-block-rendering.md) |
+
+## Optional Documentation Package Working Paths
+
+These are separate `@zero/plugin-docs` 0.1.0 facades, requiring compatible
+framework 2.5.0. They are not new mandatory framework services or additions to
+the historical 2.1.1 framework export count. Actual installed/compiled
+qualification is scoped in the [ledger](../docs-plugin-qualification.md);
+registry/main release is still separate.
+
+| Package path | Owning entry | Canonical guide |
+| --- | --- | --- |
+| `@zero/plugin-docs` | [Server factory](../../../../packages/docs/src/index.ts) | [Plugin index](../../../plugins/docs/index.md) |
+| `@zero/plugin-docs/content` | [Content tooling](../../../../packages/docs/src/content/index.ts) | [Publication](../../../plugins/docs/publication.md) |
+| `@zero/plugin-docs/react` | [Reader composition](../../../../packages/docs/src/ui/index.ts) | [Reader](../../../plugins/docs/reader.md) |
+| `@zero/plugin-docs/styles.css` | [Docs roles/layout](../../../../packages/docs/src/ui/docs.css) | [Reader](../../../plugins/docs/reader.md) |
+
 ## Review Gates
 
 - [ ] Every non-test target assigned to an inventory and canonical feature home.

@@ -236,6 +236,10 @@ apps. Start with the
   route loading, middleware, resources, and create-app behavior.
 - [Framework Developer Surface](./docs/framework-developer-surface.md):
   canonical imports and app-owned extension examples.
+- [Optional Plugins](./docs/plugins/index.md): explicitly installed features,
+  including the working folder-driven Markdown documentation integration.
+- [CodeBlock](./docs/frontend/code-block.md): the shared replacement system,
+  composable tools, server preparation and syntax-highlighted examples.
 - [ReactiveDB Fabric](./docs/framework/multi-database-architecture.md):
   supported multi-database topology, actor isolation, file/WAL and bounded
   hot placement, tenant routing, realtime behavior, capacity, durability, and

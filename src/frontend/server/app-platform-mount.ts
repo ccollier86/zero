@@ -19,6 +19,8 @@ import {
   resolveTableSyncModes,
 } from './sync-mode-resolver';
 import type { ResolvedConfig } from './types';
+import type { ZeroServerExtensionMountable } from './server-extensions';
+import type { ResolvedAppFrontendAssets } from './server-plugin-build-types';
 
 export interface MountPlatformAppInput {
   app: Elysia;
@@ -34,6 +36,8 @@ export interface MountPlatformAppInput {
   clientEntry?: string;
   cssPath?: string;
   identityProjectionRuntime: AppIdentityProjectionRuntime | null;
+  serverExtensions?: readonly ZeroServerExtensionMountable[];
+  frontend?: ResolvedAppFrontendAssets;
 }
 
 export interface MountedPlatformApp {
@@ -57,6 +61,8 @@ export async function mountPlatformApp({
   clientEntry,
   cssPath,
   identityProjectionRuntime,
+  serverExtensions,
+  frontend,
 }: MountPlatformAppInput): Promise<MountedPlatformApp> {
   app.onStart(() => {
     const resolution = resolveTableSyncModes(config, syncDB, undefined, {
@@ -92,6 +98,8 @@ export async function mountPlatformApp({
     clientEntry,
     cssPath,
     identityProjectionRuntime,
+    serverExtensions,
+    frontend,
   });
 
   return { app, extensionStopHooks };

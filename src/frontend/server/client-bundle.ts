@@ -126,7 +126,7 @@ export async function buildClientBundle(
  * framework source tree. This keeps React module identity stable when Zero is
  * installed through `file:` or a symlink during package-mode development.
  */
-function createAppDependencyAliasPlugin(appDir: string) {
+export function createAppDependencyAliasPlugin(appDir: string) {
   const appRoot = resolve(appDir, '..');
   const requireFromApp = createRequire(join(appRoot, 'package.json'));
   const cache = new Map<string, string>();

@@ -61,23 +61,32 @@ export function invalidateAll(): void {
  * of React, while the app has another copy. React hooks require a single module
  * identity between components and renderer, so SSR resolves both `react` and
  * `react-dom/server` through the app directory.
+ * Normal builds explicitly select their bundled pair for bundled plugin
+ * closures; file-route modules retain the consuming-app pair.
  */
-async function loadSsrReactRuntime(appDir = './app'): Promise<SsrReactRuntime> {
+export async function loadSsrReactRuntime(appDir = './app', selection: 'app' | 'bundled' = 'app'): Promise<SsrReactRuntime> {
   const appRoot = resolve(appDir, '..');
-  const cacheKey = appRoot;
+  const cacheKey = `${selection}:${appRoot}`;
   const cached = reactRuntimeCache.get(cacheKey);
   if (cached) return cached;
 
   const runtime = (async () => {
     const requireFromApp = createRequire(pathToFileURL(resolve(appRoot, 'package.json')).href);
-    const [reactPath, reactDomServerPath] = [
-      requireFromApp.resolve('react'),
-      requireFromApp.resolve('react-dom/server'),
-    ];
-    const [react, reactDomServer] = await Promise.all([
-      import(pathToFileURL(reactPath).href) as Promise<ReactRuntime>,
-      import(pathToFileURL(reactDomServerPath).href) as Promise<ReactDomServerRuntime>,
-    ]);
+    let paths: readonly [string, string] | undefined;
+    if (selection === 'app') {
+      try { paths = [requireFromApp.resolve('react'), requireFromApp.resolve('react-dom/server')]; }
+      catch {
+        // A compiled executable may have no live node_modules tree. Literal
+        // imports below retain the build-aliased identity in that deployment.
+      }
+    }
+    // Build-bound plugin components must use these literal imports even when
+    // physical app dependencies exist: evaluating that second renderer creates
+    // a different React dispatcher from the bundled component's hooks.
+    const [react, reactDomServer] = paths ? await Promise.all([
+      import(pathToFileURL(paths[0]).href) as Promise<ReactRuntime>,
+      import(pathToFileURL(paths[1]).href) as Promise<ReactDomServerRuntime>,
+    ]) : await Promise.all([import('react'), import('react-dom/server')]);
 
     if (typeof react.createElement !== 'function' || typeof reactDomServer.renderToReadableStream !== 'function') {
       throw new Error('[renderer] Could not resolve React SSR runtime from the app. Install compatible react and react-dom dependencies.');
@@ -388,9 +397,10 @@ function htmlShellResponse(body: string, headContent: string, status: number): R
  * Prepends <!DOCTYPE html><html>...<body><div id="root">
  * and appends </div></body></html>.
  */
-function wrapWithHtmlShell(
+export function wrapWithHtmlShell(
   reactStream: ReadableStream<Uint8Array>,
-  headContent: string
+  headContent: string,
+  options: { readonly rootId?: string } = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const prefix = encoder.encode(
@@ -400,7 +410,7 @@ function wrapWithHtmlShell(
     ${headContent}
   </head>
   <body>
-    <div id="root">`
+    <div id="${escapeHtml(options.rootId ?? 'root')}">`
   );
   const suffix = encoder.encode(
     `</div>
@@ -427,7 +437,7 @@ function wrapWithHtmlShell(
       controller.enqueue(value);
     },
     cancel() {
-      reader.cancel();
+      return reader.cancel();
     },
   });
 }

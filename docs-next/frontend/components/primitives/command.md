@@ -53,6 +53,26 @@ Supply appropriate dialog accessible title/description through the composition;
 a search placeholder is not a complete dialog name. Use the app's capabilities
 to filter actions, and still enforce each operation at the server.
 
+## 2.5 Working Composition Additions
+
+The original 2.1.1 baseline above remains historical. The documentation-reader
+work adds the following public `CommandDialogProps` on the 2.5.0 working branch,
+through the same component and React facade. It is not a second command palette.
+
+| Option | Contract |
+| --- | --- |
+| `title` / `description` | Accessible dialog text, defaulting to `Commands` / `Search and choose a command.`; rendered as hidden semantic title/description. |
+| `shouldFilter` | Defaults to `true`; use `false` when server-ranked results are authoritative, avoiding a second conflicting client filter. |
+| `contentClassName` / `contentStyle` | Presentation on the actual portalled dialog surface, including scoped token aliases. |
+| `onCloseAutoFocus` | Native close-focus lifecycle; a custom trigger can prevent default and restore focus deliberately. |
+| `contentTransition` / `overlayTransition` | Motion transitions for both animated surfaces. A reduced-motion composition must control both; CSS duration overrides alone do not stop JavaScript-driven motion. |
+
+Opening shortcuts, fetching, cancellation and selecting destinations remain the
+consumer's responsibility. The [optional docs reader](../../../plugins/docs/reader.md)
+is a complete server-search example; its
+[qualification ledger](../../../_work/audits/docs-plugin-qualification.md)
+distinguishes source browser and installed compiled checks from this older baseline.
+
 ## Related Guides And Next Steps
 
 - [Generic hotkeys](../../hooks/browser-interactions.md) installs explicit shortcuts.

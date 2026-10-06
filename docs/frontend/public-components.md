@@ -56,7 +56,12 @@ zero add components/footer
 ## Code Block
 
 `CodeBlock` renders a tokenized public code surface with Shiki highlighting,
-light/dark themes, optional line numbers, file tabs, and a copy action. Use it
+light/dark syntax tokens, optional line numbers, keyboard-accessible file tabs,
+and an awaited copy action. The complete shared family also includes composable
+headers/content/tools, compact copyable snippets, animated copy labels,
+package-manager tabs or a selector with optional persistence, server preparation,
+and compiled Markdown/pre adapters. See the [CodeBlock guide](./code-block.md)
+for every export, API option, highlight notation, and composition example. Use it
 for docs, framework websites, SDK examples, and public feature sections that
 should show real code instead of a static screenshot. Set `minLines` when
 multiple tabs have different source lengths and the visual should not collapse
@@ -98,7 +103,15 @@ export function DocsExample() {
 
 The component falls back to escaped plain text while Shiki loads or if a
 language fails. Highlight failures are reported through Zero's frontend
-observability boundary instead of direct console logging.
+observability boundary instead of direct console logging. `prepareCodeBlock()`
+can pre-highlight code in Bun before synchronous SSR, so readers without
+JavaScript receive colored source and working line links. Its explicit publishing
+fallback keeps unsupported fences readable without hiding build diagnostics.
+
+Line and word highlights, diff/focus annotations, line anchors, start-line
+numbering, and wrapping share the same server/browser implementation. Existing
+`code`, `files`, callbacks, named theme overrides, and content transition props
+remain supported; the new compositions are additive.
 
 ## Feature Section
 
@@ -355,4 +368,4 @@ Zero's implementations were adapted to the platform from:
 - Aceternity expandable cards: <https://ui.aceternity.com/components/expandable-card>
 - Aceternity bento grid: <https://ui.aceternity.com/components/bento-grid>
 - Magic UI animated list: <https://magicui.design/docs/components/animated-list>
-- Kibo UI code block API reference: <https://www.kibo-ui.com/components/code-block>
+- Pheralb Code Blocks: <https://code-blocks.pheralb.dev/> (complete shared code-example family; MIT provenance in `THIRD_PARTY_NOTICES.md`)

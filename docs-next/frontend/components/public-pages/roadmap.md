@@ -38,6 +38,12 @@ Current rendering defects are fixed/tested during this audit, not deferred as
 roadmap ideas. Device, keyboard, motion and assistive-technology coverage still
 requires appropriate real component qualification before public verification.
 
+The [complete CodeBlock family](./code-block.md) is now an authorized
+working-source implementation on the 2.4.0 baseline, not a deferred richer-code
+idea. Composable parts, copy/morph, file/package controls, token syntax and
+shared highlight/server/Markdown features are covered by focused source checks;
+their release/artifact qualification remains separate from this roadmap.
+
 ## Related Guides And Next Steps
 
 - [Public-page index](./index.md) locates current reusable components.

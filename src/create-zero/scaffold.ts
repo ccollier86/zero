@@ -125,7 +125,7 @@ async function writeGeneratedPackageJson(
     scripts: {
       dev: 'bun --watch app/server.ts',
       start: 'bun app/server.ts',
-      build: 'bun build app/server.ts --target bun --outdir dist',
+      build: 'zero build --config ./zero.config.ts --entry ./app/server.ts --outdir ./dist',
       typecheck: 'tsc --noEmit',
       doctor: 'zero doctor --config ./zero.config.ts',
       migrate: 'zero migrate --db ./data/zero.system.db',

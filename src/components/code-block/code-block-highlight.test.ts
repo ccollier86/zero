@@ -25,7 +25,7 @@ describe('CodeBlock highlight output', () => {
   test('fallback HTML renders adjacent line spans', () => {
     const html = buildFallbackCodeBlockHtml('one\ntwo');
 
-    expect(html).toContain('<span class="line">one</span><span class="line">two</span>');
+    expect(html).toContain('<span class="line" data-line-number="1">one</span><span class="line" data-line-number="2">two</span>');
     expect(html).not.toContain('</span>\n<span class="line">');
   });
 

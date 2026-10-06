@@ -1,0 +1,168 @@
+/** Prove normal/compiled deployments preserve app entry ownership and need no Markdown/plugin sources. */
+import { describe, expect, test } from 'bun:test';
+import { cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { buildZeroApp } from './build-app';
+import { parseZeroBuildArgs } from './build-args';
+
+const repository = resolve(import.meta.dir, '../..');
+async function scratch(): Promise<string> { const root = '/Volumes/code-bank/tmp/scratch/zero-platform'; await mkdir(root, { recursive: true }); return mkdtemp(join(root, 'zero-build-deployment-')); }
+
+async function fixture(root: string): Promise<string> {
+  await Promise.all([mkdir(join(root, 'app'), { recursive: true }), mkdir(join(root, 'server/plugins'), { recursive: true }), mkdir(join(root, 'node_modules/@zero'), { recursive: true })]);
+  await symlink(repository, join(root, 'node_modules/@zero/framework'), 'dir');
+  for (const dependency of ['react', 'react-dom']) await symlink(join(repository, 'node_modules', dependency), join(root, 'node_modules', dependency), 'dir');
+  await Bun.write(join(root, 'package.json'), JSON.stringify({ name: 'zero-build-fixture', type: 'module' }));
+  await Bun.write(join(root, 'reader.css'), '.documentation{color:var(--foreground);background:var(--background)}');
+  await Bun.write(join(root, 'enhance.ts'), 'globalThis.__docsFixtureEnhancement = true; globalThis.__docsFixtureLoadTools = () => import("./tools");');
+  await Bun.write(join(root, 'tools.ts'), 'export const fixtureTool = "DYNAMIC_TOOL_CHUNK";');
+  await Bun.write(join(root, 'attachment.txt'), 'ADMITTED_ATTACHMENT_BYTES');
+  await Bun.write(join(root, 'zero.config.ts'), [
+    'import { defineZeroConfig } from "@zero/framework/server";',
+    'export const customNamedExport = "retained";',
+    'export default defineZeroConfig({db:{mode:"ephemeral"},tables:{},auth:false,email:false,migrate:false,observability:false,serverMiddlewareDir:false,serverEndpointsDir:false,serverRoutesDir:false,serverResourcesDir:false});',
+  ].join('\n'));
+  await Bun.write(join(root, 'server/plugins/reader.ts'), [
+    'import * as React from "react";',
+    'import { defineZeroPlugin, renderServerPage } from "@zero/framework/server";',
+    'export default defineZeroPlugin({name:"fixture.reader",build:{identity:"fixture-v1",async prepare(context){',
+    ' return { data:{ text:"Compiled documentation survives deployment",private:"PRIVATE_COMPILED_METADATA" },browserEntries:[{name:"reader",path:"./enhance.ts"}],styles:[{name:"reader-style",path:"./reader.css"}],privateAssets:[{name:"attachment",path:"./attachment.txt",contentType:"text/plain"}] };',
+    '}},setup(context){',
+    ' const built=context.frontend.plugins["fixture.reader"];',
+    ' let attachmentAllowed=true;',
+    ' function Reader(){const id=React.useId();const [state]=React.useState("hooks-rendered");return React.createElement("article",{className:"documentation","data-hook-state":state,"data-react-id":id},built.data.text);}',
+    ' return context.app.get("/docs",({request})=>renderServerPage({component:Reader,props:{},request,appDir:context.appDir,frontend:context.frontend,pluginName:"fixture.reader",rootId:"docs-root",emitCode:context.emitCode})).get("/docs-assets",()=>built.assets).get("/docs/attachment",()=>attachmentAllowed?new Response(Bun.file(context.files.attachment)):new Response("Not found",{status:404})).get("/simulate-revoke",()=>{attachmentAllowed=false;return "revoked";}).onStop(async()=>{await Bun.sleep(20);const result=context.zero.sql.raw.query("select 1 as alive").get();await Bun.write("./plugin-stopped.txt",String(result.alive));});',
+    '}});',
+  ].join('\n'));
+  await Bun.write(join(root, 'app/server.ts'), [
+    'import { createApp } from "@zero/framework/server";',
+    'import config,{customNamedExport} from "../zero.config";',
+    'await Bun.write("./startup-entry.txt",String(Date.now()));',
+    'await Bun.write("./startup-phase.txt","entry-evaluated");',
+    'const app=await createApp(config);',
+    'await Bun.write("./startup-phase.txt","app-created");',
+    'app.get("/entry-hook",()=>({custom:customNamedExport}));',
+    'app.listen(0);',
+    'await Bun.write("./ready-port.txt",String(app.server.port));',
+  ].join('\n'));
+  return join(root, 'zero.config.ts');
+}
+
+async function running<T>(command: readonly string[], cwd: string, verify: (url: string) => Promise<T>): Promise<T> {
+  const child = Bun.spawn([...command], { cwd, env: { ...process.env, NODE_ENV: 'production' }, stdout: 'pipe', stderr: 'pipe' });
+  const stdout = new Response(child.stdout).text(); const stderr = new Response(child.stderr).text();
+  try {
+    const started = Date.now();
+    let entryStartedAt: number | undefined;
+    while (!(await Bun.file(join(cwd, 'ready-port.txt')).exists())) {
+      if (child.exitCode !== null) throw new Error(`Built server exited ${child.exitCode}: ${await stderr}\n${await stdout}`);
+      if (entryStartedAt === undefined && await Bun.file(join(cwd, 'startup-entry.txt')).exists()) entryStartedAt = Number(await Bun.file(join(cwd, 'startup-entry.txt')).text());
+      // macOS cold executables can remain in _dyld_start before Bun even loads
+      // (qualified by a process sample). Bound that admission separately; app
+      // startup still has a strict 20s deadline after the entry evaluates.
+      const deadline = entryStartedAt === undefined ? started + (command.length === 1 ? 60_000 : 20_000) : entryStartedAt + 20_000;
+      if (Date.now() > deadline) {
+        child.kill('SIGKILL');
+        await child.exited;
+        const phase = await Bun.file(join(cwd, 'startup-phase.txt')).text().catch(() => 'entry-not-evaluated');
+        throw new Error(`Built server did not report its listening port (phase=${phase}): ${await stderr}\n${await stdout}`);
+      }
+      await Bun.sleep(25);
+    }
+    const port = await Bun.file(join(cwd, 'ready-port.txt')).text();
+    const entryAt = Number(await Bun.file(join(cwd, 'startup-entry.txt')).text());
+    console.info('Synthetic build readiness', { mode: command.length === 1 ? 'compiled' : 'javascript', beforeEntryMs: entryAt - started, appStartupMs: Date.now() - entryAt });
+    return await verify(`http://127.0.0.1:${port}`);
+  } finally {
+    child.kill('SIGTERM');
+    await Promise.race([child.exited, Bun.sleep(3_000).then(() => child.kill('SIGKILL'))]);
+    await child.exited;
+  }
+}
+
+describe('Zero build arguments', () => {
+  test('supports normal config/entry/output and optional self-contained executable mode', () => {
+    expect(parseZeroBuildArgs([])).toEqual({ configPath: './zero.config.ts', help: false, compile: false, entryPath: undefined, outDir: undefined, outfile: undefined });
+    expect(parseZeroBuildArgs(['--config', '/app/zero.config.ts', '--entry', 'app/server.ts', '--outdir', 'dist', '--compile', '--outfile', 'api']).compile).toBe(true);
+    expect(() => parseZeroBuildArgs(['--config'])).toThrow('Missing'); expect(() => parseZeroBuildArgs(['--config', 'a', '--config', 'b'])).toThrow('Duplicate'); expect(() => parseZeroBuildArgs(['--outfile', 'api'])).toThrow('requires --compile'); expect(() => parseZeroBuildArgs(['--arbitrary'])).toThrow('Unknown');
+  });
+});
+
+describe('normal declared app deployment', () => {
+  for (const compile of [false, true]) {
+    test(`${compile ? 'compiled executable' : 'server bundle'} serves docs and public assets without app/plugin/node_modules sources`, async () => {
+      const root = await scratch();
+      const source = join(root, 'source'); const deployment = join(root, 'deployment');
+      let verified = false;
+      try {
+        const configPath = await fixture(source);
+        const result = await buildZeroApp({ configPath, compile });
+        expect(result.pluginCount).toBe(1); expect(result.publicAssetCount).toBeGreaterThanOrEqual(4);
+        if (!compile) await running([process.execPath, result.serverPath], source, async (url) => {
+          // A compiled plugin must not switch dispatchers merely because the
+          // consuming app still has a physical React installation available.
+          const response = await fetch(`${url}/docs`); expect(response.status).toBe(200);
+          expect(await response.text()).toContain('data-hook-state="hooks-rendered"');
+        });
+        await cp(dirname(result.serverPath), deployment, { recursive: true });
+        // Deployment receives only build output; source remains elsewhere and is
+        // renamed so any accidental absolute runtime source access also fails.
+        const movedSource = join(root, 'source-unavailable');
+        await (await import('node:fs/promises')).rename(source, movedSource);
+        const entry = join(deployment, compile ? 'server' : 'server.js');
+        await running(compile ? [entry] : [process.execPath, entry], deployment, async (url) => {
+          const docs = await fetch(`${url}/docs`); const html = await docs.text();
+          expect(docs.status).toBe(200); expect(html).toContain('Compiled documentation survives deployment'); expect(html).toContain('<div id="docs-root"><article'); expect(html).not.toContain('PRIVATE_COMPILED_METADATA');
+          expect(html).toContain('data-hook-state="hooks-rendered"'); expect(html).toContain('data-react-id=');
+          expect(await fetch(`${url}/entry-hook`).then((response) => response.json())).toEqual({ custom: 'retained' });
+          const assets = await fetch(`${url}/docs-assets`).then((response) => response.json()) as Record<string, { publicPath: string }>;
+          for (const asset of Object.values(assets)) { const response = await fetch(`${url}${asset.publicPath}`); expect(response.status).toBe(200); expect((await response.text()).length).toBeGreaterThan(0); }
+          const script = await fetch(`${url}${assets.reader!.publicPath}`).then((response) => response.text());
+          const dynamic = /import\(["']([^"']+)["']\)/.exec(script)?.[1]; expect(dynamic).toBeDefined();
+          const chunk = await fetch(new URL(dynamic!, `${url}${assets.reader!.publicPath}`)); expect(chunk.status).toBe(200); expect(await chunk.text()).toContain('DYNAMIC_TOOL_CHUNK');
+          const missingPrivate = await fetch(`${url}/_build/frontend-build.json`); expect(missingPrivate.status).toBe(404);
+          expect(await fetch(`${url}/docs/attachment`).then((response) => response.text())).toBe('ADMITTED_ATTACHMENT_BYTES');
+          await fetch(`${url}/simulate-revoke`); expect((await fetch(`${url}/docs/attachment`)).status).toBe(404);
+          expect((await fetch(`${url}/_build/attachment.txt`)).status).toBe(404);
+        });
+        expect(await Bun.file(join(deployment, 'plugin-stopped.txt')).text()).toBe('1');
+        if (compile) {
+          // A second clean process/cwd exercises cold embedded-file startup,
+          // rather than accepting a single warm executable launch.
+          const coldDeployment = join(root, 'cold-deployment');
+          await cp(join(movedSource, 'dist'), coldDeployment, { recursive: true });
+          await running([join(coldDeployment, 'server')], coldDeployment, async (url) => {
+            expect((await fetch(`${url}/docs`)).status).toBe(200);
+            expect(await fetch(`${url}/docs/attachment`).then((response) => response.text())).toBe('ADMITTED_ATTACHMENT_BYTES');
+          });
+          expect(await Bun.file(join(coldDeployment, 'plugin-stopped.txt')).text()).toBe('1');
+        }
+        verified = true;
+      } finally {
+        if (verified) await rm(root, { recursive: true, force: true });
+        else console.info('Failed synthetic deployment retained for diagnostics', root);
+      }
+    }, 180_000);
+  }
+  test('a default-root file-page app still routes copied sources after deployment relocation', async () => {
+    const root = await scratch();
+    const source = join(root, 'source'); const deployment = join(root, 'deployment');
+    try {
+      const configPath = await fixture(source);
+      await mkdir(join(source, 'app/view'), { recursive: true });
+      await Bun.write(join(source, 'app/view/page.ts'), 'import {useId,createElement} from "react";export default function Page(){const id=useId();return createElement("p",{id},"Relocated application page");}');
+      const result = await buildZeroApp({ configPath });
+      await cp(dirname(result.serverPath), deployment, { recursive: true });
+      await cp(join(source, 'app'), join(deployment, 'app'), { recursive: true });
+      await mkdir(join(deployment, 'node_modules'), { recursive: true });
+      for (const dependency of ['react', 'react-dom']) await symlink(join(repository, 'node_modules', dependency), join(deployment, 'node_modules', dependency), 'dir');
+      await (await import('node:fs/promises')).rename(source, join(root, 'source-unavailable'));
+      await running([process.execPath, join(deployment, 'server.js')], deployment, async (url) => {
+        const response = await fetch(`${url}/view`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain('Relocated application page');
+        expect((await fetch(`${url}/docs`)).status).toBe(200);
+      });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 90_000);
+});

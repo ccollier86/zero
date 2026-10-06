@@ -8,14 +8,14 @@ visibility: internal
 system: platform-runtime
 feature: overview
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.5.0 development source; publication qualification pending"]
 modes: [managed-server, standalone-extension]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -39,6 +39,8 @@ ownership, authority projection and teardown explicit.
   predicates and request-local identity.
 - [Plugins](./plugins.md): async setup, Elysia dependencies and privileged setup
   versus scoped request services.
+- [Build contributions](./build-contributions.md): optional compiled content,
+  actual enhancement/style assets and private attachments before runtime setup.
 - [Configuration](./configuration.md): extension options and managed path defaults.
 - [Discovery](./discovery.md): file/export conventions, deterministic ordering
   and the fact that importing app modules executes code.

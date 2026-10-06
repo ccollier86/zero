@@ -412,8 +412,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 
 During startup, Zero also generates client build glue in `.zero/generated`.
 Those files connect the app route manifest to Zero's hydration runtime and are
-safe to delete; `createApp()` regenerates them before bundling the browser
-entry. Keep `.zero/` ignored in app repositories. Generated apps include a
+regenerated during development preparation. Keep `.zero/` ignored in app
+repositories. Required production plugin content is different: prepare it with
+`zero build --config ./zero.config.ts --entry ./app/server.ts --outdir ./dist`;
+the built config carries its manifest and declared files. Do not delete required
+private artifacts from a manually prepared production deployment or assume
+startup will reconstruct missing sources. See [building apps and declared
+plugin content](./app-build.md) for deployment boundaries and optional compiled
+docs/plugin-only builds. Generated apps include a
 `tsconfig.json` with `@app/*`, `@/*`, `@/components/*`, `@/hooks/*`, and
 `@/lib/*` aliases. App-owned paths resolve first; installed-framework fallbacks
 support Zero's current TypeScript source distribution. Application code should

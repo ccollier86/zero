@@ -84,6 +84,8 @@ Zero.
 - [Auth System](../auth/README.md): canonical feature index for auth profiles,
   declarative permissions and RBAC, tenant/application administration,
   onboarding, browser authorization state, and installed-app authentication.
+- [Optional Plugins](../plugins/index.md): separately installed capability
+  packages and the Markdown documentation reader/build integration.
 - [Guardian User API Keys](../auth/api-keys.md): opt-in user-bound credentials,
   explicit HTTP route/resource admission, live RBAC authority, lifecycle APIs,
   browser SDK/hooks, and optional packaged management controls.
