@@ -119,6 +119,15 @@ and the complete browser gate pass. Examples and browsers
 use synthetic local callbacks, not application data. Final package/provenance
 checks remain release-owned rather than inferred from these counts.
 
+The final runtime source was frozen and committed as
+`fdba48af9dcbab96ddeb3aa3b49f070a8c8a81a6`. Root's final full typecheck passed,
+as did the combined 25-test SSR/composition gate and a newly installed public
+2.4.0 package consumer (1 test / 16 assertions). The latter checks 23 runtime
+exports for root/React/focused identity, fresh-process browser bundling, native
+SSR semantics, included component guides and third-party notices. Documentation
+navigation/metadata passed for 698 pages with zero problems. These focused
+gates are not a claim of a full-platform audit or changes to any application.
+
 Components consume exported Props/Options types and inherited React/Radix/Motion/third-party attributes; exact declarations are linked per catalog row. Settings are React props/render-time, not automatic server env/Doctor discovery. Required provider context, controlled/uncontrolled values, callback behavior, SSR fallback, accessibility and mode-sensitive services need feature-level detail during the later guide pass.
 
 AppShell* contracts include preset/icon/brand/breadcrumb/workspaces/menu/nav/user/header/theme toggle structures; source-owned defaults live in app-shell modules and presets. Public content accepts caller-owned assets/text/actions; streaming strings do not imply an AI transport. SecretField's masking/reveal/copy options act on a secret already authorized into browser memory—masking is not encryption/security. Notification/Guardian/Studio/Storage organisms compose SDK hooks and server-scoped APIs; visibility props remove UI only, never bypass backend authorization. Generic hooks own UI state/lifecycle, not transport persistence.

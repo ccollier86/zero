@@ -13,10 +13,10 @@ modes: [browser, SSR, actions, single-selection, multi-selection]
 reviewed_against:
   package: "@zero/framework"
   version: "2.4.0"
-  commit: "12f48cede30dabe908d454bbcc764392bcfebf3e"
-  snapshot: dirty
+  commit: "fdba48af9dcbab96ddeb3aa3b49f070a8c8a81a6"
+  snapshot: clean
   date: "2026-10-06"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Button Group
