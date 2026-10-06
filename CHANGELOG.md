@@ -2,6 +2,30 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.4.0 - 2026-10-06
+
+This additive component release includes Button Group and Context Menu with
+their public exports, theme-aware presentation and focused interaction/package
+checks. Existing Button, DropdownMenu and app call sites remain supported;
+there is no database migration. The discussed global typography/density/motion
+redesign is not part of this release. See the
+[2.4 upgrade notes](./docs/upgrading-2.2.md#24-button-group-and-context-menu).
+
+### Added
+
+- Public token-themed Button Group primitives for joined/separated horizontal
+  or vertical actions, text/count addons, separators, nested groups, split
+  dropdowns and mixed inputs/selects. Separate single/multiple selection
+  controls reuse Zero Button and Radix's keyboard/value semantics.
+- A complete conventional Context Menu family: native pointer-anchored
+  right-click and touch long-press, keyboard opening, leading icons, trailing
+  metadata/shortcuts, labels and separators, destructive/disabled actions,
+  checkbox/radio choices with optional right-side indicators, nested submenus,
+  portals, collision-aware bounded surfaces and reduced-motion-aware entrance.
+  Existing dropdown and radial menus remain unchanged. Public root/React and
+  focused component paths, detailed guides and isolated regression checks
+  accompany the additions.
+
 ## 2.3.0 - 2026-10-06
 
 This additive release includes the new Cascader and SignaturePad component

@@ -806,6 +806,22 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from '../components/dropdown-menu';
+
+export {
+  ContextMenu, ContextMenuTrigger, ContextMenuPortal, ContextMenuContent,
+  ContextMenuGroup, ContextMenuItem, ContextMenuCheckboxItem,
+  ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuItemIndicator,
+  ContextMenuLabel, ContextMenuSeparator, ContextMenuShortcut,
+  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent, ContextMenuArrow,
+} from '../components/context-menu';
+export type {
+  ContextMenuProps, ContextMenuTriggerProps, ContextMenuPortalProps,
+  ContextMenuContentProps, ContextMenuGroupProps, ContextMenuItemProps,
+  ContextMenuCheckboxItemProps, ContextMenuRadioGroupProps, ContextMenuRadioItemProps,
+  ContextMenuItemIndicatorProps, ContextMenuLabelProps, ContextMenuSeparatorProps,
+  ContextMenuShortcutProps, ContextMenuSubProps, ContextMenuSubTriggerProps,
+  ContextMenuSubContentProps, ContextMenuArrowProps, ContextMenuItemAdornments,
+} from '../components/context-menu';
 export {
   Collapsible,
   CollapsibleTrigger,
@@ -849,6 +865,14 @@ export type {
 
 // ─── UI Components ──────────────────────────────────────────────────────
 export { Button, buttonVariants } from '../components/ui/button';
+export {
+  ButtonGroup, ButtonGroupText, ButtonGroupSeparator, buttonGroupVariants,
+  ButtonGroupToggle, ButtonGroupToggleItem,
+} from '../components/button-group';
+export type {
+  ButtonGroupProps, ButtonGroupTextProps, ButtonGroupSeparatorProps, ButtonGroupLayoutProps,
+  ButtonGroupToggleProps, ButtonGroupToggleItemProps, ButtonGroupToggleSize, ButtonGroupToggleVariant,
+} from '../components/button-group';
 export { Input } from '../components/ui/input';
 export { Label } from '../components/ui/label';
 export { Textarea } from '../components/ui/textarea';

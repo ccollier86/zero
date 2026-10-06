@@ -198,6 +198,8 @@ call wires it all.
 | [JSON Editor](./json-editor.md) | Token-themed structured JSON and retained text drafts, synchronous local admission, and separate domain persistence |
 | [Cascader](./cascader.md) | Hierarchical leaf selection, capped checkboxes, full-path search/chips, async drill-down, and pinned side-import commands |
 | [Signature Pad](./signature-pad.md) | Mouse/pen/touch signature capture, pinned actions, history, SVG form fields, acknowledged agreements and compact clause initials |
+| [Button Group](./button-group.md) | Joined/separated actions, inputs, split buttons, addons and single/multiple selection |
+| [Context Menu](./context-menu.md) | Pointer/keyboard/touch right-click menus, icons/counts, checks/radios, nested commands and dialog focus handoff |
 | [Public Components](./public-components.md) | Feature sections, code blocks, FAQ, expandable cards, bento grids, and animated lists for public landing/content sections |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |

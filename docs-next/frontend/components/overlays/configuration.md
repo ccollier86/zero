@@ -31,6 +31,7 @@ React props and local provider state resolve at render/interaction time.
 | Family | Supported import | Public option shape |
 | --- | --- | --- |
 | DropdownMenu* | root/react or /components/dropdown-menu | named matching Props exports |
+| ContextMenu* | root/react or /components/context-menu | 2.4.0 addition; named matching Props exports and [native root/portal/choice contracts](./context-menu.md#public-parts-and-configuration) |
 | Popover/Trigger/Content/Close | root/react or /components/popover | named matching Props exports |
 | Tooltip/Trigger/Content | /components/tooltip | TooltipProps/TriggerProps/ContentProps; **not root/react** |
 | Collapsible/Trigger/Content/useCollapsible | root/react or /components/collapsible | Props and CollapsibleContextType |
@@ -39,6 +40,8 @@ React props and local provider state resolve at render/interaction time.
 
 Private Radix/Motion portal/anchor/arrow/highlight components are not added to
 those public families merely because their source files export them.
+The new ContextMenu family explicitly exports its native Portal, Arrow and
+ItemIndicator; this does not change the existing DropdownMenu export contract.
 
 ## Owned Defaults And Extensions
 
@@ -63,6 +66,10 @@ those public families merely because their source files export them.
 
 Inherited root/trigger props retain their installed Radix/React contract:
 open/defaultOpen/onOpenChange, disabled and asChild where declared.
+In particular, ContextMenu's root is uncontrolled and observes onOpenChange;
+only its submenu has an open/defaultOpen contract. Its pointer-positioned
+content does not expose unsupported side/align settings. See the dedicated
+[ContextMenu guide](./context-menu.md) for exact collision/offset and portal options.
 Styled animated content intentionally owns its rendered Motion element;
 unsupported forceMount/asChild props are not escape hatches. Native dependency
 defaults not overridden by Zero remain the installed dependency's contract.

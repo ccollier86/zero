@@ -494,6 +494,42 @@ UI wildcard and the root/React frontend barrel expose the same component names.
 | `ResizablePanel` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/resizable` | [src/components/ui/resizable.tsx:13](../../../../src/components/ui/resizable.tsx) | `frontend/components/primitives/resizable.md` |
 | `ResizableHandle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/resizable` | [src/components/ui/resizable.tsx:17](../../../../src/components/ui/resizable.tsx) | `frontend/components/primitives/resizable.md` |
 
+## Zero 2.4 Additions
+
+These are additive records outside the original pinned inventory/counts, not
+retroactive claims about the 2.1.1 baseline. The corresponding Props types and
+configuration defaults live in the focused guides. Neither family grants
+authority, awaits arbitrary app commands or changes global theme defaults.
+
+| Symbol | Public imports | Evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `ButtonGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Public entry](../../../../src/components/button-group/index.ts) | `frontend/components/primitives/button-group.md` |
+| `ButtonGroupText` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Public entry](../../../../src/components/button-group/index.ts) | `frontend/components/primitives/button-group.md` |
+| `ButtonGroupSeparator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Public entry](../../../../src/components/button-group/index.ts) | `frontend/components/primitives/button-group.md` |
+| `ButtonGroupToggle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Public entry](../../../../src/components/button-group/index.ts) | `frontend/components/primitives/button-group.md` |
+| `ButtonGroupToggleItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Public entry](../../../../src/components/button-group/index.ts) | `frontend/components/primitives/button-group.md` |
+| `ContextMenu` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuPortal` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuCheckboxItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuRadioGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuRadioItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuItemIndicator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuLabel` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuSeparator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuShortcut` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuSub` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuSubTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuSubContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+| `ContextMenuArrow` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Public entry](../../../../src/components/context-menu/index.ts) | `frontend/components/overlays/context-menu.md` |
+
+The related `buttonGroupVariants` class composer is a helper, not another UI
+component. It has the same three group imports and is documented in the
+[Button Group guide](../../../frontend/components/primitives/button-group.md#public-parts-and-configuration).
+
 ## Reconciliation And Review
 
 Packaging disposition: the original UI wildcard also resolves card.test, record-navigation-bar.test and list-detail-layout.test modules. They are test files, not supported components, and therefore are not rows or planned teaching targets here. The package export inventory records them as a finding; the user subsequently authorized a working-tree packaging correction. Export topology/counts here remain the pinned source baseline, not a claim that test-module exposure is supported.

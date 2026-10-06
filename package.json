@@ -1,6 +1,6 @@
 {
   "name": "@zero/framework",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Bun/Elysia full-stack app framework with Guardian auth, ReactiveDB Fabric, Torrent workflow orchestration, reactive data, and reusable React UI.",
   "type": "module",
   "engines": {
@@ -378,6 +378,14 @@
       "types": "./src/components/dropdown-menu/index.ts",
       "import": "./src/components/dropdown-menu/index.ts"
     },
+    "./components/context-menu": {
+      "types": "./src/components/context-menu/index.ts",
+      "import": "./src/components/context-menu/index.ts"
+    },
+    "./components/button-group": {
+      "types": "./src/components/button-group/index.ts",
+      "import": "./src/components/button-group/index.ts"
+    },
     "./components/popover": {
       "types": "./src/components/popover/index.ts",
       "import": "./src/components/popover/index.ts"
@@ -471,7 +479,7 @@
     "build": "bun build src/frontend/index.ts src/frontend/server.ts src/cli/run.ts src/create-zero/run.ts --target bun --outdir dist",
     "build:binary": "bun build --compile src/cli/run.ts --outfile zero",
     "typecheck": "tsc --noEmit",
-    "test:package": "bun test --parallel=4 --timeout 120000 src/create-zero/scaffold.test.ts src/update/bun-lock-integrity.test.ts src/update/local-archive-resolution.test.ts src/update/run.test.ts src/package-exports.test.ts src/native-package-recipes.test.ts src/package-distribution.test.ts src/build-scripts.test.ts && bun test --timeout 120000 src/update/local-archive-resolution.integration.test.ts src/update/local-archive-workspace.integration.test.ts && bun --no-env-file test src/frontend/server/fabric-sync-metadata.package.test.ts && bun --no-env-file test src/components/cascader/cascader.package.test.ts && bun --no-env-file test src/components/signature-pad/signature-pad.package.test.ts",
+    "test:package": "bun test --parallel=4 --timeout 120000 src/create-zero/scaffold.test.ts src/update/bun-lock-integrity.test.ts src/update/local-archive-resolution.test.ts src/update/run.test.ts src/package-exports.test.ts src/native-package-recipes.test.ts src/package-distribution.test.ts src/build-scripts.test.ts && bun test --timeout 120000 src/update/local-archive-resolution.integration.test.ts src/update/local-archive-workspace.integration.test.ts && bun --no-env-file test src/frontend/server/fabric-sync-metadata.package.test.ts && bun --no-env-file test src/components/cascader/cascader.package.test.ts && bun --no-env-file test src/components/signature-pad/signature-pad.package.test.ts && bun --no-env-file test src/components/button-group/button-group-context-menu.package.test.ts",
     "doctor": "bun run src/doctor/run.ts",
     "migrate": "bun run src/migrations/run.ts",
     "migrate:status": "bun run src/migrations/run.ts --status",

@@ -146,6 +146,16 @@ they are not part of the original clean-baseline helper count.
 | `modals` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [src/modals/modal-events.ts:129](../../../../src/modals/modal-events.ts) | `frontend/modals/content.md` |
 | `MODAL_SIZE_CLASSES` | `@zero/framework/modals` | [src/modals/modal.types.ts:9](../../../../src/modals/modal.types.ts) | `frontend/modals/configuration.md` |
 
+## Zero 2.4 Additions
+
+This supplement does not alter the original pinned inventory count. Grouped
+action/selection controls use one public class composer; it supplies no state,
+authority or asynchronous-action behavior.
+
+| Symbol | Public imports | Evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `buttonGroupVariants` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/button-group` | [Group styles](../../../../src/components/button-group/button-group-styles.ts) | `frontend/components/primitives/button-group.md` |
+
 ## Reconciliation And Review
 
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

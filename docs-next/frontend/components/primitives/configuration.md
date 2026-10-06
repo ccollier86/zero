@@ -38,6 +38,7 @@ custom organizers have their explicitly listed Props interfaces.
 
 | Responsibility | Owner |
 | --- | --- |
+| Joined action controls, addons and separate single/multiple selection | [Button Group configuration](./button-group.md#public-parts-and-configuration); added in 2.4.0. |
 | Theme/tokens/style output | [Design system](../../design-system/index.md). |
 | Persisted field validation/submission | [Forms](../../forms/index.md) and server services. |
 | Query/search/sort/page/action state | [DataTable](../../data-controls/data-table/index.md). |

@@ -33,6 +33,8 @@ does not create a package import; use each guide's actual public entrance.
 | Configuration responsibility | Canonical reference |
 | --- | --- |
 | Native/button/choice/date/layout/chart/command/toast props | [Primitive configuration](./primitives/configuration.md). |
+| Joined/separated control layout and single/multiple selection | [Button Group](./primitives/button-group.md#public-parts-and-configuration). |
+| Right-click/keyboard opening, leading/trailing rows and focus/portal policy | [Context Menu](./overlays/context-menu.md#public-parts-and-configuration). |
 | Menu/popover/tooltip/sidebar/collapsible/radial providers and state | [Overlay configuration](./overlays/configuration.md). |
 | Public Hero/navigation/content/code collection descriptors | [Public-page configuration](./public-pages/configuration.md). |
 | String source/replay/effect timing and callbacks | [Text configuration](./text/configuration.md). |

@@ -4,13 +4,23 @@ Zero includes or adapts the following third-party software. The notices below
 apply to those portions and do not change the licensing of unrelated Zero
 code.
 
-## ReUI — SVG Signature Pad
+## ReUI — SVG Signature Pad, Button Group And Context Menu
 
 Source: https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry-reui/bases/radix/reui/signature-pad.tsx
+
+Additional component references:
+
+- https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/bases/radix/ui/button-group.tsx
+- https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/bases/radix/ui/context-menu.tsx
 
 Zero adapts its SVG outline geometry, pressure/velocity pointer handling,
 guides and preview presentation into focused modules using Zero's own controls,
 form binding, guarded history, lifecycle handling and observability.
+Button Group adapts the public joined-control composition, with Zero controls,
+logical-direction styling and Radix selection. Context Menu adapts the public
+item/submenu composition with Zero tokens, focused modules, native Radix
+behavior, keyboard opening and leading/trailing adornments. No paid ReUI Pro
+blocks or assets are redistributed.
 
 MIT License
 

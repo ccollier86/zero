@@ -84,6 +84,7 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | Component | File | Role |
 | --- | --- | --- |
 | `Button`, `buttonVariants` | `ui/button.tsx` | Shared action primitive with variants and whole-button animated icon triggers. Avoid wrapping button icons in nested `AnimateIcon`; the button owns the trigger. |
+| `ButtonGroup`, `ButtonGroupText`, `ButtonGroupSeparator`, `ButtonGroupToggle`, `ButtonGroupToggleItem` | `components/button-group` | Available from 2.4.0: joined/separated actions, addons, native controls and separate Radix single/multiple selection. See [Button Group](./button-group.md). |
 | `Input` | `ui/input.tsx` | Tokenized single-line input with pointer-local border highlight and subtle focused border state. |
 | `Textarea` | `ui/textarea.tsx` | Tokenized multi-line input. |
 | `Label` | `ui/label.tsx` | Accessible label primitive. |
@@ -108,6 +109,7 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Breadcrumb`, `BreadcrumbList`, `BreadcrumbItem`, `BreadcrumbLink`, `BreadcrumbPage`, `BreadcrumbSeparator`, `BreadcrumbEllipsis` | `ui/breadcrumb.tsx` | Low-level breadcrumb primitives. |
 | `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis` | `ui/pagination.tsx` | Page navigation primitives. |
 | `DropdownMenu` and subparts | `components/dropdown-menu` | Public animated dropdown menu wrapper. Prefer this over raw Radix menu. |
+| `ContextMenu` and subparts | `components/context-menu` | Available from 2.4.0: conventional pointer/keyboard/touch context menus, nested commands and leading/trailing choice indicators. See [Context Menu](./context-menu.md). |
 | `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose` | `components/popover` | Public token-aware popover wrapper, including the narrow `@zero/framework/components/popover` import used by table controls. |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `components/collapsible` | Public animated collapsible wrapper. |
 | `Tooltip`, `TooltipTrigger`, `TooltipContent` | `components/tooltip` | Public Zero/Radix tooltip for accessible control descriptions, including icon-only actions. |

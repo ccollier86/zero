@@ -1,9 +1,24 @@
-# Updating Zero 2.x To 2.2 And 2.3
+# Updating Zero 2.x
 
 Zero 2.2.0 adds the Data Studio workspace/JSON editor improvements and the
 source-audit correctness fixes described in the [changelog](../CHANGELOG.md).
 This guide applies to existing Zero 2.x applications. It is not the legacy
 1.3-to-2.x system-database migration guide.
+
+## 2.4 Button Group And Context Menu
+
+Zero 2.4.0 adds the optional [Button Group](./frontend/button-group.md) and
+[Context Menu](./frontend/context-menu.md) families through the root/React and
+focused component imports. Their detailed guides cover actions versus selection,
+native form behavior, keyboard/touch interaction, portals, checked indicators,
+submenus and menu-to-dialog focus handoff.
+
+Existing Button, DropdownMenu, RadialMenu and Data Studio handlers are not
+automatically replaced. The release does not change global typography, density
+or the theme/motion contract discussed for future work. Existing 2.3.0 apps need
+no database migration, app configuration change or component-call-site rewrite.
+Use the normal saved-package update below, restart/rebuild normally, then import
+the new components where desired.
 
 ## 2.3 Component And Storage Update
 

@@ -31,6 +31,7 @@ panels, tooltips add nonessential descriptions, and collapsibles disclose conten
 ## Feature Guides
 
 - [Dropdown menus](./dropdown-menu.md): ordinary/check/radio items, groups and submenus.
+- [Context menus](./context-menu.md): conventional right-click/keyboard/touch actions, nested commands, icons and trailing choice indicators.
 - [Popovers](./popover.md): controlled inline panels with dismissal/focus callbacks.
 - [Tooltips](./tooltip.md): the public Radix family, separate from internal shared sidebar tooltips.
 - [Collapsibles](./collapsible.md): disclosure and optional retained content.

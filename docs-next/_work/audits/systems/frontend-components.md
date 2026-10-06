@@ -95,6 +95,30 @@ legal/compliance certification, npm publication, or proof of a shipped archive.
 
 ## Configuration And Integration Inventory
 
+### 2.4 Grouped Controls And Conventional Context Menus
+
+The original 2.1.1 inventory/counts above remain a pinned historical audit.
+The 2.4.0 additions are catalogued separately: [Button Group](../../../frontend/components/primitives/button-group.md)
+owns five action/selection parts and a class composer; [Context Menu](../../../frontend/components/overlays/context-menu.md)
+owns seventeen conventional menu/portal/choice parts with corresponding Props
+types. Both families have root/React and focused public component imports.
+They reuse existing controls, Radix behavior, icons and Zero colors/radius/fonts;
+they do not implement the future global density/motion-contract redesign.
+
+Focused checks against the feature candidate passed 25 SSR/composition tests
+(167 assertions), 16 styled browser tests (103 assertions), and the actual
+UI Markdown example compiler (54 assertions, including six new examples).
+The browser review exposed an invisible-menu entrance defect; the final native
+surface runs Motion inside Radix Presence without reinterpreting native React
+events or delaying close-focus handoff. Unchanged visibility checks and added
+native event/ref/asChild/style-restoration checks pass. A stronger retained
+asChild reproduction also caught a detached public ref when a consumer changed
+its own DOM tag internally; a stable native callback ref now tracks attachments
+and preserves React 19 returned cleanup functions. That unchanged regression
+and the complete browser gate pass. Examples and browsers
+use synthetic local callbacks, not application data. Final package/provenance
+checks remain release-owned rather than inferred from these counts.
+
 Components consume exported Props/Options types and inherited React/Radix/Motion/third-party attributes; exact declarations are linked per catalog row. Settings are React props/render-time, not automatic server env/Doctor discovery. Required provider context, controlled/uncontrolled values, callback behavior, SSR fallback, accessibility and mode-sensitive services need feature-level detail during the later guide pass.
 
 AppShell* contracts include preset/icon/brand/breadcrumb/workspaces/menu/nav/user/header/theme toggle structures; source-owned defaults live in app-shell modules and presets. Public content accepts caller-owned assets/text/actions; streaming strings do not imply an AI transport. SecretField's masking/reveal/copy options act on a secret already authorized into browser memory—masking is not encryption/security. Notification/Guardian/Studio/Storage organisms compose SDK hooks and server-scoped APIs; visibility props remove UI only, never bypass backend authorization. Generic hooks own UI state/lifecycle, not transport persistence.

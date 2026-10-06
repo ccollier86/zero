@@ -31,6 +31,7 @@ complete control plane.
 ## Feature Guides
 
 - [Buttons and text inputs](./inputs.md): native props, slots and form behavior.
+- [Button groups](./button-group.md): joined actions, addons, split controls and separate single/multiple selection.
 - [Choice controls](./choices.md): Select, Combobox, Checkbox and RadioGroup.
 - [Tags, progress and validation](./tags-and-validation.md): controlled lists,
   range-correct progress and caller-computed rule feedback.
