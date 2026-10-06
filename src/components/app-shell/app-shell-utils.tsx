@@ -37,7 +37,7 @@ export function renderAppShellIcon({
 export interface AppShellAnchorProps extends Omit<React.HTMLAttributes<HTMLElement>, 'onClick'> {
   href?: string;
   disabled?: boolean;
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLElement>;
   className?: string;
   children: React.ReactNode;
 }
@@ -64,7 +64,9 @@ export function AppShellAnchor({
             event.preventDefault();
             return;
           }
-          onClick?.();
+          // Slot-composed handlers (tooltip/menu/navigation) need the real
+          // event to preserve dismissal and preventDefault semantics.
+          onClick?.(event);
         }}
       >
         {children}

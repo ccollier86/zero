@@ -2,6 +2,28 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.4.3 - 2026-10-06
+
+Compatible collapsed-sidebar interaction fix. No application configuration
+changes or database migrations are needed.
+
+- Sidebar menu hints now attach Zero's public tooltip directly to the actual
+  button/link, independently of hover-highlight animations.
+- Collapsed desktop labels appear on mouse hover only. Clicking or pressing
+  Escape dismisses the hint; click/focus restoration cannot leave it stuck open.
+  Expanded sidebars and mobile navigation do not show collapsed hints.
+- Default AppShell navigation, brand, workspace and account controls retain
+  accessible names and get appropriate collapsed labels. Explicit tooltip
+  labels and accessible-name overrides remain supported.
+- Tooltip collision handling and wrapped viewport-constrained text keep long
+  labels usable at screen edges. Existing semantic colors and motion remain.
+- Public tooltip content keeps native-element animation inside its portal,
+  avoiding an asChild crash with separate Radix Slot copies and cleaning up
+  closed accessible descriptions after exit.
+- Updated Sidebar, AppShell and Tooltip guides in both documentation trees;
+  added real-browser regressions for hover, dismissal, focus, animation modes,
+  dropdown composition and constrained viewports.
+
 ## 2.4.2 - 2026-10-06
 
 Includes the complete 2.4.1 exact array-policy update and hardens the production

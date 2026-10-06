@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Owns Radix tooltip state, placement, cursor tracking and portal animation.
+ * Reuses Zero's state/DOM hooks; callers own content and activation policy.
+ */
 import * as React from 'react';
 import { Tooltip as TooltipPrimitive } from 'radix-ui';
 import {
@@ -14,6 +18,7 @@ import {
 
 import { getStrictContext } from '#zero/lib/get-strict-context';
 import { useControlledState } from '#zero/hooks/use-controlled-state';
+import { useDataState } from '#zero/hooks/use-data-state';
 
 type TooltipContextType = {
   isOpen: boolean;
@@ -113,18 +118,12 @@ type TooltipPortalProps = Omit<
 >;
 
 function TooltipPortal(props: TooltipPortalProps) {
-  const { isOpen } = useTooltip();
-
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <TooltipPrimitive.Portal
-          forceMount
-          data-slot="tooltip-portal"
-          {...props}
-        />
-      )}
-    </AnimatePresence>
+    <TooltipPrimitive.Portal
+      forceMount
+      data-slot="tooltip-portal"
+      {...props}
+    />
   );
 }
 
@@ -135,6 +134,8 @@ type TooltipContentProps = Omit<
   HTMLMotionProps<'div'>;
 
 function TooltipContent({
+  'aria-label': ariaLabel,
+  dir,
   onEscapeKeyDown,
   onPointerDownOutside,
   side,
@@ -147,52 +148,85 @@ function TooltipContent({
   arrowPadding,
   sticky,
   hideWhenDetached,
+  updatePositionStrategy,
   style,
   transition = { type: 'spring', stiffness: 300, damping: 25 },
   ...props
 }: TooltipContentProps) {
-  const { x, y, followCursor, followCursorSpringOptions } = useTooltip();
+  const { isOpen, x, y, followCursor, followCursorSpringOptions } = useTooltip();
   const translateX = useSpring(x, followCursorSpringOptions);
   const translateY = useSpring(y, followCursorSpringOptions);
+  const [resolvedSide, sideRef] = useDataState<HTMLDivElement>('side');
+  const [resolvedAlign, alignRef] = useDataState<HTMLDivElement>('align');
+  const [resolvedState, stateRef] = useDataState<HTMLDivElement>('state');
+  const placementRef = React.useCallback((element: HTMLDivElement | null) => {
+    sideRef.current = element;
+    alignRef.current = element;
+    stateRef.current = element;
+    // Preserve className-based layer overrides as well as inline zIndex before
+    // Popper measures the positioned wrapper's stacking level.
+    const animated = element?.firstElementChild;
+    if (element && animated) {
+      const layer = getComputedStyle(animated).zIndex;
+      if (layer !== 'auto') element.style.zIndex = layer;
+    }
+  }, [sideRef, alignRef, stateRef, props.className, style?.zIndex]);
 
   return (
-    <TooltipPrimitive.Content
-      asChild
-      forceMount
-      align={align}
-      alignOffset={alignOffset}
-      side={side}
-      sideOffset={sideOffset}
-      avoidCollisions={avoidCollisions}
-      collisionBoundary={collisionBoundary}
-      collisionPadding={collisionPadding}
-      arrowPadding={arrowPadding}
-      sticky={sticky}
-      hideWhenDetached={hideWhenDetached}
-      onEscapeKeyDown={onEscapeKeyDown}
-      onPointerDownOutside={onPointerDownOutside}
-    >
-      <motion.div
-        key="popover-content"
-        data-slot="popover-content"
-        initial={{ opacity: 0, scale: 0.5 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.5 }}
-        transition={transition}
-        style={{
-          x:
-            followCursor === 'x' || followCursor === true
-              ? translateX
-              : undefined,
-          y:
-            followCursor === 'y' || followCursor === true
-              ? translateY
-              : undefined,
-          ...style,
-        }}
-        {...props}
-      />
-    </TooltipPrimitive.Content>
+    // Keep presence inside the portal and animation on a native element.
+    // Radix owns placement and its hidden description, without an asChild Slot
+    // boundary between separately installed copies of the Slot primitive.
+    <AnimatePresence>
+      {isOpen && (
+        <TooltipPrimitive.Content
+          forceMount
+          ref={placementRef}
+          aria-label={ariaLabel}
+          dir={dir}
+          // Popper reads the positioned element's stacking level, not its
+          // animated child. Keep the standard tooltip layer and style override.
+          style={{ zIndex: style?.zIndex ?? 50 }}
+          align={align}
+          alignOffset={alignOffset}
+          side={side}
+          sideOffset={sideOffset}
+          avoidCollisions={avoidCollisions}
+          collisionBoundary={collisionBoundary}
+          collisionPadding={collisionPadding}
+          arrowPadding={arrowPadding}
+          sticky={sticky}
+          hideWhenDetached={hideWhenDetached}
+          updatePositionStrategy={updatePositionStrategy}
+          onEscapeKeyDown={onEscapeKeyDown}
+          onPointerDownOutside={onPointerDownOutside}
+          key="popover-content"
+        >
+          <motion.div
+            data-slot="popover-content"
+            dir={dir}
+            data-side={typeof resolvedSide === 'string' ? resolvedSide : undefined}
+            data-align={typeof resolvedAlign === 'string' ? resolvedAlign : undefined}
+            data-state={typeof resolvedState === 'string' ? resolvedState : undefined}
+            initial={{ opacity: 0, scale: 0.5 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.5 }}
+            transition={transition}
+            style={{
+              x:
+                followCursor === 'x' || followCursor === true
+                  ? translateX
+                  : undefined,
+              y:
+                followCursor === 'y' || followCursor === true
+                  ? translateY
+                  : undefined,
+              ...style,
+            }}
+            {...props}
+          />
+        </TooltipPrimitive.Content>
+      )}
+    </AnimatePresence>
   );
 }
 

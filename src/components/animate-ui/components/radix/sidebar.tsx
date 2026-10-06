@@ -21,11 +21,11 @@ import {
 } from '#zero/components/animate-ui/components/radix/sheet';
 import {
   TooltipProvider,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
 } from '#zero/components/animate-ui/components/animate/tooltip';
-import { useGlobalTooltip } from '#zero/components/animate-ui/primitives/animate/tooltip';
+import {
+  TooltipContent,
+} from '#zero/components/tooltip';
+import { CollapsedSidebarTooltip } from '#zero/components/sidebar/collapsed-sidebar-tooltip';
 import {
   Highlight,
   HighlightItem,
@@ -588,64 +588,46 @@ function SidebarMenuButton({
 }: SidebarMenuButtonProps) {
   const Comp = asChild ? Slot.Root : 'button';
   const { isMobile, state } = useSidebar();
+  const childAria = asChild && React.isValidElement<React.AriaAttributes>(props.children)
+    ? props.children.props
+    : undefined;
+  const tooltipLabel = typeof tooltip === 'string' ? tooltip
+    : typeof tooltip?.children === 'string' ? tooltip.children : undefined;
+  const accessibleLabel = props['aria-label'] ?? childAria?.['aria-label']
+    ?? (props['aria-labelledby'] || childAria?.['aria-labelledby']
+      ? undefined : tooltipLabel);
 
   const button = (
+    <Comp
+      data-slot="sidebar-menu-button"
+      data-sidebar="menu-button"
+      data-size={size}
+      data-active={isActive}
+      className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
+      {...props}
+      aria-label={accessibleLabel}
+    />
+  );
+  const tooltipProps = typeof tooltip === 'string' ? { children: tooltip } : tooltip;
+
+  if (tooltipProps) {
+    return (
+      <CollapsedSidebarTooltip
+        enabled={state === 'collapsed' && !isMobile}
+        tooltip={tooltipProps}
+        activeClassName={sidebarMenuButtonActiveVariants({ variant })}
+      >
+        {button}
+      </CollapsedSidebarTooltip>
+    );
+  }
+
+  return (
     <HighlightItem
       activeClassName={sidebarMenuButtonActiveVariants({ variant })}
     >
-      <Comp
-        data-slot="sidebar-menu-button"
-        data-sidebar="menu-button"
-        data-size={size}
-        data-active={isActive}
-        className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
-        {...props}
-      />
-    </HighlightItem>
-  );
-
-  if (!tooltip) {
-    return button;
-  }
-
-  const tooltipProps = typeof tooltip === 'string' ? { children: tooltip } : tooltip;
-
-  return (
-    <CollapsedSidebarTooltip
-      enabled={state === 'collapsed' && !isMobile}
-      tooltip={tooltipProps}
-    >
       {button}
-    </CollapsedSidebarTooltip>
-  );
-}
-
-function CollapsedSidebarTooltip({
-  children,
-  enabled,
-  tooltip,
-}: {
-  children: React.ReactElement;
-  enabled: boolean;
-  tooltip: React.ComponentProps<typeof TooltipContent>;
-}) {
-  const { hideImmediate } = useGlobalTooltip();
-
-  React.useEffect(() => {
-    if (!enabled) hideImmediate();
-    return () => hideImmediate();
-  }, [enabled, hideImmediate]);
-
-  if (!enabled) return children;
-
-  return (
-    <Tooltip side="right" align="center">
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent
-        {...tooltip}
-        className={cn('pointer-events-none', tooltip.className)}
-      />
-    </Tooltip>
+    </HighlightItem>
   );
 }
 

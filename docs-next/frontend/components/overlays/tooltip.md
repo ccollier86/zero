@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: tooltip
 maturity: supported
-applies_to: ["2.1.1 source with audited interaction/token corrections; publication qualification pending"]
+applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; publication qualification pending"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.4.3"
+  commit: "8327e4498f52b12b43759bbc4618973601191039"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -25,7 +25,7 @@ reviewed_against:
 
 The supported generic tooltip import is **@zero/framework/components/tooltip**,
 not root/react. It exports Tooltip, TooltipTrigger, TooltipContent and matching
-Props types. Tooltip wraps its own Radix provider, default delayDuration0;
+Props types. Tooltip wraps its own Radix provider, with `delayDuration: 0`;
 an extra public TooltipProvider is not required or exported by that family.
 
 Complete description example:
@@ -48,19 +48,47 @@ critical error instructions solely inside a tooltip.
 
 ## State And Position
 
-Tooltip accepts underlying controlled open/defaultOpen/onOpenChange and
-delayDuration. followCursor defaults false and can be true, x or y; spring
-options default stiffness200/damping17. Content supplies portal/arrow and
-forwarded positioning/collision/Motion props, with spring300/damping25.
-Trigger combines caller mouse-move behavior with cursor tracking.
+`Tooltip` accepts Radix's controlled `open`/`defaultOpen`/`onOpenChange` and
+`delayDuration`. `followCursor` defaults to `false` and can be `true`, `'x'` or
+`'y'`; its spring defaults to stiffness 200 and damping 17. Content supplies
+the portal and arrow and forwards positioning, collision and Motion props,
+with a spring of stiffness 300 and damping 25. Trigger combines caller
+mouse-move behavior with cursor tracking.
 
-## Two Different Implementations
+`TooltipContent` accepts `side`, `sideOffset`, `align`, `alignOffset`,
+`avoidCollisions`, `collisionBoundary`, `collisionPadding`, `arrowPadding`,
+`sticky` and `hideWhenDetached`. These control preferred placement and collision
+handling, not fixed coordinates. Radix can flip or shift the content when its
+preferred side would leave the boundary. Keep collision handling enabled for
+ordinary viewport-aware hints; disable it only when the application deliberately
+owns a different placement contract.
 
-Sidebar internally uses a shared Animate/Floating UI tooltip provider that
-coordinates one moving tooltip between collapsed menu entries. Its private
-provider/context is not interchangeable with this public Radix family.
-Importing source-local wrappers to expose it is not a supported shortcut.
-[Sidebar menu](./sidebar-menu.md) owns its collapsed-tooltip behavior.
+The styled content defaults to `collisionPadding: 8` and a maximum width of the
+smaller of 20rem and Radix's available width; its fallback viewport cap leaves
+1rem of horizontal space. Normal whitespace and `overflow-wrap: anywhere` keep
+long words inside that width, so long labels do not require application CSS
+selectors. Use `className` for a narrower content width when appropriate. The portal avoids
+clipping by a scrolling sidebar or another overflow container. A custom
+`collisionBoundary` still takes precedence over the normal viewport boundary.
+
+## Sidebar Integration
+
+Collapsed desktop [Sidebar menu buttons](./sidebar-menu.md) use this same public
+Radix family on the actual button or link. Sidebar hints are hover-only,
+independently of decorative hover highlighting: keyboard focus alone does not
+open them. Clicking a sidebar control dismisses its hint until the pointer
+leaves and hovers again, while the accessible control name remains available.
+This sidebar-specific behavior does not change ordinary public tooltips, which
+retain their standard keyboard-focus interaction. Sidebar defaults are a
+right-side, centered preference with `sideOffset: 6`, `collisionPadding: 8` and
+`hideWhenDetached: true`; the `tooltip` content-props object can override them.
+Expanded or mobile sidebars suppress the hint without replacing the underlying
+control.
+
+The internal shared Animate/Floating UI provider remains an implementation
+compatibility path, not the renderer used by current sidebar menu tooltips.
+Its context is not interchangeable with this public Radix family. Do not import
+source-local providers or wrappers to implement ordinary application hints.
 
 Verify keyboard/focus/pointer descriptions, escape/outside behavior, viewport
 placement and target browser animation. These docs inspect source; they do not

@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source with audited interaction/token corrections; publication qualification pending"]
+applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; publication qualification pending"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.4.3"
+  commit: "8327e4498f52b12b43759bbc4618973601191039"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -53,12 +53,13 @@ ItemIndicator; this does not change the existing DropdownMenu export contract.
 | Dropdown submenu content | duration0.2s; controlled/default-open subroot and positioning options |
 | PopoverContent | align center; sideOffset4; width72 utility; spring300/damping25; className/position/collision/focus callbacks |
 | Tooltip | delayDuration0; followCursor false or true/x/y; follow spring200/damping17 |
-| TooltipContent | inherited positioning/Motion props; spring300/damping25; wrapper supplies arrow/portal |
+| TooltipContent | inherited positioning/collision/Motion props; spring300/damping25; collisionPadding8; max width min(20rem, available width), viewport-minus-1rem fallback and word wrapping; wrapper supplies arrow/portal |
 | CollapsibleContent | keepRendered false; transition duration0.35s/easeInOut |
 | SidebarProvider | defaultOpen true; optional open/onOpenChange; desktop widths16rem/icon3rem |
 | Sidebar | side left, variant sidebar, collapsible offcanvas, animateOnHover true; spring350/damping35 |
 | Sidebar mobile | below768px; width18rem, independent mobile open state |
-| SidebarMenuButton | asChild false, isActive false, variant default (outline available), size default (sm/lg), tooltip optional |
+| SidebarMenuButton | asChild false, isActive false, variant default (outline available), size default (sm/lg); tooltip string or public TooltipContent props |
+| Sidebar menu tooltip | collapsed desktop only; right/center preference, sideOffset6, collisionPadding8, hideWhenDetached true; string supplies default accessible name |
 | SidebarMenuAction | asChild false, showOnHover false |
 | SidebarMenuSkeleton | showIcon false |
 | SidebarMenuSubButton | asChild false, size md (sm available), isActive false |

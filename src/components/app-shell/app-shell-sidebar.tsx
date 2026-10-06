@@ -155,6 +155,7 @@ function AppShellBrandButton({ brand }: { brand?: AppShellBrand }) {
       <AnimatedIconTrigger>
         <SidebarMenuButton
           size="lg"
+          tooltip={brand.name}
           asChild
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
         >
@@ -168,6 +169,7 @@ function AppShellBrandButton({ brand }: { brand?: AppShellBrand }) {
     <AnimatedIconTrigger>
       <SidebarMenuButton
         size="lg"
+        tooltip={brand.name}
         className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
       >
         {content}
@@ -224,6 +226,7 @@ function AppShellWorkspaceSwitcher({
           <SidebarMenuButton
             ref={triggerRef}
             size="lg"
+            tooltip={displayWorkspace.name}
             aria-busy={workspaces.pending || undefined}
             aria-disabled={workspaces.pending || undefined}
             aria-describedby={workspaces.error ? statusId : undefined}
@@ -441,6 +444,7 @@ function AppShellNavMenuItem({
             <AnimatedIconTrigger>
               <SidebarMenuButton
                 tooltip={item.tooltip ?? item.label}
+                aria-label={item.label}
                 isActive={isActive}
                 aria-disabled={item.disabled}
                 className={getNavItemButtonClassName(item, secondary)}
@@ -494,6 +498,7 @@ function AppShellNavMenuItem({
         <SidebarMenuButton
           asChild
           tooltip={item.tooltip ?? item.label}
+          aria-label={item.label}
           isActive={isActive}
           aria-disabled={item.disabled}
           className={getNavItemButtonClassName(item, secondary)}
@@ -556,6 +561,7 @@ function AppShellUserMenu({
             <AnimatedIconTrigger>
               <SidebarMenuButton
                 size="lg"
+                tooltip={user.name}
                 className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
               >
                 <Avatar className="h-8 w-8 rounded-lg">

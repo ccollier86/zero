@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: app-shell-navigation
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; package qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.4.3"
+  commit: "8327e4498f52b12b43759bbc4618973601191039"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -32,6 +32,24 @@ AppShellNavItem requires label and optionally accepts id, href, icon, variant,
 active, defaultOpen, disabled, badge, tooltip, children, actions and onSelect.
 variant is default or action; action adds a dashed action-like appearance.
 
+The generated sidebar uses `item.tooltip ?? item.label` for the collapsed
+desktop hint. Set `tooltip` to a descriptive string when the visible label is
+abbreviated. The control's accessible `aria-label` remains `item.label`; a custom
+tooltip changes the hover hint, not that control name.
+No new application configuration or tooltip provider is required. Hints appear
+on pointer hover only and use Zero's [public Radix tooltip](../components/overlays/tooltip.md)
+for portal placement, viewport collisions and long-label wrapping. Decorative
+sidebar hover highlighting is independent of tooltip interaction.
+Keyboard focus alone does not open a sidebar hint. Clicking the control
+dismisses it until the pointer leaves and hovers again; the accessible label
+still identifies the control for keyboard and assistive-technology users.
+
+The brand/workspace and account controls also receive generated labels from
+their configured names. A custom sidebar slot is different: its controls are
+app-owned and need explicit `SidebarMenuButton tooltip` values and accessible
+names. See [collapsed menu labels](../components/overlays/sidebar-menu.md#collapsed-labels-and-placement)
+for lower-level positioning and custom-content overrides.
+
 Active appearance is true when active is truthy, a child is active, or currentPath
 matches href exactly or begins with href plus '/'. It is not a full route matcher:
 provide a normalized pathname, not a URL containing search/hash. active=false
@@ -45,7 +63,7 @@ import type { AppShellNavGroup } from '@zero/framework/components/app-shell';
 export const navigation: AppShellNavGroup[] = [{
   id: 'workspace', label: 'Workspace',
   items: [{
-    label: 'Projects', href: '/app/projects',
+    label: 'Projects', tooltip: 'Browse projects', href: '/app/projects',
     children: [
       { label: 'All projects', href: '/app/projects' },
       { label: 'Archived', href: '/app/projects/archived' },

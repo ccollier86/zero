@@ -46,6 +46,7 @@ type TooltipContentProps = TooltipContentPrimitiveProps;
 function TooltipContent({
   className,
   sideOffset,
+  collisionPadding = 8,
   children,
   ...props
 }: TooltipContentProps) {
@@ -53,8 +54,10 @@ function TooltipContent({
     <TooltipPortalPrimitive>
       <TooltipContentPrimitive
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        aria-label={props['aria-label'] ?? (typeof children === 'string' ? children : undefined)}
         className={cn(
-          'bg-primary text-primary-foreground z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance',
+          'bg-primary text-primary-foreground z-50 w-fit min-w-0 max-w-[min(20rem,var(--radix-tooltip-content-available-width,calc(100vw-1rem)))] origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance whitespace-normal [overflow-wrap:anywhere]',
           className,
         )}
         {...props}

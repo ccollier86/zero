@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: sidebar
 maturity: supported
-applies_to: ["2.1.1 source with audited interaction/token corrections; publication qualification pending"]
+applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; publication qualification pending"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.4.3"
+  commit: "8327e4498f52b12b43759bbc4618973601191039"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -63,6 +63,16 @@ noncollapsing content panel. Desktop collapsed icon width is3rem; normal width16
 On a viewport below768px, collapsible sidebars use an independent sheet with
 width18rem and internal accessible title/description. Menu tooltips are disabled
 for mobile and expanded desktop states.
+
+Collapsed desktop menu hints use the [public Radix tooltip](./tooltip.md),
+anchored to the actual button/link. Pointer hover opens them, even
+with decorative `animateOnHover={false}`. Portal placement, collision detection
+and width/wrapping defaults keep labels visible in constrained viewports. The
+[menu guide](./sidebar-menu.md#collapsed-labels-and-placement) documents default
+placement, object overrides, accessible naming and custom-sidebar composition.
+Keyboard focus alone does not open a sidebar hint. Clicking the control dismisses
+it and suppresses it until the pointer leaves and hovers again; the accessible
+name remains on the control.
 
 SidebarInput/Separator/Header/Footer/Content and Group/GroupLabel/GroupAction/
 GroupContent organize the navigation. SidebarInset wraps adjoining content.
