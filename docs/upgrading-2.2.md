@@ -1,9 +1,29 @@
-# Updating Zero 2.1 To 2.2
+# Updating Zero 2.x To 2.2 And 2.3
 
 Zero 2.2.0 adds the Data Studio workspace/JSON editor improvements and the
 source-audit correctness fixes described in the [changelog](../CHANGELOG.md).
 This guide applies to existing Zero 2.x applications. It is not the legacy
 1.3-to-2.x system-database migration guide.
+
+## 2.3 Component And Storage Update
+
+Zero 2.3.0 adds the optional [Cascader](./frontend/cascader.md) and
+[SignaturePad](./frontend/signature-pad.md) families, and includes the
+Add Record/temporal-editor and Storage access-panel polish. Existing component
+props and application-owned schemas remain supported. The Filters integration
+document is still a plan; this release does not ship that component.
+
+The Storage path correction removes the spurious not-found response for
+uploaded filenames containing spaces, Unicode or special characters. Pass raw
+logical paths (normally `FileInfo.path`) to the official hooks/actions; do not
+pre-encode them. The HTTP boundary decodes each URL segment once before
+authorization and lookup, keeping `/invoice 1.txt` distinct from a literal
+`/invoice%201.txt`. See [file paths and deletion](./storage-studio.md#file-paths-and-deletion).
+
+Updating an existing 2.2.1 app to 2.3.0 requires no system migration, data
+conversion or component-call-site rewrite. Refresh the saved main archive,
+perform the normal package update below, and restart/rebuild the app normally.
+App-specific validation and deployment remain the application's responsibility.
 
 ## 2.2.1 Release-Blocker Corrections
 

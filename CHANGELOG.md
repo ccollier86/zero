@@ -2,7 +2,13 @@
 
 All notable Zero Platform changes are tracked here.
 
-## Unreleased
+## 2.3.0 - 2026-10-06
+
+This additive release includes the new Cascader and SignaturePad component
+families, plus focused Data Studio and Storage correctness/presentation fixes.
+Existing public component call sites remain supported. Updating from 2.2.1
+requires no database migration or application data conversion. See the
+[2.x upgrade guide](./docs/upgrading-2.2.md#23-component-and-storage-update).
 
 ### Added
 
@@ -20,6 +26,43 @@ All notable Zero Platform changes are tracked here.
   consumer regressions for the new public component family. Export smoke builds
   now use isolated Bun CLI processes so filtered tests do not depend on the
   test runner's resolver being warmed by an earlier server build.
+- A reusable SVG SignaturePad family with muted signing surfaces, pinned
+  controls, undo/redo and keyboard shortcuts, native required/reset form
+  integration, server-acknowledged agreement cards, and compact clause-initial
+  compositions. Controls use Zero's design tokens and public root/React/focused
+  exports; application code still owns signature persistence and agreement
+  policy. See the [SignaturePad guide](./docs/frontend/signature-pad.md).
+
+### Improved
+
+- Reworked the Add Record dialog around the existing Zero field, dialog,
+  calendar and time controls, with a bounded body, anchored heading/actions,
+  stable typed drafts and acknowledged mutations. Data Studio defaults,
+  filters and inline date/time editors now reuse those same temporal controls
+  instead of native browser date/time inputs.
+- Compact Storage access-grant forms adapt to the inspector width. Grant lists
+  remain bounded and keyboard reachable; long IDs no longer widen the pane.
+  Public-visibility controls explain disabled publication policy, while an
+  already-public resource retains its make-private remediation action.
+- Updated component/API documentation in both the existing guides and the
+  isolated source-audited documentation tree. Filters integration remains a
+  design plan, not a shipped Filters component.
+
+### Fixed
+
+- Corrected Storage HTTP wildcard paths so uploaded filenames containing
+  spaces, Unicode or special characters work for deletion, downloads,
+  information reads and metadata updates. URL segments are decoded exactly
+  once before canonical validation and authorization; literal percent-escape
+  names remain distinct. Invalid encodings/separators fail with the standard
+  safe input error. The packaged hold-to-confirm flow now completes against
+  these paths without the spurious `STORAGE_NOT_FOUND` response.
+- Fenced stale/duplicate record and permission-panel operations, preserved
+  explicit false/zero/null/default drafts, and kept accepted persistence from
+  becoming retryable when a later notification callback fails.
+- Preserved datetime seconds/fractions and supported timezone-bearing public
+  inputs, rejected invalid calendar/DST values, prevented cell-popover clicks
+  from dispatching surrounding-row actions, and corrected empty-grid spans.
 
 ## 2.2.1 - 2026-10-05
 

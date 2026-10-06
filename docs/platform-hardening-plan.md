@@ -732,8 +732,8 @@ Work one numbered item at a time. For each item:
 
 ## 13. Storage HTTP Wildcard Path Correction (2026-10-05)
 
-Status: implemented on the record-editor feature branch, not yet published on
-main. Real isolated HTTP requests reproduced uploaded filenames with spaces,
+Status: included in the Zero 2.3.0 release. Real isolated HTTP requests
+reproduced uploaded filenames with spaces,
 Unicode or percent-escape text returning `STORAGE_NOT_FOUND` during deletion.
 The SDK encoded the URL correctly, but Elysia's wildcard parameter remained
 encoded and the server looked up that transport text as a logical filename.
