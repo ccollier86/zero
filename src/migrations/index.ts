@@ -48,6 +48,7 @@ import { migration as m034 } from './definitions/034_storage_studio_foundation';
 import { migration as m035 } from './definitions/035_storage_blob_leases';
 import { migration as m036 } from './definitions/036_workflow_system_event_receipts';
 import { migration as m037 } from './definitions/037_database_automation_source_catalog';
+import { migration as m038 } from './definitions/038_workflow_system_start_receipts';
 
 export {
   createMigrationRegistry,
@@ -122,4 +123,5 @@ export const migrations: Migration[] = [
   m035,
   m036,
   m037,
+  m038,
 ];

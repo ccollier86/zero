@@ -37,10 +37,12 @@ result without conversation history or knowledge of Zero's development history.
 
 ## Isolation And Scope
 
-All rebuild content lives under `docs-next/`. Do not move, rename, overwrite,
-delete, or retarget the current `docs/`, README, `llm.txt`, `llms.txt`, package
-documentation entries, or active agent instruction/hook files as part of this
-pass. Do not add executable agent hooks merely to document a proposed hook.
+All rebuild content lives under `docs-next/`. The initial audit was isolated
+from current entry points. The approved 2.4.1 handoff subsequently routed README,
+Start Here, `llm.txt`/`llms.txt` and scaffold documentation to this tree and
+included it as package-local Markdown. Keep those entrances aligned with the
+actual packaged guides. Do not rename/delete compatibility docs or change
+active executable agent hooks merely to document a proposed hook.
 
 Existing docs, plans, examples, source, tests, release notes, and relevant
 official external documentation may inform the rebuild. Reconcile disagreements
@@ -331,13 +333,15 @@ and metadata, preserve package-local documentation, use Zero's design tokens,
 and offer search and version-aware navigation. Internal audit notes and templates
 are excluded from reader navigation and search; that exclusion must be tested.
 
-Publication uses an explicit allowlist or generated public-only projection for
-the site, package docs, search corpus, and agent bundles. Never add `docs-next/`
-wholesale to package files or copy it recursively into a public site. Front
-matter expresses classification; it does not implement filtering. Check actual
-archive contents and rendered/bundled targets for exclusions and broken links.
-The current package does not include this new tree; changing that is a separate
-approved handoff. Maintainer governance remains internal unless a self-contained
+Public site publication, search corpora and production agent bundles require an
+explicit allowlist or generated public-only projection. The approved package-local
+Markdown handoff includes `docs-next/`, including clearly classified internal
+audit/maintainer files; that is not a public website/search projection or proof
+that every guide passed independent publication review. Never recursively
+publish that package tree as a public site. Front matter expresses classification;
+it does not implement filtering. Inspect actual archives, reader navigation and
+rendered/search targets for their intended boundaries and broken links.
+Maintainer governance remains internal unless a self-contained
 public contributor version is deliberately prepared and reviewed.
 
 See the [review and publication procedure](./documentation-process.md#review-and-publication-gates).

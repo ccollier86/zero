@@ -60,6 +60,12 @@ authentication or organization scope changes.
 
 ## Find The Exact Contract
 
+The 2.4.2 update includes [exact array policy](./backend/resources/array-overlap.md),
+[bounded trigger transactions](./backend/database-automations/transaction-functions.md),
+[app-function invocation](./backend/database-automations/app-functions.md) and
+[retry-safe Torrent starts](./backend/torrent/system-starts.md). Begin at those
+feature guides for the current integration rather than older flattened bundles.
+
 Feature guides state applicability and source baseline. A roadmap item is not an
 implemented API. Source tests, example typechecks and exact installed-package
 qualification are different evidence; [verification](./guides/verification.md)

@@ -8,14 +8,14 @@ visibility: internal
 system: torrent
 feature: recovery
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["authenticated single-tenant app", "Guardian multi-tenant app", "explicit trusted server composition"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -51,6 +51,11 @@ start historical runs.
 recoverInFlight is initialization work, not a routine request that arbitrarily
 reinitializes an already-active service. Existing immutable graph/run snapshots
 and persisted memory limits remain authoritative after restart.
+
+[Idempotent system starts](./system-starts.md) atomically retain creation receipts
+with run/steps/authority/memory. Recovery validates nonterminal receipts before
+advancing a start interrupted after commit. A repeated start returns the same
+instance; it does not resolve the current definition head or reopen a terminal run.
 
 ## Attempts And Private State
 

@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: services-and-authority
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -32,7 +32,7 @@ binding; current eligibility and execution lifetime govern every scoped call.
 
 DatabaseAutomationExecutionServerServices is exported from
 @zero/framework/server. It extends AuthorityScopedServerServices with the
-narrow torrent.deliverEvent helper.
+narrow `torrent.start` and `torrent.deliverEvent` helpers.
 
 | Member | Meaning |
 | --- | --- |
@@ -44,7 +44,7 @@ narrow torrent.deliverEvent helper.
 | workflows | Scope-closed workflow facade, or null. |
 | pdf | Scope-closed PDF facade, or null. |
 | observability | Scope-attributed emitters, not raw global sink/store. |
-| torrent | Exact system event helper with delivery-derived idempotency. |
+| torrent | Retry-safe system start and exact event helpers with delivery-derived idempotency. |
 
 The strict projection deliberately does not expose unsafe, raw db/sql/sqlite,
 system databases, global registry/manager, KV/counters/limiter, vector, raw AI
@@ -95,3 +95,16 @@ Use the public types and managed provider; don't fabricate internal source
 records in app code or import private files to reach raw handles.
 [Runtime services](../runtime/server-services.md) describes request/machine
 boundaries and [delivery](./delivery.md) describes recovery.
+
+## App Function Integration
+
+Registered durable handlers are ordinary trusted server code. They may import
+an app function or dispatch an exact app-owned function version using mapped
+snapshot parameters. Pass the supplied `zero`, `signal` and a stable logical
+effect key rather than creating a second authority projection from input.
+See [invoke app functions](./app-functions.md) for the complete adapter contract.
+
+The general `zero.workflows.start` facade requires a human principal; it is not
+the system automation start path. Use [`zero.torrent.start`](./torrent.md) for
+this source-bound effect. The immutable run/steps/authority/memory and permanent
+start receipt commit together in Torrent's system database.

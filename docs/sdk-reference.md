@@ -5219,6 +5219,20 @@ re-kicks a running frontier. Reusing the key for a changed command throws
 `WORKFLOW_EVENT_IDEMPOTENCY_CONFLICT`. The event, private delivery, authority,
 capacity reservation, and receipt share one ReactiveDB transaction.
 
+For retry-safe **creation**, use
+`WorkflowService.startAsSystemOnce(name, input, system, options?, mutation?)`.
+`WorkflowSystemStartOptions` adds a required `idempotencyKey` to trusted system
+authority; `WorkflowStartOptions` supplies version/private-memory options.
+`WorkflowSystemStartMutation` supplies the final synchronous live fence.
+The stable `WorkflowSystemStartResult` includes instanceId/name/createdAt and
+the original definitionVersion (null for legacy). The source scope/principal
+namespace and canonical command are permanently bound; a changed command
+returns `WORKFLOW_START_IDEMPOTENCY_CONFLICT`. An existing enclosing transaction
+is rejected before creation/replay. Managed automation handlers use the narrower
+`zero.torrent.start(name, input?, { key?, ...startOptions }?)` bridge instead.
+See [system starts](../docs-next/backend/torrent/system-starts.md) and
+[app function dispatch](../docs-next/backend/database-automations/app-functions.md).
+
 Private delivery state classifies every event as `actor`, `system`, or
 `legacy-untrusted`; sealed authority bytes count toward the same event quotas
 as actor metadata. A response decision consumes its claimed event in the same

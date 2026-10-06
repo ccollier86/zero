@@ -121,6 +121,7 @@ export {
   type WorkflowSystemEventDeliveryResult,
 } from './workflow-system-event-delivery-contract';
 export type { WorkflowStartOptions } from './workflow-start-options';
+export type { WorkflowSystemStartOptions, WorkflowSystemStartResult, WorkflowSystemStartMutation } from './workflow-system-start-contract';
 export {
   WorkflowInteractionAuthority,
   type WorkflowInteractionActor,

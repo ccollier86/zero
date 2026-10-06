@@ -7,7 +7,7 @@ import type { WorkflowRegistry } from './workflow-registry';
 import type { WorkflowStartOptions } from './workflow-start-options';
 import type { WorkflowPersistedExecutionAuthority } from './workflow-execution-authority';
 
-export async function tryStartWorkflowGraph(input: {
+interface WorkflowGraphStartInput {
   graph: WorkflowGraphRuntime;
   registry: WorkflowRegistry;
   name: string;
@@ -17,10 +17,19 @@ export async function tryStartWorkflowGraph(input: {
   principal: WorkflowAccessPrincipal;
   options: WorkflowStartOptions;
   assertCurrentAuthority?: () => void;
-}): Promise<string | null> {
+}
+
+export async function tryStartWorkflowGraph(input: WorkflowGraphStartInput): Promise<string | null> {
+  const instanceId = tryCreateWorkflowGraph(input);
+  if (instanceId) await input.graph.advance(instanceId);
+  return instanceId;
+}
+
+/** Select and create graph state without awaiting or executing application work. */
+export function tryCreateWorkflowGraph(input: WorkflowGraphStartInput): string | null {
   const compiled = input.registry.getCompiledWorkflow(input.name);
   if (input.graph.hasPersistedDefinition(input.name, input.authority)) {
-    return input.graph.startPersisted(
+    return input.graph.createPersisted(
       input.name,
       input.workflowInput,
       input.startedBy,
@@ -31,7 +40,7 @@ export async function tryStartWorkflowGraph(input: {
     );
   }
   if (compiled && compiled.format !== 'legacy') {
-    return input.graph.startRegistered(
+    return input.graph.createRegistered(
       compiled,
       input.workflowInput,
       input.startedBy,
@@ -50,7 +59,7 @@ export async function tryStartWorkflowGraph(input: {
   }
   if (compiled) return null;
   try {
-    return await input.graph.startPersisted(
+    return input.graph.createPersisted(
       input.name,
       input.workflowInput,
       input.startedBy,

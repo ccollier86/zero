@@ -25,6 +25,10 @@ function createTables() {
     id: 'TEXT PRIMARY KEY',
     count: 'INTEGER NOT NULL',
   });
+  db.defineTable('permissions', {
+    id: 'TEXT PRIMARY KEY',
+    granted: 'INTEGER NOT NULL',
+  });
   return db;
 }
 
@@ -48,6 +52,221 @@ function transactionFunction(
 }
 
 describe('DatabaseTransactionAutomationRuntime', () => {
+  test('commits more than 256 unrelated permission writes with no automation effects', () => {
+    const db = createTables();
+    let effects = 0;
+    const observe = transactionFunction('orders.observe', () => { effects += 1; });
+    const trigger = defineDatabaseTrigger({
+      name: 'orders.inserted', version: 1, table: 'orders', after: { insert: true }, run: observe,
+    });
+    const runtime = new DatabaseTransactionAutomationRuntime({
+      db, registry: defineDatabaseAutomations({ functions: [observe], triggers: [trigger] }),
+    });
+    try {
+      db.transaction(() => {
+        for (let index = 0; index < 300; index++) {
+          db.createStrict('permissions', { id: `permission-${index}`, granted: 1 });
+        }
+      });
+      expect(db.query('permissions')).toHaveLength(300);
+      expect(db.currentSeq).toBe(300);
+      expect(effects).toBe(0);
+    } finally { runtime.close(); db.dispose(); }
+  });
+
+  test.each(['table', 'operation', 'columns'] as const)(
+    'does not charge more than 256 unrelated origin writes for a %s miss',
+    (miss) => {
+      const db = createTables();
+      if (miss === 'columns') db.createStrict('orders', { id: 'one', status: 'new', amount: 0 });
+      let firings = 0;
+      const observe = transactionFunction('orders.observe', () => { firings += 1; });
+      const trigger = defineDatabaseTrigger({
+        name: 'orders.relevant', version: 1, table: 'orders',
+        after: miss === 'table' ? { insert: true } : { update: { columns: ['status'] } },
+        run: observe,
+      });
+      const runtime = new DatabaseTransactionAutomationRuntime({
+        db, registry: defineDatabaseAutomations({ functions: [observe], triggers: [trigger] }),
+      });
+      try {
+        db.transaction(() => {
+          for (let index = 0; index < 300; index++) {
+            if (miss === 'table') {
+              db.createStrict('permissions', { id: `permission-${index}`, granted: 1 });
+            } else if (miss === 'operation') {
+              db.createStrict('orders', { id: `order-${index}`, status: 'new', amount: 0 });
+            } else {
+              db.update('orders', 'one', { amount: index + 1 });
+            }
+          }
+          // One real trigger may still run in the same transaction after the
+          // otherwise unrelated work; it receives the full original budget.
+          if (miss === 'table') {
+            db.createStrict('orders', { id: 'one', status: 'new', amount: 1 });
+          } else if (miss === 'operation') {
+            db.update('orders', 'order-0', { status: 'paid' });
+          } else {
+            db.update('orders', 'one', { status: 'paid' });
+          }
+        });
+        expect(firings).toBe(1);
+        expect(db.currentSeq).toBe(miss === 'columns' ? 302 : 301);
+        if (miss === 'table') expect(db.query('permissions')).toHaveLength(300);
+        if (miss === 'operation') expect(db.query('orders')).toHaveLength(300);
+        if (miss === 'columns') expect(db.get('orders', 'one'))
+          .toEqual({ id: 'one', status: 'paid', amount: 300 });
+      } finally { runtime.close(); db.dispose(); }
+    },
+  );
+
+  test('retains the default change cap for matched origin mutations and rolls back the entire transaction', () => {
+    const db = createTables();
+    const observe = transactionFunction('orders.observe', () => undefined);
+    const trigger = defineDatabaseTrigger({
+      name: 'orders.inserted', version: 1, table: 'orders', after: { insert: true }, run: observe,
+    });
+    const runtime = new DatabaseTransactionAutomationRuntime({
+      db, registry: defineDatabaseAutomations({ functions: [observe], triggers: [trigger] }),
+    });
+    try {
+      expect(() => db.transaction(() => {
+        db.createStrict('permissions', { id: 'must-rollback', granted: 1 });
+        for (let index = 0; index < 257; index++) {
+          db.createStrict('orders', { id: `order-${index}`, status: 'new', amount: 1 });
+        }
+      })).toThrow(expect.objectContaining({
+        code: 'DATABASE_PAYLOAD_LIMIT', outcome: 'not-committed', details: { reason: 'changes' },
+      }));
+      expect(db.query('orders')).toEqual([]);
+      expect(db.query('permissions')).toEqual([]);
+      expect(db.currentSeq).toBe(0);
+      // Failed work cannot poison the next transaction's budget.
+      db.createStrict('orders', { id: 'next', status: 'new', amount: 1 });
+      expect(db.currentSeq).toBe(1);
+    } finally { runtime.close(); db.dispose(); }
+  });
+
+  test('preserves exact low change limits for matched origins and untriggered handler writes', () => {
+    for (const generated of [false, true]) {
+      const db = createTables();
+      const effect = transactionFunction('orders.effect', (_input, transaction) => {
+        if (generated) transaction.createStrict('rollups', { id: 'one', count: 1 });
+      });
+      const trigger = defineDatabaseTrigger({
+        name: 'orders.inserted', version: 1, table: 'orders', after: { insert: true }, run: effect,
+      });
+      const runtime = new DatabaseTransactionAutomationRuntime({
+        db, registry: defineDatabaseAutomations({ functions: [effect], triggers: [trigger] }),
+        limits: { maxChanges: 1 },
+      });
+      try {
+        expect(() => db.transaction(() => {
+          for (let index = 0; index < 300; index++) {
+            db.createStrict('permissions', { id: `permission-${index}`, granted: 1 });
+          }
+          db.createStrict('orders', { id: 'one', status: 'new', amount: 1 });
+          if (!generated) db.createStrict('orders', { id: 'two', status: 'new', amount: 1 });
+        })).toThrow(expect.objectContaining({
+          code: 'DATABASE_PAYLOAD_LIMIT', details: { reason: 'changes' },
+        }));
+        expect(db.query('permissions')).toEqual([]);
+        expect(db.query('orders')).toEqual([]);
+        expect(db.query('rollups')).toEqual([]);
+        expect(db.currentSeq).toBe(0);
+      } finally { runtime.close(); db.dispose(); }
+    }
+  });
+
+  test('charges all handler-generated writes, including rollups with no trigger, and preserves rollback-only state', () => {
+    const db = createTables();
+    const excessive = transactionFunction('orders.excessive-rollup', (_input, transaction) => {
+      for (let index = 0; index < 256; index++) {
+        try { transaction.createStrict('rollups', { id: `rollup-${index}`, count: 1 }); }
+        catch { /* A handler cannot swallow a budget failure and commit. */ }
+      }
+    });
+    const trigger = defineDatabaseTrigger({
+      name: 'orders.inserted', version: 1, table: 'orders', after: { insert: true }, run: excessive,
+    });
+    const runtime = new DatabaseTransactionAutomationRuntime({
+      db, registry: defineDatabaseAutomations({ functions: [excessive], triggers: [trigger] }),
+    });
+    try {
+      expect(() => db.transaction(() => {
+        db.createStrict('permissions', { id: 'must-rollback', granted: 1 });
+        db.createStrict('orders', { id: 'one', status: 'new', amount: 1 });
+      })).toThrow('transaction is rollback-only');
+      expect(db.query('orders')).toEqual([]);
+      expect(db.query('rollups')).toEqual([]);
+      expect(db.query('permissions')).toEqual([]);
+      expect(db.currentSeq).toBe(0);
+    } finally { runtime.close(); db.dispose(); }
+  });
+
+  test.each(['operation', 'columns'] as const)(
+    'charges handler-generated writes even when their trigger %s does not match',
+    (miss) => {
+      const db = createTables();
+      if (miss === 'columns') db.createStrict('orders', { id: 'one', status: 'new', amount: 0 });
+      const rewrite = transactionFunction('orders.rewrite', (input, transaction) => {
+        for (let index = 0; index < 256; index++) {
+          transaction.update('orders', input.change.rowId, { amount: index + 1 });
+        }
+      });
+      const trigger = defineDatabaseTrigger({
+        name: 'orders.relevant', version: 1, table: 'orders',
+        after: miss === 'operation' ? { insert: true } : { update: { columns: ['status'] } },
+        run: rewrite,
+      });
+      const runtime = new DatabaseTransactionAutomationRuntime({
+        db, registry: defineDatabaseAutomations({ functions: [rewrite], triggers: [trigger] }),
+      });
+      try {
+        expect(() => miss === 'operation'
+          ? db.createStrict('orders', { id: 'one', status: 'new', amount: 0 })
+          : db.update('orders', 'one', { status: 'paid' }))
+          .toThrow(expect.objectContaining({ code: 'DATABASE_PAYLOAD_LIMIT', details: { reason: 'changes' } }));
+        expect(db.get('orders', 'one')).toEqual(miss === 'operation'
+          ? null : { id: 'one', status: 'new', amount: 0 });
+        expect(db.currentSeq).toBe(miss === 'operation' ? 0 : 1);
+      } finally { runtime.close(); db.dispose(); }
+    },
+  );
+
+  test.each(['functions', 'durable-effects'] as const)(
+    'preserves the independent %s cap and rolls back transaction-local effects',
+    (budget) => {
+      const db = createTables();
+      const first = budget === 'functions'
+        ? transactionFunction('orders.first', (_input, transaction) => {
+          transaction.createStrict('rollups', { id: 'first', count: 1 });
+        })
+        : defineDatabaseFunction({ name: 'orders.first', version: 1, mode: 'durable', handler: async () => undefined });
+      const second = budget === 'functions'
+        ? transactionFunction('orders.second', () => undefined)
+        : defineDatabaseFunction({ name: 'orders.second', version: 1, mode: 'durable', handler: async () => undefined });
+      const trigger = defineDatabaseTrigger({
+        name: 'orders.inserted', version: 1, table: 'orders', after: { insert: true }, run: [first, second],
+      });
+      const runtime = new DatabaseTransactionAutomationRuntime({
+        db, registry: defineDatabaseAutomations({ functions: [first, second], triggers: [trigger] }),
+        limits: budget === 'functions' ? { maxFunctions: 1 } : { maxDurableEffects: 1 },
+        ...(budget === 'durable-effects' ? { durableSink: { enqueue: () => {
+          db.createStrict('rollups', { id: 'captured', count: 1 });
+        } } } : {}),
+      });
+      try {
+        expect(() => db.createStrict('orders', { id: 'one', status: 'new', amount: 1 }))
+          .toThrow(expect.objectContaining({ code: 'DATABASE_PAYLOAD_LIMIT', details: { reason: budget } }));
+        expect(db.query('orders')).toEqual([]);
+        expect(db.query('rollups')).toEqual([]);
+        expect(db.currentSeq).toBe(0);
+      } finally { runtime.close(); db.dispose(); }
+    },
+  );
+
+
   test('commits an atomic same-database rollup from an AFTER trigger', () => {
     const db = createTables();
     const rollup = transactionFunction('orders.rollup', (_input, transaction) => {

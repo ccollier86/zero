@@ -5,6 +5,7 @@ import { ensureWorkflowRuntimeLeaseSchema } from './workflow-runtime-lease-schem
 import {
   ensureWorkflowSystemEventReceiptSchema,
 } from './workflow-system-event-receipt-schema';
+import { ensureWorkflowSystemStartReceiptSchema } from './workflow-system-start-receipt-schema';
 
 type RuntimeSchemaDatabase = Pick<ReactiveDB, 'exec' | 'prepare'>;
 
@@ -86,6 +87,7 @@ export function ensureWorkflowRuntimeSchema(db: RuntimeSchemaDatabase): void {
     BEFORE DELETE ON _workflow_event_authorities
     BEGIN SELECT RAISE(ABORT, 'workflow event authority is immutable'); END`);
   ensureWorkflowSystemEventReceiptSchema(db);
+  ensureWorkflowSystemStartReceiptSchema(db);
   const eventUsageTableCreated = !tablesExist(db, ['_workflow_event_usage']);
   db.exec(`CREATE TABLE IF NOT EXISTS _workflow_event_usage (
     instance_id TEXT PRIMARY KEY,

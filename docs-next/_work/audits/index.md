@@ -18,6 +18,9 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [2.4.2 array/trigger update](./trigger-production-update.md): scoped correction,
+  independent review, synthetic regression and package-consumer evidence.
+
 - [System registry](./systems/index.md): each discovered system and its features.
 - [Public-surface catalogs](./catalogs/index.md): package paths, component/hook
   symbols, SDK members and source ownership.

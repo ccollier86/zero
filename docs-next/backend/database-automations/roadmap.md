@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: roadmap
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -34,6 +34,10 @@ audit.
 - [x] Source-local atomic durable outbox with lease-fenced at-least-once delivery.
 - [x] Pinned/Fabric registry admission and source routing.
 - [x] Source-bound service authority and exact Torrent event delivery.
+- [x] Retry-safe Torrent start with a permanent, atomic system-database receipt.
+- [x] General app-function invocation through registered durable adapters,
+  independent of Torrent and with explicit parameter/idempotency mapping.
+- [x] Automation budgets exempt unrelated origin writes while bounding generated work.
 - [x] Standard safe errors/events and Doctor integrity/readiness/health checks.
 
 These checks describe the inspected source, not completed artifact

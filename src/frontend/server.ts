@@ -860,6 +860,10 @@ export type {
   WorkflowResolvedExecutionAuthority,
   WorkflowServiceOptions,
   WorkflowSystemExecutionOptions,
+  WorkflowStartOptions,
+  WorkflowSystemStartOptions,
+  WorkflowSystemStartResult,
+  WorkflowSystemStartMutation,
 } from '../workflows';
 
 // ─── Storage: Server ────────────────────────────────────────────────────

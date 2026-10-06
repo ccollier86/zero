@@ -54,9 +54,24 @@ export class WorkflowGraphStartCoordinator {
     options: StartWorkflowGraphOptions = {},
     assertCurrentAuthority?: () => void,
   ): Promise<string> {
+    const instanceId = this.createRegistered(definition, input, startedBy, authority, principal, options, assertCurrentAuthority);
+    await this.advance(instanceId);
+    return instanceId;
+  }
+
+  /** Create all durable graph state synchronously; the caller owns post-commit dispatch. */
+  createRegistered(
+    definition: CompiledWorkflowDefinition,
+    input: unknown,
+    startedBy: string | null,
+    authority: WorkflowPersistedExecutionAuthority,
+    principal: WorkflowAccessPrincipal,
+    options: StartWorkflowGraphOptions = {},
+    assertCurrentAuthority?: () => void,
+  ): string {
     const resolved = this.definitions.resolveRegistered(definition, input, options);
     this.assertDefinitionStartAccess(resolved, principal);
-    return this.createAndAdvance(
+    return this.createWithAuthority(
       resolved,
       input,
       startedBy,
@@ -77,6 +92,21 @@ export class WorkflowGraphStartCoordinator {
     options: StartWorkflowGraphOptions = {},
     assertCurrentAuthority?: () => void,
   ): Promise<string> {
+    const instanceId = this.createPersisted(name, input, startedBy, authority, principal, options, assertCurrentAuthority);
+    await this.advance(instanceId);
+    return instanceId;
+  }
+
+  /** Resolve and atomically create a pinned database-authored graph without running work. */
+  createPersisted(
+    name: string,
+    input: unknown,
+    startedBy: string | null,
+    authority: WorkflowPersistedExecutionAuthority,
+    principal: WorkflowAccessPrincipal,
+    options: StartWorkflowGraphOptions = {},
+    assertCurrentAuthority?: () => void,
+  ): string {
     const resolved = this.definitions.resolvePersisted(
       name,
       input,
@@ -84,7 +114,7 @@ export class WorkflowGraphStartCoordinator {
       workflowDefinitionScopeFromTenantId(authority.identity.tenantId),
     );
     this.assertDefinitionStartAccess(resolved, principal);
-    return this.createAndAdvance(
+    return this.createWithAuthority(
       resolved,
       input,
       startedBy,
@@ -120,7 +150,7 @@ export class WorkflowGraphStartCoordinator {
     )) throw workflowNotFound();
   }
 
-  private async createAndAdvance(
+  private createWithAuthority(
     definition: ResolvedWorkflowDefinitionVersion,
     input: unknown,
     startedBy: string | null,
@@ -129,7 +159,7 @@ export class WorkflowGraphStartCoordinator {
     initialMemory?: Readonly<Record<string, unknown>>,
     memoryLimits?: Partial<WorkflowMemoryLimits>,
     assertCurrentAuthority?: () => void,
-  ): Promise<string> {
+  ): string {
     const graph = definition.graph as WorkflowGraphIR;
     validateWorkflowGraphIR(graph, {
       allowLegacyCompatibility: definition.version.graph_format === 'legacy',
@@ -181,7 +211,6 @@ export class WorkflowGraphStartCoordinator {
         startedBy,
       },
     });
-    await this.advance(instanceId);
     return instanceId;
   }
 

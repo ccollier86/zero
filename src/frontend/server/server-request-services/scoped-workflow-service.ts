@@ -64,6 +64,7 @@ type NonRequestWorkflowMember =
   | 'startAsActor'
   | 'runAsActor'
   | 'startAsSystem'
+  | 'startAsSystemOnce'
   | 'runAsSystem'
   | 'sendEventAsSystem'
   | 'deliverEventAsSystem'

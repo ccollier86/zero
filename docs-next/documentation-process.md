@@ -23,8 +23,9 @@ have its own verified reader navigation, independent of working evidence.
    authority, navigation, and evidence requirements.
 2. Confirm the branch, Zero version, source commit, and worktree changes.
    Preserve unrelated user work and record the actual verification baseline.
-3. Keep all new documentation in `docs-next/`; work on a documentation feature
-   branch. Do not change current documentation/package/agent entry points.
+3. Keep organized documentation in `docs-next/`. The initial rewrite used a
+   separate documentation branch; focused feature releases now maintain the
+   approved primary package/agent entrances alongside their canonical guides.
 4. Keep inventories, findings, templates, and review notes under `_work/` with
    internal visibility. A future site must exclude them from publication/search.
 5. Read-only inspection is the default audit activity. Do not execute imported
@@ -164,8 +165,9 @@ line or a roadmap checkbox.
 4. Preserve or deliberately redirect previously published URLs and anchors.
    Never silently break a released link.
 5. Check that no page is orphaned and every section still has an index.
-6. Do not apply this procedure to current `docs/` during the isolated rebuild;
-   the eventual handoff requires explicit approval.
+6. Preserve released compatibility links under `docs/`; add contextual pointers
+   to the new canonical guides as contracts change. The 2.4.1 handoff approved
+   primary-entry routing, not wholesale deletion of the older reference tree.
 
 ## Review And Publication Gates
 
@@ -206,8 +208,10 @@ line or a roadmap checkbox.
   conversation history, private source imports, or maintainer-only knowledge.
 - [ ] Cover relevant mode combinations in those tasks; do not treat one success
   as proof of every Guardian/Fabric profile.
-- [ ] Verify that working notes/templates are excluded from reader navigation,
-  site publication, package docs, search, and any production agent bundle.
+- [ ] Verify that working notes/templates are excluded from public reader
+  navigation, site publication, search, and production agent bundles. The
+  approved package-local Markdown tree also contains classified internal notes;
+  packaging those files is not permission to index them as public content.
 - [ ] Build an explicit public-only projection/allowlist; inspect actual archives,
   rendered links, search entries, and agent bundles. Metadata alone is not filtering.
 - [ ] Replace this internal preparation index with self-contained public reader
@@ -220,5 +224,7 @@ line or a roadmap checkbox.
 - [ ] Obtain explicit approval before retargeting current docs, package/site
   entries, root README, agent bundles, active instructions, or hooks.
 
-At handoff, record the exact changes and checks. Do not remove old documentation
-or declare the new set authoritative until those decisions are approved.
+At handoff, record the exact changes and checks. The 2.4.1 primary-entry handoff
+is approved and implemented; individual guide review remains separate. Preserve
+older compatibility documentation and do not infer public-site qualification
+from its package-local replacement entrance.

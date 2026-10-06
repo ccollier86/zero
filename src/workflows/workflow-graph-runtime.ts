@@ -104,6 +104,12 @@ export class WorkflowGraphRuntime {
     );
   }
 
+  /** @internal Synchronous creation for enclosing atomic durable command transactions. */
+  createRegistered(...args: Parameters<WorkflowGraphRuntimeComposition['starts']['createRegistered']>): string {
+    this.assertAvailable();
+    return this.starts.createRegistered(...args);
+  }
+
   async startPersisted(
     name: string,
     input: unknown,
@@ -123,6 +129,12 @@ export class WorkflowGraphRuntime {
       options,
       assertCurrentAuthority,
     );
+  }
+
+  /** @internal Synchronous creation for enclosing atomic durable command transactions. */
+  createPersisted(...args: Parameters<WorkflowGraphRuntimeComposition['starts']['createPersisted']>): string {
+    this.assertAvailable();
+    return this.starts.createPersisted(...args);
   }
 
   /** Test tenant namespace ownership before applying global-code fallback. */

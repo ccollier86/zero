@@ -2,6 +2,30 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.4.2 - 2026-10-06
+
+Includes the complete 2.4.1 exact array-policy update and hardens the production
+ReactiveDB automation boundary. No application row conversion or existing
+trigger declaration rewrite is needed. Managed system migration
+`038_workflow_system_start_receipts` adds Torrent's private permanent start ledger.
+
+- Unrelated origin transactions no longer consume automation change budgets.
+  Matching origin writes and all handler-generated tracked writes remain
+  bounded; failures roll back origin, cascade and outbox state. Fabric's public
+  256-item batch envelope remains unchanged.
+- Added source-bound `zero.torrent.start` and trusted `startAsSystemOnce` with
+  atomic run/steps/authority/memory/receipt creation, permanent scope/principal
+  namespacing, command-conflict checks, live final fences, sealed replay
+  integrity and recovery after interrupted first advancement.
+- Existing non-idempotent start APIs remain intact. Async retry-safe starts
+  reject enclosing transactions before creation; request/activity facades do
+  not expose the privileged system-start method.
+- Documented and exercised ordinary app-function invocation independent of
+  Torrent, including exact parameter/version mapping, accepted-effect retries,
+  Guardian/Fabric isolation and source suspension/shutdown fences.
+- Updated new feature guides, reciprocal indexes, actual Markdown example
+  checks, compatibility references and upgrade/migration instructions.
+
 ## 2.4.1 - 2026-10-06
 
 This compatible authorization update adds exact string-array overlap across
