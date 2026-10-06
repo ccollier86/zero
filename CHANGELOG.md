@@ -2,6 +2,25 @@
 
 All notable Zero Platform changes are tracked here.
 
+## Unreleased
+
+### Added
+
+- A composable, token-themed Cascader for nested attributes and permission
+  choices: drill-down navigation, checkbox multi-selection with a cap, global
+  path-aware search, loading before navigation, and a pinned action footer with
+  a responsive import menu. Optional external selection chips and the
+  `useCascaderSelection` hook preserve full paths when labels repeat.
+- Scoped, cancellable async child/search adapters, retry and current-intent
+  fences, guarded footer actions, native hidden form values, and content-free
+  frontend observability. The component does not grant Guardian authority or
+  persist selections; applications retain those responsibilities. See the
+  [Cascader guide](./docs/frontend/cascader.md).
+- Browser, model, request-lifecycle, documentation-example and fresh packed
+  consumer regressions for the new public component family. Export smoke builds
+  now use isolated Bun CLI processes so filtered tests do not depend on the
+  test runner's resolver being warmed by an earlier server build.
+
 ## 2.2.1 - 2026-10-05
 
 This patch fixes two package-mode release blockers reported after 2.2.0.

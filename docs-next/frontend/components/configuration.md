@@ -38,6 +38,7 @@ does not create a package import; use each guide's actual public entrance.
 | String source/replay/effect timing and callbacks | [Text configuration](./text/configuration.md). |
 | Browser-held secret masking/copy and QR matrix props | [Sensitive display](./sensitive-display.md). |
 | Structured JSON/text drafts, validation and local commit handles | [JSON editor](./json-editor.md). |
+| Hierarchical choices, single/multi selection, async levels and full-path chips | [Cascader](./cascader.md#composition-configuration-and-interaction). |
 | Bottom anchoring refs/spring/context | [Scroll anchoring](./scroll-anchoring.md). |
 | Outer app frame/workspace/menu/header descriptors | [AppShell configuration](../app-shell/configuration.md). |
 | Theme, semantic tokens, icons and style building | [Design-system configuration](../design-system/configuration.md). |

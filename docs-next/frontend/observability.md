@@ -69,6 +69,25 @@ A browser-submitted code is not trusted proof that its named action happened.
 The backend byte-limited ingest owns validation; readable events require a
 different access policy.
 
+## Cascader Content-Free Failure Events
+
+The [Cascader](./components/cascader.md) working-source addition on top of Zero
+2.2.1 introduces two error-level frontend observations. This is supplemental
+source evidence, not a claim that those codes shipped in the page's original
+2.1.1 baseline or the previously published 2.2.1 archive.
+
+| Symbol / event code | Safe fields |
+| --- | --- |
+| `FRONTEND_CASCADER_LOAD_FAILED` / `frontend.cascader.load_failed` | Bounded `operation: 'children' | 'search'` and the safe `errorCode: 'CASCADER_LOAD_FAILED'`. |
+| `FRONTEND_CASCADER_CALLBACK_FAILED` / `frontend.cascader.callback_failed` | Bounded `operation` (`selection`, `open`, `footer`), or `stage: 'load-error-callback'` with its loader operation. |
+
+The emitted message is static. These calls omit raw exceptions, query text,
+nodes, complete paths, selected values and application payloads. The public
+loader error contains only its safe code, operation and message. A cancelled or
+retired request cannot update a new scope's picker. Frontend observation is
+still best-effort reporting, not a Guardian audit, permission grant or accepted
+mutation receipt.
+
 ## Verification And Related Guides
 
 Use a synthetic custom sink to verify one safe event and failure containment,

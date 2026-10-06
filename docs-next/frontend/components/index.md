@@ -33,6 +33,8 @@ persistence simply because they are exported by Zero.
   and QR presentation without claiming security from visual hiding.
 - [JSON editor](./json-editor.md) covers structured JSON/text drafts and explicit
   local admission before a caller-owned server save.
+- [Cascader](./cascader.md) combines nested selection, capped checkboxes,
+  complete-path search, async levels, pinned commands and external chips.
 - [Text](./text/index.md) covers static, animated and streamed strings with
   explicit source ownership.
 - [Scroll anchoring](./scroll-anchoring.md) follows transcript growth without

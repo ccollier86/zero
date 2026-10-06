@@ -903,6 +903,18 @@ export {
 export { Combobox } from '../components/ui/combobox';
 export type { ComboboxProps, ComboboxOption } from '../components/ui/combobox';
 
+// Hierarchical single/multi selection with async levels and optional path chips.
+export {
+  Cascader, CascaderTrigger, CascaderContent, CascaderPanel, CascaderInput,
+  CascaderBreadcrumb, CascaderValue, CascaderList, CascaderItems,
+  CascaderFooter, CascaderAction, CascaderImportMenu, CascaderSelectionChips,
+  useCascaderSelection,
+} from '../components/cascader';
+export type {
+  CascaderProps, CascaderNode, CascaderSearchResult, CascaderSelection,
+  CascaderChildrenLoader, CascaderSearchLoader, CascaderLoadError, CascaderImportAction,
+} from '../components/cascader';
+
 // ─── Tag Input ──────────────────────────────────────────────────────────
 export { TagInput } from '../components/ui/tag-input';
 export type { TagInputProps } from '../components/ui/tag-input';

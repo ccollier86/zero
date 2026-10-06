@@ -400,6 +400,8 @@ export const OBS_CODES = {
   FRONTEND_STORAGE_ACTION_FAILED: code('frontend', 'storage.action_failed', 'error', 'Storage management action failed.'),
   FRONTEND_DATA_PAGE_FAILED: code('frontend', 'data_page.failed', 'error', 'Frontend data page query failed.'),
   FRONTEND_RESOURCE_ACTION_FAILED: code('frontend', 'resource.action_failed', 'error', 'Frontend generated-resource action failed.'),
+  FRONTEND_CASCADER_LOAD_FAILED: code('frontend', 'cascader.load_failed', 'error', 'Cascader options could not be loaded.'),
+  FRONTEND_CASCADER_CALLBACK_FAILED: code('frontend', 'cascader.callback_failed', 'error', 'Cascader callback failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
   FRONTEND_MODAL_CALLBACK_FAILED: code('frontend', 'modal_callback.failed', 'error', 'A modal close callback failed after dismissal.'),
   FRONTEND_WORKFLOW_TOPOLOGY_FAILED: code('frontend', 'workflow.topology_failed', 'error', 'Workflow topology query failed.'),

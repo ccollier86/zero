@@ -196,6 +196,7 @@ call wires it all.
 | [Streaming Text](./streaming-text.md) | Accessible live text for AI responses, async string streams, caller-owned progressive output, and demos |
 | [Secret Field](./secret-field.md) | Display-only, masked, revealable, and copyable API keys, tokens, and other authorized browser-held secrets |
 | [JSON Editor](./json-editor.md) | Token-themed structured JSON and retained text drafts, synchronous local admission, and separate domain persistence |
+| [Cascader](./cascader.md) | Hierarchical leaf selection, capped checkboxes, full-path search/chips, async drill-down, and pinned side-import commands |
 | [Public Components](./public-components.md) | Feature sections, code blocks, FAQ, expandable cards, bento grids, and animated lists for public landing/content sections |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |
@@ -224,6 +225,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 | Public text effects | [Text Effects](./text-effects.md) | `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for landing copy and rich Hero titles |
 | Streaming and agent output | [Streaming Text](./streaming-text.md) | `StreamingText` for actual async string chunks, caller-owned progressive text, accessible sentence announcements, and replayed demos |
 | Sensitive-value display | [Secret Field](./secret-field.md) | `SecretField` for authorized browser-held values with bounded masking, optional reveal, and full-value copy |
+| Hierarchical choices | [Cascader](./cascader.md) | Composable nested picker, asynchronous levels/search, capped multi-selection, and optional full-path chips |
 | Public sections | [Public Components](./public-components.md) | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `BentoGridItem`, `AnimatedList`, and `AnimatedListCard` for polished public content sections |
 | Forms | [Form Library](./forms.md) | `useForm`, `AutoForm`, `Wizard`, generated fields, current limits, and the planned intake-grade blueprint/draft/attachment layer |
 | Storage | [Hooks](./hooks.md#storage-workflows) | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `StorageDropzone`, and storage browser helpers |

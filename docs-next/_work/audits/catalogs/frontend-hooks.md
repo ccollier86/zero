@@ -31,6 +31,17 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Authorized Working-Source Additions
+
+This row describes the unreleased Cascader addition on top of Zero 2.2.1; it is
+not part of the original clean-baseline hook count.
+
+| Named symbol | Exact import alternatives | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `useCascaderSelection` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/cascader-context.ts](../../../../src/components/cascader/cascader-context.ts) | [Cascader](../../../frontend/components/cascader.md#full-path-chips-and-custom-summaries) |
+
+### Original Baseline
+
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical planned guide |
 | --- | --- | --- | --- |
 | `useAdminUsers` | `@zero/framework`, `@zero/framework/react` | [src/components/admin/users/use-admin-users.ts:16](../../../../src/components/admin/users/use-admin-users.ts) | [frontend/guardian/management-hooks.md](../../../frontend/guardian/management-hooks.md) |

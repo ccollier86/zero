@@ -217,6 +217,25 @@ through this frontend boundary. Auth action events carry stable action/error
 codes; proof-bearing and identity-sensitive flows use code-only reporting so
 request values cannot be copied into the event.
 
+### Cascader Operational Failures
+
+The new [Cascader](./frontend/cascader.md) working-source component also uses
+this frontend boundary. These additive codes describe UI/adapter failures, not
+permission grants or durable write receipts:
+
+| Code symbol | Event code | Safe metadata |
+| --- | --- | --- |
+| `FRONTEND_CASCADER_LOAD_FAILED` | `frontend.cascader.load_failed` | The bounded `operation` (`children` or `search`) and `errorCode` (`CASCADER_LOAD_FAILED`). |
+| `FRONTEND_CASCADER_CALLBACK_FAILED` | `frontend.cascader.callback_failed` | The bounded operation (`selection`, `open` or `footer`), or `stage: 'load-error-callback'` with its loader operation. |
+
+Both events use the error level and static framework messages. Their calls omit
+the adapter/callback exception, query, node, full path, selected values and
+application payload. The public loader error is a sanitized
+`{ code, operation, message }` descriptor; it is not the original server error.
+Stale requests and retired UI completions do not update the new picker lifetime.
+An app-supplied import/mutation callback still owns its acknowledged server
+operation and cannot treat a browser event as proof of persistence.
+
 ## Auth Operational Failure Contract
 
 Auth keeps operational events separate from its durable

@@ -38,6 +38,19 @@ These additive symbols are not counted as part of the original clean baseline.
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical planned guide |
 | --- | --- | --- | --- |
 | `JsonEditor` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [src/components/json-editor/json-editor.tsx](../../../../src/components/json-editor/json-editor.tsx) | `frontend/components/json-editor.md` |
+| `Cascader` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderValue` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderPanel` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderInput` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderBreadcrumb` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderList` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderItems` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderFooter` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderAction` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderImportMenu` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
+| `CascaderSelectionChips` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
 
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical planned guide |
 | --- | --- | --- | --- |

@@ -30,6 +30,10 @@ describe('package exports', () => {
     await buildSmokeEntry('client.tsx', clientSmokeSource, 'browser');
   }, 120_000);
 
+  test('cascader composition and selection helpers build through the public browser subpath', async () => {
+    await buildSmokeEntry('cascader.tsx', cascaderSmokeSource, 'browser');
+  }, 120_000);
+
   test('native auth package subpath builds without React or server imports', async () => {
     await buildSmokeEntry('native.ts', nativeSmokeSource, 'browser');
   }, 120_000);
@@ -39,17 +43,74 @@ async function buildSmokeEntry(fileName: string, source: string, target: 'bun' |
   const entrypoint = join(smokeDir, fileName);
   await writeFile(entrypoint, source);
 
-  const result = await Bun.build({
-    entrypoints: [entrypoint],
-    outdir: join(smokeDir, `${fileName}-dist`),
-    target,
+  // A fresh Bun CLI process tests the actual consumer bundler. Bun 1.3.14's
+  // in-test build resolver can otherwise make browser tests depend on a prior
+  // server build warming its cache, even on the unchanged 2.2.1 checkout.
+  const build = Bun.spawn({
+    cmd: [process.execPath, '--no-env-file', 'build', entrypoint,
+      '--target', target, '--outdir', join(smokeDir, `${fileName}-dist`)],
+    cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe',
   });
-
-  if (!result.success) {
-    const details = result.logs.map((log) => log.message).join('\n');
-    throw new Error(details || `Failed to build ${fileName}`);
-  }
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; build.kill(); }, 110_000);
+  try {
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited,
+    ]);
+    if (timedOut || code !== 0) {
+      const details = `${stdout}\n${stderr}`.trim();
+      throw new Error(timedOut ? `Timed out building ${fileName}` : details || `Failed to build ${fileName}`);
+    }
+  } finally { clearTimeout(timeout); }
 }
+
+const cascaderSmokeSource = `
+import {
+  Cascader as CascaderRoot,
+  useCascaderSelection as useCascaderSelectionRoot,
+} from '@zero/framework';
+import {
+  Cascader as CascaderReact,
+  useCascaderSelection as useCascaderSelectionReact,
+} from '@zero/framework/react';
+import {
+  Cascader,
+  CascaderAction,
+  CascaderBreadcrumb,
+  CascaderContent,
+  CascaderFooter,
+  CascaderImportMenu,
+  CascaderInput,
+  CascaderItems,
+  CascaderList,
+  CascaderPanel,
+  CascaderSelectionChips,
+  CascaderTrigger,
+  CascaderValue,
+  useCascaderSelection,
+} from '@zero/framework/components/cascader';
+
+export const cascaderPublicSurface = {
+  CascaderRoot,
+  CascaderReact,
+  useCascaderSelectionRoot,
+  useCascaderSelectionReact,
+  Cascader,
+  CascaderAction,
+  CascaderBreadcrumb,
+  CascaderContent,
+  CascaderFooter,
+  CascaderImportMenu,
+  CascaderInput,
+  CascaderItems,
+  CascaderList,
+  CascaderPanel,
+  CascaderSelectionChips,
+  CascaderTrigger,
+  CascaderValue,
+  useCascaderSelection,
+};
+`;
 
 const serverSmokeSource = `
 import { Database } from 'bun:sqlite';

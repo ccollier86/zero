@@ -26,6 +26,7 @@ const selected: Record<string, number[]> = {
   'frontend/components/primitives/toasts.md': [0],
   'frontend/components/sensitive-display.md': [0, 1],
   'frontend/components/json-editor.md': [0],
+  'frontend/components/cascader.md': [0, 1, 2],
   'frontend/components/text/streaming-text.md': [0],
   'frontend/components/text/effects.md': [0],
   'frontend/components/scroll-anchoring.md': [0],

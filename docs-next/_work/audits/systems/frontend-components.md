@@ -44,6 +44,7 @@ The [internal bindings catalog](../catalogs/frontend-internal-bindings.md) recor
 | Public navigation/hero/content | ResizableNavbar; Hero/HeroActions/HeroBackground/HeroImageBackground/WavyBackground; FeaturesSection/CtaSection/FooterSection/Faq/CodeBlock/ExpandableCards/BentoGrid*/AnimatedList* | `frontend/components/public-pages/index.md` |
 | Text presentation | FlipWords/TextGenerateEffect/TypewriterEffect/StreamingText, StreamSource and status/props; [src/components/text-effects/index.ts](../../../../src/components/text-effects/index.ts), [src/components/streaming-text/index.ts](../../../../src/components/streaming-text/index.ts) | `frontend/components/text/index.md` |
 | Sensitive display/QR | SecretField/SecretFieldProps, QRCode/QRCodeProps; [src/components/secret-field/secret-field.tsx](../../../../src/components/secret-field/secret-field.tsx), [src/components/qr-code/index.ts](../../../../src/components/qr-code/index.ts) | `frontend/components/sensitive-display.md` |
+| Hierarchical selection | Cascader composition, typed node/search/selection contracts and useCascaderSelection; [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
 | Guardian forms/gates/control planes | Every auth/admin organism individually cataloged; useGate/usePropertyGate/native continuation/invitation hooks; [src/components/auth/index.ts](../../../../src/components/auth/index.ts) and adaptive user management | `frontend/guardian/index.md` |
 | Storage organisms | StorageManagement/StorageStudioManagement/StorageStudioWorkspace/FileBrowser/DriveList/UploadDropzone and all named storage catalog rows; [src/components/storage/index.ts](../../../../src/components/storage/index.ts) | `frontend/storage/index.md` |
 | Data/Studio forms and organisms | DataTable/DataStudio/CrudPage/MasterDetail/Kanban; separate data-controls/form inventories | `frontend/data-controls/index.md` |
@@ -54,6 +55,13 @@ The [internal bindings catalog](../catalogs/frontend-internal-bindings.md) recor
 | Generic DOM/system hooks | useAutoHeight/useClickAway/useCopyToClipboard/useHotkey/useIsInView/useMediaQuery/useIsMobile/useMotionValueState/useOs/getOS/useTextSelection | `frontend/hooks/browser-interactions.md` |
 
 Each grouped row is routing only: the catalogs assign every symbol a focused guide, including subpath-only exports not in the root barrel.
+
+The Cascader row is an authorized additive working-source feature on top of
+2.2.1 commit `ea971213e7bc7f3b1d11b16cda42227ca8287a60`, not a claim that it
+existed in the clean 2.1.1 inventory. Its guide and source own nested leaf
+selection, a multi-selection cap, path-aware local/remote search, asynchronous
+drill-down, pinned commands and optional external chips. It composes existing
+Zero controls rather than introducing another authorization or transport layer.
 
 ## Configuration And Integration Inventory
 
