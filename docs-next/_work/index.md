@@ -23,6 +23,9 @@ publication, search, and production agent bundles.
   checklists. Templates do not establish implemented capabilities.
 - [Documentation checks](./checks/index.md): read-only Bun authoring checks and
   synthetic parser regressions; not public Zero commands.
+- [Filters integration plan](./filters-integration-plan.md): planned standalone
+  query editing, compact visuals, DataTable/Data Studio integration, execution
+  parity, authorization, verification and documentation deliverables.
 
 ## Working Status
 

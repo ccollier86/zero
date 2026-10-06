@@ -393,7 +393,7 @@ Toolbar behavior:
 | Prop | Behavior |
 | --- | --- |
 | `searchable` | `true` shows the compact table search; an options object customizes it; omitted/`false` hides it |
-| `filterable` | Shows schema-aware, client-side per-column filter controls |
+| `filterable` | Shows schema-aware per-column filter controls; execution follows the data source |
 | `filterColumns` | Limits generated filters to specific columns |
 | `toolbarSlots` | Adds `controls`, `actions`, and `supplemental` content as nodes or table-aware render functions |
 | `toolbarLabel` | Sets the accessible name for the toolbar control group; defaults to `Table controls` |
@@ -514,7 +514,7 @@ the same table-local context:
 | `activeFilterCount` | Number of active column filters, excluding global search |
 | `hasActiveFilters` | Whether at least one column filter is active |
 | `hasActiveSearch` | Whether the global search query is non-empty |
-| `clearAll` | Clears global search and all client-side column filters |
+| `clearAll` | Clears global search and all column filters, including server-query criteria |
 | `selectedRowIds` | IDs of the currently selected TanStack rows |
 | `selectedRows` | Original values for the currently selected rows |
 | `selectedRowCount` | Number of selected rows |
