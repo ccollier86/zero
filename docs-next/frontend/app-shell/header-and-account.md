@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: app-shell-header-account
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; package qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.4.3"
+  commit: "8327e4498f52b12b43759bbc4618973601191039"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -71,6 +71,16 @@ Ancestors/separators are visually hidden below the md breakpoint.
 AppShellUser requires name, optionally email, avatar, fallback, accountHref,
 notificationsHref and onLogout. Avatar fallback uses caller fallback or initials.
 Omitted/null user means no account menu; it does not sign the client out.
+
+The generated footer account button has a collapsed-desktop tooltip and
+accessible label derived from `user.name`. Likewise, when the sidebar displays
+the brand instead of a workspace switcher, its hint is derived from `brand.name`.
+Both use the same [viewport-aware public tooltip](../components/overlays/tooltip.md)
+as navigation items. Pointer hover shows the hint; keyboard focus alone does
+not. Clicking the control/opening its dropdown suppresses the hint until the
+pointer leaves and hovers again, and expanding the sidebar dismisses it. The
+actual button and its ref remain
+stable across the collapsed/expanded transition.
 
 Without userMenu, accountHref creates Account, notificationsHref creates
 Notifications, and onLogout creates Log out. No configured actions produces a

@@ -338,6 +338,7 @@ export const WORKFLOW_SERVER_TABLE_NAMES: ReadonlySet<string> = new Set([
   '_workflow_event_delivery',
   '_workflow_event_authorities',
   '_workflow_system_event_receipts',
+  '_workflow_system_start_receipts',
   '_workflow_event_usage',
   '_workflow_step_attempts',
   '_workflow_pauses',

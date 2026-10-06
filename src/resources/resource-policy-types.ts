@@ -58,6 +58,8 @@ export interface ResourcePolicyAuthorizationContext {
 export interface ResourcePolicyResource {
   table: string;
   primaryKey: string;
+  /** Trusted full server schema, captured by registration; omitted only for standalone evaluators. */
+  readonly columns?: readonly string[];
 }
 
 /** Auth config subset needed to validate metadata policy keys. */
@@ -89,9 +91,18 @@ export interface ResourceFieldConstraint {
   value: ResourcePolicyScalar;
 }
 
+/** Exact overlap with a bounded JSON string array; an empty permitted set matches nothing. */
+export interface ResourceArrayOverlapConstraint {
+  type: 'field';
+  field: string;
+  operator: 'arrayOverlaps';
+  value: readonly string[];
+}
+
 /** Constraint union for later query planning. Top-level arrays are ANDed. */
 export type ResourceDataConstraint =
   | ResourceFieldConstraint
+  | ResourceArrayOverlapConstraint
   | { type: 'anyOf'; constraints: ResourceDataConstraint[] }
   | { type: 'allOf'; constraints: ResourceDataConstraint[] };
 

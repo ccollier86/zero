@@ -1,5 +1,15 @@
 # Start Here
 
+**Start with the [new Zero documentation](../docs-next/start-here.md).** Its
+[main index](../docs-next/index.md) links the source-audited backend, frontend,
+CLI and [coding-agent guides](../docs-next/agents/index.md). Use that organized
+tree as the primary feature reference for new work; check each feature's version
+and evidence metadata against the installed package. This file and the older
+`docs/` guides remain compatibility/deep-reference entry points.
+
+For 2.4.1's multi-group authorization update, read
+[exact string-array overlap](../docs-next/backend/resources/array-overlap.md).
+
 Zero is a Bun/Elysia full-stack app platform. The goal is fast data-driven app
 development without wiring separate backend services for Guardian auth,
 storage, sync, Torrent workflows, notifications, state, platform tokens, PDF

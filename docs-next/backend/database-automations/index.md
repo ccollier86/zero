@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: index
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -29,8 +29,8 @@ computation or durable server work. They apply to the pinned application
 database and admitted Fabric realms.
 
 Use a transaction function for an atomic rollup or invariant sharing the source
-commit. Use a durable function for an awaitable Zero-service action, external
-request or exact Torrent event. Use an ordinary authorized route/service for a
+commit. Use a durable function for an awaitable app function, Zero-service action,
+external request, retry-safe Torrent start or exact Torrent event. Use an ordinary authorized route/service for a
 user command not caused by a tracked row mutation.
 
 ## Mental Model
@@ -41,7 +41,7 @@ authorized tracked mutation
   → synchronous functions + source-local durable outbox
   → one database commit
   → host dispatcher claims durable work
-  → source-bound services / external effect / exact Torrent event
+  → app function / source-bound services / external effect / Torrent start or event
 ```
 
 AFTER means after the logical mutation within its ReactiveDB transaction, not
@@ -61,6 +61,8 @@ mutations, but server policy must authorize them before admission.
 - [Transaction functions](./transaction-functions.md): atomic rollups, capability
   lifetime, cascades, budgets and Guardian anchors.
 - [Durable functions](./durable-functions.md): async handlers and idempotency.
+- [Invoke app functions](./app-functions.md): map captured row values into an
+  ordinary function or your application's versioned dispatcher; no workflow required.
 - [Triggers](./triggers.md): events, column filters and ordered function chains.
 - [Input snapshots](./inputs.md): before/after rows, sequence and correlation.
 - [Versioning](./versioning.md): canonical manifests and queued-version upgrades.
@@ -68,7 +70,8 @@ mutations, but server policy must authorize them before admission.
 - [Delivery](./delivery.md): leases, capacity, fairness, restart and shutdown.
 - [Services and authority](./services-and-authority.md): system execution and
   source-bound live fences.
-- [Torrent delivery](./torrent.md): resume one exact waiting instance.
+- [Torrent integration](./torrent.md): durably start one run or resume one exact
+  waiting instance, with delivery-derived receipt identities.
 - [Operations](./operations.md): errors, safe events and Doctor.
 - [Testing](./testing.md): deterministic acceptance before deployment.
 - [Roadmap](./roadmap.md): current contracts versus future work.

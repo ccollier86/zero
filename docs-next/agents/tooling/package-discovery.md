@@ -25,7 +25,9 @@ reviewed_against:
 
 Normal applications depend on @zero/framework, use its declared package exports
 and carry package-local docs/README/llm.txt/llms.txt. Generated README points
-readers at installed documentation. This is source-observed packaging intent;
+readers at `node_modules/@zero/framework/docs-next/start-here.md`, followed by
+`docs-next/index.md` and `docs-next/agents/index.md`. Use those primary feature
+guides before the long compatibility bundle. This is source-observed packaging intent;
 an exact archive still needs qualification before release claims.
 
 Inspect the app dependency/lock and installed package.json. Saved local apps

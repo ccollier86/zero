@@ -28,8 +28,10 @@ resource policy and optional services; the managed runtime connects live
 identity, accepted server operations, realtime state and reusable controls.
 The productive path is to compose those features rather than rebuild them.
 
-This isolated documentation is still under review. It does not replace the
-references packaged with an already installed release.
+This organized tree is the primary entrance for new platform and application
+work. Feature pages retain their source-review/version metadata: verify that a
+page describes the package actually installed in your app. Older `docs/` guides
+remain linked deep references; internal audit material is not a runtime API.
 
 ## The Core Vocabulary
 

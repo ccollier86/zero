@@ -36,6 +36,10 @@ authorization decision before data is released.
 
 HTTP-only/internal resources are not available merely because client code asks
 to subscribe. Full/lazy loading changes hydration strategy, not authority.
+Scalar equality and [exact array overlap](./array-overlap.md) use the same
+constraints in SQL-backed queries and in-memory row delivery. Tracked membership
+label changes remove rows that stop matching and admit rows that begin matching;
+empty or malformed arrays cannot broaden access.
 
 ## Mutating
 

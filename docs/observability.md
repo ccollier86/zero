@@ -407,6 +407,15 @@ Idempotent system delivery emits `workflows.system_event.delivered`,
 event name, bounded system principal, and scope kind; it never includes the
 idempotency key, command fingerprint, payload, or authority reason.
 
+Retry-safe system starts emit `workflows.system_start.created`,
+`workflows.system_start.replayed`, `workflows.system_start.conflict`, or
+`workflows.system_start.failed`. Metadata may contain the bounded workflow name,
+instance ID, system principal and scope kind; it omits the start key, command
+fingerprints, input, initial private memory, authority reason and raw storage
+failure. Creation/replay events follow the durable receipt commit, while
+workflow execution follows that commit separately. See the
+[system-start guide](../docs-next/backend/torrent/system-starts.md).
+
 ReactiveDB durable functions emit stable `database.automation_dispatcher.*`,
 `database.automation_delivery.*`, `database.automation_manifest.drift`,
 `database.automation_execution.abandoned`, and

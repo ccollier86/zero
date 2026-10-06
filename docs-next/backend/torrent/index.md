@@ -8,14 +8,14 @@ visibility: internal
 system: torrent
 feature: index
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["authenticated single-tenant app", "Guardian multi-tenant app", "explicit trusted server composition"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -48,6 +48,8 @@ server code, not arbitrary JavaScript stored in a database.
 - [Definitions](./definitions.md): immutable versions, activation, drafts and
   database editor integration.
 - [Events](./events.md): durable inbox, exact run targeting and system receipts.
+- [Retry-safe system starts](./system-starts.md): one durable run per logical
+  background command, including lost acknowledgements and restart.
 - [Interactions](./interactions.md): request-and-wait, delivery, validation and
   response authority across web/email/SMS.
 - [Memory](./memory.md): attempt-local staged private scratch data.

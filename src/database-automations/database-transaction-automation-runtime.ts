@@ -13,7 +13,6 @@ import {
   type ReactiveDBMutationChange,
   type ReactiveDBMutationInterception,
 } from '../sync/reactive-db-mutation-interceptor';
-import type { ReactiveDBTransactionToken } from '../sync/reactive-db-transaction-token';
 import { isReactiveDBPromiseLike } from '../sync/reactive-db-synchronous-boundary';
 import { DatabaseError, isDatabaseError } from '../databases/database-error';
 import type { DatabaseAutomationRegistry } from './database-automations';
@@ -59,6 +58,7 @@ export interface DatabaseTransactionAutomationRuntimeOptions {
 interface PendingChange {
   readonly change: ReactiveDBMutationChange;
   readonly depth: number;
+  readonly triggers: readonly DatabaseTriggerDefinition[];
 }
 
 interface RootExecution {
@@ -122,6 +122,17 @@ export class DatabaseTransactionAutomationRuntime {
     }
     const token = interception.transactionToken as object;
     let execution = this.executions.get(token);
+    const change = interception.change;
+    const triggers = this.registry.match({
+      table: change.table,
+      operation: operationName(change),
+      row: change.row,
+      previousRow: change.previousRow,
+    });
+    // This is an automation budget, not a cap on ordinary application writes.
+    // Handler-generated writes still count even when their rollup table/event
+    // has no matching trigger; they are part of the bounded cascade.
+    if (triggers.length === 0 && !execution?.draining) return;
     if (!execution) {
       execution = {
         queue: [],
@@ -138,7 +149,8 @@ export class DatabaseTransactionAutomationRuntime {
     assertBudget(depth <= this.limits.maxCascadeDepth, 'cascade-depth');
     execution.changes += 1;
     assertBudget(execution.changes <= this.limits.maxChanges, 'changes');
-    execution.queue.push({ change: interception.change, depth });
+    if (triggers.length === 0) return;
+    execution.queue.push({ change, depth, triggers });
     if (execution.draining) return;
 
     execution.draining = true;
@@ -146,7 +158,7 @@ export class DatabaseTransactionAutomationRuntime {
       while (execution.queue.length > 0) {
         const pending = execution.queue.shift()!;
         execution.activeDepth = pending.depth;
-        this.runChange(pending.change, interception.transactionToken, execution);
+        this.runChange(pending, execution);
       }
     } finally {
       execution.activeDepth = -1;
@@ -156,21 +168,11 @@ export class DatabaseTransactionAutomationRuntime {
   }
 
   private runChange(
-    change: ReactiveDBMutationChange,
-    _token: ReactiveDBTransactionToken,
+    pending: PendingChange,
     execution: RootExecution,
   ): void {
-    const operation = operationName(change);
-    const triggers = this.registry.match({
-      table: change.table,
-      operation,
-      row: change.row,
-      previousRow: change.previousRow,
-    });
-    if (triggers.length === 0) return;
-
-    const input = createDatabaseTriggerFunctionInput(change);
-    for (const trigger of triggers) {
+    const input = createDatabaseTriggerFunctionInput(pending.change);
+    for (const trigger of pending.triggers) {
       this.runTrigger(trigger, input, execution);
     }
   }

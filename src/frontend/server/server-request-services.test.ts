@@ -364,6 +364,12 @@ describe('request-bound server services', () => {
       expect(() => deniedWorkflow.getGraphRuntime()).toThrow('not available');
       expect(() => deniedWorkflow.dispose()).toThrow('not available');
       expect(() => deniedWorkflow.pollTimeouts()).toThrow('not available');
+      expect(() => (alpha.workflows as unknown as WorkflowService).startAsSystemOnce(
+        'proof', {}, {
+          principal: 'attempted-request-bypass', reason: 'Synthetic forbidden system start',
+          scope: alpha.scope!, idempotencyKey: 'forbidden',
+        },
+      )).toThrow('not available');
     } finally {
       fixture.db.dispose();
     }

@@ -101,6 +101,9 @@ describe('scaffoldZeroApp', () => {
       const readme = await readFile(join(targetDir, 'README.md'), 'utf8');
       expect(readme).toContain('cp .env.example .env');
       expect(readme).toContain('node_modules/@zero/framework/docs/start-here.md');
+      expect(readme).toContain('node_modules/@zero/framework/docs-next/start-here.md');
+      expect(readme).toContain('node_modules/@zero/framework/docs-next/index.md');
+      expect(readme).toContain('node_modules/@zero/framework/docs-next/agents/index.md');
       expect(readme).toContain('server/middleware/');
       expect(readme).toContain('package saved from committed local `main`');
       expect(readme).toContain('zero update --project . --local');

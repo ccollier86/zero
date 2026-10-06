@@ -54,6 +54,17 @@ array, not an exact total or automatic UI-page metadata. Its maximum limit is
 1001, offset 1000000, order fields 8 and projected fields 128.
 All columns/filter operators are admitted; raw SQL is not accepted as input.
 
+### Array Membership Filters
+
+Since 2.4.1, `find` and `list` accept a field predicate with
+`operator: 'arrayOverlaps'` and a readonly string-array `value`. A stored JSON
+string array must share at least one exact string with that value. Empty values
+match nothing; malformed or mixed-type retained arrays deny the whole row.
+The scalar filter operators remain unchanged. `list` adds optional `filters`
+without changing its cursor/ordering/response contract; filters precede the limit.
+Both reader and writer actors validate the same bounded payload.
+See [complete array-policy examples and limits](../resources/array-overlap.md).
+
 ## Writes
 
 `mutate(mutation, options)`, `batch({assertions?, mutations}, options)` and

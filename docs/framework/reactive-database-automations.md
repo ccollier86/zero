@@ -3,7 +3,12 @@
 ReactiveDB database automations run declared functions after tracked table
 changes. Use them for synchronous same-database invariants, derived rows and
 rollups, or for durable post-commit work such as calling an external service or
-resuming one exact Torrent workflow instance.
+starting one retry-safe Torrent run or resuming one exact workflow instance.
+
+For the maintained organized guides, begin with
+[database automations](../../docs-next/backend/database-automations/index.md).
+[App function invocation](../../docs-next/backend/database-automations/app-functions.md)
+shows exact target/version/parameter dispatch independent of Torrent.
 
 This is an application-level ReactiveDB feature. It does not install raw
 SQLite `CREATE TRIGGER` objects and it does not watch writes which bypass
@@ -208,6 +213,22 @@ notifications, rooms, workflows, PDF, observability, auth compiler, and—when
 applicable—tenant data capabilities are already closed over the source
 catalog's trusted application or tenant authority. Raw persistence,
 registries, `unsafe`, and a caller-controlled tenant selector are absent.
+
+## Start A Torrent Run Durably
+
+From a durable handler, use `zero.torrent.start(name, input?, options?)`.
+`options` is `WorkflowStartOptions` plus optional `{ key }`; the source-bound
+adapter supplies trusted principal/scope and a delivery-derived idempotency key.
+The stable result is `{ instanceId, name, createdAt, definitionVersion }`.
+Run, initial steps, authority, private memory and permanent receipt commit
+atomically in `system.db`; execution begins afterward. Retried calls return
+the same run and changed commands conflict. Multiple intended starts in one
+handler require distinct stable keys. Do not start from a transaction function.
+The [complete start/resume guide](../../docs-next/backend/database-automations/torrent.md)
+includes a typed declaration and recovery/security details; the trusted
+low-level method is
+[`WorkflowService.startAsSystemOnce`](../../docs-next/backend/torrent/system-starts.md).
+Existing `startAsSystem` remains non-idempotent.
 
 ## Resume One Exact Torrent Instance
 
@@ -484,7 +505,7 @@ The managed transaction budgets per root commit are:
 | Budget | Default |
 | --- | ---: |
 | Cascade depth | 16 |
-| Observed tracked changes | 256 |
+| Matched origin changes plus every handler-generated tracked change | 256 |
 | Invoked functions | 256 |
 | Enqueued durable effects | 256 |
 
@@ -492,6 +513,13 @@ Exceeding a budget raises a stable `DatabaseError` with a not-committed outcome
 and rolls back the root transaction. Split unbounded batch processing into a
 Torrent workflow or another bounded job instead of increasing a trigger
 cascade indefinitely.
+
+Unrelated caller writes do not consume the automation change budget. Table,
+operation and changed-column misses are exempt when they originate outside a
+handler. All handler-generated writes remain bounded, including untriggered
+rollup writes. Enabling a trigger therefore does not cap unrelated permission
+transactions at 256 changes. The separate Fabric public batch envelope still
+limits submitted mutations/assertions to 256.
 
 ## Durable Delivery Contract
 
@@ -512,7 +540,7 @@ Delivery is at least once. Build handlers around these rules:
 
 - Use the stable invocation plus exact function identity for an external
   idempotency key.
-- Prefer `zero.torrent.deliverEvent()` for Torrent; its receipt identity is
+- Prefer `zero.torrent.start()` or `zero.torrent.deliverEvent()` for Torrent; its receipt identity is
   derived automatically from the durable delivery.
 - Do not use process memory, an attempt number, or wall-clock time as the
   identity of a business effect.
@@ -631,12 +659,14 @@ tampering or an incompatible private version fails startup. Do not add the
 outbox to `db/schema.ts`, expose it as a Resource, query it from application
 code, include it in Sync, or create an app migration for it.
 
-Two system migrations support the complete bridge:
+Three system migrations support the complete bridge:
 
 - `036_workflow_system_event_receipts` adds Torrent's immutable system-event
   receipt used for exact retry-safe delivery.
 - `037_database_automation_source_catalog` adds the private system-plane source
   catalog used to recover pinned, named, and tenant outboxes after restart.
+- `038_workflow_system_start_receipts` adds permanent, immutable start receipts
+  committed atomically with the original run/steps/authority/private memory.
 
 Apply managed system migrations before enabling durable functions. Fabric
 realm migrations remain app-owned and run independently in each source file;

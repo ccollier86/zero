@@ -13,9 +13,12 @@ Zero is a Bun/Elysia full-stack platform with a React frontend. Compose shared
 schemas, live authority, scoped services, realtime data and reusable controls.
 Use the existing platform contracts as the foundation for an app.
 
-This is the isolated next documentation set, reviewed against the 2.1.1 source
-baseline and explicitly identified audited working corrections. It is still in
-review and does not replace the documentation shipped with an installed release.
+This organized documentation is the primary entry point for new Zero work.
+It began with a 2.1.1 source audit and receives focused updates as contracts
+change; each feature retains its own review/version/evidence metadata. Read the
+page matching your installed package rather than treating every historical
+baseline or roadmap item as the current release. Older `docs/` guides remain
+available as linked compatibility/deep references.
 
 ## Start With A Task
 
@@ -58,6 +61,12 @@ authentication or organization scope changes.
 
 ## Find The Exact Contract
 
+The 2.4.2 update includes [exact array policy](./backend/resources/array-overlap.md),
+[bounded trigger transactions](./backend/database-automations/transaction-functions.md),
+[app-function invocation](./backend/database-automations/app-functions.md) and
+[retry-safe Torrent starts](./backend/torrent/system-starts.md). Begin at those
+feature guides for the current integration rather than older flattened bundles.
+
 Feature guides state applicability and source baseline. A roadmap item is not an
 implemented API. Source tests, example typechecks and exact installed-package
 qualification are different evidence; [verification](./guides/verification.md)
@@ -79,6 +88,7 @@ projection, search and production agent bundle:
 - [Working evidence](./_work/index.md): inventories, catalogs, checks, findings
   and templates—not application-building prerequisites.
 
-Current docs, README, package documentation entries and active agent
-instructions/hooks remain unchanged. Current-doc/site/package/agent cutover
-requires a separate approved handoff after qualification.
+README, the compatibility Start Here page, agent knowledge-file entrances and
+generated app README now route readers to this tree. That documentation routing
+does not install agent hooks, skills or a documentation website plugin; those
+have separate implementation and qualification requirements.

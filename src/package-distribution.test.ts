@@ -118,6 +118,10 @@ describe('package distribution', () => {
       expect(contents).toContain('package/src/components/secret-field/secret-field.tsx');
       expect(contents).toContain('package/src/components/streaming-text/streaming-text.tsx');
       expect(contents).toContain('package/docs/start-here.md');
+      expect(contents).toContain('package/docs-next/start-here.md');
+      expect(contents).toContain('package/docs-next/index.md');
+      expect(contents).toContain('package/docs-next/agents/index.md');
+      expect(contents).toContain('package/docs-next/backend/resources/array-overlap.md');
       expect(contents).toContain('package/docs/ai-generation.md');
       expect(contents).toContain('package/docs/ai-agents.md');
       expect(contents).toContain('package/docs/ai-durable-agents.md');

@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: testing
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -38,7 +38,8 @@ live organization or sending real provider traffic.
 4. Host worker: exact version, lost renewal, retry/exhaustion, independent
    physical sources, controlled abort and safe telemetry.
 5. Integration: authorized source selection, Guardian/Fabric fences, exact
-   Torrent delivery and real deployment shutdown/restart.
+   app-function parameter mapping, retry-safe Torrent starts, exact event
+   delivery and real deployment shutdown/restart.
 
 Use controlled promise barriers and a manual clock rather than relying only on
 OS scheduling to expose overlap. Capture external requests in a fake adapter,
@@ -78,6 +79,25 @@ terminal recording fail closed.
 Then restart the actual packaged deployment with pending work and verify old
 exact handler versions recover. Unit tests alone cannot establish package
 exports, actor cwd/env isolation or external idempotency.
+
+Additional 2.4.2 regressions cover 300 unrelated permission writes with an
+enabled trigger, table/operation/column misses, matched and generated-write
+overflow with full rollback, and the unchanged public Fabric batch envelope.
+Use `database-actor-automation-budget.test.ts` for actual actor execution.
+
+For app functions, hold an accepted effect before completion recording and
+force retry. The parameters and logical key must remain identical; the app's
+destination receipt must prevent duplicate effects. Verify a second tenant's
+rows stay separate and suspension/shutdown retire the held service lifetime.
+The managed `app-database-automation-app-functions.integration.test.ts` proves
+this through Guardian, Resources and real Fabric actors with Torrent disabled.
+
+For Torrent starts, race repeated calls, lose the first post-commit advance,
+restart with the persisted receipt, change the command for a reused key and
+revoke source authority at the final writer fence. One logical start must
+retain one instance ID. The installed-package
+`database-automation-torrent.package.test.ts` additionally exercises a source
+trigger, accepted workflow start, forced delivery retry and captured input.
 
 ## No Bypass For Convenience
 

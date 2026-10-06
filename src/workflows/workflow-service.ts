@@ -34,6 +34,8 @@ import {
   type WorkflowEventMutationOptions,
 } from './workflow-event-coordinator';
 import { WorkflowSystemEventDeliveryCoordinator } from './workflow-system-event-delivery-coordinator';
+import { WorkflowSystemStartCoordinator } from './workflow-system-start-coordinator';
+import type { WorkflowSystemStartOptions, WorkflowSystemStartResult, WorkflowSystemStartMutation } from './workflow-system-start-contract';
 import type {
   WorkflowSystemEventDeliveryOptions,
   WorkflowSystemEventDeliveryResult,
@@ -141,6 +143,7 @@ export class WorkflowService {
   private readonly starts: WorkflowStartCoordinator;
   private readonly events: WorkflowEventCoordinator;
   private readonly systemEventDeliveries: WorkflowSystemEventDeliveryCoordinator;
+  private readonly systemStarts: WorkflowSystemStartCoordinator;
   private readonly ownerLease: WorkflowRuntimeOwnerLease;
   private readonly onRuntimeOwnershipLost:
     ((error: WorkflowError) => void | Promise<void>) | null;
@@ -271,6 +274,8 @@ export class WorkflowService {
         this.observability,
         hooks,
       );
+      this.systemStarts = new WorkflowSystemStartCoordinator(db, registry, this.graph, instanceFactory,
+        this.repository, this.authority, this.scopes, hooks, this.observability);
       this.events = new WorkflowEventCoordinator(
         this.repository,
         this.runtime,
@@ -358,6 +363,12 @@ export class WorkflowService {
     options: WorkflowStartOptions = {},
   ): Promise<string> {
     return this.starts.startAsSystem(name, input, system, options);
+  }
+
+  /** Commit one privileged run per stable effect key; all replays return its original acknowledgement. */
+  async startAsSystemOnce(name: string, input: unknown, system: WorkflowSystemStartOptions,
+    options: WorkflowStartOptions = {}, mutation: WorkflowSystemStartMutation = {}): Promise<WorkflowSystemStartResult> {
+    return this.systemStarts.start(name, input, system, options, mutation);
   }
 
   async runAsSystem(
@@ -513,6 +524,7 @@ export class WorkflowService {
     // operation started; it must still reject disposed or stale ownership
     // before reading or validating any durable run.
     this.assertAvailable();
+    this.systemStarts.validateRecovery();
     for (const instance of this.repository.listNonterminalInstances()) {
       this.authority.validateRecoveryInstance(instance.instance_id);
     }

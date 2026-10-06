@@ -24,6 +24,11 @@ import {
   type DatabaseSerializableValue,
 } from './database-operations';
 import { DatabaseError } from './database-error';
+import {
+  databaseOperationRecord,
+  databasePayloadInvalid,
+  isDatabasePayloadProxy,
+} from './database-operation-payload';
 
 export interface CreateAsyncDatabaseClientOptions {
   /** Already-bound internal capability; it owns all physical routing. */
@@ -92,11 +97,13 @@ class BoundAsyncDatabaseClient implements AsyncDatabaseClient {
     page: DatabaseListPageOptions,
     options: DatabaseReadOptions = {},
   ): Promise<DatabaseReadResult<DatabaseListPage>> {
+    const normalized = normalizeListInput(page);
     return await this.#read({
       type: 'list',
       table,
-      limit: page.limit,
-      ...(page.after === undefined ? {} : { after: page.after }),
+      limit: normalized.limit,
+      ...(normalized.after === undefined ? {} : { after: normalized.after }),
+      ...(normalized.filters === undefined ? {} : { filters: normalized.filters }),
       ...readConsistency(options),
     }, executionOptions(options)) as DatabaseReadResult<DatabaseListPage>;
   }
@@ -204,21 +211,48 @@ class BoundAsyncDatabaseClient implements AsyncDatabaseClient {
 }
 
 function normalizeFindInput(value: unknown): DatabaseFindInput {
+  return normalizeReadInput(
+    value, 'find', ['select', 'filters', 'order', 'limit', 'offset'],
+  ) as unknown as DatabaseFindInput;
+}
+
+function normalizeListInput(value: unknown): DatabaseListPageOptions {
+  if (value !== null && typeof value === 'object' && isDatabasePayloadProxy(value)) {
+    throw databasePayloadInvalid('Database operation proxies are not supported.');
+  }
+  const record = databaseOperationRecord(value);
+  // Preserve the established optional cursor semantics while inspecting own
+  // data descriptors first. Do not clone undefined or evaluate option getters.
+  const present: Record<string, unknown> = Object.create(null);
+  for (const [field, entry] of Object.entries(record)) {
+    if ((field === 'after' || field === 'filters') && entry === undefined) continue;
+    present[field] = entry;
+  }
+  return normalizeReadInput(
+    present, 'list', ['limit', 'after', 'filters'],
+  ) as unknown as DatabaseListPageOptions;
+}
+
+function normalizeReadInput(
+  value: unknown,
+  kind: 'find' | 'list',
+  fields: readonly string[],
+): DatabaseSerializableValue {
   const detached = cloneDatabaseSerializableValue(value);
   if (detached === null || Array.isArray(detached) || typeof detached !== 'object') {
     throw new DatabaseError(
       'DATABASE_PAYLOAD_INVALID',
-      'Database find input must be a plain object.',
+      `Database ${kind} input must be a plain object.`,
     );
   }
-  const allowed = new Set(['select', 'filters', 'order', 'limit', 'offset']);
+  const allowed = new Set(fields);
   if (Object.keys(detached).some((field) => !allowed.has(field))) {
     throw new DatabaseError(
       'DATABASE_PAYLOAD_INVALID',
-      'Database find input contains an unknown field.',
+      `Database ${kind} input contains an unknown field.`,
     );
   }
-  return detached as unknown as DatabaseFindInput;
+  return detached;
 }
 
 function readConsistency(

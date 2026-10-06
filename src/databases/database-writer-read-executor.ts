@@ -3,7 +3,7 @@
 import type { Change, Row } from '../sync/types';
 import { DatabaseError } from './database-error';
 import { runDatabaseFind } from './database-find';
-import { createDatabaseListQuerySql } from './database-list-query';
+import { createDatabaseListQueryPlan } from './database-list-query';
 import {
   openDatabaseWriterReadQuerySession,
   withDatabaseReadQuerySession,
@@ -155,16 +155,10 @@ function readListPage(
       'Database table primary key is unavailable.',
     );
   }
-  const statement = runtime.db.prepare(createDatabaseListQuerySql(
-    operation.table,
-    primaryKey,
-    operation.after !== undefined,
-  ));
+  const plan = createDatabaseListQueryPlan(operation, primaryKey);
+  const statement = runtime.db.prepare(plan.sql);
   try {
-    const requested = operation.limit + 1;
-    const rows = (operation.after === undefined
-      ? statement.all(requested)
-      : statement.all(operation.after, requested)) as Row[];
+    const rows = statement.all(...plan.params) as Row[];
     const hasMore = rows.length > operation.limit;
     const pageRows = hasMore ? rows.slice(0, operation.limit) : rows;
     const last = pageRows[pageRows.length - 1];

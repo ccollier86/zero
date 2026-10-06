@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: operations
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -54,6 +54,9 @@ status codes or log user data.
 | DATABASE_CONFLICT | Delivery identity reused for a different command. |
 | DATABASE_CLOSED | Retained/closed capability or runtime use. |
 | DATABASE_OPERATION_UNSUPPORTED | Unavailable service or write through a read-only registered capability. |
+| WORKFLOW_START_IDEMPOTENCY_INVALID | Invalid explicit system-start key; repair the trusted adapter. |
+| WORKFLOW_START_IDEMPOTENCY_CONFLICT | One start key reused with a changed name, input, version/options or authority reason. Do not bypass it with a random key. |
+| WORKFLOW_AUTHORITY_CHANGED | Source authority retired at a Torrent effect's final commit fence. |
 
 DatabaseError also carries retryable and outcome. Read these instead of
 classifying every exception as a safe retry. A transaction failure rolls back
@@ -81,6 +84,12 @@ Lifecycle metadata contains sourceKind, attempt, aggregate requeued/dead and
 bounded reason—not tenant/run/delivery IDs, rows, payloads or thrown handler
 messages. Detailed app-level correlation belongs in an explicitly authorized
 business/audit system, not metric labels.
+
+Torrent starts additionally emit `workflows.system_start.created`, `.replayed`,
+`.conflict` and `.failed`. These are separate from the automation delivery
+events: a workflow start may have committed before the outbox attempt is
+acknowledged. Metadata identifies bounded workflow/system provenance but does
+not contain the start key, request digest, input, memory or authority reason.
 
 Observability callback failure must not alter successfully committed queue
 state. Source and handler diagnostics should be associated with the app-local

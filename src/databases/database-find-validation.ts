@@ -16,6 +16,7 @@ import {
   type DatabaseOperationCatalog,
   type DatabaseSerializableScalar,
 } from './database-operation-contracts';
+import { validateStringArrayOverlapValues } from '../lib/string-array-overlap';
 import {
   optionalDatabaseConsistency,
   validateDatabaseTable,
@@ -77,14 +78,9 @@ export function validateDatabaseFindOperation(
     && columns.length > DATABASE_FIND_MAX_PROJECTION_FIELDS) {
     throw databasePayloadLimit('Database find projection limit exceeded.');
   }
-  const filterState: FindFilterValidationState = {
-    nodes: 0,
-    // LIMIT and OFFSET are always parameterized by the actor compiler.
-    parameters: 2,
-  };
   const filters = !hasDatabaseOwnField(record, 'filters')
     ? undefined
-    : validateFindFilters(record.filters, columns, filterState, 0);
+    : validateDatabaseFindFilters(record.filters, table, catalog);
   const order = !hasDatabaseOwnField(record, 'order')
     ? undefined
     : validateFindOrder(record.order, columns);
@@ -98,6 +94,18 @@ export function validateDatabaseFindOperation(
     ...(offset === undefined ? {} : { offset }),
     ...optionalDatabaseConsistency(record, 'consistency'),
   };
+}
+
+/** Shared schema/parameter admission for find and filtered keyset-list reads. */
+export function validateDatabaseFindFilters(
+  value: unknown,
+  table: string,
+  catalog: DatabaseOperationCatalog,
+): readonly DatabaseFindFilter[] {
+  const columns = requireFindColumns(table, catalog);
+  requireFindPrimaryKey(table, columns, catalog);
+  // Reserve LIMIT plus OFFSET (find) or an optional cursor (list).
+  return validateFindFilters(value, columns, { nodes: 0, parameters: 2 }, 0);
 }
 
 function requireFindColumns(
@@ -250,6 +258,16 @@ function validateFindFilter(
       'Database find exact matching is valid only for eq/ne.',
     );
   }
+  if (operator === 'arrayOverlaps') {
+    const validated = validateStringArrayOverlapValues(record.value);
+    if (!validated.ok) {
+      throw validated.kind === 'limit'
+        ? databasePayloadLimit(validated.error)
+        : databasePayloadInvalid(validated.error);
+    }
+    addFindFilterParameters(state, operator, validated.value, false);
+    return Object.freeze({ type, field, operator, value: validated.value });
+  }
   const filterValue = validateFindFilterValue(operator, record.value);
   addFindFilterParameters(state, operator, filterValue, match === 'exact');
   return Object.freeze({
@@ -272,6 +290,7 @@ function validateFindOperator(value: unknown): DatabaseFindFilterOperator {
     case 'like':
     case 'contains':
     case 'in':
+    case 'arrayOverlaps':
       return value;
     default:
       throw databasePayloadInvalid('Database find filter operator is invalid.');
@@ -334,7 +353,9 @@ function addFindFilterParameters(
   exact: boolean,
 ): void {
   let additional: number;
-  if (operator === 'in') {
+  if (operator === 'arrayOverlaps') {
+    additional = (value as readonly string[]).length;
+  } else if (operator === 'in') {
     additional = (value as readonly DatabaseSerializableScalar[])
       .filter((entry) => entry !== null).length;
   } else if ((operator === 'eq' || operator === 'ne') && value === null) {

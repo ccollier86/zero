@@ -24,7 +24,7 @@ import {
 } from './database-binding-identity';
 import type { DatabaseRef } from './database-file';
 import { runDatabaseFind } from './database-find';
-import { createDatabaseListQuerySql } from './database-list-query';
+import { createDatabaseListQueryPlan } from './database-list-query';
 import {
   cloneDatabaseSerializableValue,
   createDatabaseSequenceToken,
@@ -381,18 +381,10 @@ export class DatabaseReaderRuntime {
 
   private list(operation: DatabaseListOperation): DatabaseSerializableValue {
     const primaryKey = this.requirePrimaryKey(operation.table);
-    const statement = this.database.prepare(
-      createDatabaseListQuerySql(
-        operation.table,
-        primaryKey,
-        operation.after !== undefined,
-      ),
-    );
+    const plan = createDatabaseListQueryPlan(operation, primaryKey);
+    const statement = this.database.prepare(plan.sql);
     try {
-      const values = operation.after === undefined
-        ? [operation.limit + 1]
-        : [operation.after, operation.limit + 1];
-      const fetched = statement.all(...values) as Record<string, unknown>[];
+      const fetched = statement.all(...plan.params) as Record<string, unknown>[];
       const hasNext = fetched.length > operation.limit;
       const pageRows = hasNext ? fetched.slice(0, operation.limit) : fetched;
       const rows = cloneDatabaseSerializableValue(pageRows) as readonly DatabaseOperationRow[];

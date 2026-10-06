@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -130,6 +130,12 @@ are released. Do not install a second manual interceptor/poller on managed DBs.
 Authorize origin writes with Guardian/Resource policy. Trusted trigger code is
 not another user grant. Repair failed schema/storage admission instead of
 silently removing durable work or weakening persistence.
+[Transaction budgets](./transaction-functions.md#cascades-and-budgets) bound
+matched origin work and all handler-generated writes, not unrelated origin
+transactions. A durable handler may call an [app function](./app-functions.md)
+without enabling Torrent. Enable `workflows` only when using the
+[Torrent start/event bridge](./torrent.md); its receipts live in `system.db`,
+not the source outbox or each tenant file.
 [Validation](./validation.md), [services and authority](./services-and-authority.md)
 and [versioning](./versioning.md) describe those boundaries.
 

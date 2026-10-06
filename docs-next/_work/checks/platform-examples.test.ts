@@ -44,6 +44,7 @@ test('Schema, runtime and configuration Markdown examples use valid public sourc
     'backend/resources/definitions.md': [0, 1],
     'backend/resources/realms.md': [0],
     'backend/resources/policies.md': [0, 1],
+    'backend/resources/array-overlap.md': [0, 1, 2, 3],
     'backend/resources/guardian-integration.md': [0],
     'backend/resources/policy-composition.md': [0],
     'backend/resources/field-access.md': [0],

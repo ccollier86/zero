@@ -11,7 +11,10 @@ import {
   type DatabaseReadResult,
 } from './database-operation-contracts';
 import { DatabaseError } from './database-error';
-import { validateDatabaseFindOperation } from './database-find-validation';
+import {
+  validateDatabaseFindFilters,
+  validateDatabaseFindOperation,
+} from './database-find-validation';
 import {
   optionalDatabaseConsistency,
   validateDatabaseBoundedArray,
@@ -63,6 +66,7 @@ export function validateDatabaseOperation(
         'table',
         'limit',
         'after',
+        'filters',
         'consistency',
       ]);
       const limit = record.limit;
@@ -73,13 +77,17 @@ export function validateDatabaseOperation(
           `Database list limit must be between 1 and ${DATABASE_LIST_MAX_ROWS}.`,
         );
       }
+      const table = validateDatabaseTable(record.table, catalog);
       return finalizeOperation({
         type,
-        table: validateDatabaseTable(record.table, catalog),
+        table,
         limit: limit as number,
         ...(!hasDatabaseOwnField(record, 'after')
           ? {}
           : { after: validateDatabaseRowId(record.after) }),
+        ...(!hasDatabaseOwnField(record, 'filters')
+          ? {}
+          : { filters: validateDatabaseFindFilters(record.filters, table, catalog) }),
         ...optionalDatabaseConsistency(record, 'consistency'),
       });
     }

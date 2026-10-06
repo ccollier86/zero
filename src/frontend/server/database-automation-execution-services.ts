@@ -1,24 +1,18 @@
 /** Scope-fenced managed services for durable ReactiveDB functions. */
 
 import type { RequestAuthorizationAccess } from '../../auth/authorization-access';
-import {
-  trustedSystemServiceDataScope,
-  type ServiceDataScope,
-} from '../../auth/service-data-scope';
+import { trustedSystemServiceDataScope, type ServiceDataScope } from '../../auth/service-data-scope';
 import { AuthError } from '../../auth/types';
 import type { DatabaseAutomationSourceRecord } from '../../database-automations/automation-source-catalog-contract';
-import type {
-  ClaimedDatabaseAutomationDelivery,
-} from '../../database-automations/automation-outbox-contracts';
 import type {
   DatabaseAutomationExecutionServiceProvider,
 } from '../../database-automations/database-automation-delivery-contracts';
 import { DatabaseError } from '../../databases/database-error';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
-import type {
-  WorkflowSystemEventDeliveryResult,
-} from '../../workflows/workflow-system-event-delivery-contract';
-import { WorkflowError } from '../../workflows/workflow-error';
+import {
+  createDatabaseAutomationTorrentService,
+  type DatabaseAutomationTorrentService,
+} from './database-automation-torrent-services';
 import type { AuthorityScopedServerServices } from './server-request-services';
 import { createInternalAuthorityScopedServerServices } from './server-request-services/create-request-services';
 import {
@@ -26,20 +20,7 @@ import {
   type ServerRouteServices,
 } from './server-services';
 
-const TORRENT_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
-
-export interface DatabaseAutomationTorrentService {
-  /**
-   * Deliver an exact Torrent event. Zero derives permanent idempotency from
-   * the outbox delivery plus the optional per-handler discriminator.
-   */
-  deliverEvent(
-    instanceId: string,
-    eventName: string,
-    payload?: unknown,
-    options?: Readonly<{ key?: string }>,
-  ): Promise<WorkflowSystemEventDeliveryResult>;
-}
+export type { DatabaseAutomationTorrentService } from './database-automation-torrent-services';
 
 /** Managed `ctx.zero` projection supplied to durable database functions. */
 export interface DatabaseAutomationExecutionServerServices
@@ -86,7 +67,7 @@ export function createDatabaseAutomationExecutionServiceProvider(
         privilegedSystem: true,
         auditProvenance: 'system',
       });
-      const torrent = createTorrentService(
+      const torrent = createDatabaseAutomationTorrentService(
         services,
         scope,
         delivery,
@@ -102,54 +83,6 @@ export function createDatabaseAutomationExecutionServiceProvider(
     },
   };
   return Object.freeze(provider);
-}
-
-function createTorrentService(
-  services: ServerRouteServices,
-  scope: ServiceDataScope,
-  delivery: ClaimedDatabaseAutomationDelivery,
-  assertCurrentAuthority: () => void,
-): DatabaseAutomationTorrentService {
-  const torrent: DatabaseAutomationTorrentService = {
-    async deliverEvent(instanceId, eventName, payload, options = {}) {
-      assertCurrentAuthority();
-      const workflows = services.workflows;
-      if (!workflows) {
-        throw new DatabaseError(
-          'DATABASE_OPERATION_UNSUPPORTED',
-          'Torrent is unavailable to this database automation.',
-          { retryable: true, outcome: 'not-started' },
-        );
-      }
-      const key = normalizeTorrentKey(options.key);
-      const assertWorkflowAuthority = (): void => {
-        try {
-          assertCurrentAuthority();
-        } catch {
-          throw new WorkflowError(
-            'Database automation authority changed before Torrent event commit',
-            'WORKFLOW_AUTHORITY_CHANGED',
-            409,
-          );
-        }
-      };
-      const result = await workflows.deliverEventAsSystem(
-        instanceId,
-        eventName,
-        payload,
-        {
-          principal: 'reactivedb-automation',
-          reason: 'ReactiveDB durable function event delivery',
-          scope,
-          idempotencyKey: torrentIdempotencyKey(delivery.deliveryId, key),
-        },
-        { assertCurrentAuthority: assertWorkflowAuthority },
-      );
-      assertCurrentAuthority();
-      return result;
-    },
-  };
-  return Object.freeze(torrent);
 }
 
 function withTorrent(
@@ -189,27 +122,6 @@ function sourceScope(source: DatabaseAutomationSourceRecord): ServiceDataScope {
         tenantId: source.authority.tenantId,
       })
     : trustedSystemServiceDataScope({ scopeKind: 'application' });
-}
-
-function normalizeTorrentKey(value: unknown): string {
-  if (value === undefined) return 'default';
-  if (typeof value !== 'string' || !TORRENT_KEY_PATTERN.test(value)) {
-    throw new DatabaseError(
-      'DATABASE_PAYLOAD_INVALID',
-      'Database automation Torrent key is invalid.',
-      { retryable: false, outcome: 'not-started' },
-    );
-  }
-  return value;
-}
-
-function torrentIdempotencyKey(deliveryId: string, key: string): string {
-  return `dba:${new Bun.CryptoHasher('sha256')
-    .update('zero.database-automation.torrent.v1\0')
-    .update(deliveryId)
-    .update('\0')
-    .update(key)
-    .digest('hex')}`;
 }
 
 function systemAccess(): RequestAuthorizationAccess {

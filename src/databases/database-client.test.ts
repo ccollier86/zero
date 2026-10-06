@@ -212,6 +212,47 @@ describe('createAsyncDatabaseClient', () => {
       .rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
     expect(calls).toHaveLength(0);
   });
+
+  test('detaches optional list filters and rejects unknown/getter inputs before dispatch', async () => {
+    const calls: Array<{
+      operation: DatabaseOperation;
+      options: DatabaseOperationExecutionOptions | undefined;
+    }> = [];
+    const client = createAsyncDatabaseClient({ executor: createExecutor(calls) });
+    const allowed = ['group_A'];
+    await client.list('todos', { limit: 2, after: 'a', filters: [{
+      type: 'field', field: 'title', operator: 'arrayOverlaps', value: allowed,
+    }] });
+    allowed[0] = 'mutated';
+    expect(calls[0]?.operation).toEqual({
+      type: 'list', table: 'todos', limit: 2, after: 'a', filters: [{
+        type: 'field', field: 'title', operator: 'arrayOverlaps', value: ['group_A'],
+      }],
+    });
+    let getterCalls = 0;
+    const hostile = { limit: 1 };
+    Object.defineProperty(hostile, 'filters', {
+      enumerable: true, get() { getterCalls += 1; return []; },
+    });
+    await expect(client.list('todos', hostile))
+      .rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
+    await expect(client.list('todos', {
+      limit: 1, rawSql: 'SELECT * FROM auth',
+    } as unknown as Parameters<AsyncDatabaseClient['list']>[1]))
+      .rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
+    expect(getterCalls).toBe(0);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('keeps explicitly undefined optional list options compatible', async () => {
+    const calls: Array<{
+      operation: DatabaseOperation;
+      options: DatabaseOperationExecutionOptions | undefined;
+    }> = [];
+    const client = createAsyncDatabaseClient({ executor: createExecutor(calls) });
+    await client.list('todos', { limit: 20, after: undefined, filters: undefined });
+    expect(calls[0]?.operation).toEqual({ type: 'list', table: 'todos', limit: 20 });
+  });
 });
 
 function createExecutor(

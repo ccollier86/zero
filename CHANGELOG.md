@@ -2,6 +2,121 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.5.0 - 2026-10-06
+
+Optional Markdown documentation sites, the shared CodeBlock replacement and
+native build contributions. This release retains all 2.4.1–2.4.3 fixes. Existing
+apps do not need to install the docs plugin or migrate databases for these additions.
+
+- Added `@zero/plugin-docs` 0.1.0: point a discovered plugin at a Markdown folder
+  for a public, server-rendered, fully tokenized reader with nested navigation,
+  section TOC, breadcrumbs, previous/next pages, callouts and safe code examples.
+  Publication admission, ignore rules and bounded parsing keep private content
+  out of pages, search, attachments and built output; authored HTML/MDX never executes.
+- Search covers titles, descriptions, headings and full body text. Results are
+  grouped by page with nearest-section targets, safe Unicode match ranges,
+  highlighted excerpts and canonical native links. Selecting a result focuses
+  and highlights its passage using short-lived, revision-bound per-tab context;
+  queries are not appended to document URLs.
+- Hardened palette geometry, named keyboard controls, obsolete-request fencing,
+  nested mobile modal focus/closure and reduced motion. Search is local to the
+  admitted manifest, bounded to 20 results and three distinct sections per page.
+- Replaced the previous CodeBlock implementation behind its existing facade with
+  composable file tabs, copy controls, package-manager commands, inline/block
+  modes, prepared Shiki output and supported line/notation metadata. Custom
+  transformer output is bound to exact captured hooks; optional versioned
+  `transformerIdentity` supports portable server-prepared output.
+- Added plugin browser/CSS/private build contributions and the normal `zero build`
+  pipeline for copied or compiled deployments. Declared browser entries enforce
+  canonical source-root and content-hash admission before bundling the admitted bytes.
+- Nonce-bearing HTML is private/no-store with fresh security metadata; public
+  projections use representation-specific conditional validators. Compiled
+  search metadata is bounded and checked against its admitted AST.
+- Updated public and source-audited documentation, examples, component inventories,
+  agent entry points and package/deployment regression coverage.
+
+See the [docs plugin guide](./docs/plugins/markdown-docs.md),
+[search guide](./docs-next/plugins/docs/search.md),
+[CodeBlock guide](./docs/frontend/code-block.md) and [build guide](./docs/app-build.md).
+
+## 2.4.3 - 2026-10-06
+
+Compatible collapsed-sidebar interaction fix. No application configuration
+changes or database migrations are needed.
+
+- Sidebar menu hints now attach Zero's public tooltip directly to the actual
+  button/link, independently of hover-highlight animations.
+- Collapsed desktop labels appear on mouse hover only. Clicking or pressing
+  Escape dismisses the hint; click/focus restoration cannot leave it stuck open.
+  Expanded sidebars and mobile navigation do not show collapsed hints.
+- Default AppShell navigation, brand, workspace and account controls retain
+  accessible names and get appropriate collapsed labels. Explicit tooltip
+  labels and accessible-name overrides remain supported.
+- Tooltip collision handling and wrapped viewport-constrained text keep long
+  labels usable at screen edges. Existing semantic colors and motion remain.
+- Public tooltip content keeps native-element animation inside its portal,
+  avoiding an asChild crash with separate Radix Slot copies and cleaning up
+  closed accessible descriptions after exit.
+- Updated Sidebar, AppShell and Tooltip guides in both documentation trees;
+  added real-browser regressions for hover, dismissal, focus, animation modes,
+  dropdown composition and constrained viewports.
+
+## 2.4.2 - 2026-10-06
+
+Includes the complete 2.4.1 exact array-policy update and hardens the production
+ReactiveDB automation boundary. No application row conversion or existing
+trigger declaration rewrite is needed. Managed system migration
+`038_workflow_system_start_receipts` adds Torrent's private permanent start ledger.
+
+- Unrelated origin transactions no longer consume automation change budgets.
+  Matching origin writes and all handler-generated tracked writes remain
+  bounded; failures roll back origin, cascade and outbox state. Fabric's public
+  256-item batch envelope remains unchanged.
+- Added source-bound `zero.torrent.start` and trusted `startAsSystemOnce` with
+  atomic run/steps/authority/memory/receipt creation, permanent scope/principal
+  namespacing, command-conflict checks, live final fences, sealed replay
+  integrity and recovery after interrupted first advancement.
+- Existing non-idempotent start APIs remain intact. Async retry-safe starts
+  reject enclosing transactions before creation; request/activity facades do
+  not expose the privileged system-start method.
+- Documented and exercised ordinary app-function invocation independent of
+  Torrent, including exact parameter/version mapping, accepted-effect retries,
+  Guardian/Fabric isolation and source suspension/shutdown fences.
+- Updated new feature guides, reciprocal indexes, actual Markdown example
+  checks, compatibility references and upgrade/migration instructions.
+
+## 2.4.1 - 2026-10-06
+
+This compatible authorization update adds exact string-array overlap across
+Resources, bound Fabric queries and realtime Sync. It does not include the
+unfinished documentation website/CodeBlock feature, UI redesign or changes to
+Pantheon data. No framework database migration is required. Applications still
+own their group-label/projection migration and trusted grant derivation.
+
+### Added And Fixed
+
+- Public `ResourceArrayOverlapConstraint` and `DatabaseFindArrayOverlapFilter`
+  with `operator: 'arrayOverlaps'` and bounded string-array values. Resource
+  SQL/find translation preserves this operator, ANDs it with tenant/client
+  constraints, and applies it before ordered paging. Filtered Fabric cursor
+  lists add optional `filters` without changing existing call sites.
+- Shared SQL/in-memory exact matching rejects malformed, mixed-type, oversized
+  and non-array retained data; empty allowed lists deny access. Case-sensitive
+  element matching has no substring, affinity or scalar-coercion behavior.
+  Guarded JSON traversal and bounded payload validation preserve actor and
+  reader/executor admission.
+- Validated returned resource constraints guard loaded get/update/delete rows
+  and receipt replay as well as list queries. Full/lazy Sync, catch-up, live
+  membership-label changes and live authority invalidation retain the predicate.
+- Periodic Sync revalidation now checks durable authority before and after
+  asynchronous bearer verification. Revoked memberships purge cached rows
+  instead of being misclassified as an ordinary expired-token refresh; the
+  existing same-authority refresh behavior is preserved.
+- Updated resource/Fabric/Sync documentation, a complete
+  [array-policy guide](./docs-next/backend/resources/array-overlap.md),
+  and primary documentation routing from README, agent knowledge files,
+  the compatibility Start Here page and generated app READMEs to `docs-next`.
+
 ## 2.4.0 - 2026-10-06
 
 This additive component release includes Button Group and Context Menu with

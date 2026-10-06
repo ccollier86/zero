@@ -5,6 +5,50 @@ source-audit correctness fixes described in the [changelog](../CHANGELOG.md).
 This guide applies to existing Zero 2.x applications. It is not the legacy
 1.3-to-2.x system-database migration guide.
 
+## 2.4.2 Trigger Production Update
+
+This release includes **all 2.4.1 array-policy fixes** plus the trigger budget
+correction and retry-safe Torrent start. Run the normal `zero-update` once and
+restart/rebuild the app normally; existing trigger declarations and scalar
+policies need no rewrite.
+
+Unrelated origin transactions no longer consume the 256-change automation
+budget. Matched changes and all handler-generated writes remain bounded. The
+separate public Fabric batch envelope has not changed.
+
+Durable handlers can call `zero.torrent.start(name, input?, options?)` with
+delivery-derived idempotency. Ordinary app functions remain supported through
+registered durable adapters; Torrent is not required for those calls.
+Read [app-function invocation](../docs-next/backend/database-automations/app-functions.md)
+and [start/resume integration](../docs-next/backend/database-automations/torrent.md).
+
+Managed system migration `038_workflow_system_start_receipts` runs through the
+normal startup migration path. Torrent also ensures its private runtime schema
+when workflows initialize, including migration-disabled composition. If the
+app disables migrations, explicitly run the normal **system DB** migration
+procedure to keep deployment history consistent; runtime initialization is not
+a replacement for that history.
+Back up system.db and its authority/receipt state together. No application row
+conversion is required. Existing non-idempotent `startAsSystem` calls keep
+their semantics; opt into [startAsSystemOnce](../docs-next/backend/torrent/system-starts.md)
+for retryable trusted jobs. Never call it inside a transaction-mode handler.
+
+## 2.4.1 Exact Array Authorization
+
+Update using the normal saved-main package workflow. This update requires no
+Zero migration or change to existing scalar constraints, table components or
+unfiltered Fabric `list` calls. Applications choosing the new predicate own
+their row projections and trusted membership-grant updates.
+
+`ResourceDataConstraint` and Fabric `DatabaseFindFilter` accept
+`operator: 'arrayOverlaps'` with a bounded string-array value. Empty scope matches
+nothing; stored malformed/mixed/non-array/oversized values deny the entire row.
+Returned row constraints now guard get/update/delete and receipt replay: an
+application callback returning `allowed: true` cannot bypass its own constraint.
+Read the [complete array-policy guide](../docs-next/backend/resources/array-overlap.md)
+before enabling it. New platform/agent work should start in
+[`docs-next/start-here.md`](../docs-next/start-here.md).
+
 ## 2.4 Button Group And Context Menu
 
 Zero 2.4.0 adds the optional [Button Group](./frontend/button-group.md) and

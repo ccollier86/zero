@@ -55,7 +55,7 @@ ready merely because an older archive passed.
 | Framework TypeScript | HTTP/artifact checkpoint passed with no diagnostics. Final integrated checkpoint remains required. |
 | Reader browser/SSR closeout | In progress: short visual viewport, mobile keyboard geometry, nested drawer/search focus, native modified links, destination highlights and title/description cases. |
 | CodeBlock/build/rebuilt archive | Final owner-reported regressions and a newly built installed/compiled artifact identity must be recorded. Historical hashes below do not qualify these corrections. |
-| Documentation | Current package/plugin/search/cache guides being reconciled with source. Final structural/example gate is pending in this entry. |
+| Documentation | Current package/plugin/search/cache guides reconciled with source. Structural traversal: 715 pages/IDs/reachable, zero problems; `git diff --check` clean. Final combined example/closeout gate remains required. |
 
 Current HTTP logs: `docs-http-server-final.log` and `docs-http-typecheck.log`
 under the configured project logs root. `docs-http-cache-red.log` records the

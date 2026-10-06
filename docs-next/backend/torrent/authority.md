@@ -8,14 +8,14 @@ visibility: internal
 system: torrent
 feature: authority
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["authenticated single-tenant app", "Guardian multi-tenant app", "explicit trusted server composition"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -59,6 +59,12 @@ background execution, not a way to avoid authenticating an external webhook.
 Compatibility start/run without an authority provider exists for explicit
 trusted standalone composition. Managed authority must not be sidestepped by
 importing a low-level service and omitting its provider.
+
+For retried background commands use
+[`startAsSystemOnce`](./system-starts.md), which namespaces a permanent receipt
+by source scope/principal and checks the final synchronous source fence on both
+creation and replay. The [automation bridge](../database-automations/torrent.md)
+derives that provenance/key and does not fabricate a human actor.
 
 ## Handler Provenance And Services
 

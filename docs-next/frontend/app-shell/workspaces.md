@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: app-shell-workspace-selection
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; package qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.4.3"
+  commit: "8327e4498f52b12b43759bbc4618973601191039"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -32,6 +32,13 @@ activeId selects a matching item. By default a missing/unknown activeId displays
 the first item for legacy presentation. Set requireActiveSelection=true when the
 label must represent a committed authority-owned workspace: an unknown ID then
 shows 'No active workspace' instead of implying that the first item is active.
+
+The generated switcher also supplies a collapsed-desktop tooltip and accessible
+label from its displayed workspace name. This hint follows the committed
+displayed selection; it does not imply that an in-progress Guardian switch has
+completed. Pending/error announcements remain the authority-aware status channel.
+The hint uses the same viewport-aware [public tooltip](../components/overlays/tooltip.md)
+as navigation items and is suppressed in expanded/mobile sidebars.
 
 ```tsx
 import { AppShell } from '@zero/framework/components/app-shell';

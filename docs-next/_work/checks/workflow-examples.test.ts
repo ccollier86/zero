@@ -8,6 +8,9 @@ const selected: Record<string, number[]> = {
   'backend/database-automations/configuration.md': [0],
   'backend/database-automations/functions.md': [0],
   'backend/database-automations/durable-functions.md': [0],
+  'backend/database-automations/torrent.md': [0],
+  'backend/database-automations/app-functions.md': [0],
+  'backend/torrent/system-starts.md': [0],
   'backend/database-automations/triggers.md': [0],
   'backend/database-automations/validation.md': [0],
   'backend/torrent/configuration.md': [0],
@@ -40,6 +43,7 @@ test('Torrent and database automation complete Markdown examples use public sour
     strict: true, skipLibCheck: true, noEmit: true, types: ['bun'],
     paths: {
       '@zero/framework/server': [`${repo}src/frontend/server.ts`],
+      '@zero/framework/auth': [`${repo}src/auth/index.ts`],
       '@zero/framework/react': [`${repo}src/frontend/index.ts`],
       '@zero/framework/workflows': [`${repo}src/workflows/index.ts`],
       '@zero/framework/database-automations': [`${repo}src/database-automations/index.ts`],

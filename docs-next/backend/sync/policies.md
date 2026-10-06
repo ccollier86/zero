@@ -66,6 +66,13 @@ requires a new connection baseline rather than continuing with an old filter.
 Keep reasons bounded and free of sensitive values; app policy code remains
 trusted server code.
 
+From 2.4.1, Resource filters also support
+[exact string-array overlap](../resources/array-overlap.md), shared with SQL and
+Fabric find/list queries. Invalid retained arrays deny the entire row. Periodic
+revalidation fences asynchronous bearer lookup with the durable-session check:
+known membership revocation invalidates cached data, while ordinary same-authority
+token expiry can still use the established refresh flow.
+
 See [resource policies](../resources/policies.md),
 [field access](../resources/field-access.md), [Guardian authorization](../guardian/index.md),
 [tenant Sync](./tenant-sync.md) and [configuration](./configuration.md).

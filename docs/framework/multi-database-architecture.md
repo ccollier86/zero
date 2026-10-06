@@ -780,7 +780,7 @@ interface AsyncDatabaseClient {
 
   list(
     table: string,
-    page: { limit: number; after?: string },
+    page: { limit: number; after?: string; filters?: readonly DatabaseFindFilter[] },
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseListPage>>;
 
@@ -824,6 +824,13 @@ serializing function source.
 Registered queries and commands live in an app-owned database realm imported
 inside the actor. Public request code sends their registered name and
 validated input. Ordinary bound clients cannot submit raw SQL.
+
+Since 2.4.1, both `find` and cursor `list` accept exact string-array
+`arrayOverlaps` filters. Filtered lists retain their primary-key ordering and
+exclusive cursor; predicates precede their limit. Resources translate the same
+mandatory constraint to actor filters rather than treating the array as scalar
+equality. See [array authorization](../../docs-next/backend/resources/array-overlap.md)
+for public types, limits, malformed-data behavior and complete examples.
 
 Mutation options require an idempotency key and may override queue/operation
 timeouts or supply an `AbortSignal`. Cancellation is honored only before actor

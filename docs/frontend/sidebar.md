@@ -78,6 +78,65 @@ The header row belongs to `SidebarInset`. It is intentionally light: no
 mandatory bottom border and no heavy app-bar surface. Put breadcrumbs, title,
 search, filters, or actions there as the app needs.
 
+## Collapsed Navigation Labels
+
+Give icon-only controls a `tooltip` so they remain identifiable when the desktop
+sidebar is collapsed. Zero uses its public Radix tooltip family on the actual
+button or link, not on the animated highlight wrapper. Pointer hover works
+independently of `Sidebar animateOnHover`; tooltip content is portalled
+outside the scrolling sidebar and can flip or shift to fit the viewport.
+
+```tsx
+<SidebarMenuButton asChild tooltip="Projects">
+  <a href="/projects">
+    <Layers className="size-4" />
+    <span>Projects</span>
+  </a>
+</SidebarMenuButton>
+```
+
+A string tooltip (including an object with string `children`) supplies a default
+accessible `aria-label`; an explicitly
+provided accessible name takes precedence. Tooltip content appears only for a
+collapsed desktop sidebar, not an expanded sidebar or mobile navigation sheet.
+The underlying control keeps its identity, ref and event handlers when sidebar
+state changes. Keyboard focus alone does not open a sidebar hint. Escape,
+pointer activation and leaving the trigger dismiss it; after clicking a control,
+the hint stays closed until the pointer leaves and hovers it again. An
+expanded/mobile transition or unmount also removes it. This hover-only behavior
+is specific to sidebar hints: ordinary public tooltips retain focus interaction.
+
+For richer noninteractive labels or positioning overrides, pass the public
+`TooltipContent` props as an object:
+
+```tsx
+<SidebarMenuButton
+  aria-label="Open project settings"
+  tooltip={{
+    children: 'Project settings',
+    side: 'right',
+    align: 'center',
+    collisionPadding: 12,
+    className: 'max-w-64',
+  }}
+>
+  <Layers className="size-4" />
+  <span>Settings</span>
+</SidebarMenuButton>
+```
+
+The sidebar defaults to the right side, centered alignment, a 6px side offset,
+8px collision padding and `hideWhenDetached: true`. These are preferences, not
+fixed screen coordinates: collision detection may choose another side. Public
+tooltip content constrains long labels to the available viewport width and wraps
+long words. Rich custom content still needs an accessible control name; tooltips must
+not contain inputs, menus or the only copy of critical instructions.
+
+The standard [AppShell](./app-shell.md) supplies navigation labels automatically
+and labels its brand/workspace and account controls. A custom sidebar is
+app-owned: set `tooltip` on its `SidebarMenuButton` controls yourself. No extra
+tooltip provider or application configuration is required.
+
 ## Top Workspace Switcher
 
 Use a `DropdownMenu` around a large `SidebarMenuButton` to recreate the
@@ -91,6 +150,7 @@ Animate UI team/workspace switcher.
         <DropdownMenuTrigger asChild>
           <SidebarMenuButton
             size="lg"
+            tooltip="Acme Inc"
             className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
             <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
@@ -166,7 +226,7 @@ context actions.
 
 ```tsx
 <SidebarMenuItem>
-  <SidebarMenuButton asChild>
+  <SidebarMenuButton asChild tooltip="Design Engineering">
     <a href="/projects/design">
       <Layers className="size-4" />
       <span>Design Engineering</span>
@@ -199,7 +259,7 @@ The footer user button is the same dropdown pattern with `Avatar`.
     <SidebarMenuItem>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuButton size="lg">
+          <SidebarMenuButton size="lg" tooltip={user.name}>
             <Avatar className="h-8 w-8 rounded-lg">
               <AvatarImage src={user.avatarUrl} alt={user.name} />
               <AvatarFallback className="rounded-lg">CA</AvatarFallback>

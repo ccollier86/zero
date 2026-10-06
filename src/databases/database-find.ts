@@ -10,9 +10,11 @@
 import type { Statement } from 'bun:sqlite';
 
 import { quoteSqlIdentifier } from '../sync/identity';
+import { buildStringArrayOverlapSql } from '../lib/string-array-overlap-sql';
 import { DatabaseError } from './database-error';
 import type {
   DatabaseFindFieldFilter,
+  DatabaseFindArrayOverlapFilter,
   DatabaseFindFilter,
   DatabaseFindOperation,
   DatabaseFindRows,
@@ -26,7 +28,7 @@ interface DatabaseFindConnection {
   prepare(sql: string): Statement;
 }
 
-interface DatabaseFindClause {
+export interface DatabaseFindClause {
   readonly sql: string;
   readonly params: readonly DatabaseFindBinding[];
 }
@@ -67,7 +69,7 @@ function buildDatabaseFindPlan(
   const selectSql = selectedFields
     .map((field) => quoteSqlIdentifier(field))
     .join(', ');
-  const filters = operation.filters?.map(compileFilter) ?? [];
+  const filters = operation.filters?.map(compileDatabaseFindFilter) ?? [];
   const whereSql = filters.length === 0
     ? ''
     : ` WHERE ${filters.map((filter) => filter.sql).join(' AND ')}`;
@@ -92,9 +94,10 @@ function buildDatabaseFindPlan(
   });
 }
 
-function compileFilter(filter: DatabaseFindFilter): DatabaseFindClause {
+/** @internal Shared, validated predicate compiler for find and keyset list. */
+export function compileDatabaseFindFilter(filter: DatabaseFindFilter): DatabaseFindClause {
   if (filter.type !== 'field') {
-    const children = filter.filters.map(compileFilter);
+    const children = filter.filters.map(compileDatabaseFindFilter);
     return {
       sql: `(${children.map((child) => child.sql).join(
         filter.type === 'allOf' ? ' AND ' : ' OR ',
@@ -106,9 +109,13 @@ function compileFilter(filter: DatabaseFindFilter): DatabaseFindClause {
 }
 
 function compileFieldFilter(
-  filter: DatabaseFindFieldFilter,
+  filter: DatabaseFindFieldFilter | DatabaseFindArrayOverlapFilter,
 ): DatabaseFindClause {
   const field = quoteSqlIdentifier(filter.field);
+  if (filter.operator === 'arrayOverlaps') {
+    const params: DatabaseFindBinding[] = [];
+    return { sql: buildStringArrayOverlapSql(field, filter.value, params), params };
+  }
   if (filter.match === 'exact') {
     return compileExactFilter(field, filter.operator, filter.value);
   }

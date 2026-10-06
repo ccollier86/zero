@@ -34,6 +34,6 @@ This section is developer-agent guidance; application AI agents belong to
 [Zero AI](../backend/ai/agents.md) and durable execution belongs to
 [Torrent](../backend/torrent/index.md).
 
-The new guidance is an isolated draft. It does not install AGENTS.md, Codex/
+This is the primary coding-agent guidance entrance. It does not install AGENTS.md, Codex/
 Claude hooks, skills or an MCP server into applications. Preserve the user's
 actual repository instructions and app-owned work.

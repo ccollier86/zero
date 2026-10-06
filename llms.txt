@@ -1,11 +1,15 @@
 # Zero Framework LLM Documentation
 
-This is the main agent-facing documentation bundle for Zero. It should be
-loaded before planning or coding a Zero app. It intentionally repeats the most
-important framework docs in one file so agents use Zero's existing surfaces
-instead of rebuilding them.
+Before planning or coding, start with [the new Zero documentation](docs-next/start-here.md),
+its [main index](docs-next/index.md), and [coding-agent guidance](docs-next/agents/index.md).
+The organized `docs-next` tree is the primary feature reference; follow its
+indexes/backlinks and check each page's version/evidence against the installed
+package. Do not interpret a roadmap item as an implemented API.
 
-Use this file first. Use the linked docs for deeper subsystem details.
+This long bundle remains a compatibility orientation. Some repeated sections
+are historical: use the owning feature guide and actual public exports when
+they differ from these summaries. For 2.4.1's array authorization, read
+[exact string-array overlap](docs-next/backend/resources/array-overlap.md).
 
 ## Product Summary
 
@@ -120,7 +124,9 @@ publicly supported.
 ## Authoritative Docs
 
 - `README.md`: human repo entry point and local create workflow.
-- `docs/start-here.md`: main platform documentation.
+- `docs-next/start-here.md`: primary platform/agent entrance.
+- `docs-next/index.md`: organized backend, frontend, CLI and agent references.
+- `docs/start-here.md`: compatibility entrance forwarding to the new docs.
 - `docs/framework/README.md`: installed framework/package-mode docs.
 - `docs/framework-developer-surface.md`: canonical imports and app-owned
   extension APIs.

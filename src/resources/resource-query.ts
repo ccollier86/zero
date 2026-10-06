@@ -7,6 +7,9 @@
  */
 
 import type { ResourceDataConstraint, ResourcePolicyScalar } from './resource-policy-types';
+import { buildStringArrayOverlapSql } from '../lib/string-array-overlap-sql';
+import { normalizeResourceDataConstraints, ResourcePolicyOutputError } from './resource-policy-output-validation';
+import { resourceConstraintNodeCount, resourceFindQueryBudget, validateResourceFindEnvelope, validateResourceReadQueryBudget } from './resource-query-budget';
 import {
   DATABASE_FIND_MAX_FILTERS,
   DATABASE_FIND_MAX_ROWS,
@@ -171,7 +174,7 @@ export function buildResourceListQueryPlan(
   if ('error' in search) return search;
 
   const policyFilters = buildConstraintClauses(
-    options.constraints ?? [],
+    options.constraints === undefined ? [] : options.constraints,
     options.table,
     allowedColumnSet
   );
@@ -203,6 +206,16 @@ export function buildResourceListQueryPlan(
     ? ` WHERE ${clauses.map((clause) => clause.sql).join(' AND ')}`
     : '';
   const params = clauses.flatMap((clause) => clause.params);
+  const budget = validateResourceReadQueryBudget(
+    filters.clauses.length + (search.clause ? search.clause.params.length + 1 : 0) + policyFilters.nodes,
+    params.length + 2,
+  );
+  if (budget) return budget;
+
+  // Validate the same canonical FIND envelope used by the actor path without
+  // imposing its row-cap or changing this path's legacy empty SQL projection.
+  const canonicalPlan = buildResourceListFindPayload(options, false);
+  if ('error' in canonicalPlan) return canonicalPlan;
 
   return {
     sql: `SELECT ${select.selectClause} FROM ${quoteResourceIdentifier(options.table)}${whereClause}${order.orderClause} LIMIT ? OFFSET ?`,
@@ -223,6 +236,14 @@ export function buildResourceListQueryPlan(
  */
 export function buildResourceListFindPlan(
   options: ResourceListQueryPlanOptions,
+): ResourceListFindPlan | ResourceQueryError {
+  return buildResourceListFindPayload(options, true);
+}
+
+/** Shared canonical admission; SQL retains its independently configured row cap. */
+function buildResourceListFindPayload(
+  options: ResourceListQueryPlanOptions,
+  enforceActorRowLimit: boolean,
 ): ResourceListFindPlan | ResourceQueryError {
   const queryInput = validateResourceListQueryInput(options.query);
   if (queryInput) return queryInput;
@@ -262,7 +283,7 @@ export function buildResourceListFindPlan(
   );
   if ('error' in search) return search;
   const constraints = buildFindConstraints(
-    options.constraints ?? [],
+    options.constraints === undefined ? [] : options.constraints,
     options.table,
     allowedColumnSet,
   );
@@ -282,7 +303,7 @@ export function buildResourceListFindPlan(
     options.maxLimit ?? MAX_RESOURCE_LIMIT,
   );
   if ('error' in page) return page;
-  if (page.limit + 1 > DATABASE_FIND_MAX_ROWS) {
+  if (enforceActorRowLimit && page.limit + 1 > DATABASE_FIND_MAX_ROWS) {
     return {
       status: 400,
       error: `Limit must not exceed ${DATABASE_FIND_MAX_ROWS - 1} for an isolated database query`,
@@ -294,14 +315,20 @@ export function buildResourceListFindPlan(
     ...(search.filter ? [search.filter] : []),
     ...constraints.filters,
   ];
+  const { nodes, parameters } = resourceFindQueryBudget(combinedFilters);
+  const budget = validateResourceReadQueryBudget(nodes, parameters);
+  if (budget) return budget;
+  const input: DatabaseFindInput = {
+    ...(select.select === undefined ? {} : { select: select.select }),
+    ...(combinedFilters.length === 0 ? {} : { filters: combinedFilters }),
+    ...(order.order === undefined ? {} : { order: order.order }),
+    limit: page.limit + 1,
+    offset: page.offset,
+  };
+  const envelope = validateResourceFindEnvelope(options.table, input);
+  if (envelope) return envelope;
   return {
-    input: {
-      ...(select.select === undefined ? {} : { select: select.select }),
-      ...(combinedFilters.length === 0 ? {} : { filters: combinedFilters }),
-      ...(order.order === undefined ? {} : { order: order.order }),
-      limit: page.limit + 1,
-      offset: page.offset,
-    },
+    input,
     limit: page.limit,
     offset: page.offset,
   };
@@ -365,6 +392,8 @@ function buildFindConstraints(
   table: string,
   allowedColumnSet: Set<string>,
 ): { filters: DatabaseFindFilter[] } | ResourceQueryError {
+  try { constraints = normalizeResourceDataConstraints(constraints); }
+  catch (cause) { return invalidPolicyConstraints(cause); }
   const filters: DatabaseFindFilter[] = [];
   for (const constraint of constraints) {
     const filter = buildFindConstraint(constraint, table, allowedColumnSet);
@@ -382,6 +411,9 @@ function buildFindConstraint(
   if (constraint.type === 'field') {
     const column = validatePolicyColumn(constraint.field, table, allowedColumnSet);
     if ('error' in column) return column;
+    if (constraint.operator === 'arrayOverlaps') {
+      return { filter: { type: 'field', field: constraint.field, operator: constraint.operator, value: constraint.value } };
+    }
     return {
       filter: {
         type: 'field',
@@ -555,7 +587,9 @@ function buildConstraintClauses(
   constraints: readonly ResourceDataConstraint[],
   table: string,
   allowedColumnSet: Set<string>
-): { clauses: FilterClause[] } | ResourceQueryError {
+): { clauses: FilterClause[]; nodes: number } | ResourceQueryError {
+  try { constraints = normalizeResourceDataConstraints(constraints); }
+  catch (cause) { return invalidPolicyConstraints(cause); }
   const clauses: FilterClause[] = [];
 
   for (const constraint of constraints) {
@@ -564,7 +598,7 @@ function buildConstraintClauses(
     clauses.push(clause);
   }
 
-  return { clauses };
+  return { clauses, nodes: resourceConstraintNodeCount(constraints) };
 }
 
 function buildConstraintClause(
@@ -575,6 +609,10 @@ function buildConstraintClause(
   if (constraint.type === 'field') {
     const column = validatePolicyColumn(constraint.field, table, allowedColumnSet);
     if ('error' in column) return column;
+    if (constraint.operator === 'arrayOverlaps') {
+      const params: string[] = [];
+      return { sql: buildStringArrayOverlapSql(column.identifier, constraint.value, params), params };
+    }
     return buildExactConstraintValueClause(column.identifier, constraint.value);
   }
 
@@ -593,6 +631,15 @@ function buildConstraintClause(
   return {
     sql: `(${childClauses.map((clause) => clause.sql).join(joiner)})`,
     params: childClauses.flatMap((clause) => clause.params),
+  };
+}
+
+function invalidPolicyConstraints(cause: unknown): ResourceQueryError {
+  return {
+    status: 500,
+    error: cause instanceof ResourcePolicyOutputError
+      ? cause.message
+      : 'Resource policy returned invalid data constraints.',
   };
 }
 

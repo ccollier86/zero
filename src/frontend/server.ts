@@ -145,6 +145,8 @@ export type {
   DatabaseCoordinatorRestartPolicy,
   DatabaseErrorCode,
   DatabaseFindFieldFilter,
+  DatabaseFindArrayOverlapFilter,
+  DatabaseFindScalarFieldFilter,
   DatabaseFindFilter,
   DatabaseFindFilterGroup,
   DatabaseFindFilterOperator,
@@ -419,6 +421,7 @@ export type {
   RegisteredResourceExposure,
   RegisteredResourceStorage,
   ResourceAction,
+  ResourceArrayOverlapConstraint,
   ResourceCrudFailure,
   ResourceCrudPluginConfig,
   ResourceCrudRequestContext,
@@ -870,6 +873,10 @@ export type {
   WorkflowResolvedExecutionAuthority,
   WorkflowServiceOptions,
   WorkflowSystemExecutionOptions,
+  WorkflowStartOptions,
+  WorkflowSystemStartOptions,
+  WorkflowSystemStartResult,
+  WorkflowSystemStartMutation,
 } from '../workflows';
 
 // ─── Storage: Server ────────────────────────────────────────────────────

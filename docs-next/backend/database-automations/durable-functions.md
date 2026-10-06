@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: durable-functions
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -66,6 +66,13 @@ row. context.invocation pins exact identities. context.zero is
 DatabaseAutomationExecutionServerServices: source-bound authority-scoped
 services plus the narrow torrent helper. context.signal aborts on shutdown,
 attempt timeout or lost execution lifetime.
+
+This is not a workflow-only API. An ordinary app function can receive mapped
+snapshot parameters, `zero`, `signal` and a stable destination key. The
+[app-function guide](./app-functions.md) shows how an app-owned dispatcher
+selects a registered version without giving handlers an arbitrary tenant selector.
+[`zero.torrent.start`](./torrent.md) separately provides a permanent start
+receipt when the desired effect is starting a workflow rather than calling a function.
 
 Services are revocable. Check signal before external calls and pass it into
 adapters supporting cancellation. Never stash zero for another timer/run.

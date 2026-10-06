@@ -101,6 +101,12 @@ subscription is required.
 
 ## Core Properties
 
+Managed resource policies support exact string-array `arrayOverlaps` constraints
+as well as scalar equality. HTTP/lazy queries and full/catch-up/live Sync enforce
+the same rule; a tracked group-label change can remove a previously visible row.
+See [array authorization](../../../docs-next/backend/resources/array-overlap.md)
+for declaration, malformed-data behavior and authority-refresh details.
+
 | Property | What it means |
 |----------|--------------|
 | **RAM-speed** | SQLite in `:memory:` mode — writes are sub-microsecond, reads are pointer lookups |

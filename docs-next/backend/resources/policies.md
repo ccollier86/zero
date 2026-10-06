@@ -81,4 +81,6 @@ realm, immutable identity or field admission. Broad true means a broad grant
 within those boundaries; reviewers must assess the intended business rule.
 
 See [composition](./policy-composition.md) and
-[input validation](./input-validation.md).
+[input validation](./input-validation.md). For multi-group row visibility, see
+[exact string-array overlap](./array-overlap.md); returned constraints also guard
+loaded row actions and are not merely advice for list queries.

@@ -231,7 +231,10 @@ apps. Start with the
 
 ## Docs Map
 
-- [Start Here](./docs/start-here.md): main platform entry point.
+- [Start Here](./docs-next/start-here.md): primary platform and coding-agent entrance.
+- [Documentation index](./docs-next/index.md): organized backend, frontend, CLI,
+  agent and task guides, with per-feature version/evidence metadata.
+- [Compatibility entrance](./docs/start-here.md): older links and deep references.
 - [Framework Docs](./docs/framework/README.md): package-mode app conventions,
   route loading, middleware, resources, and create-app behavior.
 - [Framework Developer Surface](./docs/framework-developer-surface.md):

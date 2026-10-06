@@ -348,9 +348,14 @@ import { Button } from '@zero/framework/components/ui/button';
 \`\`\`
 
 Use Zero components, hooks, backend services, and config surfaces before
-creating custom replacements. The framework guide is available at
-\`node_modules/@zero/framework/docs/start-here.md\` when using a local or
-published package.
+creating custom replacements. Start with the installed, organized documentation:
+
+- \`node_modules/@zero/framework/docs-next/start-here.md\`: platform orientation.
+- \`node_modules/@zero/framework/docs-next/index.md\`: system and task references.
+- \`node_modules/@zero/framework/docs-next/agents/index.md\`: coding-agent guidance.
+
+Check each feature's version/evidence against your installed package. The older
+\`node_modules/@zero/framework/docs/start-here.md\` remains a compatibility link.
 
 \`/sitemap.xml\` is enabled from public static file-router pages. Add dynamic
 URLs through \`sitemap.entries\` in \`zero.config.ts\` when your app can enumerate

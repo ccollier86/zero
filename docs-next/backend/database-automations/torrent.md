@@ -8,18 +8,18 @@ visibility: internal
 system: database-automations
 feature: torrent
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.4.2 source update; focused release checks recorded separately"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.4.2"
+  commit: "5cf3009f63767c4052065aa211734f2ebffb2c9f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
-# Resume One Torrent Instance From A Database Change
+# Start Or Resume One Torrent Instance From A Database Change
 
 [Database automations](./index.md) · [Durable functions](./durable-functions.md) · [Documentation index](../../index.md)
 
@@ -45,6 +45,67 @@ independent correlations, not one broadcast event.
 The automation invocationId is not automatically the Torrent instanceId.
 Zero's current public workflow terminology remains instanceId; an application
 may call that a run/invocation ID in its own product.
+
+## Durably Start A New Run
+
+As of 2.4.2, `zero.torrent.start(name, input?, options?)` starts one run in the
+source-bound application or tenant scope. Its result is a stable acknowledgement:
+`{ instanceId, name, createdAt, definitionVersion }`. The version is the pinned
+graph version, or `null` for a legacy sequential definition.
+
+Complete declaration example. Register `orders.fulfill` with Torrent before
+recovery and compose this function into an AFTER trigger/registry as described
+in [configuration](./configuration.md). Only independently authorized origin
+writes should be able to enter the business state that starts this work.
+
+```ts
+import { defineDatabaseFunction, type DatabaseTriggerFunctionInput,
+} from "@zero/framework/database-automations";
+import type { DatabaseAutomationExecutionServerServices } from "@zero/framework/server";
+
+export const startOrderRun = defineDatabaseFunction<
+  DatabaseTriggerFunctionInput, void, DatabaseAutomationExecutionServerServices
+>({
+  name: "orders.start-run", version: 1, mode: "durable",
+  async handler({ input, zero, signal }) {
+    signal.throwIfAborted();
+    if (input.change.row?.status !== "ready") return;
+    await zero.torrent.start("orders.fulfill", {
+      orderId: input.change.rowId,
+      sourceSequence: input.change.sequence,
+    }, {
+      key: "fulfillment",
+      version: 1,
+      initialMemory: { originOrderId: input.change.rowId },
+    });
+  },
+});
+```
+
+The options are `WorkflowStartOptions` plus the same optional `key`
+discriminator described below: `version`, `initialMemory` and `memoryLimits`
+are forwarded to Torrent. Private-memory options require a graph workflow.
+Multiple intended starts in one handler must use distinct stable keys. Different
+outbox deliveries already have distinct effect identities.
+
+Torrent commits the immutable run, initial steps, source authority, private
+memory and a permanent start receipt in one **system-database transaction**.
+Application execution happens only after that commit. A lost acknowledgement,
+retry or restart cannot create a second run for the same command/key. Replays
+return the original acknowledgement; they do not resolve a newer activated
+definition. Reusing the key with changed name, input, explicit version, options
+or system provenance returns `WORKFLOW_START_IDEMPOTENCY_CONFLICT`.
+
+Source eligibility is rechecked inside the final writer transaction, including
+on receipt replay, and after awaited work. A committed run whose first
+post-commit advance was interrupted is recovered normally; replay can also
+re-kick an eligible running instance. A successful acknowledgement confirms a
+durable start, not successful completion of every activity or external effect.
+
+The start receipt is permanent and separate from outbox retention. See
+[Torrent system starts](../torrent/system-starts.md) for the trusted low-level
+API, integrity checks, migration and backup requirements. Ordinary app function
+invocation does not need this bridge or Torrent; see [app functions](./app-functions.md).
 
 ## Handler And Trigger
 

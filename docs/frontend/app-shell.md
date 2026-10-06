@@ -316,6 +316,39 @@ Use child `badge` values for per-section counts such as cards in a Kanban
 column. Keep parent badges for parent-level state only; avoid duplicating the
 same count at both levels.
 
+### Collapsed Sidebar Tooltips
+
+The default shell automatically uses each navigation item's `label` as its
+collapsed-desktop tooltip and accessible label. Override the hint with that
+item's `tooltip` string when a more descriptive label is useful:
+
+```tsx
+{
+  label: 'Runs',
+  tooltip: 'Workflow runs',
+  href: '/runs',
+  icon: 'layers',
+}
+```
+
+The navigation control's accessible name remains its `label`; the `tooltip`
+override changes the hover hint, not the control's name.
+
+The brand, active workspace and account buttons also receive labels from their
+configured names. Workspace hints follow the committed displayed workspace;
+they do not represent an optimistic tenant switch or replace pending/error
+announcements.
+
+Hints appear on pointer hover only while the desktop sidebar is collapsed.
+Keyboard focus alone does not open them. Clicking a sidebar control dismisses
+its hint and keeps it closed until the pointer leaves and hovers again; the
+control's accessible label remains available. They reuse Zero's public Radix
+tooltip, which portals its content,
+adjusts placement at viewport edges and wraps long labels. Disabling decorative
+sidebar hover highlighting does not disable the hints. No separate tooltip
+provider or application configuration is needed. See [Sidebar](./sidebar.md#collapsed-navigation-labels)
+for positioning overrides and accessible custom-content composition.
+
 Use `variant: 'action'` for sidebar action rows such as "Add board" or "Add
 project". The action variant keeps the row in the AppShell navigation contract
 while styling it as a create button instead of another navigation target:
@@ -451,6 +484,8 @@ import {
 
 If the app needs to own the full sidebar provider/sidebar/inset structure, use
 the sidebar primitives directly instead of `AppShell preset="custom"`.
+Custom sidebar content does not receive generated navigation labels: supply
+`tooltip` and accessible labels on its icon-only `SidebarMenuButton` controls.
 
 ## Import Paths
 
