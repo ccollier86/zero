@@ -8,15 +8,15 @@ visibility: internal
 system: frontend-components
 feature: cascader
 maturity: supported
-applies_to: ["Unreleased Cascader source on top of Zero 2.2.1; not in the published 2.2.1 archive"]
+applies_to: ["Zero 2.3.0 Cascader; not in the published 2.2.1 archive"]
 modes: [browser, SSR, single-selection, multi-selection, static, async]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.2.1"
-  commit: "ea971213e7bc7f3b1d11b16cda42227ca8287a60"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: contract-tested
+  version: "2.3.0"
+  commit: "b3a583038ab7635d29a6d21ba960688429854e1c"
+  snapshot: clean
+  date: "2026-10-06"
+  evidence_level: implementation-verified
 ---
 
 # Cascader
@@ -33,6 +33,11 @@ This is a general selection component, not a permissions editor or a source
 of Guardian authority. Applications supply their choices and own persistence.
 It composes Zero's existing Command, Popover, Checkbox, Badge, Button and
 DropdownMenu controls and uses the same light/dark design tokens.
+
+The component is included in Zero 2.3.0, not the older 2.2.1 archive. The
+release's fresh packed-consumer gate verifies public exports, browser bundling
+and DOM-free server rendering. Documentation-tree publication remains separate
+from component availability.
 
 ## Imports And Tree Data
 

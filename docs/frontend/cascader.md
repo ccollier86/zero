@@ -13,10 +13,9 @@ of Guardian authority. Applications supply their choices and own persistence.
 It composes Zero's existing Command, Popover, Checkbox, Badge, Button and
 DropdownMenu controls and uses the same light/dark design tokens.
 
-Availability: this guide currently describes the new Cascader working-source
-addition on top of Zero 2.2.1. It does not claim that the previously published
-2.2.1 archive already includes the component. Check the installed package's
-public Cascader export before using this guide with an older archive.
+Availability: Cascader is included in Zero 2.3.0. It is not present in the
+previously published 2.2.1 archive; update before using these public imports.
+See the [2.3 upgrade notes](../upgrading-2.2.md#23-component-and-storage-update).
 
 ## Imports And Tree Data
 

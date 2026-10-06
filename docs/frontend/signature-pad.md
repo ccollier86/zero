@@ -7,8 +7,9 @@ mouse, pen, or touch. Compose a muted pad with pinned Clear/Save actions, add
 an undo/redo toolbar, submit a native form field, or use the agreement and
 clause-initials prefabs. The same immutable drawing model powers every variant.
 
-This is an **unreleased source addition on top of Zero 2.2.1**, alongside the
-Cascader feature branch. It is not present in the published 2.2.1 archive.
+The family is included in Zero 2.3.0. It is not present in the previously
+published 2.2.1 archive; see the
+[2.3 upgrade notes](../upgrading-2.2.md#23-component-and-storage-update).
 
 The component captures ink; it does not establish a person's identity, verify
 legal consent, assign a trusted date, or persist anything automatically. The

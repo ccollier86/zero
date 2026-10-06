@@ -8,15 +8,15 @@ visibility: internal
 system: frontend-components
 feature: signature-pad
 maturity: supported
-applies_to: ["Unreleased Signature Pad source on top of Zero 2.2.1; not in the published 2.2.1 archive"]
+applies_to: ["Zero 2.3.0 Signature Pad; not in the published 2.2.1 archive"]
 modes: [browser, SSR, controlled, native-form, agreement, clause-initials]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.2.1"
-  commit: "90327973ecf421f1bf720c1068c4f2a0b64d11e9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.3.0"
+  commit: "b3a583038ab7635d29a6d21ba960688429854e1c"
+  snapshot: clean
+  date: "2026-10-06"
+  evidence_level: implementation-verified
 ---
 
 # Signature Pad
@@ -28,8 +28,10 @@ mouse, pen, or touch. Compose a muted pad with pinned Clear/Save actions, add
 an undo/redo toolbar, submit a native form field, or use the agreement and
 clause-initials prefabs. The same immutable drawing model powers every variant.
 
-This is an **unreleased source addition on top of Zero 2.2.1**, alongside the
-Cascader feature branch. It is not present in the published 2.2.1 archive.
+The family is included in Zero 2.3.0, not the older 2.2.1 archive. The release's
+fresh packed-consumer gate verifies root/React/focused export identity, browser
+bundling and DOM-free server rendering. Documentation-tree publication remains
+separate from component availability.
 
 The component captures ink; it does not establish a person's identity, verify
 legal consent, assign a trusted date, or persist anything automatically. The
