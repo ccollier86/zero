@@ -3,19 +3,19 @@ id: zero.frontend.guardian.configuration
 type: reference
 audience: [developer, agent]
 owner: guardian
-status: draft
+status: verified
 visibility: internal
 system: guardian
 feature: frontend-configuration
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 

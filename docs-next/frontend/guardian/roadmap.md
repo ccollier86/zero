@@ -3,19 +3,19 @@ id: zero.frontend.guardian.roadmap
 type: roadmap
 audience: [developer, agent]
 owner: guardian
-status: draft
+status: verified
 visibility: internal
 system: guardian
 feature: frontend-roadmap
 maturity: planned
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -31,11 +31,10 @@ Backend expansion remains owned by the
 
 ## Known Direction
 
-- [x] Implement the adaptive current-user profile/settings surface in working
-  source: whitelisted core/expanded fields, regional settings, private avatar
-  crop/upload, contact possession, availability and required completion.
-  [Current contracts](./profile-settings.md) remain under integrated/package
-  qualification; this check is not a claim of a published release.
+- [x] Ship the adaptive current-user profile/settings surface in Zero 2.6:
+  whitelisted core/expanded fields, regional settings, private avatar crop/upload,
+  contact possession, availability and required completion. See the
+  [current contracts](./profile-settings.md) and their configuration boundaries.
 - [ ] Extend account/settings presentation alongside future passkey, social
   linking or session-device management only when those backend contracts exist.
 

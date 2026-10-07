@@ -3,20 +3,20 @@ id: zero.frontend.data-controls.data-table-controls
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: draft
+status: verified
 visibility: internal
 system: frontend-data-controls
 feature: data-table-controls
 maturity: supported
-applies_to: ["2.5.0 working source; page-size correction qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
   date: "2026-10-07"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Search-First Toolbars And Pagination

@@ -204,7 +204,7 @@ profile organism is claimed.
 
 The existing MFAManagementPanel unconditionally loaded methods and remained
 visible with MFA disabled, and guessed email/TOTP choices when actual
-availability was empty. Its [capability correction](../../../frontend/guardian/mfa-controls.md#capability-correction-250-working-update)
+availability was empty. Its [capability correction](../../../frontend/guardian/mfa-controls.md#capability-aware-management)
 now hides a definitively disabled panel without a request, treats unknown/
 refresh/error states explicitly, and admits enrollment only for current ready
 configured-and-available methods after accepted method status. It reuses the

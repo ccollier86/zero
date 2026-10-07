@@ -3,20 +3,20 @@ id: zero.frontend.components.phone-input
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: phone-input
-maturity: preview
-applies_to: ["Working source on Zero 2.5.0; release qualification pending"]
+maturity: supported
+applies_to: ["2.6.0"]
 modes: [browser, SSR, controlled, native-form, generated-form]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "39c0ed1de0501986810a2b99366f484e66ba80dc"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Phone Input
@@ -33,9 +33,8 @@ The optional [Guardian contacts service](../../backend/guardian/contacts.md)
 supplies Zero's typed account-phone storage and possession ceremony when enabled;
 the input itself does not provision that service or prove number ownership.
 
-This is an additive, unreleased working-source component, adapted from ReUI's
-country-picker and read-only examples. It is not in the already published
-2.5.0 archive. The shared [Input](./primitives/inputs.md#input-textarea-and-label)
+This component is supported in Zero 2.6.0, adapted from ReUI's country-picker
+and read-only examples. The shared [Input](./primitives/inputs.md#input-textarea-and-label)
 remains the normal base control; a second general-purpose input is not added.
 
 ## Public Imports And Ordinary Usage

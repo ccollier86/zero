@@ -3,18 +3,18 @@ id: zero.frontend.data-controls.data-table
 type: index
 audience: [developer, agent]
 owner: frontend-data-controls
-status: draft
+status: verified
 visibility: internal
 system: frontend-data-controls
 feature: data-table
 maturity: supported
-applies_to: ["2.5.0 working source; page-size correction qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
   date: "2026-10-07"
   evidence_level: source-observed
 ---
@@ -44,8 +44,9 @@ An app selects source, columns and actions rather than duplicating those control
   loaded server exports and literal spreadsheet-safe text.
 - [Roadmap](./roadmap.md): relevant future proposals, not invented source modes.
 
-These pages cover the table family as inspected in working source; independent
-manual review and installed-package qualification remain separate gates.
+These pages describe the Zero 2.6 table family. Each guide records its own
+evidence level; a shared API reference does not qualify every application source
+or device combination.
 
 ## Minimal Local Fragment
 
@@ -95,6 +96,6 @@ does not authorize a write or every matching backend result.
 
 Test the intended source, query ordering, no double pagination, unknown totals,
 scope/source replacement and delayed/rejected actions. Focused actual table and
-MasterDetail browser regressions support the corrected working source. Package,
-production styles/accessibility and app-specific server contracts still require
-their separate review gates.
+MasterDetail browser regressions support the Zero 2.6 behavior described here.
+Qualify the consuming application's server contracts, production styling and
+accessibility separately; shared regressions do not authorize custom writers.

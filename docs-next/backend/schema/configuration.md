@@ -3,19 +3,19 @@ id: zero.schema.configuration
 type: reference
 audience: [developer, agent]
 owner: schema
-status: draft
+status: verified
 visibility: internal
 system: schema
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased Schema corrections"]
+applies_to: ["2.6.0"]
 modes: [server, browser, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -72,7 +72,7 @@ wire representations as it is completed.
 | Builders | Accepted options beyond their choice/value arguments |
 | --- | --- |
 | text, email, url, password, textarea | label, placeholder, description, required, defaultValue, minLength, maxLength, tableVisible, sortable, filterable, columnWidth |
-| phone — 2.5.0 working update | label, placeholder, description, required, defaultValue, defaultCountry, validation, tableVisible, sortable, filterable, columnWidth |
+| phone | label, placeholder, description, required, defaultValue, defaultCountry, validation, tableVisible, sortable, filterable, columnWidth |
 | number | label, placeholder, description, required, defaultValue, min, max, integer, tableVisible, sortable, filterable, columnWidth |
 | boolean | label, description, required, defaultValue, tableVisible, sortable, filterable, columnWidth |
 | select, enum | label, placeholder, description, required, defaultValue, tableVisible, sortable, filterable, columnWidth |
@@ -89,11 +89,10 @@ takes a nonempty string-literal tuple and derives labels. Use `defaultValue`,
 not `default`. A builder accepting an option does not imply every option changes
 SQL validation: presentation metadata and logical constraints are distinct.
 
-## Phone Options: 2.5.0 Working Update
+## Phone Options
 
-These additions are source-observed in the working profile-settings branch based
-on `39c0ed1de0501986810a2b99366f484e66ba80dc`; they do not replace the
-earlier full-page review identity or claim an installed-package qualification.
+Phone options in Zero 2.6.0 separate canonical backend admission from generated
+input presentation. A default country is a UI hint, not server-side conversion.
 
 | Phone option | Accepted value | Default / effect |
 | --- | --- | --- |
@@ -109,7 +108,7 @@ TypeErrors. An invalid `defaultValue` uses `SchemaConfigurationError` with
 `SCHEMA_DEFAULT_INVALID`. The builder stores TEXT, not a new SQL type, and
 adds NOT NULL only when required. It emits no SQL DEFAULT clause. Both
 validation modes accept only canonical international nonblank strings; neither
-verifies the subscriber or adds SMS/MFA functionality. See [phone fields](./fields.md#phone-fields-250-working-update)
+verifies the subscriber or adds SMS/MFA functionality. See [phone fields](./fields.md#phone-fields)
 and the [PhoneInput reference](../../frontend/components/phone-input.md).
 
 ## Defaults And Read Time

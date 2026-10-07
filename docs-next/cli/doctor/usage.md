@@ -3,19 +3,19 @@ id: zero.doctor.usage
 type: how-to
 audience: [developer, agent, operator]
 owner: doctor
-status: draft
+status: verified
 visibility: internal
 system: doctor
 feature: usage
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0"]
 modes: ["configuration values", "trusted CLI modules", "explicit infrastructure snapshots"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -49,8 +49,8 @@ warnings in their owning [feature family](./check-families.md).
 
 ## Source Root Ownership
 
-This is a 2.6.0 candidate source correction; it does not requalify this page's
-historical frontmatter baseline.
+Zero 2.6 keeps infrastructure inspection and source scanning bound to the
+explicitly selected application root.
 
 `runPlatformDoctor(config, { projectRoot })` uses that root as the config origin
 when `config.projectRoot` is omitted. Relative `appDir` and server directories

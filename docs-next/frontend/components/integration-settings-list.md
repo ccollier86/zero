@@ -3,20 +3,20 @@ id: zero.frontend.components.integration-settings-list
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: integration-settings-list
-maturity: preview
-applies_to: ["Working source on Zero 2.5.0; release qualification pending"]
+maturity: supported
+applies_to: ["2.6.0"]
 modes: [browser, SSR, controlled, Guardian-bound, standalone]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "43b718a5fdf6fec4acf61524ba8d490da784e747"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Integration Settings List
@@ -31,8 +31,8 @@ icons and semantic tokens.
 The same presentation can serve a user's connections, an organization's
 integrations or platform settings. The owning adapter supplies authorized
 items and actions. The list does not create OAuth routes, store credentials,
-infer connectivity or decide server permissions. This is currently unreleased
-working source. It is separate from the [connected profile-settings surface](../guardian/profile-settings.md):
+infer connectivity or decide server permissions. It is supported in Zero 2.6.0
+and separate from the [connected profile-settings surface](../guardian/profile-settings.md):
 neither component invents an app's integration-management backend.
 
 ## Public Imports And Basic Example

@@ -3,19 +3,19 @@ id: zero.frontend.components.index
 type: index
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: component-families
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -60,8 +60,9 @@ persistence simply because they are exported by Zero.
 - [Roadmap](./roadmap.md) groups known reusable UI/editor/plugin plans and links
   the responsible family roadmaps.
 
-These are source-observed first drafts, not a claim that every component is
-already package/browser/device qualified.
+This overview is reviewed against Zero 2.6.0. Each feature guide records its
+own evidence; this index does not claim every component/device combination
+has independent package and browser qualification.
 
 ## Related Guides And Next Steps
 

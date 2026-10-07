@@ -3,20 +3,20 @@ id: zero.frontend.runtime.scope-transitions
 type: architecture
 audience: [developer, agent]
 owner: frontend-runtime
-status: draft
+status: verified
 visibility: internal
 system: frontend-runtime
 feature: scope-transitions
 maturity: supported
-applies_to: ["Working source on Zero 2.5.0; session-recovery release qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, Guardian single, Guardian multi, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Replace Scope Without Reusing Old Data

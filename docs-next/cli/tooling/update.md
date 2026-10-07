@@ -3,19 +3,19 @@ id: zero.cli.tooling.update
 type: how-to
 audience: [developer, agent, operator]
 owner: cli-tooling
-status: draft
+status: verified
 visibility: internal
 system: cli-tooling
 feature: update
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0"]
 modes: ["Bun package-mode applications", "trusted local development"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -79,11 +79,11 @@ inspection. Rollback is not a backup of all app data or user scripts.
 Human errors include rollback status, not a guarantee that arbitrary filesystem
 races can be repaired.
 
-### 2.6 Candidate: Local Archive Rollback Binding
+### Local Archive Rollback Binding
 
-The current 2.6.0 working-source qualification also checks a subsequent ordinary
+Zero 2.6.0 regression checks include a subsequent ordinary
 frozen install after rollback, with populated `node_modules` and package cache
-left in place. This is separate from the historical 2.1.1 header qualification.
+left in place, without treating a clean package cache as a rollback prerequisite.
 
 For a local/saved archive, rollback restores the original manifest, archive and
 lock, then runs a targeted, script-free

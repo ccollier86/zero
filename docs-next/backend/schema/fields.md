@@ -3,19 +3,19 @@ id: zero.schema.fields
 type: reference
 audience: [developer, agent]
 owner: schema
-status: draft
+status: verified
 visibility: internal
 system: schema
 feature: fields
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [server, browser, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -83,7 +83,7 @@ are in [configuration](./configuration.md#field-options).
 | --- | --- | --- |
 | `text(options?)` | string; minLength/maxLength when set; required minimum defaults to 1; omitted optional becomes `''` or explicit default | TEXT; optional explicit string default emitted as a safely quoted SQL literal |
 | `email(options?)` | email string; optional `''`/null; omitted becomes `''` or explicit default | TEXT |
-| `phone(options?)` — 2.5.0 working update | canonical E.164 string; possible-number validation by default, stricter valid-number option; optional `''`/null; omitted becomes `''` or explicit default | TEXT; required adds NOT NULL; no implicit national-number conversion |
+| `phone(options?)` | canonical E.164 string; possible-number validation by default, stricter valid-number option; optional `''`/null; omitted becomes `''` or explicit default | TEXT; required adds NOT NULL; no implicit national-number conversion |
 | `url(options?)` | URL string; optional `''`/null; omitted becomes `''` or explicit default | TEXT |
 | `password(options?)` | string, minLength defaults to 8, optional maxLength; optional `''`/null; omitted becomes `''` or explicit default | TEXT; tableVisible is forced false, not encryption or hashing |
 | `number(options?)` | number with optional integer/min/max; optional null; omission uses explicit default or valid implicit 0, otherwise stays undefined | REAL, or INTEGER with integer=true; optional explicit numeric SQL default |
@@ -108,11 +108,11 @@ generated SQL type is TEXT without NOT NULL. Only use a raw SQL shape when its
 validation boundary is understood; [server validation](./validation.md) explains
 where Zero retains and uses the logical validator.
 
-## Phone Fields: 2.5.0 Working Update
+## Phone Fields
 
-This additive contract is source-observed in the working profile-settings branch
-based on `39c0ed1de0501986810a2b99366f484e66ba80dc`. The front matter retains
-the earlier full-page audit; this addition does not claim package qualification.
+Phone fields are supported in Zero 2.6.0 and share their headless validator
+with generated forms. Formatting and numbering-plan validation are not proof
+that a user owns the number.
 
 ```ts
 import { defineTable, field } from '@zero/framework/schema';
@@ -142,8 +142,8 @@ Optional omission defaults to `''` or the explicitly admitted `defaultValue`;
 blank and null remain valid absence. Required fields reject omission, blank and
 null even when a valid default is configured. Invalid defaults use the existing
 value-free `SCHEMA_DEFAULT_INVALID` error. Phone options and generated rendering
-are detailed in [configuration](./configuration.md#phone-options-250-working-update)
-and [UI metadata](./ui-metadata.md#phone-presentation-250-working-update).
+are detailed in [configuration](./configuration.md#phone-options)
+and [UI metadata](./ui-metadata.md#phone-presentation).
 
 ## Choices And Literal Types
 

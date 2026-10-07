@@ -3,19 +3,19 @@ id: zero.doctor.infrastructure-inspection
 type: architecture
 audience: [developer, agent, operator]
 owner: doctor
-status: draft
+status: verified
 visibility: internal
 system: doctor
 feature: infrastructure-inspection
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0"]
 modes: ["configuration values", "trusted CLI modules", "explicit infrastructure snapshots"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -53,10 +53,9 @@ application mutations.
 
 ## Desired Guardian Features Versus Installed Schema
 
-The adaptive-profile working changes add focused feature diagnostics, observed
-against `ae85a4b6efe11eeb74ab89b15ed02a23e982c59f` plus dirty changes on
-2026-10-06. This does not promote the historical frontmatter baseline or claim
-that a new package/production rollout has passed qualification.
+Zero 2.6.0 includes focused diagnostics for the configured Guardian profile
+features. These inspect installed prerequisites; they do not provision a
+feature or prove that an application-specific production rollout succeeded.
 
 For enabled own profiles, contacts, avatars and first-use completion, Doctor
 reuses the same exact read-only schema inspectors as the owning services. A

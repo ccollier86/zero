@@ -3,20 +3,20 @@ id: zero.frontend.guardian.mfa-controls
 type: reference
 audience: [developer, agent]
 owner: guardian
-status: draft
+status: verified
 visibility: internal
 system: guardian
 feature: mfa-ui
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
-  evidence_level: source-observed
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # MFA Enrollment, Challenge And Account Controls
@@ -36,7 +36,7 @@ not enable an unavailable delivery method.
 to `MFAChallengeForm`.
 
 `onComplete` receives the next account completion result, which may still be
-a tenant selection/onboarding continuation. `onSuccess` is reserved for
+required profile completion or a tenant selection/onboarding continuation. `onSuccess` is reserved for
 completion recognized by the chosen form. In composed login flows prefer
 `AuthFlowContinuation`, which keeps the whole ceremony coordinated.
 
@@ -78,7 +78,7 @@ The challenge details drive destination text; verification uses the limited
 challenge token/code through the SDK. New challenge identity remounts the inner
 form so previous code state is not reused.
 
-A successful challenge can return a tenant continuation. It is not necessarily
+A successful challenge can return profile completion or a tenant continuation. It is not necessarily
 the final app session. Do not replace the coordinator with a generic
 “OTP passed, show app” branch.
 
@@ -89,12 +89,10 @@ The panel loads current methods/required status, shows active method labels,
 reports load failures with retry and offers enrollment based on public policy.
 Accepted enrollment reloads status.
 
-### Capability Correction: 2.5.0 Working Update
+### Capability-Aware Management
 
-This focused UI correction is source-observed in the working profile-settings
-branch based on `39c0ed1de0501986810a2b99366f484e66ba80dc`. It does not
-replace the earlier full-page review identity or claim installed-artifact
-qualification.
+The Zero 2.6.0 panel uses the actual current policy and readiness rather than
+inferring available methods from component defaults.
 
 When the current ready auth configuration explicitly disables MFA, the panel
 renders nothing and makes no method-list request. Unknown/loading policy is

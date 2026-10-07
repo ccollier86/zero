@@ -3,19 +3,19 @@ id: zero.frontend.overlays.tooltip
 type: reference
 audience: [developer, agent, operator]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: tooltip
 maturity: supported
-applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; publication qualification pending"]
+applies_to: ["2.6.0"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.4.3"
-  commit: "8327e4498f52b12b43759bbc4618973601191039"
-  snapshot: dirty
-  date: "2026-10-06"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 

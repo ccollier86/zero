@@ -3,19 +3,19 @@ id: zero.frontend.guardian.account-actions
 type: reference
 audience: [developer, agent]
 owner: guardian
-status: draft
+status: verified
 visibility: internal
 system: guardian
 feature: password-email-and-property-forms
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -124,11 +124,10 @@ boundary, not console logging with credentials.
 
 ## Current Profile Composition And Capability Boundaries
 
-The adaptive-profile working source adds a packaged
-[UserProfileSettings](./profile-settings.md) organism and whitelisted ordinary
-account writers. This changes the previous inspection's “not implemented”
-profile boundaries; it is still subject to its own release qualification, not
-an assertion that published 2.5.0 already contains those additions.
+Zero 2.6 includes the packaged [UserProfileSettings](./profile-settings.md)
+organism and whitelisted ordinary account writers described below. Older
+installed packages need an actual framework upgrade before these capabilities
+are available.
 
 | Account concern | Actual contract |
 | --- | --- |

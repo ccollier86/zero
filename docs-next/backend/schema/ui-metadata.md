@@ -3,19 +3,19 @@ id: zero.schema.ui-metadata
 type: reference
 audience: [developer, agent]
 owner: schema
-status: draft
+status: verified
 visibility: internal
 system: schema
 feature: ui-metadata
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -73,7 +73,7 @@ which options a particular field accepts.
 | maxTags | TagInput presentation limit; not an automatic server array-length validator |
 | searchable/multiple | combobox search and single/multiple presentation |
 | optionIcon/optionDescription | available combobox metadata; not a promise that generated AutoForm enriches plain label/value choices with these details |
-| defaultCountry / phoneValidation — 2.5.0 working update | phone presentation defaults and the same possible/valid numbering-plan admission mode used by the phone schema |
+| defaultCountry / phoneValidation | phone presentation defaults and the same possible/valid numbering-plan admission mode used by the phone schema |
 
 Undefined presentation options delegate to the consumer's documented defaults;
 they are not a globally normalized theme/config setting. Password tableVisible is
@@ -117,11 +117,10 @@ tuples or JSON null; optional scalar SQL null renders as an empty control withou
 silently changing stored meaning. Optional numeric clearing emits explicit null;
 required numeric blank remains invalid.
 
-## Phone Presentation: 2.5.0 Working Update
+## Phone Presentation
 
-Source-observed additions on the working profile-settings branch based on
-`39c0ed1de0501986810a2b99366f484e66ba80dc` do not requalify the earlier
-full-page audit or an installed artifact.
+Zero 2.6.0 uses the shared phone control for generated phone fields. Its
+presentation metadata does not replace the canonical backend validator.
 
 `field.phone()` renders the existing reusable
 [PhoneInput](../../frontend/components/phone-input.md), with a flag/country
@@ -141,8 +140,8 @@ An optional phone clear emits explicit null; a required clear remains an invalid
 blank. Ref, blur and field context still use the normal form lifecycle. The
 generic table search defaults also recognize phone as a searchable string field;
 this does not automatically replace every table inline editor with PhoneInput.
-See [generated values](../../frontend/forms/input-types.md#phone-values-250-working-update)
-and [schema options](./configuration.md#phone-options-250-working-update).
+See [generated values](../../frontend/forms/input-types.md#phone-values)
+and [schema options](./configuration.md#phone-options).
 
 ## Generated Table Columns
 
@@ -183,8 +182,9 @@ procedures for the relevant change.
 
 The corrected source tests exercise untouched optional fields, required failures,
 nonblank format validation, explicit numeric clears and stored SQL NULL through
-actual AutoForm and database validation. These checks establish working-source
-behavior; they do not replace package qualification or every app's visual review.
+actual AutoForm and database validation. These checks establish the Zero 2.6
+field semantics; they do not replace each application's visual and permission
+review.
 
 ## Related Guides And Next Steps
 

@@ -3,19 +3,19 @@ id: zero.guardian.configuration
 type: reference
 audience: [developer, agent, operator]
 owner: guardian
-status: draft
+status: verified
 visibility: internal
 system: guardian
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source with unreleased Guardian configuration corrections"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -27,8 +27,7 @@ Guardian configuration is trusted server code resolved during managed app
 construction/service startup. Restart/recompose to change it. It is not a
 database-editable policy document supplied by an untrusted client.
 
-This reference includes two unreleased corrections: reserved MFA
-rememberDevice/recoveryCodes true values now reject, and an API-key role
+Reserved MFA rememberDevice/recoveryCodes true values reject, and an API-key role
 allowlist may include declared Administration-only roles. They do not implement
 new MFA methods or widen customer assignment/credential ceilings.
 
@@ -145,10 +144,8 @@ readiness, not a bootstrap secret or a wholesale server configuration object.
 
 ## Required First-Use Profile Completion
 
-This subsection records unreleased working source observed against
-`ae85a4b6efe11eeb74ab89b15ed02a23e982c59f` plus the adaptive-profile dirty
-changes on 2026-10-06. It does not widen the historical frontmatter baseline
-or establish package qualification for this capability.
+Required first-use profile completion is available in Zero 2.6.0. It is opt-in;
+updating the framework does not implicitly enroll existing accounts.
 
 Configure `auth.userProfile.completion` only when deliberately requiring a
 [completed profile before application access](./profile-completion.md).

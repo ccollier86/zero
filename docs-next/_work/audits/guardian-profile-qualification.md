@@ -15,14 +15,21 @@ visibility: internal
 
 ## Source And Release Boundary
 
+The current implementation checkpoint is
+`c5656b306051b04ec6adc641b7057a0672fd7a3e`, package 2.6.0, October 7, 2026.
+It contains the committed adaptive Guardian upgrade and the preserved main CLI
+setup kit. The frozen candidate passes all 942 fresh-process test files.
+Final documentation and exact clean-checkout/publication gates remain pending;
+this checkpoint is not yet the saved stable release or a Pantheon deployment.
+
 This ledger records implementation evidence for the adaptive-profile upgrade.
 The baseline paragraphs and earlier gates below are historical; the expanded
 implementation and final release gates are recorded separately. The
 session-recovery correction was checked on October 6, 2026, in
 the working tree based on `55ca1e6b649f5652831714ad93749918bd92a6bd`, branch
 `feature/adaptive-profile-settings`, package version `2.5.0`. The correction
-is committed as `43b718a5fdf6fec4acf61524ba8d490da784e747`, but is not yet
-merged, tagged or published as a new release. Temporary qualification archives
+was committed as `43b718a5fdf6fec4acf61524ba8d490da784e747`; at that historical
+checkpoint it was not merged, tagged or published as a new release. Temporary qualification archives
 are not release artifacts.
 
 At that baseline, phone inputs, schema/form integration, read-only input behavior and MFA
@@ -131,12 +138,13 @@ Documentation logs: `guardian-profile-ui-final-examples.log`,
 
 ## Expanded Guardian Services And Settings
 
-The working source based on `ae85a4b6efe11eeb74ab89b15ed02a23e982c59f`
+The historical working source based on `ae85a4b6efe11eeb74ab89b15ed02a23e982c59f`
 implements typed own-profile and regional settings, separate contact-possession
 ceremonies, private staged/cropped avatars, restricted first-use completion,
 shared acknowledged save/leave interactions and SDK-owned presence. These are
-uncommitted feature-stage changes at the time of these checks, not a released
-version. The current guides have explicit source/release boundaries:
+uncommitted feature-stage changes at the time of those checks, not a released
+version. They are now committed in the checkpoint identified above; the guides
+retain explicit source/release boundaries:
 
 - [Own profiles](../../backend/guardian/user-profiles.md),
   [contacts](../../backend/guardian/contacts.md) and
@@ -507,13 +515,13 @@ raises the next complete inventory to 942.
 
 The frozen candidate passes the complete fresh-process inventory: all 942 files
 run exactly once, 942 pass, zero fail or remain unrun, zero are interrupted,
-and the runner exits0 after 615,315ms. The actual macOS compiled/JIT signing
+and the runner exits 0 after 615,315 ms. The actual macOS compiled/JIT signing
 case passes within its unchanged 20-second launch bound. Neither the earlier
 incomplete-output result nor either installed-consumer timeout recurs. No file
 is retried, excluded or admitted as a pass after a failed assertion.
 
-Evidence: `guardian-2.6-retained-candidate-full.log`, completed October7,2026
-at08:11:32UTC, and the final full TypeScript gate
+Evidence: `guardian-2.6-retained-candidate-full.log`, completed October 7, 2026
+at 08:11:32 UTC, and the final full TypeScript gate
 `guardian-2.6-retained-candidate-typecheck.log`. The matching package, build,
 dependency-audit, PDF-readiness and public Markdown-example gates also pass
 in `guardian-2.6-closed-candidate-package.log`,
@@ -529,3 +537,25 @@ merge, final documentation metadata, exact clean-checkout qualification,
 tag/push, committed-main archive refresh and the stopped normal-updater smoke
 are still required. No live Pantheon app, credentials, database, configuration
 or deployment was changed.
+
+### Documentation Freeze
+
+The final documentation pass reviews 58 canonical pages against the committed
+implementation checkpoint `c5656b306051b04ec6adc641b7057a0672fd7a3e`.
+All retain internal visibility: 52 describe supported capabilities, two are
+planned roadmaps and four describe the separately versioned optional docs
+preview. Twenty-five focused guides record implementation-verified evidence;
+33 broader guides record source-observed evidence. Their example code fences
+are byte-identical to the qualified implementation checkpoint.
+
+The structural check reports 732 pages, unique IDs and reachable pages with
+zero problems. Catalog placement reports 995 records in 165 existing homes;
+all 452 feature groups across 37 systems have guide destinations. Review-evidence
+regressions pass six cases /27 assertions. The one inbound MFA link changed
+with its stable heading, and obsolete working-source phone/MFA anchors are gone.
+No runtime source, test or example-code contract changed in this pass.
+
+The next frozen commit must still pass exact clean-checkout qualification and
+publication. Artifact-specific identities and completion evidence are recorded
+in the external release/provenance records; never infer a deployed Pantheon
+fix from a documentation review or a source-only checkpoint.

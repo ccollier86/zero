@@ -3,20 +3,20 @@ id: zero.frontend.components.avatar-group
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: avatar-group
-maturity: preview
-applies_to: ["Working source on Zero 2.5.0; release qualification pending"]
+maturity: supported
+applies_to: ["2.6.0"]
 modes: [browser, SSR, controlled-presentation]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "43b718a5fdf6fec4acf61524ba8d490da784e747"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Avatar Group

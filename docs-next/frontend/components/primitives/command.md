@@ -3,19 +3,19 @@ id: zero.frontend.components.primitives.command
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: command-palette
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -55,11 +55,11 @@ Supply appropriate dialog accessible title/description through the composition;
 a search placeholder is not a complete dialog name. Use the app's capabilities
 to filter actions, and still enforce each operation at the server.
 
-## 2.5 Working Composition Additions
+## Dialog Composition
 
-The original 2.1.1 baseline above remains historical. The documentation-reader
-work adds the following public `CommandDialogProps` on the 2.5.0 working branch,
-through the same component and React facade. It is not a second command palette.
+`CommandDialogProps` exposes the following composition options through the same
+component and React facade. The documentation reader reuses this component;
+it does not install a second command-palette implementation.
 
 | Option | Contract |
 | --- | --- |

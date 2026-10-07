@@ -3,8 +3,24 @@ id: zero.plugin-docs.reader
 type: reference
 audience: [developer, agent]
 owner: docs-plugin
-status: draft
+status: verified
 visibility: internal
+maturity: preview
+applies_to: ["@zero/framework 2.6.0 with @zero/plugin-docs 0.1.1"]
+system: docs-plugin
+feature: reader-layout-and-theme
+modes: [public read-only, development, production]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
+related_packages:
+  - package: "@zero/plugin-docs"
+    version: "0.1.1"
+    maturity: preview
 ---
 
 # Reader Layout And Theme

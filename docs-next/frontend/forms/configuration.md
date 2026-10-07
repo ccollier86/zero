@@ -3,19 +3,19 @@ id: zero.frontend.forms.configuration
 type: reference
 audience: [developer, agent]
 owner: frontend-forms
-status: draft
+status: verified
 visibility: internal
 system: frontend-forms
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -56,7 +56,7 @@ AutoForm accepts the preceding options plus:
 | layout | vertical, horizontal or inline | vertical; presentation option, not a schema mutation |
 | columns | number | 1; more than 1 sets a CSS grid for generated fields |
 | card | title and optional description object | no card wrapper |
-| fields | name-to-overrides map | optional autoFocus, hidden and useSwitch per field; see 2.5.0 phone/readOnly additions below |
+| fields | name-to-overrides map | optional autoFocus, hidden and useSwitch per field; see phone/readOnly controls below |
 | submitLabel | string | Save for edit, Create otherwise |
 | showReset | boolean | false; shown reset disabled when pending or not dirty |
 | className | string | optional class composition |
@@ -69,14 +69,13 @@ Generated controls still use [field metadata](../../backend/schema/ui-metadata.m
 
 name, meta and registration are required. registration is a useForm field
 registration containing value/change/blur/error/ref. overrides optionally supplies
-autoFocus, hidden or useSwitch, plus the 2.5.0 phone/readOnly additions below. Hidden metadata/override returns no rendered
+autoFocus, hidden or useSwitch, plus phone/readOnly controls below. Hidden metadata/override returns no rendered
 control; Guardian anchors are hidden reference fields, not an automatic user picker.
 
-## Phone And ReadOnly Overrides: 2.5.0 Working Update
+## Phone And ReadOnly Overrides
 
-Source-observed additions on the working profile-settings branch based on
-`39c0ed1de0501986810a2b99366f484e66ba80dc` are separate from the earlier
-full-page review identity and installed-artifact qualification.
+Zero 2.6.0 exposes phone presentation and native readOnly overrides through the
+existing generated-form configuration, without introducing a new submit path.
 
 AutoForm `fields[name]` and FieldRenderer `overrides` share one override contract:
 
@@ -94,7 +93,7 @@ enable SMS verification or change Guardian user-property types.
 
 For direct control props or native form integration, use the
 [PhoneInput reference](../components/phone-input.md). Schema options are covered
-by [phone configuration](../../backend/schema/configuration.md#phone-options-250-working-update).
+by [phone configuration](../../backend/schema/configuration.md#phone-options).
 
 ## WizardProps
 

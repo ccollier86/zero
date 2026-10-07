@@ -3,19 +3,19 @@ id: zero.frontend.forms.input-types
 type: reference
 audience: [developer, agent]
 owner: frontend-forms
-status: draft
+status: verified
 visibility: internal
 system: frontend-forms
 feature: input-types
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -31,7 +31,7 @@ UI primitive.
 | Schema kind | Generated control | Logical value / clear behavior |
 | --- | --- | --- |
 | text/email/url/password | Input with corresponding type | string; nullable stored value displays blank |
-| phone — 2.5.0 working update | PhoneInput with country/flag selector | canonical international string draft; optional clear null; required blank stays invalid |
+| phone | PhoneInput with country/flag selector | canonical international string draft; optional clear null; required blank stays invalid |
 | number | numeric Input | number; optional explicit clear null; required blank stays invalid |
 | textarea | Textarea | string |
 | boolean | Checkbox, or Switch override | boolean, including valid required false |
@@ -50,13 +50,12 @@ validate both values/requiredness but do not impose a business ordering rule.
 Choose the appropriate application timezone/date policy explicitly when that
 distinction matters; a field type alone is not a calendar/workflow service.
 
-## Phone Values: 2.5.0 Working Update
+## Phone Values
 
-This addition is source-observed in the working profile-settings branch based
-on `39c0ed1de0501986810a2b99366f484e66ba80dc`, separate from the earlier
-full-page review identity and installed-package qualification.
+Generated phone controls in Zero 2.6.0 keep display formatting separate from
+the canonical value admitted by the shared schema validator.
 
-The [phone field](../../backend/schema/fields.md#phone-fields-250-working-update)
+The [phone field](../../backend/schema/fields.md#phone-fields)
 chooses the reusable [PhoneInput](../components/phone-input.md). Display formatting
 is not the stored value: accepted nonblank values are canonical E.164 strings.
 Default country is `US`, configurable in the schema or per-field presentation
@@ -71,7 +70,7 @@ useForm validation, acknowledgment and scope-replacement rules still apply.
 Default `possible` validation checks calling code/length; `valid` also checks
 current numbering-plan patterns. Neither verifies ownership, delivery or SMS
 availability. ReadOnly overrides preserve focus/copy/submitted value rather
-than using disabled-field omission. See [configuration](./configuration.md#phone-and-readonly-overrides-250-working-update).
+than using disabled-field omission. See [configuration](./configuration.md#phone-and-readonly-overrides).
 
 ## Defaults And Storage
 
@@ -103,8 +102,9 @@ Radix/animation/native input prop. Keep the same token system and field context.
 
 Verify control values, required/nonblank rejection, logical/encoded round trips
 and clear behavior. UI defaults passing a schema are not proof a server policy
-accepted the record. Actual field/form tests support working-source examples;
-primitive-level accessibility and packaged build checks remain separate.
+accepted the record. Actual field/form tests support the Zero 2.6 value contracts;
+custom composition and primitive-level accessibility still need application
+checks.
 
 ## Related Guides And Next Steps
 

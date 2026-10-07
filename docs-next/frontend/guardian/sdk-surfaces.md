@@ -3,19 +3,19 @@ id: zero.frontend.guardian.sdk-surfaces
 type: reference
 audience: [developer, agent]
 owner: guardian
-status: draft
+status: verified
 visibility: internal
 system: guardian
 feature: public-auth-service-facades
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -112,8 +112,8 @@ Exact methods and limits live in [profiles](../../backend/guardian/user-profiles
 [presence](../../backend/guardian/presence.md) and
 [required completion](../../backend/guardian/profile-completion.md).
 The [packaged settings component](./profile-settings.md) composes them with
-accepted drafts and current server readiness. Published older packages do not
-acquire these contracts merely because this working-source guide exists.
+accepted drafts and current server readiness. Older installed packages need an
+actual framework upgrade to obtain these Zero 2.6 contracts.
 
 ## MFA And Session Operations
 

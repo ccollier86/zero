@@ -3,20 +3,20 @@ id: zero.guardian.user-profiles
 type: reference
 audience: [developer, agent, operator]
 owner: guardian
-status: in-review
+status: verified
 visibility: internal
 system: guardian
 feature: own-profile
-maturity: preview
-applies_to: ["Adaptive profile working source; release qualification pending"]
+maturity: supported
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced, native]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Own Profiles And Regional Preferences
@@ -154,8 +154,9 @@ proofs and credentials do not belong in observability metadata.
 Regression coverage includes exact schema admission, migration-disabled behavior,
 field rejection, native scope ceilings, shared revisions, actual HTTP stale-runtime
 retirement across configuration changes and final live-authority rollback.
-Release/package qualification is tracked separately; this page describes
-the working source, not an already-published upgrade.
+This contract is supported in Zero 2.6.0. Verify the application's installed
+framework version before enabling it; an older package does not gain these
+capabilities from a configuration change alone.
 
 - [Account lifecycle](./accounts.md) is the separate privileged writer.
 - [Presence](./presence.md) is activity/availability, never authentication proof.

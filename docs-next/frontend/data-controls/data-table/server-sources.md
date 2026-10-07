@@ -3,20 +3,20 @@ id: zero.frontend.data-controls.data-table.server-sources
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: draft
+status: verified
 visibility: internal
 system: frontend-data-controls
 feature: data-table-server-sources
 maturity: supported
-applies_to: ["2.6.0 working source; release qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, server offset, custom cursor, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
   date: "2026-10-07"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Server-Driven Table Queries

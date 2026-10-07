@@ -3,19 +3,19 @@ id: zero.native-auth.configuration
 type: reference
 audience: [developer, agent]
 owner: native-auth
-status: draft
+status: verified
 visibility: internal
 system: native-auth-sdks
 feature: client-options-and-preview-boundaries
 maturity: supported
-applies_to: ["2.1.1 framework source; independent SDK previews are not released"]
+applies_to: ["2.6.0"]
 modes: [native-client, multi-tenant-native, desktop, extension]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 related_packages:
   - package: "zero-native-auth / tauri-plugin-zero-auth"

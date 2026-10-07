@@ -3,19 +3,19 @@ id: zero.start-here
 type: tutorial
 audience: [developer, agent]
 owner: zero-documentation
-status: draft
+status: verified
 visibility: internal
 system: cross-system
 feature: orientation
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [managed-applications]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -59,7 +59,7 @@ families are listed in the [backend index](./backend/index.md).
   members do not need administrative writers. Optional contact proof, private
   avatars, availability and required first-use completion have separate readiness
   and rollout contracts linked from those guides. Check the installed version;
-  working-source additions are not silently available in older packages.
+  Zero 2.6.0 capabilities are not silently available in older packages.
 - **Existing app:** read [upgrade](./guides/upgrade.md); a dependency refresh is
   not a data split, tenant conversion or workflow-definition migration.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
@@ -72,8 +72,8 @@ families are listed in the [backend index](./backend/index.md).
   [frontend](./frontend/index.md), [CLI](./cli/index.md) or
   [optional plugins](./plugins/index.md).
 
-The docs plugin is a separately versioned preview package for the 2.5.0
-source/local release. Follow its installation and build guidance; neither this
+The docs plugin is a separately versioned 0.1.1 preview requiring framework
+2.6.0 or newer within major 2. Follow its separate installation and build guidance; neither this
 entrance nor installing the framework publishes documentation automatically.
 
 ## Four Ideas To Learn Once

@@ -3,20 +3,24 @@ id: zero.plugin-docs.search
 type: reference
 audience: [developer, agent, operator]
 owner: docs-plugin
-status: draft
+status: verified
 visibility: internal
 system: docs-plugin
 feature: search
 maturity: preview
-applies_to: ["@zero/framework 2.5.0 source/local release with @zero/plugin-docs 0.1.0"]
+applies_to: ["@zero/framework 2.6.0 with @zero/plugin-docs 0.1.1"]
 modes: [public read-only, development, production]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "0ef2cb30d47788722627014c7a28da616f33b5c8"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
   snapshot: clean
-  date: "2026-10-06"
-  evidence_level: source-observed
+  date: "2026-10-07"
+  evidence_level: implementation-verified
+related_packages:
+  - package: "@zero/plugin-docs"
+    version: "0.1.1"
+    maturity: preview
 ---
 
 # Search And Result Navigation

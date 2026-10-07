@@ -3,8 +3,24 @@ id: zero.plugin-docs.operations
 type: operations
 audience: [developer, agent, operator]
 owner: docs-plugin
-status: draft
+status: verified
 visibility: internal
+maturity: preview
+applies_to: ["@zero/framework 2.6.0 with @zero/plugin-docs 0.1.1"]
+system: docs-plugin
+feature: build-and-operations
+modes: [public read-only, development, production]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
+related_packages:
+  - package: "@zero/plugin-docs"
+    version: "0.1.1"
+    maturity: preview
 ---
 
 # Build And Operate Documentation
@@ -172,9 +188,10 @@ there if that is part of the application's privacy requirements.
 Source tests, actual styled-browser checks and installed artifact qualification
 prove different things. The [qualification ledger](../../_work/audits/docs-plugin-qualification.md)
 records the historical 2.5.0/0.1.0 reader/build release checks separately from earlier
-checkpoints. This guide remains internal/draft pending documentation publication
-review; that status does not mean the released reader's tests are pending or
-that the whole package-local documentation tree is approved for a public site.
+checkpoints. This guide is reviewed against Zero 2.6 and plugin 0.1.1, but remains
+internal: documentation review and public-site publication are separate decisions.
+The plugin's reader checks do not approve the entire package-local documentation
+tree for public rendering, and internal pages are not published by default.
 
 ## Related Guides And Next Steps
 

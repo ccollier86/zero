@@ -3,19 +3,19 @@ id: zero.cli.tooling.build
 type: how-to
 audience: [developer, agent, operator]
 owner: cli-tooling
-status: draft
+status: verified
 visibility: internal
 system: cli-tooling
 feature: build
 maturity: supported
-applies_to: ["2.5.0 development source; publication qualification pending"]
+applies_to: ["2.6.0"]
 modes: ["Bun package-mode applications", "trusted local builds"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "636b1c01b3484317df56ce624c7cd57976ee417c"
-  snapshot: dirty
-  date: "2026-10-06"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 

@@ -3,19 +3,19 @@ id: zero.guides.upgrade
 type: operations
 audience: [developer, agent, operator]
 owner: zero-documentation
-status: draft
+status: verified
 visibility: internal
 system: cross-system
 feature: upgrade
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -135,9 +135,9 @@ state, not every arbitrary application effect.
 
 ## Opting Into Adaptive Profiles After Provisioning
 
-The adaptive-profile feature branch extends Guardian with fixed additive SYSTEM
-substrates. These instructions describe working source pending release
-qualification; they do not make an older installed package support those flags.
+Zero 2.6.0 extends Guardian with fixed additive SYSTEM substrates. These
+instructions apply to that release; an older installed package does not gain
+support for its configuration flags without a framework upgrade.
 
 1. Preserve the existing package pin and a tested SYSTEM/application/tenant
    backup. Verify the actual installed version/commit rather than the docs page

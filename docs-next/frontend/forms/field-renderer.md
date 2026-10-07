@@ -3,19 +3,19 @@ id: zero.frontend.forms.field-renderer
 type: reference
 audience: [developer, agent]
 owner: frontend-forms
-status: draft
+status: verified
 visibility: internal
 system: frontend-forms
 feature: field-renderer
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -32,7 +32,7 @@ validator.
 
 FieldRenderer and FieldRendererProps are public from @zero/framework/react.
 Required props are name, meta and registration; overrides optionally supplies
-autoFocus, hidden and useSwitch. The 2.5.0 working additions below also supply
+autoFocus, hidden and useSwitch. Phone/readOnly overrides also supply
 phone defaultCountry and supported native-control readOnly overrides.
 
 ```tsx
@@ -71,11 +71,9 @@ multiple and defaults its generated search to true when metadata is omitted.
 optionIcon/optionDescription metadata does not automatically manufacture rich
 option content from a plain label/value declaration.
 
-## Phone Rendering: 2.5.0 Working Update
+## Phone Rendering
 
-These additions are source-observed in the working profile-settings branch based
-on `39c0ed1de0501986810a2b99366f484e66ba80dc`; they do not replace the
-earlier full-page audit or imply package qualification.
+Phone fields use the shared control and ordinary field lifecycle in Zero 2.6.0.
 
 Phone metadata renders the shared [PhoneInput](../components/phone-input.md).
 The renderer forwards current value, change, blur, input ref, required state,
@@ -92,8 +90,8 @@ from validation or submission.
 
 Optional phone null displays blank. A user clear emits null, while a required
 clear stays blank and invalid. Nonempty partial values remain drafts and must
-pass the [phone validator](../../backend/schema/fields.md#phone-fields-250-working-update)
-before ordinary form submission can succeed. See [form configuration](./configuration.md#phone-and-readonly-overrides-250-working-update).
+pass the [phone validator](../../backend/schema/fields.md#phone-fields)
+before ordinary form submission can succeed. See [form configuration](./configuration.md#phone-and-readonly-overrides).
 
 ## Custom Controls And Boundaries
 

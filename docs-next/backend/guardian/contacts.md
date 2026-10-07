@@ -3,20 +3,20 @@ id: zero.guardian.contacts
 type: reference
 audience: [developer, agent, operator]
 owner: guardian
-status: in-review
+status: verified
 visibility: internal
 system: guardian
 feature: contact-possession
-maturity: preview
-applies_to: ["Adaptive profile working source; release qualification pending"]
+maturity: supported
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced, native]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Contact Changes And Possession Verification

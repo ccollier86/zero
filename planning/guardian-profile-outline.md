@@ -18,6 +18,12 @@ The baseline is `55ca1e6` on `feature/adaptive-profile-settings`, October 6,
 remain discussion items; they are not added to this implementation by asking
 about them.
 
+The implemented 2.6.0 checkpoint is
+`c5656b306051b04ec6adc641b7057a0672fd7a3e`, October 7, 2026. Its frozen
+candidate passes all 942 fresh-process test files. Remaining checkboxes include
+exact clean-checkout/package qualification and actual publication; this is not
+yet an instruction to update a live app.
+
 ## Design references and shared rules
 
 The supplied Pantheon screenshot shows the failure to correct: an oversized
@@ -312,11 +318,11 @@ are needed for development qualification.
 
 ## Documentation and release gates
 
-- [ ] Current guides and new `docs-next` guides match implemented public contracts.
-- [ ] Feature/configuration/upgrade pages include modes, readiness and examples.
-- [ ] Frontend indexes/catalogs include every new public component and hook.
-- [ ] Guardian, Fabric, Reactive DB, storage, rooms and forms guides cross-link.
-- [ ] Start-here guidance routes people/agents into the correct documentation.
+- [x] Current guides and new `docs-next` guides match implemented public contracts.
+- [x] Feature/configuration/upgrade pages include modes, readiness and examples.
+- [x] Frontend indexes/catalogs include every new public component and hook.
+- [x] Guardian, Fabric, Reactive DB, storage, rooms and forms guides cross-link.
+- [x] Start-here guidance routes people/agents into the correct documentation.
 - [ ] Public exports, SSR and a fresh package-mode consumer pass.
 - [x] Real synthetic browser checks cover the supplied layout relationships in
   light/dark themes, narrow widths, keyboard/touch and reduced motion.

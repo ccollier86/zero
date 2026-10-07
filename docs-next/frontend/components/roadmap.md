@@ -3,19 +3,19 @@ id: zero.frontend.components.roadmap
 type: roadmap
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: component-roadmap
-maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+maturity: planned
+applies_to: ["2.6.0"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -74,9 +74,9 @@ The modal-manager redesign remains with [modals](../modals/roadmap.md), not a
 second conflicting global manager in this umbrella.
 
 Confirmed defects are corrected and tested during the audit rather than deferred
-as product limitations. Remaining whole-device, assistive-technology,
-installed-package and representative-app qualification gates are evidence work,
-not proof that those future features have been implemented.
+as product limitations. Additional whole-device, assistive-technology and
+representative-app qualification is evidence work, not proof that the unchecked
+future features have been implemented.
 
 ## Related Guides And Next Steps
 

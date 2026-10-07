@@ -3,20 +3,20 @@ id: zero.guardian.profile-completion
 type: how-to
 audience: [developer, agent, operator]
 owner: guardian
-status: in-review
+status: verified
 visibility: internal
 system: guardian
 feature: first-use-profile-completion
-maturity: preview
-applies_to: ["Adaptive profile working source; release qualification pending"]
+maturity: supported
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced, native]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Require A Profile Before Application Access
@@ -29,8 +29,7 @@ and MFA ceremonies, then supplies the required profile fields before Guardian
 issues application credentials. A hidden button or application-side redirect
 is not the enforcement mechanism.
 
-This page describes unreleased working source, not support already shipped in
-the inspected 2.5.0 baseline. It covers required editable profile fields only;
+This Zero 2.6.0 feature covers required editable profile fields only;
 requiring an avatar, contact proof or notification preference is not implemented.
 
 ## Configure A Deliberate Rollout

@@ -3,20 +3,20 @@ id: zero.frontend.data-controls.master-detail
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: draft
+status: verified
 visibility: internal
 system: frontend-data-controls
 feature: master-detail
 maturity: supported
-applies_to: ["2.5.0 working source; page-size correction qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.5.0"
-  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
-  snapshot: dirty
+  version: "2.6.0"
+  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  snapshot: clean
   date: "2026-10-07"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # One List, Detail Panel And Action Bar
@@ -66,8 +66,7 @@ controls. formColumns defaults 2, submitLabel "Save Changes". listWidth/detailWi
 default through the layout to '3fr'/'2fr'. className decorates the outer organism.
 detailVisible defaults true for desktop; resizable defaults false and enables
 the established library separator. Hiding desktop detail leaves mobile
-selected-record inspection available. These additive controls are observed in
-the dirty working source, not a shipped-artifact claim.
+selected-record inspection available. These controls are supported in Zero 2.6.0.
 loadingState/errorState customize first-load presentation. Server controls stay
 mounted while loading; rows/pages are not filtered or fetched through a second
 browser-array pass.
@@ -168,8 +167,8 @@ navigation preserves the selected key while exposing a return-to-list action.
 
 Exercise arrays with custom onUpdate, full/lazy collections, server search/sort/
 unknown totals/cursors, numeric identities, failed writes and a scope change while
-a write is pending. The corrected shared controller/acceptance tests cover those
-working-source paths. They do not qualify an installed artifact or every app's
+a write is pending. Shared controller and acceptance tests cover those Zero 2.6
+paths. They do not replace deployment checks or qualification of an application's
 custom action lifecycle.
 
 ## Related Guides And Next Steps
