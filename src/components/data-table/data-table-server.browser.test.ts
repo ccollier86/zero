@@ -78,7 +78,7 @@ describe('DataTable complete server interaction', () => {
       await page.getByLabel('Next page').click();
       await page.waitForFunction(() => window.__fullTableHarness.queries().at(-1)?.pagination.pageIndex === 1);
       await settle(page, [{ id: '3', name: 'three' }, { id: '4', name: 'four' }]);
-      expect(await page.getByText('Showing 3-4', { exact: true }).isVisible()).toBe(true);
+      expect(await page.getByRole('status', { name: 'Showing 3-4', exact: true }).isVisible()).toBe(true);
       await page.getByRole('button', { name: 'Name', exact: true }).click();
       await page.waitForFunction(() => {
         const query = window.__fullTableHarness.queries().at(-1);
@@ -92,16 +92,29 @@ describe('DataTable complete server interaction', () => {
     try {
       await page.evaluate(() => window.__fullTableHarness.mode('cursor'));
       await page.waitForFunction(() => window.__fullTableHarness.queries().at(-1)?.pagination.mode === 'cursor');
+      expect(await page.evaluate(() => window.__fullTableHarness.queries().at(-1)?.pagination))
+        .toEqual({ mode: 'cursor', pageIndex: 0, pageSize: 2, cursor: null });
       await settle(page, [{ id: '1', name: 'cursor-first' }, { id: '2', name: 'cursor-second' }], true);
       await page.getByLabel('Next page').click();
       await page.waitForFunction(() => window.__fullTableHarness.queries().at(-1)?.pagination.cursor === 'cursor-1');
       await settle(page, [{ id: '3', name: 'cursor-third' }]);
       expect(await page.getByLabel('Last page').count()).toBe(0);
+      const acceptedQueryCount = await page.evaluate(() => window.__fullTableHarness.queries().length);
       await page.getByLabel('Previous page').click();
-      await page.waitForFunction(() => {
-        const query = window.__fullTableHarness.queries().at(-1);
-        return query?.pagination.pageIndex === 0 && query.pagination.cursor === null;
-      });
+      // Foreground caching remains enabled with prefetch:false; returning must use the exact accepted opaque-cursor page.
+      await page.getByRole('group', { name: 'Page 1', exact: true }).waitFor();
+      await page.getByText('cursor-first', { exact: true }).waitFor();
+      await page.waitForFunction(() => !document.querySelector('tbody')?.textContent?.includes('cursor-third'));
+      expect(await page.locator('tbody tr').count()).toBe(2);
+      expect(await page.getByText('cursor-second', { exact: true }).isVisible()).toBe(true);
+      expect(await page.getByLabel('Previous page').isDisabled()).toBe(true);
+      expect(await page.evaluate(() => window.__fullTableHarness.queries().length)).toBe(acceptedQueryCount);
+      await page.getByLabel('Next page').click();
+      await page.getByRole('group', { name: 'Page 2', exact: true }).waitFor();
+      await page.getByText('cursor-third', { exact: true }).waitFor();
+      await page.waitForFunction(() => !document.querySelector('tbody')?.textContent?.includes('cursor-first'));
+      expect(await page.locator('tbody tr').count()).toBe(1);
+      expect(await page.evaluate(() => window.__fullTableHarness.queries().length)).toBe(acceptedQueryCount);
     } finally { await page.close(); }
   }, 60_000);
 

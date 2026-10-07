@@ -40,7 +40,7 @@ async function size(page: Page, value: number) {
   await page.getByRole('combobox', { name: 'Rows per page' }).click();
   await page.getByRole('option', { name: String(value), exact: true }).click();
 }
-async function range(page: Page, text: string) { await page.getByText(text, { exact: true }).waitFor(); }
+async function range(page: Page, text: string) { await page.getByRole('status', { name: text, exact: true }).waitFor(); }
 async function renderedRows(page: Page, count: number) {
   // Existing row exit animation may briefly keep the prior page's DOM mounted.
   await page.waitForFunction(count => document.querySelectorAll('tbody tr').length === count, count);
@@ -95,13 +95,21 @@ browserTest('controlled page replacement retires page-local selection without re
 browserTest('cursor batch changes reset opaque history honestly and retain unknown-count controls', async () => {
   const page = await open('cursor');
   try {
-    await range(page, 'Showing 1-20'); await page.getByLabel('Next page').click(); await range(page, 'Showing 21-40');
-    await page.getByLabel('Next page').click(); await range(page, 'Showing 41-60');
-    await size(page, 50); await range(page, 'Showing 1-50');
+    await range(page, '20 records on this page'); await page.getByLabel('Next page').click();
+    await page.waitForFunction(() => window.__pageSizeTable.queries().at(-1)?.pagination.pageIndex === 1);
+    await page.getByText('Record 021', { exact: true }).waitFor();
+    await range(page, '20 records on this page');
+    await page.getByLabel('Next page').click();
+    await page.waitForFunction(() => window.__pageSizeTable.queries().at(-1)?.pagination.pageIndex === 2);
+    await page.getByText('Record 041', { exact: true }).waitFor();
+    await range(page, '20 records on this page');
+    await size(page, 50); await range(page, '50 records on this page');
     expect(await page.evaluate(() => window.__pageSizeTable.queries().at(-1)?.pagination)).toEqual({ mode: 'cursor', pageIndex: 0, pageSize: 50, cursor: null });
     expect(await page.getByLabel('Last page').count()).toBe(0);
     expect(await page.getByLabel('Previous page').isDisabled()).toBe(true);
-    await page.getByLabel('Next page').click(); await range(page, 'Showing 51-100');
+    await page.getByLabel('Next page').click(); await range(page, '50 records on this page');
+    await page.waitForFunction(() => window.__pageSizeTable.queries().at(-1)?.pagination.cursor === 'after-50');
+    await page.getByText('Record 051', { exact: true }).waitFor();
     expect(await page.evaluate(() => window.__pageSizeTable.queries().at(-1)?.pagination.cursor)).toBe('after-50');
   } finally { await close(page); }
 }, 45_000);

@@ -10,6 +10,9 @@ import { OBS_CODES } from '../../observability/codes';
 import type { Row } from '../../sync/types';
 import { DataTableToolbar } from './data-table-toolbar';
 import { DataTablePagination } from './data-table-pagination';
+import { DataTableNewRecordsButton } from './data-table-new-records-button';
+import { useDataTableViewport } from './use-data-table-viewport';
+import { DATA_TABLE_MOTION } from './data-table-motion-tokens';
 import { DataTableGrid } from './data-table-grid';
 import { DataTableBulkActions } from './data-table-bulk-actions';
 import { selectedDataTablePageRows } from './data-table-selection';
@@ -40,6 +43,8 @@ export function DataTableContent<T extends Row = Row>({
   filterable = false,
   filterColumns,
   paginated = source?.type === 'server',
+  motion = true,
+  cellMotion = 'typewriter',
   selectable = false,
   onCellEdit,
   onCellCommit,
@@ -60,7 +65,10 @@ export function DataTableContent<T extends Row = Row>({
   getRowClassName,
   className,
 }: DataTableProps<T> & { controller: DataTableController<T> }) {
-  const { dt, current, resolved, partition, mutationRunner, server } = controller;
+  const { dt, current, resolved, partition, mutationRunner, server, live, queryKey } = controller;
+  const [navigationOrigin, setNavigationOrigin] = React.useState<'pointer' | 'keyboard'>('pointer');
+  const viewport = useDataTableViewport(partition, live.setScrolledAway);
+  const revealNew = () => { dt.table.setPageIndex(0); live.reveal(); resolved.clearLiveInsertions?.(); viewport.scrollToTop(); };
   const partitionRef = React.useRef(partition);
   partitionRef.current = partition;
 
@@ -119,11 +127,21 @@ export function DataTableContent<T extends Row = Row>({
 
   const showControls = showToolbar ?? Boolean(searchable || filterable || toolbarActions != null
     || toolbarSlots?.controls || toolbarSlots?.actions || toolbarSlots?.supplemental || bulkActions?.length);
-  const selectionRows = selectedDataTablePageRows(dt.table);
+  const selectionRows = resolved.isPreviousData ? [] : selectedDataTablePageRows(dt.table);
 
   return (
-    <div className={cn('min-w-0 space-y-3', className)}>
+    <div ref={viewport.ref} className={cn('min-w-0 space-y-3', className)} onKeyDown={event => {
+      if (!paginated || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+        || event.nativeEvent.isComposing || (event.target as HTMLElement).closest('input, textarea, select, button, [role="combobox"], [role="menu"], [contenteditable="true"]')) return;
+      const next = event.key === 'ArrowRight', previous = event.key === 'ArrowLeft';
+      if (next && (server ? resolved.page?.hasMore && (resolved.page.mode !== 'cursor' || resolved.page.nextCursor != null) : dt.table.getCanNextPage())) {
+        event.preventDefault(); setNavigationOrigin('keyboard'); dt.table.nextPage();
+      } else if (previous && current.pagination.pageIndex > 0) {
+        event.preventDefault(); setNavigationOrigin('keyboard'); dt.table.previousPage();
+      }
+    }}>
       {showControls && <DataTableToolbar
+        key={`toolbar:${partition}`}
         table={dt.table}
         globalFilter={current.globalFilter}
         onGlobalFilterChange={dt.setGlobalFilter}
@@ -137,6 +155,7 @@ export function DataTableContent<T extends Row = Row>({
         slots={toolbarSlots}
         ariaLabel={toolbarLabel}
         className={toolbarClassName}
+        queryPending={resolved.isPreviousData}
       />}
       {bulkActions?.length && selectionRows.length > 0 ? <DataTableBulkActions
         actions={bulkActions}
@@ -148,14 +167,26 @@ export function DataTableContent<T extends Row = Row>({
         : <DataTableErrorState error={resolved.error} onRetry={resolved.refresh} />)}
       {resolved.isLoading && resolved.data.length > 0 && <p role="status" className="text-xs text-muted-foreground">Updating records…</p>}
       <DataTableGrid
-        key={partition}
+        key={`grid:${partition}`}
         controls={dt} selectable={selectable} sortable={sortable} tableLayout={tableLayout}
         actions={actions} mutationRunner={mutationRunner} highlightedRowId={highlightedRowId}
         emptyState={emptyState} loadingState={loadingState} loading={resolved.isLoading}
+        error={Boolean(resolved.error)} motionEnabled={motion && live.stableIdentity} queryKey={queryKey}
+        previousData={resolved.isPreviousData}
+        cellMotion={cellMotion}
+        query={current.globalFilter} freshRowIds={live.freshRowIds} onBusyChange={live.setBusy}
+        navigationOrigin={navigationOrigin}
+        onClearFilters={current.globalFilter || current.columnFilters.length ? () => { dt.table.resetColumnFilters(true); dt.setGlobalFilter(''); } : undefined}
         getRowClassName={getRowClassName} onRowClick={onRowClick} onRowDoubleClick={onRowDoubleClick}
         onCellSave={saveCell} onCellAccepted={acceptCell} getNextEditableCell={nextEditableCell}
       />
-      {paginated && <DataTablePagination table={dt.table} serverPage={server ? resolved.page : undefined} loading={resolved.isLoading} />}
+      {paginated ? <DataTablePagination key={`pagination:${partition}`} table={dt.table} serverPage={server ? resolved.page : undefined} loading={resolved.isLoading}
+        newCount={live.newCount} onRevealNew={revealNew} onPrefetchPage={resolved.prefetchPage}
+        onPageNavigate={(_, origin) => setNavigationOrigin(origin)} keyboardNavigation motionEnabled={motion}
+        unfilteredTotal={live.unfilteredTotal} totalCountOverride={live.totalCount}
+        motionDurationFactor={navigationOrigin === 'keyboard' ? DATA_TABLE_MOTION.keyboardFactor : 1} />
+        : live.newCount > 0 && <div className="flex justify-center"><DataTableNewRecordsButton count={live.newCount}
+          onReveal={revealNew} motionEnabled={motion} /></div>}
     </div>
   );
 }

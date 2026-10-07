@@ -25,6 +25,17 @@ reviewed_against:
 
 `StorageStudioActionBar({ controller })` renders selection-aware actions in the bottom `RecordNavigationBar`. It has no className prop. Callback availability and effective capabilities jointly decide visible actions; loading/busy state disables mutation admission.
 
+Operational actions are icon-only at rest and expand their full label on hover
+or keyboard focus. Accessible names remain complete while collapsed. Touch uses
+two deliberate taps: reveal the label first, then invoke; selecting another
+drive/file retires that disclosure. Keyboard Enter/Space and ordinary mouse
+clicks activate once without an extra confirmation step. Reduced motion reveals
+labels immediately. New Drive, Upload and New Folder keep visible primary labels.
+The shared bar puts its action strip on a separate narrow-width row and retains
+horizontal scrolling instead of widening the page. For custom bars, use
+`RecordNavigationBar.actionLabelMode="visible"` or per-action
+`labelMode: 'visible'` to opt out. See [shared master/detail controls](../data-controls/master-detail.md).
+
 ## Selection Versus Pagination
 
 Record previous/next chooses a drive/file inside the currently supplied array. Selection index is derived from drive ID or file ID. It does not request a server page. Use [pagination controls](./storage-studio-pagination.md) for that separate operation.

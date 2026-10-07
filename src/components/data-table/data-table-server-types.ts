@@ -55,12 +55,30 @@ export interface DataTableServerAdapterContext {
   signal: AbortSignal;
 }
 
+/** Authoritative live change, not a snapshot, optimistic write, or result-set join. Row IDs use the adapter's stable result identity. */
+export interface DataTableServerChange {
+  op: 'INSERT' | 'UPDATE' | 'DELETE';
+  rowId: string;
+}
+
 /** App-owned query transport for cursor APIs or non-Zero backends. */
 export interface DataTableServerAdapter<T extends Row> {
   query(
     query: DataTableServerQuery,
     context: DataTableServerAdapterContext,
   ): Promise<DataTableServerResult<T>>;
+  /** Confirm which genuine INSERT identities match these criteria, independently of pagination. Return only supplied IDs; unsupported sources omit this capability. */
+  confirmInsertedRows?(
+    query: DataTableServerQuery,
+    rowIds: readonly string[],
+    context: DataTableServerAdapterContext,
+  ): Promise<readonly string[]>;
+  /** Subscribe to genuine server changes for this captured query. Membership is confirmed by subsequent query results, not guessed locally. */
+  subscribeChanges?(
+    query: DataTableServerQuery,
+    listener: (change: DataTableServerChange) => void,
+    context: DataTableServerAdapterContext,
+  ): () => void;
 }
 
 /** DataTable source that delegates filtering, sorting, and pagination to a server. */
@@ -73,6 +91,8 @@ export interface DataTableServerSource<T extends Row> {
   adapter?: DataTableServerAdapter<T>;
   /** Refetch after relevant reactive collection changes. Defaults to true. */
   live?: boolean;
+  /** Speculatively load known neighboring pages. Defaults to true; never invents cursors. */
+  prefetch?: boolean;
   /** Optional row identity override; schema primary key is preferred by DataTable. */
   getRowId?: (row: T, index: number) => string | number;
 }

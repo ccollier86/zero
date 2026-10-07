@@ -32,6 +32,7 @@ export function DataStudioWorkspaceActions({ controller: c, access, ...actions }
     variant: 'destructive', disabled, onClick: actions.onDeleteRecord });
   return <RecordNavigationBar
     className="min-w-0"
+    actionContextKey={JSON.stringify([c.scopeKey, c.selectedTableId, c.selectedRowId])}
     currentIndex={Math.max(0, c.selectedRowIndex)} totalCount={c.rows.length}
     showNavigation={c.selectedRow !== null}
     status={<span className="text-xs text-muted-foreground tabular-nums">{c.rows.length} loaded{c.totalRows !== c.rows.length ? ` · ${c.totalRows} matching` : ''}{c.isLoadingRows ? ' · Refreshing…' : ''}</span>}

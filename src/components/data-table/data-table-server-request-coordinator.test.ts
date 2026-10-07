@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DataTableServerRequestCoordinator } from './data-table-server-request-coordinator';
 import { dataTableServerSourceIdentity } from './data-table-server-source-identity';
+import { dataTableServerPartitionMatches } from './data-table-server-source-state';
 import {
   dataTableServerStateMatches,
   projectDataTableServerRows,
@@ -92,5 +93,17 @@ describe('DataTableServerRequestCoordinator', () => {
       .toBe(dataTableServerSourceIdentity({ type: 'server', table: 'docs', adapter: first }));
     expect(dataTableServerSourceIdentity({ type: 'server', table: 'docs', adapter: first }))
       .not.toBe(dataTableServerSourceIdentity({ type: 'server', table: 'docs', adapter: second }));
+  });
+  test('previous-query presentation never crosses a source/auth partition or an unreadable scope', () => {
+    const previous = { partition: 'auth-a/source-a/primary-key-id', signature: 'page-0' };
+    expect(dataTableServerPartitionMatches(previous, previous.partition, true)).toBe(true);
+    expect(dataTableServerPartitionMatches(previous, 'auth-b/source-a/primary-key-id', true)).toBe(false);
+    expect(dataTableServerPartitionMatches(previous, 'auth-a/source-b/primary-key-id', true)).toBe(false);
+    expect(dataTableServerPartitionMatches(previous, previous.partition, false)).toBe(false);
+  });
+  test('provider replacement partitions the built-in client even when its visible auth shape is unchanged', () => {
+    const source = { type: 'server' as const, table: 'tasks' }, first = {}, second = {};
+    expect(dataTableServerSourceIdentity(source, first)).toBe(dataTableServerSourceIdentity(source, first));
+    expect(dataTableServerSourceIdentity(source, first)).not.toBe(dataTableServerSourceIdentity(source, second));
   });
 });

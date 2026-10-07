@@ -59,7 +59,7 @@ function Fixture() {
         onCellCommit={(_id, _field, value) => { commits++; return new Promise<void>((resolve) => {
           acceptWrite = () => { updateEditedValue(String(value)); resolve(); };
         }); }} />
-      : <DataTable<FixtureRow> schema={schema} source={{ type: 'server', table, pagination: mode, adapter: alternate ? alternativeAdapter : adapter }}
+      : <DataTable<FixtureRow> schema={schema} source={{ type: 'server', table, pagination: mode, adapter: alternate ? alternativeAdapter : adapter, prefetch: false }}
         columns={['name']} searchable={{ fields: ['name'], ariaLabel: 'Search records' }} paginated={{ pageSize: 2 }}
         selectable state={controls} onStateChange={updateControls}
         onSelectionChange={(ids) => { selectionChanges++; lastSelection = ids; updateSelection(ids); }}

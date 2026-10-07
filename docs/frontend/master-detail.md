@@ -381,6 +381,19 @@ These are record/action controls, not a data-source pagination mechanism. At
 narrow widths, actions remain reachable in their horizontal strip and primary
 workflows reflow beneath it.
 
+Operational actions now default to icon-only rest with a sliding full label on
+hover or keyboard focus. Accessible names always retain the full label. Touch
+first reveals, then invokes on a second tap; keyboard Enter/Space and ordinary
+mouse clicks invoke once. Reduced motion reveals immediately. Primary workflows
+remain labelled. Below the compact container breakpoint, navigation/status and
+the independently scrolling action strip occupy separate rows.
+
+`RecordNavigationBar.actionLabelMode="visible"` opts into always-visible labels;
+an individual `NavigationAction.labelMode` can override the bar. Custom record
+compositions should change `actionContextKey` with the selected target/scope to
+retire touch disclosure. This is not authorization: the operation still owns
+permission, pending and confirmation checks.
+
 ## Public Exports
 
 ```ts

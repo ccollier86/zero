@@ -1,0 +1,48 @@
+/* Scoped rules intentionally outrank Skeleton’s generic pulse utility; the theme still owns every visual color. */
+[data-slot="data-table-grid"] { isolation: isolate; }
+[data-slot="data-table-grid"] [data-slot="table-row"] {
+  transition-duration: var(--zero-table-motion-ui);
+  transition-timing-function: var(--zero-table-motion-ease);
+}
+[data-slot="data-table-grid"] [data-slot="table-body"] { position: relative; }
+[data-table-leaving] { pointer-events: none; }
+[data-skeleton-visible] { display: none; }
+[data-slot="data-table-skeleton-overlay"] {
+  position: absolute; inset: 0; display: flex; align-items: center; padding: inherit;
+  background: var(--background); pointer-events: none;
+  animation: zero-table-skeleton-exit var(--zero-table-motion-fast) linear both;
+  animation-delay: calc(var(--zero-table-skeleton-index, 0) * var(--zero-table-motion-stagger));
+}
+[data-slot="data-table-cell-flash"] {
+  position: absolute; inset: 0; pointer-events: none; z-index: -1; background: var(--accent);
+  animation: zero-table-fresh var(--zero-table-motion-highlight) var(--zero-table-motion-ease) both;
+}
+[data-table-fresh] > td, .zero-table-cell-flash { position: relative; isolation: isolate; }
+[data-table-fresh] > td::before, .zero-table-cell-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--accent);
+  animation: zero-table-fresh var(--zero-table-motion-highlight) var(--zero-table-motion-ease) both;
+}
+[data-slot="data-table-search-match"] { background: var(--accent); color: inherit; border-radius: var(--radius-sm); }
+[data-slot="data-table-skeleton"] {
+  animation: zero-table-skeleton var(--zero-table-motion-skeleton-pulse) ease-in-out infinite;
+  animation-delay: calc(var(--zero-table-skeleton-index, 0) * var(--zero-table-motion-skeleton-offset));
+}
+[data-slot="data-table-empty"] { animation: zero-table-empty var(--zero-table-motion-base) var(--zero-table-motion-ease) both; }
+@keyframes zero-table-fresh { 0%, 35% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes zero-table-skeleton { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+@keyframes zero-table-empty { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes zero-table-skeleton-exit { from { opacity: 1; } to { opacity: 0; } }
+[data-slot="data-table-grid"][data-motion="false"] [data-slot="data-table-empty"] { animation: none; }
+[data-slot="data-table-grid"] button, [data-slot="data-table-pagination"] button {
+  transition-duration: var(--zero-table-motion-ui); transition-timing-function: var(--zero-table-motion-ease);
+}
+[data-slot="data-table-skeleton-crossfade"] { z-index: 3; }
+[data-slot="data-table-skeleton-crossfade"] [data-slot="table-row"] { border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="data-table-skeleton"] { animation: none; opacity: 1; }
+}

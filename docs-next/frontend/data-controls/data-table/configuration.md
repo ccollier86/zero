@@ -3,18 +3,18 @@ id: zero.frontend.data-controls.data-table.configuration
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: verified
+status: draft
 visibility: internal
 system: frontend-data-controls
 feature: data-table-configuration
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0 baseline with unreleased working-tree additions"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
+  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  snapshot: dirty
   date: "2026-10-07"
   evidence_level: source-observed
 ---
@@ -41,7 +41,7 @@ Column metadata is shared with [schema](../../../backend/schema/ui-metadata.md).
 | columns | field-name list | schema fields except tableVisible=false |
 | primaryKey | field name override | descriptor key, then supported fallback behavior |
 | editable | field-name list | [] |
-| columnOverrides | field-to-column override map | optional header/cell/width/minWidth/maxWidth/flex/wrap/truncate/sortable/filterable/editable |
+| columnOverrides | field-to-column override map | optional header/cell/width/minWidth/maxWidth/flex/wrap/truncate/sortable/filterable/editable/sortDescFirst/sortingFn |
 | tableLayout | auto or fixed | auto |
 
 See [sources](./sources.md) for the full discriminated shapes. In server mode
@@ -62,12 +62,18 @@ cell receives original row, decoded value, columnId and fieldMeta.
 | initialState | partial initial DataTableState | empty criteria/selection/visibility, pageIndex0/pageSize20 |
 | state | partial controlled DataTableState | other facets remain internal |
 | onStateChange | receives full next state | optional |
+| motion | boolean table row/page/counter presentation | true in current working tree; reduced motion respected |
+| cellMotion | `'typewriter'`, `'highlight'`, or `false` | typewriter for eligible existing plain-text cells; other values keep their typed presentation |
+| liveUpdates | boolean held-arrival presentation | true for supported complete/server sources; does not stop transport updates |
 
 Search options are fields, placeholder, ariaLabel, collapsedWidth, expandedWidth
 and disabled. Built-in server search uses declared fields with OR semantics;
 if omitted, string/text-family candidates are derived from visible/schema fields.
 Standalone DataTableToolbar defaults searchable=true; MasterDetail also has its
 own default. Do not merge those defaults into DataTable's false default.
+In the working organism toolbar, nonempty input is published after 90ms;
+input display and clearing remain immediate. Standalone DataTableSearch retains
+its immediate controlled callback. This is not a global form-input debounce.
 
 Changing search, filters or sort resets pagination. Rows per page preserves the
 page containing the old first row for local/offset sources, while cursor sources
@@ -113,6 +119,27 @@ buttons reflect the accepted source state; old responses/results are fenced
 instead of replacing newer queries or organizations. Exact unknown/known page
 semantics are in [server sources](./server-sources.md).
 
+## Working Motion And Live Options
+
+The current development additions use existing Zero visuals, with table-scoped
+motion rather than a global theme change. `motion: false` disables that
+presentation, not source requests, acknowledgment or pending-authority guards.
+`liveUpdates: false` disables holding/fresh-arrival presentation, not automatic
+refetch. Server `source.live: false` separately disables automatic invalidation/
+subscriptions, while `source.prefetch: false` disables speculative requests.
+These are ordinary React options, not new app-config settings or backend grants.
+
+Holding needs stable unique IDs and a baseline. Complete arrays must represent
+the caller's complete accepted dataset; collection/server arrival evidence uses
+admitted genuine INSERTs rather than snapshots or arbitrary result joins.
+Server counts include genuine INSERTs confirmed by accepted pages or supported
+bounded, authorized membership lookups; off-page totals are not inferred from
+count differences. [Motion and live updates](./motion-and-live-updates.md)
+owns the timing, reading-window, reduced-motion and keyboard contract.
+
+This section and the new options describe the working tree against the stated
+baseline, not the already-published 2.6.0 archive.
+
 ## Read Time And Verification
 
 Props are ordinary React/query inputs. Controlled state is not persisted unless
@@ -125,5 +152,6 @@ for integrated sources and qualify every custom writer/adapter's own contract.
 
 - [Sources](./sources.md) owns resolution/execution semantics.
 - [Server sources](./server-sources.md) owns query/results and pagination.
+- [Motion and live updates](./motion-and-live-updates.md) owns presentation timing and genuine-arrival evidence.
 - [Schema UI metadata](../../../backend/schema/ui-metadata.md) owns column hints.
 - [SDK receipts](../../sdk/acknowledged-mutations.md) owns accepted realtime writes.

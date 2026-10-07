@@ -1,5 +1,10 @@
 'use client';
 
+/**
+ * Shared text-animation primitive. Owns the original typing sequence and an
+ * opt-in, bounded replacement presentation; callers own accepted text and layout.
+ */
+
 import * as React from 'react';
 import { motion, type HTMLMotionProps } from 'motion/react';
 
@@ -8,6 +13,7 @@ import {
   type UseIsInViewOptions,
 } from '#zero/hooks/use-is-in-view';
 import { getStrictContext } from '#zero/lib/get-strict-context';
+import { useTypingTextReplacement } from './use-typing-text-replacement';
 
 type TypingTextContextType = {
   isTyping: boolean;
@@ -17,7 +23,8 @@ type TypingTextContextType = {
 const [TypingTextProvider, useTypingText] =
   getStrictContext<TypingTextContextType>('TypingTextContext');
 
-type TypingTextProps = React.ComponentProps<'span'> & {
+type TypingTextSequenceProps = React.ComponentProps<'span'> & {
+  mode?: 'type';
   duration?: number;
   delay?: number;
   loop?: boolean;
@@ -25,7 +32,54 @@ type TypingTextProps = React.ComponentProps<'span'> & {
   text: string | string[];
 } & UseIsInViewOptions;
 
-function TypingText({
+type TypingTextReplacementProps = React.ComponentProps<'span'> & {
+  mode: 'replace';
+  text: string;
+  /** Per-grapheme cadence, bounded by maxDuration for long replacements. */
+  duration?: number;
+  /** Maximum erase-plus-type duration in milliseconds; initial mount is always final. */
+  maxDuration?: number;
+  /** Disabling replacement motion immediately exposes the latest canonical text. */
+  enabled?: boolean;
+};
+
+/** Original sequences remain the default; replacement children are the canonical final presentation. */
+type TypingTextProps = TypingTextSequenceProps | TypingTextReplacementProps;
+
+/** Render original typing sequences or animate only subsequent accepted string replacements. */
+function TypingText(props: TypingTextProps) {
+  return props.mode === 'replace'
+    ? <TypingTextReplacement {...props} />
+    : <TypingTextSequence {...props} />;
+}
+
+function TypingTextReplacement({
+  mode: _mode,
+  text,
+  duration = 24,
+  maxDuration = 525,
+  enabled = true,
+  children,
+  style,
+  ...props
+}: TypingTextReplacementProps) {
+  const { displayedText, isTyping } = useTypingTextReplacement({ text, duration, maxDuration, enabled });
+
+  return (
+    <span data-slot="typing-text" data-typing={isTyping ? '' : undefined}
+      style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', verticalAlign: 'baseline', ...style }} {...props}>
+      {/* Opacity preserves final layout, the accessibility tree, and canonical copy while glyphs change. */}
+      <span data-slot="typing-text-value" style={{ opacity: isTyping ? 0 : undefined }}>{children ?? text}</span>
+      {isTyping && <span data-slot="typing-text-visual" aria-hidden="true"
+        style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', userSelect: 'none', whiteSpace: 'inherit' }}>
+        {displayedText}
+      </span>}
+    </span>
+  );
+}
+
+function TypingTextSequence({
+  mode: _mode,
   ref,
   children,
   duration = 100,
@@ -37,7 +91,7 @@ function TypingText({
   holdDelay = 1000,
   text,
   ...props
-}: TypingTextProps) {
+}: TypingTextSequenceProps) {
   const { ref: localRef, isInView } = useIsInView(
     ref as React.Ref<HTMLElement>,
     {
@@ -135,6 +189,7 @@ function TypingText({
 
 type TypingTextCursorProps = Omit<HTMLMotionProps<'span'>, 'children'>;
 
+/** Render the original sequence's cursor; replacement mode intentionally has no looping cursor. */
 function TypingTextCursor({
   style,
   variants,

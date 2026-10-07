@@ -11,6 +11,7 @@ const selected: Record<string, number[]> = {
   'frontend/app-shell/header-and-account.md': [0],
   'frontend/data-studio/workspace.md': [0, 1, 2],
   'frontend/data-studio/controller.md': [0],
+  'frontend/data-controls/data-table/motion-and-live-updates.md': [0, 1],
   'frontend/components/primitives/inputs.md': [0],
   'frontend/components/phone-input.md': [0, 1, 2],
   'frontend/components/avatar-group.md': [0, 1],

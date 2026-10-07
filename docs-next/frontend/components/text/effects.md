@@ -63,6 +63,26 @@ pause; no onDone/provider receipt is exposed. The cursor is decorative, not a
 transport-status signal. UTF-16 slicing is the current typing behavior; do not
 infer Unicode-grapheme timing guarantees from a string API.
 
+## Table Value Replacement
+
+The current 2.6.0 working tree extends the internal `TypingText` primitive with
+an opt-in replacement mode, reused by DataTable. This is not a new package export
+or a change to TypewriterEffect's marketing-copy/loop defaults above.
+
+The public table control is `cellMotion`: `'typewriter'` (the default for eligible
+plain-text displays), `'highlight'`, or `false`. Replacement mode displays its
+initial value immediately, then erases and types subsequent changes at a 24ms
+grapheme cadence bounded to 525ms total. It retargets the current visual string
+instead of queuing old values; grapheme segmentation avoids partial emoji and
+combining characters. Reduced motion and disabled motion show the latest value
+immediately and retire the decorative timer.
+
+Canonical final text remains in the layout and accessibility/selection tree.
+The intermediate text is an aria-hidden, non-selectable overlay with no looping
+cursor. Custom cells, masked content, active editors and nontext types are not
+inspected or converted. Use the [table motion guide](../../data-controls/data-table/motion-and-live-updates.md#existing-cell-values)
+for exact eligibility, configuration and source boundaries.
+
 ## Accessibility And Content
 
 Use motion deliberately and verify reduced-motion/assistive technology behavior

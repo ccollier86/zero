@@ -31,6 +31,17 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Working Table Motion Defaults — 2026-10-07
+
+This additive runtime constant was source-observed in the dirty framework 2.6.0
+worktree against published baseline
+`5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8`. It is not included in the historical
+clean helper count and is not a claim about the published 2.6.0 archive.
+
+| Named symbol | Exact import alternatives | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `DATA_TABLE_MOTION` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/data-table` | [src/components/data-table/data-table-motion-tokens.ts](../../../../src/components/data-table/data-table-motion-tokens.ts) | [Motion and live updates](../../../frontend/data-controls/data-table/motion-and-live-updates.md#what-moves-and-when) |
+
 ### Authorized Working-Source Signature Helpers
 
 These additions accompany the unreleased signature UI on top of Zero 2.2.1;

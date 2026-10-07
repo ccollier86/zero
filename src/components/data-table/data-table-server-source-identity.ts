@@ -8,11 +8,13 @@ let nextIdentity = 1;
 
 export function dataTableServerSourceIdentity<T extends Row>(
   source: DataTableServerSource<T> | null,
+  client?: object | null,
 ): string {
   if (!source) return 'none';
   return JSON.stringify([
     source.adapter ? objectIdentity(source.adapter) : 'builtin',
     source.getRowId ? objectIdentity(source.getRowId) : 'schema-primary-key',
+    client ? objectIdentity(client) : 'standalone',
   ]);
 }
 

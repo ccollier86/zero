@@ -16,6 +16,9 @@ import { dataTableServerSourceIdentity } from './data-table-server-source-identi
 import { useDataTableMutationRunner, type DataTableMutationRunner } from './data-table-mutation';
 import { getSchemaPrimaryKey } from './row-identity';
 import { selectedDataTablePageRows } from './data-table-selection';
+import { useDataTableLiveWindow } from './use-data-table-live-window';
+import { useDataTableCollectionInserts } from './use-data-table-collection-inserts';
+import type { InternalClient } from '../../frontend/client/sdk';
 
 /** Internal composition result; not an additional public table API. */
 export interface DataTableController<T extends Row> {
@@ -26,6 +29,8 @@ export interface DataTableController<T extends Row> {
   primaryKey: string;
   mutationRunner: DataTableMutationRunner;
   server: boolean;
+  live: ReturnType<typeof useDataTableLiveWindow<T>>;
+  queryKey: string;
 }
 
 /** Build one query/source/result owner; presentation consumers must not fetch a second copy. */
@@ -34,14 +39,14 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
   const client = useClientMaybe();
   const boundary = useAuthorizationScopeBoundary(client);
   const server = source?.type === 'server';
+  const primaryKey = getSchemaPrimaryKey(schema, options.primaryKey);
   const sourceTable = source && 'table' in source ? source.table : collection;
   const mode = server ? source.pagination ?? 'offset' : 'offset';
   const partition = stableValueKey([
-    boundary.key, source?.type ?? (collection ? 'collection' : 'data'), sourceTable,
-    server ? dataTableServerSourceIdentity(source) : null, mode,
+    boundary.key, boundary.ready, source?.type ?? (collection ? 'collection' : 'data'), sourceTable,
+    server ? dataTableServerSourceIdentity(source, client) : null, mode, primaryKey,
   ]);
   const pageSize = typeof paginated === 'object' ? paginated.pageSize ?? 20 : 20;
-  const primaryKey = getSchemaPrimaryKey(schema, options.primaryKey);
   const interaction = useDataTableState({
     initialState: options.initialState, state: options.state,
     onStateChange: options.onStateChange, pageSize, boundaryKey: partition, paginationMode: mode,
@@ -60,6 +65,7 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
   const resolved = useDataTableSource<T>({
     source, data: options.data, collection, lazy: options.lazy,
     filters: options.filters, lazyOptions: options.lazyOptions, primaryKey,
+    confirmLiveInsertions: options.liveUpdates !== false,
     query: {
       search: searchable ? current.globalFilter : '',
       filters: current.columnFilters,
@@ -72,8 +78,15 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     },
   });
   useDataTableAcceptedCursors(cursors, current.pagination.pageIndex, resolved.page);
+  const collectionInserts = useDataTableCollectionInserts(client as InternalClient | null,
+    resolved.sourceType === 'collection' ? resolved.table : null, boundary.key, boundary.ready, queryShape);
+  const live = useDataTableLiveWindow<T>({ props: options, data: resolved.data, sourceType: resolved.sourceType,
+    boundary: partition, criteria: queryShape, state: current, primaryKey, loading: resolved.isLoading,
+    insertedRowIds: resolved.sourceType === 'collection' ? collectionInserts : resolved.liveInsertedRowIds,
+    confirmedInsertedRowIds: resolved.confirmedLiveInsertedRowIds,
+    clearConfirmedInsertions: resolved.clearLiveInsertions });
   const dt = useDataTable<T>({
-    schema, data: resolved.data, columns: options.columns, editable: options.editable,
+    schema, data: live.data, columns: options.columns, editable: options.editable,
     selectable: options.selectable, pageSize, primaryKey,
     columnOverrides: options.columnOverrides, state: current,
     onStateChange: interaction.replace, paginated: !!paginated,
@@ -94,5 +107,5 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     callback?.(ids);
   }, [selectionKey]);
 
-  return { dt, current, resolved, partition, primaryKey, mutationRunner, server };
+  return { dt, current, resolved, partition, primaryKey, mutationRunner, server, live, queryKey: queryShape };
 }

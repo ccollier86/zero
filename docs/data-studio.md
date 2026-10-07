@@ -409,6 +409,14 @@ the server's row/byte limits; it does not download the whole table. Search,
 filters and sorting remain server-owned. The workspace has loading, retry,
 empty, end-of-results and refresh-required states, not page navigation buttons.
 Previous/Next **record** actions in the bottom bar move through loaded records.
+Operational bar buttons are icon-only at rest and slide out their labels on
+hover or keyboard focus. Complete accessible names remain available. Touch
+reveals on the first tap and invokes on the second; replacing the selected
+table/record/scope retires that intent. Keyboard/mouse activation remains
+single-step, reduced motion reveals immediately, and Add record stays labelled.
+The action strip occupies its own narrow-width row rather than widening the
+page. Custom shared bars can opt into `actionLabelMode="visible"` or a per-action
+`labelMode: 'visible'`.
 
 The optional inspector has **Record**, **Table**, and **Code** tabs. Record
 shows complete selected values; Table shows the description, stable key,

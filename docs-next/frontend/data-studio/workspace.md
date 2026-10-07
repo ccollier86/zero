@@ -67,6 +67,17 @@ record according to live capability, selection, pending state and lifecycle.
 Previous/Next **record** actions traverse loaded records; they are not page
 requests. No selection hides an unhelpful `0 / 0` navigation counter.
 
+Bottom-bar operational actions are icon-only at rest, expanding their full label
+on hover or keyboard focus while retaining complete accessible names. Touch
+reveals on the first tap and invokes on the second; a changed table/record/scope
+retires that touch intent. Enter/Space and mouse activation remain single-step,
+and reduced motion reveals immediately. Add record keeps its visible primary
+label. At narrow widths the action strip has its own horizontally scrolling row,
+so labels remain readable and the bar does not widen the page. Custom
+RecordNavigationBar compositions can set `actionLabelMode="visible"`, or set
+`labelMode: 'visible'` on an individual NavigationAction; see
+[shared master/detail controls](../data-controls/master-detail.md).
+
 ## Bounded Composition
 
 Use AppShell's workspace content mode, or an equivalent constrained height chain:

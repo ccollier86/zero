@@ -1,0 +1,61 @@
+/* Table-scoped composition and compositor-only motion; keep existing Zero type, surface, and control tokens. */
+[data-slot='data-table-pagination'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  position: relative;
+}
+[data-slot='data-table-page-count'] { grid-column: 1; grid-row: 1; min-width: 0; }
+[data-slot='data-table-page-count'][data-ready='false'] { opacity: 0; }
+[data-slot='data-table-pagination'][data-motion='true'] [data-slot='data-table-page-count'][data-ready='true'] {
+  animation: zero-data-table-count-in var(--zero-table-motion-base, 525ms) var(--zero-table-motion-ease, cubic-bezier(.2, 0, 0, 1)) both;
+}
+[data-slot='data-table-page-controls'] { grid-column: 3; grid-row: 1; justify-self: end; }
+[data-slot='data-table-pagination'] > [data-slot='data-table-new-records'] { grid-column: 2; grid-row: 1; justify-self: center; }
+[data-slot='data-table-new-records'][data-motion='true'] {
+  animation: zero-data-table-pill-in var(--zero-table-motion-base, 525ms) var(--zero-table-motion-ease, cubic-bezier(.2, 0, 0, 1)) both;
+}
+.data-table-rolling-number { display: inline-flex; font-variant-numeric: tabular-nums; vertical-align: bottom; }
+.data-table-rolling-number [data-slot='data-table-digit'] {
+  display: inline-grid;
+  overflow: hidden;
+  height: var(--zero-data-table-roller-height, 1.35em);
+  line-height: var(--zero-data-table-roller-height, 1.35em);
+}
+.data-table-rolling-number [data-slot='data-table-digit'] > span { grid-area: 1 / 1; text-align: center; }
+[data-slot='data-table-page-track'] {
+  position: absolute; inset-inline: 0; bottom: 0;
+  height: var(--zero-data-table-progress-height, 2px); overflow: hidden; pointer-events: none;
+}
+[data-slot='data-table-page-progress'] {
+  height: 100%; background: var(--primary); transform-origin: left;
+  transition: transform var(--zero-table-motion-move, 700ms) var(--zero-table-motion-ease, cubic-bezier(.2, 0, 0, 1));
+}
+[data-slot='data-table-sort-indicator'] {
+  opacity: 0;
+  transition: transform var(--zero-table-motion-fast, 350ms) var(--zero-table-motion-ease, cubic-bezier(.2, 0, 0, 1)),
+    opacity var(--zero-table-motion-ui, 120ms) var(--zero-table-motion-ease, cubic-bezier(.2, 0, 0, 1));
+}
+[data-slot='data-table-sort-header']:is(:hover, :focus-visible) [data-slot='data-table-sort-indicator'] { opacity: .4; }
+[data-slot='data-table-sort-header'][data-sorted='true'] [data-slot='data-table-sort-indicator'] { opacity: 1; }
+[data-slot='data-table-pagination'][data-motion='false'] [data-slot='data-table-page-progress'],
+[data-slot='data-table-sort-header'][data-motion='false'] [data-slot='data-table-sort-indicator'] { transition: none; }
+@keyframes zero-data-table-pill-in { from { opacity: 0; transform: translateY(4px) scale(.96); } }
+@keyframes zero-data-table-count-in { from { opacity: 0; } }
+@media (max-width: 520px) {
+  [data-slot='data-table-pagination'] { grid-template-columns: minmax(0, 1fr) auto; }
+  [data-slot='data-table-page-controls'] { grid-column: 2; display: grid; grid-template-columns: auto auto; max-width: 100%; }
+  [data-slot='data-table-page-buttons'] { grid-column: 1 / -1; justify-self: end; }
+  /* The existing Select carries an explicit accessible name; keep its full label without spending a mobile track on it. */
+  [data-slot='data-table-page-size-label'] {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+  [data-slot='data-table-pagination'] > [data-slot='data-table-new-records'] { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot='data-table-new-records'] { animation: none; }
+  [data-slot='data-table-page-count'] { animation: none !important; }
+  [data-slot='data-table-pagination'] [data-slot='data-table-page-progress'],
+  [data-slot='data-table-sort-header'] [data-slot='data-table-sort-indicator'] { transition: none; }
+}

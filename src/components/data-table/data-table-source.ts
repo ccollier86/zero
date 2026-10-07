@@ -80,6 +80,8 @@ export interface UseDataTableSourceOptions<T extends Row> {
   lazyOptions?: LazyCollectionOptions;
   query?: DataTableServerQuery;
   primaryKey?: string;
+  /** Skip separate live membership reads when held-arrival presentation is disabled. */
+  confirmLiveInsertions?: boolean;
 }
 
 export interface DataTableSourceState<T extends Row> {
@@ -91,6 +93,21 @@ export interface DataTableSourceState<T extends Row> {
   page: DataTableServerPage | null;
   refresh: () => void | Promise<void>;
   actions: DataTableSourceActions<T> | null;
+  /** Server-only speculative reads; cursor targets must already be known. */
+  prefetchPage?: (pageIndex: number) => Promise<void>;
+  /** Previous-query server rows are presentation-only while the next page loads. */
+  isPreviousData?: boolean;
+  requestKey?: string | null;
+  resolvedRequestKey?: string | null;
+  resultRevision?: number;
+  /** Live invalidation does not itself prove new-record insertion. */
+  changeReason?: 'query' | 'refresh' | 'live' | null;
+  /** Genuine live INSERTs whose query/page membership was confirmed by the current server response. */
+  liveInsertedRowIds?: readonly string[];
+  /** Query-matching INSERT identities confirmed separately from the current page, without merging lookup rows. */
+  confirmedLiveInsertedRowIds?: readonly string[];
+  /** Retire held server insertion evidence when the reading view reveals it. */
+  clearLiveInsertions?: () => void;
 }
 
 /**
@@ -159,6 +176,7 @@ export function useDataTableSource<T extends Row = Row>(
     source: sourceType === 'server' ? resolved : null,
     query: options.query,
     primaryKey: options.primaryKey,
+    confirmLiveInsertions: options.confirmLiveInsertions,
     liveRevision: collection.data,
   });
   const [isLazyLoading, setIsLazyLoading] = useState(false);
@@ -332,6 +350,15 @@ export function useDataTableSource<T extends Row = Row>(
       page: server.page,
       refresh: server.refresh,
       actions: collection.actions,
+      prefetchPage: server.prefetchPage,
+      isPreviousData: server.isPreviousData,
+      requestKey: server.requestKey,
+      resolvedRequestKey: server.resolvedRequestKey,
+      resultRevision: server.resultRevision,
+      changeReason: server.changeReason,
+      liveInsertedRowIds: server.liveInsertedRowIds,
+      confirmedLiveInsertedRowIds: server.confirmedLiveInsertedRowIds,
+      clearLiveInsertions: server.clearLiveInsertions,
     };
   }
 

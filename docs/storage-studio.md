@@ -354,6 +354,16 @@ inherited drive and ancestor grants are shown read-only and must be changed at
 their source; folder grants inherit to descendants. Actions are projected from
 live server capabilities; hiding a button is never the authorization boundary.
 
+Its operational bottom-bar actions are icon-only at rest and expand their full
+label on hover or keyboard focus; accessible names stay complete. Touch reveals
+on the first tap and invokes on the second, with selection changes retiring the
+disclosure. Keyboard Enter/Space and mouse clicks still activate once. Reduced
+motion reveals immediately. Primary New Drive/Upload/New Folder labels remain
+visible, and the action strip moves to a separately scrolling row at narrow
+widths. Custom RecordNavigationBar users can choose `actionLabelMode="visible"`
+or per-action `labelMode: 'visible'`. Controller permissions and confirmation
+remain authoritative.
+
 Access forms wrap according to the **inspector width**, not the overall desktop
 viewport, keeping grant type, target and access-level controls reachable in a
 narrow pane. Current/direct/inherited grants render as compact rows inside

@@ -32,6 +32,7 @@ import {
   getDataTableColumnLabel,
 } from './data-table-column-filter';
 import { exportDataTableCsv } from './data-table-export';
+import { useDataTableSearchDraft } from './use-data-table-search-draft';
 import {
   DataTableSearch,
   type DataTableSearchOptions,
@@ -92,6 +93,8 @@ export interface DataTableToolbarProps<TData> {
   /** Accessible name for this group of table controls. */
   ariaLabel?: string;
   className?: string;
+  /** Retained previous-query rows are read presentation, not export targets. */
+  queryPending?: boolean;
 }
 
 /** Render a responsive, composable control plane for a DataTable. */
@@ -109,7 +112,9 @@ export function DataTableToolbar<TData>({
   slots,
   ariaLabel = 'Table controls',
   className,
+  queryPending = false,
 }: DataTableToolbarProps<TData>) {
+  const searchDraft = useDataTableSearchDraft(globalFilter, onGlobalFilterChange);
   const activeFilters = table.getState().columnFilters;
   const filterColumnSet = React.useMemo(
     () => filterColumns ? new Set(filterColumns) : null,
@@ -121,8 +126,8 @@ export function DataTableToolbar<TData>({
     .filter((column) => !filterColumnSet || filterColumnSet.has(column.id));
   const clearAll = React.useCallback(() => {
     table.resetColumnFilters(true);
-    onGlobalFilterChange('');
-  }, [onGlobalFilterChange, table]);
+    searchDraft.change('');
+  }, [searchDraft.change, table]);
   const selectedRows = selectedDataTablePageRows(table);
   const context = React.useMemo<DataTableToolbarContext<TData>>(() => ({
     table,
@@ -143,7 +148,7 @@ export function DataTableToolbar<TData>({
   const supplementalSlot = resolveToolbarSlot(slots?.supplemental, context);
   const searchOptions = typeof searchable === 'object' ? searchable : undefined;
   const showSearch = searchable !== false;
-  const showSecondary = supplementalSlot != null || activeFilters.length > 0;
+  const showSecondary = supplementalSlot != null || activeFilters.length > 0 || globalFilter.length > 0;
 
   return (
     <DataTableControls
@@ -152,8 +157,8 @@ export function DataTableToolbar<TData>({
       className={className}
       search={showSearch ? (
         <DataTableSearch
-          value={globalFilter}
-          onValueChange={onGlobalFilterChange}
+          value={searchDraft.value}
+          onValueChange={searchDraft.change}
           placeholder={searchOptions?.placeholder}
           label={searchOptions?.ariaLabel}
           collapsedWidth={searchOptions?.collapsedWidth}
@@ -204,6 +209,7 @@ export function DataTableToolbar<TData>({
 
           {showExport && (
             <Button
+              disabled={queryPending}
               type="button"
               variant="outline"
               size="sm"

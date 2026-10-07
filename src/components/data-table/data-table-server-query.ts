@@ -10,6 +10,7 @@ import {
   type DataFilterValue,
 } from '../../frontend/client/query-params';
 import type { Row } from '../../sync/types';
+import { dataTableServerMembershipQueries } from './data-table-server-membership-query';
 import {
   DataTableServerSourceError,
   type DataTableServerAdapter,
@@ -147,12 +148,13 @@ export function buildDataTableServerQuery(
   return `/api/data?${params}`;
 }
 
-/** Build the default authenticated adapter without exposing the SDK client publicly. */
+/** Build the existing SDK read adapter; a known PK opts into bounded membership checks, with server-denied filters remaining failures rather than guessed counts. */
 export function createDataTableApiAdapter<T extends Row>(
   client: Client,
   table: string,
+  primaryKey?: string,
 ): DataTableServerAdapter<T> {
-  return {
+  const adapter: DataTableServerAdapter<T> = {
     async query(query, { signal }) {
       const response = await client.fetch<DataTableApiResponse<T>>(
         buildDataTableServerQuery(table, query),
@@ -164,6 +166,25 @@ export function createDataTableApiAdapter<T extends Row>(
       });
     },
   };
+  if (primaryKey && IDENTIFIER.test(primaryKey) && primaryKey.length <= 128) {
+    adapter.confirmInsertedRows = async (query, rowIds, { signal }) => {
+      const confirmed = new Set<string>();
+      for (const lookup of dataTableServerMembershipQueries(normalizeDataTableServerQuery(query), primaryKey, rowIds)) {
+        if (signal.aborted) return [];
+        const result = await adapter.query(lookup, { signal });
+        if (signal.aborted) return [];
+        const filter = lookup.filters[lookup.filters.length - 1]!.value as DataFilterExpression;
+        const candidates = new Set(filter.value as string[]);
+        for (const row of result.rows) {
+          const value = row[primaryKey];
+          if ((typeof value === 'string' || typeof value === 'number' && Number.isFinite(value))
+            && candidates.has(String(value))) confirmed.add(String(value));
+        }
+      }
+      return [...confirmed];
+    };
+  }
+  return adapter;
 }
 
 /** Validate and snapshot the built-in endpoint response. */

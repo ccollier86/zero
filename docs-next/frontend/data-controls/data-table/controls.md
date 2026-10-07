@@ -3,20 +3,20 @@ id: zero.frontend.data-controls.data-table-controls
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: verified
+status: draft
 visibility: internal
 system: frontend-data-controls
 feature: data-table-controls
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0 baseline with unreleased working-tree additions"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
+  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  snapshot: dirty
   date: "2026-10-07"
-  evidence_level: implementation-verified
+  evidence_level: source-observed
 ---
 
 # Search-First Toolbars And Pagination
@@ -91,6 +91,12 @@ searchable=true, filterable=false, visibility/export=true,
 filename="export.csv", ariaLabel="Table controls".
 DataTable itself defaults searchable=false; do not infer the toolbar default.
 
+In the current working toolbar, input presentation remains immediate while
+nonempty query publication is debounced 90ms; clear publishes immediately.
+The standalone search primitive above does not acquire that debounce. Scope
+replacement/remount retires the table's pending query draft. These working
+additions are not yet a claim about the published 2.6.0 archive.
+
 Generated filters follow schema metadata and filterColumns. Active chips allow
 individual clearing. Column controls toggle presentation, not field authorization.
 DataTableColumnHeader composes a column's sortable label; server sources translate
@@ -123,8 +129,40 @@ anchor formula and shrinking-result behavior.
 An unknown total shows "Showing 21-40" rather than inventing a total from page
 length. Cursor mode requires an admitted nextCursor and hasMore for Next and
 does not offer Last. Previous follows retained visited-page cursor state. Loading
-disables page-size/navigation actions; the toolbar remains usable during refresh.
+does not freeze ordinary page-size/navigation controls; the source supersedes/
+aborts old requests and the presentation coalesces to the latest target.
+Previous-query rows are presentation-only, not active row/bulk mutation targets.
 See [server sources](./server-sources.md) for exact result/query shapes.
+
+## Working Footer Motion And Intent
+
+The footer retains Zero controls and theme tokens. Counts/page numbers use
+directional digit rollers; sort indicators expose the existing TanStack cycle
+(the column's configured first direction, its opposite, then unsorted) with an
+accessible current state and next action. Arrow navigation is focus-scoped rather than a global listener;
+text inputs, editors, comboboxes, menus, composition and modified keys keep
+their normal key behavior. Keyboard navigation uses the tuned 0.7 timing factor,
+without changing query authority or page math.
+
+`DataTablePagination` adds optional `newCount`, `onRevealNew`, `onPrefetchPage`,
+`onPageNavigate`, `keyboardNavigation`, `motionEnabled`, `unfilteredTotal`,
+`totalCountOverride` and `motionDurationFactor`. New count/reveal are
+caller-authoritative presentation inputs, not automatic insertion detection.
+The organism supplies them from its single live/source owner. Hover/focus intent
+passes a target page to that owner; it does not invent cursors or send a second
+independent request. Rejected intent uses the normal frontend data-page event.
+
+A centered `N new` button appears only for a positive admitted held count.
+`DataTableNewRecordsButton` is separately exported with `count`, `onReveal` and
+optional `motionEnabled`, plus normal Zero Button props. It renders nothing for
+zero/invalid counts and does not fetch, navigate or authorize on its own.
+
+Known page counts get a thin bottom progress track reflecting position from
+first to last; unknown totals/cursors omit it instead of faking progress.
+Narrow layouts reflow reachable controls and retain accessible names. Status
+labels are complete sentences; visual rolling digits are not separate live
+announcements. [Motion and live updates](./motion-and-live-updates.md) owns the
+timing, genuine-arrival evidence and reduced-motion details.
 
 Record actions in a master-detail/control plane may belong in its bottom
 navigation/action bar; use the organism's navigation actions, not a separate
@@ -144,3 +182,4 @@ connect it. Scope replacement must clear page targets before actions execute.
 - [Server sources](./server-sources.md) connects controls to authenticated queries.
 - [Selection/export](./export-and-selection.md) explains footer/CSV boundaries.
 - [Actions](./actions.md) owns complete asynchronous operation behavior.
+- [Motion and live updates](./motion-and-live-updates.md) owns the reading-safe footer/presentation integration.

@@ -189,8 +189,10 @@ const ordersAdapter: DataTableServerAdapter<OrderRow> = {
 A custom adapter must honor `context.signal` and return a result whose page mode
 matches the source. Zero validates and snapshots the result before displaying
 it. Replacing the adapter, row-identity function, query, login, tenant, or
-authorization-data boundary immediately retires the old page; aborted or
-out-of-order responses cannot repopulate it.
+authorization-data boundary immediately retires that old scope; aborted or
+out-of-order responses cannot repopulate it. The current development source
+additionally retains presentation-only previous rows within the same exact
+readable source/authorization partition while a different query loads.
 
 `live` defaults to `true`. When the named table is also in the current Sync
 catalog, collection changes act only as an invalidation signal and cause a new
@@ -198,6 +200,40 @@ server query; server rows are still never loaded into that collection. Set
 `live: false` for manually refreshed result sets. Logical/custom server tables
 that are not in the Sync catalog remain read-only unless the app supplies
 `onCellCommit`, row actions, or another explicit mutation path.
+
+Current working-tree additions add bounded known-page prefetch/cache and
+query-bound `adapter.subscribeChanges` for authoritative custom streams.
+Genuine INSERT IDs are exposed only after accepted page results or a supported
+bounded, authorized membership lookup confirms a match. Cache/page joins,
+snapshots and aggregate differences do not create new-record counts. These additions are not
+a claim about the already-published 2.6.0 archive. See the canonical
+[server source guide](../../docs-next/frontend/data-controls/data-table/server-sources.md)
+for exact cache limits, metadata and cancellation/authority boundaries.
+
+## Working Motion And Live Presentation
+
+Plain-text updates in existing rows now use a short erase/type replacement by
+default, including initially blank values. Set `cellMotion="highlight"` for the
+value flash only or `cellMotion={false}` for no cell effect. Row/page motion is
+controlled separately. Inline editors, custom/masked cells and typed numeric/date
+values keep their own presentation; reduced motion shows the final text instantly.
+
+The current development `DataTable`/`DataTableView` adds tuned row reflow, page
+transitions, schema-shaped skeletons, token-colored value changes and rolling
+footer numbers without replacing Zero's visual theme. `motion={false}` opts out
+of presentation motion; reduced-motion preference is respected. `liveUpdates={false}`
+separately disables held arrivals, not transport refresh or mutation acknowledgment.
+Complete caller arrays need a truthful loading baseline; registered collections
+use genuine admitted Sync INSERT evidence rather than hydration/snapshot joins.
+Server holding counts genuine INSERTs confirmed in accepted pages or supported
+membership lookups; custom adapters can opt into `confirmInsertedRows`. Lookup
+rows are not merged into the grid, and ordinary offset revalidation remains
+subject to concurrent page shifts rather than gaining snapshot isolation.
+
+These remain unreleased working-source behavior. The canonical
+[motion and live updates guide](../../docs-next/frontend/data-controls/data-table/motion-and-live-updates.md)
+owns exact timings, keyboard behavior, reading-position preservation, source
+distinctions, conservative server counts and verification requirements.
 
 Server mode differs from lazy mode in one important way:
 

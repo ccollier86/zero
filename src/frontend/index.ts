@@ -590,6 +590,7 @@ export { DataTableToolbar } from '../components/data-table';
 export { DataTableControls } from '../components/data-table';
 export { DataTableSearch } from '../components/data-table';
 export { DataTablePagination } from '../components/data-table';
+export { DATA_TABLE_MOTION, DataTableNewRecordsButton } from '../components/data-table';
 export { DataTableRowActions } from '../components/data-table';
 export {
   DataTableBulkActions,
@@ -608,6 +609,8 @@ export type {
   DataTableState,
   DataTablePaginationProps,
   DataTableServerAdapter,
+  DataTableServerChange,
+  DataTableNewRecordsButtonProps,
   DataTableServerAdapterContext,
   DataTableServerCursorPage,
   DataTableServerOffsetPage,

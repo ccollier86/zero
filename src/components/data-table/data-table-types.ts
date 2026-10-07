@@ -36,6 +36,12 @@ export interface DataTableProps<T extends Row = Row> {
   filterable?: boolean;
   filterColumns?: string[];
   paginated?: boolean | { pageSize?: number };
+  /** Tuned row/page/loading motion. Defaults to true; reduced-motion preference is respected. */
+  motion?: boolean;
+  /** Existing plain-text cell updates: typewriter (default), highlight only, or no cell effect. */
+  cellMotion?: 'typewriter' | 'highlight' | false;
+  /** Hold matching live additions while reading. Default true; server sources require confirmed INSERT evidence. */
+  liveUpdates?: boolean;
   selectable?: boolean;
   onSelectionChange?: (ids: string[]) => void;
   /** Legacy edit notification after the source write; acts as writer for array sources. */

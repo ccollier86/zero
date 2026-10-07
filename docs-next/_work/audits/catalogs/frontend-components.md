@@ -35,8 +35,13 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 These additive symbols are not counted as part of the original clean baseline.
 
+The DataTableNewRecordsButton row below is a 2026-10-07 dirty working-source
+addition against framework 2.6.0 baseline
+`5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8`, not a claim about its published archive.
+
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical planned guide |
 | --- | --- | --- | --- |
+| `DataTableNewRecordsButton` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/data-table` | [src/components/data-table/data-table-new-records-button.tsx](../../../../src/components/data-table/data-table-new-records-button.tsx) | [Motion and live updates](../../../frontend/data-controls/data-table/motion-and-live-updates.md) |
 | `Kbd` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/kbd` | [src/components/kbd/kbd.tsx](../../../../src/components/kbd/kbd.tsx) | [Keyboard hints](../../../frontend/components/kbd.md) |
 | `KbdGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/kbd` | [src/components/kbd/kbd.tsx](../../../../src/components/kbd/kbd.tsx) | [Keyboard hints](../../../frontend/components/kbd.md) |
 | `JsonEditor` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [src/components/json-editor/json-editor.tsx](../../../../src/components/json-editor/json-editor.tsx) | `frontend/components/json-editor.md` |

@@ -18,6 +18,8 @@ import {
 
 export interface EditableCellProps {
   value: unknown;
+  /** Optional read presentation; editing and validation continue to use the actual typed value. */
+  displayValue?: React.ReactNode;
   rowId: string;
   columnId: string;
   fieldMeta?: FieldMeta;
@@ -52,6 +54,7 @@ function EditableCellWithLocalRunner(props: EditableCellProps) {
 
 function EditableCellContent({
   value,
+  displayValue,
   rowId,
   columnId,
   fieldMeta,
@@ -132,7 +135,7 @@ function EditableCellContent({
         onStartEdit();
       }}
     >
-      {formatEditableCellValue(value, fieldMeta)}
+      {displayValue ?? formatEditableCellValue(value, fieldMeta)}
     </div>
   );
 }

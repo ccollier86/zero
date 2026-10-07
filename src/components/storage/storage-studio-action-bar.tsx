@@ -49,6 +49,8 @@ export function StorageStudioActionBar({ controller }: StorageStudioActionBarPro
   return (
     <div data-slot="storage-studio-action-bar" className="bg-background px-2 py-2 sm:px-3">
       <RecordNavigationBar
+        actionContextKey={JSON.stringify([controller.view, controller.selectedDrive?.drive.drive_id,
+          controller.selectedFile?.id, controller.currentPath])}
         currentIndex={selectedIndex < 0 ? 0 : selectedIndex}
         totalCount={collection.length}
         onPrevious={() => selectIndex(controller, Math.max(0, selectedIndex - 1))}

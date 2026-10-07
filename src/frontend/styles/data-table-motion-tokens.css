@@ -1,0 +1,36 @@
+/* Hand-tuned data motion; visual colors, typography and density remain the existing theme. */
+:root {
+  --zero-table-motion-ease: cubic-bezier(.2, 0, 0, 1);
+  --zero-table-motion-ui: 120ms;
+  --zero-table-motion-fast: 350ms;
+  --zero-table-motion-base: 525ms;
+  --zero-table-motion-move: 700ms;
+  --zero-table-motion-move-extra: 230ms;
+  --zero-table-motion-page-out: 230ms;
+  --zero-table-motion-odo: 525ms;
+  --zero-table-motion-height: 580ms;
+  --zero-table-motion-enter-delay: 120ms;
+  --zero-table-motion-stagger: 45ms;
+  --zero-table-motion-highlight: 2000ms;
+  --zero-table-motion-skeleton-pulse: 1400ms;
+  --zero-table-motion-skeleton-offset: 70ms;
+  --zero-table-motion-search-debounce: 90ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --zero-table-motion-ui: 1ms;
+    --zero-table-motion-fast: 1ms;
+    --zero-table-motion-base: 1ms;
+    --zero-table-motion-move: 1ms;
+    --zero-table-motion-move-extra: 1ms;
+    --zero-table-motion-page-out: 1ms;
+    --zero-table-motion-odo: 1ms;
+    --zero-table-motion-height: 1ms;
+    --zero-table-motion-enter-delay: 1ms;
+    --zero-table-motion-stagger: 1ms;
+    --zero-table-motion-highlight: 1ms;
+    --zero-table-motion-skeleton-pulse: 1ms;
+    --zero-table-motion-skeleton-offset: 1ms;
+  }
+}

@@ -28,6 +28,7 @@ run an agent, parse streamed HTTP events, persist an answer or render untrusted 
 
 - [StreamingText](./streaming-text.md) presents static, replayed and live string chunks.
 - [Animated text](./effects.md) covers FlipWords, TextGenerateEffect and TypewriterEffect.
+- [Table value replacement](./effects.md#table-value-replacement) explains the internal typing primitive reused by DataTable's public cell-motion option.
 - [Configuration](./configuration.md) gives imports, timing units and ownership.
 - [Roadmap](./roadmap.md) separates planned AI/editor composition from current controls.
 

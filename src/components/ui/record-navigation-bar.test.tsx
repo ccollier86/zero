@@ -5,7 +5,7 @@ import { KeyRound, Shield, UserRoundX } from 'lucide-react';
 import { RecordNavigationBar } from './record-navigation-bar';
 
 describe('RecordNavigationBar', () => {
-  test('keeps dense action labels visible and provides touch-safe horizontal overflow', () => {
+  test('defaults to collapsed labels with full accessible names and touch-safe horizontal overflow', () => {
     const markup = renderToStaticMarkup(
       <RecordNavigationBar
         currentIndex={1}
@@ -35,6 +35,17 @@ describe('RecordNavigationBar', () => {
     expect(markup).toContain('aria-label="Revoke sessions"');
     expect(markup).toContain('aria-label="Suspend account"');
     expect(markup).not.toContain('sm:flex-nowrap');
+    expect(markup.match(/data-label-mode="expand"/g)).toHaveLength(3);
+    expect(markup.match(/data-expanded="false"/g)).toHaveLength(3);
+  });
+  test('bar and per-action opt-outs preserve always-visible labels', () => {
+    const markup = renderToStaticMarkup(<RecordNavigationBar currentIndex={0} totalCount={0}
+      onPrevious={() => {}} onNext={() => {}} actionLabelMode="visible" actions={[
+        { icon: createElement(KeyRound), label: 'Visible default', onClick() {} },
+        { icon: createElement(Shield), label: 'Expandable override', labelMode: 'expand', onClick() {} },
+      ]} />);
+    expect(markup).toContain('data-label-mode="visible" data-expanded="true"');
+    expect(markup).toContain('data-label-mode="expand" data-expanded="false"');
   });
 
   test('uses non-submitting buttons with visible focus treatment throughout', () => {

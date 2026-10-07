@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-sources
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 baseline with unreleased working-tree additions"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -37,12 +37,15 @@ collection when lazy=true; otherwise caller data/empty rows becomes array source
 | data | `{ type:'data', data, actions?, isLoading?, error?, refresh? }` | caller owns rows; browser row models handle controls |
 | collection | `{ type:'collection', table }` | SDK reactive local rows; browser handles controls |
 | lazy | `{ type:'lazy', table, filters?, options?, replaceOnLoad? }` | HTTP hydrates shared collection; browser controls operate loaded local rows |
-| server | `{ type:'server', table, pagination?, adapter?, live?, getRowId? }` | server adapter owns search/filter/sort/page; isolated accepted results |
+| server | `{ type:'server', table, pagination?, adapter?, live?, prefetch?, getRowId? }` | server adapter owns search/filter/sort/page; isolated accepted results |
 
 For ordinary complete arrays/collections, the browser filters/sorts/pages locally.
 A lazy collection remains a shared local cache, not a strict server-page membership
 view. Use [server source](./server-sources.md) when controls must query the server
 and each query needs isolated ordered rows.
+
+The motion/prefetch/live-evidence additions in this draft describe the current
+working tree, not an already-published 2.6.0 archive change.
 
 ## Caller-Owned Data
 
@@ -80,6 +83,10 @@ The data-table subpath exports useDataTableSource, its option/state/action types
 and buildDataTableLazyQuery. The hook resolves data, sourceType, table, isLoading,
 error, page, refresh and actions. It owns source wiring, not column rendering.
 Do not add a second server query under a DataTable that already owns that source.
+Server metadata additionally exposes prefetchPage, isPreviousData, opaque
+requestKey/resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds,
+confirmedLiveInsertedRowIds and clearLiveInsertions;
+see [server cache/evidence](./server-sources.md#bounded-prefetch-and-cache).
 
 buildDataTableLazyQuery encodes primitive filters in sorted field order and
 optional legacy order/dir/limit/offset. It is not a SQL compiler or authority
@@ -91,12 +98,35 @@ Server sources keep their accepted by-ID rows and ordered IDs isolated from the
 shared collection. Collection state can signal relevant table invalidation and
 refetch when live is not false, but another table's cached records do not enter
 the accepted page. A custom adapter/unsynchronized logical table must not infer
-an automatic external event subscription merely from live=true.
+an automatic external event subscription merely from live=true. An adapter can
+explicitly supply the query-bound subscribeChanges contract; the built-in data
+source observes admitted SDK Sync changes. Both confirm INSERT membership using
+their accepted query result or a supported authoritative membership lookup, not
+a local approximation of server filters.
 
 Replacing server table, adapter, pagination mode or row-identity configuration
 retires relevant query/selection/cursor state. Auth/tenant/data-authority boundary
 replacement additionally masks rows and blocks stale operations. Use stable
 custom adapter references rather than allocating a different adapter every render.
+
+## Genuine Arrivals Versus Hydration
+
+Complete caller-owned arrays can classify a new stable ID after their supplied
+loading baseline. The owner must not present an arbitrary remote page/hydration
+replacement as a complete live dataset. Registered collections use admitted Sync
+INSERT evidence, so snapshots/catchup/cache load additions do not become new
+record notifications. Lazy partial hydration is not treated as a complete
+dataset for automatic holding/count inference.
+
+Server arrivals require genuine stream INSERT IDs confirmed in an accepted page
+or by a bounded query-matching lookup. A shifted page can gain old rows without
+generating a new-record count, and total differences never manufacture arrivals.
+Lookup rows are not merged into the page or global cache. Ordinary offset
+revalidation can still shift page membership; stronger cursor/snapshot semantics
+belong to the source. [Motion and live updates](./motion-and-live-updates.md)
+describes holding, existing-record updates and the effective action/selection
+model; [server sources](./server-sources.md#live-insert-evidence-and-custom-subscriptions)
+documents unsupported/conservative modes.
 
 ## Verification And Compatibility
 
@@ -116,3 +146,4 @@ new public source types.
 - [Server sources](./server-sources.md) owns query/result/page metadata.
 - [SDK collections](../../sdk/collections.md) owns local cache and receipt actions.
 - [Scope boundary](../../runtime/authorization-scope-boundary.md) owns retained custom state.
+- [Motion and live updates](./motion-and-live-updates.md) owns source-specific arrival evidence and opt-outs.

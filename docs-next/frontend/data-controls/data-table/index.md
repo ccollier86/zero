@@ -3,18 +3,18 @@ id: zero.frontend.data-controls.data-table
 type: index
 audience: [developer, agent]
 owner: frontend-data-controls
-status: verified
+status: draft
 visibility: internal
 system: frontend-data-controls
 feature: data-table
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0 baseline with unreleased working-tree additions"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
+  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  snapshot: dirty
   date: "2026-10-07"
   evidence_level: source-observed
 ---
@@ -35,6 +35,8 @@ An app selects source, columns and actions rather than duplicating those control
   and isolated server results.
 - [Server sources](./server-sources.md): query/result contract, offset/cursor paging,
   authenticated adapter, ordering and authority fences.
+- [Motion and live updates](./motion-and-live-updates.md): tuned row/page/loading
+  motion, held genuine arrivals, counters, opt-outs and reduced motion.
 - [State and columns](./state-and-columns.md): controlled facets, first-row
   page-size anchoring, cursor reset boundaries, headless hook and stable sizing.
 - [Controls](./controls.md): search-first toolbars, slots, filters and honest paging.
@@ -44,7 +46,9 @@ An app selects source, columns and actions rather than duplicating those control
   loaded server exports and literal spreadsheet-safe text.
 - [Roadmap](./roadmap.md): relevant future proposals, not invented source modes.
 
-These pages describe the Zero 2.6 table family. Each guide records its own
+These pages describe the Zero 2.6 table family plus explicitly labeled current
+working-tree motion/cache/live additions, not a claim that those additions have
+already shipped. Each guide records its own
 evidence level; a shared API reference does not qualify every application source
 or device combination.
 
@@ -84,6 +88,8 @@ filtered/paginated a second time in the browser. Exact totals are optional.
 DataTable/DataTableView and their common types are available from the browser-safe
 React/root barrel. The @zero/framework/components/data-table subpath exposes
 additional table primitives/hooks/helpers, including EditableCell/AnimatedCell.
+The working tree also exports DataTableNewRecordsButton and the readonly
+DATA_TABLE_MOTION defaults; ordinary DataTable compositions need neither manually.
 Use exact per-feature imports; internal controller/view extraction does not
 introduce new application-facing hooks.
 
@@ -96,6 +102,7 @@ does not authorize a write or every matching backend result.
 
 Test the intended source, query ordering, no double pagination, unknown totals,
 scope/source replacement and delayed/rejected actions. Focused actual table and
-MasterDetail browser regressions support the Zero 2.6 behavior described here.
+MasterDetail browser regressions support their inspected source contracts.
+Working-source checks for the additions are distinct from release qualification.
 Qualify the consuming application's server contracts, production styling and
 accessibility separately; shared regressions do not authorize custom writers.

@@ -14,13 +14,13 @@ import {
   type RowSelectionState,
   type PaginationState,
   type Table,
-  type FilterFnOption,
+  type SortingFnOption,
 } from '@tanstack/react-table';
 import type { ReactNode } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { FieldMeta } from '../../schema/field-types';
 import type { Row } from '../../sync/types';
-import { decodeFieldValue } from '../../schema/field-codecs';
+import { createDataTableColumns } from './data-table-columns';
 import { getRowPrimaryKey, getSchemaPrimaryKey } from './row-identity';
 import {
   useDataTableState,
@@ -51,6 +51,10 @@ export interface DataTableColumnOverride<T extends Row> {
   sortable?: boolean;
   filterable?: boolean;
   editable?: boolean;
+  /** Natural direction on first activation; omission retains TanStack's type-aware default. */
+  sortDescFirst?: boolean;
+  /** Optional domain comparator; transport sorting still uses the declared column ID. */
+  sortingFn?: SortingFnOption<T>;
 }
 
 export type DataTableColumnOverrides<T extends Row> = Record<string, DataTableColumnOverride<T>>;
@@ -150,50 +154,19 @@ export function useDataTable<T extends Row>(
 
   // ─── Column Definitions ─────────────────────────────────────────────
 
-  const columnDefs = useMemo((): ColumnDef<T, unknown>[] => {
-    const fieldNames = visibleColumns ?? schema.fieldNames.filter((name) => {
-      const meta = schema.fields.get(name);
-      return meta?.tableVisible !== false;
-    });
-
-    return fieldNames.map((name) => {
-      const meta = schema.fields.get(name);
-      const override = columnOverrides?.[name];
-      const filterFn = getSchemaFilterFn<T>(meta);
-      return {
-        id: name,
-        accessorFn: (row) => meta ? decodeFieldValue(meta, row[name]) : row[name],
-        header: override?.header ?? meta?.label ?? formatLabel(name),
-        ...(override?.cell ? {
-          cell: (context) => override.cell!({
-            row: context.row.original,
-            value: context.getValue(),
-            columnId: name,
-            fieldMeta: meta,
-          }),
-        } : {}),
-        enableSorting: options.sortable !== false && (override?.sortable ?? meta?.sortable !== false),
-        enableColumnFilter: override?.filterable ?? meta?.filterable !== false,
-        enableGlobalFilter: options.searchableFields ? options.searchableFields.includes(name) : undefined,
-        ...(filterFn ? { filterFn } : {}),
-        size: override?.width ?? meta?.columnWidth,
-        minSize: override?.minWidth,
-        maxSize: override?.maxWidth,
-        meta: {
-          fieldMeta: meta,
-          isEditable: override?.editable ?? editable.includes(name),
-          flex: override?.flex,
-          wrap: override?.wrap,
-          truncate: override?.truncate,
-        },
-      };
-    });
-  }, [columnOverrides, schema, visibleColumns, editable, options.sortable, options.searchableFields]);
+  const columnDefs = useMemo(() => createDataTableColumns<T>({
+    schema, columns: visibleColumns, editable, columnOverrides,
+    sortable: options.sortable, searchableFields: options.searchableFields,
+  }), [columnOverrides, schema, visibleColumns, editable, options.sortable, options.searchableFields]);
 
   // ─── Table Instance ─────────────────────────────────────────────────
 
+  // TanStack's core-row memo keys only on data, not on getRowId. A new identity
+  // boundary must rebuild wrappers even if the caller retains its array.
+  const rowData = useMemo(() => [...data], [data, options.boundaryKey, primaryKey, options.getRowId, schema]);
+
   const table = useReactTable<T>({
-    data,
+    data: rowData,
     columns: columnDefs,
     state: {
       sorting,
@@ -248,35 +221,4 @@ export function useDataTable<T extends Row>(
     setGlobalFilter,
     columnDefs,
   };
-}
-
-// ─── Utility ────────────────────────────────────────────────────────────────
-
-function formatLabel(name: string): string {
-  return name
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^./, (s) => s.toUpperCase())
-    .trim();
-}
-
-/** Keep schema-backed discrete controls exact and scalar numeric filters safe. */
-function getSchemaFilterFn<T extends Row>(
-  meta: FieldMeta | undefined,
-): FilterFnOption<T> | undefined {
-  switch (meta?.type) {
-    case 'boolean':
-    case 'date':
-    case 'datetime':
-    case 'enum':
-    case 'number':
-    case 'select':
-      return 'equals';
-    case 'combobox':
-      return meta.multiple ? 'arrIncludes' : 'equals';
-    case 'multiSelect':
-    case 'tags':
-      return 'arrIncludes';
-    default:
-      return undefined;
-  }
 }

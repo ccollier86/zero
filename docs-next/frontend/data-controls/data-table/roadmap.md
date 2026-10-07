@@ -19,10 +19,20 @@ DataTable already has shared controls, server-query integration, exact/unknown
 pagination metadata, sizing and accepted action/edit lifecycle. Further work
 should preserve that coherent foundation rather than ask each app to rebuild it.
 
+The current working tree now has tuned row/page/loading motion, bounded server
+prefetch, previous-page presentation and genuine-INSERT-based live holding.
+Those additions are documented in [motion and live updates](./motion-and-live-updates.md)
+and [server sources](./server-sources.md), with draft/source-observed evidence;
+they are not claims of already-published archive support.
+
 - [ ] Evaluate the user's proposed in-cell mini graph/summary presentation with
   typed data, design tokens and appropriate aggregate/permission semantics.
 - [ ] Continue app-driven layout/interaction polish using existing slots/column
   overrides before introducing new framework props or hidden query behavior.
+- [ ] Evaluate stronger cursor/snapshot/pinned-record consistency for concurrent
+  writes. The current bounded membership lookup confirms genuine off-page
+  arrivals, but it does not give ordinary offset pagination snapshot isolation
+  or an inserted row's global rank.
 
 These are ideas, not current graph column types or newly promised backend query
 modes. Confirmed correctness/security defects are fixed and tested separately;

@@ -56,7 +56,8 @@ function Workspace({ mode }: { mode: Mode }) {
   };
   const source = mode === 'collection' ? { type: 'collection' as const, table: 'records' }
     : mode === 'offset' || mode === 'cursor' || mode === 'master'
-      ? { type: 'server' as const, table, pagination: mode === 'cursor' ? 'cursor' as const : 'offset' as const, adapter }
+      // Isolate logical anchoring from adjacent speculative calls; default prefetch has its own source browser suite.
+      ? { type: 'server' as const, table, pagination: mode === 'cursor' ? 'cursor' as const : 'offset' as const, adapter, prefetch: false }
       : { type: 'data' as const, data };
   return mode === 'master'
     ? <MasterDetailPage<TestRow> schema={records.schema} source={source} listColumns={['name']}

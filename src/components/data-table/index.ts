@@ -1,4 +1,7 @@
 export { DataTable, DataTableView } from './data-table';
+export { DATA_TABLE_MOTION } from './data-table-motion-tokens';
+export { DataTableNewRecordsButton } from './data-table-new-records-button';
+export type { DataTableNewRecordsButtonProps } from './data-table-new-records-button';
 export type { DataTableProps } from './data-table';
 export {
   buildDataTableLazyQuery,
@@ -49,6 +52,7 @@ export { createDataTableApiAdapter, buildDataTableServerQuery } from './data-tab
 export { DataTableServerSourceError } from './data-table-server-types';
 export type {
   DataTableServerAdapter,
+  DataTableServerChange,
   DataTableServerAdapterContext,
   DataTableServerCursorPage,
   DataTableServerOffsetPage,

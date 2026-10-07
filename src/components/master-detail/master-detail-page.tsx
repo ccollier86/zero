@@ -136,6 +136,12 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   sortable?: boolean;
   /** Enable pagination. Defaults to true for server sources, otherwise false. */
   paginated?: boolean | { pageSize?: number };
+  /** Tuned table motion, enabled by default and respecting reduced motion. */
+  motion?: boolean;
+  /** Plain-text value replacement, highlight only, or no cell effect. */
+  cellMotion?: 'typewriter' | 'highlight' | false;
+  /** Hold confirmed live additions while the list is being read. Default: true. */
+  liveUpdates?: boolean;
 
   // ── Form config ─────────────────────────────────────────────────
   /** Number of CSS grid columns in the detail form. Default: 2. */
@@ -197,6 +203,9 @@ function MasterDetailPage<T extends Row = Row>({
   tableToolbarLabel,
   sortable = true,
   paginated = source?.type === 'server',
+  motion,
+  cellMotion,
+  liveUpdates,
   formColumns = 2,
   submitLabel = 'Save Changes',
   detailFooter,
@@ -219,7 +228,7 @@ function MasterDetailPage<T extends Row = Row>({
     lazy,
     filters,
     lazyOptions,
-    searchable, sortable, paginated,
+    searchable, sortable, paginated, motion, cellMotion, liveUpdates,
     toolbarSlots: tableToolbarSlots, toolbarLabel: tableToolbarLabel,
     loadingState, errorState,
   };
@@ -228,7 +237,7 @@ function MasterDetailPage<T extends Row = Row>({
   partitionRef.current = tableController.partition;
   const getRowId = source?.type === 'server' ? source.getRowId : undefined;
   const state = useMasterDetailSelection<T>({
-    resolvedSource: tableController.resolved,
+    resolvedSource: { ...tableController.resolved, data: tableController.live.data },
     primaryKey, getRowId, boundaryKey: tableController.partition,
     selectedId: selectedIdProp,
     defaultSelectedId,
@@ -477,6 +486,7 @@ function MasterDetailPage<T extends Row = Row>({
         }
         bottomBar={
           <RecordNavigationBar
+            actionContextKey={`${tableController.partition}:${selectedId ?? ''}`}
             currentIndex={selectedIndex}
             totalCount={totalCount}
             onPrevious={selectPreviousAndOpenDetail}

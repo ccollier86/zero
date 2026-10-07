@@ -6,6 +6,7 @@ import { motion } from 'motion/react';
 import { SlidingNumber } from '#zero/components/animate-ui/primitives/texts/sliding-number';
 import { cn } from '#zero/lib/utils';
 import { Kbd } from '#zero/components/kbd';
+import { RecordNavigationActionButton } from './record-navigation-action';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,8 @@ export interface NavigationAction {
   onClick: () => void;
   variant?: 'default' | 'destructive' | 'success' | 'warning';
   disabled?: boolean;
+  /** Override the bar's default label disclosure for this action. */
+  labelMode?: 'expand' | 'visible';
 }
 
 export interface RecordPrimaryAction {
@@ -36,6 +39,10 @@ export interface RecordNavigationBarProps {
   /** Optional useful scope/count status; independent from record navigation. */
   status?: React.ReactNode;
   actions?: NavigationAction[];
+  /** Icon-only rest with hover/focus/touch disclosure by default; `visible` retains full labels. */
+  actionLabelMode?: 'expand' | 'visible';
+  /** Presentation identity that retires touch disclosure when the selected record/scope changes; never authorization. */
+  actionContextKey?: string;
   /** Optional adjacent workflow rendered before the primary action. */
   secondaryPrimaryAction?: RecordPrimaryAction;
   primaryAction?: RecordPrimaryAction;
@@ -61,6 +68,8 @@ function RecordNavigationBar({
   showNavigation = true,
   status,
   actions,
+  actionLabelMode = 'expand',
+  actionContextKey,
   secondaryPrimaryAction,
   primaryAction,
   className,
@@ -75,7 +84,7 @@ function RecordNavigationBar({
       className={cn('@container/wrapper flex w-full justify-center', className)}
     >
       <div className="flex w-full min-w-0 flex-col items-stretch gap-2 rounded-2xl border border-border bg-background p-2 shadow-lg @xl/wrapper:flex-row @xl/wrapper:items-center">
-        <div className="flex min-w-0 w-full flex-row items-center gap-2 @xl/wrapper:flex-1">
+        <div className="flex min-w-0 w-full flex-row flex-wrap items-center gap-2 @lg/wrapper:flex-nowrap @xl/wrapper:flex-1">
           {/* Navigation controls */}
           {(showNavigation || status != null) && <div className="flex h-10 min-w-0 shrink-0 items-center gap-2">
             {showNavigation && <>
@@ -116,26 +125,14 @@ function RecordNavigationBar({
               <motion.div
                 layout
                 layoutRoot
-                className="flex min-w-0 flex-1 flex-nowrap items-center justify-start gap-2 overflow-x-auto py-1"
+                className="flex min-w-0 basis-full flex-1 flex-nowrap items-center justify-start gap-2 overflow-x-auto py-1 @lg/wrapper:basis-auto"
               >
                 {actions.map((action, index) => (
-                  <motion.button
+                  <RecordNavigationActionButton
                     key={`${action.label}:${index}`}
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    disabled={action.disabled}
-                    className={cn(
-                      'flex h-10 max-w-full shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 transition-[background-color,color,box-shadow,opacity] duration-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none',
-                      VARIANT_COLORS[action.variant ?? 'default'],
-                    )}
-                    aria-label={action.label}
-                    onClick={action.onClick}
-                  >
-                    <span className="shrink-0">{action.icon}</span>
-                    <span className="text-sm">
-                      {action.label}
-                    </span>
-                  </motion.button>
+                    action={action} labelMode={action.labelMode ?? actionLabelMode} contextKey={actionContextKey}
+                    className={VARIANT_COLORS[action.variant ?? 'default']!}
+                  />
                 ))}
               </motion.div>
             </>

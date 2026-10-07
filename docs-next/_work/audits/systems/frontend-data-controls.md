@@ -34,9 +34,10 @@ Owns schema-aware data organisms, source/query/controller composition, editing/s
 | --- | --- | --- |
 | DataTable/DataTableView composition | DataTableProps and schema source integration; [src/components/data-table/data-table.tsx](../../../../src/components/data-table/data-table.tsx), [src/components/data-table/data-table-types.ts](../../../../src/components/data-table/data-table-types.ts) | [Table entrance](../../../frontend/data-controls/data-table/index.md) |
 | Source adapters | useDataTableSource/buildDataTableLazyQuery/DataTableSource and source/action/state types; [src/components/data-table/data-table-source.ts](../../../../src/components/data-table/data-table-source.ts) | `frontend/data-controls/data-table/sources.md` |
-| Isolated server queries | createDataTableApiAdapter/buildDataTableServerQuery/DataTableServerSourceError and server offset/cursor/page/query/adapter/result types; [src/components/data-table/data-table-server-types.ts](../../../../src/components/data-table/data-table-server-types.ts), [src/components/data-table/data-table-server-query.ts](../../../../src/components/data-table/data-table-server-query.ts) | `frontend/data-controls/data-table/server-sources.md` |
+| Isolated server queries | createDataTableApiAdapter/buildDataTableServerQuery/DataTableServerSourceError and server offset/cursor/page/query/adapter/result types; working DataTableServerChange and optional subscribeChanges/prefetch metadata are separately noted below; [src/components/data-table/data-table-server-types.ts](../../../../src/components/data-table/data-table-server-types.ts), [src/components/data-table/data-table-server-query.ts](../../../../src/components/data-table/data-table-server-query.ts) | `frontend/data-controls/data-table/server-sources.md` |
 | Headless columns/state/sizing | useDataTable and column override/cell/state/result types; [src/components/data-table/use-data-table.ts](../../../../src/components/data-table/use-data-table.ts) | `frontend/data-controls/data-table/state-and-columns.md` |
 | Controls/toolbar/search/pagination | DataTableControls/Toolbar/Search/Pagination/ColumnHeader; exact Props/Options/slot/context exports; [src/components/data-table/index.ts](../../../../src/components/data-table/index.ts) | `frontend/data-controls/data-table/controls.md` |
+| Table motion and reading-safe arrivals (working addition) | motion/liveUpdates, DATA_TABLE_MOTION, DataTableNewRecordsButton and props; [src/components/data-table/data-table-types.ts](../../../../src/components/data-table/data-table-types.ts), [src/components/data-table/data-table-motion-tokens.ts](../../../../src/components/data-table/data-table-motion-tokens.ts), [src/components/data-table/data-table-new-records-button.tsx](../../../../src/components/data-table/data-table-new-records-button.tsx) | [Motion and live updates](../../../frontend/data-controls/data-table/motion-and-live-updates.md) |
 | Inline editing/cells | AnimatedCell/EditableCell; source writer vs onCellEdit/onCellCommit and keyboard/save lifecycle | `frontend/data-controls/data-table/editing.md` |
 | Row/bulk actions | DataTableRowActions/DataTableBulkActions/useDataTableMutationRunner; RowAction/BulkAction/MutationContext/Runner/PageBulkSelection/AllMatchingBulkSelection | `frontend/data-controls/data-table/actions.md` |
 | CSV export/selection | DataTableView composition and loaded row selection; source-owned server pagination boundary | `frontend/data-controls/data-table/export-and-selection.md` |
@@ -63,12 +64,28 @@ Data source precedence is explicit source, then collection/lazy, then caller dat
 | toolbarActions/toolbarSlots/toolbarLabel/toolbarClassName/showToolbar | Table-aware slots; controls/actions/supplemental shared shell; derived toolbar visibility. |
 | exportFilename/showExport/showColumnVisibility/emptyState/loadingState/errorState/getRowClassName/className | export.csv/true/true defaults; rendering/export options, loaded-page boundary. |
 | DataTableSource | data/collection/lazy/server discriminated sources; server pagination offset/cursor, query/adapter/result contracts at server-types declaration. |
+| motion/cellMotion/liveUpdates (working addition) | table presentation defaults true where supported; eligible existing text defaults to bounded typewriter replacement; motion opt-out/reduced motion distinct from source invalidation/authority. |
+| server prefetch/adapter.subscribeChanges/confirmInsertedRows (working addition) | prefetch defaults true for known pages; query-bound genuine change callback; accepted-page or bounded authoritative membership evidence, no inferred unseen totals. |
 | MasterDetailPageProps | schema/listColumns, source/data/collection/lazy, selection controlled/default/autoSelectFirst, detail header/body/footer/content, update callbacks, navigation, toolbar/search/sort/page/form/layout options; source declaration authoritative. |
 | CrudPageProps | table/schema/columns, resourceFields, table/master-detail layout, lazy/filter/options, create/edit fields, callback transforms, hide actions, modal labels/sizes, detail/navigation/layout options. |
 | KanbanBoardProps | Schema/data/grouping/move/render configuration and callbacks from source; IDs/group utilities do not grant backend write authority. |
 | DataStudio* props/options | Public controller/permission/schema/revision/readiness and rendering interfaces at catalog source rows; owning Studio inventory defines backend settings. |
 
 Planned `frontend/data-controls/configuration.md`, DataTable focused option reference and separate Studio settings. These are client/query/render-time props; Doctor source/config audits do not simulate UI acceptance, server pagination or browser cache races.
+
+### Working Table Motion And Source Evidence — 2026-10-07
+
+The explicitly marked working additions above were observed against published
+framework 2.6.0 baseline `5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8` plus the current
+dirty worktree. This does not relabel the historical clean 2.1.1 inventory or
+declare that the published 2.6.0 archive includes them. Their public homes are
+[motion/live updates](../../../frontend/data-controls/data-table/motion-and-live-updates.md)
+and [server sources](../../../frontend/data-controls/data-table/server-sources.md).
+The server cache/event/hook source gate passed 50 tests/193 assertions including
+13 controlled browser cases, and the actual frontend Markdown example gate
+passed 1 test/79 assertions. These synthetic source checks are not installed-
+archive or live-application qualification; the independently owned row-motion/
+organism acceptance gates remain separate.
 
 ## Evidence And Verification
 

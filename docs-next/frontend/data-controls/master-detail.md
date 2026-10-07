@@ -136,11 +136,29 @@ record commands in the bottom bar, and primaryAction for the main workflow.
 Do not turn routine commands into disconnected oversized cards.
 
 NavigationAction contains icon, label, onClick, optional variant
-(default/destructive/success/warning) and disabled. RecordPrimaryAction contains
+(default/destructive/success/warning), disabled and labelMode. RecordPrimaryAction contains
 label/onClick and optional sublabel/shortcut/disabled/ariaHasPopup.
 Those button callbacks are caller-owned; they do not automatically acquire the
 table's async operation runner. Compose a runner when tracking app operations,
 and retain server permission/confirmation checks.
+
+The shared RecordNavigationBar defaults to `actionLabelMode="expand"`: operational
+actions show their icon at rest and slide out the full label on hover or keyboard
+focus. Their accessible name always contains the complete label. Mouse clicks
+activate normally; on touch, the first tap reveals the label without executing,
+and the second tap invokes the action. Moving focus to another control retires
+that touch intent. Enter and Space remain ordinary single-step activation.
+Reduced motion reveals labels immediately. Primary workflows keep visible labels.
+
+Set `actionLabelMode="visible"` on a custom RecordNavigationBar to retain full
+labels, or use `labelMode: 'visible'` on an individual NavigationAction supplied
+by navigationActions. Custom selected-record compositions should change the
+bar's `actionContextKey` when the selected target/scope changes, so a second tap
+following an old reveal cannot invoke a new target without fresh disclosure. This key is presentation
+state only: callbacks must still enforce current authority and confirmation.
+At narrow container widths, navigation/status and the horizontally scrolling
+action strip occupy separate rows so expanded labels remain readable without
+widening the page.
 
 ## Detail Context And Accepted Writes
 
@@ -172,6 +190,13 @@ paths. They do not replace deployment checks or qualification of an application'
 custom action lifecycle.
 
 ## Related Guides And Next Steps
+
+The current working table also accepts `motion`, `liveUpdates` and `cellMotion`
+through MasterDetailPage; these are forwarded to its shared DataTable controller
+and view. Use `cellMotion="highlight"` or `cellMotion={false}` to change existing
+plain-text value effects without changing record navigation or permissions.
+See [table motion](./data-table/motion-and-live-updates.md) for exact defaults and
+the distinction between row arrivals and existing value changes.
 
 - [DataTable](./data-table/index.md) owns shared queries, control slots and sizing.
 - [Forms](../forms/index.md) owns generated field state/validation.

@@ -3,20 +3,20 @@ id: zero.frontend.data-controls.data-table-state-and-columns
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: verified
+status: draft
 visibility: internal
 system: frontend-data-controls
 feature: data-table-state-and-columns
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0 baseline with unreleased working-tree additions"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
+  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  snapshot: dirty
   date: "2026-10-07"
-  evidence_level: implementation-verified
+  evidence_level: source-observed
 ---
 
 # Headless State, Columns And Stable Sizing
@@ -132,10 +132,17 @@ a formatted field name. Accessors decode field values; a custom cell receives
 { row, value, columnId, fieldMeta } with the original row and decoded value.
 
 DataTableColumnOverride supports header, cell, width, minWidth, maxWidth, flex,
-wrap, truncate, sortable, filterable and editable. width overrides schema
+wrap, truncate, sortable, filterable, editable, sortDescFirst and sortingFn. width overrides schema
 columnWidth. Sorting is disabled by global sortable=false; otherwise per-column
 override wins schema sortable. Editable overrides win the editable list. These
 are presentation/interaction settings, not server validation or permissions.
+
+`sortDescFirst` overrides TanStack's natural first direction for that column;
+otherwise numeric/date columns can start descending and text can start ascending.
+The header follows the natural three-state cycle, including both directions and
+clearing the sort. `sortingFn` supplies a local domain comparator for complete
+datasets. A server source still sends column IDs and directions to its adapter;
+it does not serialize or execute a browser comparator on the server.
 
 ```tsx
 <DataTable
@@ -160,6 +167,30 @@ then an index fallback. Server sources expose their own getRowId. Prefer stable
 schema identities; indexes are unsafe for reorderable editable records.
 string/number identities are canonicalized to strings for UI selection.
 
+Changing a primary key, custom `getRowId`, schema descriptor or authorization/source
+boundary rebuilds core row wrappers even when the caller keeps the same array.
+Cached wrappers cannot carry old IDs into the new grid. The underlying record
+objects stay caller-owned; ordinary updates with stable IDs retain their nodes.
+
+## Working Presentation And Accepted State
+
+The current table adds motion/held-arrival presentation above this headless state
+owner. Presentation does not change query math, acknowledge writes or create a
+second selectable dataset. Stable unique row IDs retain native/React row nodes
+through sorting and reflow; index-based/missing/duplicate identities disable
+that entity retention. Custom server getRowId functions must not depend on a
+record's changing display index.
+
+Query/size replacements outrank pending page animations. The source starts
+requests immediately and keeps only the latest admitted target; the presentation
+can finish or retire its own transition without admitting an obsolete response.
+Retained same-scope server pages expose isPreviousData and opaque target/result
+keys; their rows are not new-query mutation targets. Authorization/source
+replacement masks old records rather than animating their data into a new scope.
+
+These unreleased working-source additions and their stable-ID/timing/reduced-
+motion contract are documented in [motion and live updates](./motion-and-live-updates.md).
+
 ## Verification
 
 Check controlled and uncontrolled facets together, query/page resets, a changed
@@ -174,3 +205,4 @@ styling and device qualification remain separate from those shared checks.
 - [Controls](./controls.md) connects TanStack state to shared search/filter slots.
 - [Selection and export](./export-and-selection.md) defines current-page targets.
 - [Schema UI metadata](../../../backend/schema/ui-metadata.md) owns shared hints.
+- [Motion and live updates](./motion-and-live-updates.md) composes presentation without replacing this state owner.
