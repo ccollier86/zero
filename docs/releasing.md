@@ -594,9 +594,7 @@ dry-run npm against that archive:
 ```sh
 ZERO_RELEASE_PACK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zero-framework-release.XXXXXX")"
 ZERO_RELEASE_ARCHIVE="$ZERO_RELEASE_PACK_DIR/zero-framework-${ZERO_RELEASE_VERSION}.tgz"
-bun pm pack --destination "$ZERO_RELEASE_PACK_DIR" \
-  --filename "zero-framework-${ZERO_RELEASE_VERSION}.tgz" \
-  --ignore-scripts
+bun pm pack --filename "$ZERO_RELEASE_ARCHIVE" --ignore-scripts
 tar -tzf "$ZERO_RELEASE_ARCHIVE"
 npm whoami
 npm publish "$ZERO_RELEASE_ARCHIVE" --access public --dry-run
