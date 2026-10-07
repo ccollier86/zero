@@ -42,7 +42,7 @@ export interface ResolvedNativeAuthConfig {
   clients: ResolvedNativeAuthClientConfig[];
 }
 
-export type NativeIdentityScope = 'openid' | 'profile' | 'email';
+export type NativeIdentityScope = 'openid' | 'profile' | 'email' | 'phone' | 'profile:write' | 'contacts:write';
 
 export type NativeRedirectKind =
   | 'loopback'

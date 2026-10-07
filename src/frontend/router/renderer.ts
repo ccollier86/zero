@@ -109,6 +109,7 @@ export interface PlatformConfig {
   auth?: boolean;
   email?: boolean;
   stateSync?: boolean;
+  presence?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
   tableSyncPlanes?: Record<string, SyncDataPlaneName>;
   managedTableNames?: string[];

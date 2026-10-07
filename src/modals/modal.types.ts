@@ -81,9 +81,16 @@ export interface ModalInstance {
   confirmOptions?: ConfirmModalOptions;
   /** Callback when modal closes */
   onClose?: () => void;
+  /** Optional pre-close admission. Use shared Save/Discard/Stay; never a security veto. */
+  beforeClose?: (context: ModalCloseContext) => boolean | Promise<boolean>;
   /** Promise resolver for confirm modals */
   _resolve?: (value: boolean) => void;
 }
+
+/** Scope retirement/force-close cancels any pending advisory decision. */
+export interface ModalCloseContext { readonly signal: AbortSignal }
+/** Explicit bypass for authoritative retirement; discardAll also suppresses stale callbacks. */
+export interface ModalCloseOptions { readonly force?: boolean }
 
 // ─── Open Options (user-facing, without internal fields) ─────────────────────
 

@@ -25,6 +25,8 @@ import type { AuthActionTokenService } from './action-token-service';
 import type { AuthApplicationAdministrationService } from './auth-application-administration-service';
 import type { AuthAuditService } from './auth-audit-service';
 import type { AuthEmailOutbox } from './auth-email-outbox';
+import type { AuthUserContactService } from './auth-user-contact-service';
+import type { AuthUserProfileCompletionService } from './auth-user-profile-completion-service';
 import type { AuthPlatformTenantAdministrationService } from './auth-platform-tenant-administration-service';
 import type { AuthRequestAdmissionService } from './auth-request-admission-service';
 import type { AuthSessionService } from './auth-session-service';
@@ -43,6 +45,7 @@ import type { TokenService } from './token-service';
 import type { AuthPluginConfig, ResolvedAuthBehaviorConfig } from './types';
 import type { UserPropertyService } from './user-property-service';
 import type { UserStore } from './user-store';
+import type { AuthUserProfileService } from './auth-user-profile-service';
 import type { VerifiedDomainOnboardingService } from './verified-domain-service';
 import {
   createAuthStateInvariantError,
@@ -195,6 +198,15 @@ export class AuthRuntime {
   getStore(): UserStore | null {
     return this.withCurrentProfile(this.services.userStore);
   }
+  getUserProfileService(): AuthUserProfileService | null {
+    return this.withCurrentProfile(this.services.userProfileService);
+  }
+  getUserContactService(): AuthUserContactService | null {
+    return this.withCurrentProfile(this.services.userContactService);
+  }
+  getUserProfileCompletionService(): AuthUserProfileCompletionService | null {
+    return this.withCurrentProfile(this.services.userProfileCompletionService);
+  }
   getAuditService(): AuthAuditService | null {
     return this.withCurrentProfile(this.services.auditService);
   }
@@ -287,6 +299,9 @@ export class AuthRuntime {
     this.services.installedProfileGuard?.assertCurrent();
     return {
       authStore: this.services.userStore,
+      userProfileService: this.services.userProfileService,
+      userContactService: this.services.userContactService,
+      userProfileCompletionService: this.services.userProfileCompletionService,
       authAuditService: this.services.auditService,
       tokenService: this.services.tokenService,
       authApiKeyService: this.services.apiKeyService,

@@ -76,6 +76,7 @@ async function services(config: AuthAdminPluginConfig, request: Request) {
       email,
       config.getAuthConfig(),
       getAuthAdminEmitter(config),
+      (userId, at) => config.getUserContactService?.()?.recordEmailProof(userId, at, 'administrator'),
     ),
   };
 }

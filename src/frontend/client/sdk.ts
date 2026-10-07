@@ -113,6 +113,9 @@ import { NOTIFICATION_TABLES } from '../../notifications/types';
 import { ROOM_TABLES } from '../../rooms/types';
 import { WORKFLOW_TABLES } from '../../workflows/types';
 import { STORAGE_TABLES } from '../../storage/types';
+import { PRESENCE_CLIENT_TABLES } from '../../presence/presence-client-tables';
+import { createSdkPresence } from './sdk-presence';
+import type { GuardianPresenceClient } from './guardian-presence-client';
 import { createCollection, type Collection } from './collection';
 import {
   createResourceClient,
@@ -141,6 +144,7 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
   ...WORKFLOW_TABLES,
   ...STORAGE_TABLES,
 };
+const RESERVED_PLATFORM_TABLES = { ...PLATFORM_TABLES, ...PRESENCE_CLIENT_TABLES };
 
 export type { SyncClient };
 export type { SyncMutationRejection } from '../../sync/types';
@@ -384,6 +388,9 @@ export interface ClientConfig {
   /** Enable auth. Default: false, matching createApp(). */
   auth?: boolean;
 
+  /** Opt-in Guardian presence; AppProvider reads the server's feature manifest automatically. */
+  presence?: boolean;
+
   /** Revalidate observed authorization hints in milliseconds. Default: 30000; 0 disables polling. */
   authorizationRevalidationIntervalMs?: number;
 
@@ -436,6 +443,9 @@ export interface Client extends AuthAdminSdkSurface {
   /** Guardian-scoped managed storage drives and lifecycle controls. */
   readonly storageStudio: StorageStudioSdkSurface;
 
+  /** Scoped presence feed and own availability intent; one tracker per SDK, not per component. */
+  readonly presence: GuardianPresenceClient;
+
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
   /** Current authenticated user, or null. */
@@ -473,6 +483,19 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Load public auth config for registration/bootstrap UI decisions. */
   getAuthConfig(): Promise<AuthPublicConfig>;
+
+  /** Global own-profile operations; uses the current authenticated identity. */
+  readonly userProfile: {
+    get(signal?: AbortSignal): Promise<import('../../auth/auth-user-profile-types').UserProfileSnapshot>;
+    update(input: import('../../auth/auth-user-profile-types').UpdateUserProfileInput,
+      signal?: AbortSignal): Promise<import('../../auth/auth-user-profile-types').UserProfileSnapshot>;
+  };
+  /** Own contact values and possession-proof ceremonies over current Guardian credentials. */
+  readonly userContacts: import('./auth-user-contact-transport').AuthUserContactTransport;
+  /** Restricted first-use proof exchange; does not require or fabricate an app Bearer session. */
+  readonly userProfileCompletion: import('./auth-user-profile-completion-transport').AuthUserProfileCompletionTransport;
+  /** Private profile pictures through Guardian stages and existing signed storage upload grants. */
+  readonly userAvatar: import('./auth-user-avatar-transport').AuthUserAvatarTransport;
 
   /** Request a password reset email. Always generic on success. */
   forgotPassword(email: string, nativeContinuation?: string): Promise<void>;
@@ -847,6 +870,7 @@ export function createClient(config: ClientConfig): Client {
     tables: rawTables,
     tableSyncPlanes,
     auth: authEnabled = false,
+    presence: presenceEnabled = false,
     authorizationRevalidationIntervalMs,
     stateSync = false,
     autoConnect = true,
@@ -860,11 +884,13 @@ export function createClient(config: ClientConfig): Client {
   if (stateSync && !authEnabled) {
     throw new Error('[client] stateSync requires auth: true because server state is keyed by authenticated user.');
   }
+  if (presenceEnabled && !authEnabled) throw new Error('[client] presence requires auth: true.');
 
   // Normalize app tables — accept raw ClientTableDef or defineTable() output.
   // defineTable() returns { clientTable: ClientTableDef, ... } — extract .clientTable.
   const appTables: Record<string, ClientTableDef> = {};
   for (const [name, def] of Object.entries(rawTables ?? {})) {
+    if (Object.hasOwn(PRESENCE_CLIENT_TABLES, name)) throw new Error(`[client] application tables cannot replace reserved presence table: ${name}`);
     appTables[name] = 'clientTable' in def ? (def as { clientTable: ClientTableDef }).clientTable : def as ClientTableDef;
   }
 
@@ -874,12 +900,14 @@ export function createClient(config: ClientConfig): Client {
   // App tables spread last so they can override if needed.
   const tables: Record<string, ClientTableDef> = {
     ...(authEnabled ? PLATFORM_TABLES : {}),
+    ...(presenceEnabled ? PRESENCE_CLIENT_TABLES : {}),
     ...appTables,
   };
   const resolvedTableSyncPlanes = resolveSdkTableSyncPlanes(
     appTables,
     tableSyncPlanes,
     authEnabled,
+    presenceEnabled,
   );
 
   // ─── Auth ─────────────────────────────────────────────────────────
@@ -1128,7 +1156,8 @@ export function createClient(config: ClientConfig): Client {
   const ephemeralStore = createEphemeralStore();
   ephemeralClient = new EphemeralClient(
     (msg) => syncClient.sendRaw(msg),
-    ephemeralStore
+    ephemeralStore,
+    (msg) => syncClient.sendTransient(msg),
   );
 
   // Route incoming ephemeral messages from WS to ephemeral store
@@ -1154,6 +1183,7 @@ export function createClient(config: ClientConfig): Client {
     },
   });
   storageStudio = createStorageStudioSdkSurface(clientFetch);
+  const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();
   let previousAuthorizationScope = readAuthorizationScope(previousAuthToken);
@@ -1283,6 +1313,7 @@ export function createClient(config: ClientConfig): Client {
     get dataRealm() { return dataRealm; },
     get dataStudio() { return dataStudio; },
     get storageStudio() { return storageStudio; },
+    get presence() { return presenceClient; },
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },
@@ -1322,6 +1353,10 @@ export function createClient(config: ClientConfig): Client {
     login: async (username: string, password: string) => requireAuthClient().login(username, password),
     register: async (params: RegisterParams) => requireAuthClient().register(params),
     getAuthConfig: async () => requireAuthClient().getConfig(),
+    get userProfile() { return requireAuthClient().profile; },
+    get userContacts() { return requireAuthClient().contacts; },
+    get userProfileCompletion() { return requireAuthClient().profileCompletion; },
+    get userAvatar() { return requireAuthClient().avatars; },
     forgotPassword: async (email: string, nativeContinuation?: string) =>
       requireAuthClient().forgotPassword(email, nativeContinuation),
     resendVerificationEmail: async (email: string, nativeContinuation?: string) =>
@@ -1510,6 +1545,7 @@ export function createClient(config: ClientConfig): Client {
     disconnect() {
       authorizationScopeEpoch += 1;
       cancelAuthorizationScopeRequests();
+      presenceClient.dispose();
       syncClient.disconnect();
       unsubscribeAuth?.();
       authClient?.dispose();
@@ -1524,6 +1560,7 @@ export function createClient(config: ClientConfig): Client {
   };
 
   _instance = client;
+  presenceClient.activate();
   return client;
 }
 
@@ -1535,13 +1572,14 @@ function resolveSdkTableSyncPlanes(
   appTables: Readonly<Record<string, ClientTableDef>>,
   configured: Readonly<Record<string, SyncDataPlaneName>> | undefined,
   authEnabled: boolean,
+  presenceEnabled: boolean,
 ): Readonly<Record<string, SyncDataPlaneName>> {
   const appPlanes = configured ?? Object.fromEntries(
     Object.keys(appTables).map((table) => [table, 'default' as const]),
   );
 
   const platform = Object.keys(appPlanes)
-    .filter((table) => Object.hasOwn(PLATFORM_TABLES, table));
+    .filter((table) => Object.hasOwn(RESERVED_PLATFORM_TABLES, table));
   if (platform.length > 0) {
     throw new Error(
       `[client] tableSyncPlanes cannot configure SDK-owned platform table${platform.length === 1 ? '' : 's'}: ${platform.join(', ')}`,
@@ -1569,6 +1607,7 @@ function resolveSdkTableSyncPlanes(
       ? Object.keys(PLATFORM_TABLES).map((table) => [table, 'system' as const])
       : [],
   ) as Record<string, SyncDataPlaneName>;
+  if (presenceEnabled) for (const table of Object.keys(PRESENCE_CLIENT_TABLES)) resolved[table] = 'system';
   for (const [table, plane] of Object.entries(appPlanes)) {
     resolved[table] = plane;
   }

@@ -39,6 +39,20 @@ describe('package build scripts', () => {
     }
   });
 
+  test('the canonical release suite isolates files in bounded OS processes without skipping actor entry', async () => {
+    expect(packageJson.scripts?.test).toBe('bun --no-env-file src/testing/run-test-suite.ts');
+    expect(packageJson.scripts?.['test:parallel']).toBe('bun run test');
+    expect(await Bun.file('src/testing/run-test-suite.ts').exists()).toBe(true);
+    const { discoverTestSuiteFiles } = await import('./testing/test-suite-discovery');
+    const { parseTestSuiteOptions } = await import('./testing/test-suite-options');
+    const files = await discoverTestSuiteFiles(process.cwd());
+    expect(files.filter(file => file === 'src/databases/database-actor-entry.test.ts')).toHaveLength(1);
+    expect(files).toContain('src/presence/presence-http-sync.integration.test.ts');
+    expect(parseTestSuiteOptions(['--timeout', '120000'])).toMatchObject({ testTimeoutMs: 120000, fileTimeoutMs: 900000, concurrency: 4 });
+    expect(() => parseTestSuiteOptions(['--parallel=4'])).toThrow('Unsupported test-suite option');
+    expect(() => parseTestSuiteOptions(['--path-ignore-patterns=**/database-actor-entry.test.ts'])).toThrow('Unsupported test-suite option');
+  });
+
   test('dev script points at the framework CLI entry', async () => {
     const entrypoints = scriptEntrypoints('dev');
 

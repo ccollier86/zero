@@ -268,6 +268,30 @@ export class AccountEmailService {
   }
 
   /** Deliver one tenant-bound invitation from the durable auth outbox. */
+  async sendContactVerification(params: {
+    user: UserRecord; recipient: string; rawToken: string; expiresAt: number;
+    deliveryId: string; signal?: AbortSignal;
+  }): Promise<void> {
+    const user = captureEmailDeliveryUser(params.user);
+    const runtime = this.assertReady();
+    const contacts = this.config.userProfile?.contacts;
+    if (!this.config.userProfile?.enabled || !contacts?.enabled) {
+      throw new AuthError('Contact verification is disabled', 'AUTH_CONTACT_DISABLED', 403);
+    }
+    const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
+    const actionUrl = this.createActionUrl(this.requirePublicUrl(branding.publicUrl), contacts.verificationPath, params.rawToken);
+    // Existing safely escaped first-party verification template; no parallel rendering engine.
+    const rendered = await this.renderTemplate('emailVerification', {
+      branding, actionUrl, user, expiresAt: params.expiresAt,
+    }, { userId: user.userId, tokenType: 'profile_contact_verification' });
+    const result = await runtime.service.send({ to: params.recipient, subject: rendered.subject,
+      text: rendered.text, html: rendered.html, tags: { category: 'auth', action: 'contact_verification' },
+      metadata: { userId: user.userId, tokenType: 'profile_contact_verification' },
+      idempotencyKey: params.deliveryId, signal: params.signal });
+    assertAuthEmailRecipientAccepted(result, params.recipient);
+  }
+
+  /** Deliver one tenant-bound invitation from the durable auth outbox. */
   async sendTenantInvitation(params: {
     delivery: AuthTenantInvitationDelivery;
     rawToken: string;

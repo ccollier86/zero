@@ -1,7 +1,7 @@
 /** Focused browser-route helpers kept outside the Elysia controller. */
 
 import { NativeAuthorizationError } from '../native';
-import { readPageSessionCookie } from '../page-session';
+import { resolvePageSessionCookie } from '../page-session';
 import type { NativeAuthorizationService } from './native-authorization-service';
 import { escapeHtml, nativeHtml } from './native-http';
 import type { NativeAuthHttpConfig } from './native-plugin-types';
@@ -14,9 +14,8 @@ export function requireNativeService(config: NativeAuthHttpConfig): NativeAuthor
 }
 
 export async function resolveNativePagePost(request: Request, config: NativeAuthHttpConfig) {
-  const raw = readPageSessionCookie(request);
   const tokens = config.getTokenService();
-  return raw && tokens ? tokens.resolvePageSessionToken(raw) : null;
+  return tokens ? (await resolvePageSessionCookie(request, tokens))?.auth ?? null : null;
 }
 
 export function authorizationProblem(message: string, status = 400): Response {

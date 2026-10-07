@@ -133,6 +133,48 @@ Do not erase live data, run migrations, deploy or regenerate an app as part of a
 routine documentation diagnostic. An update rollback protects managed install
 state, not every arbitrary application effect.
 
+## Opting Into Adaptive Profiles After Provisioning
+
+The adaptive-profile feature branch extends Guardian with fixed additive SYSTEM
+substrates. These instructions describe working source pending release
+qualification; they do not make an older installed package support those flags.
+
+1. Preserve the existing package pin and a tested SYSTEM/application/tenant
+   backup. Verify the actual installed version/commit rather than the docs page
+   alone. Apply the package update to an isolated populated copy first.
+2. Configure the desired [own-profile fields](../backend/guardian/user-profiles.md)
+   and optional [contacts](../backend/guardian/contacts.md),
+   [avatars](../backend/guardian/avatars.md) and
+   [presence](../backend/guardian/presence.md). Existing member roles do not need
+   administrative grants to edit their own enabled fields.
+3. Apply the known SYSTEM migrations under the deployment's normal allowed
+   migration procedure: 039 profiles/policy/revision, 040 presence, 041 contacts,
+   042 avatars and 043 restricted completion. Missing/incompatible storage with
+   migration disabled is blocked, not automatically repaired. A guessed manual
+   table or removing validators is not a supported shortcut.
+4. Ensure existing Storage is enabled for private avatars. Fabric presence needs
+   the exact same public contribution in gateway and actual actor realms.
+   Profiles/contact proofs/private avatar receipts remain SYSTEM identity data;
+   optional field choices do not add arbitrary columns to every customer file.
+5. Choose [required completion rollout](../backend/guardian/profile-completion.md)
+   deliberately. New signup/invitation gates and `existingUsers: 'onSignIn'` are
+   different choices; the default does not silently lock out all old accounts.
+   Enable/qualify email and MFA delivery before enforcing those separate gates.
+6. Use the [packaged profile UI](../frontend/guardian/profile-settings.md) and
+   include configured proof/completion entrances in any explicit public-path
+   override. Native writer scopes are explicit and must be registered/requested;
+   existing default native scopes are not broadened automatically.
+7. Run read-only [Doctor inspection](../cli/doctor/infrastructure-inspection.md),
+   then prove ordinary login, signed-out recovery, profile CAS, disabled-feature
+   omission, private image delivery, live revocation and presence across the
+   app's real topology. Exercise retained state after restart. Keep the rollback
+   package and backups until the isolated and deployed validation is accepted.
+
+Changing configuration requires restart/recomposition. The generation-bound
+profile policy retires older in-flight writers; replaying A after A→B→A does not
+reactivate its old runtime authority. Policy clocks are not database-editable
+role customization or a browser settings override.
+
 See [migrations](../backend/migrations/index.md),
 [data planes](../concepts/data-planes.md), [mode selection](./choose-modes.md),
 [verification](./verification.md) and [release tooling](../cli/tooling/releases.md).

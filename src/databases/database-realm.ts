@@ -44,6 +44,7 @@ import {
   type TableSchema,
 } from '../sync/types';
 import { DatabaseError } from './database-error';
+import { PRESENCE_TABLE, PRESENCE_OWNER_TABLE } from '../presence/presence-client-tables';
 import { admitDatabaseRealmAutomations } from './database-realm-automation-admission';
 import {
   cloneDatabaseHandlerResult,
@@ -241,7 +242,7 @@ export function defineDatabaseRealm<
     guardianAnchorRequirements,
   );
   for (const tableName of Object.keys(tables)) {
-    if (guardianAnchorTables.some((anchor) =>
+    if ([...guardianAnchorTables, PRESENCE_TABLE, PRESENCE_OWNER_TABLE, '_guardian_presence_projection_binding', 'guardian_presence_current'].some((anchor) =>
       anchor.toLowerCase() === tableName.toLowerCase())) {
       throw configInvalid(
         `Database realm table "${tableName}" is a framework-owned Guardian anchor.`,
@@ -364,7 +365,8 @@ export function runDatabaseRealmCommand(
   const detachedInput = cloneDatabaseSerializableValue(input);
   const session = createDatabaseWriteCommandSession(
     database,
-    guardianAnchorTableNames(realm.guardianAnchorRequirements),
+    [...guardianAnchorTableNames(realm.guardianAnchorRequirements), PRESENCE_TABLE, PRESENCE_OWNER_TABLE,
+      '_guardian_presence_projection_binding', 'guardian_presence_current'],
   );
   try {
     return database.transaction(() => {

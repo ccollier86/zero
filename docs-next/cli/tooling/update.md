@@ -79,6 +79,27 @@ inspection. Rollback is not a backup of all app data or user scripts.
 Human errors include rollback status, not a guarantee that arbitrary filesystem
 races can be repaired.
 
+### 2.6 Candidate: Local Archive Rollback Binding
+
+The current 2.6.0 working-source qualification also checks a subsequent ordinary
+frozen install after rollback, with populated `node_modules` and package cache
+left in place. This is separate from the historical 2.1.1 header qualification.
+
+For a local/saved archive, rollback restores the original manifest, archive and
+lock, then runs a targeted, script-free
+`bun update @zero/framework --frozen-lockfile --force --no-cache --ignore-scripts --no-progress`
+to rebind Bun's extracted canonical archive. It restores and verifies the exact
+snapshot bytes afterward, and restores the captured installed framework.
+Registry rollback continues to use a frozen `bun install`.
+
+On the qualified Bun 1.3.14 baseline, extracted tarball cache names depend on
+the locator, not archive integrity. Restoring the old lock alone does not
+replace a cached new payload. See the [pinned Bun cache implementation](https://github.com/oven-sh/bun/blob/bun-v1.3.14/src/install/PackageManager/PackageManagerDirectories.zig#L321-L329).
+This repair does not claim general isolation for concurrent local-archive
+installs sharing Bun's global cache. Synthetic parallel qualification fixtures
+use their own retained extraction cache; this is not an instruction to clear
+an existing app's lock, installed packages or cache before updating.
+
 ## Related Guides And Next Steps
 
 [Saved updates](./zero-update.md) for branch provenance,

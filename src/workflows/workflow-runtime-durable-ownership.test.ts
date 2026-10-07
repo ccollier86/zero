@@ -1,10 +1,8 @@
 /** Durable cross-handle workflow ownership and stale-generation fencing. */
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import {
@@ -34,6 +32,9 @@ import { WorkflowRegistry } from './workflow-registry';
 import { WorkflowRepository } from './workflow-repository';
 import { defineWorkflowTables } from './workflow-schema';
 import type { WorkflowWakeTimer } from './workflow-wake-coordinator';
+import { acquireWorkflowOwnersSimultaneously } from './test-support/workflow-owner-acquisition';
+
+const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 
 describe('durable workflow runtime ownership', () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -63,9 +64,9 @@ describe('durable workflow runtime ownership', () => {
     }
   });
 
-  test('admits exactly one simultaneous owner across independent worker handles', async () => {
+  test('admits exactly one simultaneous owner across independent Bun subprocess handles', async () => {
     const harness = await fileHarness(cleanups);
-    const outcomes = await acquireSimultaneously(harness.path, [
+    const outcomes = await acquireWorkflowOwnersSimultaneously(harness.path, [
       'concurrent-owner-a',
       'concurrent-owner-b',
     ]);
@@ -790,7 +791,8 @@ interface FileHarness {
 }
 
 async function fileHarness(cleanups: Array<() => Promise<void>>): Promise<FileHarness> {
-  const root = await mkdtemp(join(tmpdir(), 'zero-workflow-owner-'));
+  await mkdir(SCRATCH, { recursive: true });
+  const root = await mkdtemp(join(SCRATCH, 'zero-workflow-owner-'));
   const path = join(root, 'workflow.sqlite');
   const first = createReactiveDB({ mode: 'file', path, busyTimeout: 5_000 });
   defineWorkflowTables(first);
@@ -855,104 +857,6 @@ function workflowMutationSnapshot(db: ReactiveDB, instanceId: string): unknown {
     pause: db.prepare('SELECT * FROM _workflow_pauses WHERE instance_id = ?')
       .get(instanceId),
   };
-}
-
-interface OwnerAcquisitionOutcome {
-  ok: boolean;
-  ownerId: string;
-  code?: string;
-  status?: number;
-  message?: string;
-}
-
-async function acquireSimultaneously(
-  databasePath: string,
-  ownerIds: readonly [string, string],
-): Promise<OwnerAcquisitionOutcome[]> {
-  const gateBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
-  const gate = new Int32Array(gateBuffer);
-  const reactiveDbModule = new URL('../sync/reactive-db.ts', import.meta.url).href;
-  const leaseStoreModule = new URL('./workflow-runtime-lease-store.ts', import.meta.url).href;
-  const source = `
-    self.onmessage = async (event) => {
-      const input = event.data;
-      const [{ createReactiveDB }, { WorkflowRuntimeLeaseStore }] = await Promise.all([
-        import(${JSON.stringify(reactiveDbModule)}),
-        import(${JSON.stringify(leaseStoreModule)}),
-      ]);
-      const db = createReactiveDB({ mode: 'file', path: input.databasePath, busyTimeout: 5000 });
-      const store = new WorkflowRuntimeLeaseStore(db);
-      const gate = new Int32Array(input.gateBuffer);
-      postMessage({ type: 'ready' });
-      Atomics.wait(gate, 0, 0);
-      try {
-        store.acquire(input.ownerId, 1000, 1000);
-        postMessage({ type: 'result', outcome: { ok: true, ownerId: input.ownerId } });
-      } catch (error) {
-        postMessage({
-          type: 'result',
-          outcome: {
-            ok: false,
-            ownerId: input.ownerId,
-            code: error && typeof error === 'object' ? error.code : undefined,
-            status: error && typeof error === 'object' ? error.status : undefined,
-            message: error instanceof Error ? error.message : String(error),
-          },
-        });
-      } finally {
-        db.dispose();
-      }
-    };
-  `;
-  const workerPath = join(dirname(databasePath), 'workflow-owner-acquire-worker.mjs');
-  await Bun.write(workerPath, source);
-  const workerUrl = pathToFileURL(workerPath);
-  const workers = ownerIds.map((ownerId) => startAcquisitionWorker(
-    workerUrl,
-    { databasePath, ownerId, gateBuffer },
-  ));
-  try {
-    await Promise.all(workers.map(({ ready }) => ready));
-    Atomics.store(gate, 0, 1);
-    Atomics.notify(gate, 0, workers.length);
-    return await Promise.all(workers.map(({ result }) => result));
-  } finally {
-    await Promise.allSettled(workers.map(({ worker }) => Promise.resolve(worker.terminate())));
-  }
-}
-
-function startAcquisitionWorker(
-  url: URL,
-  input: {
-    databasePath: string;
-    ownerId: string;
-    gateBuffer: SharedArrayBuffer;
-  },
-): {
-  worker: Worker;
-  ready: Promise<void>;
-  result: Promise<OwnerAcquisitionOutcome>;
-} {
-  const worker = new Worker(url);
-  const ready = deferred<void>();
-  const result = deferred<OwnerAcquisitionOutcome>();
-  void ready.promise.catch(() => undefined);
-  void result.promise.catch(() => undefined);
-  worker.onmessage = (event: MessageEvent) => {
-    const message = event.data as {
-      type?: string;
-      outcome?: OwnerAcquisitionOutcome;
-    };
-    if (message.type === 'ready') ready.resolve();
-    if (message.type === 'result' && message.outcome) result.resolve(message.outcome);
-  };
-  worker.onerror = (event: ErrorEvent) => {
-    const error = event.error ?? new Error(event.message);
-    ready.reject(error);
-    result.reject(error);
-  };
-  worker.postMessage(input);
-  return { worker, ready: ready.promise, result: result.promise };
 }
 
 class ManualWorkflowClock implements WorkflowClock {

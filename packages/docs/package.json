@@ -1,6 +1,6 @@
 {
   "name": "@zero/plugin-docs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Optional tokenized Markdown documentation sites for Zero.",
   "type": "module",
   "engines": { "bun": ">=1.3.14" },
@@ -12,7 +12,7 @@
   },
   "files": ["src", "README.md", "THIRD_PARTY_NOTICES.md", "!src/**/*.test.*", "!src/**/*.fixture.*", "!src/**/*-fixture.ts", "!src/**/*-fixture.tsx"],
   "peerDependencies": {
-    "@zero/framework": ">=2.5.0 <3",
+    "@zero/framework": ">=2.6.0 <3",
     "react": ">=19.2.0 <20",
     "react-dom": ">=19.2.0 <20"
   },

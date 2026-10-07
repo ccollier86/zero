@@ -21,7 +21,7 @@ import { buildRouteTree } from '../router/route-tree';
 import { scanRoutes } from '../router/scanner';
 import { createRouterPlugin } from './router-plugin';
 
-const TEST_PAGE_COOKIE = PAGE_SESSION_COOKIE_NAME;
+const TEST_PAGE_COOKIE = `${PAGE_SESSION_COOKIE_NAME}_synthetic_router`;
 
 interface TestApp {
   handle(request: Request): Response | Promise<Response>;
@@ -274,7 +274,7 @@ describe('router page-session authentication boundary', () => {
             loginPath: '/sign-in',
             postLoginPath: '/dashboard',
             resolvePageAuth: resolveTestPageAuth,
-            clearRejectedPageSession: rejectedPageSessionCookieHeader,
+            clearRejectedPageSession: request => rejectedPageSessionCookieHeader(request, { pageSessionCookieName: TEST_PAGE_COOKIE }),
           },
         })
       );
@@ -328,7 +328,7 @@ describe('router page-session authentication boundary', () => {
       '/sign-in?redirect=%2Fprotected',
     );
     expect(response.headers.get('set-cookie')).toContain(
-      `${PAGE_SESSION_COOKIE_NAME}=`
+      `${TEST_PAGE_COOKIE}=`
     );
     expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
   });

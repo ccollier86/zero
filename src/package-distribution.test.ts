@@ -14,7 +14,7 @@ import { LOCAL_FRAMEWORK_DEPENDENCY } from './create-zero/local-framework-packag
 import { runCreateZeroCli } from './create-zero/run';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 37 },
+  { length: 43 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 const PACKAGE_RUNTIME_SMOKE_TIMEOUT_MS = 180_000;
@@ -62,6 +62,20 @@ describe('package distribution', () => {
       expect(contents).toContain('package/src/email/email-failure-policy.ts');
       expect(contents).toContain('package/src/frontend/server/app-signal-dispatcher.ts');
       expect(contents).toContain('package/src/frontend/server/app-signal-lifecycle.ts');
+      for (const file of [
+        'build-app.ts',
+        'build-config-adapter.ts',
+        'build-types.ts',
+        'mac-executable-signing.ts',
+        'mac-signing-command.ts',
+        'sharp-native-assets.ts',
+        'sharp-native-build-plugin.ts',
+      ]) {
+        expect(packagedFiles).toContain(`package/src/build/${file}`);
+      }
+      expect(packagedFiles).toContain('package/src/frontend/client/query-params.ts');
+      expect(packagedFiles).toContain('package/src/frontend/client/authorization-scope-hooks.ts');
+      expect(packagedFiles).toContain('package/src/frontend/client/authorization-scope-readiness.ts');
       expect(contents).toContain('package/src/auth/native/trusted-proxy-source.ts');
       expect(contents).toContain('package/src/auth/oidc/auth-native.plugin.ts');
       expect(contents).toContain('package/src/auth/oidc/native-access-session.ts');
@@ -70,6 +84,13 @@ describe('package distribution', () => {
       expect(contents).toContain('package/src/migrations/definitions/006_native_auth_hardening.ts');
       expect(contents).toContain('package/src/migrations/definitions/007_auth_email_outbox.ts');
       expect(contents).toContain('package/src/migrations/index.ts');
+      expect(contents).toContain('package/src/migrations/definitions/039_guardian_user_profiles.ts');
+      expect(contents).toContain('package/src/migrations/definitions/040_guardian_presence.ts');
+      expect(contents).toContain('package/src/migrations/definitions/041_guardian_user_contacts.ts');
+      expect(contents).toContain('package/src/migrations/definitions/041_guardian_user_contacts_schema.ts');
+      expect(contents).toContain('package/src/migrations/definitions/042_guardian_user_avatars.ts');
+      expect(contents).toContain('package/src/migrations/definitions/043_guardian_profile_completion.ts');
+      expect(contents).toContain('package/src/migrations/definitions/043_guardian_profile_completion_schema.ts');
       for (const version of EXPECTED_MIGRATION_VERSIONS) {
         expect(packagedFiles.some((file) =>
           file.startsWith(`package/src/migrations/definitions/${version}_`)
@@ -122,6 +143,14 @@ describe('package distribution', () => {
       expect(contents).toContain('package/docs-next/index.md');
       expect(contents).toContain('package/docs-next/agents/index.md');
       expect(contents).toContain('package/docs-next/backend/resources/array-overlap.md');
+      expect(contents).toContain('package/docs-next/backend/guardian/user-profiles.md');
+      expect(contents).toContain('package/docs-next/backend/guardian/contacts.md');
+      expect(contents).toContain('package/docs-next/backend/guardian/avatars.md');
+      expect(contents).toContain('package/docs-next/backend/guardian/presence.md');
+      expect(contents).toContain('package/docs-next/backend/guardian/profile-completion.md');
+      expect(contents).toContain('package/docs-next/frontend/guardian/profile-settings.md');
+      expect(contents).toContain('package/docs-next/frontend/forms/save-and-leave.md');
+      expect(contents).toContain('package/docs-next/frontend/components/kbd.md');
       expect(contents).toContain('package/docs/ai-generation.md');
       expect(contents).toContain('package/docs/ai-agents.md');
       expect(contents).toContain('package/docs/ai-durable-agents.md');
@@ -159,7 +188,16 @@ describe('package distribution', () => {
         dependencies: Record<string, string>;
         files: string[];
         imports: Record<string, string>;
+        exports: Record<string, unknown>;
       };
+      expect(frameworkPackageJson.exports['./react/query-params']).toEqual({
+        types: './src/frontend/client/query-params.ts',
+        import: './src/frontend/client/query-params.ts',
+      });
+      expect(frameworkPackageJson.exports['./react/authorization-scope']).toEqual({
+        types: './src/frontend/client/authorization-scope-hooks.ts',
+        import: './src/frontend/client/authorization-scope-hooks.ts',
+      });
       expect(frameworkPackageJson.dependencies['@sinclair/typebox']).toBeDefined();
       expect(frameworkPackageJson.dependencies['file-type']).toBeDefined();
       expect(frameworkPackageJson.dependencies['openapi-types']).toBeDefined();

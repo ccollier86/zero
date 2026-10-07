@@ -15,7 +15,7 @@ export function buildNativeDiscovery(issuer: string) {
     id_token_signing_alg_values_supported: ['ES256'],
     token_endpoint_auth_methods_supported: ['none'],
     revocation_endpoint_auth_methods_supported: ['none'],
-    scopes_supported: ['openid', 'profile', 'email'],
+    scopes_supported: ['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write'],
     claims_supported: [
       'sub', 'iss', 'aud', 'exp', 'iat', 'nonce', 'name',
       'given_name', 'family_name', 'preferred_username', 'email', 'email_verified',

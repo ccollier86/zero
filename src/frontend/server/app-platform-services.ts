@@ -45,6 +45,13 @@ import {
 } from './identity-projection-runtime';
 import type { ResolvedConfig } from './types';
 import { createWorkflowExecutionServiceProvider } from './workflow-execution-services';
+import { PresenceService, ZERO_GUARDIAN_PRESENCE } from '../../presence/presence-service';
+import { ManagedPresencePublisher } from '../../presence/presence-managed-publisher';
+import { createPresencePlugin } from '../../presence/presence.plugin';
+import { composeManagedUserAvatars } from './app-user-avatars';
+import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
+import { ZERO_DATABASE_MANAGER } from '../../runtime/service-keys';
+import { createAuthPlatformCodeEmitter } from '../../auth/auth-observability';
 
 interface MountPlatformServicesInput {
   readonly app: Elysia;
@@ -105,6 +112,13 @@ export async function mountPlatformServices({
         strictUserProperties: config.auth.strictUserProperties,
         nativeApps: config.auth.nativeApps,
         apiKeys: config.auth.apiKeys,
+        userProfile: config.auth.userProfile,
+        presence: config.auth.presence,
+        profileSchemaInstallAllowed: config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
+        profileContactSchemaInstallAllowed: config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
+        profileCompletionSchemaInstallAllowed: config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
+        presenceSchemaInstallAllowed: config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
+        phoneVerificationAdapter: config.auth.phoneVerificationAdapter,
         identityProjection: identityProjectionRuntime?.lifecycle,
         dataRealmReadiness: identityProjectionRuntime
           ?? NOT_REQUIRED_DATA_REALM_READINESS,
@@ -165,6 +179,25 @@ export async function mountPlatformServices({
   }));
 
   if (config.auth !== false) {
+    const presencePolicy = resourceAuthConfig.presence;
+    let presence: PresenceService | null = null;
+    app.use(createPresencePlugin({ getService: () => presence, getTokenService, authorization }));
+    managedInitializers.push(async () => {
+      if (presencePolicy.enabled) await managedStartup.auth!.start();
+      const manager = runtime.require(ZERO_DATABASE_MANAGER);
+      if (presencePolicy.enabled) manager.start();
+      const installAllowed = config.migrate || manager.systemRuntime.sqlite.mode === 'ephemeral';
+      const publisher = presencePolicy.enabled ? new ManagedPresencePublisher(manager,
+        config.migrate || manager.appRuntime.sqlite.mode === 'ephemeral', resourceAuthConfig.tenancy.mode)
+        : { publish: async () => { throw new AuthError('Presence is disabled', 'AUTH_PRESENCE_DISABLED', 404); }, isReady: () => false };
+      presence = new PresenceService(systemDB, presencePolicy, resourceAuthConfig.tenancy.mode, publisher, installAllowed,
+        Date.now, crypto.randomUUID(), createAuthPlatformCodeEmitter(runtime));
+      runtime.set(ZERO_GUARDIAN_PRESENCE, presence);
+      const removeAdmission = presencePolicy.enabled && resourceAuthConfig.tenancy.mode === 'multi'
+        ? manager.installTenantPresenceAdmission(tenantId => presence!.ensureScope(trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId }))) : null;
+      runtime.addCleanup(async () => { removeAdmission?.(); await presence?.close(); runtime.clear(ZERO_GUARDIAN_PRESENCE, presence ?? undefined); });
+      await presence.initialize();
+    });
     app.use(createNotificationPlugin({
       db: systemDB,
       runtime,
@@ -178,10 +211,18 @@ export async function mountPlatformServices({
       getTokenService,
       authorization,
     }));
+    const avatars = composeManagedUserAvatars(runtime, systemDB, resourceAuthConfig.userProfile,
+      config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral');
+    if (resourceAuthConfig.userProfile.enabled && resourceAuthConfig.userProfile.avatars.enabled) {
+      managedInitializers.push(() => managedStartup.auth!.start());
+    }
+    app.use(avatars.plugin);
     app.use(createStoragePlugin({
       db: systemDB,
       localDir: config.storageDir,
       signingSecret: config.storage.signingSecret,
+      onServiceCreated: avatars.onStorageCreated,
+      captureUploadGrantCommitFence: avatars.captureUploadGrantCommitFence,
       defaultPresignedTTL: config.storage.defaultPresignedTTL,
       studio: config.storage.studio,
       runtime,

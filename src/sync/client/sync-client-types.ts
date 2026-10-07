@@ -41,6 +41,8 @@ export interface SyncClient {
   ): Promise<void>;
   /** Send or buffer an extension-protocol message. */
   sendRaw(message: object): void;
+  /** Send only on the current authenticated baseline; never buffer or replay transient activity. */
+  sendTransient(message: object): boolean;
   /** Open the socket when automatic connection is disabled. */
   connect(): void;
   /** Reopen the socket without clearing local data. */

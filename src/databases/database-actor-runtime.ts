@@ -7,6 +7,11 @@
  */
 
 import { DatabaseError } from './database-error';
+import { hasGuardianPresenceRealm } from '../presence/presence-realm';
+import { PresenceProjectionStore } from '../presence/presence-projection-store';
+import { validateDatabasePresenceProjectionPayload } from './database-presence-projection-protocol';
+import type { PresenceProjectionReceipt } from '../presence/presence-publication';
+import { createTenantDatabaseRef } from './database-binding-ref';
 import {
   establishHotAutomationClaimDurability,
 } from './database-actor-automation-durability';
@@ -190,6 +195,8 @@ export class DatabaseActorRuntime implements Disposable {
           return asExecutorValue(this.findReceipt(request));
         case DATABASE_ACTOR_OPERATIONS.identityProjection:
           return asExecutorValue(this.identityProjection(request));
+        case DATABASE_ACTOR_OPERATIONS.presenceProjection:
+          return asExecutorValue(this.presenceProjection(request));
         case DATABASE_ACTOR_AUTOMATION_OUTBOX_OPERATION:
           return asExecutorValue(this.automationOutbox(request));
         case DATABASE_ACTOR_OPERATIONS.unbind:
@@ -514,6 +521,26 @@ export class DatabaseActorRuntime implements Disposable {
       payload.idempotencyKey,
       payload.logicalReceiptFingerprint,
     );
+  }
+
+  private presenceProjection(request: DatabaseExecutorServerRequest): PresenceProjectionReceipt {
+    const payload = validateDatabasePresenceProjectionPayload(request.payload);
+    const binding = this.requireBinding(payload.databaseRef); requireOperationKind(request.kind, 'write');
+    if (binding.role !== 'writer' || !hasGuardianPresenceRealm(this.realm)
+      || payload.publication.scopeKind !== 'tenant' || createTenantDatabaseRef(payload.publication.scopeId) !== binding.databaseRef) throw new DatabaseError(
+      'DATABASE_OPERATION_UNSUPPORTED', 'The actor does not admit Guardian presence projection.');
+    if (payload.authorityRevision !== undefined && payload.authorityRevision !== payload.publication.sourceAuthorityRevision) {
+      throw new DatabaseError('DATABASE_AUTHORITY_CHANGED', 'Presence directory authority changed.', { outcome: 'not-committed' });
+    }
+    const execute = () => {
+      try { return new PresenceProjectionStore(binding.runtime.db).apply(payload.publication); }
+      catch (error) {
+        if (error instanceof DatabaseError) throw error;
+        throw new DatabaseError('DATABASE_SCHEMA_MISMATCH', 'Guardian presence projection is incompatible.', { outcome: 'not-committed' });
+      }
+    };
+    const result = binding.authorityCommitGuard ? binding.authorityCommitGuard.run(payload.authorityRevision, execute) : execute();
+    this.establishHotWriteDurability(binding, false); return result;
   }
 
   private identityProjection(

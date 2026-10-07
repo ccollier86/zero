@@ -9,11 +9,17 @@ and evidence metadata against the installed package. This file and the older
 
 For 2.4.1's multi-group authorization update, read
 [exact string-array overlap](../docs-next/backend/resources/array-overlap.md).
-For 2.5.0's optional Markdown reader, start with the
+For the optional Markdown reader (current plugin 0.1.1 requires framework 2.6.0), start with the
 [docs plugin](../docs-next/plugins/docs/index.md) and its
 [search guide](../docs-next/plugins/docs/search.md). The shared
 [CodeBlock family](../docs-next/frontend/components/public-pages/code-block.md)
 also supports app-owned code examples without installing the plugin.
+
+For the adaptive Guardian account-settings upgrade, start with
+[Profile Settings](../docs-next/frontend/guardian/profile-settings.md) and
+[post-bootstrap provisioning](../docs-next/guides/upgrade.md#opting-into-adaptive-profiles-after-provisioning).
+The current feature guides record source/release status explicitly; enabling an
+option in an older installed package is not a migration or an upgrade.
 
 Zero is a Bun/Elysia full-stack app platform. The goal is fast data-driven app
 development without wiring separate backend services for Guardian auth,

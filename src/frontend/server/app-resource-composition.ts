@@ -21,6 +21,7 @@ import {
 } from '../../runtime/service-keys';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import type { ReactiveDB } from '../../sync/reactive-db';
+import { ZERO_GUARDIAN_PRESENCE } from '../../presence/presence-service';
 import {
   combineSyncPolicies,
   createDefaultSyncPolicy,
@@ -65,7 +66,7 @@ export async function composeAppResources({
   observability,
   getSystemDB,
 }: ComposeAppResourcesInput): Promise<AppResourceComposition> {
-  addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false);
+  addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false, config.auth !== false && authConfig.presence.enabled);
   const loadedResources = await loadResourceDefinitions({
     resourcesDir: config.serverResourcesDir,
     observability,
@@ -151,6 +152,7 @@ export async function composeAppResources({
         getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
         tenancyMode: authConfig.tenancy.mode,
         privateTables,
+        isPresenceReady: scope => runtime.get(ZERO_GUARDIAN_PRESENCE)?.capabilities(scope).state === 'ready',
       });
 
   return Object.freeze({

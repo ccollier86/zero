@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { SlidingNumber } from '#zero/components/animate-ui/primitives/texts/sliding-number';
 import { cn } from '#zero/lib/utils';
+import { Kbd } from '#zero/components/kbd';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -190,12 +191,12 @@ function PrimaryActionButton({
       {action.shortcut && (
         <>
           <div className={cn('mx-3 hidden h-5 w-px shrink-0 rounded-full @sm/wrapper:block', secondary ? 'bg-border' : 'bg-primary-foreground/40')} />
-          <div className={cn(
-            '-mr-1 hidden shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs @sm/wrapper:flex',
-            secondary ? 'bg-muted' : 'bg-primary-foreground/20',
+          <Kbd className={cn(
+            '-mr-1 hidden @sm/wrapper:inline-flex',
+            secondary ? '' : 'bg-primary-foreground/20 text-primary-foreground',
           )}>
             {action.shortcut}
-          </div>
+          </Kbd>
         </>
       )}
     </motion.button>

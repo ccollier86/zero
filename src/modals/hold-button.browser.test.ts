@@ -220,14 +220,16 @@ describe('HoldButton confirmation lifecycle', () => {
     try {
       await page.locator('button').dispatchEvent('pointerdown', { button: 0, isPrimary: true });
       await page.evaluate(() => window.__holdButtonHarness.replaceAction());
-      await page.waitForFunction(() => window.__holdButtonHarness.pendingFrames() === 0);
+      // The fixture owns RAF: the default RAF poller would add its own pending
+      // frame and wait forever for that same frame map to become empty.
+      await page.waitForFunction(() => window.__holdButtonHarness.pendingFrames() === 0, undefined, { polling: 10 });
       await page.evaluate(() => window.__holdButtonHarness.advance(200));
       expect(await page.evaluate(() => window.__holdButtonHarness.confirmations())).toBe(0);
       expect(await page.evaluate(() => window.__holdButtonHarness.replacementConfirmations())).toBe(0);
 
       await page.locator('button').dispatchEvent('pointerdown', { button: 0, isPrimary: true });
       await page.evaluate(() => window.__holdButtonHarness.replaceDuration(400));
-      await page.waitForFunction(() => window.__holdButtonHarness.pendingFrames() === 0);
+      await page.waitForFunction(() => window.__holdButtonHarness.pendingFrames() === 0, undefined, { polling: 10 });
       await page.evaluate(() => window.__holdButtonHarness.advance(400));
       expect(await page.evaluate(() => window.__holdButtonHarness.replacementConfirmations())).toBe(0);
 

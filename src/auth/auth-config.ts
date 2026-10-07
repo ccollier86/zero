@@ -27,6 +27,8 @@ import {
   normalizeAuthEmailTemplates,
 } from './auth-config-email';
 import { normalizeAuthTenancy } from './auth-config-tenancy';
+import { normalizeAuthUserProfile } from './auth-config-user-profile';
+import { normalizeAuthPresence } from './auth-config-presence';
 import {
   isPolicyTrustedAuthUserProperty,
   normalizeAuthUserProperties,
@@ -59,6 +61,8 @@ const AUTH_BEHAVIOR_FIELDS = [
   'strictUserProperties',
   'nativeApps',
   'apiKeys',
+  'userProfile',
+  'presence',
 ] as const;
 
 /**
@@ -111,6 +115,8 @@ export function resolveAuthBehaviorConfig(
     strictUserProperties: config.strictUserProperties ?? false,
     nativeApps: resolveNativeAuthConfig(config.nativeApps),
     apiKeys,
+    userProfile: normalizeAuthUserProfile(config.userProfile),
+    presence: normalizeAuthPresence(config.presence),
   };
 }
 

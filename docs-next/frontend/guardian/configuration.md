@@ -43,6 +43,14 @@ a second AuthClient in every form or manually insert Bearer headers in each UI.
 
 ## Profile Adaptation
 
+The ordinary own-account [UserProfileSettings](./profile-settings.md) is distinct
+from administrative user management. It follows `auth.userProfile` and optional
+contacts/avatar/presence services, supports full/compact/read-only placement and
+field/page saves, and does not require privileged account-writer permissions.
+Expanded fields and ready services are projected by the server; props only
+narrow them. Optional availability uses the same SDK-owned tracker as avatar
+rings, not another per-component connection.
+
 `UserManagement` self-wires from public tenancy/authorization config and active
 tenant kind. Controlled `data` deliberately chooses identity management.
 Use explicit `TenantMemberManagement` or `PlatformWorkspaceManagement` only
@@ -83,6 +91,13 @@ The data-realm gate is optional presentation of server readiness; backend
 application-data operations still enforce their own boundary.
 
 ## Migration And Verification
+
+Existing apps may opt into extended fields, private avatars or contact proof after
+provisioning. Install the fixed SYSTEM migrations and required Storage/Fabric
+realm contribution under the real deployment policy before serving the new
+feature. Migration-disabled or incompatible substrate stays blocked; showing a
+component does not create SQL tables. Required first-use completion additionally
+has an explicit [enrollment/rollout policy](../../backend/guardian/profile-completion.md).
 
 Existing simple identity call sites can retain their props. Advanced/multi
 self-wired mode gains the appropriate scoped control plane. A controlled list

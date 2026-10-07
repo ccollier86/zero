@@ -13,7 +13,7 @@ import type {
 } from './types';
 
 const CLIENT_ID = /^[A-Za-z0-9._~-]{1,128}$/;
-const IDENTITY_SCOPES = new Set(['openid', 'profile', 'email']);
+const IDENTITY_SCOPES = new Set(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write']);
 const NATIVE_TTL_MAX = {
   requestTTL: 3_600_000,
   codeTTL: 600_000,
@@ -91,6 +91,9 @@ function resolveClient(client: NativeAuthClientConfig): ResolvedNativeAuthClient
   const scopes = unique(client.scopes ?? ['openid', 'profile', 'email'], 'scopes');
   if (!scopes.includes('openid')) fail(`${client.clientId} must allow openid.`);
   if (scopes.some((scope) => !IDENTITY_SCOPES.has(scope))) fail('scope is unsupported.');
+  if ((scopes.includes('profile:write') || scopes.includes('contacts:write')) && !scopes.includes('profile')) {
+    fail('profile:write requires profile scope.');
+  }
   return { clientId: client.clientId, name: client.name, redirectUris, scopes };
 }
 

@@ -1,7 +1,7 @@
 /** Password-reset and initial-password setup HTTP routes. */
 
 import { Elysia, t } from 'elysia';
-import type { AuthAccountPluginConfig } from './auth-account-dependencies';
+import { requireAccountTokenService, type AuthAccountPluginConfig } from './auth-account-dependencies';
 import { completePasswordAction } from './auth-password-action-service';
 import { authNewPasswordSchema, authTokenSchema } from './auth-request-schema';
 import { clearPageSessionCookie } from './page-session';
@@ -23,7 +23,7 @@ export function createAuthPasswordActionPlugin(config: AuthAccountPluginConfig) 
           allowedTypes: ['password_reset', 'admin_password_reset'],
           auditRequest: authAuditRequestFromRequest(request),
         });
-        clearPageSessionCookie(set, request);
+        clearPageSessionCookie(set, request, requireAccountTokenService(config));
         return response;
       },
       { body: passwordBody }
@@ -37,7 +37,7 @@ export function createAuthPasswordActionPlugin(config: AuthAccountPluginConfig) 
           allowedTypes: ['account_setup'],
           auditRequest: authAuditRequestFromRequest(request),
         });
-        clearPageSessionCookie(set, request);
+        clearPageSessionCookie(set, request, requireAccountTokenService(config));
         return response;
       },
       { body: passwordBody }

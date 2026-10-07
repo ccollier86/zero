@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: master-detail
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.5.0 working source; page-size correction qualification pending"]
 modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.5.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -71,6 +71,13 @@ the dirty working source, not a shipped-artifact claim.
 loadingState/errorState customize first-load presentation. Server controls stay
 mounted while loading; rows/pages are not filtered or fetched through a second
 browser-array pass.
+
+The list uses DataTable's shared pagination controller: changing Rows per page
+keeps the page containing the former first row for local/offset data. Cursor
+batch-size changes start a fresh history. This is distinct from the bottom
+bar's previous/next **record** selection; that bar is not a second page-query
+engine. See [table state](./data-table/state-and-columns.md#state-and-pagination-resets)
+for the anchor formula, selection retirement and known-total clamping.
 
 detailHeader is a component receiving { item }. emptyState/emptyStateText customize
 the unselected panel. renderDetail(item, context) replaces AutoForm; detailContent

@@ -450,7 +450,15 @@ export interface AuthSessionResult {
   mfaChallengeRequired?: false;
   tenantSelectionRequired?: false;
   tenantOnboardingRequired?: false;
+  profileCompletionRequired?: false;
   activeTenant?: AuthTenantSummary;
+}
+
+/** Identity is proven, but required profile values must be accepted before app session issue. */
+export interface AuthProfileCompletionRequiredResult {
+  user: AuthUser;
+  profileCompletionRequired: true;
+  profileCompletion: import('../../auth/auth-user-profile-completion-types').UserProfileCompletion;
 }
 
 /** Password recovery/setup completed; a fresh login must start a new session. */
@@ -475,7 +483,8 @@ export type AuthCompletionResult =
   | AuthPasswordUpdatedResult
   | AuthEmailVerificationRequiredResult
   | AuthTenantSelectionRequiredResult
-  | AuthTenantOnboardingRequiredResult;
+  | AuthTenantOnboardingRequiredResult
+  | AuthProfileCompletionRequiredResult;
 
 /** Registration completion, including the atomically created organization when applicable. */
 export type AuthRegistrationResult = AuthCompletionResult & {
@@ -499,6 +508,7 @@ export type AuthMfaSetupVerifyResult =
   | AuthSessionResult
   | AuthTenantSelectionRequiredResult
   | AuthTenantOnboardingRequiredResult
+  | AuthProfileCompletionRequiredResult
   | {
       ok: true;
       method: AuthMfaMethod;
@@ -517,6 +527,8 @@ export interface AuthUserPropertyConfig {
 }
 
 export interface AuthPublicConfig {
+  /** Own-profile policy and installed-schema readiness. Absent on older servers. */
+  userProfile?: import('../../auth/auth-user-profile-types').UserProfileCapabilities;
   /** Resolved tenancy capability. Missing on older Zero servers means single. */
   tenancy?: {
     mode: 'single' | 'multi';
@@ -630,6 +642,14 @@ export function isAuthTenantSelectionRequiredResult(
     && Boolean(candidate.tenantSelection)
     && typeof candidate.tenantSelection?.continuation === 'string'
     && Array.isArray(candidate.tenantSelection?.tenants);
+}
+
+/** Narrow a restricted first-use result; a continuation is never an application credential. */
+export function isAuthProfileCompletionRequiredResult(value: unknown): value is AuthProfileCompletionRequiredResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<AuthProfileCompletionRequiredResult>;
+  return candidate.profileCompletionRequired === true && Boolean(candidate.user)
+    && typeof candidate.profileCompletion?.continuation === 'string';
 }
 
 export function isAuthTenantOnboardingRequiredResult(

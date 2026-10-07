@@ -320,6 +320,7 @@ export interface AppConfig {
   auth?: boolean | (AuthBehaviorConfig & {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
+    phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter;
   });
 
   /**
@@ -574,7 +575,8 @@ export interface ResolvedConfig {
   databaseAutomations?: DatabaseAutomationRegistry;
   /** Server-only logical validators used by websocket mutation handling. */
   mutationValidators: Record<string, SyncTableMutationValidator>;
-  auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
+  auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string;
+    phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter });
   workflows: false | AppWorkflowsConfig;
   email: false | EmailConfig;
   ai: false | ResolvedAIConfig;
@@ -846,6 +848,7 @@ function validateAppAuthConfig(
   config: AuthBehaviorConfig & {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
+    phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter;
   },
 ): NormalizedAuthBehaviorConfig {
   if (
@@ -859,9 +862,17 @@ function validateAppAuthConfig(
   const {
     accessTokenTTL,
     refreshTokenTTL,
+    phoneVerificationAdapter,
     ...behavior
   } = config;
   const normalized = resolveAuthBehaviorConfig(behavior);
+  if (phoneVerificationAdapter !== undefined && (!phoneVerificationAdapter || typeof phoneVerificationAdapter !== 'object'
+    || typeof phoneVerificationAdapter.id !== 'string' || !/^[a-zA-Z0-9._-]{1,80}$/.test(phoneVerificationAdapter.id)
+    || typeof phoneVerificationAdapter.isReady !== 'function' || typeof phoneVerificationAdapter.start !== 'function'
+    || typeof phoneVerificationAdapter.verify !== 'function'
+    || phoneVerificationAdapter.cancel !== undefined && typeof phoneVerificationAdapter.cancel !== 'function')) {
+    throw new Error('[auth] phoneVerificationAdapter must implement the trusted phone verification contract.');
+  }
   validateAuthTokenTTL(accessTokenTTL, 'accessTokenTTL');
   validateAuthTokenTTL(refreshTokenTTL, 'refreshTokenTTL');
   return normalized;
@@ -882,6 +893,7 @@ function defaultPublicPaths(
 ): string[] {
   const account = auth === false ? undefined : auth.account;
   const accountEmails = auth === false ? undefined : auth.accountEmails;
+  const profile = auth === false ? undefined : auth.userProfile;
 
   return [...new Set([
     authRoutePathname(loginPath, '/login', 'loginPath'),
@@ -902,6 +914,10 @@ function defaultPublicPaths(
       '/verify-email',
       'account.emailVerificationPath'
     ),
+    ...(profile?.enabled !== false && profile?.contacts?.enabled ? [authRoutePathname(
+      profile.contacts.verificationPath, '/verify-contact', 'userProfile.contacts.verificationPath'
+    )] : []),
+    ...(profile?.enabled !== false && profile?.completion?.enabled ? ['/complete-profile'] : []),
   ])];
 }
 

@@ -1,0 +1,42 @@
+/* REUI's compact defaults through Zero semantic colors and public metric tokens. */
+@layer components {
+  .zero-kbd {
+    display: inline-flex;
+    pointer-events: none;
+    user-select: none;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: fit-content;
+    height: var(--zero-kbd-height, 1.25rem);
+    min-width: var(--zero-kbd-min-width, 1.25rem);
+    gap: var(--zero-kbd-gap, 0.25rem);
+    padding: var(--zero-kbd-padding, 0 var(--zero-kbd-padding-inline, 0.25rem));
+    border-radius: var(--zero-kbd-radius, calc(var(--radius) - 2px));
+    background: var(--zero-kbd-background, var(--muted));
+    color: var(--zero-kbd-foreground, var(--muted-foreground));
+    font-family: var(--zero-kbd-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif));
+    font-size: var(--zero-kbd-font-size, 0.75rem);
+    font-weight: var(--zero-kbd-font-weight, 500);
+    line-height: var(--zero-kbd-line-height, 1rem);
+    white-space: nowrap;
+  }
+  .zero-kbd svg:not([class*="size-"]) {
+    width: var(--zero-kbd-icon-size, 0.75rem);
+    height: var(--zero-kbd-icon-size, 0.75rem);
+  }
+  .zero-kbd-group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--zero-kbd-group-gap, 0.25rem);
+  }
+  /* Zero's tooltip visual slot is popover-content, with its own tooltip arrow.
+     Do not target upstream's absent tooltip-content or tint ordinary popovers. */
+  :where([data-slot="popover-content"]:has([data-slot="tooltip-arrow"])) .zero-kbd {
+    color: var(--zero-kbd-tooltip-foreground, inherit);
+    background: var(--zero-kbd-tooltip-background, color-mix(in srgb, currentColor var(--zero-kbd-tooltip-opacity, 20%), transparent));
+  }
+  :where(.dark [data-slot="popover-content"]:has([data-slot="tooltip-arrow"])) .zero-kbd {
+    background: var(--zero-kbd-tooltip-background, color-mix(in srgb, currentColor var(--zero-kbd-tooltip-opacity, 10%), transparent));
+  }
+}

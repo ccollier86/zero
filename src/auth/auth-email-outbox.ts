@@ -124,6 +124,14 @@ export class AuthEmailOutbox {
     });
   }
 
+  /** Called only by the admitted contact ceremony's shared writer transaction. */
+  enqueueContactProof(input: { jobId: string; recipient: string }): AuthEmailEnqueueResult {
+    this.assertCurrentProfile();
+    return this.enqueueTransactionally('profile_contact_verification', () => this.store.enqueueContact({
+      ...input, recipient: canonicalizeEmail(input.recipient),
+    }, this.clock(), this.options.maxActiveJobs, this.options.maxStoredJobs));
+  }
+
   enqueueDomainMailboxProof(
     input: DomainMailboxJobBinding,
     admit: () => boolean = () => true,

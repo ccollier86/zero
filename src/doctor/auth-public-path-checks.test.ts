@@ -41,4 +41,17 @@ describe('Doctor auth public-path checks', () => {
     const config = { ...resolved(), auth: { audit: { retentionDays: 0 } } };
     expect(authPublicPathFindings(config)).toEqual([]);
   });
+  test('checks enabled configured contact and completion entrances without inspecting a provider', () => {
+    let touched = false;
+    const policy = resolved({ userProfile: { contacts: { enabled: true, verificationPath: '/prove-mailbox' },
+      completion: { enabled: true } }, phoneVerificationAdapter: { id: 'synthetic',
+      isReady: () => { touched = true; return true; }, start: async () => { touched = true; return { reference: 'private' }; },
+      verify: async () => { touched = true; return true; } } });
+    expect(authPublicPathFindings(policy).map(finding => finding.code)).toContain('auth.contact_verification_path.not_public');
+    expect(authPublicPathFindings(policy).map(finding => finding.code)).toContain('auth.profile_completion_path.not_public');
+    expect(touched).toBe(false);
+    const publicPolicy = { ...policy, publicPaths: ['/login', '/register', '/forgot-password', '/reset-password', '/prove-mailbox', '/complete-profile'] };
+    expect(authPublicPathFindings(publicPolicy)).toEqual([]);
+    expect(authPublicPathFindings(resolved()).map(finding => finding.code)).not.toContain('auth.contact_verification_path.not_public');
+  });
 });

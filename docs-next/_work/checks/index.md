@@ -89,7 +89,7 @@ load environment files, run Doctor, open databases or call providers.
   window: `bun --no-env-file test docs-next/_work/checks/frontend-ui-examples.test.ts`.
 
 - [Guardian, Storage and small-service example typecheck](./storage-service-examples.test.ts):
-  all 51 actual TS/TSX fences in the Guardian/Storage UI, Email, Notifications, Rooms,
+  all 53 actual TS/TSX fences in the Guardian/Storage UI, Email, Notifications, Rooms,
   Tokens, Observability, KV and PDF families compile against public source
   facades using an in-memory host. It does not execute an example, configuration,
   provider, database, file storage or browser. Run

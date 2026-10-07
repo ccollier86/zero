@@ -1,11 +1,29 @@
 import type { ReactNode } from 'react';
 import { modalStore } from './modal-store';
 import { notifyModalClosed } from './modal-close-callback';
+import { ModalCloseAdmission } from './modal-close-admission';
+import { emitFrontendCode } from '../frontend/client/observability';
+import { OBS_CODES } from '../observability/codes';
 import type {
   OpenModalOptions,
   OpenConfirmOptions,
   ModalInstance,
+  ModalCloseOptions,
 } from './modal.types';
+
+const closeAdmission = new ModalCloseAdmission({
+  isCurrent: modal => {
+    const state = modalStore.getSnapshot().context;
+    return state.modals.find(value => value.id === modal.id) === modal && !state.closingIds.includes(modal.id);
+  },
+  commit: modal => {
+    modalStore.send({ type: 'close', id: modal.id });
+    modal._resolve?.(false); notifyModalClosed(modal);
+  },
+  onFailure: () => emitFrontendCode(OBS_CODES.FRONTEND_MODAL_CALLBACK_FAILED, {
+    metadata: { surface: 'modal-manager', stage: 'before-close' },
+  }),
+});
 
 // ─── ID Generator ────────────────────────────────────────────────────────────
 
@@ -78,32 +96,37 @@ function confirm(options: OpenConfirmOptions): Promise<boolean> {
 /**
  * Close a specific modal by ID. Triggers exit animation.
  */
-function close(id: string): void {
+function requestClose(id: string, options?: ModalCloseOptions): Promise<boolean> {
   const state = modalStore.getSnapshot().context;
   const modal = state.modals.find((m) => m.id === id);
-  if (!modal || state.closingIds.includes(id)) return;
-
-  modalStore.send({ type: 'close', id });
-  modal._resolve?.(false);
-  notifyModalClosed(modal);
+  if (!modal || state.closingIds.includes(id)) return Promise.resolve(false);
+  return closeAdmission.request(modal, options?.force);
 }
+
+/** Existing void close remains synchronous for unguarded modals; guarded close awaits admission. */
+function close(id: string, options?: ModalCloseOptions): void { void requestClose(id, options); }
 
 /**
  * Close the topmost modal.
  */
-function closeLast(): void {
+function closeLast(options?: ModalCloseOptions): void {
   const state = modalStore.getSnapshot().context;
   const last = [...state.modals]
     .reverse()
     .find((modal) => !state.closingIds.includes(modal.id));
-  if (last) close(last.id);
+  if (last) close(last.id, options);
 }
 
 /**
  * Close all open modals.
  */
-function closeAll(): void {
+function closeAll(options?: ModalCloseOptions): void {
   const state = modalStore.getSnapshot().context;
+  if (!options?.force && state.modals.some(modal => modal.beforeClose)) {
+    for (const modal of state.modals) close(modal.id);
+    return;
+  }
+  closeAdmission.cancelAll();
   modalStore.send({ type: 'closeAll' });
   for (const modal of state.modals) {
     if (!state.closingIds.includes(modal.id)) notifyModalClosed(modal);
@@ -117,6 +140,7 @@ function closeAll(): void {
  * inside the store.
  */
 function discardAll(): void {
+  closeAdmission.cancelAll();
   modalStore.send({ type: 'closeAll' });
 }
 
@@ -124,6 +148,7 @@ function discardAll(): void {
  * Update an open modal's properties.
  */
 function update(id: string, updates: Partial<OpenModalOptions>): void {
+  closeAdmission.cancel(id);
   modalStore.send({ type: 'update', id, updates });
 }
 
@@ -131,6 +156,7 @@ export const modals = {
   open,
   confirm,
   close,
+  requestClose,
   closeLast,
   closeAll,
   discardAll,

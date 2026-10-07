@@ -13,6 +13,7 @@ import {
   PAGE_SESSION_COOKIE_NAME,
   clearPageSessionCookie,
   readPageSessionCookie,
+  revokeAndClearPageSessionCookie,
   rejectedPageSessionCookieHeader,
   resolvePageSessionAuth,
   setPageSessionCookie,
@@ -168,7 +169,7 @@ describe('page-session cookie helpers', () => {
     await setPageSessionCookie(set, request, tokenService, pair.refreshToken);
 
     const header = String(set.headers['set-cookie']);
-    expect(header).toStartWith(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(header).toStartWith(`${tokenService.pageSessionCookieName}=`);
     expect(header).toContain('Path=/');
     expect(header).toMatch(/Max-Age=\d+/);
     expect(header).toContain('Expires=');
@@ -180,7 +181,7 @@ describe('page-session cookie helpers', () => {
     const cookieRequest = new Request('http://zero.test/app', {
       headers: { Cookie: cookiePair(header) },
     });
-    expect(readPageSessionCookie(cookieRequest)).toBeString();
+    expect(readPageSessionCookie(cookieRequest, tokenService)).toBeString();
     await expect(resolvePageSessionAuth(cookieRequest, tokenService)).resolves.toMatchObject({
       userId: user.userId,
     });
@@ -212,9 +213,9 @@ describe('page-session cookie helpers', () => {
     expect(String(forwardedSet.headers['set-cookie'])).toContain('Secure');
 
     const clearSet = responseSet();
-    clearPageSessionCookie(clearSet, new Request('https://zero.test/logout'));
+    clearPageSessionCookie(clearSet, new Request('https://zero.test/logout'), tokenService);
     const clearHeader = String(clearSet.headers['set-cookie']);
-    expect(clearHeader).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(clearHeader).toContain(`${tokenService.pageSessionCookieName}=`);
     expect(clearHeader).toContain('Path=/');
     expect(clearHeader).toContain('Max-Age=0');
     expect(clearHeader).toContain('Expires=Thu, 01 Jan 1970 00:00:00 GMT');
@@ -242,7 +243,7 @@ describe('page-session cookie helpers', () => {
     expect(set.headers['set-cookie']).toBeArrayOfSize(2);
     expect(set.headers['set-cookie'][0]).toStartWith('app_preference=compact');
     expect(set.headers['set-cookie'][1]).toStartWith(
-      `${PAGE_SESSION_COOKIE_NAME}=`
+      `${tokenService.pageSessionCookieName}=`
     );
   });
 
@@ -251,7 +252,7 @@ describe('page-session cookie helpers', () => {
     const pair = await tokenService.issueTokenPair(user);
     const pageSession = await tokenService.issuePageSessionToken(pair.refreshToken);
     expect(pageSession).not.toBeNull();
-    const cookie = `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(pageSession!.token)}`;
+    const cookie = `${tokenService.pageSessionCookieName}=${encodeURIComponent(pageSession!.token)}`;
 
     for (const method of ['GET', 'HEAD']) {
       const request = new Request('http://zero.test/app', {
@@ -292,10 +293,76 @@ describe('page-session cookie helpers', () => {
     ).resolves.toBeNull();
 
     const malformed = new Request('http://zero.test/app', {
-      headers: { Cookie: `${PAGE_SESSION_COOKIE_NAME}=%ZZ` },
+      headers: { Cookie: `${tokenService.pageSessionCookieName}=%ZZ` },
     });
     await expect(resolvePageSessionAuth(malformed, tokenService)).resolves.toBeNull();
-    expect(rejectedPageSessionCookieHeader(malformed)).toContain('Max-Age=0');
+    expect(rejectedPageSessionCookieHeader(malformed, tokenService)).toContain('Max-Age=0');
+  });
+
+  test('uses one persisted application namespace across TokenService recreation and continuations', async () => {
+    const namespace = tokenService.pageSessionCookieName;
+    expect(namespace).toMatch(/^__zero_page_session_[a-f0-9]{32}$/);
+    const recreated = await TokenService.create({ db }); recreated.setUserStore(store);
+    expect(recreated.pageSessionCookieName).toBe(namespace);
+    const id = (db.prepare("SELECT value FROM _auth_config WHERE key = 'auth.application.id'").get() as { value: string }).value;
+    expect(namespace).toBe(`${PAGE_SESSION_COOKIE_NAME}_${hashToken(id).slice(0, 32)}`);
+    expect(namespace).not.toContain(id);
+  });
+
+  test('accepts verified legacy credentials only when canonical is absent; present empty or invalid canonical never falls back', async () => {
+    const user = await createUser(); const pair = await tokenService.issueTokenPair(user);
+    const page = (await tokenService.issuePageSessionToken(pair.refreshToken))!;
+    const legacy = `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(page.token)}`;
+    await expect(resolvePageSessionAuth(new Request('https://zero.test/app', { headers: { Cookie: legacy } }), tokenService))
+      .resolves.toMatchObject({ userId: user.userId });
+    for (const invalid of ['', 'invalid', '%ZZ']) {
+      const request = new Request('https://zero.test/app', { headers: { Cookie: `${legacy}; ${tokenService.pageSessionCookieName}=${invalid}` } });
+      await expect(resolvePageSessionAuth(request, tokenService)).resolves.toBeNull();
+      expect(rejectedPageSessionCookieHeader(request, tokenService)).toStartWith(`${tokenService.pageSessionCookieName}=`);
+    }
+    const bareCanonical = new Request('https://zero.test/app', { headers: { Cookie: `${legacy}; ${tokenService.pageSessionCookieName}` } });
+    await expect(resolvePageSessionAuth(bareCanonical, tokenService)).resolves.toBeNull();
+    expect(rejectedPageSessionCookieHeader(bareCanonical, tokenService)).toStartWith(`${tokenService.pageSessionCookieName}=`);
+    const request = new Request('https://zero.test/app', { headers: { Cookie: `${PAGE_SESSION_COOKIE_NAME}=foreign` } });
+    expect(rejectedPageSessionCookieHeader(request, tokenService)).toBeNull();
+  });
+
+  test('migrates a validated legacy session to the canonical cookie and retires its exact old proof', async () => {
+    const user = await createUser(); const previous = await tokenService.issueTokenPair(user);
+    const page = (await tokenService.issuePageSessionToken(previous.refreshToken))!;
+    const next = await tokenService.issueTokenPair(user); const set = responseSet();
+    await setPageSessionCookie(set, new Request('https://zero.test/login', { method: 'POST', headers: {
+      Cookie: `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(page.token)}`,
+    } }), tokenService, next.refreshToken);
+    const headers = set.headers['set-cookie'] as unknown as string[];
+    expect(headers).toHaveLength(2);
+    expect(headers[0]).toStartWith(`${PAGE_SESSION_COOKIE_NAME}=`); expect(headers[0]).toContain('Max-Age=0');
+    expect(headers[1]).toStartWith(`${tokenService.pageSessionCookieName}=`); expect(headers[1]).not.toContain('Max-Age=0');
+    await expect(tokenService.resolvePageSessionToken(page.token)).resolves.toBeNull();
+    await expect(resolvePageSessionAuth(new Request('https://zero.test/app', { headers: { Cookie: cookiePair(headers[1]!) } }), tokenService))
+      .resolves.toMatchObject({ userId: user.userId });
+  });
+
+  test('foreign legacy and other app canonical cookies survive replacement, rejection and logout', async () => {
+    const foreignDB = createReactiveDB({ mode: 'memory' }); defineAuthTables(foreignDB);
+    try {
+      const foreignStore = new UserStore(foreignDB); const foreign = await TokenService.create({ db: foreignDB }); foreign.setUserStore(foreignStore);
+      const other = await foreignStore.createUser({ username: 'other-app', email: 'other-app@example.test', password: 'password123' });
+      const otherPair = await foreign.issueTokenPair(other); const otherPage = (await foreign.issuePageSessionToken(otherPair.refreshToken))!;
+      expect(foreign.pageSessionCookieName).not.toBe(tokenService.pageSessionCookieName);
+      const foreignCookies = `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(otherPage.token)}; ${foreign.pageSessionCookieName}=${encodeURIComponent(otherPage.token)}`;
+      const request = new Request('https://zero.test/app', { headers: { Cookie: foreignCookies } });
+      await expect(resolvePageSessionAuth(request, tokenService)).resolves.toBeNull();
+      expect(rejectedPageSessionCookieHeader(request, tokenService)).toBeNull();
+      const local = await createUser(); const pair = await tokenService.issueTokenPair(local); const set = responseSet();
+      await setPageSessionCookie(set, request, tokenService, pair.refreshToken);
+      expect(String(set.headers['set-cookie'])).toStartWith(`${tokenService.pageSessionCookieName}=`);
+      const logout = responseSet(); await revokeAndClearPageSessionCookie(logout, request, tokenService);
+      expect(String(logout.headers['set-cookie'])).toStartWith(`${tokenService.pageSessionCookieName}=`);
+      expect(String(logout.headers['set-cookie'])).not.toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+      expect(String(logout.headers['set-cookie'])).not.toContain(`${foreign.pageSessionCookieName}=`);
+      await expect(foreign.resolvePageSessionToken(otherPage.token)).resolves.toMatchObject({ userId: other.userId });
+    } finally { foreignDB.dispose(); }
   });
 });
 

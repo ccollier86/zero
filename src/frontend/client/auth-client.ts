@@ -42,6 +42,14 @@ import {
 } from './auth-errors';
 import { AuthMfaTransport } from './auth-mfa-transport';
 import { AuthPropertyTransport } from './auth-property-transport';
+import { AuthUserProfileTransport } from './auth-user-profile-transport';
+import { AuthUserContactTransport } from './auth-user-contact-transport';
+import { AuthUserProfileCompletionTransport } from './auth-user-profile-completion-transport';
+import { AuthUserAvatarTransport } from './auth-user-avatar-transport';
+export type * from '../../auth/auth-user-profile-types';
+export type * from '../../auth/auth-user-contact-types';
+export type * from '../../auth/auth-user-profile-completion-types';
+export type * from '../../auth/auth-user-avatar-types';
 import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
 import {
   composeAuthorizationScopeSignal,
@@ -117,6 +125,7 @@ export {
 export { AuthSessionSynchronizationError } from './auth-session';
 export {
   isAuthEmailVerificationRequiredResult,
+  isAuthProfileCompletionRequiredResult,
   isAuthTenantOnboardingRequiredResult,
   isAuthTenantSelectionRequiredResult,
 } from './auth-types';
@@ -224,6 +233,7 @@ export type {
   AuthMfaSetupStartResult,
   AuthMfaSetupVerifyResult,
   AuthPasswordUpdatedResult,
+  AuthProfileCompletionRequiredResult,
   AuthPublicConfig,
   AuthRegistrationResult,
   AuthRegistrationTenant,
@@ -330,6 +340,14 @@ export class AuthClient {
   private readonly actions: AuthActionTransport;
   private readonly mfa: AuthMfaTransport;
   private readonly properties: AuthPropertyTransport;
+  /** Global own-profile operations; never an arbitrary user or tenant selector. */
+  readonly profile: AuthUserProfileTransport;
+  /** Contact proof/change ceremonies; independent from cosmetic profile mutations. */
+  readonly contacts: AuthUserContactTransport;
+  /** Restricted first-use profile continuation, not an authenticated profile mutation. */
+  readonly profileCompletion: AuthUserProfileCompletionTransport;
+  /** Staged private profile media; all steps remain in one captured Guardian scope. */
+  readonly avatars: AuthUserAvatarTransport;
   private readonly tenants: AuthTenantTransport;
   private readonly tenantAdministration: AuthTenantAdministrationTransport;
   private readonly tenantOnboarding: AuthTenantOnboardingTransport;
@@ -444,6 +462,55 @@ export class AuthClient {
         this.assertAuthenticatedResponseCurrent(response);
         this.session.deleteProperty(key);
       },
+    });
+    this.profile = new AuthUserProfileTransport({
+      baseUrl,
+      authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
+      assertResponseCurrent: (response) => this.assertAuthenticatedResponseCurrent(response),
+    });
+    this.profileCompletion = new AuthUserProfileCompletionTransport({
+      baseUrl, beginAuthentication: loading => this.beginAuthenticationAttempt(loading),
+      readContinuation: () => this.authenticationContinuation,
+      completeAuthentication: (result, attempt) => this.session.completeAuthentication(result, attempt.assertCurrent),
+    });
+    this.avatars = new AuthUserAvatarTransport({
+      baseUrl,
+      authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
+      assertResponseCurrent: response => this.assertAuthenticatedResponseCurrent(response),
+      runScoped: async (operation, signal) => {
+        const attempt = this.beginAuthorizationScopeAttempt(), userId = this.user?.userId;
+        const composed = composeAuthorizationScopeSignal(signal, attempt.signal);
+        try {
+          if (!userId || !this.isAuthenticated) throw new DOMException('Avatar scope is unavailable.', 'AbortError');
+          attempt.assertCurrent(); composed.signal.throwIfAborted();
+          const result = await operation({ userId, signal: composed.signal, assertCurrent: attempt.assertCurrent });
+          attempt.assertCurrent(); composed.signal.throwIfAborted(); return result;
+        } finally { composed.dispose(); attempt.dispose(); }
+      },
+    });
+    this.contacts = new AuthUserContactTransport({
+      baseUrl,
+      authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
+      assertResponseCurrent: response => this.assertAuthenticatedResponseCurrent(response),
+      runEmailCompletion: (request, signal) => this.runScopeChangingOperation(async attempt => {
+        const userId = this.user?.userId;
+        if (!attempt.signal) throw new DOMException('Contact verification scope is unavailable.', 'AbortError');
+        const composed = composeAuthorizationScopeSignal(signal, attempt.signal);
+        try {
+          attempt.assertCurrent();
+          composed.signal.throwIfAborted();
+          const result = await request(composed.signal);
+          attempt.assertCurrent();
+          composed.signal.throwIfAborted();
+          if (result.requiresSignIn && userId === result.userId && this.user?.userId === userId) {
+            // A token may belong to A while B is signed in. Only the proved
+            // owner's unchanged browser family can be intentionally retired.
+            attempt.consumeStartingScope();
+            await this.logout();
+          }
+          return result;
+        } finally { composed.dispose(); }
+      }),
     });
     this.tenants = new AuthTenantTransport({
       baseUrl,
@@ -873,7 +940,7 @@ export class AuthClient {
       startingScopeConsumed = true;
       attempt.dispose();
     };
-    return this.session.refresh(attempt.assertCurrent, consumeStartingScope)
+    return this.session.refresh(attempt.assertCurrent, consumeStartingScope, attempt.signal)
       .then((result) => {
         if (!startingScopeConsumed) attempt.assertCurrent();
         return result;

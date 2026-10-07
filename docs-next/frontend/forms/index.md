@@ -37,6 +37,7 @@ The SDK or custom callback owns persistence, and the server remains authoritativ
 - [Input types](./input-types.md): representation and supported generated control map.
 - [Submission and scope](./submission-and-scope.md): accepted writes, stale callbacks
   and identity/organization replacement.
+- [Settings saves and leave guards](./save-and-leave.md): accepted baselines, field Check/Cancel, floating saves and Save/Discard/Stay.
 - [Configuration](./configuration.md): exact props/defaults/read-time semantics.
 - [Roadmap](./roadmap.md): future editor/autosave direction, not current APIs.
 

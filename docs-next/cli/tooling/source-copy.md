@@ -8,14 +8,14 @@ visibility: internal
 system: cli-tooling
 feature: source-copy
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; release qualification pending"]
 modes: ["Bun package-mode applications", "trusted local development"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
+  snapshot: dirty
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -40,6 +40,22 @@ Copy planning recursively follows eligible `components`, `hooks`, `lib`
 and `modals` source imports. Public framework service/schema/runtime imports
 stay package-owned after rewriting; source-local implementation symbols do not
 become supported app APIs simply because the source is visible.
+
+For copied DataTable source, the pure query helpers remain package-owned through
+`@zero/framework/react/query-params`. The copy engine uses this focused public
+subpath for `stableValueKey`, filter encoding and their data-query types; it does
+not copy frontend client internals or assume every helper is on the broad React
+facade. The module encodes query state only: it does not fetch data or grant
+authority. See [server-driven tables](../../frontend/data-controls/data-table/server-sources.md)
+for the authenticated adapter and query contract.
+
+Copied `InlineEditText` and form/save hooks retain live authorization checks
+through `@zero/framework/react/authorization-scope`. The exact module rewrite
+preserves scope/readiness helpers without copying the client implementation or
+assuming those lower-level helpers are exported by the broad React facade.
+Keep the matching framework package installed. These are UI admission/result
+fences, not permission decisions; [scope boundaries](../../frontend/runtime/authorization-scope-boundary.md)
+describe their opaque keys and retirement behavior.
 
 ## Choosing Package Or Source Ownership
 

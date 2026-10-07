@@ -43,6 +43,7 @@ import type {
   DatabaseTrustedWriteExecutor,
 } from './database-trusted-writer';
 import type { DatabaseWriterCommitValue } from './database-writer-engine';
+import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
 import type {
   DatabaseCoordinatorAutomationDeliveryInput,
   DatabaseCoordinatorAutomationDeliveryResult,
@@ -56,6 +57,8 @@ export interface CoordinatorTenantSyncSnapshotStart {
 
 /** Narrow host boundary implemented by DatabaseCoordinator. */
 export interface DatabaseCoordinatorCapabilityHost {
+  executePresenceProjection(entry: DatabaseCoordinatorEntry, publication: PresencePublication,
+    options: DatabaseExecutionOptions | undefined, commitAuthority: DatabaseCommitAuthority | null): Promise<PresenceProjectionReceipt>;
   executeAutomationDelivery<
     TInput extends DatabaseCoordinatorAutomationDeliveryInput,
   >(
@@ -221,6 +224,11 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
   }
 
   /** @internal Guardian target path; not part of DatabaseCoordinatorLease. */
+  executePresenceProjection(publication: PresencePublication, options?: DatabaseExecutionOptions): Promise<PresenceProjectionReceipt> {
+    this.assertActive(); return this.#coordinator.executePresenceProjection(this.#entry, publication, options, this.#commitAuthority);
+  }
+
+  /** @internal Guardian target path; not part of DatabaseCoordinatorLease. */
   executeIdentityProjection(
     input: Omit<DatabaseIdentityProjectionPayload, 'databaseRef'>,
     options?: DatabaseExecutionOptions,
@@ -274,6 +282,13 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
       throw new DatabaseError('DATABASE_CLOSED', 'Database capability was released.');
     }
   }
+}
+
+/** Invoke the private projection path only on a coordinator-owned lease. */
+export function executeCoordinatorPresenceProjection(lease: DatabaseCoordinatorLease, publication: PresencePublication,
+  options?: DatabaseExecutionOptions): Promise<PresenceProjectionReceipt> {
+  if (!(lease instanceof CoordinatorLease)) throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Presence projection requires a coordinator-owned binding.');
+  return lease.executePresenceProjection(publication, options);
 }
 
 /** Invoke the private projection path only on a coordinator-owned lease. */

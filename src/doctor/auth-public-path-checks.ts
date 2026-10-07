@@ -19,6 +19,7 @@ export function authPublicPathFindings(
     const {
       accessTokenTTL: _accessTokenTTL,
       refreshTokenTTL: _refreshTokenTTL,
+      phoneVerificationAdapter: _phoneVerificationAdapter,
       ...behavior
     } = resolved.auth;
     auth = resolveAuthBehaviorConfig(behavior);
@@ -51,6 +52,14 @@ export function authPublicPathFindings(
       label: 'email verification path', path: auth.account.emailVerificationPath,
       code: 'auth.verification_path.not_public',
     });
+  }
+  if (auth.userProfile.enabled && auth.userProfile.contacts.enabled) {
+    required.push({ label: 'contact verification path', path: auth.userProfile.contacts.verificationPath,
+      code: 'auth.contact_verification_path.not_public' });
+  }
+  if (auth.userProfile.enabled && auth.userProfile.completion.enabled) {
+    required.push({ label: 'profile completion path', path: '/complete-profile',
+      code: 'auth.profile_completion_path.not_public' });
   }
 
   return dedupe(required).flatMap((entry) => {

@@ -31,11 +31,13 @@ Backend expansion remains owned by the
 
 ## Known Direction
 
-- [ ] Provide a compact adaptive current-user profile/settings organism: core
-  identity, configured editable properties and capability-gated security,
-  composed from existing controls. Core-name editing needs a whitelisted
-  self-service backend contract; managed avatars and verified email changes
-  remain separate backend features, not merely hidden UI controls.
+- [x] Implement the adaptive current-user profile/settings surface in working
+  source: whitelisted core/expanded fields, regional settings, private avatar
+  crop/upload, contact possession, availability and required completion.
+  [Current contracts](./profile-settings.md) remain under integrated/package
+  qualification; this check is not a claim of a published release.
+- [ ] Extend account/settings presentation alongside future passkey, social
+  linking or session-device management only when those backend contracts exist.
 
 - [ ] Continue refining the adaptable list/detail/action control plane without
   replacing it with disconnected one-action cards.

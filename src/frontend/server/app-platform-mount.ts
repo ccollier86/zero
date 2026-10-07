@@ -72,7 +72,7 @@ export async function mountPlatformApp({
     });
     applyTableSyncResolution(config, resolution);
     if (config.auth !== false) {
-      addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false);
+      addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false, resourceAuthConfig.presence.enabled);
     }
   });
 

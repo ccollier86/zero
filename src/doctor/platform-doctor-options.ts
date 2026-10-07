@@ -13,7 +13,10 @@ export interface PlatformDoctorOptions {
   strict?: boolean;
   /** Environment values used for provider checks. Defaults to process.env. */
   env?: Record<string, string | undefined>;
-  /** Project root used for app-owned source usage scanning. */
+  /**
+   * Opt into filesystem checks and supply the config origin when config.projectRoot
+   * is omitted. Explicit config roots must agree.
+   */
   projectRoot?: string;
   /** Source usage audit options. Pass false to disable. */
   usageAudit?: boolean | UsageAuditOptions;

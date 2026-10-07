@@ -1,8 +1,23 @@
 import { expect, test } from 'bun:test';
+import ts from 'typescript';
 
 import { migrations } from './index';
 
-const MUTABLE_RUNTIME_VALUE_IMPORT = /import\s+(?!type\b)[\s\S]*?\sfrom\s+['"](\.\.\/\.\.\/[^'"]+)['"];?/g;
+/** Inspect declarations, never let one value import swallow a later type-only import. */
+function mutableRuntimeImports(source: string): string[] {
+  const file = ts.createSourceFile('migration.ts', source, ts.ScriptTarget.Latest, true);
+  return file.statements.flatMap(statement => {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
+    const path = statement.moduleSpecifier.text;
+    if (!path.startsWith('../../')) return [];
+    const clause = statement.importClause;
+    if (clause?.isTypeOnly) return [];
+    if (clause && !clause.name && clause.namedBindings && ts.isNamedImports(clause.namedBindings)
+      && clause.namedBindings.elements.length > 0
+      && clause.namedBindings.elements.every(element => element.isTypeOnly)) return [];
+    return [path];
+  });
+}
 
 /**
  * `hashMigration()` protects the exported `up`/`down` function bodies, but a
@@ -50,6 +65,11 @@ const FROZEN_MIGRATION_DEFINITIONS: Readonly<Record<string, string>> = {
   '036_workflow_system_event_receipts.ts': '4dcf3233d11a21a915dcea8524cc61997fb00c9657dd7a0eefc33b35848deea2',
   '037_database_automation_source_catalog.ts': '6fe68d59b759d51586f9d76e6b2932871765287462054e352146eddf58f3d552',
   '038_workflow_system_start_receipts.ts': '887b313eb900c0c4f6824494e1954b589cd9a235c17a14027047ffe27c01494a',
+  '039_guardian_user_profiles.ts': '5475e84610bc8576c3f0e71dd462a69d20feac2c87427b8408cf6c0b1e5a212a',
+  '040_guardian_presence.ts': '6a9ea858b25b98bc6b0fb3e0a02a20b46c023520bf88e7f39f41c89e7a892198',
+  '041_guardian_user_contacts.ts': '88c9c62dea5a405538dc0daea970f62ccbb67aa0171fc599013af6e4bf3b036e',
+  '042_guardian_user_avatars.ts': 'c9a2366f00d68c99b04471d24c90cc0b8ef1ed92ed27a9f38bb94ff4db38e12f',
+  '043_guardian_profile_completion.ts': 'ada92189315f3e791f7de22a44f2d03d35c89b59db7a388eeacc7d32041f92df',
 };
 
 /**
@@ -75,7 +95,27 @@ const FROZEN_LOCAL_DEPENDENCIES: Readonly<Record<string, string>> = {
   '030_workflow_runtime_schema.ts': '7d5fcea4007cdd8f4a20295ecec5c06a81ad408c2bcd49ba17b6a0709d558219',
   '031_workflow_graph_integrity_schema.ts': '4fb85fbd287328bf981a94c9ac624bd11b5e3c69321d9b5e92b6bbd0fc011713',
   '031_workflow_graph_table_rebuilds.ts': 'b15402d664b8ed69caa4d86c1072c6ed8d0ae8e822ac3eff54e73688797f9b84',
+  '041_guardian_user_contacts_schema.ts': 'c1c1638b40b3a0352a96672f477558d448d02538e55bff4c804caa8a42326375',
+  '043_guardian_profile_completion_schema.ts': '080df5ed9195928fb379a90d33c86247dc150a91b39b05a90704cc85bc0e6354',
 };
+
+test('migration import inspection separates type-only declarations from runtime dependencies', () => {
+  expect(mutableRuntimeImports(`
+    import { inspect } from './041_local_schema';
+    import type { ReactiveDB } from '../../sync/reactive-db';
+    import { type User } from '../../auth/types';
+    // import { fake } from '../../runtime/comment';
+  `)).toEqual([]);
+  expect(mutableRuntimeImports(`
+    import { inspect } from './041_local_schema';
+    import type { ReactiveDB } from '../../sync/reactive-db';
+    import { type User, liveGuard } from '../../auth/runtime';
+    import * as mutable from '../../runtime/namespace';
+    import defaultRuntime from '../../runtime/default';
+    import '../../runtime/side-effect';
+    import {} from '../../runtime/empty-import';
+  `)).toEqual(['../../auth/runtime', '../../runtime/namespace', '../../runtime/default', '../../runtime/side-effect', '../../runtime/empty-import']);
+});
 
 test('numbered migrations do not import mutable runtime values', async () => {
   const violations: string[] = [];
@@ -86,8 +126,8 @@ test('numbered migrations do not import mutable runtime values', async () => {
     onlyFiles: true,
   })) {
     const source = await Bun.file(`${import.meta.dir}/${relativePath}`).text();
-    for (const match of source.matchAll(MUTABLE_RUNTIME_VALUE_IMPORT)) {
-      violations.push(`${relativePath} -> ${match[1]}`);
+    for (const dependency of mutableRuntimeImports(source)) {
+      violations.push(`${relativePath} -> ${dependency}`);
     }
   }
 

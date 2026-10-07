@@ -7,6 +7,7 @@ import type { NativeServiceContext } from './native-service-context';
 import { prepareNativeSession } from './native-session-factory';
 import { canReceiveTokens, invalidGrant, tokenClient } from './native-service-policy';
 import { sameNativeAuthority } from './native-tenant-authority';
+import { assertNativeProfileCompletion, nativeProfileCompletionError } from './native-profile-completion-admission';
 
 export async function exchangeNativeCode(
   context: NativeServiceContext,
@@ -20,6 +21,7 @@ export async function exchangeNativeCode(
 
   const user = context.users.getUserById(code.userId);
   if (!user || !canReceiveTokens(user)) invalidGrant();
+  assertNativeProfileCompletion(context.tokens, user.userId);
   if (context.users.getAuthGeneration(user.userId) !== code.authGeneration) invalidGrant();
   if (context.requiresMfaAssurance(user.userId) && code.mfaVerifiedAt === null) {
     invalidGrant();
@@ -37,7 +39,7 @@ export async function exchangeNativeCode(
       user, code.clientId, code.scope, code.authGeneration, prepared.session.familyId,
     ),
     context.tokens.signNativeIdToken(user, code.clientId, code.nonce, code.scope),
-  ]);
+  ]).catch(error => { throw nativeProfileCompletionError(error); });
   if (context.users.getAuthGeneration(user.userId) !== code.authGeneration) invalidGrant();
   const stillCurrent = context.authority.resolve(user.userId, code);
   if (!stillCurrent
@@ -46,6 +48,7 @@ export async function exchangeNativeCode(
     () => context.codes.consume(code.codeId),
     prepared.session,
     () => {
+      assertNativeProfileCompletion(context.tokens, user.userId);
       const live = context.authority.resolve(user.userId, code);
       return context.users.getAuthGeneration(user.userId) === code.authGeneration
         && (!context.requiresMfaAssurance(user.userId)

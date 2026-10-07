@@ -23,6 +23,11 @@ reviewed_against:
 
 [Forms index](./index.md) · [Documentation index](../../index.md)
 
+The additive [settings-save contract](./save-and-leave.md) documents accepted
+baselines, typed submit outcomes, expected revisions, field acknowledgements and
+shared Save/Discard/Stay guards. Legacy initial/reset and handleSubmit behavior
+remain compatible; opt into accepted baselines deliberately.
+
 useForm manages schema-backed values, validation, dirty state and an optional
 submission path. Rendering stays with the app or [AutoForm](./auto-form.md).
 Persisting/authorizing values remains with the SDK/callback and server.

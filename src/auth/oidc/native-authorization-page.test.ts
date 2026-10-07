@@ -2,6 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { nativeAuthorizationPage } from './native-authorization-page';
 
 describe('native authorization page', () => {
+  test('contact writes and phone disclosures are separate from profile read consent', async () => {
+    const page = await nativeAuthorizationPage({ clientName: 'Contact Client', rawRequestId: 'request', userEmail: 'person@example.test',
+      scopes: ['openid', 'profile', 'phone', 'contacts:write'] }).text();
+    expect(page).toContain('phone number and its verification status');
+    expect(page).toContain('Edit and verify your permitted email and phone contact details');
+    const readonly = await nativeAuthorizationPage({ clientName: 'Contact Client', rawRequestId: 'request', userEmail: 'person@example.test',
+      scopes: ['openid', 'profile'] }).text();
+    expect(readonly).not.toContain('phone number and its verification status');
+    expect(readonly).not.toContain('Edit and verify');
+  });
   test('shows requested identity disclosures and escapes provider data', async () => {
     const response = nativeAuthorizationPage({
       clientName: '<Desktop & Mobile>',
@@ -34,5 +44,13 @@ describe('native authorization page', () => {
     expect(response.headers.get('cross-origin-opener-policy')).toBe('same-origin');
     expect(response.headers.get('permissions-policy')).toContain('camera=()');
     expect(response.headers.get('x-frame-options')).toBe('DENY');
+  });
+
+  test('profile writes receive a distinct explicit disclosure without widening read-only consent', async () => {
+    const base = { clientName: 'Profile App', rawRequestId: 'request', userEmail: 'person@example.test' };
+    const read = await nativeAuthorizationPage({ ...base, scopes: ['openid', 'profile'] }).text();
+    const write = await nativeAuthorizationPage({ ...base, scopes: ['openid', 'profile', 'profile:write'] }).text();
+    expect(read).not.toContain('Edit your permitted profile fields and regional preferences');
+    expect(write).toContain('Edit your permitted profile fields and regional preferences');
   });
 });

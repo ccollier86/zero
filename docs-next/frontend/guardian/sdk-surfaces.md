@@ -84,11 +84,36 @@ role summary, not the full advanced grant set.
 
 The exported SDK guards `isAuthTenantSelectionRequiredResult`,
 `isAuthTenantOnboardingRequiredResult`,
-`isAuthEmailVerificationRequiredResult` distinguish completion shapes.
-The latter checks email-verification-required without a completed session.
+`isAuthEmailVerificationRequiredResult` and
+`isAuthProfileCompletionRequiredResult` distinguish completion shapes.
+The email guard checks email-verification-required without a completed session.
+The profile guard identifies required-profile completion without application
+credentials; render its restricted flow rather than treating `user` alone as a
+completed sign-in.
 These are type guards, not security verification of arbitrary JSON.
 The auth component barrel has its separately named UI guards documented in
 [authentication flows](./authentication-flows.md).
+
+## Own Profiles, Contacts, Avatars And Presence
+
+The adaptive-profile source adds `client.userProfile` (`auth.profile`),
+`client.userContacts` (`auth.contacts`), `client.userAvatar` (`auth.avatars`) and
+the SDK-owned `client.presence`. Use their real typed transports through the
+current provider rather than copying tokens into a parallel fetch helper.
+These own-account facades do not accept arbitrary target identities for writes.
+
+`client.userProfileCompletion` / `auth.profileCompletion` uses the restricted
+in-memory first-use proof before a general session exists. It may hand off to
+tenant/native continuation rather than directly complete sign-in; mandatory
+email/MFA ceremonies precede profile completion.
+
+Exact methods and limits live in [profiles](../../backend/guardian/user-profiles.md),
+[contacts](../../backend/guardian/contacts.md), [avatars](../../backend/guardian/avatars.md),
+[presence](../../backend/guardian/presence.md) and
+[required completion](../../backend/guardian/profile-completion.md).
+The [packaged settings component](./profile-settings.md) composes them with
+accepted drafts and current server readiness. Published older packages do not
+acquire these contracts merely because this working-source guide exists.
 
 ## MFA And Session Operations
 

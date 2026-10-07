@@ -139,6 +139,20 @@ export class AuthEmailOutboxStore {
     });
   }
 
+  /** Stable challenge-owned job; domain cooldown and existing queue capacity bound issuance. */
+  enqueueContact(input: { jobId: string; recipient: string }, now: number,
+    maxActiveJobs: number, maxStoredJobs: number): AuthEmailEnqueueResult {
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      const active = this.sql.activeCount.get() as { count: number };
+      const total = this.sql.totalCount.get() as { count: number };
+      if (active.count >= maxActiveJobs || total.count >= maxStoredJobs) return 'capacity';
+      this.sql.insert.run(input.jobId, 'profile_contact_verification', input.recipient,
+        hashToken(input.recipient), null, now, now, now);
+      return 'enqueued';
+    });
+  }
+
   claim(now: number, leaseMs: number): AuthEmailOutboxJob | null {
     return this.db.transaction(() => {
       this.assertCurrentProfile();

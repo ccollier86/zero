@@ -6,6 +6,10 @@ import { expect, test } from 'bun:test';
 
 import { LOCAL_FRAMEWORK_DEPENDENCY } from '../create-zero/local-framework-package';
 import { updateZeroProject, ZeroUpdateError } from './run';
+import {
+  createLocalArchiveFixtureBun, expectFixtureFrameworkArchive, readFixtureFrameworkFiles,
+  type LocalArchiveFixtureBun,
+} from './test-support/local-archive-fixture-bun';
 
 interface WorkspaceFixture {
   rootDir: string;
@@ -15,6 +19,8 @@ interface WorkspaceFixture {
   peerManifest: string;
   oldVersion: string;
   newVersion: string;
+  installedFilesBefore: Record<string, string>;
+  bun: LocalArchiveFixtureBun;
 }
 
 for (const override of [false, true]) {
@@ -22,7 +28,10 @@ for (const override of [false, true]) {
     const fixture = await createFixture(override);
     try {
       const lockBefore = await Bun.file(join(fixture.appDir, 'bun.lock')).text();
-      const result = await updateZeroProject({ projectDir: fixture.appDir, mode: 'local', localFrameworkDir: fixture.sourceDir });
+      const result = await updateZeroProject({ projectDir: fixture.appDir, mode: 'local', localFrameworkDir: fixture.sourceDir }, {
+        runCommand: fixture.bun.runCommand,
+      });
+      expect(result.versionBefore).toBe(fixture.oldVersion);
       expect(result.versionAfter).toBe(fixture.newVersion);
       await assertAppPreserved(fixture);
       const lockAfter = await Bun.file(join(fixture.appDir, 'bun.lock')).text();
@@ -37,11 +46,11 @@ for (const override of [false, true]) {
       expect(lockAfter).toContain('"json-schema"');
       expect(tuple(lockAfter, 'react')).toBe(tuple(lockBefore, 'react'));
       expect(await installedVersion(fixture.appDir)).toBe(fixture.newVersion);
-      await bun(join(fixture.appDir, 'packages', 'bridge'), [
+      await fixture.bun.run(join(fixture.appDir, 'packages', 'bridge'), [
         '-e', `import { version } from "@zero/framework"; if (version !== ${JSON.stringify(fixture.newVersion)}) throw new Error("Workspace consumed stale framework");`,
       ]);
       expect(await readdir(join(fixture.appDir, '.zero', 'framework'))).toEqual(['zero-framework.tgz']);
-      await bun(fixture.appDir, ['install', '--frozen-lockfile', '--force', '--no-cache', '--ignore-scripts', '--no-progress']);
+      await fixture.bun.run(fixture.appDir, ['install', '--frozen-lockfile', '--force', '--no-cache', '--ignore-scripts', '--no-progress']);
       expect(await installedVersion(fixture.appDir)).toBe(fixture.newVersion);
       expect(await Bun.file(join(fixture.appDir, 'bun.lock')).text()).toBe(lockAfter);
     } finally {
@@ -87,7 +96,13 @@ for (const failureStage of ['staged-install', 'canonical-manifest', 'verificatio
       const failure = await updateZeroProject({ projectDir: fixture.appDir, mode: 'local', localFrameworkDir: fixture.sourceDir }, {
         runCommand: async (argv, options) => {
           commands += 1;
-          await bun(options.cwd, argv.slice(1));
+          const rollbackCommand = failureStage === 'staged-install' ? 2 : 3;
+          if (commands === rollbackCommand) {
+            expect(argv).toEqual(['bun', 'update', '@zero/framework', '--frozen-lockfile', '--force',
+              '--no-cache', '--ignore-scripts', '--no-progress']);
+          }
+          const result = await fixture.bun.runCommand(argv, options);
+          if (result.exitCode !== 0) return result;
           if (commands === 2 && failureStage === 'canonical-manifest') {
             const manifest = await Bun.file(join(options.cwd, 'package.json')).json();
             manifest.unrelatedSetting = 'must not be accepted';
@@ -109,8 +124,20 @@ for (const failureStage of ['staged-install', 'canonical-manifest', 'verificatio
       expect(await Bun.file(join(fixture.appDir, 'bun.lock')).text()).toBe(lockBefore);
       expect(await Bun.file(join(fixture.appDir, '.zero', 'framework', 'zero-framework.tgz')).bytes()).toEqual(archiveBefore);
       expect(await installedVersion(fixture.appDir)).toBe(fixture.oldVersion);
+      expect(await readFixtureFrameworkFiles(fixture.appDir)).toEqual(fixture.installedFilesBefore);
+      expect((await Bun.file(join(fixture.appDir, 'node_modules', 'picocolors', 'package.json')).json()).version)
+        .toBe('1.1.1');
       expect(await readdir(join(fixture.appDir, '.zero', 'framework'))).toEqual(['zero-framework.tgz']);
       expect(await Bun.file(join(fixture.appDir, '.zero-update.lock')).exists()).toBe(false);
+      // The restored lock/archive must still select the old payload on a real
+      // subsequent frozen install, with populated node_modules/cache intact.
+      await fixture.bun.run(fixture.appDir, ['install', '--frozen-lockfile', '--force',
+        '--no-cache', '--ignore-scripts', '--no-progress']);
+      await assertAppPreserved(fixture);
+      expect(await Bun.file(join(fixture.appDir, 'bun.lock')).text()).toBe(lockBefore);
+      expect(await Bun.file(join(fixture.appDir, '.zero', 'framework', 'zero-framework.tgz')).bytes()).toEqual(archiveBefore);
+      expect(await installedVersion(fixture.appDir)).toBe(fixture.oldVersion);
+      expect(await readFixtureFrameworkFiles(fixture.appDir)).toEqual(fixture.installedFilesBefore);
     } finally {
       await rm(fixture.rootDir, { recursive: true, force: true });
     }
@@ -123,10 +150,11 @@ async function createFixture(override: boolean): Promise<WorkspaceFixture> {
   const rootDir = await mkdtemp(join(scratchRoot, 'zero-update-workspace-'));
   try {
     const suffix = crypto.randomUUID().slice(0, 8);
+    const bun = createLocalArchiveFixtureBun(rootDir);
     const oldVersion = `1.0.0-${suffix}`;
     const newVersion = `2.0.0-${suffix}`;
-    const oldArchive = await pack(rootDir, oldVersion, { picocolors: '1.1.1' });
-    const newArchive = await pack(rootDir, newVersion, { 'json-schema': '0.4.0' });
+    const oldArchive = await pack(rootDir, oldVersion, { picocolors: '1.1.1' }, bun);
+    const newArchive = await pack(rootDir, newVersion, { 'json-schema': '0.4.0' }, bun);
     const appDir = join(rootDir, 'app');
     const workspaceDir = join(appDir, 'packages', 'bridge');
     const archiveDir = join(appDir, '.zero', 'framework');
@@ -151,15 +179,21 @@ async function createFixture(override: boolean): Promise<WorkspaceFixture> {
       Bun.write(join(appDir, 'bunfig.toml'), '[install]\nlinker = "hoisted"\n'),
       Bun.write(join(appDir, 'user-data-sentinel.txt'), 'app data is untouched\n'),
     ]);
-    await bun(appDir, ['install', '--force', '--no-cache', '--ignore-scripts', '--no-progress']);
-    return { rootDir, appDir, sourceDir: newArchive.sourceDir, rootManifest, peerManifest, oldVersion, newVersion };
+    await bun.run(appDir, ['install', '--force', '--no-cache', '--ignore-scripts', '--no-progress']);
+    // Admit the actual installed baseline, not merely the archive we asked Bun
+    // to install. Different fixture roots intentionally share the canonical
+    // relative archive name, which must not select another fixture's package.
+    expect(await installedVersion(appDir)).toBe(oldVersion);
+    const installedFilesBefore = await expectFixtureFrameworkArchive(appDir, oldArchive.archivePath);
+    return { rootDir, appDir, sourceDir: newArchive.sourceDir, rootManifest, peerManifest,
+      oldVersion, newVersion, installedFilesBefore, bun };
   } catch (error) {
     await rm(rootDir, { recursive: true, force: true });
     throw error;
   }
 }
 
-async function pack(rootDir: string, version: string, dependencies: Record<string, string>): Promise<{ archivePath: string; sourceDir: string }> {
+async function pack(rootDir: string, version: string, dependencies: Record<string, string>, bun: LocalArchiveFixtureBun): Promise<{ archivePath: string; sourceDir: string }> {
   const sourceDir = join(rootDir, `framework-${version}`);
   const archiveDir = join(rootDir, `archives-${version}`);
   await Promise.all([mkdir(sourceDir), mkdir(archiveDir)]);
@@ -167,16 +201,10 @@ async function pack(rootDir: string, version: string, dependencies: Record<strin
     Bun.write(join(sourceDir, 'package.json'), JSON.stringify({ name: '@zero/framework', version, type: 'module', dependencies })),
     Bun.write(join(sourceDir, 'index.js'), `export const version = ${JSON.stringify(version)};\n`),
   ]);
-  await bun(sourceDir, ['pm', 'pack', '--destination', archiveDir, '--ignore-scripts', '--quiet']);
+  await bun.run(sourceDir, ['pm', 'pack', '--destination', archiveDir, '--ignore-scripts', '--quiet']);
   const filename = (await readdir(archiveDir)).find((entry) => entry.endsWith('.tgz'));
   if (!filename) throw new Error('Fixture framework archive was not created');
   return { sourceDir, archivePath: join(archiveDir, filename) };
-}
-
-async function bun(cwd: string, args: string[]): Promise<void> {
-  const child = Bun.spawn(['bun', ...args], { cwd, env: Bun.env, stdout: 'pipe', stderr: 'pipe' });
-  const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  if (code !== 0) throw new Error(`Fixture bun ${args[0]} failed (${code}):\n${stdout}${stderr}`);
 }
 
 async function installedVersion(appDir: string): Promise<string> {

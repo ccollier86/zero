@@ -5,7 +5,10 @@
  * and shared contracts live in adjacent responsibility-focused files.
  */
 
+import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+import type { ResolvedConfig } from '../frontend/server/types';
 
 import { addAuthStopLifecycleFinding } from './usage-audit-auth-lifecycle';
 import { DEFAULT_EXCLUDES, browserSourceFile, discoverSourceFiles, matchesPathPattern, normalizePath, stripLineNumber } from './usage-audit-scanner';
@@ -37,7 +40,10 @@ export function runUsageAudit(input: RunUsageAuditInput): PlatformDoctorFinding[
   const options = normalizeUsageAuditOptions(input.options);
   if (!options.enabled) return [];
 
-  const projectRoot = resolve(input.projectRoot);
+  const rootMismatch = usageAuditProjectRootMismatch(input.projectRoot, input.resolvedConfig);
+  if (rootMismatch) return [rootMismatch];
+  // Config owns the anchor; an equivalent symlink alias must not change labels.
+  const projectRoot = resolve(input.resolvedConfig.projectRoot);
   const files = discoverSourceFiles(projectRoot, input.resolvedConfig, options);
   const findings: PlatformDoctorFinding[] = [];
 
@@ -49,6 +55,32 @@ export function runUsageAudit(input: RunUsageAuditInput): PlatformDoctorFinding[
   addRootWiringFindings(files, options, findings);
 
   return findings.filter((finding) => !isAllowedFinding(finding, options.allow));
+}
+
+/** Refuse ambiguous config/source ownership before walking either tree. */
+export function usageAuditProjectRootMismatch(
+  projectRoot: string,
+  resolvedConfig: Pick<ResolvedConfig, 'projectRoot'>,
+): PlatformDoctorFinding | null {
+  if (canonicalProjectRoot(projectRoot) === canonicalProjectRoot(resolvedConfig.projectRoot)) return null;
+  return {
+    severity: 'error',
+    code: 'usage.config.project_root_mismatch',
+    path: 'projectRoot',
+    message: 'The Doctor project root does not match the resolved configuration project root; source scanning was skipped.',
+    hint: 'Resolve config with the same projectRoot used for Doctor. Keep intentionally external source directories explicit in appDir, server directory settings, or usageAudit.include.',
+    docs: './docs-next/cli/doctor/usage.md#source-root-ownership',
+  };
+}
+
+function canonicalProjectRoot(projectRoot: string): string {
+  const absolute = resolve(projectRoot);
+  try {
+    return realpathSync.native(absolute);
+  } catch {
+    // Missing roots still compare lexically without walking or creating them.
+    return absolute;
+  }
 }
 
 function normalizeUsageAuditOptions(

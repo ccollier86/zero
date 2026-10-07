@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: page-access-and-refresh-sessions
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["Working source on Zero 2.5.0; adaptive-profile release qualification pending"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -63,15 +63,39 @@ described in [native clients](./native-provider.md).
 
 ## Page Cookie Behavior
 
-The cookie is named `__zero_page_session`, has `Path=/`, `HttpOnly`,
-`SameSite=Lax`, expiry/max-age bounded by its backing refresh/session authority,
-and `Secure` for secure requests. Guardian does not expose it to JavaScript.
+The page-cookie name is application-owned: `__zero_page_session_` followed by
+32 hexadecimal characters derived from Guardian's persisted application ID.
+It is stable across a restart of the same SYSTEM database, not derived from a
+display name, browser-supplied host or client ID. Cookies do not distinguish
+ports, so application ownership prevents two Zero apps on the same hostname
+from replacing or clearing each other's page credentials. This is separate
+from the browser SDK's own credential-storage namespace.
 
-Page-cookie admission is limited to GET and HEAD. An explicit
+The cookie has `Path=/`, `HttpOnly`, `SameSite=Lax`, expiry/max-age bounded by
+its backing refresh/session authority, and `Secure` for secure requests.
+Guardian does not expose it to JavaScript. Apps should let Guardian issue and
+clear the cookie rather than hard-code a deletion header or a cookie name.
+
+File-router page-cookie admission is limited to GET and HEAD. An explicit
 `Authorization` header takes precedence; invalid explicit credentials never
-silently fall back to a valid ambient cookie. An invalid cookie on a safe page
-request is cleared. Unsafe methods and API routes do not gain cookie-based
-authentication through this page mechanism.
+silently fall back to a valid ambient cookie. A present application cookie is
+authoritative even if empty or malformed; it never falls back to another
+credential. An invalid application cookie on a safe page request is cleared.
+Unsafe methods and API routes do not gain cookie-based authentication through
+this page mechanism. Native consent POST separately uses the same validated
+cookie resolver under its existing native origin/consent protections; it is
+not general cookie-authenticated API access. See
+[native clients](./native-provider.md).
+
+Older releases used the host-wide name `__zero_page_session`. When the new
+application cookie is absent, Guardian accepts that legacy cookie only after
+its own TokenService validates the live local session. A successful session
+completion migrates the credential to the application-owned name. Refresh and
+logout capture verified legacy ownership before retiring the old proof, so
+they can clear the proven local legacy cookie afterward. An invalid or
+foreign legacy cookie is not erased merely because it was presented to a
+different app. This compatibility path does not admit arbitrary JWTs or skip
+live session checks.
 
 At a reverse proxy, preserve the request's HTTPS scheme correctly and configure
 trusted ingress. Cookie security does not make untrusted forwarded headers
@@ -105,6 +129,16 @@ client's restoring state and authorization scope transition before showing
 protected collections, pending mutations or tenant-sensitive panels.
 A completed unauthenticated state must show public login/bootstrap pages;
 a revision increment after anonymous sync reset is not an ongoing restoration.
+
+Normal refresh, startup restore and browser session replacement use bounded
+credential-lock and response-body operations. Transient network/server errors
+retain recoverable proof while protected data remains hidden; definite
+credential rejection retires the session. A rebuild alone should not invalidate
+a session whose SYSTEM authority and signing material remain intact. If the
+authority really changed, recovery must settle to a usable signed-out state,
+not require manual cookie deletion. See
+[bounded browser recovery](../../frontend/runtime/scope-transitions.md#bounded-recovery)
+for the SSR/browser reconciliation flow and its explicit Retry/Sign out paths.
 
 A tenant/user/authority change retires rows, selection, queued edits and stale
 request completions. Do not copy protected data into an unscoped application
@@ -140,3 +174,4 @@ are not authentication records.
 - [Tenancy](./tenancy.md) covers selection and scope replacement.
 - [Identity projection](./identity-projection.md) separates canonical users from FK anchors.
 - [API keys](./api-keys.md) provides non-session app credentials with explicit admission.
+- [Upgrade guide](../../guides/upgrade.md) separates source availability from an installed release.

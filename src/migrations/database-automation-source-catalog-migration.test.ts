@@ -26,7 +26,8 @@ describe('ReactiveDB automation source catalog migration 037', () => {
       const current = new Migrator({
         database,
         dbPath: ':memory:',
-        migrations,
+        // This historical upgrade proves 037, not whichever migrations follow it.
+        migrations: migrations.filter((entry) => entry.version <= '037'),
         createBackups: false,
         log: () => {},
       });

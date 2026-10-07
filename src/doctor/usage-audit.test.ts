@@ -21,7 +21,7 @@ describe('runUsageAudit', () => {
       await writeSource(projectRoot, 'app/deep/generated/deeper/widget.tsx', 'export const widget = <button />;');
       await writeSource(projectRoot, 'app/allowed/deep/page.tsx', 'export const page = <button />;');
       await writeSource(projectRoot, 'app/ordinary/deep/page.tsx', 'export const page = <button />;');
-      const findings = runUsageAudit({ projectRoot, resolvedConfig: resolveConfig(baseConfig()),
+      const findings = runUsageAudit({ projectRoot, resolvedConfig: resolveConfig(baseConfig(projectRoot)),
         options: { allow: [{ code: 'usage.frontend.raw_button', path: 'app/allowed/**' }] } });
       expect(findings.filter(finding => finding.code === 'usage.frontend.raw_button').map(finding => finding.path))
         .toEqual(['app/ordinary/deep/page.tsx:1']);
@@ -54,7 +54,7 @@ describe('runUsageAudit', () => {
 
       const findings = runUsageAudit({
         projectRoot,
-        resolvedConfig: resolveConfig(baseConfig()),
+        resolvedConfig: resolveConfig(baseConfig(projectRoot)),
         options: { maxFileLines: 5 },
       });
 
@@ -99,7 +99,7 @@ describe('runUsageAudit', () => {
 
       const findings = runUsageAudit({
         projectRoot,
-        resolvedConfig: resolveConfig(baseConfig()),
+        resolvedConfig: resolveConfig(baseConfig(projectRoot)),
       });
 
       expect(codes(findings)).toEqual(expect.arrayContaining([
@@ -121,7 +121,7 @@ describe('runUsageAudit', () => {
       await writeSource(projectRoot, 'app/ignored/page.tsx', 'export default function Page() { return <input />; }\n');
       await writeSource(projectRoot, 'app/allowed/page.tsx', 'export default function Page() { return <input />; }\n');
 
-      const resolvedConfig = resolveConfig(baseConfig());
+      const resolvedConfig = resolveConfig(baseConfig(projectRoot));
 
       expect(runUsageAudit({
         projectRoot,
@@ -159,7 +159,7 @@ describe('runUsageAudit', () => {
 
       const findings = runUsageAudit({
         projectRoot,
-        resolvedConfig: resolveConfig(baseConfig()),
+        resolvedConfig: resolveConfig(baseConfig(projectRoot)),
       });
 
       expect(codes(findings)).toEqual(expect.arrayContaining([
@@ -193,7 +193,7 @@ describe('runUsageAudit', () => {
 
       const findings = runUsageAudit({
         projectRoot,
-        resolvedConfig: resolveConfig(baseConfig()),
+        resolvedConfig: resolveConfig(baseConfig(projectRoot)),
       });
 
       expect(codes(findings)).not.toContain('usage.frontend.app_provider_missing');
@@ -216,8 +216,9 @@ describe('runUsageAudit', () => {
   });
 });
 
-function baseConfig(): AppConfig {
+function baseConfig(projectRoot?: string): AppConfig {
   return {
+    projectRoot,
     db: { mode: ':memory:' },
     tables: {
       todos: { id: 'text primary key', title: 'text not null' },

@@ -17,6 +17,11 @@ Client hydration adds disclosures, command search, active TOC tracking, copy
 controls and the existing Zero theme transition. It does not create a second
 Sync client or wait for an authenticated app provider.
 
+The current `@zero/plugin-docs` 0.1.1 preview requires framework 2.6.0 or newer
+within major 2. Its shared `Kbd`/`KbdGroup` imports are a package prerequisite,
+including when `search: false`; disabling an optional reader feature does not
+lower the declared framework peer requirement.
+
 ## Default Composition
 
 The left nav scrolls independently and groups folder topics using nested vertical
@@ -40,6 +45,8 @@ Use the search button or `Cmd/Ctrl+K`. The command dialog searches admitted
 titles, descriptions and visible passages on the server, then groups useful
 section targets under each page. It shows matched terms, ancestry and excerpts;
 arrow keys choose a result and Enter opens its real canonical link.
+The trigger and footer use the [shared Kbd/KbdGroup presentation](../../frontend/components/kbd.md)
+for compact hints; those components do not register or change these commands.
 
 Queries are bounded and debounced; superseded requests cannot replace newer
 results. Loading, no-results and retry states are explicit. Input/footer stay

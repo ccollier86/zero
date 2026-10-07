@@ -23,6 +23,7 @@ import type { AuthorizationKernel } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { emitPlatformCode } from '../observability/sink';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
+import type { AuthUserContactService } from './auth-user-contact-service';
 import {
   createRequestAuthorizationAccess,
   type RequestAuthorizationAccess,
@@ -40,6 +41,7 @@ export interface AuthAdminPluginConfig {
   getMfaChallengeService?: () => MfaChallengeService | null;
   getEmailRuntime: () => EmailRuntime;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
+  getUserContactService?: () => AuthUserContactService | null;
   /** Owning app emitter. Omitted only by standalone/legacy compositions. */
   emitCode?: AuthPlatformCodeEmitter;
 }

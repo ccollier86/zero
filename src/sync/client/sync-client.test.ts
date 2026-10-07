@@ -166,6 +166,22 @@ async function waitForSocketCount(count: number): Promise<void> {
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe('createSyncClient', () => {
+  test('transient sends require the admitted current socket and never replay', async () => {
+    MockWebSocket.autoAuthReady = false;
+    const client = makeClient();
+    const observation = { type: 'ephemeral.set', topic: 'guardian:presence', key: 'self', value: { sequence: 1, activity: true, visible: true } };
+    expect(client.sendTransient(observation)).toBe(false);
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    expect(client.sendTransient(observation)).toBe(false);
+    socket.simulateMessage(JSON.stringify({ type: 'sync.auth.ready', authenticated: false }));
+    expect(socket.sent.some(value => JSON.parse(value).type === 'ephemeral.set')).toBe(false);
+    expect(client.sendTransient({ ...observation, value: { sequence: 2, activity: false, visible: true } })).toBe(true);
+    client.beginAuthorizationScopeTransition();
+    expect(client.sendTransient(observation)).toBe(false);
+    client.disconnect();
+    expect(client.sendTransient(observation)).toBe(false);
+  });
   test('connects immediately on creation', async () => {
     const client = makeClient();
     await flushMicrotasks();

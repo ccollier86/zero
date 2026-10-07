@@ -2,7 +2,8 @@ export type AuthEmailOutboxKind =
   | 'password_reset'
   | 'email_verification'
   | 'tenant_invitation'
-  | 'domain_mailbox_proof';
+  | 'domain_mailbox_proof'
+  | 'profile_contact_verification';
 /** Kinds accepted by the generic, secret-free account-link enqueue path. */
 export type AuthEmailAccountLinkKind = Extract<
   AuthEmailOutboxKind,

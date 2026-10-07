@@ -205,6 +205,7 @@ export async function mountPlatformRoutes({
       auth: config.auth !== false,
       email: emailRuntime.enabled,
       stateSync: config.stateSync,
+      presence: config.auth !== false && config.auth.presence?.enabled === true,
       tableSyncModes: config.resolvedSyncModes,
       tableSyncPlanes: resolveBrowserSyncTablePlanes(
         Object.keys(config.tables),
@@ -232,7 +233,7 @@ export async function mountPlatformRoutes({
               const auth = await resolvePageSessionAuth(request, getTokenService());
               return auth ? { ...auth } : null;
             },
-            clearRejectedPageSession: rejectedPageSessionCookieHeader,
+            clearRejectedPageSession: (request: Request) => rejectedPageSessionCookieHeader(request, getTokenService()),
           },
         }
       : {}),

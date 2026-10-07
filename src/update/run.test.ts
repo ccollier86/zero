@@ -71,6 +71,11 @@ const FROZEN_ROLLBACK_COMMAND = [
   '--no-progress',
 ];
 
+const LOCAL_FROZEN_REBIND_COMMAND = [
+  'bun', 'update', '@zero/framework', '--frozen-lockfile', '--force', '--no-cache',
+  '--ignore-scripts', '--no-progress',
+];
+
 describe('zero update safety', () => {
   test('refuses a missing project path without creating it or spawning commands', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'zero-update-missing-'));
@@ -736,7 +741,7 @@ describe('zero update safety', () => {
       );
 
       expect(exitCode).toBe(1);
-      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, FROZEN_ROLLBACK_COMMAND]);
+      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, LOCAL_FROZEN_REBIND_COMMAND]);
       expect(commands.every((command) => command.includes('--ignore-scripts'))).toBe(true);
       expect(exactRestoreObserved).toBe(true);
       expect(cleanupCalls).toBe(1);
@@ -800,7 +805,7 @@ describe('zero update safety', () => {
       expect(commands).toEqual([
         LOCAL_UPDATE_COMMAND,
         LOCAL_UPDATE_COMMAND,
-        FROZEN_ROLLBACK_COMMAND,
+        LOCAL_FROZEN_REBIND_COMMAND,
       ]);
       expect(exactRestoreObserved).toBe(true);
       expect(await snapshotTree(project.projectDir)).toEqual(treeBefore);
@@ -845,7 +850,7 @@ describe('zero update safety', () => {
       );
 
       expect(exitCode).toBe(1);
-      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, FROZEN_ROLLBACK_COMMAND]);
+      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, LOCAL_FROZEN_REBIND_COMMAND]);
       expect(await Bun.file(join(installedFramework, 'package.json')).exists()).toBe(false);
       expect(await snapshotTree(project.projectDir)).toEqual(treeBefore);
     } finally {
@@ -895,7 +900,7 @@ describe('zero update safety', () => {
       );
 
       expect(exitCode).toBe(1);
-      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, FROZEN_ROLLBACK_COMMAND]);
+      expect(commands).toEqual([LOCAL_UPDATE_COMMAND, LOCAL_FROZEN_REBIND_COMMAND]);
       expect(exactRestoreObserved).toBe(true);
       expect(await snapshotTree(project.projectDir)).toEqual(treeBefore);
     } finally {
@@ -1013,7 +1018,7 @@ describe('zero update safety', () => {
         LOCAL_UPDATE_COMMAND,
         ['bun', 'run', 'typecheck'],
         ['bun', 'run', 'doctor'],
-        FROZEN_ROLLBACK_COMMAND,
+        LOCAL_FROZEN_REBIND_COMMAND,
       ]);
       expect(commands.flat()).not.toContain('migrate');
       expect(commands.flat()).not.toContain('migrate:plan');

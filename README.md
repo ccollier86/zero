@@ -232,6 +232,10 @@ apps. Start with the
 ## Docs Map
 
 - [Start Here](./docs-next/start-here.md): primary platform and coding-agent entrance.
+- [Adaptive account settings](./docs-next/frontend/guardian/profile-settings.md):
+  reusable own-profile/security/contact/availability UI, private avatar cropping,
+  optional required completion and [server policy](./docs-next/backend/guardian/configuration.md).
+  Check each guide's source/release status before enabling it in an installed app.
 - [Documentation index](./docs-next/index.md): organized backend, frontend, CLI,
   agent and task guides, with per-feature version/evidence metadata.
 - [Compatibility entrance](./docs/start-here.md): older links and deep references.
@@ -345,7 +349,7 @@ backend app code, or grows source files past the responsibility threshold.
 
 ## Current Package State
 
-Zero 2.5.0 is Bun-first and exports TypeScript source through the package export
+Zero 2.6.0 is Bun-first and exports TypeScript source through the package export
 map. Bun 1.3.14 is the minimum encoded runtime for this source/local release.
 That is intentional for package-mode development. Public npm publication also
 requires the maintainers to select the repository license and complete the

@@ -143,6 +143,38 @@ Declarations do not themselves attach a rule to a route or table.
 describe completion unions. Client capability projection contains safe policy/
 readiness, not a bootstrap secret or a wholesale server configuration object.
 
+## Required First-Use Profile Completion
+
+This subsection records unreleased working source observed against
+`ae85a4b6efe11eeb74ab89b15ed02a23e982c59f` plus the adaptive-profile dirty
+changes on 2026-10-06. It does not widen the historical frontmatter baseline
+or establish package qualification for this capability.
+
+Configure `auth.userProfile.completion` only when deliberately requiring a
+[completed profile before application access](./profile-completion.md).
+The parent `userProfile.enabled` must also be true. Required field policies are
+the ordinary enabled/editable `userProfile.fields` policies, not a second schema.
+
+| Path under auth.userProfile.completion | Accepted values / default | Effect |
+| --- | --- | --- |
+| enabled | Boolean; false. | Opt-in identity-only completion before tenant/full-session admission. |
+| onSignup | Boolean; true. | Durably enrolls new signup accounts when completion is enabled. |
+| onInvitation | Boolean; true. | Enrolls newly created invitation/admin-provisioned identities; does not reopen completed existing identities. |
+| existingUsers | `none` or `onSignIn`; `none`. | Explicit existing-account rollout. Enabling completion does not implicitly enroll old accounts. |
+| ttl | Positive seconds/minutes duration, 1–30 minutes; `10m`. | Lifetime of an opaque one-time completion proof. |
+
+Configuration is resolved at runtime startup; restart/recompose to change it.
+There is no environment alias or database-editable browser policy. Unknown keys,
+invalid types/rollout values, and TTL outside the bounds reject. Required avatar
+or contact-proof options are not supported by this completion contract.
+Migration 043 installs the fixed SYSTEM enrollment/policy/continuation substrate;
+managed `migrate: false` leaves missing schema blocked rather than silently
+creating it. A newer installed policy fingerprint prevents an older runtime
+or proof from issuing credentials under stale requirements.
+
+See the [completion guide](./profile-completion.md) for ordering, actual response
+unions, native consent preservation, compare-and-swap retry and safe rollout.
+
 ## MFA
 
 See [MFA enrollment, challenge and enforcement](./mfa.md).
@@ -205,6 +237,37 @@ An accepted template key does not implement its corresponding reserved event.
 Do not claim password-change notices or recovery-code regeneration merely
 because their future-compatible template keys exist. Templates are trusted
 server callbacks and may receive secrets; they must not log their context.
+
+## User Profile And Optional Services
+
+`userProfile` configures the ordinary own-account surface independently from
+administrative writers. It defaults enabled with first/last name editing; other
+typed fields, separate username, regional preferences, contacts and avatars are
+independently opt-in. Field policies specify enabled/editable/required. Regional
+configuration selects locale/timeZone/timeFormat/weekStartsOn and inherited
+defaults. Read [own profiles](./user-profiles.md) for exact field/default/CAS rules.
+
+`userProfile.contacts` enables purpose-bound mailbox proof/email change and typed
+phone possession. Actual email/provider readiness and native writer ceilings
+remain authoritative. `phoneVerificationAdapter` is a trusted dependency, not a
+browser-editable provider selector. See [contacts](./contacts.md).
+
+`userProfile.avatars` accepts a boolean or bounded presentation/media policy.
+It requires the existing Storage service and private SYSTEM provisioning, and
+shares the account profile revision. See [avatars](./avatars.md).
+
+`presence` is independently disabled by default. It configures activity/lease
+timings, semantic statuses and optional On call/custom intent. One SDK tracker
+and one SYSTEM owner supply fresh, live-scoped observations. Fabric actors need
+the same public presence contribution in their actual realm declaration. See
+[presence](./presence.md) for topology and SQL contracts.
+
+Enabling a feature after deployment is not a UI-only switch. Install its fixed
+SYSTEM migrations and required service/realm contribution under the deployment's
+normal migration policy, then restart/recompose. With migration disabled,
+missing/incompatible substrate remains blocked rather than silently repaired.
+Disabled optional features retain data; no application-configured arbitrary
+columns are added to every organization database.
 
 ## User Properties
 
@@ -324,7 +387,12 @@ Paths below auth.nativeApps; see [provider protocol](./native-provider.md).
 | clients[].clientId | Public validated identifier 1–128. | Never a secret. |
 | clients[].name | Nonempty already-trimmed string. | Consent label. |
 | clients[].redirectUris | Nonempty unique validated URI array. | Exact safe callbacks; loopback port exception only. |
-| clients[].scopes | Unique identity-scope array; openid/profile/email. | Must include openid, no unsupported scopes; not app permissions. |
+| clients[].scopes | Unique native scope array; defaults openid/profile/email. | Supported: openid, profile, email, phone, profile:write, contacts:write. Must include openid; writer scopes also require profile. These are explicit credential ceilings, not app permissions. |
+
+Adding a writer scope to a registered native client does not add it to existing
+credentials or to the browser/native SDK's default request. Request it explicitly
+when the app needs self-profile/contact writes, and preserve the independent
+server-enabled profile policy. See [native scopes](./native-provider.md#multi-tenant-and-live-revocation).
 
 Native requestAdmission accepts cleanupBatchSize (100, max10000),
 maxOutstandingGlobal (1000), maxOutstandingPerClient (100),

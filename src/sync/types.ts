@@ -384,6 +384,8 @@ export interface SyncPluginConfig {
    * authless plugins retain the historical unrestricted topic behavior.
    */
   ephemeralPolicy?: EphemeralTopicPolicy;
+  /** Framework-owned optional presence reports reuse this socket; not a second connection bus. */
+  presenceTransport?: import('./sync-presence-transport').SyncPresenceTransport;
   /**
    * Optional table allow-list for full snapshot payloads.
    *

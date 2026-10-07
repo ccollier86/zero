@@ -35,6 +35,7 @@ async function audit(source: string): Promise<string[]> {
     return runUsageAudit({
       projectRoot: root,
       resolvedConfig: resolveConfig({
+        projectRoot: root,
         db: { mode: ':memory:' },
         tables: { todos: { id: 'text primary key' } },
         auth: false,

@@ -47,6 +47,27 @@ source heuristics. This does not disable existing DB inspection.
 Use repeatable source options to choose intentional scan roots, then resolve
 warnings in their owning [feature family](./check-families.md).
 
+## Source Root Ownership
+
+This is a 2.6.0 candidate source correction; it does not requalify this page's
+historical frontmatter baseline.
+
+`runPlatformDoctor(config, { projectRoot })` uses that root as the config origin
+when `config.projectRoot` is omitted. Relative `appDir` and server directories
+then resolve inside the intended app, not the Doctor process working directory.
+An explicit `config.projectRoot` remains authoritative. If it disagrees with the
+Doctor root, Doctor emits the error `usage.config.project_root_mismatch` and skips
+source scanning and optional database filesystem inspection; it does not rebase
+absolute paths or choose another tree. Existing symlink aliases of the same root
+are accepted.
+
+For a direct `runUsageAudit` call, resolve the config with the same project root
+passed to the audit. An enabled audit returns the same error finding on mismatch.
+Intentional absolute external `appDir`, server directory settings, and
+`usageAudit.include` roots remain supported when config and audit origins agree.
+Omitting Doctor's `projectRoot` still avoids optional filesystem inspection;
+declaring `config.projectRoot` alone does not opt into it.
+
 ## Safe Synthetic Verification
 
 For development tests, create explicit in-memory config values and pass

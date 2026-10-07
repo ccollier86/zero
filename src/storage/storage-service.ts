@@ -366,6 +366,8 @@ export function defineStorageTables(db: ReactiveDB): void {
  * not depend on Elysia route context or transport details.
  */
 export class StorageService {
+  /** Narrow domain identity for consumers that atomically compose private metadata with Storage. */
+  getTransactionDomain(): ReturnType<ReactiveDB['getTransactionDomain']> { return this.db.getTransactionDomain(); }
   private stmts!: ReturnType<typeof this.prepareStatements>;
   private readonly blobLifecycle: StorageBlobLifecycle;
   private readonly objectMutations: StorageObjectMutationStore;

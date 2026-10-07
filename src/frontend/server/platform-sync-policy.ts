@@ -7,6 +7,8 @@
  */
 
 import type { ReactiveDB } from '../../sync/reactive-db';
+import { PRESENCE_TABLE, PRESENCE_OWNER_TABLE } from '../../presence/presence-client-tables';
+import { PresenceDirectory } from '../../presence/presence-directory';
 import {
   createRequestAuthorizationAccess,
   type AuthorizationRoleAssignmentResolver,
@@ -64,6 +66,7 @@ export const PLATFORM_SYNC_PRIVATE_TABLES = new Set([
   ...WORKFLOW_PRIVATE_TABLES,
   'storage_drives',
   'storage_objects',
+  '_guardian_presence_authority', '_guardian_presence_intents', '_guardian_presence_outbox', '_guardian_presence_projection_binding',
 ]);
 
 const DATA_STUDIO_SYNC_PRIVATE_TABLES = Object.freeze([
@@ -91,6 +94,7 @@ const PLATFORM_SYNC_SCOPED_TABLES = new Set([
   'workflow_steps',
   'workflow_events',
   'workflow_interactions',
+  PRESENCE_TABLE, PRESENCE_OWNER_TABLE,
 ]);
 
 export interface PlatformSyncPolicyOptions {
@@ -106,6 +110,8 @@ export interface PlatformSyncPolicyOptions {
   tenancyMode?: 'single' | 'multi';
   /** Complete optional-feature private-table set admitted for this app. */
   privateTables?: ReadonlySet<string>;
+  /** Reserved presence tables fail closed until the actual managed owner admits this scope. */
+  isPresenceReady?: (scope: ServiceDataScope) => boolean;
 }
 
 interface PlatformFilterCache {
@@ -276,6 +282,12 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
         platformFingerprint.push([table, 'invalid-authorization-scope']);
         continue;
       }
+      if ((table === PRESENCE_TABLE || table === PRESENCE_OWNER_TABLE) && (
+        !this.options.isPresenceReady?.(dataScope)
+        || auth.sessionKind === 'native' && !auth.scope?.includes('profile')
+      )) {
+        platformFingerprint.push([table, 'presence-not-admitted']); continue;
+      }
       const authorization = access.authorization;
       const requiresAuthorizationProjection = kernel !== null
         || dataScope.scopeKind === 'tenant'
@@ -405,6 +417,18 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
     cache: PlatformFilterCache,
   ): { filter: SyncRowFilter; fingerprint: string } | null {
     switch (table) {
+      case PRESENCE_TABLE:
+      case PRESENCE_OWNER_TABLE: {
+        const directory = new PresenceDirectory(db, this.options.tenancyMode ?? 'single');
+        return {
+          filter: rowFilter(row => Boolean(this.options.isPresenceReady?.(dataScope))
+            && directory.contains(dataScope, auth.userId)
+            && (table === PRESENCE_OWNER_TABLE ? row.owner_key === 'primary'
+              : row.scope_kind === dataScope.scopeKind && row.scope_id === dataScope.scopeId
+                && typeof row.user_id === 'string' && directory.contains(dataScope, row.user_id))),
+          fingerprint: JSON.stringify(['guardian-presence', serviceDataScopeKey(dataScope), auth.userId, access.authorization?.revision ?? null]),
+        };
+      }
       case 'notifications': {
         const roles = notificationAudienceRoles(access, dataScope);
         return {

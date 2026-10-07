@@ -5,7 +5,7 @@ import { createReactiveDB } from '../../sync/reactive-db';
 import { defineAuthTables } from '../auth-schema';
 import { resolveNativeAuthConfig } from '../native';
 import type { TokenService } from '../token-service';
-import type { UserRecord } from '../types';
+import { AuthError, type UserRecord } from '../types';
 import type { UserStore } from '../user-store';
 import type { PreparedNativeSession } from './native-auth-records';
 import { rotateNativeRefresh } from './native-refresh-flow';
@@ -140,6 +140,79 @@ describe('NativeSessionStore refresh-family bounds', () => {
     }
   });
 
+  test('requires profile completion before signing or consuming a native refresh family', async () => {
+    const now = Date.now();
+    const { db, store } = setup({ now: () => now, minRotationIntervalMs: 0 });
+    const admittedUsers: string[] = [];
+    let signedTokens = 0;
+    const context = flowContext(store, { generation: 0, user: activeUser() }, {
+      assertFullSessionAdmission: (userId) => {
+        admittedUsers.push(userId);
+        throw new AuthError('Synthetic required profile', 'AUTH_PROFILE_COMPLETION_REQUIRED', 403);
+      },
+      signNativeAccessToken: async () => { signedTokens += 1; return 'access-token'; },
+      signNativeIdToken: async () => { signedTokens += 1; return 'id-token'; },
+    });
+    try {
+      store.consumeCodeAndInsert(() => true, prepared('incomplete', 'incomplete-family', now));
+      await expect(rotateNativeRefresh(context, {
+        refreshToken: 'incomplete', clientId: 'desktop',
+      })).rejects.toMatchObject({ code: 'invalid_grant' });
+      expect(admittedUsers).toEqual(['user']);
+      expect(signedTokens).toBe(0);
+      expect(store.get('incomplete')).toMatchObject({ consumedAt: null, revokedAt: null });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_native_sessions').get())
+        .toEqual({ count: 1 });
+    } finally {
+      db.dispose();
+    }
+  });
+
+  test('rechecks profile completion at the native refresh writer after held signing', async () => {
+    const now = Date.now();
+    const { db, store } = setup({ now: () => now, minRotationIntervalMs: 0 });
+    const signingEntered = Promise.withResolvers<void>();
+    const signingReleased = Promise.withResolvers<void>();
+    const admittedUsers: string[] = [];
+    let profileReady = true;
+    let rotation: ReturnType<typeof rotateNativeRefresh> | null = null;
+    const context = flowContext(store, { generation: 0, user: activeUser() }, {
+      assertFullSessionAdmission: (userId) => {
+        admittedUsers.push(userId);
+        if (!profileReady) {
+          throw new AuthError('Synthetic profile unavailable', 'AUTH_PROFILE_COMPLETION_NOT_READY', 503);
+        }
+      },
+      signNativeAccessToken: async () => {
+        signingEntered.resolve();
+        await signingReleased.promise;
+        return 'access-token';
+      },
+    });
+    try {
+      store.consumeCodeAndInsert(() => true, prepared('held', 'held-family', now));
+      rotation = rotateNativeRefresh(context, {
+        refreshToken: 'held', clientId: 'desktop',
+      });
+      await Promise.race([signingEntered.promise, rotation.then(() => {
+        throw new Error('Native refresh settled without entering the held signer');
+      })]);
+      profileReady = false;
+      signingReleased.resolve();
+      await expect(rotation).rejects.toMatchObject({
+        code: 'temporarily_unavailable', status: 503,
+      });
+      expect(admittedUsers).toEqual(['user', 'user']);
+      expect(store.get('held')).toMatchObject({ consumedAt: null, revokedAt: null });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_native_sessions').get())
+        .toEqual({ count: 1 });
+    } finally {
+      signingReleased.resolve();
+      await rotation?.catch(() => {});
+      db.dispose();
+    }
+  });
+
   test('caps rotations and active families while keeping storage bounded under stress', () => {
     let now = 20_000;
     const { db, store } = setup({
@@ -263,10 +336,22 @@ function activeUser(): UserRecord {
   };
 }
 
+type NativeRefreshTokenDouble = Pick<TokenService,
+  'assertFullSessionAdmission' | 'signNativeAccessToken' | 'signNativeIdToken'
+  | 'getAccessTokenTTLSeconds'>;
+
 function flowContext(
   sessions: NativeSessionStore,
   state: { generation: number; user: UserRecord | null },
+  tokenOverrides: Partial<NativeRefreshTokenDouble> = {},
 ): NativeServiceContext {
+  const tokens = {
+    assertFullSessionAdmission: (_userId: string) => {},
+    signNativeAccessToken: async () => 'access-token',
+    signNativeIdToken: async () => 'id-token',
+    getAccessTokenTTLSeconds: () => 300,
+    ...tokenOverrides,
+  } satisfies NativeRefreshTokenDouble;
   return {
     config: {
       native: resolveNativeAuthConfig({ clients: [{
@@ -280,11 +365,7 @@ function flowContext(
       getUserById: () => state.user,
       getAuthGeneration: () => state.generation,
     } as unknown as UserStore,
-    tokens: {
-      signNativeAccessToken: async () => 'access-token',
-      signNativeIdToken: async () => 'id-token',
-      getAccessTokenTTLSeconds: () => 300,
-    } as unknown as TokenService,
+    tokens: tokens as unknown as TokenService,
     authority: new NativeTenantAuthorityService('single', null),
     requiresMfaAssurance: () => false,
     emitCode: emitPlatformCode,

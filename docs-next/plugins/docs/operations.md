@@ -19,22 +19,24 @@ site or publish arbitrary source files.
 
 ## Source And Local Archive Installation
 
-The optional package requires `@zero/framework >=2.5.0 <3`, `react` and
+The current `@zero/plugin-docs` 0.1.1 preview requires `@zero/framework >=2.6.0 <3`, `react` and
 `react-dom >=19.2.0 <20`, and Bun 1.3.14+. A normal framework update does not
 install this separate package. A source/local release does not imply an npm
 registry publication.
+Its reader statically uses the framework's shared keyboard-hint exports;
+`search: false` is not a way to use this preview with an older framework.
 
 From the selected Zero checkout's optional-package directory, create its archive:
 
 ```sh
 cd /path/to/zero/packages/docs
-bun pm pack --ignore-scripts --filename /path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+bun pm pack --ignore-scripts --filename /path/to/artifacts/zero-plugin-docs-0.1.1.tgz
 ```
 
 Then, from the consuming application root:
 
 ```sh
-bun add file:/path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+bun add file:/path/to/artifacts/zero-plugin-docs-0.1.1.tgz
 ```
 
 If the framework is also an unpublished saved archive, keep the application's
@@ -169,7 +171,7 @@ there if that is part of the application's privacy requirements.
 
 Source tests, actual styled-browser checks and installed artifact qualification
 prove different things. The [qualification ledger](../../_work/audits/docs-plugin-qualification.md)
-records the completed 2.5.0 reader/build release checks separately from earlier
+records the historical 2.5.0/0.1.0 reader/build release checks separately from earlier
 checkpoints. This guide remains internal/draft pending documentation publication
 review; that status does not mean the released reader's tests are pending or
 that the whole package-local documentation tree is approved for a public site.

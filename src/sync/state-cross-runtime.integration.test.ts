@@ -279,7 +279,8 @@ describe('State Sync shared-file runtimes', () => {
     )).toEqual([]);
   });
 
-  test('commit and snapshot fences reject authority revoked after token revalidation', async () => {
+  test('durable fences retire revoked connections before a still-valid bearer can authorize state', async () => {
+    serverInitiatedClose = true;
     const authority = createDurableAuthorityHarness();
     authority.add('writer-token', tenantContext(
       'shared-user', 'writer-session', 'tenant-a', 'writer-membership',
@@ -301,22 +302,22 @@ describe('State Sync shared-file runtimes', () => {
     writer.ws.send(JSON.stringify({
       type: 'state.set', ref: 'revoked-commit', key: 'secret', value: 'blocked',
     }));
-    expect(await writer.waitForMessage(
-      (message) => message.type === 'state.ack' && message.ref === 'revoked-commit',
-    )).toEqual({
-      type: 'state.ack',
-      ref: 'revoked-commit',
-      ok: false,
-      error: 'UNAUTHORIZED',
-    });
-
     reader.ws.send(JSON.stringify({ type: 'state.subscribe' }));
+    await Promise.all([writer.waitForClose(), reader.waitForClose()]);
     await Bun.sleep(25);
+    expect(writer.messages.filter((message) => message.type === 'state.ack'
+      && message.ref === 'revoked-commit' && message.ok)).toEqual([]);
     expect(reader.messages.filter((message) => message.type === 'state.snapshot')).toEqual([]);
 
+    // Re-admitting the harness authority cannot resurrect the retired socket.
+    // A fresh connection proves that the rejected write never reached storage.
     authority.restore('reader-session');
-    reader.ws.send(JSON.stringify({ type: 'state.subscribe' }));
-    expect(await reader.waitForMessage(
+    expect(reader.ws.readyState).toBe(WebSocket.CLOSED);
+    const replacement = await connect(app);
+    connections.push(replacement);
+    await authenticate(replacement, 'reader-token');
+    replacement.ws.send(JSON.stringify({ type: 'state.subscribe' }));
+    expect(await replacement.waitForMessage(
       (message) => message.type === 'state.snapshot',
     )).toEqual({ type: 'state.snapshot', entries: {} });
   });

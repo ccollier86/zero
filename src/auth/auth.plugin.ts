@@ -30,6 +30,10 @@ import {
 } from './auth-runtime';
 import { createAuthSessionPlugin } from './auth-session.plugin';
 import { createAuthUserPropertiesPlugin } from './auth-user-properties.plugin';
+import { createAuthUserProfilePlugin } from './auth-user-profile.plugin';
+import { createAuthUserContactPlugin } from './auth-user-contact.plugin';
+import { createAuthUserProfileCompletionPlugin } from './auth-user-profile-completion.plugin';
+import { ZERO_GUARDIAN_AVATARS } from './auth-user-avatar-service';
 import { createAuthTenantAdministrationPlugin } from './auth-tenant-administration.plugin';
 import { createAuthPlatformAdministrationPlugin } from './auth-platform-administration.plugin';
 import { createAuthTenantOnboardingPlugin } from './auth-tenant-onboarding.plugin';
@@ -109,6 +113,10 @@ export function createAuthPlugin(config: AuthPluginConfig) {
   });
 
   const getUserStore = () => runtime.getStore();
+  const getUserProfileService = () => runtime.getUserProfileService();
+  const getUserContactService = () => runtime.getUserContactService();
+  const getUserProfileCompletionService = () => runtime.getUserProfileCompletionService();
+  const getUserAvatarService = () => config.runtime?.get(ZERO_GUARDIAN_AVATARS) ?? null;
   const getAuditService = () => runtime.getAuditService();
   const getTokenService = () => runtime.getTokenService();
   const getApiKeyService = () => runtime.getApiKeyService();
@@ -301,6 +309,9 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getRequestAdmissionService,
       getEmailRuntime,
       getAuthConfig: () => authConfig,
+      getUserProfileService,
+      getUserContactService,
+      getUserAvatarService,
       emitCode,
     }))
     .use(config.dataRealmReadiness
@@ -320,8 +331,12 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getRegistrationIntentStore,
       getAuthConfig: () => authConfig,
       getAuthTenantSessionService,
+      getUserContactService,
       emitCode,
     }))
+    .use(createAuthUserProfilePlugin({ getTokenService, getUserProfileService }))
+    .use(createAuthUserContactPlugin({ getTokenService, getUserContactService, getRequestAdmissionService }))
+    .use(createAuthUserProfileCompletionPlugin({ getUserProfileCompletionService, getRequestAdmissionService, getTokenService }))
     .use(createAuthApiKeyPlugin({
       getApiKeyService,
       getUserStore,
@@ -348,6 +363,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getMfaChallengeService,
       getEmailRuntime,
       getAuthConfig: () => authConfig,
+      getUserContactService,
       emitCode,
     }))
     .use(createAuthUserPropertiesPlugin({
@@ -479,6 +495,11 @@ function authBehaviorConfig(config: AuthPluginConfig): AuthBehaviorConfig {
     nativeAudience: _nativeAudience,
     loginPath: _loginPath,
     registrationPath: _registrationPath,
+    profileSchemaInstallAllowed: _profileSchemaInstallAllowed,
+    profileContactSchemaInstallAllowed: _profileContactSchemaInstallAllowed,
+    profileCompletionSchemaInstallAllowed: _profileCompletionSchemaInstallAllowed,
+    presenceSchemaInstallAllowed: _presenceSchemaInstallAllowed,
+    phoneVerificationAdapter: _phoneVerificationAdapter,
     ...behavior
   } = config;
   return behavior;

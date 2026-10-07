@@ -98,6 +98,7 @@ export function createSyncPluginLifecycle(
   let teardownComplete = false;
   let startEventEmitted = false;
   let removeRuntimeCleanup: (() => void) | null = null;
+  let removePresence: (() => void) | null = null;
   const durableChanges = createSyncDurableChangeRuntime({
     config,
     runtime,
@@ -125,6 +126,7 @@ export function createSyncPluginLifecycle(
 
         // Always create EphemeralStateManager for ephemeral KV + presence.
         runtime.ephemeralManager = new EphemeralStateManager();
+        removePresence = config.presenceTransport?.attach(runtime.ephemeralManager) ?? null;
         runtime.ephemeralChannel = new EphemeralChannel(
           runtime.ephemeralManager,
           config.ephemeralPolicy
@@ -230,6 +232,7 @@ export function createSyncPluginLifecycle(
     durableChanges.dispose(attempt);
 
     socketController.disposeCapabilities(attempt);
+    if (removePresence) attempt(removePresence); removePresence = null;
 
     const stateManager = runtime.stateManager;
     runtime.stateManager = null;

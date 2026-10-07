@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-state-and-columns
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.5.0 working source; page-size correction qualification pending"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.5.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -51,7 +51,7 @@ table.setPageIndex/setPageSize.
 
 UseDataTableOptions includes schema, data, columns, editable, selectable,
 pageSize, globalFilter, primaryKey, getRowId, columnOverrides, initialState,
-state, onStateChange, paginated, manualQuery, rowCount, pageCount, boundaryKey,
+state, onStateChange, paginated, manualQuery, paginationMode, rowCount, pageCount, boundaryKey,
 sortable and searchableFields. In corrected development source, globalFilter
 is an initial-search shorthand. Explicit initialState.globalFilter takes
 precedence (including an intentional empty string), and controlled
@@ -73,11 +73,36 @@ An intentional empty string/array/object is still a provided value.
 onStateChange receives the complete next state. A controlled
 parent must accept those changes if it wants the UI to move.
 
-Search, filters, sorting and page size reset pageIndex to zero and clear
-page-local selection. Page changes also clear page selection. Authorization/source
-replacement resets selection and page admission. Retaining a parent's old
+Search, filters and sorting reset pageIndex to zero and clear page-local selection.
+Authorization/source replacement resets selection and page admission. Retaining a parent's old
 controlled selection/page object must not silently reinstate old-scope rows;
 a deliberate new controlled value or user interaction is needed.
+
+Changing **Rows per page** preserves the page containing the old first row for
+arrays, complete reactive collections and offset server sources. The new index
+is `floor(oldPageIndex * oldPageSize / newPageSize)`: moving from index3 with20
+rows per page (first offset60) to50 selects index1 (offset50). The former first
+row stays on that page; it need not remain the first displayed row. A larger
+page may legitimately have index0. Increasing or decreasing the size uses the
+same rule and does not restart a server search at offset0 unnecessarily.
+
+Opaque cursor sources instead reset index/cursor history to the beginning when
+batch size changes; the table cannot invent a cursor for an offset it has not
+visited. The organism derives this mode from `source.pagination`. A standalone
+manual `useDataTable` cursor composition must set `paginationMode: 'cursor'`;
+the hook defaults to offset semantics.
+
+Every page/size change clears page-local selection, including a parent-driven
+controlled pagination replacement. Adopt the complete pagination pair from
+onStateChange to retain the built-in anchor. An explicitly supplied controlled
+`{ pageIndex, pageSize }` pair describes the parent's intended position; the
+table does not reinterpret it as a page-size button click.
+
+If a complete local result or an offset response with an exact total shrinks,
+an out-of-range page is clamped to the last remaining page (index0 for no rows).
+An unknown-total server batch does not supply such evidence: an empty batch
+does not become a fabricated total or an automatic first-page jump. These
+rules do not change search/filter/sort/source/authorization resets.
 
 ```tsx
 <DataTable

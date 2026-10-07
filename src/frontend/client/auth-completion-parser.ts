@@ -15,6 +15,7 @@ import type {
   AuthUser,
 } from './auth-types';
 import { isCanonicalAuthTenantSlug } from './auth-tenant-identifiers';
+import { parseUserProfileCompletion } from './auth-user-profile-completion-parser';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -36,6 +37,12 @@ export function parseAuthCompletionResult(
 ): AuthCompletionResult {
   const result = record(value);
   const user = parseAuthUser(result.user);
+
+  if (result.profileCompletionRequired === true) {
+    exactKeys(result, ['user', 'profileCompletionRequired', 'profileCompletion'], [], allowedEnvelopeKeys);
+    return Object.freeze({ user, profileCompletionRequired: true,
+      profileCompletion: parseUserProfileCompletion(result.profileCompletion, user.userId) });
+  }
 
   if (result.mfaSetupRequired === true) {
     exactKeys(
@@ -159,12 +166,14 @@ export function parseAuthCompletionResult(
       [
         'activeTenant', 'mfaSetupRequired', 'mfaChallengeRequired',
         'tenantSelectionRequired', 'tenantOnboardingRequired',
+        'profileCompletionRequired',
       ],
       allowedEnvelopeKeys,
     );
     assertFalseWhenPresent(result, [
       'mfaSetupRequired', 'mfaChallengeRequired',
       'tenantSelectionRequired', 'tenantOnboardingRequired',
+      'profileCompletionRequired',
     ]);
     const parsed: AuthSessionResult = {
       user,

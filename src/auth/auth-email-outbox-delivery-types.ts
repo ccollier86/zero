@@ -9,6 +9,7 @@ import type { AuthTenantInvitationEnvelope } from './auth-tenant-invitation-enve
 import type { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
 import type { VerifiedDomainOnboardingService } from './verified-domain-service';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
+import type { AuthUserContactService } from './auth-user-contact-service';
 
 export interface AuthEmailOutboxDeliveryDeps {
   store: UserStore;
@@ -20,6 +21,7 @@ export interface AuthEmailOutboxDeliveryDeps {
   invitationEnvelope?: AuthTenantInvitationEnvelope | null;
   getTenantOnboarding?: () => AuthTenantOnboardingService | null;
   getVerifiedDomainOnboarding?: () => VerifiedDomainOnboardingService | null;
+  getUserContactService?: () => AuthUserContactService | null;
   emitCode?: AuthPlatformCodeEmitter;
 }
 

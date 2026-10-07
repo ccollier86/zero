@@ -101,6 +101,9 @@ export function getVerifiedDomainOnboardingService() {
 function emptyAuthRuntimeContext() {
   return {
     authStore: null,
+    userProfileService: null,
+    userContactService: null,
+    userProfileCompletionService: null,
     authAuditService: null,
     tokenService: null,
     authApiKeyService: null,

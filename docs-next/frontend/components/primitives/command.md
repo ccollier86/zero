@@ -33,6 +33,8 @@ CommandItem supports value, keywords, disabled and onSelect. CommandList bounds
 scrolling; groups supply headings; CommandEmpty displays the empty result;
 CommandShortcut is a display-only span. The app registers any opening shortcut
 explicitly, not by writing 'Cmd+K' inside that span.
+Use the [shared keyboard hints](../kbd.md) for compact individual keys or
+combinations; `CommandShortcut` remains a compatible trailing alignment span.
 
 ```tsx
 import { Command, CommandInput, CommandList, CommandItem, CommandEmpty }

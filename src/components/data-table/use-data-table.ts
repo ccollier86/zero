@@ -74,6 +74,8 @@ export interface UseDataTableOptions<T extends Row> {
   /** False renders every supplied row instead of only hiding the footer. */
   paginated?: boolean;
   manualQuery?: boolean;
+  /** For an opaque cursor source, changing batch size resets navigation history. */
+  paginationMode?: 'offset' | 'cursor';
   rowCount?: number;
   pageCount?: number;
   boundaryKey?: string;
@@ -124,6 +126,7 @@ export function useDataTable<T extends Row>(
     onStateChange: options.onStateChange,
     pageSize,
     boundaryKey: options.boundaryKey,
+    paginationMode: options.paginationMode,
   });
   const { sorting, columnFilters, columnVisibility, rowSelection, pagination, globalFilter } = controls.state;
   const setSorting = useCallback((update: React.SetStateAction<SortingState>) => controls.update('sorting', update), [controls.update]);
@@ -219,6 +222,15 @@ export function useDataTable<T extends Row>(
     enableRowSelection: selectable,
     getRowId: (row, index) => String(options.getRowId?.(row, index) ?? getRowPrimaryKey(row, primaryKey) ?? index),
   });
+
+  // An accepted shrinking result must not leave local/known-total offset tables
+  // on an empty out-of-range page. Never infer a total from a server batch.
+  const knownRows = options.manualQuery ? options.rowCount : table.getPrePaginationRowModel().rows.length;
+  useEffect(() => {
+    if (options.paginated === false || options.paginationMode === 'cursor' || knownRows === undefined) return;
+    const lastPage = Math.max(0, Math.ceil(knownRows / pagination.pageSize) - 1);
+    if (pagination.pageIndex > lastPage) table.setPageIndex(lastPage);
+  }, [knownRows, pagination.pageIndex, pagination.pageSize, options.paginated, options.paginationMode, table]);
 
   return {
     table,

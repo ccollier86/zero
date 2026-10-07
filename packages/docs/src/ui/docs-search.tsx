@@ -1,6 +1,6 @@
 /** Server-ranked search using Zero's Command controls and native, canonical result links. */
 import { useState, useRef, type MouseEvent, type KeyboardEvent } from 'react';
-import { Button, CommandDialog, CommandInput, CommandList, CommandGroup, CommandItem } from '@zero/framework/react';
+import { Button, CommandDialog, CommandInput, CommandList, CommandGroup, CommandItem, Kbd, KbdGroup } from '@zero/framework/react';
 import { Search, ArrowRight } from '@zero/framework/icons';
 import type { DocsPresentation, DocsSearchResult } from './types';
 import { useDocsSearch } from './use-docs-search';
@@ -46,7 +46,7 @@ export function DocsSearch({ presentation }: { readonly presentation: DocsPresen
   const announcement = search.status === 'ready' ? `${search.results.length} results in ${groups.size} ${groups.size === 1 ? 'page' : 'pages'}.`
     : search.status === 'loading' ? 'Searching documentation…' : '';
   return <>
-    <Button ref={dialog.trigger} type="button" variant="outline" className="zero-docs-search-trigger" onClick={() => dialog.changeOpen(true)} aria-label="Search documentation"><Search aria-hidden="true" /><span>Search documentation…</span><kbd>⌘ K</kbd></Button>
+    <Button ref={dialog.trigger} type="button" variant="outline" className="zero-docs-search-trigger" onClick={() => dialog.changeOpen(true)} aria-label="Search documentation"><Search aria-hidden="true" /><span>Search documentation…</span><Kbd>⌘ K</Kbd></Button>
     <CommandDialog open={dialog.open} onOpenChange={dialog.changeOpen} shouldFilter={false} title="Search documentation" description="Search pages and sections. Use arrow keys to choose a result, then Enter to open it." contentClassName="zero-docs-search" contentStyle={viewport} contentTransition={{ duration, ease: 'easeOut' }} overlayTransition={{ duration }} onCloseAutoFocus={dialog.onCloseAutoFocus}>
       <CommandInput value={query} onValueChange={setQuery} placeholder="Search documentation…" maxLength={200} onKeyDownCapture={newTab} />
       <div className="zero-docs-search-body" onKeyDownCapture={newTab}>
@@ -58,7 +58,7 @@ export function DocsSearch({ presentation }: { readonly presentation: DocsPresen
           : !search.results.length && <div className="zero-docs-search-state" role="status">{search.status === 'loading' ? 'Searching…' : search.status === 'ready' ? 'No matching pages. Try a different phrase.' : 'Type at least two characters to search.'}</div>}
       </CommandList>
       </div>
-      <div className="zero-docs-search-footer"><span className="zero-docs-search-count" aria-live="polite" aria-atomic="true">{announcement}</span><span><kbd>↑</kbd> <kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      <div className="zero-docs-search-footer"><span className="zero-docs-search-count" aria-live="polite" aria-atomic="true">{announcement}</span><span><KbdGroup><Kbd aria-label="Arrow up">↑</Kbd><Kbd aria-label="Arrow down">↓</Kbd></KbdGroup> navigate</span><span><Kbd aria-label="Enter">↵</Kbd> open</span><span><Kbd>esc</Kbd> close</span></div>
     </CommandDialog>
   </>;
 }

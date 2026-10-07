@@ -51,6 +51,11 @@ interchangeable proofs of permission.
 - [Password recovery](./password-recovery.md): reset, first-password setup, signed-in changes and admin recovery.
 - [Email verification](./email-verification.md): prove mailbox ownership and handle identity changes.
 - [User properties](./user-properties.md): declare defaults, editor rules and policy trust.
+- [Own profiles and regional preferences](./user-profiles.md): whitelisted personal editing, accepted revisions and SYSTEM rollout.
+- [Contact possession](./contacts.md): verified email changes, typed phone numbers and trusted phone-provider ceremonies.
+- [Private avatars](./avatars.md): staged/cropped/normalized media, account receipts, private delivery and retained cleanup.
+- [Presence](./presence.md): activity leases, availability, fresh scoped reactive feeds and real Fabric SQL projection.
+- [Required profile completion](./profile-completion.md): restricted first-use continuation, enrollment and explicit existing-user rollout.
 - [Canonical accounts](./accounts.md): manage profiles, global status and protected account lifecycle separately from memberships.
 - [MFA](./mfa.md): enroll, challenge and enforce email OTP/TOTP with live session assurance.
 

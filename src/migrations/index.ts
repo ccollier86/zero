@@ -49,6 +49,11 @@ import { migration as m035 } from './definitions/035_storage_blob_leases';
 import { migration as m036 } from './definitions/036_workflow_system_event_receipts';
 import { migration as m037 } from './definitions/037_database_automation_source_catalog';
 import { migration as m038 } from './definitions/038_workflow_system_start_receipts';
+import { migration as m039 } from './definitions/039_guardian_user_profiles';
+import { migration as m040 } from './definitions/040_guardian_presence';
+import { migration as m041 } from './definitions/041_guardian_user_contacts';
+import { migration as m042 } from './definitions/042_guardian_user_avatars';
+import { migration as m043 } from './definitions/043_guardian_profile_completion';
 
 export {
   createMigrationRegistry,
@@ -124,4 +129,9 @@ export const migrations: Migration[] = [
   m036,
   m037,
   m038,
+  m039,
+  m040,
+  m041,
+  m042,
+  m043,
 ];

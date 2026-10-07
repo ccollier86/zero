@@ -76,12 +76,20 @@ export class EphemeralChannel {
   private revalidation: Promise<void> | null = null;
   private revalidationQueued = false;
   private disposed = false;
+  private readonly removeExpirationListener: () => void;
 
   constructor(
     private readonly manager: EphemeralStateManager,
     private readonly policy: EphemeralTopicPolicy,
     private readonly options: EphemeralChannelOptions = {},
   ) {
+    this.removeExpirationListener = manager.onExpired(expiration => {
+      if (this.disposed) return;
+      void this.broadcast(expiration.namespace, {
+        type: 'ephemeral.change', topic: '', key: expiration.key, value: null,
+        userId: expiration.entry.userId, op: 'delete',
+      }).catch(error => this.handleRevalidationFailure(error, 'periodic'));
+    });
     const intervalMs = options.revalidateIntervalMs ?? 30_000;
     this.revalidationTimer = intervalMs > 0
       ? setInterval(
@@ -92,6 +100,7 @@ export class EphemeralChannel {
   }
 
   async subscribe(ws: EphemeralSocket, topicInput: unknown): Promise<void> {
+    if (this.disposed) return;
     this.register(ws);
     const validated = validateEphemeralTopic(topicInput);
     if (!validated.ok) {
@@ -153,6 +162,7 @@ export class EphemeralChannel {
     ws: EphemeralSocket,
     input: { topic: unknown; key: unknown; value: unknown; ttl?: unknown },
   ): Promise<void> {
+    if (this.disposed) return;
     this.register(ws);
     const topicValidation = validateEphemeralTopic(input.topic);
     if (!topicValidation.ok) {
@@ -250,6 +260,7 @@ export class EphemeralChannel {
     topicInput: unknown,
     keyInput: unknown,
   ): Promise<void> {
+    if (this.disposed) return;
     this.register(ws);
     const topicValidation = validateEphemeralTopic(topicInput);
     if (!topicValidation.ok) {
@@ -359,6 +370,7 @@ export class EphemeralChannel {
     this.disposed = true;
     this.revalidationQueued = false;
     if (this.revalidationTimer) clearInterval(this.revalidationTimer);
+    this.removeExpirationListener();
     this.bindings.clear();
     this.sockets.clear();
   }
@@ -406,6 +418,7 @@ export class EphemeralChannel {
   ): Promise<void> {
     const connectionIds = [...this.manager.getSubscribers(namespace)];
     for (const connectionId of connectionIds) {
+      if (this.disposed) return;
       const ws = this.sockets.get(connectionId);
       const socketBindings = this.bindings.get(connectionId);
       if (!ws || !socketBindings) continue;
@@ -474,6 +487,11 @@ export class EphemeralChannel {
         authContext: ws.data.authContext,
         connectionId: ws.data.connectionId,
       });
+      // Cleanup/close may finish while an asynchronous policy is resolving.
+      // A late decision cannot recreate a retired socket's subscription or values.
+      if (this.disposed || this.sockets.get(ws.data.connectionId) !== ws) {
+        return { ok: false, code: 'EPHEMERAL_FORBIDDEN', reason: 'Ephemeral connection is no longer current' };
+      }
     } catch {
       return {
         ok: false,

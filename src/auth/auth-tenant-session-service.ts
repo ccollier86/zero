@@ -20,6 +20,9 @@ import {
 } from './auth-tenant-creation';
 import { AuthError, type ResolvedAuthBehaviorConfig, type UserRecord } from './types';
 import type { UserStore } from './user-store';
+import type { AuthUserProfileCompletionService } from './auth-user-profile-completion-service';
+import type { WebSessionIssueOptions } from './auth-session-types';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import {
   AuthAuditService,
   captureAuthAuditRequestContext,
@@ -41,6 +44,8 @@ export const TENANT_ONBOARDING_CONTINUATION_TTL_MS = 10 * 60_000;
  * refresh-family-backed tenant switching.
  */
 export class AuthTenantSessionService {
+  private profileCompletion: AuthUserProfileCompletionService | null = null;
+  setProfileCompletionService(service: AuthUserProfileCompletionService): void { this.profileCompletion = service; }
   constructor(
     readonly continuations: AuthSessionContinuationStore,
     private readonly authConfig: ResolvedAuthBehaviorConfig,
@@ -58,11 +63,14 @@ export class AuthTenantSessionService {
     explicitBinding: WebSessionBinding | undefined,
     mfaVerifiedAt: number | null,
     expectedAuthGeneration: number,
+    admit?: () => boolean,
   ): Promise<AuthTenantSessionCompletion> {
     const authGeneration = this.requireCompletionAuthGeneration(
       user.userId,
       expectedAuthGeneration,
     );
+    const gate = this.profileCompletion?.gate(user.userId, authGeneration, mfaVerifiedAt, explicitBinding);
+    if (gate) return gate;
     if (this.tenancyMode === 'single') {
       if (explicitBinding) {
         throw new AuthError(
@@ -73,10 +81,10 @@ export class AuthTenantSessionService {
       }
       return {
         kind: 'session',
-        tokens: await this.tokens.issueTokenPair(user, {
+        tokens: await this.issueCompletionTokens(user, {
           mfaVerifiedAt,
           expectedAuthGeneration: authGeneration,
-        }),
+        }, admit),
       };
     }
 
@@ -85,32 +93,35 @@ export class AuthTenantSessionService {
       const active = this.requireActiveBinding(user.userId, explicitBinding);
       return {
         kind: 'session',
-        tokens: await this.tokens.issueTokenPair(user, {
+        tokens: await this.issueCompletionTokens(user, {
           binding: explicitBinding,
           mfaVerifiedAt,
           expectedAuthGeneration: authGeneration,
-        }),
+        }, admit),
         tenant: toTenantSummary(active),
       };
     }
 
     const memberships = tenancy.listActiveTenantMembershipsForUser(user.userId);
     if (memberships.length === 0) {
-      return this.createOnboardingCompletion(user, mfaVerifiedAt, authGeneration);
+      return this.users.transaction(() => { this.admitCompletion(admit);
+        return this.createOnboardingCompletion(user, mfaVerifiedAt, authGeneration); });
     }
     if (memberships.length === 1) {
       const active = memberships[0]!;
       return {
         kind: 'session',
-        tokens: await this.tokens.issueTokenPair(user, {
+        tokens: await this.issueCompletionTokens(user, {
           binding: toBinding(active),
           mfaVerifiedAt,
           expectedAuthGeneration: authGeneration,
-        }),
+        }, admit),
         tenant: toTenantSummary(active),
       };
     }
 
+    return this.users.transaction(() => {
+    this.admitCompletion(admit);
     const created = this.continuations.create({
       userId: user.userId,
       purpose: 'tenant_selection',
@@ -124,6 +135,20 @@ export class AuthTenantSessionService {
       expiresAt: created.record.expiresAt,
       tenants: memberships.map(toTenantSummary),
     };
+    });
+  }
+
+  private admitCompletion(admit?: () => boolean): void {
+    if (admit && !invokeSynchronousAuthCallback(admit, { component: 'tenant-session',
+      invariant: 'profile-completion-admission-async', message: '[auth] Completion admission must be synchronous.' })) {
+      throw new AuthError('Profile completion authorization changed', 'AUTH_PROFILE_COMPLETION_INVALID', 409);
+    }
+  }
+  private async issueCompletionTokens(user: UserRecord, options: WebSessionIssueOptions, admit?: () => boolean) {
+    if (!admit) return this.tokens.issueTokenPair(user, options);
+    const tokens = await this.tokens.issueTokenPairAfterAdmission(user, options, admit);
+    if (!tokens) throw new AuthError('Profile completion authorization changed', 'AUTH_PROFILE_COMPLETION_INVALID', 409);
+    return tokens;
   }
 
   /** Consume one identity-only continuation and mint exactly one bound session. */

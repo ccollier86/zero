@@ -65,6 +65,8 @@ This is not a new merge system for database, storage or environment settings.
 3. Bundle tokenized enhancements, scoped/shared styles and admitted files.
 4. Save private compiled metadata outside `/_build`.
 5. Bundle the original entry using prepared config and static declarations.
+6. For compiled output on macOS, replace the generated executable's ad-hoc
+   signature and require strict verification before returning a successful build.
 
 Plugin runtime `setup` is not executed during build. Zero preparation does not
 open/migrate databases, provision tenants, call providers or start the server.
@@ -76,11 +78,43 @@ for the complete server-side contract.
 
 ## Deployment Boundaries
 
-Copy the **complete** JavaScript output directory, not just `server.js`.
+Copy the **complete** output directory for both JavaScript and executable builds,
+not just `server.js` or the compiled executable.
 Its file-loader assets include the complete browser chunk graph. Compiled build
 data stays in the server; public files have explicit static URLs. Private
 attachments are embedded/copied separately and have no automatic public route.
 Only their owning plugin's admission-controlled logical route should serve them.
+
+When the server graph includes Guardian's avatar decoder, the build also emits
+a private `zero-native/` payload containing the host-native Sharp addon, its
+libvips libraries and available vendor notices. Native binary filenames and
+relative vendor layout are preserved; flattening or renaming those files can
+break the OS loader. They are not browser assets or a copied `node_modules`
+tree. Keep that directory beside the server/executable when relocating a build;
+do not publish it through `/_build` or a public file route.
+
+`zero build --compile` currently builds for the host platform/architecture,
+including its native addon and libc. It does not offer a cross-target flag;
+moving that payload to another OS/architecture is not a supported
+cross-compilation workflow. Build on the intended target with Sharp's optional
+native dependencies installed. Missing or unsupported native package layout
+fails the build instead of dropping server image validation. Current
+qualification covers the documented macOS ARM64 source/local baseline, not
+every operating system.
+
+On macOS, compiled builds require the host `/usr/bin/codesign` tool. Zero
+ad-hoc signs only its newly generated executable, preserving existing signing
+metadata and JIT entitlements where present, then verifies the signature
+strictly. Signing or verification failure fails the build; neither is silently
+ignored. This does not select an application certificate, establish a Developer
+ID, notarize a release, or guarantee Gatekeeper acceptance on another machine.
+Distribution signing and notarization remain a separate release responsibility.
+The native vendor payload is not recursively re-signed. JavaScript output and
+non-macOS builds do not invoke this step.
+Each host signing command has a 60-second deadline. A timed-out child is killed
+and reaped before the build rejects. Failures use the stable
+`app.compiled_signature.failed` observability event with only the stage, reason
+and exit status; command paths, environment and raw tool output are not logged.
 
 The generated private manifest also binds bundled plugin SSR to the bundled
 React identity. It must not change merely because app node_modules remains
@@ -97,6 +131,10 @@ The verified no-source fixture is a docs/plugin-only app without file pages:
 SSR, admitted private attachments, enhancements, named exports and app hooks
 work after source and node_modules are removed from the deployment. A missing
 optional app route directory is empty; an existing non-directory fails.
+Separate managed-avatar fixtures enable the real Guardian/Storage ceremony and
+verify staged PNG upload, native normalization and private WebP delivery after
+relocation, in JavaScript and executable modes. Disabled auth/avatars do not
+eagerly load the native processor.
 
 **Applications with file-routed pages retain their existing source-deployment
 convention.** Deploy the app route modules and their app-owned dependencies.

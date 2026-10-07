@@ -1,6 +1,6 @@
 # Building Apps And Declared Plugin Content
 
-Development source for Zero 2.5.0. The optional Markdown documentation package
+Source/local build contract for Zero 2.6.0. The optional Markdown documentation package
 uses these native build seams; installing a dependency alone does not register
 a plugin or publish its content.
 
@@ -27,6 +27,8 @@ The command performs these stages in order:
 3. Build content-addressed plugin enhancements, scoped CSS and shared styles.
 4. Save private compiled metadata outside the public asset directory.
 5. Bundle the **existing** app server entry with a prepared version of its config.
+6. For compiled output on macOS, ad-hoc sign the newly built executable and
+   require strict signature verification before accepting the build.
 
 The original entry still owns listening, custom hooks and application startup.
 Its selected config's named exports remain available. Discovered declarations
@@ -58,14 +60,37 @@ restart is performed.
 The generated config embeds the private content manifest and file-loader
 references. Public enhancements and private attachments are included in the
 server build output; the latter have **no automatic public static URL**.
-Copy the complete output directory, not only `server.js`, for a JavaScript
-deployment. A compiled executable embeds those declared files.
+Copy the complete output directory for both JavaScript and executable
+deployments, not only `server.js` or the executable. A compiled executable
+embeds the declared frontend files, but native server libraries remain a
+private deployment payload.
+
+When the server graph includes Guardian's avatar decoder, the build preserves
+its host-native Sharp addon, libvips libraries and vendor notices in
+`zero-native/` beside the server. Keep that directory and its relative layout;
+do not expose it through `/_build` or another public static route. Disabled
+avatars do not eagerly load the processor. Build on the intended host with
+Sharp's optional native dependencies installed: cross-OS/architecture
+compilation is not supported by this command. The current native qualification
+is macOS ARM64, not an all-platform guarantee. See the
+[current deployment guide](../docs-next/cli/tooling/build.md#deployment-boundaries).
+
+macOS compiled builds use `/usr/bin/codesign` to repair the generated output's
+ad-hoc signature, preserving existing signing metadata and JIT entitlements
+where present. Signing or strict verification failure fails the build. This is
+not Developer ID signing or notarization, does not choose a certificate, and
+does not guarantee another machine's Gatekeeper policy. The native payload is
+not recursively re-signed; JavaScript and non-macOS builds are unchanged.
+Each signing command is bounded to 60 seconds; timed-out children are killed
+and reaped before rejection. Safe failure events use
+`app.compiled_signature.failed`, without command paths, environment or raw tool
+output.
 
 ```sh
 # JavaScript server output and its file-loader assets:
 bun ./dist/server.js
 
-# Optional self-contained executable:
+# Optional native executable; deploy the complete output directory:
 zero build --config ./zero.config.ts --entry ./app/server.ts \
   --outdir ./dist --compile --outfile docs-server
 ./dist/docs-server

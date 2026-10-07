@@ -82,7 +82,7 @@ describe('createZeroNativeAuth', () => {
       secureStorage: { async get() { return null; }, async set() {}, async delete() {} },
       // Exercise the runtime guard for untyped JavaScript callers.
       scopes: ['records:read'] as any,
-    })).toThrow('Only openid, profile, and email scopes are supported');
+    })).toThrow('Only declared Zero identity and own-account scopes are supported');
   });
 
   test('rejects unsafe explicit secure-storage namespaces', () => {

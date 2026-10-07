@@ -1,0 +1,34 @@
+/* Save geometry is opt-in/local; all surfaces and density inherit the current Zero theme. */
+.form-save-bar {
+  --_form-save-unit: var(--spacing, .25rem);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--zero-form-save-gap, calc(var(--_form-save-unit) * 3));
+  min-width: 0;
+  padding: var(--zero-form-save-padding, calc(var(--_form-save-unit) * 3));
+  border: var(--zero-form-save-border-width, 1px) solid var(--border);
+  border-radius: var(--zero-form-save-radius, var(--radius, .625rem));
+  background: var(--card);
+  color: var(--card-foreground);
+  font-size: var(--zero-form-save-text-size, var(--text-sm, .875rem));
+}
+.form-save-bar[data-placement=floating] {
+  position: fixed;
+  z-index: var(--zero-form-save-z-index, 40);
+  left: 50%;
+  bottom: calc(var(--zero-form-save-bottom, 1rem) + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(var(--zero-form-save-max-width, 38rem), calc(100% - var(--zero-form-save-gutter, 2rem)));
+  box-shadow: var(--zero-form-save-shadow, var(--shadow-lg));
+}
+.form-save-bar__copy { flex: 1 1 10rem; min-width: 0; overflow-wrap: anywhere; }
+.form-save-bar__actions { display: flex; gap: var(--zero-form-save-action-gap, calc(var(--_form-save-unit) * 2)); flex-wrap: wrap; min-width: 0; }
+.form-save-bar__actions button { height: auto; min-height: calc(var(--_form-save-unit) * 8); white-space: normal; overflow-wrap: anywhere; }
+.form-save-bar__error { margin: 0; color: var(--destructive); font-size: var(--zero-form-save-detail-size, var(--text-xs, .75rem)); overflow-wrap: anywhere; }
+.form-save-bar__spacer { min-height: calc(var(--zero-form-save-reserved-height, 7rem) + env(safe-area-inset-bottom, 0px)); }
+.form-save-dialog { max-height: calc(100dvh - 2rem); overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .form-save-bar button { transition: none; }
+}

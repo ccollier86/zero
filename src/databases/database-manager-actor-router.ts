@@ -7,6 +7,9 @@
  */
 
 import type { IdentityAnchorState } from '../auth/identity-projection-types';
+import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
+import { hasGuardianPresenceRealm, PRESENCE_REALM_QUERY } from '../presence/presence-realm';
+import { executeCoordinatorPresenceProjection } from './database-coordinator-capability';
 import type {
   DatabaseAutomationSourceRecord,
   DatabaseAutomationSourceRegistration,
@@ -49,6 +52,7 @@ import {
 import type {
   AsyncDatabaseClient,
   AsyncDatabaseOperationExecutor,
+  DatabaseOperation,
 } from './database-operations';
 import type { DatabaseTrustedWriteExecutor } from './database-trusted-writer';
 
@@ -71,6 +75,7 @@ export class DatabaseManagerActorRouter {
   readonly #tenantDatabaseEligibility: DatabaseTenantEligibilityOptions | null;
   readonly #automationSourceCatalog: DatabaseAutomationSourceCatalog | null;
   readonly #realmHasDurableFunctions: boolean;
+  #presenceAdmission: ((tenantId: string) => Promise<void>) | null = null;
 
   constructor(options: DatabaseManagerActorRouterOptions) {
     this.#coordinator = options.coordinator;
@@ -155,7 +160,11 @@ export class DatabaseManagerActorRouter {
       // if projection or a later setup step fails.
       await this.#identityProjection.reconcile(options.tenantId, lease);
       const client = createAsyncDatabaseClient({
-        executor: createLeaseExecutor(lease),
+        executor: createLeaseExecutor(lease, async operation => {
+          if (operation.type === 'query' && operation.name === PRESENCE_REALM_QUERY) {
+            await this.#presenceAdmission?.(options.tenantId); options.assertCurrentAuthoritySync();
+          }
+        }),
         assertReadAuthority: options.assertCurrentReadAuthority
           ?? options.assertCurrentAuthoritySync,
       });
@@ -191,6 +200,31 @@ export class DatabaseManagerActorRouter {
         ? {}
         : { assertReadAuthority: options.assertCurrentReadAuthority }),
     });
+  }
+
+  /** Provision/reconcile one authoritative tenant target for lifecycle work. */
+  installPresenceAdmission(admit: (tenantId: string) => Promise<void>): () => void {
+    if (this.#presenceAdmission) throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Presence admission is already installed.');
+    this.#presenceAdmission = admit;
+    return () => { if (this.#presenceAdmission === admit) this.#presenceAdmission = null; };
+  }
+
+  /** Framework-only publication routes and admits the tenant before acquiring its ordinary managed lease. */
+  async publishTenantPresence(tenantId: string, publication: PresencePublication, assertCurrent: () => void): Promise<PresenceProjectionReceipt> {
+    if (!this.#tenantDatabases || !hasGuardianPresenceRealm(this.#requireCoordinator().realm)
+      || publication.scopeKind !== 'tenant' || publication.scopeId !== tenantId || publication.targetId !== `tenant:${tenantId}`) {
+      throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'The gateway does not admit Guardian presence projection.');
+    }
+    this.#assertTenantDatabaseEligible(tenantId); assertCurrent();
+    const physicalId = deriveTenantDatabaseId(tenantId);
+    const authority = createDatabaseCommitAuthority(this.#requireAuthority(), physicalId, () => {
+      this.#assertTenantDatabaseEligible(tenantId); assertCurrent(); return undefined;
+    });
+    const lease = await this.#requireCoordinator().acquire(physicalId, { commitAuthority: authority });
+    try {
+      this.#registerReadySource(tenantSource(createDatabaseRef(physicalId), String(normalizeDatabaseId(tenantId))));
+      assertCurrent(); return await executeCoordinatorPresenceProjection(lease, publication);
+    } finally { lease.release(); }
   }
 
   /** Provision/reconcile one authoritative tenant target for lifecycle work. */
@@ -491,9 +525,11 @@ class BoundTenantDatabase implements TenantDatabaseBinding {
 
 function createLeaseExecutor(
   lease: DatabaseCoordinatorLease,
+  beforeExecute?: (operation: DatabaseOperation) => Promise<void>,
 ): AsyncDatabaseOperationExecutor {
   return {
-    execute(operation, options) {
+    async execute(operation, options) {
+      await beforeExecute?.(operation);
       return lease.execute(operation, options);
     },
   } as AsyncDatabaseOperationExecutor;

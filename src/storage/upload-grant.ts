@@ -45,6 +45,8 @@ export interface VerifiedUploadGrant {
   grantId: string;
   driveId: string;
   path: string;
+  /** Absolute authenticated expiry, rechecked at final storage publication. */
+  expiresAt: number;
   maxSize?: number;
   contentTypes?: string[];
   overwrite: boolean;
@@ -113,13 +115,14 @@ export async function verifyUploadGrantToken(
   const payload = await verifySignedStorageToken<UploadGrantPayload>(tokenString, secret);
   if (!payload) return null;
   if (payload.k !== UPLOAD_GRANT_KIND) return null;
-  if (Date.now() > payload.e) return null;
+  if (!Number.isSafeInteger(payload.e) || payload.e <= Date.now()) return null;
   if (!payload.g || !payload.d || !payload.p) return null;
 
   return {
     grantId: payload.g,
     driveId: payload.d,
     path: payload.p,
+    expiresAt: payload.e,
     maxSize: typeof payload.s === 'number' ? payload.s : undefined,
     contentTypes: Array.isArray(payload.c) ? payload.c : undefined,
     overwrite: payload.o === 1,

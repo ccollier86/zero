@@ -13,6 +13,7 @@ import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import type { EphemeralTopicPolicy } from './ephemeral-policy';
 import type { ReactiveDB } from './reactive-db';
 import { createSyncPlugin } from './sync.plugin';
+import { requiresSyncCachePurge } from './client/sync-authorization-boundary';
 import type { ServerMessage } from './types';
 
 const AUTHORITY_EPHEMERAL_TOPIC = 'authority:workspace';
@@ -105,7 +106,10 @@ describe('Sync auth cross-replica invalidation', () => {
       const close = await connection.waitForClose(2_000);
       expect(performance.now() - startedAt).toBeLessThan(2_000);
       expect(close.code).toBe(4001);
-      expect(close.reason).toBe('Invalid auth token');
+      // Durable session revocation is a cache-purging authorization boundary,
+      // not ordinary bearer expiry (which can retain same-authority caches).
+      expect(close.reason).toBe('Auth context changed');
+      expect(requiresSyncCachePurge(close)).toBeTrue();
       await expect(second.auth.getTokenService()!.resolveAuthContext(accessToken))
         .resolves.toBeNull();
     } finally {

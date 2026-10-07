@@ -7,12 +7,15 @@ page navigation using Zero's shared controls and current public design tokens.
 
 ## Prerequisites
 
-This package targets Zero framework **2.5.0 or newer within major 2**, React and
+The current **0.1.1 preview** targets Zero framework **2.6.0 or newer within major 2**, React and
 React DOM 19.2 or newer within major 19, and Bun 1.3.14+. Its parser dependencies
 belong to this optional package, not the framework's required runtime
 dependencies. Install it only alongside the compatible framework release.
 A working checkout or archive
 is not evidence that a registry version has been published.
+The reader uses the framework's shared `Kbd`/`KbdGroup` exports, so disabling
+search does not make this package compatible with framework 2.5.x. The previous
+0.1.0 preview's 2.5.0 qualification remains historical evidence for that pair.
 
 ## Use
 
@@ -26,7 +29,7 @@ export default docs({ contentDir: './documentation' });
 ```
 
 For unpublished source/local installs, pack this directory using
-`bun pm pack --ignore-scripts --filename /absolute/artifacts/zero-plugin-docs-0.1.0.tgz`
+`bun pm pack --ignore-scripts --filename /absolute/artifacts/zero-plugin-docs-0.1.1.tgz`
 and add that archive from the app root. If the framework is also a saved archive,
 the app's root framework dependency and override must identify the same archive
 for this package's framework peer. A normal framework update alone does not
@@ -35,7 +38,7 @@ install the optional docs package.
 From the consuming app root, the local-archive install command is:
 
 ```sh
-bun add file:/absolute/artifacts/zero-plugin-docs-0.1.0.tgz
+bun add file:/absolute/artifacts/zero-plugin-docs-0.1.1.tgz
 ```
 
 Add `documentation/index.md` and other `.md` files. The default mount is `/docs`.

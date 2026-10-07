@@ -44,7 +44,7 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
   const primaryKey = getSchemaPrimaryKey(schema, options.primaryKey);
   const interaction = useDataTableState({
     initialState: options.initialState, state: options.state,
-    onStateChange: options.onStateChange, pageSize, boundaryKey: partition,
+    onStateChange: options.onStateChange, pageSize, boundaryKey: partition, paginationMode: mode,
   });
   const current = interaction.state;
   const queryShape = stableValueKey([
@@ -82,6 +82,7 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     pageCount: server && resolved.page?.total === undefined ? -1 : undefined,
     searchableFields: typeof searchable === 'object' ? searchable.fields : undefined,
     getRowId: server ? source.getRowId : undefined,
+    paginationMode: mode,
   });
   const mutationRunner = useDataTableMutationRunner({ refresh: resolved.refresh, boundaryKey: partition });
   const selectedIds = selectedDataTablePageRows(dt.table).map((row) => row.id);

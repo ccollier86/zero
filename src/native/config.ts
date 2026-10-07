@@ -19,7 +19,7 @@ export interface ResolvedNativeAuthConfig extends NativeAuthClientOptions {
   now: () => number;
 }
 
-const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email']);
+const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write']);
 
 /** Resolve secure defaults without supplying any platform-sensitive adapters. */
 export function resolveNativeAuthConfig(
@@ -51,7 +51,7 @@ export function resolveNativeAuthConfig(
   const requestedScopes = options.scopes ?? ['profile', 'email'];
   if (requestedScopes.some((scope) => !IDENTITY_SCOPES.has(scope))) {
     throw new NativeAuthError(
-      'Only openid, profile, and email scopes are supported.',
+      'Only declared Zero identity and own-account scopes are supported.',
       'NATIVE_SCOPES_UNSUPPORTED',
     );
   }

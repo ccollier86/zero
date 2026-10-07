@@ -6,7 +6,7 @@ import type { NativeAuthorizationRequest, NativeIdentityScope } from './types';
 const TRANSACTION_VALUE = /^[A-Za-z0-9._~-]{32,512}$/;
 const CLIENT_ID = /^[A-Za-z0-9._~-]{1,128}$/;
 const SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
-const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email']);
+const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write']);
 
 export function parseNativeAuthorizationRequest(
   input: URL | URLSearchParams
@@ -31,6 +31,9 @@ export function parseNativeAuthorizationRequest(
   const state = transaction(params, 'state');
   const scopes = parseScopes(optional(params, 'scope'));
   if (!scopes.includes('openid')) fail('invalid_scope', 'openid scope is required.');
+  if ((scopes.includes('profile:write') || scopes.includes('contacts:write')) && !scopes.includes('profile')) {
+    fail('invalid_scope', 'profile:write requires profile scope.');
+  }
   const nonce = transaction(params, 'nonce');
   const responseMode = optional(params, 'response_mode');
   if (responseMode && responseMode !== 'query') {
@@ -73,7 +76,7 @@ function parseScopes(value: string | undefined): NativeIdentityScope[] {
   const scopes = value.split(' ');
   if (scopes.some((scope) =>
     !SCOPE_TOKEN.test(scope) || !IDENTITY_SCOPES.has(scope as NativeIdentityScope))) {
-    fail('invalid_scope', 'Only openid, profile, and email scopes are supported.');
+    fail('invalid_scope', 'Only the declared Guardian identity and explicit write scopes are supported.');
   }
   return [...new Set(scopes)] as NativeIdentityScope[];
 }

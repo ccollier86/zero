@@ -7,6 +7,13 @@ const repository = resolve(import.meta.dir, '../..');
 const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const artifactRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/docs-plugin';
 const image = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg=='), character => character.charCodeAt(0));
+interface DocsPackageManifest { version: string; peerDependencies: { '@zero/framework': string } }
+
+test('docs preview manifest requires the framework release containing shared keyboard hints', async () => {
+  const manifest = await Bun.file(join(repository, 'packages/docs/package.json')).json() as DocsPackageManifest;
+  expect(manifest.version).toBe('0.1.1');
+  expect(manifest.peerDependencies['@zero/framework']).toBe('>=2.6.0 <3');
+});
 
 async function command(cmd: readonly string[], cwd: string, maximum = 60_000, environment?: Record<string, string | undefined>, captureStderr = false): Promise<string> {
   const child = Bun.spawn([...cmd], { cwd, env: environment, stdout: 'pipe', stderr: 'pipe' });
@@ -56,10 +63,14 @@ async function createConsumer(root: string, framework: string, docs: string): Pr
   await write(root, 'public-imports.ts', [
     'import {docs} from "@zero/plugin-docs"; import {compileDocsContent,DocsContentError} from "@zero/plugin-docs/content";',
     'import {DocsApp} from "@zero/plugin-docs/react"; import {defineZeroPlugin,prepareAppBuild,renderServerPage,isReservedAppRoutePath} from "@zero/framework/server";',
-    'import {CodeBlock,CodeBlockRoot,CodeBlockFiles,CodeBlockInline} from "@zero/framework/react"; import {prepareCodeBlock} from "@zero/framework/components/code-block/server";',
+    'import {CodeBlock,CodeBlockRoot,CodeBlockFiles,CodeBlockInline,Kbd,KbdGroup} from "@zero/framework/react"; import {prepareCodeBlock} from "@zero/framework/components/code-block/server";',
+    'import {Kbd as FocusedKbd,KbdGroup as FocusedKbdGroup} from "@zero/framework/components/kbd"; import {createElement} from "react"; import {renderToStaticMarkup} from "react-dom/server";',
     'import {readCodeBlockMetadata} from "@zero/framework/components/code-block/metadata";',
-    'if([docs,compileDocsContent,DocsContentError,DocsApp,defineZeroPlugin,prepareAppBuild,renderServerPage,isReservedAppRoutePath,CodeBlock,CodeBlockRoot,CodeBlockFiles,CodeBlockInline,prepareCodeBlock,readCodeBlockMetadata].some(value=>value===undefined)) throw new Error("Public package export is missing");',
-    'console.log(JSON.stringify({publicImports:true,claim:docs({contentDir:"./documentation"}).build.mountPaths}));',
+    'if([docs,compileDocsContent,DocsContentError,DocsApp,defineZeroPlugin,prepareAppBuild,renderServerPage,isReservedAppRoutePath,CodeBlock,CodeBlockRoot,CodeBlockFiles,CodeBlockInline,Kbd,KbdGroup,prepareCodeBlock,readCodeBlockMetadata].some(value=>value===undefined)) throw new Error("Public package export is missing");',
+    'if(Kbd!==FocusedKbd||KbdGroup!==FocusedKbdGroup) throw new Error("Keyboard hints must share the public framework facade");',
+    'const keyboardHtml=renderToStaticMarkup(createElement(KbdGroup,null,createElement(Kbd,null,"Ctrl"),createElement(Kbd,null,"K")));',
+    'if(!keyboardHtml.includes("data-slot=\\\"kbd-group\\\"")||!keyboardHtml.includes("data-slot=\\\"kbd\\\"")) throw new Error("Public keyboard hints failed SSR");',
+    'console.log(JSON.stringify({publicImports:true,keyboardHints:true,claim:docs({contentDir:"./documentation"}).build.mountPaths}));',
   ].join('\n'));
 }
 async function startDeployment(directory: string, compiled: boolean) {
@@ -85,6 +96,7 @@ async function startDeployment(directory: string, compiled: boolean) {
 async function verifyDeployment(url: string) {
   const response = await fetch(url + '/docs'), html = await response.text();
   expect(response.status).toBe(200); expect(html).toContain('<div id="zero-docs-root">'); expect(html).toContain('Installed reader'); expect(html).toContain('Installed Zero Reader Documentation');
+  expect(html).toContain('data-slot="kbd"');
   expect(html).not.toContain('PRIVATE_INSTALLED_SOURCE_SENTINEL'); expect(html).not.toContain('PRIVATE_INSTALLED_WORK_SENTINEL'); expect(html).not.toContain('Restoring your secure session');
   expect(response.headers.get('content-security-policy')).toContain("script-src 'self' 'nonce-"); expect(response.headers.get('link')).toBe('<https://docs.example.test/docs>; rel="canonical"');
   const head = await fetch(url + '/docs', { method: 'HEAD' }); expect(head.status).toBe(200); expect(await head.text()).toBe('');
@@ -106,9 +118,17 @@ async function verifyDeployment(url: string) {
 test('fresh framework/docs archives qualify public imports and normal/compiled source-free deployments', async () => {
   await Promise.all([mkdir(scratchRoot, { recursive: true }), mkdir(artifactRoot, { recursive: true })]);
   const work = await mkdtemp(join(scratchRoot, 'docs-installed-')), evidence = await mkdtemp(join(artifactRoot, 'installed-'));
-  const frameworkArchive = join(evidence, 'zero-framework-2.5.0.tgz'), docsArchive = join(evidence, 'zero-plugin-docs-0.1.0.tgz');
+  const sourceVersion = (await Bun.file(join(repository, 'package.json')).json()).version as string;
+  const sourceDocs = await Bun.file(join(repository, 'packages/docs/package.json')).json() as DocsPackageManifest;
+  const frameworkArchive = join(evidence, `zero-framework-${sourceVersion}.tgz`), docsArchive = join(evidence, `zero-plugin-docs-${sourceDocs.version}.tgz`);
   await command(['bun', 'pm', 'pack', '--ignore-scripts', '--quiet', '--filename', frameworkArchive], repository);
   await command(['bun', 'pm', 'pack', '--ignore-scripts', '--quiet', '--filename', docsArchive], join(repository, 'packages/docs'));
+  const packedFramework = JSON.parse(await command(['tar', '-xOf', frameworkArchive, 'package/package.json'], repository)) as { version: string };
+  expect(packedFramework.version).toBe(sourceVersion);
+  const packedDocs = JSON.parse(await command(['tar', '-xOf', docsArchive, 'package/package.json'], repository)) as DocsPackageManifest;
+  expect(packedDocs.version).toBe(sourceDocs.version);
+  expect(packedDocs.peerDependencies['@zero/framework']).toBe(sourceDocs.peerDependencies['@zero/framework']);
+  expect(packedDocs.peerDependencies['@zero/framework']).toBe('>=2.6.0 <3');
   const files = await command(['tar', '-tzf', docsArchive], repository); expect(files).not.toMatch(/\.test\.|test-fixture|docs-next|planning\//u);
   const frameworkFiles = new Set((await command(['tar', '-tzf', frameworkArchive], repository)).trim().split('\n'));
   for (const obsolete of ['components/animate/code.tsx', 'components/animate/code-tabs.tsx', 'primitives/animate/code-block.tsx']) {
@@ -116,9 +136,11 @@ test('fresh framework/docs archives qualify public imports and normal/compiled s
   }
   const consumer = join(work, 'consumer'); await createConsumer(consumer, frameworkArchive, docsArchive);
   expect(await Bun.file(join(consumer, 'tsconfig.json')).exists()).toBe(false);
-  expect(JSON.parse(await Bun.file(join(consumer, 'node_modules/@zero/framework/package.json')).text()).version).toBe('2.5.0');
-  expect(JSON.parse(await Bun.file(join(consumer, 'node_modules/@zero/plugin-docs/package.json')).text()).version).toBe('0.1.0');
-  const imports = JSON.parse(await command(['bun', '--no-env-file', 'run', './public-imports.ts'], consumer)); expect(imports).toEqual({ publicImports: true, claim: ['/docs'] });
+  expect(JSON.parse(await Bun.file(join(consumer, 'node_modules/@zero/framework/package.json')).text()).version).toBe(packedFramework.version);
+  const installedDocs = await Bun.file(join(consumer, 'node_modules/@zero/plugin-docs/package.json')).json() as DocsPackageManifest;
+  expect(installedDocs.version).toBe(packedDocs.version);
+  expect(installedDocs.peerDependencies['@zero/framework']).toBe(packedDocs.peerDependencies['@zero/framework']);
+  const imports = JSON.parse(await command(['bun', '--no-env-file', 'run', './public-imports.ts'], consumer)); expect(imports).toEqual({ publicImports: true, keyboardHints: true, claim: ['/docs'] });
   const cli = join(consumer, 'node_modules/@zero/framework/src/cli/run.ts');
   await command(['bun', '--no-env-file', cli, 'build', '--outdir', 'dist-normal'], consumer, 90_000);
   await command(['bun', '--no-env-file', cli, 'build', '--config', './named.config.ts', '--entry', './app/custom-server.ts', '--outdir', 'dist-compiled', '--compile', '--outfile', 'reader'], consumer, 90_000);
@@ -132,8 +154,9 @@ test('fresh framework/docs archives qualify public imports and normal/compiled s
   await cp(join(consumer, 'dist-normal'), normal, copy); await cp(join(consumer, 'dist-compiled'), compiled, copy);
   await rename(consumer, join(work, 'source-not-available'));
   const provenance: Record<string, unknown> = { sourceHead: (await command(['git', 'rev-parse', 'HEAD'], repository)).trim(), branch: (await command(['git', 'branch', '--show-current'], repository)).trim(),
-    bun: Bun.version, registryPublished: false, framework: { version: '2.5.0', path: frameworkArchive, sha256: new Bun.CryptoHasher('sha256').update(await Bun.file(frameworkArchive).arrayBuffer()).digest('hex') },
-    docs: { version: '0.1.0', path: docsArchive, sha256: new Bun.CryptoHasher('sha256').update(await Bun.file(docsArchive).arrayBuffer()).digest('hex') }, work, normal, compiled, deployments: [] };
+    sourceSnapshot: (await command(['git', 'status', '--porcelain', '--untracked-files=all'], repository)).trim() ? 'dirty' : 'clean',
+    bun: Bun.version, registryPublished: false, framework: { version: packedFramework.version, path: frameworkArchive, sha256: new Bun.CryptoHasher('sha256').update(await Bun.file(frameworkArchive).arrayBuffer()).digest('hex') },
+    docs: { version: packedDocs.version, frameworkPeer: packedDocs.peerDependencies['@zero/framework'], path: docsArchive, sha256: new Bun.CryptoHasher('sha256').update(await Bun.file(docsArchive).arrayBuffer()).digest('hex') }, work, normal, compiled, deployments: [] };
   for (const [directory, executable] of [[normal, false], [compiled, true]] as const) {
     expect(await Bun.file(join(directory, 'node_modules/package.json')).exists()).toBe(false); expect(await Bun.file(join(directory, 'documentation/index.md')).exists()).toBe(false);
     const server = await startDeployment(directory, executable);

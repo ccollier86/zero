@@ -8,14 +8,14 @@ visibility: internal
 system: cli-tooling
 feature: add
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; release qualification pending"]
 modes: ["Bun package-mode applications", "trusted local development"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
+  snapshot: dirty
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -43,6 +43,13 @@ The copy engine gathers supported source and reachable app-owned dependencies,
 rewrites framework-internal imports to public package paths where known, and
 maps copied app-owned imports to app aliases. It reports requested items,
 planned/written/skipped paths and import rewrite counts.
+
+DataTable's low-level query dependencies use the focused public
+`@zero/framework/react/query-params` subpath. Keep the matching framework package
+installed after copying; source ownership does not make its client/query services
+local. Copied inline editing and form-save hooks similarly retain their live
+scope guards through `@zero/framework/react/authorization-scope`, not a private
+client-source import. [Source ownership](./source-copy.md) explains this boundary.
 
 Existing files are skipped by default. `--force` overwrites them; inspect the
 specific target and preserve your changes first. `--dry-run` reads source and

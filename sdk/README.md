@@ -22,20 +22,24 @@ Zero commit does not capture or back up their contents.
 ## What isolation means
 
 The parent `.gitignore` has exact root-anchored entries for both child paths.
-Zero's Bun configuration excludes them from root test discovery. Framework
-package tests reject SDK/Cargo/crate files in the tarball and in generated
-apps. Normal tooling behaves as follows:
+Framework package tests reject SDK/Cargo/crate files in the tarball and in
+generated apps. The canonical fresh-process test runner deliberately discovers
+normal test files in admitted source fixtures, independently of Gitignore and
+Bun's direct-test configuration exclusions. Discovery is not package ownership:
+the separately versioned Chrome fixture remains outside the framework archive.
+Normal tooling behaves as follows:
 
 | Operation | Child SDK behavior |
 |---|---|
 | `git status`, commit, or push at the Zero root | Does not include either child |
-| `bun run test`, framework typecheck, or package build | Does not discover child tests/dependencies as parent work |
+| `bun run test` | Includes normal test files in any admitted child source fixture; inspect `--list` and record the child commit separately |
+| Framework typecheck or package build | Does not package or install either child's independent dependencies; explicit documentation checks can import the admitted Chrome source |
 | `bun run test:package` / framework packing | Excludes both child repositories |
 | Default `create-zero` / `zero-new`, including `--local` | Does not copy either child into a new app |
 | `zero update` / `zero-update` | Does not add, update, or remove either child in an application |
 | Parent framework version bump | Does not version either child package |
 
-This isolation is intentional. Running the Zero command from another project
+This distribution isolation is intentional. Running the Zero command from another project
 must never drag an SDK development repository, Cargo target directory, Chrome
 fixture, or nested Git history into that project.
 
@@ -47,6 +51,14 @@ nested Git repository. Likewise, a `--zero file:<path>` package source
 deliberately asks Bun to consume that checkout. The built-in template, normal
 published-package create, `--local` pack, `zero add`, and `zero update` paths
 remain isolated by the framework package allowlist.
+
+The native documentation example check currently needs the exact Chrome source
+fixture, even though ordinary framework consumers do not. For clean-checkout
+release qualification, follow [Private Preview Source Fixtures](../docs/releasing.md#private-preview-source-fixtures):
+admit tracked source from a clean child commit without its `.git`, dependencies
+or generated output, and record its commit, tree and archive hash independently.
+The current ten Chrome unit files are reported in the complete suite inventory;
+a parent release does not publish those preview packages.
 
 ## Check status in the correct repository
 

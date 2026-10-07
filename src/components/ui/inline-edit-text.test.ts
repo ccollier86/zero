@@ -15,5 +15,7 @@ describe('resolveInlineEditTextKeyAction', () => {
     expect(resolveInlineEditTextKeyAction('Escape')).toEqual({ type: 'cancel' });
     expect(resolveInlineEditTextKeyAction('a')).toBeNull();
     expect(resolveInlineEditTextKeyAction('Enter', false, true)).toBeNull();
+    expect(resolveInlineEditTextKeyAction('Tab', false, false, 'explicit')).toBeNull();
+    expect(resolveInlineEditTextKeyAction('Enter', false, false, 'explicit')).toEqual({ type: 'save' });
   });
 });

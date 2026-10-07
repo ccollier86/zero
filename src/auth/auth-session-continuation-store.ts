@@ -3,6 +3,7 @@ import { normalizeMfaVerifiedAt } from './mfa-assurance';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { createOpaqueToken, hashToken } from '../tokens/token-utils';
 import { defineAuthSessionContinuationTables } from './auth-session-continuation-schema';
+import { resolveApplicationId } from './auth-application-id';
 import {
   createAuthStateInvariantError,
   type AuthPlatformCodeEmitter,
@@ -10,7 +11,8 @@ import {
 
 export type AuthSessionContinuationPurpose =
   | 'tenant_selection'
-  | 'tenant_onboarding';
+  | 'tenant_onboarding'
+  | 'profile_completion';
 
 export interface AuthSessionContinuationRecord {
   continuationId: string;
@@ -58,6 +60,8 @@ export class AuthSessionContinuationStore {
   private readonly getByHash: Statement;
   private readonly consume: Statement;
   private readonly cleanup: Statement;
+  private readonly profileStatements: { insert: Statement; get: Statement; consume: Statement; cleanup: Statement } | null;
+  private readonly emitCode?: AuthPlatformCodeEmitter;
 
   constructor(
     private readonly db: ReactiveDB,
@@ -65,6 +69,7 @@ export class AuthSessionContinuationStore {
   ) {
     defineAuthSessionContinuationTables(db);
     this.now = options.now ?? Date.now;
+    this.emitCode = options.emitCode;
     this.applicationId = options.applicationId
       ?? resolveApplicationId(db, options.emitCode);
     this.insert = db.prepare(`
@@ -92,6 +97,18 @@ export class AuthSessionContinuationStore {
       DELETE FROM _auth_session_continuations
       WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)
     `);
+    // The same hash-at-rest continuation owner supports an isolated purpose
+    // table without rewriting the tenant table referenced by domain proofs.
+    const profileExists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_auth_profile_completion_continuations'").get();
+    this.profileStatements = profileExists ? {
+      insert: db.prepare(`INSERT INTO _auth_profile_completion_continuations
+        (continuation_id,application_id,user_id,purpose,token_hash,auth_generation,mfa_verified_at,expires_at,consumed_at,created_at)
+        VALUES (?,?,?,?,?,?,?,?,NULL,?)`),
+      get: db.prepare(`SELECT * FROM _auth_profile_completion_continuations WHERE application_id = ? AND purpose = ? AND token_hash = ?`),
+      consume: db.prepare(`UPDATE _auth_profile_completion_continuations SET consumed_at = ? WHERE continuation_id = ?
+        AND application_id = ? AND user_id = ? AND purpose = ? AND auth_generation = ? AND consumed_at IS NULL AND expires_at > ?`),
+      cleanup: db.prepare(`DELETE FROM _auth_profile_completion_continuations WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)`),
+    } : null;
   }
 
   create(input: {
@@ -114,7 +131,8 @@ export class AuthSessionContinuationStore {
       consumedAt: null,
       createdAt: now,
     };
-    this.insert.run(
+    const insert = input.purpose === 'profile_completion' ? this.requireProfileStatements().insert : this.insert;
+    insert.run(
       record.continuationId,
       record.applicationId,
       record.userId,
@@ -133,12 +151,22 @@ export class AuthSessionContinuationStore {
     purpose: AuthSessionContinuationPurpose,
   ): AuthSessionContinuationRecord | null {
     if (!raw) return null;
-    const row = this.getByHash.get(
+    const statement = purpose === 'profile_completion' ? this.requireProfileStatements().get : this.getByHash;
+    const row = statement.get(
       this.applicationId,
       purpose,
       hashToken(raw),
     ) as ContinuationRow | null;
     if (!row || row.consumed_at !== null || row.expires_at <= this.now()) return null;
+    if (purpose === 'profile_completion' && (!Number.isSafeInteger(row.auth_generation) || row.auth_generation < 0
+      || !Number.isSafeInteger(row.created_at) || row.created_at < 0
+      || !Number.isSafeInteger(row.expires_at) || row.expires_at <= row.created_at
+      || row.expires_at - row.created_at > 1_800_000
+      || (row.mfa_verified_at !== null && (!Number.isSafeInteger(row.mfa_verified_at)
+        || row.mfa_verified_at < 0 || row.mfa_verified_at > row.created_at)))) {
+      throw createAuthStateInvariantError(this.emitCode, { component: 'auth-session-continuation-store',
+        invariant: 'profile-continuation-row-invalid', message: '[auth] Profile completion continuation state is invalid.' });
+    }
     return mapContinuation(row);
   }
 
@@ -153,7 +181,8 @@ export class AuthSessionContinuationStore {
     expectedAuthGeneration: number,
   ): boolean {
     const now = this.now();
-    return this.consume.run(
+    const statement = purpose === 'profile_completion' ? this.requireProfileStatements().consume : this.consume;
+    return statement.run(
       now,
       record.continuationId,
       this.applicationId,
@@ -165,30 +194,12 @@ export class AuthSessionContinuationStore {
   }
 
   deleteExpired(now = this.now()): number {
-    return this.cleanup.run(now, now).changes;
+    return this.cleanup.run(now, now).changes + (this.profileStatements?.cleanup.run(now, now).changes ?? 0);
   }
-}
-
-function resolveApplicationId(
-  db: ReactiveDB,
-  emitCode?: AuthPlatformCodeEmitter,
-): string {
-  const key = 'auth.application.id';
-  db.prepare(`
-    INSERT INTO _auth_config (key, value)
-    VALUES (?, ?)
-    ON CONFLICT(key) DO NOTHING
-  `).run(key, `app_${crypto.randomUUID()}`);
-  const row = db.prepare('SELECT value FROM _auth_config WHERE key = ?')
-    .get(key) as { value: string } | null;
-  if (!row?.value) {
-    throw createAuthStateInvariantError(emitCode, {
-      component: 'auth-session-continuation-store',
-      invariant: 'application-id-resolution-missing',
-      message: '[auth] Failed to resolve the auth application id.',
-    });
+  private requireProfileStatements() {
+    if (!this.profileStatements) throw new Error('[auth] Profile completion continuation storage is unavailable.');
+    return this.profileStatements;
   }
-  return row.value;
 }
 
 function mapContinuation(row: ContinuationRow): AuthSessionContinuationRecord {

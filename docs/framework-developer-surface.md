@@ -1756,7 +1756,20 @@ import {
 
 Use `zero add` only when the app needs to customize source. It copies selected
 files into the app, follows app-owned alias dependencies, and rewrites
-framework-internal imports to public `@zero/framework/*` package paths:
+framework-internal imports to public `@zero/framework/*` package paths.
+
+Copied DataTable query dependencies use the focused
+`@zero/framework/react/query-params` export. That module contains browser-safe
+query encoders and state helpers; it does not perform authenticated requests or
+replace the normal client/server authorization boundary. Keep the framework
+package installed alongside copied components.
+
+Copied `InlineEditText` and form-save hooks similarly use the exact browser-safe
+`@zero/framework/react/authorization-scope` export for live scope/readiness
+checks. These helpers remain package-owned; a copied UI does not become a
+replacement Guardian authorization engine. The canonical
+[scope-boundary guide](../docs-next/frontend/runtime/authorization-scope-boundary.md)
+documents the hook, focused helper module and opaque-key contract.
 
 ```sh
 zero add components/ui/button

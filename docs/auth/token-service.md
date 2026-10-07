@@ -236,7 +236,12 @@ Official MFA paths always supply the exact generation. Profile signing without
 
 When an auth flow produces a complete access/refresh pair, Zero signs a
 dedicated page JWT and sends it only as the HttpOnly
-`__zero_page_session` cookie. Its expiration matches the backing refresh row.
+application-owned cookie named by `TokenService.pageSessionCookieName`. Its
+expiration matches the backing refresh row. The persisted application ID
+provides the namespace across restarts; no app should hard-code a deletion
+header for the older host-wide cookie name. Validated legacy migration and
+canonical-cookie precedence are documented in the
+[current session guide](../../docs-next/backend/guardian/sessions.md#page-cookie-behavior).
 
 ```ts
 new SignJWT({
@@ -256,8 +261,9 @@ Current role and email come from the database, not stale cookie claims.
 
 This JWT is intentionally rejected by access-token verification. The file
 router accepts it only for actual `GET`/`HEAD` pages when no Authorization
-header is present. APIs, mutations, server plugins, and WebSocket sync remain
-Bearer-only. Rotation and session revocation invalidate the page JWT through
+header is present. Ordinary APIs, mutations, server plugins and WebSocket sync
+remain Bearer-only; native consent POST is a separate protected ceremony using
+the same app-validated page resolver. Rotation and session revocation invalidate the page JWT through
 its backing refresh row; authenticated HTML is private/no-store and excluded
 from ISR.
 

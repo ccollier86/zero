@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.5.0"
-  commit: "55ca1e6b649f5652831714ad93749918bd92a6bd"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
   date: "2026-10-06"
   evidence_level: source-observed
@@ -86,7 +86,8 @@ result contracts as the public facade, except:
 
 `clearAuthenticationContinuation()` clears in-memory UI continuation.
 
-Startup restoration and explicit recovery use a 15-second deadline for
+Startup restoration, ordinary refresh, browser credential replacement and
+explicit recovery use a 15-second deadline for
 credential-lock admission and each network/response-body operation, including
 current-user hydration and live authorization. A timed-out queued operation
 cannot later adopt credentials or begin a request. Temporary HTTP,
@@ -97,6 +98,14 @@ as fully signed out. Family replacement/disposal rejects or retires late work.
 AppProvider also clears page-cookie state through normal logout after a
 signed-out explicit recovery. Do not treat the result alone as confirmation
 that a remote cookie was deleted while its server was unavailable.
+
+An externally replaced session clears the previous in-memory user/tenant before
+hydrating its replacement. Failure cannot leave the old account published under
+the new proof or keep `isLoading` true forever. A temporary failure retains the
+replacement proof for explicit recovery; disposal or another replacement retires
+the late response. The server's
+[application-owned page cookie](../../backend/guardian/sessions.md#page-cookie-behavior)
+is reconciled through Guardian, not by asking consumers to clear cookies manually.
 
 Live Sync refresh outages also retain proof while clearing and read-fencing
 cached rows. Definite rejection still signs out. This correction has focused

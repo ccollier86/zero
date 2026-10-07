@@ -5,6 +5,7 @@ export { PasswordActionForm, type PasswordActionFormProps } from './password-act
 export { EmailVerificationForm, type EmailVerificationFormProps } from './email-verification-form';
 export { ChangePasswordForm, type ChangePasswordFormProps } from './change-password-form';
 export { UserPropertiesForm, type UserPropertiesFormProps } from './user-properties-form';
+export { ProfileCompletionForm, type ProfileCompletionFormProps } from './profile-completion-form';
 export { OTPVerification, type OTPVerificationProps } from './otp-verification';
 export {
   isAuthFlowContinuationResult,
@@ -12,6 +13,7 @@ export {
   isMfaChallengeRequiredResult,
   isMfaContinuationResult,
   isMfaSetupRequiredResult,
+  isProfileCompletionRequiredResult,
   isTenantOnboardingRequiredResult,
   isTenantSelectionRequiredResult,
   type AuthFlowContinuationResult,

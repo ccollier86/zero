@@ -528,3 +528,8 @@ export type {
   ResolvedNativeAuthorizationRequestPolicy,
   ResolvedNativeRefreshRotationPolicy,
 } from './native';
+export type * from './auth-user-profile-types';
+export type * from './auth-presence-types';
+export type * from './auth-user-contact-types';
+export type * from './auth-user-avatar-types';
+export type * from './auth-user-profile-completion-types';

@@ -36,6 +36,11 @@ nested guide rails, a focused article, right-hand table of contents and quiet
 previous/next page links. It uses current Zero tokens and shared controls, not
 a separate theme or authentication client.
 
+The current optional preview is **0.1.1** and requires framework **2.6.0 or newer
+within major 2**. The reader imports Zero's shared `Kbd`/`KbdGroup` controls even
+when search is disabled; a 2.5.x framework does not satisfy this package's peer.
+The normal framework updater does not install or upgrade the separate plugin.
+
 ## Start With A Folder
 
 Install the optional package alongside a compatible framework release. In an
@@ -52,8 +57,9 @@ Add `documentation/index.md` and other `.md` pages. The default mount is `/docs`
 Relative paths resolve against the captured app configuration root, not whatever
 directory happens to be current when a request arrives.
 
-The build integration is available in the 2.5.0 source/local release; a 2.4.x
-package does not contain it. The optional package is qualified through fresh
+The build integration was introduced in the 2.5.0 source/local release; a 2.4.x
+package does not contain it. That historical 0.1.0/2.5.0 pair does not describe
+the current 0.1.1 preview's compatibility floor. The optional package is qualified through fresh
 archives, not assumed to exist in a public registry. Follow the
 [installation boundary](./operations.md#source-and-local-archive-installation).
 

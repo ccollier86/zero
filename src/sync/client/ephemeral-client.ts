@@ -23,6 +23,7 @@ export type EphemeralErrorListener = (error: EphemeralErrorMessage) => void;
  * Wraps the @xstate/store with a user-friendly interface.
  */
 export class EphemeralClient {
+  private disposed = false;
   private authorizationScopeTransition = false;
   private subscribedTopics = new Set<string>();
   private topicListeners = new Map<string, Set<(entries: Record<string, EphemeralEntryClient>) => void>>();
@@ -31,7 +32,8 @@ export class EphemeralClient {
 
   constructor(
     private sendMessage: (msg: object) => void,
-    private store: EphemeralStore
+    private store: EphemeralStore,
+    private sendTransientMessage?: (msg: object) => boolean,
   ) {}
 
   // ─── Subscribe / Unsubscribe ──────────────────────────────────────────
@@ -114,6 +116,11 @@ export class EphemeralClient {
     this.assertScopeWritesAvailable();
     this.sendMessage({ type: 'ephemeral.set', topic, key, value, ttl });
   }
+  /** Best-effort current-connection observation; deliberately drops instead of queuing. */
+  setTransient(topic: string, key: string, value: JsonValue): boolean {
+    if (this.disposed || this.authorizationScopeTransition || !this.sendTransientMessage) return false;
+    return this.sendTransientMessage({ type: 'ephemeral.set', topic, key, value });
+  }
 
   /**
    * Set a key with throttle — at most once per `intervalMs`.
@@ -139,6 +146,7 @@ export class EphemeralClient {
   // ─── Cleanup ──────────────────────────────────────────────────────────
 
   dispose(): void {
+    this.disposed = true;
     // Unsubscribe from all topics
     for (const topic of this.subscribedTopics) {
       if (!this.authorizationScopeTransition) {

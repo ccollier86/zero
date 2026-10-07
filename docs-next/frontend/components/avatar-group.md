@@ -102,6 +102,9 @@ overlapping avatars still appear; they are not presence rings.
 Only set the prop when the app has enabled presence and its own authorized
 adapter supplies current observations. A missing observation is unknown, not
 offline. `AvatarPresence` is a visual mapping, not a Guardian authority record.
+For Guardian's account availability, [useAvatarPresence](../../backend/guardian/presence.md#sdk-and-ui)
+provides that fresh, authorized mapping from the SDK-owned tracker. The group
+does not create a second tracker for each member.
 
 ```tsx
 import { AvatarGroup, type AvatarGroupMember } from '@zero/framework/react';
@@ -189,5 +192,8 @@ names/images or an unrestricted total into a roster merely because it is small.
 - [Scope transitions](../runtime/scope-transitions.md) explains retirement of
   user/organization-owned presentation data.
 - [Design tokens](../design-system/tokens.md) owns shared theme configuration.
-- [Component roadmap](./roadmap.md) distinguishes upcoming connected profiles
-  and presence from this presentation-only component.
+- [Guardian profiles](../../backend/guardian/user-profiles.md) and
+  [presence](../../backend/guardian/presence.md) own the connected account services
+  separately from this presentation-only component.
+- [Component roadmap](./roadmap.md) distinguishes further expansion from those
+  existing services.

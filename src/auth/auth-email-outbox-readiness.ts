@@ -8,7 +8,9 @@ export function shouldStartAuthEmailOutbox(
   if (!config.accountEmails.passwordReset
     && !config.account.requireEmailVerification
     && !config.tenancy?.onboarding?.invitations.delivery.email.enabled
-    && !config.tenancy?.onboarding?.verifiedDomains.enabled) return false;
+    && !config.tenancy?.onboarding?.verifiedDomains.enabled
+    && !(config.userProfile?.enabled && config.userProfile.contacts.enabled
+      && (config.userProfile.contacts.email.verify || config.userProfile.contacts.email.change))) return false;
   try {
     email.assertReady();
     return true;

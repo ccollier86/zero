@@ -33,6 +33,10 @@ export function emitAuthEmailQueued(kind: AuthEmailOutboxKind, result: AuthEmail
 
 export function emitAuthEmailDelivered(job: AuthEmailOutboxJob, userId?: string,
   emitCode: AuthPlatformCodeEmitter = emitPlatformCode) {
+  if (job.kind === 'profile_contact_verification') {
+    emitCode(OBS_CODES.AUTH_USER_CONTACT_DELIVERED, { userId, metadata: { channel: 'email' } });
+    return;
+  }
   if (job.kind === 'tenant_invitation') return;
   const event = job.kind === 'password_reset'
     ? OBS_CODES.AUTH_PASSWORD_RESET_SENT
@@ -65,7 +69,9 @@ export function emitAuthEmailSuppressed(
 export function emitAuthEmailFailed(job: AuthEmailOutboxJob, input: {
   code: string; cleanupSucceeded: boolean; retry: boolean; userId?: string;
 }, emitCode: AuthPlatformCodeEmitter = emitPlatformCode) {
-  const deliveryEvent = job.kind === 'tenant_invitation'
+  const deliveryEvent = job.kind === 'profile_contact_verification'
+    ? OBS_CODES.AUTH_USER_CONTACT_DELIVERY_FAILED
+    : job.kind === 'tenant_invitation'
     ? null
     : job.kind === 'password_reset'
     ? OBS_CODES.AUTH_PASSWORD_RESET_DELIVERY_FAILED

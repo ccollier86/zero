@@ -126,13 +126,13 @@ function activeSessionCountForUser(db: ReactiveDB, userId: string): number {
 
 function pageToken(headers: Headers): string {
   const setCookie = headers.get('set-cookie') ?? '';
-  const match = setCookie.match(new RegExp(`${PAGE_SESSION_COOKIE_NAME}=([^;]*)`));
+  const match = setCookie.match(new RegExp(`${PAGE_SESSION_COOKIE_NAME}_[a-f0-9]{32}=([^;]*)`));
   if (!match) throw new Error('Expected a page-session cookie');
   return decodeURIComponent(match[1]!);
 }
 
-function cookie(token: string): string {
-  return `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`;
+function cookie(token: string, harness: Harness): string {
+  return `${harness.runtime.getTokenService()!.pageSessionCookieName}=${encodeURIComponent(token)}`;
 }
 
 describe('multi-tenant browser session completion', () => {
@@ -849,7 +849,7 @@ describe('multi-tenant browser session completion', () => {
     const switched = await post(harness, '/auth/tenants/switch', {
       refreshToken: oldRefresh,
       tenantId: other.body.tenant.tenantId,
-    }, cookie(oldPage));
+    }, cookie(oldPage, harness));
     expect(switched.status).toBe(200);
     expect(switched.body.activeTenant.tenantId).toBe(other.body.tenant.tenantId);
     const newPage = pageToken(switched.headers);

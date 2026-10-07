@@ -4,11 +4,19 @@ import { cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { buildZeroApp } from './build-app';
 import { parseZeroBuildArgs } from './build-args';
+import sharp from 'sharp';
 
 const repository = resolve(import.meta.dir, '../..');
 async function scratch(): Promise<string> { const root = '/Volumes/code-bank/tmp/scratch/zero-platform'; await mkdir(root, { recursive: true }); return mkdtemp(join(root, 'zero-build-deployment-')); }
 
-async function fixture(root: string): Promise<string> {
+async function verifyMacCompiledSignature(binary: string, compiled: boolean): Promise<void> {
+  if (!compiled || process.platform !== 'darwin') return;
+  const verification = Bun.spawn(['/usr/bin/codesign', '--verify', '--strict', binary], { stdout: 'ignore', stderr: 'pipe' });
+  expect(await verification.exited).toBe(0);
+  expect(await new Response(verification.stderr).text()).toBe('');
+}
+
+async function fixture(root: string, avatars = false): Promise<string> {
   await Promise.all([mkdir(join(root, 'app'), { recursive: true }), mkdir(join(root, 'server/plugins'), { recursive: true }), mkdir(join(root, 'node_modules/@zero'), { recursive: true })]);
   await symlink(repository, join(root, 'node_modules/@zero/framework'), 'dir');
   for (const dependency of ['react', 'react-dom']) await symlink(join(repository, 'node_modules', dependency), join(root, 'node_modules', dependency), 'dir');
@@ -20,7 +28,7 @@ async function fixture(root: string): Promise<string> {
   await Bun.write(join(root, 'zero.config.ts'), [
     'import { defineZeroConfig } from "@zero/framework/server";',
     'export const customNamedExport = "retained";',
-    'export default defineZeroConfig({db:{mode:"ephemeral"},tables:{},auth:false,email:false,migrate:false,observability:false,serverMiddlewareDir:false,serverEndpointsDir:false,serverRoutesDir:false,serverResourcesDir:false});',
+    `export default defineZeroConfig({db:{mode:"ephemeral"},tables:{},auth:${avatars ? '{bootstrap:"public",userProfile:{avatars:{enabled:true,outputSize:64}}}' : 'false'},email:false,ai:false,vector:false,kv:false,pdf:false,workflows:false,storageDir:"./synthetic-avatar-storage",migrate:false,observability:false,serverMiddlewareDir:false,serverEndpointsDir:false,serverRoutesDir:false,serverResourcesDir:false});`,
   ].join('\n'));
   await Bun.write(join(root, 'server/plugins/reader.ts'), [
     'import * as React from "react";',
@@ -49,7 +57,7 @@ async function fixture(root: string): Promise<string> {
 }
 
 async function running<T>(command: readonly string[], cwd: string, verify: (url: string) => Promise<T>): Promise<T> {
-  const child = Bun.spawn([...command], { cwd, env: { ...process.env, NODE_ENV: 'production' }, stdout: 'pipe', stderr: 'pipe' });
+  const child = Bun.spawn([...command], { cwd, env: { PATH: Bun.env.PATH ?? '', TMPDIR: Bun.env.TMPDIR, NODE_ENV: 'production' }, stdout: 'pipe', stderr: 'pipe' });
   const stdout = new Response(child.stdout).text(); const stderr = new Response(child.stderr).text();
   try {
     const started = Date.now();
@@ -97,6 +105,7 @@ describe('normal declared app deployment', () => {
       try {
         const configPath = await fixture(source);
         const result = await buildZeroApp({ configPath, compile });
+        await verifyMacCompiledSignature(result.serverPath, compile);
         expect(result.pluginCount).toBe(1); expect(result.publicAssetCount).toBeGreaterThanOrEqual(4);
         if (!compile) await running([process.execPath, result.serverPath], source, async (url) => {
           // A compiled plugin must not switch dispatchers merely because the
@@ -105,6 +114,9 @@ describe('normal declared app deployment', () => {
           expect(await response.text()).toContain('data-hook-state="hooks-rendered"');
         });
         await cp(dirname(result.serverPath), deployment, { recursive: true });
+        // Disabled auth/avatars do not load the optional native processor.
+        // The payload is required only for real avatar decoding.
+        await rm(join(deployment, 'zero-native'), { recursive: true, force: true });
         // Deployment receives only build output; source remains elsewhere and is
         // renamed so any accidental absolute runtime source access also fails.
         const movedSource = join(root, 'source-unavailable');
@@ -126,6 +138,7 @@ describe('normal declared app deployment', () => {
           expect((await fetch(`${url}/_build/attachment.txt`)).status).toBe(404);
         });
         expect(await Bun.file(join(deployment, 'plugin-stopped.txt')).text()).toBe('1');
+        await verifyMacCompiledSignature(entry, compile);
         if (compile) {
           // A second clean process/cwd exercises cold embedded-file startup,
           // rather than accepting a single warm executable launch.
@@ -141,6 +154,52 @@ describe('normal declared app deployment', () => {
       } finally {
         if (verified) await rm(root, { recursive: true, force: true });
         else console.info('Failed synthetic deployment retained for diagnostics', root);
+      }
+    }, 180_000);
+  }
+  for (const compile of [false, true]) {
+    test(`${compile ? 'compiled executable' : 'server bundle'} retains real enabled avatar decoding after relocation`, async () => {
+      const root = await scratch(), source = join(root, 'source'), deployment = join(root, 'deployment');
+      let verified = false;
+      try {
+        const configPath = await fixture(source, true);
+        const result = await buildZeroApp({ configPath, compile });
+        await verifyMacCompiledSignature(result.serverPath, compile);
+        await cp(dirname(result.serverPath), deployment, { recursive: true });
+        await (await import('node:fs/promises')).rename(source, join(root, 'source-unavailable'));
+        expect(await Bun.file(join(deployment, 'node_modules/package.json')).exists()).toBe(false);
+        const entry = join(deployment, compile ? 'server' : 'server.js');
+        await running(compile ? [entry] : [process.execPath, '--no-env-file', entry], deployment, async url => {
+          const register = await fetch(`${url}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'compiled-avatar', email: 'compiled-avatar@example.test', password: 'password123', firstName: 'Avatar' }) });
+          expect(register.status).toBe(200);
+          const session = await register.json() as { accessToken: string };
+          const headers = { Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' };
+          const before = await fetch(`${url}/auth/profile/avatar`, { headers }).then(response => response.json()) as { revision: number; capabilities: { state: string } };
+          expect(before.capabilities.state).toBe('ready');
+          const allocated = await fetch(`${url}/auth/profile/avatar/stages`, { method: 'POST', headers, body: JSON.stringify({ expectedRevision: before.revision }) });
+          expect(allocated.status).toBe(200);
+          const stage = await allocated.json() as { id: string; receipt: string; upload: { token: string } };
+          const png = await sharp({ create: { width: 80, height: 70, channels: 3, background: '#223355' } }).png().toBuffer();
+          const uploaded = await fetch(`${url}/storage/upload-grants/${encodeURIComponent(stage.upload.token)}`, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: Uint8Array.from(png) });
+          expect(uploaded.status).toBe(201);
+          const finalized = await fetch(`${url}/auth/profile/avatar/stages/${stage.id}/finalize`, { method: 'POST', headers, body: JSON.stringify({ receipt: stage.receipt }) });
+          expect(finalized.status).toBe(200);
+          const accepted = await finalized.json() as { revision: number; asset: { deliveryPath: string; width: number; height: number; mimeType: string } };
+          expect(accepted).toMatchObject({ revision: before.revision + 1, asset: { width: 64, height: 64, mimeType: 'image/webp' } });
+          const delivered = await fetch(new URL(accepted.asset.deliveryPath, url), { headers });
+          expect(delivered.status).toBe(200);
+          expect(delivered.headers.get('cache-control')).toContain('no-store');
+          expect(delivered.headers.get('content-type')).toBe('image/webp');
+          const metadata = await sharp(new Uint8Array(await delivered.arrayBuffer())).metadata();
+          expect(metadata).toMatchObject({ format: 'webp', width: 64, height: 64 });
+          expect((await fetch(`${url}/_build/zero-native/LICENSE-sharp`)).status).toBe(404);
+        });
+        await verifyMacCompiledSignature(entry, compile);
+        verified = true;
+      } finally {
+        if (verified) await rm(root, { recursive: true, force: true });
+        else console.info('Failed synthetic avatar deployment retained for diagnostics', root);
       }
     }, 180_000);
   }

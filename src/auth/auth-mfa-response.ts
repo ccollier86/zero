@@ -113,7 +113,15 @@ export async function buildSessionCompletionResponse(params: {
     params.mfaVerifiedAt ?? null,
     params.expectedAuthGeneration,
   );
-  const user = toAuthUserResponse(params.user);
+  return mapAuthSessionCompletion(params.user, completion);
+}
+
+/** Reuse the auth-flow response mapping after a restricted profile continuation completes. */
+export function mapAuthSessionCompletion(userRecord: UserRecord, completion: import('./auth-tenant-session-types').AuthTenantSessionCompletion) {
+  const user = toAuthUserResponse(userRecord);
+  if (completion.kind === 'profile_completion_required') {
+    return { user, profileCompletionRequired: true as const, profileCompletion: completion.profileCompletion };
+  }
   if (completion.kind === 'session') {
     return {
       user,

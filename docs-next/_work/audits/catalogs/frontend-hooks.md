@@ -191,4 +191,20 @@ this source catalog or expanded to all historical hooks.
 
 ## Reconciliation And Review
 
+## Adaptive Profile Working-Source Hooks
+
+New source contracts, separate from the historical pinned count:
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `useUserProfile` | `@zero/framework`, `@zero/framework/react` | [Profile hook](../../../../src/frontend/client/user-profile-hooks.ts) | `frontend/guardian/profile-settings.md` |
+| `useUserContacts` | `@zero/framework`, `@zero/framework/react` | [Contact hook](../../../../src/frontend/client/user-contact-hooks.ts) | `frontend/guardian/profile-settings.md` |
+| `useUserAvatar` | `@zero/framework`, `@zero/framework/react` | [Avatar hook](../../../../src/frontend/client/user-avatar-hooks.ts) | `frontend/guardian/profile-settings.md` |
+| `useGuardianPresence` | `@zero/framework`, `@zero/framework/react` | [Presence hooks](../../../../src/frontend/client/guardian-presence-hooks.tsx) | `frontend/guardian/profile-settings.md` |
+| `useAvatarPresence` | `@zero/framework`, `@zero/framework/react` | [Presence hooks](../../../../src/frontend/client/guardian-presence-hooks.tsx) | `frontend/guardian/profile-settings.md` |
+| `useFormSave` | `@zero/framework`, `@zero/framework/react` | [Save hook](../../../../src/hooks/use-form-save.ts) | `frontend/forms/save-and-leave.md` |
+| `useNavigationGuard` | `@zero/framework`, `@zero/framework/react` | [Router guard](../../../../src/frontend/client/router-context.tsx) | `frontend/forms/save-and-leave.md` |
+
+## Reconciliation And Review
+
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

@@ -18,5 +18,7 @@ export type {
   OpenModalOptions,
   OpenConfirmOptions,
   ModalStoreState,
+  ModalCloseContext,
+  ModalCloseOptions,
 } from './modal.types';
 export { MODAL_SIZE_CLASSES } from './modal.types';

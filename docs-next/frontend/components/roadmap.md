@@ -36,17 +36,24 @@ ideas/plans, not newly implemented component exports:
   existing editor rather than a homemade highlighting primitive.
 - [ ] A richer AI prompt/chat interface that reuses the existing gateway, typed
   tools, streaming presentation, storage and tenant authority.
-- [ ] Public website/content polish and a Markdown-first documentation plugin.
+- [x] An optional [Markdown-first documentation plugin](../../plugins/docs/index.md)
+  provides the reader, navigation and search. It retains its separately versioned
+  preview contract; installing it does not publish a documentation website.
+- [ ] Further public website/content polish and permission-aware document editing
+  with an actual accepted writer, not a client-only editing surface.
 - [ ] Full blogging/calendar/file-browser experiences where real app requirements
   justify a reusable plugin rather than app-specific screens.
 - [ ] Additional compact application/organization administration blocks and
   optional in-table mini-graphs with accessible exact data.
-- [ ] Connect first-class editable profiles, avatar staging/cropping, verified
+- [x] Connect first-class editable profiles, avatar staging/cropping, verified
   contacts, regional preferences and required-completion policy to the adaptive
-  user-settings experience, with safe post-bootstrap feature provisioning.
-- [ ] First-class Guardian presence with multi-device leases, inactivity and
-  admitted Reactive DB/Fabric projections. The working-source
-  [avatar group](./avatar-group.md) supplies opt-in visual decoration, not this
+  [user-settings experience](../guardian/profile-settings.md), with fixed
+  post-bootstrap feature provisioning and explicit readiness.
+- [x] First-class [Guardian presence](../../backend/guardian/presence.md) with
+  multi-device leases, inactivity and admitted Reactive DB/Fabric projections.
+  Its supported topology has one active presence owner per SYSTEM database;
+  distributed multi-owner operation remains future work. The
+  [avatar group](./avatar-group.md) supplies opt-in visual decoration, not the
   service; [settings matrix](./settings-matrix.md) and
   [integration list](./integration-settings-list.md) supply controlled settings
   compositions without inventing persistence or provider management.

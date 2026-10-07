@@ -204,7 +204,9 @@ export function createManagedAppDatabasePlanes({
                     ? {
                         tenantDatabaseEligibility: createTenantDatabaseEligibility(
                           systemRuntime.db,
-                          tenantResourceTopology.eligibleTenantKinds,
+                          config.auth !== false && config.auth.presence?.enabled === true
+                            ? [...new Set([...tenantResourceTopology.eligibleTenantKinds, 'organization' as const, 'administration' as const])]
+                            : tenantResourceTopology.eligibleTenantKinds,
                         ),
                       }
                     : {}),

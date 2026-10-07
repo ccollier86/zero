@@ -2,10 +2,12 @@
 
 [Optional plugins](./index.md)
 
-The 2.5.0 source/local framework release introduces the separately installed
-`@zero/plugin-docs` 0.1.0 package. It provides a public, read-only docs section
+The current separately installed `@zero/plugin-docs` 0.1.1 preview requires the
+2.6.0 source/local framework release or newer within major 2. It provides a public, read-only docs section
 from a Markdown folder. Registry publication/release qualification is separate
 from implementation; do not assume a 2.4.x package has this build seam.
+The earlier 2.5.0/0.1.0 archive pair remains historical qualification evidence,
+not the compatibility declaration for the current preview.
 
 ## Source And Local Archive Installation
 
@@ -17,21 +19,23 @@ channel, build its archive from the selected Zero checkout:
 
 ```sh
 cd /path/to/zero/packages/docs
-bun pm pack --ignore-scripts --filename /path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+bun pm pack --ignore-scripts --filename /path/to/artifacts/zero-plugin-docs-0.1.1.tgz
 ```
 
 Then, from the consuming application's root:
 
 ```sh
-bun add file:/path/to/artifacts/zero-plugin-docs-0.1.0.tgz
+bun add file:/path/to/artifacts/zero-plugin-docs-0.1.1.tgz
 ```
 
-Use framework 2.5.0 or newer within major 2, React/React DOM 19.2 or newer within
+Use framework 2.6.0 or newer within major 2, React/React DOM 19.2 or newer within
 major 19, and Bun 1.3.14+. If the framework is itself an
 unpublished saved archive, keep the root `@zero/framework` dependency and root
 override pointing to that same archive so Bun resolves the plugin's framework
 peer to the installed package. The normal updater preserves that override
 relationship. Do not patch the plugin's imports or its installed framework copy.
+The reader statically imports shared `Kbd`/`KbdGroup` controls, so `search: false`
+does not make the current preview work with framework 2.5.x.
 See [upgrading](../upgrading-2.2.md#25-documentation-and-codeblock-update) and
 [package qualification](../../docs-next/_work/audits/docs-plugin-qualification.md).
 

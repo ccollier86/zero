@@ -1,5 +1,6 @@
 import type { TokenPair } from './types';
 import type { TenantKind } from './tenancy/tenancy-types';
+import type { ProfileCompletionRequired } from './auth-user-profile-completion-types';
 
 /** Public-safe tenant projection used by selection and switching UI. */
 export interface AuthTenantSummary {
@@ -52,7 +53,8 @@ export interface AuthTenantCreateInput {
 export type AuthTenantSessionCompletion =
   | BoundAuthSessionCompletion
   | TenantSelectionCompletion
-  | TenantOnboardingCompletion;
+  | TenantOnboardingCompletion
+  | ProfileCompletionRequired;
 
 export interface AuthTenantListResult {
   activeTenantId: string;

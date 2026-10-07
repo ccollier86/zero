@@ -22,6 +22,8 @@ import type { AppIdentityProjectionRuntime } from './identity-projection-runtime
 import { assertApplicationGuardianReferenceStorage } from './identity-projection-runtime';
 import { resolvePlatformClientTables } from './app-platform-tables';
 import type { ResolvedConfig } from './types';
+import { ZERO_GUARDIAN_PRESENCE } from '../../presence/presence-service';
+import { createPresenceSyncTransport } from '../../presence/presence-sync-transport';
 
 interface MountAppSyncEngineInput {
   readonly app: Elysia;
@@ -72,7 +74,7 @@ export function mountAppSyncEngine({
       ? {
           systemDataPlane: {
             db: systemDB,
-            tables: resolvePlatformClientTables(config.workflows !== false),
+            tables: resolvePlatformClientTables(config.workflows !== false, authConfig.presence.enabled),
           },
         }
       : {}),
@@ -96,6 +98,7 @@ export function mountAppSyncEngine({
           tenancyMode: authConfig.tenancy.mode,
         })
       : config.ephemeralPolicy,
+    presenceTransport: config.auth !== false ? createPresenceSyncTransport(() => runtime.get(ZERO_GUARDIAN_PRESENCE), authConfig.tenancy.mode) : undefined,
     snapshotTables: config.snapshotTables,
     tenantDataPlane,
     auth: config.auth !== false

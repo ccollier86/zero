@@ -33,6 +33,8 @@ export interface DataTableStateOptions {
   pageSize?: number;
   /** Opaque authorization/source partition; never an untrusted tenant selector. */
   boundaryKey?: string;
+  /** Opaque cursor batches cannot preserve an offset anchor when their size changes. */
+  paginationMode?: 'offset' | 'cursor';
 }
 
 /** Reset page-local selection whenever the query or page changes. */
@@ -40,6 +42,7 @@ export function applyDataTableStateChange<Key extends keyof DataTableState>(
   state: DataTableState,
   key: Key,
   update: Updater<DataTableState[Key]>,
+  paginationMode: 'offset' | 'cursor' = 'offset',
 ): DataTableState {
   const value = typeof update === 'function'
     ? (update as (previous: DataTableState[Key]) => DataTableState[Key])(state[key])
@@ -52,7 +55,10 @@ export function applyDataTableStateChange<Key extends keyof DataTableState>(
   if (key === 'pagination') {
     const pagination = value as PaginationState;
     next.pagination = {
-      pageIndex: pagination.pageSize !== state.pagination.pageSize ? 0 : Math.max(0, pagination.pageIndex),
+      // TanStack setPageSize already computes floor(old first-row offset / new size).
+      // Preserve that index; only opaque cursor histories need a fresh boundary.
+      pageIndex: paginationMode === 'cursor' && pagination.pageSize !== state.pagination.pageSize
+        ? 0 : Math.max(0, pagination.pageIndex),
       pageSize: Math.max(1, pagination.pageSize),
     };
     next.rowSelection = {};
@@ -71,21 +77,29 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
   const controlledPaginationKey = options.state?.pagination === undefined
     ? undefined : stableValueKey(options.state.pagination);
   const candidate = mergeProvidedFacets(local, options.state);
-  const criteria = queryCriteriaKey(candidate);
+  const criteria = queryCriteriaKey(candidate, options.paginationMode);
+  const paginationKey = stableValueKey(candidate.pagination);
+  const previousPagination = useRef(paginationKey);
+  const changedPagination = previousPagination.current !== paginationKey;
+  previousPagination.current = paginationKey;
   const previousCriteria = useRef(criteria);
   const changedCriteria = previousCriteria.current !== criteria;
   previousCriteria.current = criteria;
   const changedScope = scope.current !== options.boundaryKey;
   let base = local;
-  if (changedScope || changedCriteria) {
+  if (changedScope || changedCriteria || changedPagination) {
     scope.current = options.boundaryKey;
     blockedSelection.current = controlledSelectionKey;
-    blockedPagination.current = controlledPaginationKey;
-    base = { ...local, pagination: { ...local.pagination, pageIndex: 0 }, rowSelection: {} };
+    if (changedScope || changedCriteria) blockedPagination.current = controlledPaginationKey;
+    base = {
+      ...local,
+      pagination: { ...local.pagination, pageIndex: changedScope || changedCriteria ? 0 : local.pagination.pageIndex },
+      rowSelection: {},
+    };
     setLocal(base);
   }
   const state = mergeProvidedFacets(base, options.state);
-  if (changedScope || changedCriteria || (blockedSelection.current !== undefined
+  if (changedScope || changedCriteria || changedPagination || (blockedSelection.current !== undefined
     && blockedSelection.current === controlledSelectionKey)) {
     state.rowSelection = {};
   } else if (blockedSelection.current !== controlledSelectionKey) {
@@ -103,12 +117,18 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
   onChange.current = options.onStateChange;
   const notifiedScope = useRef(options.boundaryKey);
   const notifiedCriteria = useRef(criteria);
+  const notifiedPagination = useRef(paginationKey);
   useEffect(() => {
-    if (notifiedScope.current === options.boundaryKey && notifiedCriteria.current === criteria) return;
+    if (notifiedScope.current === options.boundaryKey
+      && notifiedCriteria.current === criteria
+      && notifiedPagination.current === paginationKey) return;
     notifiedScope.current = options.boundaryKey;
     notifiedCriteria.current = criteria;
+    notifiedPagination.current = paginationKey;
     onChange.current?.(latest.current);
-  }, [options.boundaryKey, criteria]);
+  }, [options.boundaryKey, criteria, paginationKey]);
+  const mode = useRef(options.paginationMode ?? 'offset');
+  mode.current = options.paginationMode ?? 'offset';
   const update = useCallback(<Key extends keyof DataTableState>(
     key: Key,
     value: Updater<DataTableState[Key]>,
@@ -118,9 +138,10 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
       blockedPagination.current = undefined;
       blockedSelection.current = undefined;
     }
-    const next = applyDataTableStateChange(latest.current, key, value);
+    const next = applyDataTableStateChange(latest.current, key, value, mode.current);
     latest.current = next;
-    notifiedCriteria.current = queryCriteriaKey(next);
+    notifiedCriteria.current = queryCriteriaKey(next, mode.current);
+    notifiedPagination.current = stableValueKey(next.pagination);
     setLocal(next);
     onChange.current?.(next);
   }, []);
@@ -128,15 +149,19 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
     blockedSelection.current = undefined;
     blockedPagination.current = undefined;
     latest.current = next;
-    notifiedCriteria.current = queryCriteriaKey(next);
+    notifiedCriteria.current = queryCriteriaKey(next, mode.current);
+    notifiedPagination.current = stableValueKey(next.pagination);
     setLocal(next);
     onChange.current?.(next);
   }, []);
   return { state, update, replace };
 }
 
-function queryCriteriaKey(state: DataTableState): string {
-  return stableValueKey([state.globalFilter, state.columnFilters, state.sorting, state.pagination.pageSize]);
+function queryCriteriaKey(state: DataTableState, mode: 'offset' | 'cursor' = 'offset'): string {
+  return stableValueKey([
+    state.globalFilter, state.columnFilters, state.sorting,
+    mode === 'cursor' ? state.pagination.pageSize : null,
+  ]);
 }
 
 /** Undefined partial facets are omitted controls, not replacements for defaults. */

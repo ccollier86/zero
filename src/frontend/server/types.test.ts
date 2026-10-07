@@ -479,6 +479,21 @@ describe('resolveConfig', () => {
     })).toThrow('account.emailVerificationPath must be a safe local path');
   });
 
+  test('adds configured contact and restricted profile completion pages only when enabled', () => {
+    const enabled = resolveConfig({ db: { mode: 'memory' }, tables,
+      auth: { userProfile: { contacts: { enabled: true, verificationPath: '/prove-contact' },
+        completion: { enabled: true } } } });
+    expect(enabled.publicPaths).toContain('/prove-contact');
+    expect(enabled.publicPaths).not.toContain('/verify-contact');
+    expect(enabled.publicPaths).toContain('/complete-profile');
+    const disabled = resolveConfig({ db: { mode: 'memory' }, tables, auth: true });
+    expect(disabled.publicPaths).not.toContain('/verify-contact');
+    expect(disabled.publicPaths).not.toContain('/complete-profile');
+    const explicit = resolveConfig({ db: { mode: 'memory' }, tables, publicPaths: ['/health'],
+      auth: { userProfile: { completion: { enabled: true } } } });
+    expect(explicit.publicPaths).toEqual(['/health']);
+  });
+
   test('normalizes and validates the authenticated post-login destination', () => {
     const config = resolveConfig({
       db: { mode: 'memory' },

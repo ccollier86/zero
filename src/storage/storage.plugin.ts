@@ -1161,6 +1161,16 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const svc = requireStorage();
         const verified = await verifyUploadGrantToken(params.token, requireSigningSecret());
         if (!verified) throw invalidStorageCapability();
+        const receiptFence = config.captureUploadGrantCommitFence?.(verified);
+        const commitFence = () => {
+          if (verified.expiresAt <= Date.now()) throw invalidStorageCapability();
+          const result: unknown = receiptFence?.();
+          if (result && (typeof result === 'object' || typeof result === 'function') && 'then' in result) {
+            void Promise.resolve(result).catch(() => {});
+            throw invalidStorageCapability();
+          }
+        };
+        commitFence();
         studioIngressPolicy?.assertCapabilityCurrent(
           verified.driveId,
           verified.generation,
@@ -1219,8 +1229,9 @@ export function createStoragePlugin(config: StoragePluginConfig) {
             allowedMimeTypes: verified.contentTypes,
           },
           undefined,
-          undefined,
+          async () => { commitFence(); },
           verified.generation,
+          commitFence,
         );
 
         set.status = 201;

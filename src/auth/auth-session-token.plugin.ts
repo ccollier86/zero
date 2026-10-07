@@ -3,6 +3,7 @@
 import { Elysia, t } from 'elysia';
 import {
   revokeAndClearPageSessionCookie,
+  resolvePageSessionCookie,
   syncPageSessionCookie,
 } from './page-session';
 import {
@@ -19,6 +20,8 @@ export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
       '/refresh',
       async ({ body, request, set }) => {
         const tokens = requireSessionTokenService(config);
+        // Capture legacy ownership while its exact refresh proof is still live.
+        await resolvePageSessionCookie(request, tokens);
         const result = await tokens.rotateRefreshToken(body.refreshToken);
         if (!result) {
           await revokeAndClearPageSessionCookie(set, request, tokens);
@@ -40,6 +43,7 @@ export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
       '/logout',
       async ({ body, request, set }) => {
         const tokens = requireSessionTokenService(config);
+        await resolvePageSessionCookie(request, tokens);
         if (body.refreshToken) {
           tokens.revokeRefreshTokenByRaw(
             body.refreshToken,

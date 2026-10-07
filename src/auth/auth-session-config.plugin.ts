@@ -97,6 +97,11 @@ export function createAuthSessionConfigPlugin(config: AuthSessionPluginConfig) {
           authConfig.account.requireEmailVerification && accountEmailReady,
       },
       mfa,
+      userProfile: (() => {
+        const profile = config.getUserProfileService?.()?.capabilities();
+        return profile ? { ...profile, contacts: config.getUserContactService?.()?.capabilities(),
+          avatars: config.getUserAvatarService?.()?.capabilities() ?? profile.avatars } : undefined;
+      })(),
       userProperties: Object.fromEntries(
         Object.entries(authConfig.userProperties).filter(
           ([, field]) => field.editableBy === 'user'

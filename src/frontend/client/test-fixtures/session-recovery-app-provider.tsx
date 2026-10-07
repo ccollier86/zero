@@ -21,12 +21,16 @@ export interface SessionRecoveryHarness {
     userId: string | null;
     hasRecoverableSession: boolean;
     isRestoring: boolean;
+    isLoading: boolean;
+    transitionPhase: string;
+    tenantId: string | null;
     authorizationStatus: string;
   };
   paints(): SessionRecoveryPaint[];
   login(username: string): Promise<void>;
   switchTenant(tenantId: string): Promise<void>;
   refreshAuthorization(): Promise<void>;
+  reconcileSession(): Promise<void>;
 }
 
 declare global {
@@ -53,6 +57,9 @@ window.__sessionRecoveryHarness = {
     userId: client.auth?.user?.userId ?? null,
     hasRecoverableSession: client.auth?.hasRecoverableSession ?? false,
     isRestoring: client.auth?.isRestoring ?? false,
+    isLoading: client.auth?.isLoading ?? false,
+    transitionPhase: client.auth?.sessionTransition.phase ?? 'idle',
+    tenantId: client.auth?.activeTenant?.tenantId ?? null,
     authorizationStatus: client.authorizationState.status,
   }),
   paints,
@@ -64,6 +71,9 @@ window.__sessionRecoveryHarness = {
   },
   async refreshAuthorization() {
     await client.refreshAuthorization();
+  },
+  async reconcileSession() {
+    try { await client.auth!.reconcileSession(); } catch { /* The test inspects the public retry state. */ }
   },
 };
 

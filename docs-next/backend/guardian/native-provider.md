@@ -133,6 +133,14 @@ role changes are resolved through the same live Guardian checks used by
 ordinary APIs. The native identity scopes openid/profile/email are not app
 RBAC permissions or a way to access another organization's Fabric database.
 
+The adaptive-profile source adds explicit `phone`, `profile:write` and
+`contacts:write` ceilings. Defaults remain openid/profile/email; register and
+request writer scopes deliberately. `profile:write` narrows own-profile/avatar
+and availability mutation; `contacts:write` narrows own-contact ceremonies.
+They are not role grants or a directory/global-account administration API.
+Read [profiles](./user-profiles.md), [contacts](./contacts.md) and
+[avatars](./avatars.md) for exact read/write limitations and private delivery.
+
 ## Admission And Rotation Bounds
 
 Native requests have bounded outstanding and rolling admissions across app,

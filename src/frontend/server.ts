@@ -1248,3 +1248,9 @@ export type {
   PlatformObservabilityRuntime,
   PlatformSink,
 } from '../observability';
+export type * from '../auth/auth-user-profile-types';
+export type * from '../auth/auth-presence-types';
+export type * from '../auth/auth-user-contact-types';
+export type * from '../auth/auth-user-avatar-types';
+export type * from '../auth/auth-user-profile-completion-types';
+export { guardianPresenceRealmContribution } from '../presence/presence-realm';

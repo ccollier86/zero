@@ -54,6 +54,7 @@ const STORAGE_SERVICE_INVENTORY: CompleteServiceMemberInventory<
   StorageService,
   ScopedStorageMembers,
   | 'createDriveRecord'
+  | 'getTransactionDomain'
   | 'updateDriveRecord'
   | 'deleteDriveRecord'
   | 'setDriveVisibilityRecord'

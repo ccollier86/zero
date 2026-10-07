@@ -100,11 +100,18 @@ attribute requests without affecting another app. A client must have:
   `-`;
 - a non-blank, already-trimmed display `name` shown on the consent page;
 - at least one unique supported redirect URI; and
-- a unique subset of `openid`, `profile`, and `email` that includes `openid`.
+- a unique subset of `openid`, `profile`, `email`, `phone`, `profile:write`,
+  and `contacts:write` that includes `openid`.
 
 If `scopes` is omitted, all three identity scopes are allowed. The SDK adds
 `openid` to its requested scopes automatically, but the server still requires
 the registered client to allow it.
+
+Phone access and the two own-account write scopes require explicit client
+registration and explicit requests. They do not widen Guardian permissions or
+enable a disabled profile/contact feature. See the current
+[native-provider guide](../../docs-next/backend/guardian/native-provider.md)
+and [adaptive profile settings](../../docs-next/frontend/guardian/profile-settings.md).
 
 `app.publicUrl` must be a canonical HTTPS origin with no path, query,
 fragment, or credentials. Local development may use `http://localhost`,
@@ -549,7 +556,8 @@ deployment diagnostics. With `app.publicUrl` set to
 Discovery advertises response type `code`, response mode `query`, grants
 `authorization_code` and `refresh_token`, public endpoint authentication
 method `none`, PKCE method `S256`, ES256 ID tokens, authorization response
-issuer parameters, and scopes `openid`, `profile`, and `email`. The current
+issuer parameters, and scopes `openid`, `profile`, `email`, `phone`,
+`profile:write`, and `contacts:write`. The current
 discovery document also advertises the `zero_tenant_sessions` extension at
 version `1`, including the list/switch endpoints and its `refresh_token` proof
 contract. A third-party client must validate every required advertised
@@ -636,9 +644,13 @@ Authorization header.
 
 ## Identity scopes and application permissions
 
-The current provider accepts only `openid`, `profile`, and `email`. This is
-intentional: these are identity claims, not an application authorization
-language. Do not invent OAuth scopes for application routes yet.
+The provider accepts `openid`, `profile`, `email`, `phone`, `profile:write`,
+and `contacts:write`. The default registered/requested identity scopes remain
+`openid`, `profile`, and `email`. Explicit write scopes are additional ceilings
+for the supported own-profile/avatar and contact ceremonies, not a replacement
+for live Guardian permissions or feature policy. `phone` governs the contact
+read surface; it does not add phone claims to the current UserInfo response.
+Do not invent OAuth scopes for application routes.
 
 After token validation, Zero supplies the normal user id, email, and role plus
 native attribution (`clientId`, `sessionKind: 'native'`, identity `scope`, and

@@ -13,7 +13,7 @@ modes: [browser, SSR, Guardian single, Guardian multi, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.5.0"
-  commit: "55ca1e6b649f5652831714ad93749918bd92a6bd"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
   date: "2026-10-06"
   evidence_level: source-observed
@@ -75,10 +75,23 @@ definite rejection settles a clean signed-out state. Never edit injected
 globals or weaken identity/role/tenant/revision comparison to assert a match.
 
 Credential-lock admission and each recovery network/body read have a bounded
-15-second deadline. An initial restore and one automatic repair may each use
+15-second deadline. Ordinary refresh and externally replaced browser sessions
+use the same bounded transport: a stalled refresh must not hold the credential
+lock indefinitely and prevent Retry or Sign out from progressing. Replacement
+retires the old in-memory user and tenant before attempting the new proof. A
+temporary replacement failure clears loading, retains the new recoverable proof
+and exposes recovery; it does not restore the old identity or silently delete
+the new session. An initial restore and one automatic repair may each use
 their own deadline; the UI does not promise a 15-second whole-page timeout.
 Sign out retires local authority even if the remote server is unreachable, but
 does not claim that an unreachable server acknowledged HttpOnly-cookie cleanup.
+
+Guardian's page cookie is application-owned and stable across a restart of the
+same SYSTEM database. The validated compatibility path for older host-wide
+cookies is described in [Guardian sessions](../../backend/guardian/sessions.md#page-cookie-behavior).
+Cookie namespace isolation is not a diagnosis of every deployed recovery
+incident: inspect whether proof was rejected, a request failed temporarily, or
+an SSR payload remains stale before attributing the cause.
 
 This page-session repair is separate from `reconcileAuthSession()`, which
 retries the local data barrier after credentials already committed. Do not

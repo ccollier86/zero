@@ -44,6 +44,7 @@ export interface AuthWebSessionTokenServiceOptions {
   readonly emitCode: TokenServiceConfig['emitCode'];
   getUserStore(): UserStore | null;
   assertCurrentProfile(): void;
+  assertFullSessionAdmission?(userId: string): void;
   signAccessToken(
     user: Pick<UserRecord, 'userId' | 'email' | 'role'>,
     expectedAuthGeneration: number,
@@ -210,12 +211,17 @@ export class AuthWebSessionTokenService {
         generation: session.generation,
       },
       expiresAt,
-      () => this.requireUserStore().rotateRefreshTokenAtomically(currentRecord, {
-        tokenId: crypto.randomUUID(),
-        tokenHash: hashToken(refreshToken),
-        expiresAt,
-        createdAt,
-      }, authGeneration, createdAt),
+      () => {
+        this.options.assertFullSessionAdmission?.(user.userId);
+        const value = this.requireUserStore().rotateRefreshTokenAtomically(currentRecord, {
+          tokenId: crypto.randomUUID(),
+          tokenHash: hashToken(refreshToken),
+          expiresAt,
+          createdAt,
+        }, authGeneration, createdAt);
+        this.options.assertFullSessionAdmission?.(user.userId);
+        return value;
+      },
     );
     if (!rotated || rotated.value !== 'rotated') return null;
     return { accessToken, refreshToken };
@@ -302,6 +308,7 @@ export class AuthWebSessionTokenService {
       replacement.sessionId,
       authGeneration,
       () => {
+        this.options.assertFullSessionAdmission?.(user.userId);
         const admitted = invokeSynchronousAuthCallback(admit, {
           component: 'token-service',
           invariant: 'web-session-replacement-admission-async',
@@ -327,6 +334,7 @@ export class AuthWebSessionTokenService {
             },
           );
         }
+        this.options.assertFullSessionAdmission?.(user.userId);
         return true;
       },
       createdAt,
@@ -404,6 +412,7 @@ export class AuthWebSessionTokenService {
     this.options.assertCurrentProfile();
     const userStore = this.requireUserStore();
     assertUserCanReceiveTokens(capturedUser);
+    this.options.assertFullSessionAdmission?.(capturedUser.userId);
 
     const authGeneration = expectedAuthGeneration
       ?? userStore.getAuthGeneration(capturedUser.userId);
@@ -425,23 +434,22 @@ export class AuthWebSessionTokenService {
     const tokenId = crypto.randomUUID();
     const stored = this.options.authSessionService.persistPreparedWebSession(
       session,
-      () => this.requireUserStore().storeRefreshTokenIfCurrent(
-        tokenId,
-        capturedUser,
-        refreshHash,
-        expiresAt,
-        createdAt,
-        authGeneration,
-        session.sessionId,
-      ),
-      admit
-        ? () => invokeSynchronousAuthCallback(admit, {
+      () => {
+        const accepted = this.requireUserStore().storeRefreshTokenIfCurrent(
+          tokenId, capturedUser, refreshHash, expiresAt, createdAt, authGeneration, session.sessionId,
+        );
+        this.options.assertFullSessionAdmission?.(capturedUser.userId);
+        return accepted;
+      },
+      () => {
+        this.options.assertFullSessionAdmission?.(capturedUser.userId);
+        return admit ? invokeSynchronousAuthCallback(admit, {
           component: 'token-service',
           invariant: 'web-session-issuance-admission-async',
           message: '[auth] Web session issuance admission must be synchronous.',
           emitCode: this.options.emitCode,
-        })
-        : undefined,
+        }) : true;
+      },
     );
     if (!stored) return null;
     return { accessToken, refreshToken };

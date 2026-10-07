@@ -30,8 +30,9 @@ export async function completeEmailVerification(
       services.registrationIntents.clear(inspection.user.userId);
     },
     Date.now(),
-    verifiedDomainConfig?.enabled
-      ? (verified, provedAt) => {
+    (verified, provedAt) => {
+          config.getUserContactService?.()?.recordEmailProof(verified.userId, provedAt, 'possession');
+          if (!verifiedDomainConfig?.enabled) return;
           const applicationId = services.store.getConfig('auth.application.id');
           if (!applicationId) return;
           services.store.recordEmailLinkMailboxProof({
@@ -42,8 +43,7 @@ export async function completeEmailVerification(
             provedAt,
             expiresAt: provedAt + verifiedDomainConfig.mailboxProofMaxAgeMs,
           });
-        }
-      : undefined,
+        },
     {
       actor: {
         userId: inspection.user.userId,

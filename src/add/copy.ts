@@ -236,6 +236,8 @@ function toPublicFrameworkImport(sourcePath: string, sourceRoot: string): string
   if (rel.startsWith('schema/')) return '@zero/framework/schema';
   if (rel === 'sync/identity.ts') return '@zero/framework/sync/identity';
   if (rel === 'sync/types.ts') return '@zero/framework/sync/types';
+  if (rel === 'frontend/client/query-params.ts') return '@zero/framework/react/query-params';
+  if (rel === 'frontend/client/authorization-scope-hooks.ts') return '@zero/framework/react/authorization-scope';
   if (rel.startsWith('frontend/client/')) return '@zero/framework/react';
   if (rel === 'observability/codes.ts') return '@zero/framework/observability/codes';
   if (rel.startsWith('storage/storage-hooks.') || rel.startsWith('storage/upload-dropzone-hooks.')) {

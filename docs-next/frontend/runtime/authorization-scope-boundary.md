@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-runtime
 feature: authorization-scope-boundary
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 candidate working source; release qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -58,6 +58,27 @@ a required context rejects clearly; SSR has an appropriate boundary fallback.
 Do not parse keys into credentials or treat ready as isAuthenticated. A stable
 anonymous scope must reach public login/bootstrap pages; an authenticated scope
 with stale unvalidated data must remain fenced.
+
+## Focused Boundary Export
+
+`@zero/framework/react/authorization-scope` exposes the same hook and callback
+comparison plus the lower-level browser-safe helpers used by copied Zero forms
+and inline editors. It exports `readAuthorizationScopeBoundaryKey`,
+`readAuthorizationScopeIdentityKey`, `isAuthorizationDataReady`,
+`isAuthorizationScopeReady`, `isAuthorizationScopeStable`,
+`AuthorizationScopeBoundaryFence` and the `AuthorizationScopeBoundary` type.
+The broad React facade need not export every lower-level helper.
+
+The key readers take the actual current AuthClient (or explicit `null` for an
+auth-disabled context); the complete-key reader also accepts the SDK's local
+data-validation revision. They return opaque partition keys, never credentials
+or permission grants. Do not supply a fabricated identity or treat a missing
+client as permission to read protected data. A boundary fence increments its
+local generation on a changed key so a retained A→B→A callback is not revived.
+Normal application composition should prefer the hook and existing SDK controls.
+
+[Source copy](../../cli/tooling/source-copy.md) preserves these checks through
+this public module instead of copying framework-private client state.
 
 ## Retained Callback Pattern
 

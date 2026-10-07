@@ -54,6 +54,11 @@ export function createManagedEphemeralTopicPolicy(
           'The authenticated session has no valid authorization scope',
         );
       }
+      // Managed activity is write-only through the separately admitted Sync
+      // adapter. No custom policy can expose its private connection leases.
+      if (context.topic === 'guardian:presence' || context.topic.startsWith('_guardian-presence:')) {
+        return deny('EPHEMERAL_FORBIDDEN', 'Managed presence reports require the presence service');
+      }
 
       if (context.topic.startsWith(PRESENCE_PREFIX)) {
         return authorizeRoomTopic('presence', PRESENCE_PREFIX, context, options, scope);

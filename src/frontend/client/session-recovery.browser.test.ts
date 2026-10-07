@@ -225,6 +225,34 @@ describe('hydrated session recovery with real HTTP and page cookies', () => {
       } finally { await harness.close(); }
     }, TEST_TIMEOUT_MS);
   }
+  browserTest('a failed persisted-family replacement masks old loader data and offers Retry instead of permanent Restoring', async () => {
+    const harness = await openHarness();
+    try {
+      await expectProtected(harness.page, 'user-a', 'application', 'revision-1');
+      const documentsBeforeReplacement = harness.state.documents;
+      harness.state.sessionUser = 'user-b'; harness.state.credential = 'synthetic-replacement-b'; harness.state.refreshUnavailable = true;
+      await harness.page.evaluate(({ keys, credential }) => {
+        const previous = JSON.parse(window.localStorage.getItem(keys.credential)!);
+        const revision = previous.revision + 1;
+        window.localStorage.setItem(keys.credential, JSON.stringify({ version: 1, revision,
+          refreshToken: credential, scopeId: 'synthetic-family-b', updatedAt: Date.now() }));
+        // A same-origin peer's sanitized scope receipt is the actual supported
+        // replacement trigger; reconcileSession only retries an existing barrier.
+        window.dispatchEvent(new StorageEvent('storage', { key: keys.signal,
+          newValue: JSON.stringify({ version: 1, namespace: keys.namespace, sourceId: 'synthetic-other-tab',
+            revision, scopeId: 'synthetic-family-b', kind: 'scope' }) }));
+      }, { keys: getBrowserAuthStorageKeys(harness.page.url()), credential: harness.state.credential });
+      const retry = harness.page.getByRole('button', { name: 'Retry session', exact: true }); await retry.waitFor({ timeout: 5000 });
+      expect(await retry.isEnabled()).toBe(true);
+      expect(await snapshot(harness.page)).toMatchObject({ userId: null, tenantId: null, hasRecoverableSession: true, isLoading: false });
+      expect(await harness.page.getByTestId('protected-loader').count()).toBe(0);
+      expect(harness.state.logouts).toBe(0); expect(harness.state.documents).toBe(documentsBeforeReplacement);
+      const failedRefreshes = harness.state.refreshes; harness.state.refreshUnavailable = false; await retry.click();
+      await expectProtected(harness.page, 'user-b', 'application', 'revision-1');
+      expect(harness.state.refreshes).toBeGreaterThan(failedRefreshes); expect(harness.state.logouts).toBe(0);
+      await expectNoStalePaints(harness.page);
+    } finally { await harness.close(); }
+  }, TEST_TIMEOUT_MS);
 });
 
 interface AuthorityState {

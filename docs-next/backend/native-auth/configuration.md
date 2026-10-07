@@ -53,7 +53,7 @@ Public imports come from `@zero/framework/native`.
 | callbacks | Required NativeCallbackAdapter. | prepare arms a concrete callback session before browser open. |
 | fetch | NativeFetch; global fetch. | Trusted/test network adapter, not a UI-selected provider. |
 | crypto | NativeCryptoAdapter; WebCrypto. | Secure entropy and SHA-256. |
-| scopes | Identity-scope array; profile+email, openid always added. | Only openid/profile/email, not app permission scopes. |
+| scopes | Identity-scope array; profile+email, openid always added. | Optional phone/profile:write/contacts:write must be explicitly requested and allowed by server client policy; never app RBAC scopes. |
 | storageNamespace | Optional string; issuer/client-derived. | Explicit value trimmed, 1–200, no controls; avoid colliding unrelated clients. |
 | authorizationTimeoutMs | Positive finite number; 900000. | Browser/callback ceremony deadline. |
 | networkTimeoutMs | Positive finite number; 15000. | Provider/network operation deadline. |

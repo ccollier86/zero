@@ -46,6 +46,8 @@ import type {
   DatabaseExecutorValue,
 } from './database-executor';
 import type { DatabaseObservability } from './database-observability';
+import { validateDatabasePresenceProjectionPayload, validateDatabasePresenceProjectionReceipt } from './database-presence-projection-protocol';
+import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
 import {
   validateDatabaseOperation,
   type DatabaseCommitResult,
@@ -107,6 +109,32 @@ interface DatabaseCoordinatorOperationRuntimeOptions {
 
 export class DatabaseCoordinatorOperationRuntime {
   constructor(private readonly options: DatabaseCoordinatorOperationRuntimeOptions) {}
+
+  /** Framework-private publication shares the existing FIFO and final authority boundary. */
+  executePresenceProjection(entry: DatabaseCoordinatorEntry, publication: PresencePublication,
+    execution: DatabaseExecutionOptions = {}, commitAuthority: DatabaseCommitAuthority | null = null): Promise<PresenceProjectionReceipt> {
+    this.options.assertStarted();
+    const payload = validateDatabasePresenceProjectionPayload({ databaseRef: entry.databaseRef, publication });
+    if (this.options.canAwaitOpening(entry)) return this.awaitReplacementOpening(entry, execution, 'mutation',
+      () => this.executePresenceProjection(entry, publication, execution, commitAuthority));
+    this.options.assertUsableEntry(entry);
+    return this.enqueueLane(entry, 'mutation', execution, () => this.withWriterAuthority(entry, execution, commitAuthority, async (writer, authorityRevision) => {
+      const startedAt = this.options.now();
+      try {
+        const raw = await writer.execute({ operation: DATABASE_ACTOR_OPERATIONS.presenceProjection, kind: 'write',
+          payload: { ...payload, ...(authorityRevision === undefined ? {} : { authorityRevision }) } as unknown as DatabaseExecutorValue },
+          { timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs) });
+        return validateDatabasePresenceProjectionReceipt(raw, payload.publication);
+      } catch (caught) {
+        const error = safeCoordinatorError(caught);
+        this.options.emit({ type: error.outcome === 'unknown' ? 'operation-outcome-unknown' : 'operation-failed',
+          databaseRef: entry.databaseRef, placement: entry.placement.mode, role: 'writer', slot: entry.slot,
+          generation: writer.diagnostics().generation, operation: 'mutation', durationMs: elapsed(startedAt, this.options.now()), error });
+        if (error.outcome === 'unknown' || this.options.isTerminalFailure(writer, error)) await this.options.retire(entry, writer, error);
+        throw error;
+      }
+    }));
+  }
 
   execute(
     entry: DatabaseCoordinatorEntry,
@@ -522,6 +550,17 @@ export class DatabaseCoordinatorOperationRuntime {
       );
     }
 
+    return this.withWriterAuthority(entry, execution, commitAuthority, (writer, authorityRevision) => this.executeOnActor(
+      entry, writer, operation, execution, logicalReceiptFingerprint, authorityRevision));
+  }
+
+  /** Share exactly one final-edge authority implementation for public and private writer operations. */
+  private async withWriterAuthority<T>(entry: DatabaseCoordinatorEntry, execution: DatabaseExecutionOptions,
+    commitAuthority: DatabaseCommitAuthority | null, run: (writer: DatabaseExecutor, authorityRevision?: number) => Promise<T>): Promise<T> {
+    if (!commitAuthority) {
+      if (this.options.requireCommitAuthority) throw authorityUnavailable();
+      return run(this.options.requireWriter(entry));
+    }
     const authorityCoordinator = this.options.authorityCommitCoordinator;
     if (!authorityCoordinator) {
       throw new DatabaseError(
@@ -546,14 +585,7 @@ export class DatabaseCoordinatorOperationRuntime {
         entry.databaseRef,
       );
       try {
-        return await this.executeOnActor(
-          entry,
-          writer,
-          operation,
-          execution,
-          logicalReceiptFingerprint,
-          authorityRevision,
-        );
+        return await run(writer, authorityRevision);
       } catch (error) {
         const normalized = safeCoordinatorError(error);
         if (normalized.outcome === 'unknown'

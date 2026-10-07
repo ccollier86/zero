@@ -22,6 +22,16 @@ import {
 } from './auth-runtime-profile-reconciliation';
 import type { AuthRuntimeServiceGraph } from './auth-runtime-service-graph';
 import { defineAuthTables } from './auth-schema';
+import { AuthUserProfileService } from './auth-user-profile-service';
+import { ZERO_GUARDIAN_AVATARS } from './auth-user-avatar-service';
+import { inspectUserProfileSchema } from './auth-user-profile-schema';
+import { OBS_CODES } from '../observability/codes';
+import { normalizeAuthUserProfile } from './auth-config-user-profile';
+import { reconcileUserProfilePolicy } from './auth-user-profile-policy';
+import { reconcileProfileCompletionPolicy } from './auth-user-profile-completion-policy';
+import { AuthUserContactService } from './auth-user-contact-service';
+import { reconcileUserContactSchema } from './auth-user-contact-schema';
+import { AuthUserProfileCompletionService } from './auth-user-profile-completion-service';
 import { AuthSessionContinuationStore } from './auth-session-continuation-store';
 import { AuthSessionService } from './auth-session-service';
 import { AuthSessionStore } from './auth-session-store';
@@ -80,7 +90,9 @@ export async function bootstrapAuthRuntimeServices(
   } = input;
 
   config.db.exec('PRAGMA foreign_keys = ON');
-  defineAuthTables(config.db);
+  defineAuthTables(config.db, { profileSchemaInstallAllowed: config.profileSchemaInstallAllowed,
+    profileContactSchemaInstallAllowed: config.profileContactSchemaInstallAllowed,
+    profileCompletionSchemaInstallAllowed: config.profileCompletionSchemaInstallAllowed });
   await config.identityProjection?.initialize?.();
 
   services.auditService = new AuthAuditService(
@@ -211,6 +223,29 @@ export async function bootstrapAuthRuntimeServices(
   services.tokenService.setRuntimeProfileGuard(() => {
     services.installedProfileGuard!.assertCurrent();
   });
+  const userProfileConfig = authConfig.userProfile ?? normalizeAuthUserProfile();
+  // The optional-policy clock and required-completion marker must change in one
+  // writer commit, so an older issuer cannot slip between two policy adoptions.
+  const userProfilePolicy = services.userStore.transaction(() => {
+    const policy = reconcileUserProfilePolicy(config.db, services.userStore!, userProfileConfig,
+      config.phoneVerificationAdapter?.id ?? null, emitCode);
+    reconcileProfileCompletionPolicy(config.db, services.userStore!, userProfileConfig, emitCode);
+    return policy;
+  });
+  services.userStore.setUserProfilePolicyGuard(userProfilePolicy.assertCurrent);
+  services.userProfileService = new AuthUserProfileService(config.db,
+    services.userStore, services.tokenService, userProfileConfig, emitCode, (auth) => {
+      const service = config.runtime?.get(ZERO_GUARDIAN_AVATARS);
+      if (service) return service.capabilities(auth);
+      const policy = userProfileConfig.avatars;
+      return { ...policy, editable: false,
+        state: userProfileConfig.enabled && policy.enabled ? 'blocked' : 'disabled' };
+    });
+  if (userProfileConfig.enabled && inspectUserProfileSchema(config.db) !== 'ready') {
+    emitCode(OBS_CODES.AUTH_USER_PROFILE_SCHEMA_UNREADY, {
+      metadata: { component: 'user-profile', stage: 'schema-admission' },
+    });
+  }
   if (services.authorizationRoleService) {
     const roleService = services.authorizationRoleService;
     services.tokenService.setAuthorizationRevisionResolver((context) => {
@@ -253,6 +288,12 @@ export async function bootstrapAuthRuntimeServices(
     authorizationKernel,
     services.authorizationRoleService,
   );
+  services.userProfileCompletionService = new AuthUserProfileCompletionService(config.db,
+    services.userStore, services.userProfileService, services.authTenantSessionService.continuations,
+    userProfileConfig, () => services.authTenantSessionService!, emitCode);
+  services.userStore.setProfileCompletionEnrollment((userId, origin) => services.userProfileCompletionService!.enroll(userId, origin));
+  services.tokenService.setFullSessionAdmission(userId => services.userProfileCompletionService!.assertFullSessionAdmission(userId));
+  services.authTenantSessionService.setProfileCompletionService(services.userProfileCompletionService);
   if (services.authorizationRoleService
     && authorizationKernel.tenancy.mode === 'single') {
     services.applicationAdministrationService =
@@ -350,6 +391,12 @@ export async function bootstrapAuthRuntimeServices(
     );
   }
 
+  reconcileUserContactSchema(config.db, (config.profileContactSchemaInstallAllowed ?? config.profileSchemaInstallAllowed) !== false);
+  services.userContactService = new AuthUserContactService({ db: config.db,
+    users: services.userStore, tokens: services.tokenService, actions: services.actionTokenService,
+    email: services.accountEmailService,
+    config: { ...userProfileConfig.contacts, enabled: userProfileConfig.enabled && userProfileConfig.contacts.enabled },
+    adapter: config.phoneVerificationAdapter, getOutbox: () => services.authEmailOutbox, emitCode });
   services.authEmailOutbox = new AuthEmailOutbox(config.db, {
     store: services.userStore,
     tokens: services.actionTokenService,
@@ -359,6 +406,7 @@ export async function bootstrapAuthRuntimeServices(
     getNative: () => services.nativeAuthorizationService,
     getTenantOnboarding: () => services.tenantOnboardingService,
     getVerifiedDomainOnboarding: () => services.verifiedDomainOnboardingService,
+    getUserContactService: () => services.userContactService,
     emitCode,
   }, {
     requestWindowMs: parseTokenTTL(

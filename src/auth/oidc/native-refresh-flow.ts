@@ -9,6 +9,7 @@ import { prepareNativeSession } from './native-session-factory';
 import { canReceiveTokens, invalidGrant, tokenClient } from './native-service-policy';
 import { NativeTokenError } from './native-token-error';
 import { sameNativeAuthority } from './native-tenant-authority';
+import { assertNativeProfileCompletion, nativeProfileCompletionError } from './native-profile-completion-admission';
 
 export async function rotateNativeRefresh(
   context: NativeServiceContext,
@@ -32,6 +33,7 @@ export async function rotateNativeRefresh(
   }
   const user = context.users.getUserById(current.userId);
   if (!user || !canReceiveTokens(user)) terminalInvalidGrant(context, current.familyId);
+  assertNativeProfileCompletion(context.tokens, user.userId);
   if (context.requiresMfaAssurance(user.userId) && current.mfaVerifiedAt === null) {
     terminalInvalidGrant(context, current.familyId);
   }
@@ -63,7 +65,7 @@ export async function rotateNativeRefresh(
       user, current.clientId, current.scope, current.authGeneration, current.familyId,
     ),
     context.tokens.signNativeIdToken(user, current.clientId, undefined, current.scope),
-  ]);
+  ]).catch(error => { throw nativeProfileCompletionError(error); });
   if (context.users.getAuthGeneration(user.userId) !== current.authGeneration) {
     terminalInvalidGrant(context, current.familyId);
   }
@@ -73,6 +75,7 @@ export async function rotateNativeRefresh(
     terminalInvalidGrant(context, current.familyId);
   }
   const rotated = context.sessions.rotate(current, prepared.session, () => {
+    assertNativeProfileCompletion(context.tokens, user.userId);
     const live = context.authority.resolve(user.userId, current);
     return context.users.getAuthGeneration(user.userId) === current.authGeneration
       && (!context.requiresMfaAssurance(user.userId)

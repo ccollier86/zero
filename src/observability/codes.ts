@@ -26,6 +26,8 @@ function code(
 
 /** Stable platform observability codes. */
 export const OBS_CODES = {
+  AUTH_USER_AVATAR_UPDATED: code('auth', 'user_avatar.updated', 'info', 'User avatar change committed.'),
+  AUTH_USER_AVATAR_CLEANUP_RETRY: code('auth', 'user_avatar.cleanup_retry', 'warn', 'Retained avatar cleanup will retry.'),
   APP_CLIENT_BUNDLE_READY: code('app', 'client_bundle.ready', 'info', 'Client bundle is ready.'),
   APP_CLIENT_BUNDLE_FAILED: code('app', 'client_bundle.failed', 'warn', 'Client bundle build failed; SSR-only mode is active.'),
   APP_STYLES_READY: code('app', 'styles.ready', 'info', 'Platform stylesheet is ready.'),
@@ -33,6 +35,7 @@ export const OBS_CODES = {
   APP_PLUGIN_BUILD_READY: code('app', 'plugin_build.ready', 'info', 'Plugin frontend build is ready.'),
   APP_PLUGIN_BUILD_FAILED: code('app', 'plugin_build.failed', 'error', 'Required plugin frontend build failed.'),
   APP_PLUGIN_BUILD_CONFIG_INVALID: code('app', 'plugin_build.config_invalid', 'error', 'Plugin frontend build configuration is invalid.'),
+  APP_COMPILED_SIGNATURE_FAILED: code('app', 'compiled_signature.failed', 'error', 'Compiled executable signature admission failed.'),
   DOCS_CONTENT_COMPILED: code('docs', 'content.compiled', 'info', 'Documentation content is compiled.'),
   DOCS_CONTENT_FAILED: code('docs', 'content.failed', 'error', 'Documentation content could not be compiled.'),
   DOCS_STARTED: code('docs', 'started', 'info', 'Documentation plugin started.'),
@@ -103,6 +106,8 @@ export const OBS_CODES = {
   AUTH_REGISTRATION_PROVISIONING_RECOVERED: code('auth', 'registration_provisioning.recovered', 'warn', 'Abandoned auth registration provisioning was rolled back.'),
   AUTH_STATE_INVARIANT_FAILED: code('auth', 'state_invariant.failed', 'error', 'An internal auth state invariant failed.'),
   AUTH_STATE_CONFLICT: code('auth', 'state.conflict', 'warn', 'An auth state mutation conflicted with an active data commit and may be retried.'),
+  AUTH_PRESENCE_RUNTIME_FAILED: code('auth', 'presence.runtime_failed', 'error', 'Presence runtime failed closed.'),
+  AUTH_PRESENCE_PROJECTION_RETRY: code('auth', 'presence.projection_retry', 'warn', 'Presence publication will be retried.'),
   AUTH_IDENTITY_PROJECTION_ENQUEUED: code('auth', 'identity_projection.enqueued', 'debug', 'An ID-only identity anchor was queued.'),
   AUTH_IDENTITY_PROJECTION_APPLIED: code('auth', 'identity_projection.applied', 'debug', 'An ID-only identity anchor was applied.'),
   AUTH_IDENTITY_PROJECTION_RETRY: code('auth', 'identity_projection.retry', 'warn', 'An identity anchor delivery will be retried.'),
@@ -111,6 +116,12 @@ export const OBS_CODES = {
   AUTH_IDENTITY_PROJECTION_QUARANTINED: code('auth', 'identity_projection.quarantined', 'error', 'An identity projection target was quarantined.'),
   AUTH_ADMIN_USER_CREATED: code('auth', 'admin.user_created', 'info', 'Admin created a user.'),
   AUTH_ADMIN_USER_UPDATED: code('auth', 'admin.user_updated', 'info', 'Admin updated a user.'),
+  AUTH_USER_PROFILE_UPDATED: code('auth', 'user_profile.updated', 'info', 'The account profile was updated.'),
+  AUTH_USER_PROFILE_COMPLETED: code('auth', 'user_profile.completed', 'info', 'Required account profile completion was accepted.'),
+  AUTH_USER_PROFILE_SCHEMA_UNREADY: code('auth', 'user_profile.schema_unready', 'warn', 'The account profile schema is unavailable.'),
+  AUTH_USER_CONTACT_PROVED: code('auth', 'user_contact.proved', 'info', 'Account contact possession was proved.'),
+  AUTH_USER_CONTACT_DELIVERED: code('auth', 'user_contact.delivered', 'info', 'Account contact verification was delivered.'),
+  AUTH_USER_CONTACT_DELIVERY_FAILED: code('auth', 'user_contact.delivery_failed', 'warn', 'Account contact delivery failed.'),
   AUTH_ADMIN_USER_DELETED: code('auth', 'admin.user_deleted', 'warn', 'Admin deleted a user.'),
   AUTH_ADMIN_PASSWORD_RESET: code('auth', 'admin.password_reset', 'warn', 'Admin reset a user password.'),
   AUTH_ADMIN_PASSWORD_CHANGE_REQUIREMENT_CLEARED: code('auth', 'admin.password_change_requirement_cleared', 'warn', 'Admin cleared a user password-change requirement.'),

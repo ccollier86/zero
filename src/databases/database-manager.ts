@@ -30,6 +30,7 @@ import type {
 import { DatabaseRuntime } from './database-runtime';
 import { PinnedDatabaseRuntimes } from './pinned-database-runtimes';
 import type { IdentityAnchorState } from '../auth/identity-projection-types';
+import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
 
 interface DatabaseAutomationRecoveryBinding {
   readonly router: DatabaseManagerActorRouter;
@@ -229,6 +230,16 @@ export class DatabaseManager implements AsyncDisposable {
   ): Promise<TenantDatabaseSyncBinding> {
     this.#assertStarted();
     return await this.#actorRouter.bindTenantSync(options);
+  }
+
+  /** Provision/reconcile one authoritative tenant target for lifecycle work. */
+  installTenantPresenceAdmission(admit: (tenantId: string) => Promise<void>): () => void {
+    return this.#actorRouter.installPresenceAdmission(admit);
+  }
+
+  /** @internal Framework projection only; never exposed by a request facade. */
+  async publishTenantPresence(tenantId: string, publication: PresencePublication, assertCurrent: () => void): Promise<PresenceProjectionReceipt> {
+    this.#assertStarted(); return this.#actorRouter.publishTenantPresence(tenantId, publication, assertCurrent);
   }
 
   /** Provision/reconcile one authoritative tenant target for lifecycle work. */

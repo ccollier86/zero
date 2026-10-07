@@ -14,6 +14,7 @@ import {
   isMfaContinuationResult,
   isTenantOnboardingRequiredResult,
   isTenantSelectionRequiredResult,
+  isProfileCompletionRequiredResult,
 } from './auth-continuation';
 import { MFAContinuation } from './mfa-continuation';
 import { TenantSelectionForm, tenantSelectionFlowKey } from './tenant-selection-form';
@@ -21,6 +22,7 @@ import { TenantCreationForm } from './tenant-creation-form';
 import { DomainOnboarding } from './domain-onboarding';
 import { useAuthConfig } from '../../frontend/client/auth-hooks';
 import { AuthConfigLoadState } from './auth-config-load-state';
+import { ProfileCompletionForm, profileCompletionFlowKey } from './profile-completion-form';
 
 export type TenantOnboardingOption = 'create' | 'verified-domain';
 
@@ -63,6 +65,11 @@ function AuthFlowContinuationScope({
         onTenantOnboardingRequired?.(next);
       }
     }
+  }
+
+  if (isProfileCompletionRequiredResult(current)) {
+    return <ProfileCompletionForm result={current} onComplete={handleMfaComplete}
+      onSuccess={onSuccess} onBack={onBack} className={className} />;
   }
 
   if (isMfaContinuationResult(current)) {
@@ -194,6 +201,9 @@ function AuthFlowContinuationScope({
 
 /** @internal Synchronous reset boundary for single-use auth continuations. */
 export function authFlowContinuationKey(result: AuthFlowContinuationResult): string {
+  if (isProfileCompletionRequiredResult(result)) {
+    return `profile-completion:${profileCompletionFlowKey(result)}`;
+  }
   if (isTenantSelectionRequiredResult(result)) {
     return `tenant-selection:${tenantSelectionFlowKey(result)}`;
   }

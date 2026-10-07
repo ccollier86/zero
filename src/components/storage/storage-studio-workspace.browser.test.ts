@@ -65,9 +65,13 @@ beforeAll(async () => {
     export function usePresignedUrl(){return {url:null,loading:false,error:null}}
     export function useStorageActions(){return {grantPermission(driveId){return window.__storagePermissionHarness.write('grant',driveId)},
       revokePermission(id){return window.__storagePermissionHarness.write('revoke',id)}}}`;
+  // Keep this fixture's mutable opaque scope in both rendered and live callback reads;
+  // reuse production readiness policy instead of replacing the new guards with true.
   const boundarySource = `export function useAuthorizationScopeBoundary(){return {key:window.__storagePermissionScope,scopeKey:window.__storagePermissionScope,
     dataRevision:0,ready:true,stable:true,phase:'idle'}}
-    export function isAuthorizationScopeCallbackCurrent(current,ready,captured){return ready && current===captured}`;
+    export function isAuthorizationScopeCallbackCurrent(current,ready,captured){return ready && current===captured}
+    export function readAuthorizationScopeBoundaryKey(){return window.__storagePermissionScope}
+    export {isAuthorizationDataReady,isAuthorizationScopeReady} from ${JSON.stringify(join(import.meta.dir, '../../frontend/client/authorization-scope-readiness.ts'))}`;
   await Bun.write(builder, `const result = await Bun.build({
     entrypoints: [${JSON.stringify(entrypoint)}],
     root: ${JSON.stringify(join(import.meta.dir, '../../..'))},

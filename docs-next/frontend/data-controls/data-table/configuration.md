@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-configuration
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.5.0 working source; page-size correction qualification pending"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.5.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -69,8 +69,11 @@ if omitted, string/text-family candidates are derived from visible/schema fields
 Standalone DataTableToolbar defaults searchable=true; MasterDetail also has its
 own default. Do not merge those defaults into DataTable's false default.
 
-Changing search, filters, sort or page size resets pagination. Disabling local
-pagination renders all supplied rows, not a hidden first page. A server result
+Changing search, filters or sort resets pagination. Rows per page preserves the
+page containing the old first row for local/offset sources, while cursor sources
+start a new history. All page/size changes clear page-local selection; see
+[state and columns](./state-and-columns.md#state-and-pagination-resets).
+Disabling local pagination renders all supplied rows, not a hidden first page. A server result
 remains the page returned by its source; hiding pagination does not fetch every
 backend row or remove server budgets automatically.
 

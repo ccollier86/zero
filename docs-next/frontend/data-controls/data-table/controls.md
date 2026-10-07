@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-controls
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.5.0 working source; page-size correction qualification pending"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.5.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -111,6 +111,14 @@ DataTablePagination takes table, optional pageSizes/className/serverPage/loading
 pageSizes defaults [10, 20, 50, 100]. Omit serverPage for local data; null means
 a server page has not yet loaded. Accepted server metadata governs ranges and
 hasMore; optional total controls known totals and last-page admission.
+
+Rows per page calls the TanStack table's setPageSize. For local and offset
+sources, it selects the new page containing the former first row instead of
+always returning to page one. Cursor batch-size changes intentionally start
+a new cursor history. Page/size changes retire page-local selection; controlled
+parents must accept the full pagination pair from onStateChange. See
+[state and columns](./state-and-columns.md#state-and-pagination-resets) for the
+anchor formula and shrinking-result behavior.
 
 An unknown total shows "Showing 21-40" rather than inventing a total from page
 length. Cursor mode requires an admitted nextCursor and hasMore for Next and

@@ -2,6 +2,89 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 2.6.0 - 2026-10-07
+
+Adaptive Guardian account settings, private avatars, scoped presence and bounded
+session recovery. Existing application call sites remain supported. Optional
+features require their declared configuration and ready SYSTEM/Storage/Fabric
+services; an updater does not modify application settings or migrate live data.
+
+- Added reusable full/compact/read-only own-profile settings, individually
+  configured core/extended fields, global regional preferences, scoped role
+  labels and compact existing password/MFA ceremonies. Disabled MFA is omitted.
+- Added E.164 PhoneInput with searchable countries/flags, configurable US default,
+  read-only controls and `field.phone`/generated-form integration.
+- Added separate current-email/candidate-email and phone-possession ceremonies.
+  Verified badges distinguish proof from administrative attestation. Candidate
+  email leaves the old login address active until accepted proof; phone delivery
+  requires an explicit trusted adapter, not an invented SMS provider or SMS MFA.
+- Added private staged avatar upload/cropping/removal through existing Storage.
+  Actual raster decoding/normalization, live authority, single-use receipts,
+  shared profile CAS and durable unreferenced-media cleanup guard attachment.
+  Avatar groups support optional add/count actions, square shapes and fresh rings.
+- Normal server and compiled builds preserve the host-native avatar decoder in
+  a private `zero-native/` deployment payload. Deploy the complete output
+  directory; disabled avatars do not eagerly load it. Relocated JavaScript and
+  executable builds are qualified on the current macOS ARM64 baseline, not as
+  a cross-platform or cross-compilation guarantee.
+- macOS compiled builds now ad-hoc sign and strictly verify their newly built
+  executable before reporting success, retaining existing signing metadata and
+  JIT entitlements. This is not Developer ID signing or notarization.
+- Added required first-use configured-profile completion before general app-session
+  issue, retaining email/MFA/native/invitation/tenant gates. Existing-account
+  enforcement is an explicit rollout option, off by default.
+- Added SDK-owned activity/presence with manual intent, real idle/away detection,
+  multi-tab aggregation, readonly Reactive DB projection, owner epochs/freshness
+  and an explicit Fabric realm contribution. Initial topology is one active
+  presence owner per SYSTEM database, not distributed multi-owner fan-in.
+- Added acknowledged form baselines, field check/cancel controls, floating Save/
+  Discard bars and Save/Discard/Stay navigation/modal guards. Security scope
+  retirement is never vetoed by a dirty draft. Reusable settings matrices and
+  integration lists remain app-controlled presentation, not new OAuth endpoints.
+- Closing review hardened wrong-account response rejection, policy/data retry
+  sequencing, correctable username conflicts, asynchronous avatar notifications
+  and immediate profile/contact admission retirement during runtime shutdown.
+- Hardened ordinary refresh, browser-family replacement and SSR recovery with
+  bounded credential/body operations. Valid persisted sessions survive restart;
+  definite rejection reaches sign-in, while temporary failures retain Retry.
+  App-owned page-cookie names prevent cross-app host collisions and migrate
+  only locally verified legacy proof; stale loader data remains hidden.
+- Added shared compact REUI-derived Kbd/KbdGroup hints, fully tokenized through
+  Zero, and retained existing record-action/docs-reader shortcut contracts.
+- Updated the separate optional docs preview to `0.1.1`, requiring framework
+  `>=2.6.0 <3` for its shared keyboard hints. Install that plugin archive
+  separately when updating it; the normal framework updater does not replace
+  an independently installed plugin.
+- Pinned Shiki and its transformer family together so a fresh installed consumer
+  cannot acquire incompatible public transformer types. Added public avatar-editor
+  subpath exports and strict fresh-archive type/build/SSR qualification.
+- Updated the locked transitive `source-map-js` dependency to patched `1.2.2`
+  for the [indexed-source-map denial-of-service advisory](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
+- Table page-size changes retain the logical result position for local and
+  offset/page sources. Opaque cursor sources reset deliberately instead of
+  fabricating a cursor; query/authorization resets remain independent.
+- Added exact SYSTEM migrations039–043, generation-bound feature policy,
+  read-only Doctor readiness diagnostics, source-validated guides, indexes,
+  backlinks, actual public examples and post-bootstrap upgrade instructions.
+- Doctor audits the consuming application's declared project root rather than
+  accidentally inspecting the framework checkout. Conflicting explicit roots
+  fail with an actionable diagnostic before source or database inspection.
+- Added focused browser-safe query and authorization helper subpaths for copied
+  components; copied DataTable and form/inline-save consumers build against the
+  packaged framework without widening the general React facade.
+- Local-archive updater rollback restores the original dependency graph and
+  payload through a targeted frozen Bun update, including a subsequent ordinary
+  frozen install. Original app, manifest, lock and archive bytes are preserved.
+  This does not claim to repair Bun's general shared local-archive cache behavior.
+
+Native write scopes `profile:write` and `contacts:write` must be registered and
+requested explicitly; default identity scopes do not acquire writer powers.
+Use the [upgrade guide](./docs-next/guides/upgrade.md#opting-into-adaptive-profiles-after-provisioning)
+and [profile guide](./docs-next/frontend/guardian/profile-settings.md).
+Tenant-custom role definitions, direct individual grants, distributed presence,
+global theme/modal redesign and animated reactive table updates remain separate
+future work. This is the source/local channel, not public npm publication.
+
 ## 2.5.0 - 2026-10-06
 
 Optional Markdown documentation sites, the shared CodeBlock replacement and

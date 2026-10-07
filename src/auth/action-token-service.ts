@@ -401,7 +401,8 @@ function isAuthActionTokenType(value: string): value is AuthActionTokenType {
   return value === 'account_setup'
     || value === 'password_reset'
     || value === 'admin_password_reset'
-    || value === 'email_verification';
+    || value === 'email_verification'
+    || value === 'profile_contact_verification';
 }
 
 function toAuthActionTokenError(err: PlatformTokenError): AuthError {

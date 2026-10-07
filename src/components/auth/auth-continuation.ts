@@ -10,6 +10,7 @@ import type {
   AuthMfaChallengeRequiredResult,
   AuthMfaSetupRequiredResult,
   AuthSessionResult,
+  AuthProfileCompletionRequiredResult,
   AuthTenantOnboardingRequiredResult,
   AuthTenantSelectionRequiredResult,
 } from '../../frontend/client/auth-client';
@@ -74,7 +75,15 @@ export type AuthFlowContinuationResult =
   | AuthMfaSetupRequiredResult
   | AuthMfaChallengeRequiredResult
   | AuthTenantSelectionRequiredResult
-  | AuthTenantOnboardingRequiredResult;
+  | AuthTenantOnboardingRequiredResult
+  | AuthProfileCompletionRequiredResult;
+
+/** Required profile edits admit no application session until their continuation finishes. */
+export function isProfileCompletionRequiredResult(value: unknown): value is AuthProfileCompletionRequiredResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<AuthProfileCompletionRequiredResult>;
+  return candidate.profileCompletionRequired === true && typeof candidate.profileCompletion?.continuation === 'string';
+}
 
 /** Any supported incomplete browser-auth result handled by Zero's coordinator. */
 export function isAuthFlowContinuationResult(
@@ -82,5 +91,6 @@ export function isAuthFlowContinuationResult(
 ): value is AuthFlowContinuationResult {
   return isMfaContinuationResult(value)
     || isTenantSelectionRequiredResult(value)
-    || isTenantOnboardingRequiredResult(value);
+    || isTenantOnboardingRequiredResult(value)
+    || isProfileCompletionRequiredResult(value);
 }

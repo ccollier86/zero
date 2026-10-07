@@ -32,6 +32,7 @@ describe('DocsApp public reader SSR', () => {
     expect(html).toContain('id="setup"'); expect(html).toContain('Reuse the existing controls.');
     expect(html).toContain('rel="prev"'); expect(html).toContain('Organization apps');
     expect(html).not.toContain('Restoring your secure session'); expect(html).not.toContain('data-slot="breadcrumb"');
+    expect(html).toContain('data-slot="kbd"');
     expect(html.match(/<h1\b/gu)).toHaveLength(1);
     expect(html.match(/<p>A useful introduction\.<\/p>/gu)).toHaveLength(1);
     expect(html).toContain('&lt;script&gt;alert');

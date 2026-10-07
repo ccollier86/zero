@@ -77,6 +77,7 @@ interface BrowserPlatformConfig {
   auth?: boolean;
   email?: boolean;
   stateSync?: boolean;
+  presence?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
   /** Server-owned Sync-visible application table routing catalog. */
   tableSyncPlanes?: Record<string, SyncDataPlaneName>;
@@ -146,6 +147,8 @@ export interface AppProviderProps {
   auth?: boolean;
   /** Enable per-user state sync. Defaults to injected server config, otherwise false. */
   stateSync?: boolean;
+  /** Defaults to the server's Guardian presence policy; false suppresses this browser's tracker/feed. */
+  presence?: boolean;
   /** Initial URL pathname from SSR. */
   initialPathname?: string;
   /** Initial route params from SSR. */
@@ -198,6 +201,7 @@ export function AppProvider({
   tables,
   auth,
   stateSync,
+  presence,
   initialPathname,
   initialParams,
   publicPaths,
@@ -224,7 +228,11 @@ export function AppProvider({
   const platformConfig = getBrowserPlatformConfig();
   const authEnabled = auth ?? platformConfig.auth ?? false;
   const stateSyncEnabled = stateSync ?? platformConfig.stateSync ?? false;
-  const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'];
+  const presenceEnabled = presence ?? platformConfig.presence ?? false;
+  if (presenceEnabled && (!authEnabled || platformConfig.presence === false)) {
+    throw new Error('[app] presence requires auth and server-enabled Guardian presence.');
+  }
+  const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email', '/verify-contact', '/complete-profile'];
   const resolvedRouteAuth = routeAuth ?? platformConfig.routeAuth ?? 'protected-by-default';
   const resolvedLoginPath = normalizeConfiguredAuthPath(
     loginPath ?? platformConfig.loginPath ?? '/login',
@@ -270,6 +278,7 @@ export function AppProvider({
         : {}),
       auth: authEnabled,
       stateSync: stateSyncEnabled,
+      presence: presenceEnabled,
       autoConnect: true,
     });
   }
@@ -607,7 +616,7 @@ function AuthRouteGuard({
     if (isLoading) return;
 
     if (authenticatedDestination) {
-      router.replace(authenticatedDestination);
+      router.replace(authenticatedDestination, { bypassGuards: true });
       return;
     }
 
@@ -618,7 +627,7 @@ function AuthRouteGuard({
     emitFrontendCode(FRONTEND_OBS_CODES.FRONTEND_AUTH_SESSION_REDIRECT, {
       metadata: { from: pathname, to: loginPath },
     });
-    router.replace(target);
+    router.replace(target, { bypassGuards: true });
   }, [
     isAuthenticated,
     authenticatedDestination,

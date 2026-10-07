@@ -9,7 +9,12 @@
  */
 
 import * as React from 'react';
-import { AlertCircle, Check, LoaderCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, Check, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { Button } from './button';
+import { useClientMaybe } from '../../frontend/client/client-context';
+import type { InternalClient } from '../../frontend/client/sdk';
+import { isAuthorizationDataReady, isAuthorizationScopeReady, readAuthorizationScopeBoundaryKey,
+  useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { cn } from '../../lib/utils';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from '../../frontend/client/observability';
@@ -36,11 +41,20 @@ export interface InlineEditTextProps {
   readonly placeholder?: string;
   readonly className?: string;
   readonly onSelect?: () => void;
-  readonly onCommit: (value: string) => void | Promise<unknown>;
+  /** Existing blur commit remains default; explicit mode adds Check/X and never saves on blur. */
+  readonly commitMode?: 'blur' | 'explicit';
+  readonly scopeKey?: string | number;
+  readonly onCommit: (value: string, context: InlineEditTextCommitContext) => void | Promise<unknown>;
   readonly onReload?: () => void | Promise<unknown>;
   readonly onNavigate?: (direction: -1 | 1) => void;
   readonly normalize?: (draft: string) => string;
   readonly isConflictError?: (cause: unknown) => boolean;
+}
+
+/** Backend adapters still independently authorize writes against the captured revision. */
+export interface InlineEditTextCommitContext {
+  readonly expectedRevision: string | number;
+  readonly signal: AbortSignal;
 }
 
 /** Render an in-place text editor with optimistic, error, and conflict states. */
@@ -50,6 +64,8 @@ export function InlineEditText({
   label,
   disabled = false,
   selected = false,
+  commitMode = 'blur',
+  scopeKey,
   placeholder = 'Untitled',
   className,
   onSelect,
@@ -59,6 +75,17 @@ export function InlineEditText({
   normalize = requireNonEmptyText,
   isConflictError = defaultConflictDetector,
 }: InlineEditTextProps) {
+  const client = useClientMaybe(), boundary = useAuthorizationScopeBoundary(client);
+  const callbackBoundaryKey = JSON.stringify([boundary.key, scopeKey ?? null]);
+  const latest = React.useRef({ client, scopeKey, disabled, value, revision });
+  latest.current = { client, scopeKey, disabled, value, revision };
+  const currentScope = React.useCallback((key: string) => {
+    const current = latest.current, internal = current.client as InternalClient | null;
+    const auth = internal?.auth ?? null, dataRevision = internal?._authorizationDataBoundary?.revision ?? 0;
+    return JSON.stringify([readAuthorizationScopeBoundaryKey(auth, dataRevision), current.scopeKey ?? null]) === key
+      && (!auth || isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
+        && isAuthorizationDataReady(dataRevision, auth.authorizationState.status, auth.isAuthenticated));
+  }, []);
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value);
   const [optimisticValue, setOptimisticValue] = React.useState<string | null>(null);
@@ -73,6 +100,7 @@ export function InlineEditText({
   const inFlight = React.useRef<number | null>(null);
   const skipBlur = React.useRef(false);
   const savedTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveController = React.useRef<AbortController | null>(null);
 
   const displayValue = optimisticValue ?? value;
 
@@ -87,11 +115,27 @@ export function InlineEditText({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      saveController.current?.abort();
       saveSequence.current += 1;
       if (savedTimer.current) clearTimeout(savedTimer.current);
       savedTimer.current = null;
     };
   }, []);
+
+  React.useEffect(() => {
+    saveController.current?.abort(); saveController.current = null;
+    saveSequence.current += 1; inFlight.current = null; editRevision.current = null;
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = null; skipBlur.current = true;
+    setEditing(false); setDraft(latest.current.value); setOptimisticValue(null); setState('idle'); setMessage(null);
+  }, [callbackBoundaryKey]);
+
+  React.useEffect(() => {
+    if (!disabled) return;
+    saveController.current?.abort(); saveController.current = null;
+    saveSequence.current += 1; inFlight.current = null;
+    setState('idle'); setMessage(null);
+  }, [disabled]);
 
   React.useEffect(() => {
     if (!editing) return;
@@ -102,13 +146,13 @@ export function InlineEditText({
   const restoreFocus = React.useCallback(() => {
     const sequence = saveSequence.current;
     requestAnimationFrame(() => {
-      if (mounted.current && sequence === saveSequence.current) triggerRef.current?.focus();
+      if (mounted.current && sequence === saveSequence.current && currentScope(callbackBoundaryKey)) triggerRef.current?.focus();
     });
-  }, []);
+  }, [callbackBoundaryKey, currentScope]);
 
   const navigateAfterAcceptance = React.useCallback((move: -1 | 1) => {
     const sequence = saveSequence.current;
-    const current = () => mounted.current && sequence === saveSequence.current;
+    const current = () => mounted.current && sequence === saveSequence.current && currentScope(callbackBoundaryKey);
     requestAnimationFrame(() => {
       if (!current()) return;
       try {
@@ -117,7 +161,7 @@ export function InlineEditText({
         });
       } catch { if (current()) reportNotificationFailure('navigation'); }
     });
-  }, [onNavigate]);
+  }, [callbackBoundaryKey, currentScope, onNavigate]);
 
   const resetSavedTimer = React.useCallback(() => {
     if (!savedTimer.current) return;
@@ -126,7 +170,7 @@ export function InlineEditText({
   }, []);
 
   const beginEdit = React.useCallback(() => {
-    if (!mounted.current) return;
+    if (!mounted.current || !currentScope(callbackBoundaryKey)) return;
     onSelect?.();
     if (disabled || state === 'pending' || inFlight.current !== null) return;
     resetSavedTimer();
@@ -138,9 +182,10 @@ export function InlineEditText({
     setMessage(null);
     setState('idle');
     setEditing(true);
-  }, [disabled, displayValue, onSelect, resetSavedTimer, revision, state]);
+  }, [callbackBoundaryKey, currentScope, disabled, displayValue, onSelect, resetSavedTimer, revision, state]);
 
   const cancel = React.useCallback(() => {
+    if (inFlight.current !== null) return;
     saveSequence.current += 1;
     resetSavedTimer();
     editRevision.current = null;
@@ -155,6 +200,12 @@ export function InlineEditText({
   const showConflict = React.useCallback(() => {
     saveSequence.current += 1;
     resetSavedTimer();
+    if (commitMode === 'explicit') {
+      skipBlur.current = true;
+      setOptimisticValue(null); setState('conflict');
+      setMessage('This item changed elsewhere. Your draft is preserved. Reload the latest value before saving.');
+      return;
+    }
     editRevision.current = null;
     skipBlur.current = true;
     setOptimisticValue(null);
@@ -163,12 +214,13 @@ export function InlineEditText({
     setState('conflict');
     setMessage('This item changed elsewhere. The latest name was restored.');
     restoreFocus();
-  }, [resetSavedTimer, restoreFocus, value]);
+  }, [commitMode, resetSavedTimer, restoreFocus, value]);
 
   React.useEffect(() => {
     if (!editing || state === 'pending' || editRevision.current === null) return;
+    if (commitMode === 'explicit' && state === 'conflict') return;
     if (editRevision.current !== revision) showConflict();
-  }, [editing, revision, showConflict, state]);
+  }, [commitMode, editing, revision, showConflict, state]);
 
   const finishWithoutCommit = React.useCallback((move?: -1 | 1) => {
     skipBlur.current = true;
@@ -181,7 +233,7 @@ export function InlineEditText({
   }, [navigateAfterAcceptance, restoreFocus]);
 
   const save = React.useCallback(async (move?: -1 | 1) => {
-    if (!mounted.current || disabled || inFlight.current !== null || state === 'pending') return;
+    if (!mounted.current || !currentScope(callbackBoundaryKey) || latest.current.disabled || disabled || inFlight.current !== null || state === 'pending') return;
     if (editRevision.current !== revision) {
       showConflict();
       return;
@@ -203,13 +255,16 @@ export function InlineEditText({
 
     resetSavedTimer();
     const sequence = ++saveSequence.current;
+    const controller = new AbortController(); saveController.current = controller;
     inFlight.current = sequence;
     skipBlur.current = true;
     setState('pending');
     setMessage(null);
     try {
-      await onCommit(nextValue);
-      if (!mounted.current || sequence !== saveSequence.current) return;
+      await Promise.resolve();
+      if (!mounted.current || controller.signal.aborted || sequence !== saveSequence.current || latest.current.disabled || !currentScope(callbackBoundaryKey)) return;
+      await onCommit(nextValue, { signal: controller.signal, expectedRevision: editRevision.current! });
+      if (!mounted.current || controller.signal.aborted || sequence !== saveSequence.current || !currentScope(callbackBoundaryKey)) return;
       editRevision.current = null;
       setOptimisticValue(nextValue);
       setEditing(false);
@@ -221,8 +276,16 @@ export function InlineEditText({
       if (move) navigateAfterAcceptance(move);
       else restoreFocus();
     } catch (cause) {
-      if (!mounted.current || sequence !== saveSequence.current) return;
+      if (!mounted.current || controller.signal.aborted || sequence !== saveSequence.current || !currentScope(callbackBoundaryKey)) return;
       const conflict = isConflictError(cause);
+      emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, { metadata: { surface: 'inline-edit-text', stage: conflict ? 'conflict' : 'commit' } });
+      if (commitMode === 'explicit') {
+        setOptimisticValue(null); setState(conflict ? 'conflict' : 'error');
+        setMessage(conflict ? 'This item changed elsewhere. Your draft is preserved. Reload the latest value before saving.'
+          : 'This value could not be saved. Your draft is preserved.');
+        inputRef.current?.focus();
+        return;
+      }
       editRevision.current = null;
       setOptimisticValue(null);
       setDraft(value);
@@ -240,9 +303,13 @@ export function InlineEditText({
       if (mounted.current && sequence === saveSequence.current) restoreFocus();
     } finally {
       if (inFlight.current === sequence) inFlight.current = null;
+      if (saveController.current === controller) saveController.current = null;
     }
   }, [
     disabled,
+    callbackBoundaryKey,
+    commitMode,
+    currentScope,
     draft,
     finishWithoutCommit,
     isConflictError,
@@ -303,13 +370,14 @@ export function InlineEditText({
           disabled={disabled || state === 'pending'}
           aria-label={`Edit ${label}`}
           aria-invalid={state === 'error' || state === 'conflict'}
-          className="absolute inset-0 size-full min-w-0 appearance-none rounded-sm border-0 bg-transparent px-1 py-1 font-inherit text-inherit leading-inherit outline-none ring-2 ring-inset ring-primary/55 disabled:opacity-70"
+          className={cn('absolute inset-0 size-full min-w-0 appearance-none rounded-sm border-0 bg-transparent px-1 py-1 font-inherit text-inherit leading-inherit outline-none ring-2 ring-inset ring-primary/55 disabled:opacity-70', commitMode === 'explicit' && 'pr-14')}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             const action = resolveInlineEditTextKeyAction(
               event.key,
               event.shiftKey,
               event.nativeEvent.isComposing,
+              commitMode,
             );
             if (!action) return;
             event.preventDefault();
@@ -317,6 +385,7 @@ export function InlineEditText({
             else void save(action.type === 'save-and-move' ? action.direction : undefined);
           }}
           onBlur={() => {
+            if (commitMode === 'explicit') return;
             if (skipBlur.current) {
               skipBlur.current = false;
               return;
@@ -326,7 +395,28 @@ export function InlineEditText({
         />
       )}
 
-      <InlineEditTextIndicator state={state} message={message} />
+      {editing && commitMode === 'explicit' && <div className="absolute inset-y-0 right-0 z-10 flex items-center gap-0.5 rounded-sm bg-background/95 px-0.5">
+        {state === 'conflict' ? <Button type="button" size="icon-xs" variant="ghost" aria-label={`Reload ${label}`}
+          disabled={disabled} onPointerDown={event => event.preventDefault()}
+          onClick={() => {
+            const sequence = ++saveSequence.current;
+            void Promise.resolve().then(() => onReload?.()).then(() => {
+              if (!mounted.current || sequence !== saveSequence.current || !currentScope(callbackBoundaryKey)) return;
+              setDraft(latest.current.value); editRevision.current = latest.current.revision;
+              initialDraft.current = latest.current.value; setState('idle'); setMessage(null); inputRef.current?.focus();
+            }).catch(() => { if (mounted.current && currentScope(callbackBoundaryKey)) reportNotificationFailure('reload'); });
+          }}><RefreshCw aria-hidden="true" /></Button>
+          : <Button type="button" size="icon-xs" variant="ghost" aria-label={`Save ${label}`}
+            disabled={disabled || state === 'pending' || draft === initialDraft.current}
+            onPointerDown={event => event.preventDefault()} onClick={() => { void save(); }}>
+            {state === 'pending' ? <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /> : <Check aria-hidden="true" />}</Button>}
+        <Button type="button" size="icon-xs" variant="ghost" aria-label={`Cancel ${label}`} disabled={disabled || state === 'pending'}
+          onPointerDown={event => { skipBlur.current = true; event.preventDefault(); }} onClick={cancel}><X aria-hidden="true" /></Button>
+      </div>}
+
+      {editing && commitMode === 'explicit' ? <span role={state === 'error' || state === 'conflict' ? 'alert' : 'status'}
+        className="sr-only">{state === 'pending' ? `Saving ${label}` : message}</span>
+        : <InlineEditTextIndicator state={state} message={message} />}
     </div>
   );
 }
@@ -342,10 +432,11 @@ export function resolveInlineEditTextKeyAction(
   key: string,
   shiftKey = false,
   isComposing = false,
+  commitMode: 'blur' | 'explicit' = 'blur',
 ): InlineEditTextKeyAction {
   if (isComposing) return null;
   if (key === 'Enter') return { type: 'save' };
-  if (key === 'Tab') return { type: 'save-and-move', direction: shiftKey ? -1 : 1 };
+  if (key === 'Tab') return commitMode === 'explicit' ? null : { type: 'save-and-move', direction: shiftKey ? -1 : 1 };
   if (key === 'Escape') return { type: 'cancel' };
   return null;
 }
@@ -370,7 +461,7 @@ function InlineEditTextIndicator({
     : state === 'saved'
       ? 'Saved'
       : state === 'conflict'
-        ? 'Conflict; latest value restored'
+      ? message ?? 'Conflict; latest value restored'
         : message ?? 'Save failed; previous value restored';
 
   return (
@@ -384,7 +475,7 @@ function InlineEditTextIndicator({
         state === 'conflict' && 'text-warning',
       )}
     >
-      <Icon className={cn('size-3', state === 'pending' && 'animate-spin')} aria-hidden="true" />
+      <Icon className={cn('size-3', state === 'pending' && 'motion-safe:animate-spin')} aria-hidden="true" />
       <span className="sr-only">{label}</span>
     </span>
   );

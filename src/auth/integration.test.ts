@@ -182,14 +182,14 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 3_000): Promise<v
 
 function expectActivePageSession(response: JsonResponse): void {
   const setCookie = response.headers.get('set-cookie');
-  expect(setCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+  expect(setCookie).toMatch(new RegExp(`${PAGE_SESSION_COOKIE_NAME}_[a-f0-9]{32}=`));
   expect(setCookie).toContain('HttpOnly');
   expect(setCookie).not.toContain('Max-Age=0');
 }
 
 function expectClearedPageSession(response: JsonResponse): void {
   const setCookie = response.headers.get('set-cookie');
-  expect(setCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+  expect(setCookie).toMatch(new RegExp(`${PAGE_SESSION_COOKIE_NAME}_[a-f0-9]{32}=`));
   expect(setCookie).toContain('HttpOnly');
   expect(setCookie).toContain('Max-Age=0');
 }
@@ -597,7 +597,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
     const loginSetCookie = loginResponse.headers.get('set-cookie');
 
     expect(loginResponse.status).toBe(200);
-    expect(loginSetCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(loginSetCookie).toContain(`${authRuntime.getTokenService()!.pageSessionCookieName}=`);
     expect(loginSetCookie).toContain('HttpOnly');
     expect(loginSetCookie).toContain('SameSite=Lax');
     expect(loginSetCookie).toContain('Path=/');
@@ -646,7 +646,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
     const logoutSetCookie = logoutResponse.headers.get('set-cookie');
 
     expect(logoutResponse.status).toBe(200);
-    expect(logoutSetCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(logoutSetCookie).toContain(`${authRuntime.getTokenService()!.pageSessionCookieName}=`);
     expect(logoutSetCookie).toContain('Max-Age=0');
     expect(await authRuntime.getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toBeNull();
   });

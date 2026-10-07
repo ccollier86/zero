@@ -121,6 +121,8 @@ export function createSyncSocketController(
     sockets.tenantDataSockets.delete(socket);
     sockets.systemDataSockets.get(socket)?.dispose();
     sockets.systemDataSockets.delete(socket);
+    try { config.presenceTransport?.release(socket.data.connectionId); }
+    catch (error) { reportSyncCode(OBS_CODES.SYNC_MESSAGE_HANDLING_FAILED, { error, metadata: { stage: 'presence-release' } }); }
     socketAuth.clearSocket(socket);
     // Bun automatically unsubscribes from pub/sub on close. Explicit manager
     // cleanup is still required for presence and in-process subscriptions.
@@ -440,6 +442,22 @@ export function createSyncSocketController(
       }
     }
     if (!ingress.active) return;
+
+    let presenceMessage: Record<string, unknown> | null = null;
+    try { presenceMessage = typeof wireMessage === 'string' ? JSON.parse(wireMessage) : wireMessage; } catch { /* Normal parser owns malformed input. */ }
+    if (presenceMessage && typeof presenceMessage === 'object' && !Array.isArray(presenceMessage)
+      && presenceMessage.topic === 'guardian:presence' && config.presenceTransport) {
+      try {
+        config.presenceTransport.handle(presenceMessage, data.authContext, data.connectionId, () => {
+          if (!ingress.active || !sockets.openSockets.has(socket)
+            || !socketAuth.validateCurrentAuthority(socket, data.authContext ?? undefined)) throw tenantSyncAuthorityChanged();
+        });
+      } catch {
+        socket.send(JSON.stringify({ type: 'ephemeral.error', operation: 'set', topic: 'guardian:presence', key: 'self',
+          code: 'EPHEMERAL_FORBIDDEN', message: 'Presence report was not admitted' }));
+      }
+      return;
+    }
 
     await routeMessage(
       socket,

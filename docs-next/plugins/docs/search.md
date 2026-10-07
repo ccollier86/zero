@@ -28,6 +28,10 @@ the existing `search` option; it is on by default. No external search service,
 provider credentials, second crawler or browser Markdown parser is required.
 Search reads the same admitted immutable manifest as the article and other
 [public projections](./api.md), not the repository or excluded source files.
+The current 0.1.1 preview requires framework 2.6.0 or newer within major 2;
+the search trigger/footer reuse Zero's shared `Kbd`/`KbdGroup` hints. Disabling
+search does not remove that package prerequisite. See
+[installation](./operations.md#source-and-local-archive-installation).
 
 ## Reader Experience
 

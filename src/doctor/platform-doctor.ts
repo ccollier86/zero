@@ -6,6 +6,8 @@
  * file owns ordering, config resolution, pass/fail policy, and public exports.
  */
 
+import { resolve } from 'node:path';
+
 import type { AuthBehaviorConfig } from '../auth/types';
 import {
   resolveConfig,
@@ -46,7 +48,7 @@ import { checkObservability, checkStorage } from './platform-doctor-operations';
 import type { PlatformDoctorOptions } from './platform-doctor-options';
 import { checkPdf } from './platform-doctor-pdf';
 import { checkResources } from './platform-doctor-resources';
-import { runUsageAudit } from './usage-audit';
+import { runUsageAudit, usageAuditProjectRootMismatch } from './usage-audit';
 
 export type {
   PlatformDoctorFinding,
@@ -76,7 +78,9 @@ export function runPlatformDoctor(
 
   let resolved: ResolvedConfig | null = null;
   try {
-    resolved = resolveConfig(config, env);
+    resolved = resolveConfig(config.projectRoot === undefined && options.projectRoot
+      ? { ...config, projectRoot: resolve(options.projectRoot) }
+      : config, env);
   } catch (error) {
     const message = error instanceof Error
       ? error.message
@@ -102,6 +106,10 @@ export function runPlatformDoctor(
   }
 
   if (resolved) {
+    const rootMismatch = options.projectRoot
+      ? usageAuditProjectRootMismatch(options.projectRoot, resolved)
+      : null;
+    if (rootMismatch) sink.push(rootMismatch);
     const doctorAuthConfig = resolveDoctorAuthConfig(
       resolved.auth === false ? {} : resolved.auth as AuthBehaviorConfig,
       sink,
@@ -109,7 +117,8 @@ export function runPlatformDoctor(
     checkAuthAndEmail(resolved, sink, env, doctorAuthConfig);
     checkStorage(resolved, sink, env);
     checkMigrations(resolved, sink);
-    checkSystemDatabase(resolved, sink, env, options.projectRoot);
+    checkSystemDatabase(resolved, sink, env,
+      options.projectRoot && !rootMismatch ? resolved.projectRoot : undefined);
     checkDatabaseTopology(resolved, sink);
     checkConfiguredDatabaseAutomations(resolved, sink);
     checkSyncPolicy(resolved, sink);
@@ -119,7 +128,7 @@ export function runPlatformDoctor(
     checkAI(resolved, sink, env);
     checkVector(resolved, sink);
     checkPdf(resolved, sink);
-    checkUsageAudit(resolved, findings, options);
+    if (!rootMismatch) checkUsageAudit(resolved, findings, options);
   }
 
   const hasError = findings.some((finding) => finding.severity === 'error');

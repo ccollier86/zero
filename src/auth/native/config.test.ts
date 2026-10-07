@@ -2,6 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { resolveNativeAuthConfig } from './config';
 
 describe('resolveNativeAuthConfig', () => {
+  test('phone/contact write scopes are separately opt-in, with unchanged default consent', () => {
+    const client = { clientId: 'contacts', name: 'Contacts', redirectUris: ['com.example.contacts:/callback'] };
+    expect(resolveNativeAuthConfig({ clients: [client] }).clients[0]!.scopes).toEqual(['openid', 'profile', 'email']);
+    expect(resolveNativeAuthConfig({ clients: [{ ...client, scopes: ['openid', 'profile', 'phone', 'contacts:write'] }] }).clients[0]!.scopes)
+      .toEqual(['openid', 'profile', 'phone', 'contacts:write']);
+    expect(() => resolveNativeAuthConfig({ clients: [{ ...client, scopes: ['openid', 'contacts:write'] }] })).toThrow();
+  });
   test('defaults off and resolves public native client registration', () => {
     const defaults = resolveNativeAuthConfig();
     expect(defaults).toMatchObject({
@@ -66,6 +73,15 @@ describe('resolveNativeAuthConfig', () => {
       ...client,
       redirectUris: [client.redirectUris[0], client.redirectUris[0]],
     }] })).toThrow('redirectUris contains duplicates');
+  });
+
+  test('profile write scopes require explicit registration and profile read consent', () => {
+    const client = { clientId: 'profile-client', name: 'Profile Client', redirectUris: ['com.example.profile:/callback'] };
+    expect(resolveNativeAuthConfig({ clients: [client] }).clients[0]!.scopes).not.toContain('profile:write');
+    expect(resolveNativeAuthConfig({ clients: [{ ...client, scopes: ['openid', 'profile', 'profile:write'] }] })
+      .clients[0]!.scopes).toContain('profile:write');
+    expect(() => resolveNativeAuthConfig({ clients: [{ ...client, scopes: ['openid', 'profile:write'] }] }))
+      .toThrow('profile:write requires profile scope');
   });
 
   test('rejects unknown native auth fields and wrong runtime shapes', () => {

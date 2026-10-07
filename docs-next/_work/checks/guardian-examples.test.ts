@@ -17,7 +17,7 @@ test('Guardian declarations and integration examples use public source contracts
   for (const page of [
     'bootstrap', 'user-properties', 'mfa', 'authorization', 'rbac', 'tenancy',
     'invitations', 'verified-domains', 'api-keys', 'audit', 'identity-projection',
-    'native-provider', 'integration', 'configuration',
+    'native-provider', 'integration', 'configuration', 'profile-completion',
   ]) {
     for (const [index, source] of (await blocks(page)).entries()) add(`${page}-${index}`, source);
   }

@@ -60,6 +60,8 @@ suite('installed compiled DocsApp browser boundary', () => {
     try {
       await page.keyboard.press('Control+k');
       const dialog = page.getByRole('dialog', { name: 'Search documentation', exact: true }); await dialog.waitFor();
+      expect(await dialog.locator('[data-slot="kbd-group"]').count()).toBeGreaterThan(0);
+      expect(await dialog.locator('[data-slot="kbd"]').count()).toBeGreaterThan(0);
       await dialog.getByRole('combobox').fill('integration');
       await dialog.getByRole('option', { name: /Details Public package integration details/ }).waitFor();
       await dialog.getByRole('combobox').press('Enter');

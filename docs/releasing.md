@@ -332,6 +332,19 @@ unchanged, and the installed framework's package-owned files must exactly match
 the canonical archive. This final binding check prevents a later frozen install
 from reusing the previous archive payload.
 
+Local/saved-archive rollback must also restore the extracted canonical binding,
+not only the old archive, lock and installed top-level package. After restoring
+the original declarations and frozen lock, the updater uses a targeted,
+script-free `bun update @zero/framework --frozen-lockfile --force --no-cache`
+(with `--ignore-scripts --no-progress`), then restores and verifies the exact
+snapshot bytes. Registry rollback keeps its ordinary frozen install. Qualify
+a subsequent ordinary frozen install with the populated installed tree and
+cache intact, checking the old framework's complete package-owned file hashes
+and unchanged app/manifest/lock/archive bytes after every injected failure
+stage. This does not claim that Bun's general shared local-archive extraction
+cache behavior is fixed; parallel synthetic archive fixtures use independent,
+retained package caches so their baselines cannot select each other's payloads.
+
 The updater must not delete or regenerate the whole app lockfile, broadly
 re-resolve unrelated dependencies, or require operators to remove
 `node_modules`, `bun.lock`, or the managed cache first. It must directly manage
@@ -354,6 +367,32 @@ database or ledger files.
 
 Never use `create-zero --force` or `zero-new --force` for this smoke test. Those
 commands regenerate scaffold targets and are not updaters.
+
+## Private Preview Source Fixtures
+
+The core repository tracks `sdk/README.md`, not the separately versioned private
+SDK checkouts. The native documentation example check currently imports the
+Chrome preview's real source. When qualifying a fresh core checkout, admit an
+exact clean Chrome SDK commit as a separate source fixture beneath
+`sdk/zero-chrome-auth/`; do not copy a developer's dependency tree, generated
+output or Git metadata. A Git archive with that explicit prefix provides the
+tracked files only. Validate its paths before extraction into the disposable
+checkout, and record its commit, tree and archive hash separately from the core
+release commit and package hash.
+
+The core's native-example check maps framework imports to the actual core source.
+Its compiler dependencies and the Chrome preview's current ten fake-broker unit
+files do not require the SDK's own `node_modules`. A standalone SDK package/build
+check is a different gate and needs its own frozen dependencies; its development
+framework fixture is not evidence against the real core release. The Rust/Tauri
+preview is not imported by this TypeScript documentation check.
+
+The source/local qualification inventory includes any admitted preview tests and
+reports them explicitly. Do not silently discard them through Git-ignore rules,
+and do not claim those private `0.0.0` previews were shipped in the framework
+archive or published as part of its release. A checkout without those separate
+fixtures has a different inventory and must report that prerequisite, not a
+fabricated whole-suite pass.
 
 ## Release Checklist
 
@@ -395,6 +434,58 @@ git diff --check
    Run browser/PDF installation checks in the disposable release environment;
    they may download runtime assets. Do not point release verification at a
    production app database or Storage root.
+
+   The canonical suite discovers every normal Bun test/spec file, including
+   actor-entry tests, and runs each exactly once in a fresh Bun OS process,
+   with at most four concurrent children. `test:parallel` is a compatibility
+   alias for this same runner, not Bun's reused-worker mode. The default
+   per-test timeout is 120 seconds; `--timeout 120000` is forwarded to every
+   child. Existing explicit shorter test deadlines and native/concurrency
+   assertions are unchanged. Each file also has a separate 15-minute process
+   deadline and at most one second of termination grace; timeout, native signal,
+   spawn failure or nonzero exit fails the run. No files are retried or excluded
+   because they previously crashed.
+
+   Ten explicitly catalogued full-framework archive consumers share one
+   admission slot because their fresh installation and compilation compete for
+   the same external package cache and cold-I/O budget. The scheduler admits
+   ordinary queued files around a waiting archive consumer, retaining up to
+   four total fresh processes. The slot stays owned through process, descendant
+   and output retirement. This changes admission overlap, not inventories,
+   assertions, deadlines, cleanup requirements or failure handling. Review
+   `src/testing/test-suite-resources.ts` when adding a full-framework installed
+   consumer; unrelated package metadata, tiny updater archives, source-only
+   compiler fixtures and browser tests are not classified automatically.
+
+   `bun run test --list` prints the exact deterministic inventory without
+   execution. Status and final per-file accounting are JSON lines on stdout;
+   tagged child output goes to stderr. Optional path-substring selectors and
+   bounded `--concurrency`/`--file-timeout` are documented by `bun run test --help`.
+   Unsupported worker, isolate, retry, skip, snapshot-update and coverage flags
+   fail explicitly. Discovery includes all eight normal JS/TS loader extensions
+   and case-insensitive test/spec suffixes. It excludes `node_modules` and hidden
+   directory components, not hidden file basenames, `dist`/`build`, Gitignored
+   source or bunfig feature exclusions. This retains the complete release
+   baseline, including the standalone SDK tests.
+
+   On macOS/Linux each admitted child owns a new POSIX session/process group.
+   Root interruption/deadline sends signals only to those captured groups;
+   `--no-orphans` is an additional parent-death fence, not the sole cleanup
+   mechanism. After leader exit, group retirement allows 250ms for an orderly
+   close, then kills any leftover group members and verifies retirement for
+   at most one second. A leftover group is recorded as a failure, never cleaned
+   up into a pass. No unrelated or externally owned group is signaled. The runner
+   also limits post-exit output draining to one second: inherited pipes or a
+   failing output sink cannot hold the suite indefinitely. Incomplete output or
+   cleanup failure is recorded and fails the run. The runner cancels only its
+   own stream readers, without hunting for children that moved to another group.
+   An incomplete drain also reports payload-free per-channel progress: bytes and
+   chunks read, EOF, pending read versus output consumer, and relative pending
+   duration. These diagnostics do not turn an incomplete result into a pass or
+   change the one-second drain boundary.
+
+   This process harness does not add support for raw SQLite use inside nested JavaScript
+   Workers; tests of production subprocess concurrency retain their own gates.
 
    For a candidate containing Fabric, also run the focused actor protocol,
    coordinator, file/root identity, liveness/orphan, subprocess, Resource CRUD,

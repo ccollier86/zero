@@ -12,7 +12,10 @@ corrections remain included. This update adds no database migration and does not
 enable a docs route or install Markdown dependencies into existing apps.
 
 The optional [Markdown docs plugin](./plugins/markdown-docs.md) lives in its own
-package, `@zero/plugin-docs` 0.1.0, with framework peer `>=2.5.0 <3`. Source/local
+package. The current `@zero/plugin-docs` 0.1.1 preview requires framework
+`>=2.6.0 <3`; upgrade/install the optional plugin separately from the normal
+framework updater. The original 2.5.0/0.1.0 release pair remains historical.
+Source/local
 archive installs are qualified separately from any future registry publication.
 Register it in the ordinary server-plugin directory and point `contentDir` at
 the folder you deliberately want to publish. Internal/draft documents remain
@@ -208,7 +211,13 @@ runtime backups until the application checks succeed.
 
 ## Documentation And Future Packages
 
-The rebuilt `docs-next` tree is committed separately from the packaged docs; its
-source baselines and qualification status remain explicit. This release does
-not automatically publish the new site, replace agent entrypoints, or split UI
-and icons into separate packages. Existing public imports remain supported.
+The rebuilt `docs-next` tree is included in the framework archive as the primary
+package-local feature and agent reference. The approved 2.4.1 handoff already
+aligned README, Start Here and the agent documentation entrances with that tree;
+each guide's source baseline and qualification status remain explicit.
+
+Packaging classified Markdown is not permission to publish it. Internal working
+notes remain internal, and the docs plugin admits only deliberately published
+content. A public-only site projection and separate UI/icon packages are still
+distinct follow-up work, not automatic effects of a framework update. Existing
+public imports remain supported.

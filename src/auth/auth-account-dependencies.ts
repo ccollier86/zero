@@ -12,6 +12,7 @@ import type { UserStore } from './user-store';
 import type { AuthTenantSessionService } from './auth-tenant-session-service';
 import { emitPlatformCode } from '../observability/sink';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
+import type { AuthUserContactService } from './auth-user-contact-service';
 
 export interface AuthAccountPluginConfig {
   getUserStore: () => UserStore | null;
@@ -24,6 +25,7 @@ export interface AuthAccountPluginConfig {
   getRegistrationIntentStore: () => RegistrationIntentStore | null;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
   getAuthTenantSessionService: () => AuthTenantSessionService | null;
+  getUserContactService?: () => AuthUserContactService | null;
   /** Owning app emitter. Omitted only by standalone/legacy compositions. */
   emitCode?: AuthPlatformCodeEmitter;
 }

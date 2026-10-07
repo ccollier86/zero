@@ -22,6 +22,12 @@ import type { AuthAuditConfig, ResolvedAuthAuditConfig } from './auth-audit-type
 import type { TenantKind } from './tenancy/tenancy-types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import type { DataRealmReadinessService } from './data-realm-readiness.plugin';
+import type { AuthUserProfileConfig, ResolvedAuthUserProfileConfig } from './auth-user-profile-types';
+export type * from './auth-user-profile-types';
+import type { AuthPresenceConfig, ResolvedAuthPresenceConfig } from './auth-presence-types';
+export type * from './auth-presence-types';
+import type { PhoneVerificationAdapter } from './auth-user-contact-types';
+export type * from './auth-user-contact-types';
 
 // ─── Auth Context ──────────────────────────────────────────────────────────
 
@@ -202,7 +208,8 @@ export type AuthActionTokenType =
   | 'account_setup'
   | 'password_reset'
   | 'admin_password_reset'
-  | 'email_verification';
+  | 'email_verification'
+  | 'profile_contact_verification';
 
 /** Internal hashed auth action token record. Raw tokens are never stored. */
 export interface AuthActionTokenRecord {
@@ -650,6 +657,10 @@ export interface ResolvedUserPropertyFieldConfig {
 
 /** Developer-authored auth behavior config. */
 export interface AuthBehaviorConfig {
+  /** Global identity profile fields and regional preferences. */
+  userProfile?: AuthUserProfileConfig;
+  /** Optional lease-based, scoped presence; never an authorization signal. */
+  presence?: AuthPresenceConfig;
   /** Durable authorization/control-plane audit retention. */
   audit?: AuthAuditConfig;
   /** Application or tenant-scoped authorization. Default: 'single'. */
@@ -684,6 +695,9 @@ export interface AuthBehaviorConfig {
 
 /** Normalized auth behavior config used by backend services and routes. */
 export interface ResolvedAuthBehaviorConfig {
+  /** Present on normalized config; optional for legacy hand-built service doubles. */
+  userProfile?: ResolvedAuthUserProfileConfig;
+  presence?: ResolvedAuthPresenceConfig;
   /** Durable authorization/control-plane audit retention. */
   audit: ResolvedAuthAuditConfig;
   /**
@@ -711,6 +725,8 @@ export interface ResolvedAuthBehaviorConfig {
 
 /** Exact return contract of resolveAuthBehaviorConfig(). */
 export interface NormalizedAuthBehaviorConfig extends ResolvedAuthBehaviorConfig {
+  userProfile: ResolvedAuthUserProfileConfig;
+  presence: ResolvedAuthPresenceConfig;
   tenancy: ResolvedAuthTenancyConfig;
   authorization: ResolvedAuthAuthorizationConfig;
   bootstrap: ResolvedAuthBootstrapConfig;
@@ -721,8 +737,17 @@ export interface NormalizedAuthBehaviorConfig extends ResolvedAuthBehaviorConfig
  * Configuration for createAuthPlugin().
  */
 export interface AuthPluginConfig extends AuthBehaviorConfig {
+  /** Trusted optional phone possession verifier; never public/declarative credentials. */
+  phoneVerificationAdapter?: PhoneVerificationAdapter;
   /** Shared ReactiveDB instance — auth defines its tables here */
   db: ReactiveDB;
+
+  /** @internal Managed startup must honor migrate:false for the profile schema. */
+  profileSchemaInstallAllowed?: boolean;
+  /** @internal Equivalent managed migration admission for contact/presence schemas. */
+  profileContactSchemaInstallAllowed?: boolean;
+  profileCompletionSchemaInstallAllowed?: boolean;
+  presenceSchemaInstallAllowed?: boolean;
 
   /** @internal Synchronous system-db outbox hook installed by createApp. */
   identityProjection?: IdentityProjectionLifecycleHook;

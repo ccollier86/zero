@@ -6,7 +6,7 @@
  * this fixture owns deterministic Doctor and server-build smoke checks only.
  */
 
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
@@ -15,8 +15,9 @@ import type { ResourcePolicy } from '../../resources';
 
 const REPOSITORY_ROOT = process.cwd();
 const PROOF_ROOT = join(REPOSITORY_ROOT, 'examples', 'guardian-fabric-proof');
-const PROOF_CONFIG = join(PROOF_ROOT, 'zero.config.ts');
+const PROOF_CONFIG_FACTORY = new URL('../../../examples/guardian-fabric-proof/server/proof-config.ts', import.meta.url).href;
 const PROOF_SERVER = join(PROOF_ROOT, 'app', 'server.ts');
+const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const COMMAND_TIMEOUT_MS = 45_000;
 
 interface DoctorFinding {
@@ -64,35 +65,69 @@ describe('Guardian + Fabric proof fixture', () => {
     }
   });
 
-  test('passes Doctor with the intended physical-tenant contract', async () => {
-    const result = await spawnBounded([
-      process.execPath,
-      join(REPOSITORY_ROOT, 'src', 'doctor', 'run.ts'),
-      '--config',
-      PROOF_CONFIG,
-      '--json',
-    ], {
-      ...Bun.env,
-      APP_PUBLIC_URL: 'http://127.0.0.1:3100',
-      AUTH_BOOTSTRAP_SECRET: 'guardian-fabric-proof-smoke-secret-32-bytes',
-      PORT: '3100',
-    });
-    const report = JSON.parse(result.stdout) as DoctorReport;
+  test('passes configuration-only Doctor with isolated nonexistent physical-tenant data paths', async () => {
+    await mkdir(SCRATCH, { recursive: true });
+    const temporaryRoot = await mkdtemp(join(SCRATCH, 'guardian-proof-doctor-'));
+    const configPath = join(temporaryRoot, 'zero.config.ts');
+    const paths = {
+      applicationDatabase: join(temporaryRoot, 'data', 'application.db'),
+      systemDatabase: join(temporaryRoot, 'data', 'system.db'),
+      tenantDatabases: join(temporaryRoot, 'data', 'tenant-databases'),
+      app: join(PROOF_ROOT, 'app'),
+      storage: join(temporaryRoot, 'data', 'storage'),
+      generated: join(temporaryRoot, '.zero', 'generated'),
+      output: join(temporaryRoot, '.build'),
+    };
+    const absentPaths = [join(temporaryRoot, 'data'), join(temporaryRoot, '.zero'),
+      paths.output, paths.applicationDatabase, paths.systemDatabase, paths.tenantDatabases, paths.storage];
+    // The pure factory preserves the shipped contract; only fixture-owned paths
+    // change. Never inspect or migrate the runnable proof's retained databases.
+    const wrapper = `
+      import { createGuardianFabricProofConfig } from ${JSON.stringify(PROOF_CONFIG_FACTORY)};
+      export default {
+        ...createGuardianFabricProofConfig({
+          port: 3100,
+          publicUrl: 'http://127.0.0.1:3100',
+          bootstrap: { mode: 'secret', secret: 'guardian-fabric-proof-smoke-secret-32-bytes' },
+          paths: ${JSON.stringify(paths)},
+        }),
+        projectRoot: ${JSON.stringify(temporaryRoot)},
+      };
+    `;
 
-    expect(result.exitCode).toBe(0);
-    expect(report.ok).toBe(true);
-    expect(report.findings.filter((finding) => finding.severity === 'error')).toEqual([]);
-    expect(
-      report.findings
-        .filter((finding) => finding.severity === 'warning')
-        .filter((finding) => finding.code !== 'database.receipts.permanent_key_capacity'),
-    ).toEqual([]);
+    try {
+      await Bun.write(configPath, wrapper);
+      await expectMissingPaths(absentPaths);
+      const result = await spawnBounded([
+        process.execPath,
+        '--no-env-file',
+        join(REPOSITORY_ROOT, 'src', 'doctor', 'run.ts'),
+        '--config', configPath,
+        '--no-usage-audit',
+        '--json',
+      ], { NODE_ENV: 'test', TMPDIR: SCRATCH });
+      const report = JSON.parse(result.stdout) as DoctorReport;
 
-    const findingCodes = report.findings.map((finding) => finding.code);
-    expect(findingCodes).toContain('database.topology.multiple_enabled');
-    expect(findingCodes).toContain('database.tenant_isolation.physical');
-    expect(findingCodes).toContain('database.sync.actor_capacity_reserved');
-    expect(findingCodes).toContain('resource.tenant_database.physical_boundary');
+      expect(result.exitCode).toBe(0);
+      expect(report.ok).toBe(true);
+      expect(report.findings.filter((finding) => finding.severity === 'error')).toEqual([]);
+      expect(
+        report.findings
+          .filter((finding) => finding.severity === 'warning')
+          .filter((finding) => finding.code !== 'database.receipts.permanent_key_capacity'),
+      ).toEqual([]);
+
+      const findingCodes = report.findings.map((finding) => finding.code);
+      expect(findingCodes).toContain('database.topology.multiple_enabled');
+      expect(findingCodes).toContain('database.tenant_isolation.physical');
+      expect(findingCodes).toContain('database.sync.actor_capacity_reserved');
+      expect(findingCodes).toContain('resource.tenant_database.physical_boundary');
+      await expectMissingPaths(absentPaths);
+      expect(await readdir(temporaryRoot)).toEqual(['zero.config.ts']);
+      expect(await Bun.file(configPath).text()).toBe(wrapper);
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   }, 60_000);
 
   test('bundles the proof server through public package exports', async () => {
@@ -119,6 +154,12 @@ describe('Guardian + Fabric proof fixture', () => {
     }
   }, 60_000);
 });
+
+async function expectMissingPaths(paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+}
 
 function policyDescendants(
   policy: ResourcePolicy | undefined,

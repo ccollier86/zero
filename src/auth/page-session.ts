@@ -11,7 +11,20 @@ import type { TokenService } from './token-service';
 import type { AuthContext } from './types';
 import { authAuditRequestFromRequest } from './auth-audit-service';
 
+/** Legacy host-wide name. New credentials use TokenService.pageSessionCookieName. */
 export const PAGE_SESSION_COOKIE_NAME = '__zero_page_session';
+type PageCookieNamespace = Pick<TokenService, 'pageSessionCookieName'>;
+
+interface ResolvedPageCookie {
+  name: string;
+  token: string;
+  auth: AuthContext;
+}
+
+// A mutation may retire a validated legacy proof before writing its response.
+// Retain ownership only for this immutable request and actual TokenService;
+// this evidence is NEVER reused to authenticate a later request or resolution.
+const validatedLegacyCookies = new WeakMap<Request, WeakMap<TokenService, string>>();
 
 interface ResponseSet {
   headers: HTTPHeaders;
@@ -32,13 +45,31 @@ export async function resolvePageSessionAuth(
   // must not silently fall back to an ambient cookie.
   if (request.headers.has('authorization')) return null;
 
-  const token = readPageSessionCookie(request);
-  return token ? tokenService.resolvePageSessionToken(token) : null;
+  return (await resolvePageSessionCookie(request, tokenService))?.auth ?? null;
 }
 
-/** Read the page-session value without validating or exposing it to application code. */
-export function readPageSessionCookie(request: Request): string | null {
-  return readCookie(request.headers.get('cookie'), PAGE_SESSION_COOKIE_NAME);
+/** Read only this app's canonical cookie; absence differs from present empty input. */
+export function readPageSessionCookie(request: Request, tokenService: PageCookieNamespace): string | null {
+  return readCookie(request.headers.get('cookie'), tokenService.pageSessionCookieName);
+}
+
+/**
+ * Server-only shared GET/native-POST resolution. Canonical presence is
+ * authoritative, even when malformed or empty. A legacy cookie is selected
+ * only after the owning TokenService validates its live local refresh proof.
+ */
+export async function resolvePageSessionCookie(request: Request, tokenService: TokenService): Promise<ResolvedPageCookie | null> {
+  const canonical = readPageSessionCookie(request, tokenService);
+  const name = canonical !== null ? tokenService.pageSessionCookieName : PAGE_SESSION_COOKIE_NAME;
+  const token = canonical ?? readCookie(request.headers.get('cookie'), PAGE_SESSION_COOKIE_NAME);
+  if (!token) return null;
+  const auth = await tokenService.resolvePageSessionToken(token);
+  if (auth && name === PAGE_SESSION_COOKIE_NAME) {
+    let owners = validatedLegacyCookies.get(request);
+    if (!owners) { owners = new WeakMap(); validatedLegacyCookies.set(request, owners); }
+    owners.set(tokenService, token);
+  }
+  return auth ? { name, token, auth } : null;
 }
 
 /** Install or clear the page cookie to mirror an auth-completion response. */
@@ -67,23 +98,24 @@ export async function setPageSessionCookie(
   tokenService: TokenService,
   rawRefreshToken: string
 ): Promise<void> {
-  const previousSession = readPageSessionCookie(request);
+  const previousSession = await resolvePageSessionCookie(request, tokenService);
   if (previousSession) {
     await tokenService.revokePageSessionToken(
-      previousSession,
+      previousSession.token,
       authAuditRequestFromRequest(request),
     );
   }
+  clearValidatedLegacyCookie(set, request, tokenService);
 
   const session = await tokenService.issuePageSessionToken(rawRefreshToken);
   if (!session) {
-    clearPageSessionCookie(set, request);
+    clearPageSessionCookie(set, request, tokenService);
     return;
   }
 
   const maxAge = Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1_000));
   const parts = [
-    `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(session.token)}`,
+    `${tokenService.pageSessionCookieName}=${encodeURIComponent(session.token)}`,
     'Path=/',
     `Max-Age=${maxAge}`,
     `Expires=${new Date(session.expiresAt).toUTCString()}`,
@@ -101,25 +133,37 @@ export async function revokeAndClearPageSessionCookie(
   request: Request,
   tokenService: TokenService
 ): Promise<void> {
-  const session = readPageSessionCookie(request);
+  const session = await resolvePageSessionCookie(request, tokenService);
   if (session) {
     await tokenService.revokePageSessionToken(
-      session,
+      session.token,
       authAuditRequestFromRequest(request),
     );
   }
-  clearPageSessionCookie(set, request);
+  clearValidatedLegacyCookie(set, request, tokenService);
+  clearPageSessionCookie(set, request, tokenService);
 }
 
 /** Expire the page cookie immediately without touching unrelated cookies. */
-export function clearPageSessionCookie(set: ResponseSet, request: Request): void {
-  appendSetCookieHeader(set, serializeClearedPageSessionCookie(request));
+export function clearPageSessionCookie(set: ResponseSet, request: Request, tokenService: PageCookieNamespace): void {
+  appendSetCookieHeader(set, serializeClearedPageSessionCookie(request, tokenService));
+}
+
+function clearValidatedLegacyCookie(set: ResponseSet, request: Request, tokenService: TokenService): void {
+  const owners = validatedLegacyCookies.get(request);
+  if (!owners || owners.get(tokenService) !== readCookie(request.headers.get('cookie'), PAGE_SESSION_COOKIE_NAME)) return;
+  owners.delete(tokenService);
+  appendSetCookieHeader(set, serializeClearedCookie(request, PAGE_SESSION_COOKIE_NAME));
 }
 
 /** Build a deletion header for raw router responses. */
-export function serializeClearedPageSessionCookie(request: Request): string {
+export function serializeClearedPageSessionCookie(request: Request, tokenService: PageCookieNamespace): string {
+  return serializeClearedCookie(request, tokenService.pageSessionCookieName);
+}
+
+function serializeClearedCookie(request: Request, name: string): string {
   const parts = [
-    `${PAGE_SESSION_COOKIE_NAME}=`,
+    `${name}=`,
     'Path=/',
     'Max-Age=0',
     'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
@@ -137,12 +181,16 @@ export function serializeClearedPageSessionCookie(request: Request): string {
  * methods never attempt cookie auth, so they must not clear a valid cookie.
  */
 export function rejectedPageSessionCookieHeader(
-  request: Request
+  request: Request,
+  tokenService: PageCookieNamespace | null,
 ): string | null {
+  if (!tokenService) return null;
   if (!isSafePageMethod(request.method)) return null;
   if (request.headers.has('authorization')) return null;
-  if (!readPageSessionCookie(request)) return null;
-  return serializeClearedPageSessionCookie(request);
+  // Rejection cannot establish ownership of a legacy host-wide cookie.
+  // Never erase one which might belong to a different app on this hostname.
+  if (readPageSessionCookie(request, tokenService) === null) return null;
+  return serializeClearedPageSessionCookie(request, tokenService);
 }
 
 function getRefreshToken(response: unknown): string | null {
@@ -178,7 +226,11 @@ function readCookie(header: string | null, name: string): string | null {
 
   for (const part of header.split(';')) {
     const separator = part.indexOf('=');
-    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    if (separator < 0) {
+      if (part.trim() === name) return ''; // Present malformed canonical still blocks legacy fallback.
+      continue;
+    }
+    if (part.slice(0, separator).trim() !== name) continue;
 
     const value = part.slice(separator + 1).trim();
     try {

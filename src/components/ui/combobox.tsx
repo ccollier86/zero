@@ -43,6 +43,12 @@ export interface ComboboxProps {
   disabled?: boolean;
   className?: string;
   transition?: Transition;
+  /** Native trigger identity and labels; the visible button is the actual form control. */
+  id?: string;
+  'aria-label'?: string;
+  'aria-labelledby'?: string;
+  'aria-describedby'?: string;
+  'aria-invalid'?: React.AriaAttributes['aria-invalid'];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -74,6 +80,11 @@ function Combobox({
   disabled = false,
   className,
   transition,
+  id,
+  'aria-label': ariaLabel,
+  'aria-labelledby': ariaLabelledBy,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -167,6 +178,11 @@ function Combobox({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id}
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledBy}
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid}
           data-slot="combobox-trigger"
           variant="outline"
           role="combobox"

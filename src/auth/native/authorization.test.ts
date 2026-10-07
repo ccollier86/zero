@@ -77,4 +77,11 @@ describe('parseNativeAuthorizationRequest', () => {
     resource.set('resource', 'https://api.example.com');
     expectCode(resource, 'invalid_target');
   });
+
+  test('profile write consent is opt-in and requires the separate profile read scope', () => {
+    const permitted = validRequest(); permitted.set('scope', 'openid profile profile:write');
+    expect(parseNativeAuthorizationRequest(permitted).scopes).toEqual(['openid', 'profile', 'profile:write']);
+    const incomplete = validRequest(); incomplete.set('scope', 'openid profile:write');
+    expectCode(incomplete, 'invalid_scope');
+  });
 });

@@ -28,7 +28,10 @@ number formatting. It reuses Zero's Input, Button, Popover, Command, ScrollArea
 and icons, with the current light/dark tokens. Formatting comes from
 `react-phone-number-input`; numbering-plan validation uses
 `libphonenumber-js`. No provider, session or AppProvider is needed to edit a local
-value. Persistence and contact verification remain application responsibilities.
+value. Persistence and contact verification are separate from formatting.
+The optional [Guardian contacts service](../../backend/guardian/contacts.md)
+supplies Zero's typed account-phone storage and possession ceremony when enabled;
+the input itself does not provision that service or prove number ownership.
 
 This is an additive, unreleased working-source component, adapted from ReUI's
 country-picker and read-only examples. It is not in the already published

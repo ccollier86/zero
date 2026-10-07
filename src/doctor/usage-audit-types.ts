@@ -29,6 +29,7 @@ export interface UsageAuditOptions {
 }
 
 export interface RunUsageAuditInput {
+  /** Must identify the same project as resolvedConfig.projectRoot (existing symlink aliases are accepted). */
   projectRoot: string;
   resolvedConfig: ResolvedConfig;
   options?: boolean | UsageAuditOptions;

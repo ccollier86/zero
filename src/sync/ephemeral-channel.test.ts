@@ -34,6 +34,41 @@ afterEach(() => {
 });
 
 describe('managed ephemeral topic authorization', () => {
+  test('expiration emits one authorized delete and a closed async policy continuation cannot resurrect state', async () => {
+    let now = 1000;
+    const manager = new EphemeralStateManager(0, () => now); managers.push(manager);
+    const channel = new EphemeralChannel(manager, allowLegacyEphemeralTopicPolicy, { revalidateIntervalMs: 0 }); channels.push(channel);
+    const first = createSocket('expiry-first', null), second = createSocket('expiry-second', null);
+    await channel.subscribe(first.ws, 'shared'); await channel.subscribe(second.ws, 'shared');
+    await channel.set(first.ws, { topic: 'shared', key: 'value', value: true, ttl: 1000 });
+    now = 2000; manager.sweep(); for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+    expect(second.messages.filter(message => message.type === 'ephemeral.change' && message.op === 'delete')).toHaveLength(1);
+    manager.getSnapshot('legacy:shared'); await Promise.resolve();
+    expect(second.messages.filter(message => message.type === 'ephemeral.change' && message.op === 'delete')).toHaveLength(1);
+
+    let finish!: (value: Awaited<ReturnType<EphemeralTopicPolicy['authorize']>>) => void;
+    const deferred = new Promise<Awaited<ReturnType<EphemeralTopicPolicy['authorize']>>>(resolve => { finish = resolve; });
+    const delayed = new EphemeralChannel(manager, { authorize: () => deferred }, { revalidateIntervalMs: 0 }); channels.push(delayed);
+    const stale = createSocket('late-policy', 'alice');
+    const pending = delayed.set(stale.ws, { topic: 'late', key: 'owned', value: true });
+    delayed.cleanup(stale.ws); finish({ ok: true, namespace: 'late', keyOwnership: 'actor' }); await pending;
+    expect(manager.getSnapshot('late')).toEqual({}); expect(stale.ws.data.ephemeralTopics.size).toBe(0);
+  });
+
+  test('managed Guardian reports and private leases never fall through to custom policy or generic subscriptions', async () => {
+    let delegated = 0;
+    const manager = new EphemeralStateManager(0); managers.push(manager);
+    const channel = new EphemeralChannel(manager, createManagedEphemeralTopicPolicy({ getRoomService: () => null,
+      customPolicy: { authorize: async () => { delegated++; return { ok: true, namespace: 'unsafe', keyOwnership: 'actor' }; } },
+    }), { revalidateIntervalMs: 0 }); channels.push(channel);
+    const socket = createSocket('guardian-reserved', 'alice');
+    for (const topic of ['guardian:presence', '_guardian-presence:application']) {
+      await channel.subscribe(socket.ws, topic); await channel.set(socket.ws, { topic, key: 'self', value: true });
+    }
+    expect(delegated).toBe(0); expect(manager.getSnapshot('unsafe')).toEqual({});
+    expect(errorCodes(socket)).toEqual(['EPHEMERAL_FORBIDDEN', 'EPHEMERAL_FORBIDDEN', 'EPHEMERAL_FORBIDDEN', 'EPHEMERAL_FORBIDDEN']);
+  });
+
   test('rejects unauthenticated and non-member room access with stable wire errors', async () => {
     const members = new Set(['room-a:alice']);
     const channel = createManagedChannel(members);

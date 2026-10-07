@@ -37,6 +37,8 @@ These additive symbols are not counted as part of the original clean baseline.
 
 | Named symbol | Exact import alternatives | Declaration evidence | Canonical planned guide |
 | --- | --- | --- | --- |
+| `Kbd` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/kbd` | [src/components/kbd/kbd.tsx](../../../../src/components/kbd/kbd.tsx) | [Keyboard hints](../../../frontend/components/kbd.md) |
+| `KbdGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/kbd` | [src/components/kbd/kbd.tsx](../../../../src/components/kbd/kbd.tsx) | [Keyboard hints](../../../frontend/components/kbd.md) |
 | `JsonEditor` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [src/components/json-editor/json-editor.tsx](../../../../src/components/json-editor/json-editor.tsx) | `frontend/components/json-editor.md` |
 | `Cascader` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
 | `CascaderTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/cascader` | [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
@@ -585,6 +587,30 @@ presence contract does not implement a connection tracker or database projection
 | `AvatarPresenceIndicator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/avatar-group` | [Avatar group entry](../../../../src/components/avatar-group/index.ts) | `frontend/components/avatar-group.md` |
 | `SettingsMatrix` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/settings-matrix` | [Settings matrix entry](../../../../src/components/settings-matrix/index.ts) | `frontend/components/settings-matrix.md` |
 | `IntegrationSettingsList` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/integration-settings-list` | [Integration list entry](../../../../src/components/integration-settings-list/index.ts) | `frontend/components/integration-settings-list.md` |
+
+## Reconciliation And Review
+
+## Adaptive Profile Working-Source Additions
+
+These source-observed additions on `feature/adaptive-profile-settings` are not
+part of the historical count or a published-package qualification.
+
+| Symbol | Public imports | Evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `UserProfileSettings` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Profile entry](../../../../src/components/profile-settings/index.ts) | `frontend/guardian/profile-settings.md` |
+| `UserProfileIdentitySummary` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Profile entry](../../../../src/components/profile-settings/index.ts) | `frontend/guardian/profile-settings.md` |
+| `UserProfileFields` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Profile entry](../../../../src/components/profile-settings/index.ts) | `frontend/guardian/profile-settings.md` |
+| `UserRegionalSettings` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Profile entry](../../../../src/components/profile-settings/index.ts) | `frontend/guardian/profile-settings.md` |
+| `UserProfileSecurity` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Profile entry](../../../../src/components/profile-settings/index.ts) | `frontend/guardian/profile-settings.md` |
+| `UserContactSettings` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Contact section](../../../../src/components/profile-settings/user-contact-settings.tsx) | `frontend/guardian/profile-settings.md` |
+| `UserContactProofBadge` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Contact badge](../../../../src/components/profile-settings/user-contact-proof-badge.tsx) | `frontend/guardian/profile-settings.md` |
+| `ContactEmailVerification` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Email landing](../../../../src/components/profile-settings/contact-email-verification.tsx) | `frontend/guardian/profile-settings.md` |
+| `UserPresenceSettings` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/profile-settings` | [Availability](../../../../src/components/profile-settings/user-presence-settings.tsx) | `frontend/guardian/profile-settings.md` |
+| `AvatarEditor` | `@zero/framework`, `@zero/framework/react` | [Avatar entry](../../../../src/components/avatar-editor/index.ts) | `frontend/guardian/profile-settings.md` |
+| `AvatarCropDialog` | `@zero/framework`, `@zero/framework/react` | [Avatar entry](../../../../src/components/avatar-editor/index.ts) | `frontend/guardian/profile-settings.md` |
+| `ProfileCompletionForm` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/auth` | [Completion form](../../../../src/components/auth/profile-completion-form.tsx) | `frontend/guardian/profile-settings.md` |
+| `FormSaveBar` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/form-save` | [Save entry](../../../../src/components/form-save/index.ts) | `frontend/forms/save-and-leave.md` |
+| `UnsavedChangesDialog` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/form-save` | [Save entry](../../../../src/components/form-save/index.ts) | `frontend/forms/save-and-leave.md` |
 
 ## Reconciliation And Review
 

@@ -32,10 +32,16 @@ import type { TenancyService } from './tenancy/tenancy-service';
 import type { TokenService } from './token-service';
 import type { UserPropertyService } from './user-property-service';
 import type { UserStore } from './user-store';
+import type { AuthUserProfileService } from './auth-user-profile-service';
+import type { AuthUserContactService } from './auth-user-contact-service';
+import type { AuthUserProfileCompletionService } from './auth-user-profile-completion-service';
 import type { VerifiedDomainOnboardingService } from './verified-domain-service';
 
 export interface AuthRuntimeServiceGraph {
   userStore: UserStore | null;
+  userProfileService: AuthUserProfileService | null;
+  userContactService: AuthUserContactService | null;
+  userProfileCompletionService: AuthUserProfileCompletionService | null;
   auditService: AuthAuditService | null;
   requestAdmissionService: AuthRequestAdmissionService | null;
   tokenService: TokenService | null;
@@ -67,6 +73,9 @@ export interface AuthRuntimeServiceGraph {
 export function createAuthRuntimeServiceGraph(): AuthRuntimeServiceGraph {
   return {
     userStore: null,
+    userProfileService: null,
+    userContactService: null,
+    userProfileCompletionService: null,
     auditService: null,
     requestAdmissionService: null,
     tokenService: null,

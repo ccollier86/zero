@@ -21,6 +21,8 @@ import {
   hasSQLiteTable,
   withDoctorDatabase,
 } from './platform-doctor-system-database-inspection';
+import { checkGuardianPresenceApplicationState, checkGuardianProfileFeatureState,
+  type DoctorGuardianProfileFeatures } from './platform-doctor-guardian-features';
 
 /** Inspect existing databases without creating, migrating, or mutating them. */
 export function inspectSystemDatabaseState(
@@ -28,6 +30,7 @@ export function inspectSystemDatabaseState(
   findings: PlatformDoctorFindingSink,
   projectRoot: string,
   projection: DoctorIdentityProjectionConfiguration,
+  features: DoctorGuardianProfileFeatures | null = null,
 ): void {
   let applicationState: DoctorApplicationIdentityProjectionState | null = null;
   withDoctorDatabase(resolved.db, projectRoot, 'db', findings, (application) => {
@@ -42,6 +45,7 @@ export function inspectSystemDatabaseState(
       });
       return;
     }
+    if (features) checkGuardianPresenceApplicationState(application, features, findings);
     if (projection.applicationReferenceCount > 0) {
       checkApplicationGuardianReferenceStorage(application, resolved, findings);
       applicationState = checkApplicationIdentityProjectionState(
@@ -54,6 +58,7 @@ export function inspectSystemDatabaseState(
   if (resolved.auth === false && projection.referenceCount === 0) return;
   withDoctorDatabase(resolved.systemDb, projectRoot, 'systemDb', findings, (system) => {
     if (resolved.auth !== false) checkAuthAuthorityRevisionState(system, findings);
+    if (features) checkGuardianProfileFeatureState(system, features, findings);
     if (projection.referenceCount > 0) {
       checkSystemIdentityProjectionState(system, findings, projection, applicationState);
     }

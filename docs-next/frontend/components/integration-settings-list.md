@@ -32,7 +32,8 @@ The same presentation can serve a user's connections, an organization's
 integrations or platform settings. The owning adapter supplies authorized
 items and actions. The list does not create OAuth routes, store credentials,
 infer connectivity or decide server permissions. This is currently unreleased
-working source, separate from the future connected profile-settings service.
+working source. It is separate from the [connected profile-settings surface](../guardian/profile-settings.md):
+neither component invents an app's integration-management backend.
 
 ## Public Imports And Basic Example
 

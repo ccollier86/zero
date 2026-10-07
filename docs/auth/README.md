@@ -1,5 +1,15 @@
 # Guardian Authentication and Authorization
 
+For current feature/configuration guidance, start with the source-audited
+[Guardian index](../../docs-next/backend/guardian/index.md). Adaptive
+[own profiles](../../docs-next/backend/guardian/user-profiles.md),
+[contact verification](../../docs-next/backend/guardian/contacts.md),
+[private avatars](../../docs-next/backend/guardian/avatars.md),
+[presence](../../docs-next/backend/guardian/presence.md) and
+[profile UI](../../docs-next/frontend/guardian/profile-settings.md) have focused
+guides there. Their version/evidence markers distinguish source work from a
+published upgrade; this long reference remains a compatibility entrance.
+
 **Register. Login. Keep identity private by default.**
 
 **Guardian** is Zero's app-local identity, session, tenancy, and authorization
@@ -359,11 +369,17 @@ browser SDK stores the opaque refresh token in `localStorage` so a reload can
 restore the session without making the user log in again.
 
 In parallel, every completed auth session sets a signed HttpOnly
-`__zero_page_session` cookie. It contains no raw refresh token and is bound to
+application-owned `__zero_page_session_<application-id-hash>` cookie. The
+namespace remains stable across a restart of the same SYSTEM database; older
+host-wide cookies migrate only after local session ownership is verified.
+See the [current page-session contract](../../docs-next/backend/guardian/sessions.md#page-cookie-behavior).
+It contains no raw refresh token and is bound to
 the same revocable `_refresh_tokens` row. This lets a direct or refreshed
 `GET`/`HEAD` page request pass the server route guard before browser JavaScript
-runs. The cookie is never accepted by auth APIs, `route.ts` handlers,
-mutations, server plugins, or WebSocket sync; those remain Bearer-only.
+runs. Ordinary auth APIs, `route.ts` handlers, mutations, server plugins and
+WebSocket sync remain Bearer-only. Native consent POST separately uses the
+validated page proof under its existing origin/consent checks, not general
+cookie-authenticated API admission.
 
 The SDK handles the normal lifecycle:
 

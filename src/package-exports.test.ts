@@ -30,6 +30,36 @@ describe('package exports', () => {
     await buildSmokeEntry('client.tsx', clientSmokeSource, 'browser');
   }, 120_000);
 
+  test('pure data-query helpers build through their focused browser export', async () => {
+    await buildSmokeEntry('query-params.ts', `
+      import { stableValueKey, normalizePage, normalizePageSize, appendDataFilter,
+        appendDataFilters, buildDataPageQuery, buildResourceListQuery, normalizeResourcePrefix }
+        from '@zero/framework/react/query-params';
+      import type { DataFilterOperator, DataFilterPrimitive, DataFilterExpression,
+        DataFilterValue, DataPageFilters, DataPageSort, DataPageInfo }
+        from '@zero/framework/react/query-params';
+      export { stableValueKey, normalizePage, normalizePageSize, appendDataFilter,
+        appendDataFilters, buildDataPageQuery, buildResourceListQuery, normalizeResourcePrefix };
+      export type { DataFilterOperator, DataFilterPrimitive, DataFilterExpression,
+        DataFilterValue, DataPageFilters, DataPageSort, DataPageInfo };
+    `, 'browser');
+  }, 120_000);
+
+  test('live-authorization boundary helpers build through their focused browser export', async () => {
+    await buildSmokeEntry('authorization-scope.ts', `
+      import { useAuthorizationScopeBoundary, isAuthorizationScopeCallbackCurrent,
+        readAuthorizationScopeBoundaryKey, readAuthorizationScopeIdentityKey,
+        isAuthorizationDataReady, isAuthorizationScopeReady, isAuthorizationScopeStable,
+        AuthorizationScopeBoundaryFence } from '@zero/framework/react/authorization-scope';
+      import type { AuthorizationScopeBoundary } from '@zero/framework/react/authorization-scope';
+      export { useAuthorizationScopeBoundary, isAuthorizationScopeCallbackCurrent,
+        readAuthorizationScopeBoundaryKey, readAuthorizationScopeIdentityKey,
+        isAuthorizationDataReady, isAuthorizationScopeReady, isAuthorizationScopeStable,
+        AuthorizationScopeBoundaryFence };
+      export type { AuthorizationScopeBoundary };
+    `, 'browser');
+  }, 120_000);
+
   test('cascader composition and selection helpers build through the public browser subpath', async () => {
     await buildSmokeEntry('cascader.tsx', cascaderSmokeSource, 'browser');
   }, 120_000);

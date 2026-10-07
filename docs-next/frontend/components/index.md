@@ -33,6 +33,8 @@ persistence simply because they are exported by Zero.
   and QR presentation without claiming security from visual hiding.
 - [Phone input](./phone-input.md) covers flags, searchable countries, canonical
   numbers, shared read-only semantics and generated-form integration.
+- [Keyboard hints](./kbd.md) covers native keys/groups, icons, tooltip/input
+  compositions and shared compact metrics without registering commands.
 - [Avatar group](./avatar-group.md) covers compact rosters, overflow counts,
   optional add actions and explicitly enabled shape-matched status decoration.
 - [Settings matrix](./settings-matrix.md) covers one to three choice columns,

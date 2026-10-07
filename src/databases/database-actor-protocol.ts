@@ -51,6 +51,7 @@ export const DATABASE_ACTOR_OPERATIONS = Object.freeze({
   tenantSyncSnapshotAbort: 'database.tenant-sync.snapshot.abort',
   findReceipt: 'database.receipt.find',
   identityProjection: 'database.identity-projection',
+  presenceProjection: 'database.presence-projection',
   unbind: 'database.unbind',
 } as const);
 

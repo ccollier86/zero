@@ -30,6 +30,9 @@ import { defineAuthInstalledProfileTable } from './auth-profile-state';
 import { defineAuthAuthorizationManifestTable } from './auth-authorization-manifest';
 import { defineAuthApiKeyTables } from './auth-api-key-schema';
 import { defineTenancyTables } from './tenancy/tenancy-schema';
+import { reconcileUserProfileSchema } from './auth-user-profile-schema';
+import { reconcileUserContactSchema } from './auth-user-contact-schema';
+import { reconcileProfileCompletionSchema } from './auth-user-profile-completion-schema';
 
 /**
  * Define all auth tables on the shared ReactiveDB.
@@ -38,7 +41,7 @@ import { defineTenancyTables } from './tenancy/tenancy-schema';
  * tables use raw SQL and `_` prefixes so they have no client Sync surface.
  * Non-internal table delivery is still controlled by composed Sync policy.
  */
-export function defineAuthTables(db: ReactiveDB): void {
+export function defineAuthTables(db: ReactiveDB, options: { profileSchemaInstallAllowed?: boolean; profileContactSchemaInstallAllowed?: boolean; profileCompletionSchemaInstallAllowed?: boolean } = {}): void {
   defineAuthAuditTables(db);
   // Create/upgrade users before defineTable() prepares statements for all
   // lifecycle columns. Existing databases may have been created before these
@@ -66,6 +69,7 @@ export function defineAuthTables(db: ReactiveDB): void {
   ensureColumn(db, 'users', 'email_verification_required', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'mfa_required', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'email_generation', 'INTEGER NOT NULL DEFAULT 1');
+  const userProfileSchema = reconcileUserProfileSchema(db, options.profileSchemaInstallAllowed !== false);
 
   db.defineTable('users', {
     user_id: 'text primary key',
@@ -82,6 +86,7 @@ export function defineAuthTables(db: ReactiveDB): void {
     mfa_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
+    ...(userProfileSchema === 'ready' ? { profile_revision: 'integer not null default 1 check (profile_revision between 1 and 9007199254740991)' } : {}),
   });
 
   db.exec(`
@@ -243,6 +248,8 @@ export function defineAuthTables(db: ReactiveDB): void {
     ensureNativeMfaAssuranceColumns(db);
   });
   for (const statement of createNativeAuthIndexStatements()) db.exec(statement);
+  reconcileUserContactSchema(db, (options.profileContactSchemaInstallAllowed ?? options.profileSchemaInstallAllowed) !== false);
+  reconcileProfileCompletionSchema(db, (options.profileCompletionSchemaInstallAllowed ?? options.profileSchemaInstallAllowed) !== false);
 }
 
 function ensureColumn(

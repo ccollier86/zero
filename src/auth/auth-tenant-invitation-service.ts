@@ -559,6 +559,7 @@ export class AuthTenantInvitationService {
           mfaRequired,
         };
       }, (user) => {
+        this.users.enrollProfileCompletion(user.userId, 'invitation');
         if (deferAcceptance) {
           const current = this.requireUsable(token);
           if (current.email !== canonicalizeEmail(user.email)) {

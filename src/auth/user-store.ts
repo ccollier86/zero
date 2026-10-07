@@ -188,6 +188,8 @@ export const USER_LIST_MAX_LIMIT = USER_IDENTITY_LIST_MAX_LIMIT;
  * All statements prepared once in constructor, reused per call.
  */
 export class UserStore {
+  private userProfilePolicyGuard: (() => void) | null = null;
+  private profileCompletionEnrollment: ((userId: string, origin: 'signup' | 'invitation') => void) | null = null;
   private authorizationBootstrapper: AuthAuthorizationBootstrapper | null = null;
   private readonly authGenerations: AuthGenerationStore;
   private readonly identity: UserIdentityStore;
@@ -297,9 +299,30 @@ export class UserStore {
     this.runtimeProfileGuard = guard;
   }
 
+  /** Internal configured first-use enrollment, captured inside the original identity writer transaction. */
+  setProfileCompletionEnrollment(callback: (userId: string, origin: 'signup' | 'invitation') => void): void {
+    this.profileCompletionEnrollment = callback;
+  }
+  enrollProfileCompletion(userId: string, origin: 'signup' | 'invitation'): void {
+    if (this.profileCompletionEnrollment) invokeSynchronousAuthCallback(() => this.profileCompletionEnrollment!(userId, origin), {
+      component: 'user-store', invariant: 'profile-completion-enrollment-async',
+      message: '[auth] Profile completion enrollment must be synchronous.', emitCode: this.emitCode ?? undefined });
+  }
+
   /** Recheck the exact committed profile for cached/direct store consumers. */
   assertCurrentProfile(): void {
     this.assertRuntimeProfileCurrent();
+  }
+
+  /** Bootstrap-owned optional profile policy. Unrelated identity/session operations do not call this guard. */
+  setUserProfilePolicyGuard(guard: () => void): void {
+    this.userProfilePolicyGuard = guard;
+  }
+  assertCurrentUserProfilePolicy(): void {
+    this.assertRuntimeProfileCurrent();
+    if (this.userProfilePolicyGuard) invokeSynchronousAuthCallback(this.userProfilePolicyGuard, {
+      component: 'user-store', invariant: 'user-profile-policy-guard-async',
+      message: '[auth] User profile policy admission must be synchronous.', emitCode: this.emitCode ?? undefined });
   }
 
   /** Share this store's SQLite transaction with a coordinating auth service. */
@@ -426,7 +449,7 @@ export class UserStore {
           503,
         );
       }
-      const user = this.insertPreparedUser(prepared, true);
+      const user = this.insertPreparedUser(prepared, true, 'invitation');
       const authGeneration = this.getAuthGeneration(user.userId);
       const receipt = this.adminUserProvisioning.insert({
         ...provisional,
@@ -687,6 +710,7 @@ export class UserStore {
   private insertPreparedUser(
     prepared: PreparedUserCreate,
     deferIdentityProjection = false,
+    completionOrigin: 'signup' | 'invitation' = 'signup',
   ): UserRecord {
     const { params, email, userId, now, passwordHash } = prepared;
     // Password hashing yields. Recheck inside the write transaction so a
@@ -701,6 +725,7 @@ export class UserStore {
       userId,
       params.properties ?? {},
     );
+    this.enrollProfileCompletion(userId, completionOrigin);
     if (!deferIdentityProjection) this.identityProjection.userCreated(userId);
     return this.identity.getByIdInCurrentProfile(userId)!;
   }

@@ -3,7 +3,9 @@
 import * as React from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { FieldMeta } from '../../schema/field-types';
-import { useForm, type UseFormOptions } from '../../hooks/use-form';
+import { useForm, type UseFormOptions, type UseFormReturn } from '../../hooks/use-form';
+import { useFormSave } from '../../hooks/use-form-save';
+import { FormSaveBar, UnsavedChangesDialog } from '../form-save';
 import { FieldRenderer, type FieldRendererProps } from './field-renderer';
 import { Button } from '#zero/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '#zero/components/ui/card';
@@ -28,7 +30,12 @@ export interface AutoFormProps<T extends Row = Row> {
   fields?: Record<string, FieldOverrides>;
   /** Field allow-list used for rendering, validation, and submitted data. */
   includeFields?: readonly string[];
-  onSubmit?: (data: T) => void | Promise<void>;
+  onSubmit?: UseFormOptions<T>['onSubmit'];
+  baseline?: UseFormOptions<T>['baseline'];
+  initialRevision?: UseFormOptions<T>['initialRevision'];
+  scopeKey?: UseFormOptions<T>['scopeKey'];
+  /** Opt in to acknowledged-baseline Save/Discard/Stay instead of the existing submit row. */
+  saveBar?: boolean | 'inline';
   onSuccess?: () => void;
   onError?: (error: string) => void;
   submitLabel?: string;
@@ -50,6 +57,10 @@ export function AutoForm<T extends Row = Row>({
   fields: fieldOverrides = {},
   includeFields,
   onSubmit,
+  baseline,
+  initialRevision,
+  scopeKey,
+  saveBar = false,
   onSuccess,
   onError,
   submitLabel,
@@ -64,6 +75,9 @@ export function AutoForm<T extends Row = Row>({
     editId,
     includeFields,
     onSubmit,
+    baseline: baseline ?? (saveBar ? 'accepted' : 'initial'),
+    initialRevision,
+    scopeKey,
     onSuccess,
     onError,
   });
@@ -94,7 +108,7 @@ export function AutoForm<T extends Row = Row>({
         })}
       </div>
 
-      <div className={cn(
+      {saveBar ? <AutoFormSaveControls form={form} scopeKey={scopeKey} placement={saveBar === 'inline' ? 'inline' : 'floating'} /> : <div className={cn(
         'flex gap-2',
         layout === 'inline' ? 'flex-row items-end' : 'flex-row pt-2',
       )}>
@@ -119,7 +133,7 @@ export function AutoForm<T extends Row = Row>({
             Reset
           </Button>
         )}
-      </div>
+      </div>}
     </form>
   );
 
@@ -136,4 +150,11 @@ export function AutoForm<T extends Row = Row>({
   }
 
   return content;
+}
+
+function AutoFormSaveControls<T extends Row>({ form, scopeKey, placement }: {
+  form: UseFormReturn<T>; scopeKey?: string | number; placement: 'inline' | 'floating';
+}) {
+  const controller = useFormSave({ form, scopeKey });
+  return <><FormSaveBar controller={controller} placement={placement} /><UnsavedChangesDialog controller={controller} /></>;
 }

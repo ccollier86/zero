@@ -41,6 +41,7 @@ export function activateAuthRuntimeServices(input: AuthRuntimeLifecycleInput): v
     services.authEmailOutbox!.start();
   }
   services.verifiedDomainOnboardingService?.start();
+  services.userContactService?.start();
   services.auditService!.start();
 
   publishRuntimeServices(input);
@@ -61,6 +62,12 @@ export async function clearAuthRuntimeServices(
   const outbox = services.authEmailOutbox;
   const audit = services.auditService;
   const verifiedDomains = services.verifiedDomainOnboardingService;
+  const userContacts = services.userContactService;
+  // Restricted completion can be awaiting token signing. Retire its final
+  // writer admission immediately, before asynchronous worker drain yields.
+  services.userProfileCompletionService?.stop();
+  services.userProfileService?.stop();
+  userContacts?.retire();
   let failure: unknown;
   try {
     await outbox?.stop();
@@ -77,6 +84,7 @@ export async function clearAuthRuntimeServices(
   } catch (error) {
     failure ??= error;
   }
+  try { await userContacts?.stop(); } catch (error) { failure ??= error; }
   try {
     unpublishRuntimeServices(input);
   } catch (error) {

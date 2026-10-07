@@ -57,7 +57,49 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## ReUI — SVG Signature Pad, Button Group, Context Menu, Phone Input And Avatar Group
+## react-easy-crop — Profile Avatar Cropping
+
+Source: https://github.com/ValentinH/react-easy-crop
+
+Dependency version: 6.2.4. Zero composes the installed crop engine with its own
+Dialog, avatar, dropzone, buttons, scope fences and styling. The engine retains
+its distributed MIT license. Zero does not replace its geometry engine with a
+bespoke crop implementation.
+
+MIT License
+
+Copyright (c) 2022 Valentin Hervieu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## sharp — Server Avatar Validation And Normalization
+
+Source: https://github.com/lovell/sharp
+
+Dependency version: 0.35.5. Zero uses the existing decoder for bounded actual
+raster validation, EXIF orientation, resizing, metadata removal and WebP output.
+The dependency and native codecs retain their distributed license notices;
+sharp is distributed under Apache License 2.0, available in its installed
+LICENSE file and at https://www.apache.org/licenses/LICENSE-2.0.
+No upstream source file or native binary is vendored as Zero-authored code.
+
+## ReUI — SVG Signature Pad, Button Group, Context Menu, Phone Input, Avatar Group And Kbd
 
 Source: https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry-reui/bases/radix/reui/signature-pad.tsx
 
@@ -66,6 +108,8 @@ Additional component references:
 - https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/bases/radix/ui/button-group.tsx
 - https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/bases/radix/ui/context-menu.tsx
 - https://github.com/keenthemes/reui/blob/6e433ddaba3a4be38182c8c8883b6cc335183c42/registry-reui/bases/radix/reui/phone-input.tsx
+- https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/components/ui/kbd.tsx
+- https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/styles/style-vega.css
 
 Phone Input examples inspected through the public `radix-vega` registry:
 
@@ -99,6 +143,12 @@ Avatar Group adapts the overlapping avatars, overflow count/icon and optional
 separate add action to Zero's existing Avatar, animated group, Button and
 Tooltip controls. Shape/size and opt-in presence decoration are presentation
 extensions; no upstream example is represented as a connected presence service.
+
+Kbd and KbdGroup adapt the native keyboard-hint composition and `radix-vega`
+compact defaults into Zero semantic colors and documented CSS metric variables.
+Tooltip hints target Zero's actual tooltip surface rather than an upstream slot.
+No keyboard command registry, shortcut listener or operating-system detection is
+included in this presentation component.
 
 MIT License
 

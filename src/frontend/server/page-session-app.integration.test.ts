@@ -101,7 +101,7 @@ describe('createApp page-session SSR integration', () => {
     const registration = await registrationResponse.json();
     const setCookie = registrationResponse.headers.get('set-cookie');
     expect(registrationResponse.status).toBe(200);
-    expect(setCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(setCookie).toMatch(new RegExp(`${PAGE_SESSION_COOKIE_NAME}_[a-f0-9]{32}=`));
     const pageCookie = setCookie!.split(';', 1)[0]!;
     const pageToken = decodeURIComponent(pageCookie.slice(pageCookie.indexOf('=') + 1));
     expect(JSON.stringify(registration)).not.toContain(pageToken);

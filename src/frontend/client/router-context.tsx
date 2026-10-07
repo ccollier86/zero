@@ -5,11 +5,16 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
+  useRef,
   useSyncExternalStore,
   createElement,
 } from 'react';
 import type { ReactNode } from 'react';
 import { prefetchRoute } from './client-router';
+import { RouterNavigation, type NavigationGuard, type NavigationOptions } from './router-navigation';
+import { emitFrontendCode } from './observability';
+import { OBS_CODES } from '../../observability/codes';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -19,9 +24,9 @@ export interface RouterState {
 }
 
 export interface RouterActions {
-  push: (path: string) => void;
-  replace: (path: string) => void;
-  back: () => void;
+  push: (path: string, options?: NavigationOptions) => void;
+  replace: (path: string, options?: NavigationOptions) => void;
+  back: (options?: NavigationOptions) => void;
   prefetch: (path: string) => void;
   isNavigating: boolean;
   setParams: (params: Record<string, string>) => void;
@@ -31,6 +36,7 @@ export interface RouterActions {
 interface RouterContextValue {
   state: RouterState;
   actions: RouterActions;
+  navigation: RouterNavigation;
 }
 
 // ─── Context ───────────────────────────────────────────────────────────────
@@ -57,29 +63,24 @@ export function RouterProvider({
   initialParams,
   children,
 }: RouterProviderProps) {
-  // Subscribe to browser URL changes
+  const navigationRef = useRef<RouterNavigation | null>(null);
+  if (!navigationRef.current) navigationRef.current = new RouterNavigation(initialPathname ?? '/', () => {
+    emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, { metadata: { surface: 'navigation-guard', stage: 'admission' } });
+  });
+  const navigation = navigationRef.current;
+  // Publish only admitted URLs. Temporary history rollback never unmounts a draft.
   const pathname = useSyncExternalStore(
-    subscribeToUrl,
-    () => window.location.pathname,
-    () => initialPathname ?? '/',
+    navigation.subscribe, navigation.getSnapshot, navigation.getServerSnapshot,
   );
 
   const [params, setParams] = useState<Record<string, string>>(initialParams ?? {});
   const [isNavigating, setIsNavigating] = useState(false);
 
-  const push = useCallback((path: string) => {
-    window.history.pushState(null, '', path);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  }, []);
+  const push = useCallback((path: string, options?: NavigationOptions) => navigation.push(path, options), [navigation]);
 
-  const replace = useCallback((path: string) => {
-    window.history.replaceState(null, '', path);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  }, []);
+  const replace = useCallback((path: string, options?: NavigationOptions) => navigation.replace(path, options), [navigation]);
 
-  const back = useCallback(() => {
-    window.history.back();
-  }, []);
+  const back = useCallback((options?: NavigationOptions) => navigation.back(options), [navigation]);
 
   const prefetch = useCallback((path: string) => {
     prefetchRoute(path);
@@ -88,6 +89,7 @@ export function RouterProvider({
   const value: RouterContextValue = {
     state: { pathname, params },
     actions: { push, replace, back, prefetch, isNavigating, setParams, setIsNavigating },
+    navigation,
   };
 
   return createElement(RouterContext.Provider, { value }, children);
@@ -145,8 +147,13 @@ function useRouterContext(): RouterContextValue {
   return ctx;
 }
 
-/** Subscribe to popstate events for useSyncExternalStore. */
-function subscribeToUrl(callback: () => void): () => void {
-  window.addEventListener('popstate', callback);
-  return () => window.removeEventListener('popstate', callback);
+/** Opt-in pre-navigation admission. Safely no-ops in standalone forms without a router. */
+export function useNavigationGuard(guard: NavigationGuard, enabled = true): void {
+  const context = useContext(RouterContext), latest = useRef({ guard, enabled });
+  latest.current = { guard, enabled };
+  useEffect(() => {
+    if (!context || !enabled) return;
+    return context.navigation.register(() => latest.current.enabled ? latest.current.guard() : true);
+  }, [context?.navigation, enabled]);
 }
+export type { NavigationGuard, NavigationOptions } from './router-navigation';

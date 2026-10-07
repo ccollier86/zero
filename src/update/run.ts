@@ -1293,15 +1293,20 @@ async function rollbackProject(
   try {
     await restoreSnapshotFiles(snapshot.files, state.projectDir);
     if (didManagedArchiveExist(state, snapshot)) {
-      const command = [
-        'bun',
-        'install',
+      // A frozen install can reuse the replacement archive's extracted cache
+      // even after restoring the original lock/integrity. A targeted frozen
+      // update rebinds only the restored local framework archive through Bun,
+      // without touching cache internals or re-resolving the app's lock.
+      const command = state.archivePath
+        ? ['bun', 'update', FRAMEWORK_PACKAGE]
+        : ['bun', 'install'];
+      command.push(
         '--frozen-lockfile',
         '--force',
         '--no-cache',
         '--ignore-scripts',
         '--no-progress',
-      ];
+      );
       const result = await runner(command, { cwd: state.projectDir, stdio: 'inherit' });
       if (result.exitCode !== 0) {
         throw new Error(commandFailureMessage('rollback installation', command, result));
@@ -1366,9 +1371,17 @@ async function restoreSnapshotFiles(files: FileSnapshot[], projectDir: string): 
     await assertSafeManagedParent(projectDir, file.path);
     if (!file.existed) {
       await rm(file.path, { force: true });
+      if (await safeLstat(file.path)) {
+        throw new Error(`[zero update] Rollback did not restore absence of ${basename(file.path)}`);
+      }
       continue;
     }
     await atomicallyReplaceFile(file.backupPath, file.path, projectDir);
+    await assertSafeManagedParent(projectDir, file.path);
+    await assertRegularNonSymlinkFile(file.path, `restored ${basename(file.path)}`);
+    if (!Bun.deepEquals(await Bun.file(file.path).bytes(), await Bun.file(file.backupPath).bytes())) {
+      throw new Error(`[zero update] Rollback did not restore exact bytes of ${basename(file.path)}`);
+    }
   }
 }
 

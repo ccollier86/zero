@@ -80,7 +80,8 @@ export class AuthMfaTransport {
         const completion = parseAuthMfaCompletionResult(data);
         if (!('accessToken' in completion)
           && !('tenantSelectionRequired' in completion)
-          && !('tenantOnboardingRequired' in completion)) throw invalidMfaResponse();
+          && !('tenantOnboardingRequired' in completion)
+          && !('profileCompletionRequired' in completion)) throw invalidMfaResponse();
         return await this.options.completeAuthentication(
           completion,
           attempt,

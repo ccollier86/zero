@@ -4,6 +4,25 @@ import { createEphemeralStore, routeEphemeralMessage } from './ephemeral-store';
 import type { EphemeralErrorMessage } from '../ephemeral-policy';
 
 describe('EphemeralClient authorization lifecycle', () => {
+  test('transient observations never enter the buffered ordinary send path', () => {
+    const buffered: object[] = [], transient: object[] = [];
+    let writable = false;
+    const client = new EphemeralClient(value => buffered.push(value), createEphemeralStore(), value => {
+      if (!writable) return false;
+      transient.push(value); return true;
+    });
+    expect(client.setTransient('guardian:presence', 'self', { sequence: 1, activity: true, visible: true })).toBe(false);
+    writable = true;
+    expect(client.setTransient('guardian:presence', 'self', { sequence: 2, activity: false, visible: true })).toBe(true);
+    expect(buffered).toEqual([]);
+    expect(transient).toEqual([{ type: 'ephemeral.set', topic: 'guardian:presence', key: 'self',
+      value: { sequence: 2, activity: false, visible: true } }]);
+    client.beginAuthorizationScopeTransition();
+    expect(client.setTransient('guardian:presence', 'self', true)).toBe(false);
+    client.completeAuthorizationScopeTransition(); client.dispose();
+    expect(client.setTransient('guardian:presence', 'self', true)).toBe(false);
+    expect(transient).toHaveLength(1);
+  });
   test('clears rejected snapshots, surfaces stable errors, and allows retry', () => {
     const sent: object[] = [];
     const store = createEphemeralStore();

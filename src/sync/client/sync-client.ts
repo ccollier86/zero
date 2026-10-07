@@ -384,6 +384,10 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       assertScopeWritesAvailable();
       sendMessage(JSON.stringify(message));
     },
+    sendTransient(message: object): boolean {
+      if (disposed || authorizationScopeTransition || !baselineReady) return false;
+      return connection.send(JSON.stringify(message));
+    },
     connect,
     reconnect,
     reset,

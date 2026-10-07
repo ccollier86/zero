@@ -22,6 +22,7 @@ import {
   type DatabaseRef,
 } from './database-file';
 import type { DatabaseObservability } from './database-observability';
+import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
 import {
   acquireDatabaseRootOwnership,
   type DatabaseRootOwnershipGuard,
@@ -816,6 +817,12 @@ export class DatabaseCoordinator implements AsyncDisposable {
       options,
       commitAuthority,
     );
+  }
+
+  /** Framework-private scoped presence writer path; absent from the public database operation catalog. */
+  executePresenceProjection(entry: DatabaseEntry, publication: PresencePublication,
+    options: DatabaseExecutionOptions = {}, commitAuthority: DatabaseCommitAuthority | null = null): Promise<PresenceProjectionReceipt> {
+    return this.operationRuntime.executePresenceProjection(entry, publication, options, commitAuthority);
   }
 
   executeAutomationDelivery<

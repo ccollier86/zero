@@ -87,6 +87,7 @@ function createFakeSyncClient(
       client.delete(table, rowId);
     },
     sendRaw(): void {},
+    sendTransient(): boolean { return false; },
     connect(): void {},
     reconnect(): void {},
     reset(): void {

@@ -150,6 +150,7 @@ export {
   hasAuthorizationPermission,
   hasEveryAuthorizationPermission,
   isAuthEmailVerificationRequiredResult,
+  isAuthProfileCompletionRequiredResult,
   isAuthTenantOnboardingRequiredResult,
   isAuthTenantSelectionRequiredResult,
 } from './client/auth-client';
@@ -233,6 +234,7 @@ export type {
   AuthMfaSetupStartResult,
   AuthMfaSetupVerifyResult,
   AuthPasswordUpdatedResult,
+  AuthProfileCompletionRequiredResult,
   AuthPublicConfig,
   AuthRegistrationResult,
   AuthRegistrationTenant,
@@ -332,7 +334,27 @@ export type {
 } from './client/observability';
 export { ClientProvider } from './client/hooks';
 export type { ClientProviderProps } from './client/hooks';
-export { RouterProvider } from './client/router-context';
+export { RouterProvider, useNavigationGuard } from './client/router-context';
+export type { NavigationGuard, NavigationOptions } from './client/router-context';
+export { useUserProfile } from './client/user-profile-hooks';
+export { useUserContacts } from './client/user-contact-hooks';
+export type { UseUserContactsOptions, UseUserContactsResult } from './client/user-contact-hooks';
+export { useUserAvatar } from './client/user-avatar-hooks';
+export type { UseUserAvatarOptions, UseUserAvatarResult } from './client/user-avatar-hooks';
+export { useGuardianPresence, useAvatarPresence } from './client/guardian-presence-hooks';
+export type { GuardianPresenceClient, GuardianPresenceClientSnapshot } from './client/guardian-presence-client';
+export type { GuardianPresenceOwnSnapshot } from './client/guardian-presence-parser';
+export { UserPresenceSettings, type UserPresenceSettingsProps } from '../components/profile-settings/user-presence-settings';
+export type { UseUserProfileOptions, UseUserProfileResult } from './client/user-profile-hooks';
+export type * from '../auth/auth-user-profile-types';
+export type * from '../auth/auth-user-profile-completion-types';
+export type * from '../auth/auth-presence-types';
+export type * from '../auth/auth-user-contact-types';
+export type * from '../auth/auth-user-avatar-types';
+export { UserProfileSettings, UserProfileIdentitySummary, UserProfileFields,
+  UserRegionalSettings, UserProfileSecurity, UserContactSettings, UserContactProofBadge, ContactEmailVerification } from '../components/profile-settings';
+export type { UserProfileSettingsProps, UserProfileFieldsProps, UserRegionalSettingsProps,
+  UserContactSettingsProps, ContactEmailVerificationProps } from '../components/profile-settings';
 
 // ─── React: Hooks ────────────────────────────────────────────────────────
 export {
@@ -554,6 +576,11 @@ export { Wizard } from '../components/forms';
 export type { WizardProps, WizardStep } from '../components/forms';
 export { useForm } from '../hooks/use-form';
 export type { UseFormOptions, UseFormReturn } from '../hooks/use-form';
+export { useFormSave } from '../hooks/use-form-save';
+export type { UseFormSaveOptions, UseFormSaveReturn } from '../hooks/use-form-save';
+export type * from '../hooks/form-save-types';
+export { FormSaveBar, UnsavedChangesDialog } from '../components/form-save';
+export type { FormSaveBarProps, UnsavedChangesDialogProps } from '../components/form-save';
 
 // ─── Data Table ─────────────────────────────────────────────────────────
 export { DataTable, DataTableView } from '../components/data-table';
@@ -896,6 +923,8 @@ export { Separator } from '../components/ui/separator';
 export { Skeleton } from '../components/ui/skeleton';
 export { Avatar, AvatarImage, AvatarFallback } from '../components/ui/avatar';
 export { AvatarGroup, AvatarPresenceIndicator } from '../components/avatar-group';
+export { AvatarEditor, AvatarCropDialog } from '../components/avatar-editor';
+export type { AvatarEditorProps, AvatarCropDialogProps } from '../components/avatar-editor';
 export type {
   AvatarGroupProps, AvatarGroupMember, AvatarGroupAddAction, AvatarGroupShape,
   AvatarGroupSize, AvatarPresence, AvatarPresenceTone, AvatarPresenceIndicatorProps,
@@ -1006,6 +1035,7 @@ export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../compone
 export { DetailPanel } from '../components/ui/detail-panel';
 export type { DetailPanelProps } from '../components/ui/detail-panel';
 export { RecordNavigationBar } from '../components/ui/record-navigation-bar';
+export { Kbd, KbdGroup, type KbdProps, type KbdGroupProps } from '../components/kbd';
 export type {
   RecordNavigationBarProps,
   NavigationAction,
@@ -1025,7 +1055,7 @@ export type {
 export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
   PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
-  AuthFlowContinuation, TenantCreationForm, TenantSelectionForm,
+  AuthFlowContinuation, ProfileCompletionForm, TenantCreationForm, TenantSelectionForm,
   DataRealmReadinessNotice, DataRealmReadyGate,
   ApiKeyManagement, SelfApiKeyManagement, ApplicationUserApiKeyManagement,
   TenantMemberApiKeyManagement, PlatformApiKeyManagement,
@@ -1044,7 +1074,7 @@ export {
 export type {
   LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
   PasswordActionFormProps, EmailVerificationFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
-  AuthFlowContinuationProps, AuthFlowContinuationResult, TenantCreationFormProps,
+  AuthFlowContinuationProps, AuthFlowContinuationResult, ProfileCompletionFormProps, TenantCreationFormProps,
   TenantSelectionFormProps,
   DataRealmReadinessNoticeProps, DataRealmReadyGateProps,
   ApiKeyManagementCommonProps, ApiKeyManagementProps,
@@ -1428,4 +1458,6 @@ export type {
   OpenModalOptions,
   OpenConfirmOptions,
   HoldButtonProps,
+  ModalCloseContext,
+  ModalCloseOptions,
 } from '../modals';

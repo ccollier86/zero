@@ -65,6 +65,7 @@ manual or a claim that every preview native host adapter is bundled.
   forms and completion guards, not token-presence shortcuts.
 - [Account action forms](./account-actions.md): password recovery/setup/change,
   email verification and self-editable properties.
+- [Adaptive profile settings](./profile-settings.md): full/compact/read-only profiles, avatar crop/upload, contact proof, regional and availability controls.
 - [MFA controls](./mfa-controls.md): enrollment, challenge, continuation and
   current-account method status.
 - [Native browser UI](./native-ui.md): continuation-preserving auth links and

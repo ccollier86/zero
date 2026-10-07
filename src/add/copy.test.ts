@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 import { addZeroSource } from './copy';
+import { buildSourceCopyBrowserFixture } from './test-support/build-source-copy-fixture';
 
 async function createTempApp(): Promise<string> {
   const baseDir = join(process.cwd(), '.zero');
@@ -70,30 +71,51 @@ describe('addZeroSource', () => {
       expect(rowIdentity).toContain("from '@zero/framework/schema'");
       expect(rowIdentity).toContain("from '@zero/framework/sync/types'");
       expect(rowIdentity).toContain("from '@zero/framework/sync/identity'");
+      for (const file of ['data-table-state.ts', 'use-data-table-controller.ts', 'data-table-server-query.ts']) {
+        const copied = await Bun.file(join(targetDir, 'components/data-table', file)).text();
+        expect(copied).toContain("from '@zero/framework/react/query-params'");
+        expect(copied).not.toContain('../../frontend/client/query-params');
+      }
 
       await writeFile(
         join(targetDir, 'entry.tsx'),
         [
-          "import { DataTable, DataTableSearch, DataTableToolbar } from './components/data-table';",
+          "import { DataTable, DataTableSearch, DataTableToolbar, buildDataTableServerQuery, createDataTableApiAdapter } from './components/data-table';",
           "import type { DataTableSearchOptions, DataTableToolbarSlots } from './components/data-table';",
           "const search: DataTableSearchOptions = { placeholder: 'Find records…' };",
           'const slots: DataTableToolbarSlots<Record<string, unknown>> = {',
           "  controls: ({ activeFilterCount }) => <span>{activeFilterCount}</span>,",
           '};',
-          'export { DataTable, DataTableSearch, DataTableToolbar, search, slots };',
+          'export { DataTable, DataTableSearch, DataTableToolbar, buildDataTableServerQuery, createDataTableApiAdapter, search, slots };',
           '',
         ].join('\n'),
       );
 
-      const build = await Bun.build({
-        entrypoints: [join(targetDir, 'entry.tsx')],
-        outdir: join(targetDir, 'dist'),
-        target: 'browser',
-      });
-      expect(build.success).toBe(true);
+      await buildSourceCopyBrowserFixture(join(targetDir, 'entry.tsx'), join(targetDir, 'dist'), targetDir);
     } finally {
       await rm(targetDir, { recursive: true, force: true });
     }
+  });
+
+  test('copies inline editing and form save hooks with the focused live-authorization boundary import', async () => {
+    const targetDir = await createTempApp();
+    try {
+      const result = await addZeroSource({ targetDir, items: ['components/ui/inline-edit-text', 'hooks'] });
+      for (const file of ['components/ui/inline-edit-text.tsx', 'hooks/use-form.ts', 'hooks/use-form-save.ts']) {
+        expect(result.filesWritten).toContain(file);
+        const source = await Bun.file(join(targetDir, file)).text();
+        expect(source).toContain("from '@zero/framework/react/authorization-scope'");
+        expect(source).not.toContain('frontend/client/authorization-scope-hooks');
+      }
+      expect(result.filesWritten.some(file => file.startsWith('frontend/'))).toBe(false);
+      await Bun.write(join(targetDir, 'entry.tsx'), `
+        import { InlineEditText } from './components/ui/inline-edit-text';
+        import { useForm } from './hooks/use-form';
+        import { useFormSave } from './hooks/use-form-save';
+        export { InlineEditText, useForm, useFormSave };
+      `);
+      await buildSourceCopyBrowserFixture(join(targetDir, 'entry.tsx'), join(targetDir, 'dist-form-save'), targetDir);
+    } finally { await rm(targetDir, { recursive: true, force: true }); }
   });
 
   test('copies kanban source with its app-owned dependencies', async () => {
@@ -255,12 +277,7 @@ describe('addZeroSource', () => {
         ].join('\n'),
       );
 
-      const build = await Bun.build({
-        entrypoints: [join(targetDir, 'entry.tsx')],
-        outdir: join(targetDir, 'dist-secret-field'),
-        target: 'browser',
-      });
-      expect(build.success).toBe(true);
+      await buildSourceCopyBrowserFixture(join(targetDir, 'entry.tsx'), join(targetDir, 'dist-secret-field'), targetDir);
     } finally {
       await rm(targetDir, { recursive: true, force: true });
     }
@@ -321,12 +338,7 @@ describe('addZeroSource', () => {
         "import { CodeBlock } from './components/code-block';\nimport { CtaSection } from './components/cta';\nimport { FeaturesSection } from './components/features';\nimport { FooterSection } from './components/footer';\nexport { CodeBlock, CtaSection, FeaturesSection, FooterSection };\n"
       );
 
-      const build = await Bun.build({
-        entrypoints: [join(targetDir, 'entry.tsx')],
-        outdir: join(targetDir, 'dist-public-feature'),
-        target: 'browser',
-      });
-      expect(build.success).toBe(true);
+      await buildSourceCopyBrowserFixture(join(targetDir, 'entry.tsx'), join(targetDir, 'dist-public-feature'), targetDir);
     } finally {
       await rm(targetDir, { recursive: true, force: true });
     }

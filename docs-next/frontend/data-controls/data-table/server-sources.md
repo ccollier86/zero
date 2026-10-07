@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-server-sources
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; release qualification pending"]
 modes: [browser, server offset, custom cursor, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -52,6 +52,15 @@ createDataTableApiAdapter and buildDataTableServerQuery are public from the
 data-table subpath for explicit composition. The generated built-in API supports
 offset, not opaque cursor pagination; cursor requires a custom adapter.
 
+Lower-level, browser-safe query helpers are available from
+`@zero/framework/react/query-params`: `appendDataFilter`, `appendDataFilters`,
+`buildDataPageQuery`, `buildResourceListQuery`, `normalizePage`,
+`normalizePageSize`, `normalizeResourcePrefix` and `stableValueKey`, with the
+data-filter/page types. These are pure encoders/state helpers, not transport or
+authorization. Ordinary tables should keep using the built-in adapter rather
+than rebuilding it. [Source-copy](../../../cli/tooling/source-copy.md) retains
+this focused package dependency when an application owns a copied DataTable.
+
 ## Query Contract
 
 DataTableServerQuery contains:
@@ -76,8 +85,12 @@ filters on declared search-text fields use contains; other ordinary values use
 the shared data-query contract. The built-in encoder trims search and requires
 search fields for nonempty search. Applications do not submit raw SQL.
 
-Changing search/filter/sort/page size resets paging and cursor history. A custom
-adapter receives the normalized query and `{ signal: AbortSignal }`, and must
+Changing search/filter/sort resets paging and cursor history. Changing page size
+for an offset source instead requests the new page containing the former first
+row: `floor(oldPageIndex * oldPageSize / newPageSize)`. Cursor batch-size changes
+reset index0/cursor:null and clear visited history, because an opaque cursor
+cannot be reconstructed from that offset. Both retire page-local selection.
+A custom adapter receives the normalized query and `{ signal: AbortSignal }`, and must
 return its complete promise, not mutate shared rows behind the source.
 
 ## Custom Cursor Fragment
@@ -120,6 +133,12 @@ previous behavior, not an invented count or last-page jump. Cursor Next requires
 an available nextCursor; previous-page navigation uses retained query cursor
 history. Even with an exact total, cursor mode does not invent a last-page cursor.
 Hiding pagination does not remove server limits or fetch all records.
+
+If an accepted offset response supplies an exact total and the current index
+is no longer in range, the table requests the last remaining page. It does not
+infer a total or clamp from a short/empty unknown-total batch. Search, filter,
+sort and source/authorization changes still reset to the start, independently
+of the page-size anchor.
 
 ## Requests, Live Updates And Scope
 

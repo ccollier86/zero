@@ -18,13 +18,20 @@ describe('DataTable interaction state', () => {
     const search = applyDataTableStateChange(base, 'globalFilter', 'Ada');
     const filters = applyDataTableStateChange(base, 'columnFilters', [{ id: 'name', value: 'Ada' }]);
     const sorting = applyDataTableStateChange(base, 'sorting', [{ id: 'name', desc: true }]);
-    const size = applyDataTableStateChange(base, 'pagination', { pageIndex: 3, pageSize: 50 });
-    for (const state of [search, filters, sorting, size]) {
+    for (const state of [search, filters, sorting]) {
       expect(state.pagination.pageIndex).toBe(0);
       expect(state.rowSelection).toEqual({});
     }
     expect(base.pagination.pageIndex).toBe(3);
     expect(base.rowSelection).toEqual({ old: true });
+  });
+
+  test('preserves TanStack first-row anchoring on offset size changes and resets opaque cursor batches', () => {
+    const anchored = applyDataTableStateChange(base, 'pagination', previous => ({ pageIndex: Math.floor(previous.pageIndex * previous.pageSize / 50), pageSize: 50 }));
+    expect(anchored.pagination).toEqual({ pageIndex: 1, pageSize: 50 }); expect(anchored.rowSelection).toEqual({});
+    const cursor = applyDataTableStateChange(base, 'pagination', { pageIndex: 1, pageSize: 50 }, 'cursor');
+    expect(cursor.pagination).toEqual({ pageIndex: 0, pageSize: 50 }); expect(cursor.rowSelection).toEqual({});
+    expect(applyDataTableStateChange(base, 'pagination', { pageIndex: 2, pageSize: 20 }, 'cursor').pagination.pageIndex).toBe(2);
   });
 
   test('functional updates retain independent visibility and query state', () => {

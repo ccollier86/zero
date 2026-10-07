@@ -368,6 +368,13 @@ Two upgrade details are worth reviewing:
    changes before running `zero add components/data-table --force`; `--force`
    replaces the copied component files.
 
+Copied tables retain their pure query helpers through the public
+`@zero/framework/react/query-params` subpath, not private client paths or missing
+exports on the broad React facade. Keep the corresponding framework dependency
+installed. The [canonical source-copy guide](../../docs-next/cli/tooling/source-copy.md)
+explains package versus app ownership; these helpers do not fetch data or change
+server authority.
+
 ```tsx
 <DataTableView
   schema={clientTable.schema}
@@ -824,10 +831,27 @@ const [sorting, setSorting] = useState<SortingState>([
 
 `DataTableState` contains `globalFilter`, `columnFilters`, `sorting`,
 `pagination`, `rowSelection`, and `columnVisibility`. Search, filters, sorting,
-page-size changes, and source/authorization-boundary changes reset the page to
-zero and clear page-local selection. Ordinary page navigation also clears the
-old page's selection. A controlled facet remains controlled, so its parent must
-adopt the corresponding value from `onStateChange`.
+and source/authorization-boundary changes reset the page to zero and clear
+page-local selection. Page navigation and size changes also clear selection.
+A controlled facet remains controlled, so its parent must adopt the corresponding
+value from `onStateChange`, including the complete pagination pair.
+
+Changing **Rows per page** preserves the page containing the former first row
+for arrays, complete reactive collections and offset server queries. The new
+index is `floor(oldPageIndex * oldPageSize / newPageSize)`: index3 at20 rows
+per page becomes index1 at50 rows per page, not automatically index0. The old
+first row remains on the new page, not necessarily in its first position.
+Explicit controlled `{ pageIndex, pageSize }` pairs still describe the parent's
+intended position; they are not reinterpreted as button clicks.
+
+For opaque cursor sources a size change deliberately resets the index and
+visited cursor history, since the table cannot invent an offset's cursor.
+Standalone manual cursor hooks opt into this via `paginationMode: 'cursor'`;
+the organism derives the mode from `source.pagination`. Shrinking complete
+local results or exact-total offset results clamp an out-of-range index to
+the last remaining page. Unknown-total server batches do not invent totals
+or trigger such a clamp. These semantics are shared by `MasterDetailPage`;
+its bottom record navigation remains separate from page navigation.
 
 For deeper control, compose the exported subcomponents, `useDataTable()`,
 `useDataTableSource()`, and `useDataTableMutationRunner()` directly.
@@ -838,6 +862,10 @@ The server-source, async-action, state-control, and sizing work is additive.
 Existing `DataTable`/`DataTableView` call sites do not need a schema migration or
 page rewrite:
 
+- Rows-per-page changes now keep the containing page for local/offset sources
+  instead of unconditionally resetting to page one. Cursor sources retain an
+  explicit batch-size reset boundary. Controlled parents should accept both
+  pagination values from `onStateChange` rather than forcing `pageIndex: 0`.
 - `data`, `collection`, `lazy`, `filters`, and `lazyOptions` keep their existing
   behavior; an explicit `source` still takes precedence.
 - The `DataTable` alias remains supported. `DataTableView` is the preferred name

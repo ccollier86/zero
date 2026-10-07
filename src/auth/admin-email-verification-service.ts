@@ -26,6 +26,7 @@ export class AdminEmailVerificationService {
     private readonly email: AccountEmailService,
     private readonly config: ResolvedAuthBehaviorConfig,
     private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
+    private readonly recordContactAttestation?: (userId: string, at: number) => void,
   ) {}
 
   /** Send a tokenized verification link to an active pending account. */
@@ -107,6 +108,8 @@ export class AdminEmailVerificationService {
       const existing = this.requireUser(userId);
       const updated = this.store.markEmailVerified(userId);
       if (!updated) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+      this.recordContactAttestation?.(userId, updated.emailVerifiedAt!);
+      this.assertAuthority(assertCurrentAuthority, userId);
       const changed = existing.emailVerificationRequired || existing.emailVerifiedAt === null;
       if (changed) this.store.revokeAllUserTokens(userId);
       this.store.appendControlPlaneAudit({

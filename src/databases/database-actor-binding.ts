@@ -40,6 +40,9 @@ import { DatabaseTenantSyncSnapshotSessionStore } from './database-tenant-sync-s
 import { DatabaseWriterOperationEngine } from './database-writer-engine';
 import { identityAnchorReactiveTableSchemas } from '../auth/identity-projection-reactive-schema';
 import { defineIdentityAnchorSQLiteTables } from '../auth/identity-projection-schema';
+import { hasGuardianPresenceRealm } from '../presence/presence-realm';
+import { PRESENCE_PROJECTION_SCHEMAS, registerPresenceProjectionTables } from '../presence/presence-schema';
+import { presenceProjectionSchemaReady } from '../presence/presence-projection-schema';
 import {
   inspectGuardianReferenceSchema,
   type GuardianReferenceSchemaReader,
@@ -169,6 +172,10 @@ export function openWriterBinding(
       migrationLog: () => undefined,
     });
     assertActorGuardianReferenceStorage(runtime.sqlite.raw, realm);
+    if (hasGuardianPresenceRealm(realm)) {
+      if (!presenceProjectionSchemaReady(runtime.db)) throw new DatabaseError('DATABASE_SCHEMA_MISMATCH', 'Guardian presence projection schema is incompatible.');
+      registerPresenceProjectionTables(runtime.db);
+    }
     bindingIdentity = readDatabaseBindingIdentity(
       runtime.sqlite.raw,
       payload.databaseRef,
@@ -210,9 +217,9 @@ export function openWriterBinding(
           realmName: realm.name,
           realmFingerprint: realm.fingerprint,
           storageMode: payload.placement.mode,
-          readOnlyTables: Object.keys(
+          readOnlyTables: [...Object.keys(
             identityAnchorReactiveTableSchemas(realm.guardianAnchorRequirements),
-          ),
+          ), ...Object.keys(PRESENCE_PROJECTION_SCHEMAS), '_guardian_presence_projection_binding', 'guardian_presence_current'],
         })
       : null;
     // Runtime startup may perform framework-owned maintenance transactions.

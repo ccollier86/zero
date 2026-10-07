@@ -54,6 +54,12 @@ families are listed in the [backend index](./backend/index.md).
   [real ownership](./guides/user-owned-records.md).
 - **Organization product:** start with [mode selection](./guides/choose-modes.md)
   and [organization apps](./guides/organization-app.md) before designing records.
+- **Account settings:** use the [adaptive profile component](./frontend/guardian/profile-settings.md)
+  and [server profile policy](./backend/guardian/user-profiles.md); ordinary
+  members do not need administrative writers. Optional contact proof, private
+  avatars, availability and required first-use completion have separate readiness
+  and rollout contracts linked from those guides. Check the installed version;
+  working-source additions are not silently available in older packages.
 - **Existing app:** read [upgrade](./guides/upgrade.md); a dependency refresh is
   not a data split, tenant conversion or workflow-definition migration.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant

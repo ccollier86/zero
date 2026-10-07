@@ -7,6 +7,8 @@ import { prepareAppBuild } from '../frontend/server/app-build';
 import { createAppDependencyAliasPlugin } from '../frontend/server/client-bundle';
 import { createBuildConfigAdapter, type EmbeddedBuildAsset, type EmbeddedPrivateBuildAsset } from './build-config-adapter';
 import type { ZeroBuildOptions, ZeroBuildResult } from './build-types';
+import { createSharpNativeBuildPlugin } from './sharp-native-build-plugin';
+import { finalizeMacExecutableSignature } from './mac-executable-signing';
 
 /** Execute the normal build without starting the app, invoking runtime setup or opening databases. */
 export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuildResult> {
@@ -33,11 +35,13 @@ export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuild
     minify: false, sourcemap: 'none', naming: { entry: serverName, asset: '[name].[hash].[ext]' },
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     ...(options.compile ? { compile: { outfile: join(outDir, serverName) } } : {}),
-    plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir)],
+    plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir), createSharpNativeBuildPlugin(outDir, options.compile === true)],
   });
   if (!result.success) throw new Error(`Zero server build failed: ${result.logs.map((log) => log.message).join('\n')}`);
   const entry = result.outputs.find((output) => output.kind === 'entry-point');
-  return Object.freeze({ serverPath: options.compile ? join(outDir, serverName) : entry?.path ?? join(outDir, serverName), privateManifestPath: prepared.privateManifestPath, publicAssetCount: assets.length, pluginCount: Object.keys(prepared.frontend.plugins).length });
+  const serverPath = options.compile ? join(outDir, serverName) : entry?.path ?? join(outDir, serverName);
+  if (options.compile) await finalizeMacExecutableSignature(serverPath);
+  return Object.freeze({ serverPath, privateManifestPath: prepared.privateManifestPath, publicAssetCount: assets.length, pluginCount: Object.keys(prepared.frontend.plugins).length });
 }
 
 /** Only public build files become file-loader inputs; private generated metadata is outside this tree. */

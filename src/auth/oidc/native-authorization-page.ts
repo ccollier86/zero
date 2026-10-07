@@ -27,7 +27,10 @@ export function nativeAuthorizationPage(input: {
 
 function scopeDisclosures(scopes: string[]): string[] {
   const values = ['Your account identity'];
-  if (scopes.includes('profile')) values.push('Your name and username');
+  if (scopes.includes('profile')) values.push('Your name and username, permitted profile details and availability');
+  if (scopes.includes('profile:write')) values.push('Edit your permitted profile fields and regional preferences, including availability settings');
+  if (scopes.includes('phone')) values.push('Your configured phone number and its verification status');
+  if (scopes.includes('contacts:write')) values.push('Edit and verify your permitted email and phone contact details');
   if (scopes.includes('email')) values.push('Your email address and verification status');
   return values;
 }

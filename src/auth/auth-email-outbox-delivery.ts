@@ -16,6 +16,9 @@ export class AuthEmailOutboxDelivery {
   constructor(private readonly deps: AuthEmailOutboxDeliveryDeps) {}
 
   async deliver(job: AuthEmailOutboxJob, signal: AbortSignal): Promise<AuthEmailDeliveryOutcome> {
+    if (job.kind === 'profile_contact_verification') {
+      return this.deliverContactProof(job, signal);
+    }
     if (job.kind === 'tenant_invitation') {
       return this.deliverTenantInvitation(job, signal);
     }
@@ -32,6 +35,23 @@ export class AuthEmailOutboxDelivery {
     }
     const continuation = this.validateContinuation(job, user);
     return this.createAndSend(job, user, continuation, signal);
+  }
+
+  private async deliverContactProof(job: AuthEmailOutboxJob, signal: AbortSignal): Promise<AuthEmailDeliveryOutcome> {
+    const contacts = this.deps.getUserContactService?.();
+    if (!contacts || contacts.capabilities().state !== 'ready') return suppressed('contact_verification_unavailable');
+    const created = contacts.createEmailDelivery(job.jobId, job.recipient);
+    if (!created) return suppressed('account_not_eligible');
+    try {
+      await waitForAuthEmailDelivery(this.deps.email.sendContactVerification({ ...created,
+        deliveryId: `${job.jobId}:${job.attempts}`, signal }), signal);
+      contacts.assertEmailDeliveryCurrent(job.jobId);
+      return { status: 'delivered', userId: created.user.userId };
+    } catch (error) {
+      // A lost provider receipt must not invalidate an already delivered sibling link.
+      // Challenge generation and expiry bound every retained token.
+      throw failure(error, created.user.userId, false);
+    }
   }
 
   private async deliverDomainMailboxProof(

@@ -3,6 +3,11 @@
 @import "../../components/code-block/code-block.styles.css";
 @import "../../components/avatar-group/avatar-group.styles.css";
 @import "../../components/integration-settings-list/integration-settings-list.css";
+@import "../../components/form-save/form-save.styles.css";
+@import "../../components/profile-settings/profile-settings.styles.css";
+@import "../../components/kbd/kbd.styles.css";
+@import "react-easy-crop/react-easy-crop.css";
+@import "../../components/avatar-editor/avatar-editor.styles.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 

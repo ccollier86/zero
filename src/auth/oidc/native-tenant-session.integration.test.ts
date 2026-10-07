@@ -408,7 +408,7 @@ async function beginAuthorization(harness: Harness, cookie: string) {
   });
   return fetch(`${harness.issuer}/oauth/authorize?${query}`, {
     redirect: 'manual',
-    headers: { Cookie: cookieHeader(cookie) },
+    headers: { Cookie: cookieHeader(cookie, harness) },
   });
 }
 
@@ -417,7 +417,7 @@ function approve(harness: Harness, requestId: string, cookie: string) {
     method: 'POST',
     redirect: 'manual',
     headers: {
-      Cookie: cookieHeader(cookie),
+      Cookie: cookieHeader(cookie, harness),
       Origin: harness.url,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
@@ -492,14 +492,14 @@ function nativeSync(harness: Harness, accessToken: string) {
 
 function pageCookie(headers: Headers): string {
   const match = (headers.get('set-cookie') ?? '').match(
-    new RegExp(`${PAGE_SESSION_COOKIE_NAME}=([^;]*)`),
+    new RegExp(`${PAGE_SESSION_COOKIE_NAME}_[a-f0-9]{32}=([^;]*)`),
   );
   if (!match) throw new Error('Expected page-session cookie');
   return decodeURIComponent(match[1]!);
 }
 
-function cookieHeader(token: string) {
-  return `${PAGE_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`;
+function cookieHeader(token: string, harness: Harness) {
+  return `${harness.runtime.getTokenService()!.pageSessionCookieName}=${encodeURIComponent(token)}`;
 }
 
 function hidden(html: string, name: string): string {

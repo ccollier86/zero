@@ -52,4 +52,10 @@ describe('RecordNavigationBar', () => {
     expect(markup.match(/type="button"/g)).toHaveLength(4);
     expect(markup).toContain('focus-visible:ring-ring/50');
   });
+
+  test('retains shortcut string display through the shared keyboard primitive', () => {
+    const markup = renderToStaticMarkup(<RecordNavigationBar currentIndex={0} totalCount={1} onPrevious={() => {}} onNext={() => {}}
+      primaryAction={{ label: 'New table', shortcut: 'Cmd+N', onClick() {} }} />);
+    expect(markup).toContain('data-slot="kbd"'); expect(markup).toContain('>Cmd+N</kbd>');
+  });
 });

@@ -1,4 +1,6 @@
 import type { JsonValue } from './types';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -19,6 +21,13 @@ export interface EphemeralUsage {
   actorBytes: number;
 }
 
+/** Expiration is a deletion, observed after the manager has removed its owned entry. */
+export interface EphemeralExpiration {
+  readonly namespace: string;
+  readonly key: string;
+  readonly entry: EphemeralEntry;
+}
+
 // ─── EphemeralStateManager ──────────────────────────────────────────────────
 
 /**
@@ -37,9 +46,18 @@ export class EphemeralStateManager {
   private totalEntries = 0;
   private totalBytes = 0;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly expirationListeners = new Set<(expiration: EphemeralExpiration) => void>();
+  private disposed = false;
 
-  constructor(private cleanupIntervalMs = 5_000) {
-    this.cleanupTimer = setInterval(() => this.sweep(), this.cleanupIntervalMs);
+  constructor(private cleanupIntervalMs = 5_000, private readonly now: () => number = Date.now) {
+    if (cleanupIntervalMs > 0) this.cleanupTimer = setInterval(() => this.sweep(), this.cleanupIntervalMs);
+  }
+
+  /** Observe server TTL deletion without introducing another cleanup timer or connection bus. */
+  onExpired(listener: (expiration: EphemeralExpiration) => void): () => void {
+    if (this.disposed) throw new Error('Ephemeral state manager is disposed.');
+    this.expirationListeners.add(listener);
+    return () => { this.expirationListeners.delete(listener); };
   }
 
   /** Subscribe a connection to a topic. */
@@ -82,6 +100,7 @@ export class EphemeralStateManager {
     ttl = 30_000,
     byteSize = measureJsonValue(value),
   ): void {
+    if (this.disposed) throw new Error('Ephemeral state manager is disposed.');
     let entries = this.topics.get(topic);
     if (!entries) {
       entries = new Map();
@@ -89,7 +108,7 @@ export class EphemeralStateManager {
     }
     const previous = entries.get(key);
     if (previous) this.removeUsage(topic, previous);
-    const entry = { value, userId, expiresAt: Date.now() + ttl, byteSize };
+    const entry = { value, userId, expiresAt: this.now() + ttl, byteSize };
     entries.set(key, entry);
     this.addUsage(topic, entry);
   }
@@ -110,10 +129,11 @@ export class EphemeralStateManager {
     const entries = this.topics.get(topic);
     const entry = entries?.get(key);
     if (!entry) return null;
-    if (entry.expiresAt > Date.now()) return entry;
+    if (entry.expiresAt > this.now()) return entry;
     entries!.delete(key);
     this.removeUsage(topic, entry);
     if (entries!.size === 0) this.topics.delete(topic);
+    this.emitExpiration({ namespace: topic, key, entry });
     return null;
   }
 
@@ -137,7 +157,7 @@ export class EphemeralStateManager {
   getSnapshot(topic: string): Record<string, { value: JsonValue; userId: string }> {
     const entries = this.topics.get(topic);
     if (!entries) return {};
-    const now = Date.now();
+    const now = this.now();
     const result: Record<string, { value: JsonValue; userId: string }> = {};
     for (const [key, entry] of entries) {
       if (entry.expiresAt > now) {
@@ -171,23 +191,27 @@ export class EphemeralStateManager {
 
   /** Sweep expired entries. Returns number of entries removed. */
   sweep(): number {
-    const now = Date.now();
+    const now = this.now();
+    const expired: EphemeralExpiration[] = [];
     let count = 0;
     for (const [topic, entries] of this.topics) {
       for (const [key, entry] of entries) {
         if (entry.expiresAt <= now) {
           entries.delete(key);
           this.removeUsage(topic, entry);
+          expired.push({ namespace: topic, key, entry });
           count++;
         }
       }
       if (entries.size === 0) this.topics.delete(topic);
     }
+    for (const expiration of expired) this.emitExpiration(expiration);
     return count;
   }
 
   /** Dispose — clear all data and stop cleanup timer. */
   dispose(): void {
+    this.disposed = true;
     if (this.cleanupTimer !== null) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
@@ -198,6 +222,18 @@ export class EphemeralStateManager {
     this.actorUsage.clear();
     this.totalEntries = 0;
     this.totalBytes = 0;
+    this.expirationListeners.clear();
+  }
+
+  private emitExpiration(expiration: EphemeralExpiration): void {
+    for (const listener of [...this.expirationListeners]) {
+      try { listener(expiration); }
+      catch (error) {
+        emitPlatformCode(OBS_CODES.SYNC_MESSAGE_HANDLING_FAILED, {
+          error, metadata: { stage: 'ephemeral-expiry' },
+        });
+      }
+    }
   }
 
   private addUsage(topic: string, entry: EphemeralEntry): void {

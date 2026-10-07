@@ -8,7 +8,7 @@ import { ClientProvider } from '../frontend/client/client-context';
 import type { Collection } from '../frontend/client/sdk';
 import type { AuthClient } from '../frontend/client/auth-client';
 import type { Client } from '../frontend/client/sdk';
-import { useForm } from './use-form';
+import { useForm, type UseFormOptions } from './use-form';
 import { configureFrontendObservability, type FrontendObservabilityEvent } from '../frontend/client/observability';
 
 type FormRow = Row & { id: string; title: string };
@@ -39,6 +39,70 @@ afterEach(async () => {
 });
 
 describe('useForm collection submission', () => {
+  test('manual field validation uses declared schema errors and cannot validate foreign fields', async () => {
+    const rendered = await renderForm({ baseline: 'accepted' });
+    await act(async () => rendered.current.setValue('title', ''));
+    let valid = true;
+    await act(async () => { valid = rendered.current.validateFields(['title']); });
+    expect(valid).toBe(false); expect(rendered.current.errors.title).toBeTruthy();
+    expect(() => rendered.current.validateFields(['foreign'])).toThrow('unique declared fields');
+    expect(() => rendered.current.validateFields(['title', 'title'])).toThrow('unique declared fields');
+    await act(async () => { rendered.current.setValue('title', 'Valid'); valid = rendered.current.validateFields(['title']); });
+    expect(valid).toBe(true); expect(rendered.current.errors.title).toBeUndefined();
+  });
+  test('accepted mode adopts canonical values and revision without overwriting newer edits', async () => {
+    let resolve!: (result: { values: Partial<FormRow>; revision: number }) => void;
+    const receipt = new Promise<{ values: Partial<FormRow>; revision: number }>(yes => { resolve = yes; });
+    let expected: string | number | undefined;
+    const rendered = await renderForm({ baseline: 'accepted', initialRevision: 1,
+      onSubmit: (_, context) => { expected = context.expectedRevision; return receipt; } });
+    await act(async () => rendered.current.setValue('title', 'Submitted'));
+    let saving!: ReturnType<typeof rendered.current.submit>;
+    await act(async () => { saving = rendered.current.submit(); await Promise.resolve(); });
+    await act(async () => { rendered.current.setValue('title', 'Newer'); });
+    await act(async () => { resolve({ values: { title: 'Canonical' }, revision: 2 }); await saving; });
+    expect(expected).toBe(1); expect((await saving).kind).toBe('accepted');
+    expect(rendered.current.watch('title')).toBe('Newer'); expect(rendered.current.isDirty).toBe(true);
+    expect(rendered.current.revision).toBe(2);
+    await act(async () => rendered.current.reset());
+    expect(rendered.current.watch('title')).toBe('Canonical'); expect(rendered.current.isDirty).toBe(false);
+  });
+  test('manual field acceptance preserves A→B→A and detaches getValues snapshots', async () => {
+    const rendered = await renderForm({ baseline: 'accepted', initialRevision: 1 });
+    let snapshot!: ReturnType<typeof rendered.current.captureValues>;
+    await act(async () => { rendered.current.setValue('title', 'A'); snapshot = rendered.current.captureValues(['title']); });
+    await act(async () => { rendered.current.setValue('title', 'B'); rendered.current.setValue('title', 'A'); });
+    await act(async () => { expect(rendered.current.acceptValues({ values: { title: 'Canonical' }, revision: 2 }, snapshot)).toBe(true); });
+    const detached = rendered.current.getValues(); detached.title = 'Foreign mutation';
+    expect(rendered.current.watch('title')).toBe('A'); expect(rendered.current.isDirty).toBe(true);
+    expect(rendered.current.acceptValues({ values: { title: 'Twice' } }, snapshot)).toBe(false);
+    await act(async () => rendered.current.reset()); expect(rendered.current.watch('title')).toBe('Canonical');
+  });
+  test('typed submission reports invalid, blocked and conflict outcomes instead of false success', async () => {
+    const missing = await renderForm({ baseline: 'accepted' });
+    expect(await missing.current.submit()).toEqual({ kind: 'blocked' });
+    let writes = 0;
+    const rendered = await renderForm({ baseline: 'accepted', onSubmit: async () => { writes++; throw { code: 'REVISION_CONFLICT', private: 'do-not-log' }; } });
+    await act(async () => rendered.current.setValue('title', ''));
+    let result!: Awaited<ReturnType<typeof rendered.current.submit>>;
+    await act(async () => { result = await rendered.current.submit(); }); expect(result.kind).toBe('invalid');
+    await act(async () => { rendered.current.setValue('title', 'Valid'); result = await rendered.current.submit(); });
+    expect(result.kind).toBe('failed'); expect(rendered.current.hasConflict).toBe(true);
+    expect(rendered.current.watch('title')).toBe('Valid'); expect(rendered.current.submitError).toContain('draft is preserved');
+    await act(async () => { rendered.current.setValue('title', 'Another draft'); result = await rendered.current.submit(); });
+    expect(result.kind).toBe('failed'); expect(writes).toBe(1);
+    // A conflict is not silently re-based just because the user edits or retries.
+    const reviewed = rendered.current.captureValues();
+    await act(async () => { rendered.current.acceptValues({ values: { title: 'Reviewed' }, revision: 2 }, reviewed); });
+    expect(rendered.current.hasConflict).toBe(false); expect(rendered.current.revision).toBe(2);
+    expect(JSON.stringify(events)).not.toContain('do-not-log');
+  });
+  test('legacy mode retains its initial reset baseline after successful submission', async () => {
+    const rendered = await renderForm({ onSubmit: async () => {} });
+    await act(async () => { rendered.current.setValue('title', 'Updated'); await rendered.current.handleSubmit(); });
+    expect(rendered.current.isDirty).toBe(true);
+    await act(async () => rendered.current.reset()); expect(rendered.current.watch('title')).toBe('A title');
+  });
   test('waits for the insert receipt before success and clearing submitting state', async () => {
     const receipt = deferred<void>();
     const calls: string[] = [];
@@ -245,12 +309,15 @@ describe('useForm collection submission', () => {
 });
 
 async function renderForm(options: {
-  collection: Collection<FormRow>;
+  collection?: Collection<FormRow>;
   mode?: 'create' | 'edit';
   editId?: string;
   onSuccess?: () => void;
   onError?: (error: string) => void;
   client?: Client;
+  baseline?: UseFormOptions<FormRow>['baseline'];
+  initialRevision?: number;
+  onSubmit?: UseFormOptions<FormRow>['onSubmit'];
 }): Promise<{ current: ReturnType<typeof useForm<FormRow>> }> {
   const { createRoot } = await import('react-dom/client');
   const root = createRoot(createContainer());
@@ -266,6 +333,9 @@ async function renderForm(options: {
       editId: options.editId,
       onSuccess: options.onSuccess,
       onError: options.onError,
+      onSubmit: options.onSubmit,
+      baseline: options.baseline,
+      initialRevision: options.initialRevision,
     });
     return null;
   }

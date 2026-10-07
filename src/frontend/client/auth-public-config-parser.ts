@@ -3,6 +3,7 @@ import type {
   AuthPublicConfig,
   AuthUserPropertyConfig,
 } from './auth-types';
+import { isUserProfileCapabilities } from './auth-user-profile-parser';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -18,6 +19,7 @@ export function isAuthPublicConfig(value: unknown): value is AuthPublicConfig {
     && optional(config.accountEmails, isAccountEmails)
     && optional(config.account, isAccount)
     && optional(config.mfa, isMfa)
+    && optional(config.userProfile, isUserProfileCapabilities)
     && optional(config.userProperties, isUserProperties)
     && optionalBoolean(config.strictUserProperties);
 }

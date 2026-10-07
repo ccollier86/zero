@@ -334,11 +334,14 @@ export class AuthSessionController {
   async refresh(
     assertRequestCurrent: () => void = () => {},
     consumeStartingScope: () => void = () => {},
+    signal?: AbortSignal,
   ): Promise<boolean> {
     assertRequestCurrent();
+    signal?.throwIfAborted();
     if (this.refreshPromise) {
       const result = await this.refreshPromise;
       assertRequestCurrent();
+      signal?.throwIfAborted();
       return result;
     }
     let startingScopeConsumed = false;
@@ -347,9 +350,22 @@ export class AuthSessionController {
       consumeStartingScope();
       startingScopeConsumed = true;
     };
-    this.refreshPromise = this.runCredentialOperation(() => {
+    const request = this.createRecoveryRequest();
+    const cancel = () => request.cancel();
+    signal?.addEventListener('abort', cancel, { once: true });
+    this.recoveryRequests.add(request);
+    this.refreshPromise = request.waitForAdmission((admit) => this.runCredentialOperation(() => {
       assertRequestCurrent();
-      return this.performRefreshLocked(0, consumeCurrentStartingScope);
+      return this.performRefreshLocked(0, consumeCurrentStartingScope, assertRequestCurrent, request);
+    }, true, () => { admit(); assertRequestCurrent(); })).catch((cause) => {
+      if (!startingScopeConsumed) assertRequestCurrent();
+      if (cause instanceof BrowserAuthCoordinationError
+        || cause instanceof DOMException && cause.name === 'TimeoutError') return false;
+      throw cause;
+    }).finally(() => {
+      request.cancel();
+      signal?.removeEventListener('abort', cancel);
+      this.recoveryRequests.delete(request);
     });
     try {
       const result = await this.refreshPromise;
@@ -762,10 +778,10 @@ export class AuthSessionController {
   }
 
   private async performRefreshLocked(
-    attempt = 0,
-    consumeStartingScope: () => void = () => {},
-    assertRequestCurrent: () => void = () => {},
-    recoveryRequest?: AuthSessionRecoveryRequest,
+    attempt: number,
+    consumeStartingScope: () => void,
+    assertRequestCurrent: () => void,
+    recoveryRequest: AuthSessionRecoveryRequest,
   ): Promise<boolean> {
     assertRequestCurrent();
     this.adoptStoredCredential();
@@ -779,10 +795,8 @@ export class AuthSessionController {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
       };
-      const recovered = recoveryRequest
-        ? await recoveryRequest.request(`${this.baseUrl}/auth/refresh`, init)
-        : null;
-      const response = recovered?.response ?? await fetch(`${this.baseUrl}/auth/refresh`, init);
+      const recovered = await recoveryRequest.request(`${this.baseUrl}/auth/refresh`, init);
+      const { response } = recovered;
       assertRequestCurrent();
 
       const latest = this.coordinator.readCredential();
@@ -808,7 +822,7 @@ export class AuthSessionController {
 
       let data;
       try {
-        data = parseAuthRefreshResponse(recovered ? recovered.body : await response.json());
+        data = parseAuthRefreshResponse(recovered.body);
         assertRequestCurrent();
       } catch {
         assertRequestCurrent();
@@ -986,42 +1000,74 @@ export class AuthSessionController {
 
     this.beginScopeTransition('external-session');
     this.adoptRecord(stored);
+    // The persisted proof already belongs to a replacement family. Drop A's
+    // in-memory identity/tenant behind the barrier without writing a logout
+    // tombstone over B's recoverable credential.
+    if (!sameScope) this.send('auth.logout');
     this.send('auth.loading');
     this.send('auth.refresh', { accessToken: '', refreshToken: stored.refreshToken });
 
-    const refreshed = await this.performRefreshLocked();
-    if (!refreshed || !this.accessToken) {
+    const request = this.createRecoveryRequest();
+    this.recoveryRequests.add(request);
+    const scope = this.scopeId;
+    const assertCurrent = () => {
+      this.assertAuthorizationScopeCurrent(scope);
+      if (this.coordinator.readCredential()?.scopeId !== scope) {
+        throw new DOMException('The replacement browser session was retired', 'AbortError');
+      }
+    };
+    try {
+      const refreshed = await this.performRefreshLocked(0, () => {}, assertCurrent, request);
+      if (!refreshed || !this.accessToken) {
+        // Definitive denial already settled the intentional logout barrier.
+        if (!this.hasRecoverableSession && this.sessionTransition.phase === 'idle') return;
+        assertCurrent();
+        this.markScopeTransitionCommitted();
+        if (this.context.refreshToken) {
+          await this.failCommittedScopeTransition(
+            new Error('Unable to restore the replacement browser session'),
+          );
+        }
+        await this.completeScopeTransition();
+        return;
+      }
+
+      assertCurrent();
       this.markScopeTransitionCommitted();
-      if (this.context.refreshToken) {
-        await this.failCommittedScopeTransition(
-          new Error('Unable to restore the replacement browser session'),
-        );
+      const revision = this.credentialRevision, token = this.accessToken;
+      const assertHydrationCurrent = () => {
+        assertCurrent();
+        if (revision !== this.credentialRevision || token !== this.accessToken
+          || this.coordinator.readCredential()?.revision !== revision) {
+          throw new DOMException('The replacement browser session was retired', 'AbortError');
+        }
+      };
+      try {
+        const { response, body } = await request.request(`${this.baseUrl}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        assertHydrationCurrent();
+        if (!response.ok) {
+          if (isRejectedSessionResponse(response)) this.commitLogout();
+          else throw new Error('Unable to restore the replacement browser session');
+        } else {
+          const user = parseAuthUser(body);
+          this.send('auth.success', {
+            user,
+            activeTenant: this.context.activeTenant ?? undefined,
+            accessToken: this.context.accessToken!,
+            refreshToken: this.context.refreshToken!,
+          });
+        }
+      } catch (cause) {
+        assertHydrationCurrent();
+        await this.failCommittedScopeTransition(cause);
       }
       await this.completeScopeTransition();
-      return;
+    } finally {
+      request.cancel();
+      this.recoveryRequests.delete(request);
     }
-
-    this.markScopeTransitionCommitted();
-    try {
-      const response = await fetch(`${this.baseUrl}/auth/me`, {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      });
-      if (!response.ok) {
-        if (isRejectedSessionResponse(response)) this.commitLogout();
-        else throw new Error('Unable to restore the replacement browser session');
-      } else {
-        const user = parseAuthUser(await response.json());
-        this.send('auth.success', {
-          user,
-          activeTenant: this.context.activeTenant ?? undefined,
-          accessToken: this.context.accessToken!,
-          refreshToken: this.context.refreshToken!,
-        });
-      }
-    } catch (cause) {
-      await this.failCommittedScopeTransition(cause);
-    }
-    await this.completeScopeTransition();
   }
 
   private async failCommittedScopeTransition(cause: unknown): Promise<never> {
@@ -1036,6 +1082,7 @@ export class AuthSessionController {
       this.credentialRevision,
       cause,
     );
+    this.send('auth.error', { error: 'Unable to restore the replacement browser session' });
     this.setTransition('recovery-required', operation, true, error.message);
     throw error;
   }

@@ -54,7 +54,7 @@ The form's `onSuccess` does not automatically choose your destination.
 
 | Prop | Default / effect |
 | --- | --- |
-| `onSuccess` | Called after completed login/continuation, not immediately after receiving an MFA/tenant continuation. |
+| `onSuccess` | Called after completed login/continuation, not immediately after receiving an MFA/profile/tenant continuation. |
 | `onPasswordChangeRequired`, `onAccountSuspended` | Optional callbacks for those backend codes; the form still presents the mapped error. |
 | `showForgotPassword` / `forgotPasswordHref` | true / `'#forgot-password'`. |
 | `showRegisterLink` / `registerHref` | true / `'#register'`. |
@@ -96,7 +96,9 @@ The server still owns [bootstrap](../../backend/guardian/bootstrap.md),
 [organization creation](../../backend/guardian/tenancy.md).
 A registration needing email verification displays a pending-verification
 screen and resend action; it does not invoke completed-session success.
-MFA/tenant continuations are routed through the common coordinator.
+MFA, required-profile and tenant continuations are routed through the common
+coordinator. Required profile fields are completed after mandatory email/MFA
+ceremonies and before tenant binding or full application credentials.
 
 ## AuthFlowContinuation
 
@@ -106,20 +108,64 @@ and accepts `onSuccess`, `onBack`,
 Its keyed internal flow resets local state when the server-issued ceremony
 identity changes.
 
-It dispatches in this order:
+The server owns the ceremony order. The coordinator renders the matching
+limited result and retains subsequent stages rather than reporting app success:
 
 1. MFA setup/challenge goes to `MFAContinuation`. Its completion may still need
-   tenant selection/onboarding; that result stays in the coordinator.
-2. A tenant-selection result goes to `TenantSelectionForm`.
-3. A no-membership onboarding result loads public policy and offers only
+   required profile completion or tenant selection/onboarding; that result stays
+   in the coordinator.
+2. A required-profile result goes to `ProfileCompletionForm`. It accepts only
+   the enabled required profile fields through the restricted profile continuation;
+   its completion can proceed to tenant selection/onboarding instead of issuing
+   a session immediately.
+3. A tenant-selection result goes to `TenantSelectionForm`.
+4. A no-membership onboarding result loads public policy and offers only
    server-authorized creation and/or verified-domain request-to-join.
-4. If neither path is available, it explains that invitation/approval or
+5. If neither onboarding path is available, it explains that invitation/approval or
    platform-created access is required.
 
-The coordinator does not treat an MFA proof as tenant authority or guess that
-an email suffix grants membership. See [backend completion states](../../backend/guardian/sessions.md).
+The coordinator does not treat an MFA/profile proof as application or tenant
+authority, or guess that an email suffix grants membership. See
+[required profile completion](../../backend/guardian/profile-completion.md) and
+[backend session states](../../backend/guardian/sessions.md).
 Back callbacks clear/restart UI flow; a continuation's actual validity and
 single-use enforcement remain server responsibilities.
+
+## ProfileCompletionForm
+
+`ProfileCompletionForm` is exported from `@zero/framework/components/auth`,
+the React facade and the framework root. Its optional `result` accepts an
+`AuthProfileCompletionRequiredResult`; omitting it uses the current in-memory
+authentication continuation from the configured provider. Other props are
+`onComplete(result)`, `onSuccess`, `onBack` and `className`.
+
+```tsx
+import { ProfileCompletionForm } from '@zero/framework/components/auth';
+
+export function CompleteProfilePage({ onBack }: { onBack: () => void }) {
+  return <ProfileCompletionForm onBack={onBack} />;
+}
+```
+
+Mount this page inside the normal provider if an app needs a separate completion
+entrance. No proof asks the user to restart sign-in; the page does not invent an
+identity. Keep the continuation in memory, never in a URL or localStorage.
+Ordinary `UserProfileSettings` is a signed-in account editor, not a replacement
+for this identity-only stage.
+
+The form renders only enabled required profile fields, retaining the original
+server policy as the authority. It does not ask for optional biography/regional
+preferences, require an avatar/contact proof, or clear omitted optional values.
+It submits the actual expected profile revision, retains a failed/conflicted
+draft and offers review of the accepted latest state. Unready storage shows an
+explicit migration/configuration state rather than a fabricated empty profile.
+SDK inspection and completion bound both response headers and JSON-body reads
+to 30 seconds. A timeout releases pending controls but retains the current
+restricted proof and failed draft; it does not mean the server did not commit.
+Review the latest profile before retrying, or restart sign-in if the proof was
+consumed or expired. No completion request is automatically replayed.
+`onComplete` reports an accepted auth result; `onSuccess` runs only for an
+accepted full session. A tenant/native continuation is not app success.
 
 ## Public Result Guards
 
@@ -129,6 +175,7 @@ The auth barrel exports:
 - `isMfaSetupRequiredResult`, `isMfaChallengeRequiredResult`,
   `isMfaContinuationResult`.
 - `isTenantSelectionRequiredResult`, `isTenantOnboardingRequiredResult`.
+- `isProfileCompletionRequiredResult`.
 - `isAuthFlowContinuationResult` and the `AuthFlowContinuationResult` type.
 
 These guards distinguish SDK result variants for UI composition. They are not
@@ -138,10 +185,13 @@ browser result as a server principal.
 ## Verification And Related Guides
 
 Exercise first bootstrap, closed registration, unverified email, required MFA,
-multi-membership selection and a verified account without membership.
+required profile completion, multi-membership selection and a verified account
+without membership. Include profile conflicts, missing/expired proofs and a
+completion which continues to tenant/native consent rather than app success.
 `onSuccess` should run only when the full ceremony yields a session, with the
 configured navigation destination.
 
 - [MFA controls](./mfa-controls.md) cover enrollment/challenge/account settings.
 - [Account actions](./account-actions.md) cover password/email/property forms.
+- [Required profile completion](../../backend/guardian/profile-completion.md) owns enrollment, restricted authority and final issuance.
 - [Native web UI](./native-ui.md) preserves native authorization continuation.

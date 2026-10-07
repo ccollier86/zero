@@ -44,8 +44,8 @@ export interface NativeAuthErrorInfo {
   status?: number;
 }
 
-/** Identity claims Zero can release to a native public client. */
-export type NativeIdentityScope = 'openid' | 'profile' | 'email';
+/** Identity claims and explicit own-account writer ceilings; never application RBAC grants. */
+export type NativeIdentityScope = 'openid' | 'profile' | 'email' | 'phone' | 'profile:write' | 'contacts:write';
 
 export interface NativeAuthClientOptions {
   issuer: string;

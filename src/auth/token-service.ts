@@ -38,7 +38,8 @@ import {
   authContextMatchesAuthorityReference,
   snapshotAuthContextAuthorityReference,
 } from './auth-context-authority';
-import { parseTokenTTL } from '../tokens/token-utils';
+import { hashToken, parseTokenTTL } from '../tokens/token-utils';
+import { resolveApplicationId } from './auth-application-id';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import { createAuthStateInvariantError } from './auth-observability';
 
@@ -75,6 +76,9 @@ export interface WebRefreshProof {
  * opaque values stored as SHA-256 hashes in the database.
  */
 export class TokenService {
+  /** Host-only page cookie namespace derived solely from persisted Guardian identity. */
+  readonly pageSessionCookieName: string;
+  private fullSessionAdmission: ((userId: string) => void) | null = null;
   private readonly db: TokenServiceConfig['db'];
   private readonly accessTokenTTL: string;
   private readonly nativeIssuer?: string;
@@ -103,6 +107,7 @@ export class TokenService {
     config: TokenServiceConfig,
   ) {
     this.db = config.db;
+    this.pageSessionCookieName = `__zero_page_session_${hashToken(resolveApplicationId(config.db, config.emitCode)).slice(0, 32)}`;
     this.accessTokenTTL =
       config.accessTokenTTL ??
       process.env[AUTH_DEFAULTS.accessTokenTTLEnvKey] ??
@@ -144,6 +149,7 @@ export class TokenService {
       ),
       withAuthorizationRevision: (context) => this.withAuthorizationRevision(context),
       resolveWebRefreshProof: (rawToken) => this.resolveWebRefreshProof(rawToken),
+      assertFullSessionAdmission: userId => this.assertFullSessionAdmission(userId),
     });
   }
 
@@ -171,6 +177,13 @@ export class TokenService {
   /** Fence token authority after another runtime commits a profile change. */
   setRuntimeProfileGuard(guard: () => void): void {
     this.runtimeProfileGuard = guard;
+  }
+  /** Internal configured account-completion boundary; no credential or app permission is created here. */
+  setFullSessionAdmission(guard: (userId: string) => void): void { this.fullSessionAdmission = guard; }
+  assertFullSessionAdmission(userId: string): void {
+    if (this.fullSessionAdmission) invokeSynchronousAuthCallback(() => this.fullSessionAdmission!(userId), {
+      component: 'token-service', invariant: 'full-session-admission-async',
+      message: '[auth] Full session admission must be synchronous.', emitCode: this.emitCode });
   }
 
   /** Recheck the exact committed profile for cached request-level facades. */
@@ -221,6 +234,7 @@ export class TokenService {
     role: string;
   }, expectedAuthGeneration?: number, session?: AuthSessionRecord): Promise<string> {
     this.assertRuntimeProfileCurrent();
+    this.assertFullSessionAdmission(user.userId);
     const authGeneration = expectedAuthGeneration
       ?? currentAuthGeneration(this.userStore, user.userId);
     const token = await this.codec.signBrowserAccessToken({
@@ -230,6 +244,7 @@ export class TokenService {
       ttl: this.accessTokenTTL,
     });
     this.assertRuntimeProfileCurrent();
+    this.assertFullSessionAdmission(user.userId);
     return token;
   }
 
@@ -261,6 +276,7 @@ export class TokenService {
     sessionId: string,
   ): Promise<string> {
     this.assertRuntimeProfileCurrent();
+    this.assertFullSessionAdmission(user.userId);
     if (!this.nativeIssuer || !this.nativeAudience) {
       throw new Error('TokenService: native token issuer is not configured');
     }
@@ -275,6 +291,7 @@ export class TokenService {
       ttl: this.accessTokenTTL,
     });
     this.assertRuntimeProfileCurrent();
+    this.assertFullSessionAdmission(user.userId);
     return token;
   }
 

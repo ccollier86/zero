@@ -10,6 +10,7 @@ import {
   checkSystemDatabaseConfiguration,
 } from './platform-doctor-system-database-config';
 import { inspectSystemDatabaseState } from './platform-doctor-system-database-state';
+import { checkGuardianProfileFeatureConfiguration } from './platform-doctor-guardian-features';
 
 /** Emit a stable targeted finding before general config resolution fails. */
 export function checkPreResolutionSystemDatabase(
@@ -27,7 +28,8 @@ export function checkSystemDatabase(
   projectRoot?: string,
 ): void {
   checkSystemDatabaseConfiguration(resolved, findings, env, projectRoot);
+  const features = checkGuardianProfileFeatureConfiguration(resolved, findings);
   const projection = checkIdentityProjectionConfiguration(resolved, findings);
   if (!projectRoot) return;
-  inspectSystemDatabaseState(resolved, findings, projectRoot, projection);
+  inspectSystemDatabaseState(resolved, findings, projectRoot, projection, features);
 }

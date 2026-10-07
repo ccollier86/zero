@@ -260,4 +260,23 @@ Reviewed independently on 2026-10-05 using TypeScript syntax trees without execu
 
 ## Coverage Boundary
 
+## Adaptive Profile Working-Source Facades
+
+Additive source-observed contracts; signals are optional. No arbitrary target
+identity is accepted for own-account writes.
+
+| Owner | Member | Kind | Signature/contract | Evidence | Canonical guide |
+| --- | --- | --- | --- | --- | --- |
+| `Client` | `userProfile` | facade | `get`, `update` with expected revision | [Profile transport](../../../../src/frontend/client/auth-user-profile-transport.ts) | `backend/guardian/user-profiles.md` |
+| `AuthClient` | `profile` | facade | Same own-profile transport | [AuthClient](../../../../src/frontend/client/auth-client.ts) | `backend/guardian/user-profiles.md` |
+| `Client` | `userContacts` | facade | Contact get/edit/request/complete/cancel | [Contact transport](../../../../src/frontend/client/auth-user-contact-transport.ts) | `backend/guardian/contacts.md` |
+| `AuthClient` | `contacts` | facade | Same own-contact transport | [AuthClient](../../../../src/frontend/client/auth-client.ts) | `backend/guardian/contacts.md` |
+| `Client` | `userAvatar` | facade | Private stage/upload/finalize/replace/remove/deliver/directory | [Avatar transport](../../../../src/frontend/client/auth-user-avatar-transport.ts) | `backend/guardian/avatars.md` |
+| `AuthClient` | `avatars` | facade | Same immutable scope-bound media transport | [AuthClient](../../../../src/frontend/client/auth-client.ts) | `backend/guardian/avatars.md` |
+| `Client` | `presence` | facade | One tracker, refresh/getSelf/updateIntent | [Presence client](../../../../src/frontend/client/guardian-presence-client.ts) | `backend/guardian/presence.md` |
+| `Client` | `userProfileCompletion` | facade | Restricted inspect/complete continuation | [Completion transport](../../../../src/frontend/client/auth-user-profile-completion-transport.ts) | `backend/guardian/profile-completion.md` |
+| `AuthClient` | `profileCompletion` | facade | Same typed completion transport | [AuthClient](../../../../src/frontend/client/auth-client.ts) | `backend/guardian/profile-completion.md` |
+
+## Coverage Boundary
+
 Additional request/result/query types, source-local transports, and nested types must be reconciled by each owning subsystem inventory. Full public signatures come from source/types and the [package export catalog](./package-exports.md), not the abridged display column. Existing tests are cataloged in the [SDK system inventory](../systems/frontend-sdk.md); none ran here. Independent review and exact-package qualification remain open.

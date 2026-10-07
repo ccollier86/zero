@@ -45,6 +45,8 @@ export function HelpControl() {
 The tooltip text supplements an accessible control name; it is not the only
 way a user can identify the operation. Do not put interactive menus/inputs or
 critical error instructions solely inside a tooltip.
+The [shared keyboard hints](../kbd.md) can display a compact command hint
+inside this surface, with inherited tooltip colors and no new focus target.
 
 ## State And Position
 

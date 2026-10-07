@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.5.0 working source; page-size correction qualification pending"]
 modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.5.0"
+  commit: "ae85a4b6efe11eeb74ab89b15ed02a23e982c59f"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-07"
   evidence_level: source-observed
 ---
 
@@ -35,8 +35,8 @@ An app selects source, columns and actions rather than duplicating those control
   and isolated server results.
 - [Server sources](./server-sources.md): query/result contract, offset/cursor paging,
   authenticated adapter, ordering and authority fences.
-- [State and columns](./state-and-columns.md): controlled facets, headless hook,
-  schema metadata and stable sizing.
+- [State and columns](./state-and-columns.md): controlled facets, first-row
+  page-size anchoring, cursor reset boundaries, headless hook and stable sizing.
 - [Controls](./controls.md): search-first toolbars, slots, filters and honest paging.
 - [Editing](./editing.md): writer precedence, encoded values and accepted cells.
 - [Actions](./actions.md): pending/confirmation/refresh and row/bulk targets.
