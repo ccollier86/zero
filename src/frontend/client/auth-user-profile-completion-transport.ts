@@ -1,6 +1,6 @@
 /** Restricted profile completion over the existing auth-attempt/session owner; no Bearer proof or persistence. */
 import type { CompleteUserProfileInput, UserProfileCompletion } from '../../auth/auth-user-profile-completion-types';
-import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
+import { runAuthenticationExchange, type AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import type { AuthCompletionResult } from './auth-types';
 import { createAuthClientError, AuthClientError } from './auth-errors';
 import { parseAuthCompletionResult } from './auth-completion-parser';
@@ -44,24 +44,27 @@ export class AuthUserProfileCompletionTransport {
   private async performComplete(input: CompleteUserProfileInput, signal?: AbortSignal): Promise<AuthCompletionResult> {
     // This mutation has its own form pending state. Toggling the global auth
     // loading boundary would retire the anonymous draft/request it owns.
-    const attempt = this.options.beginAuthentication(false), composed = composeAuthorizationScopeSignal(signal, attempt.signal);
-    try {
-      const assertCurrent = this.captureContinuation(input.continuation, attempt, composed.signal);
-      let result: AuthCompletionResult;
+    const attempt = this.options.beginAuthentication(false);
+    return runAuthenticationExchange(attempt, async (attempt) => {
+      const composed = composeAuthorizationScopeSignal(signal, attempt.signal);
       try {
-        const { response, body } = await this.request('', input, composed.signal); assertCurrent();
-        if (!response.ok) throw createAuthClientError(response, body, 'Your profile could not be completed.');
-        result = parseAuthCompletionResult(body);
-        const userId = this.options.readContinuation()?.user.userId;
-        if (userId !== undefined && result.user.userId !== userId) throw invalidResponse();
-      } catch (cause) {
-        // The ordinary auth.error event clears identity continuations. A
-        // rejected profile CAS/validation request must keep this restricted
-        // proof and draft available for explicit review/retry instead.
-        assertCurrent(); throw cause;
-      }
-      assertCurrent(); return await this.options.completeAuthentication(result, { ...attempt, assertCurrent });
-    } finally { composed.dispose(); attempt.dispose(); }
+        const assertCurrent = this.captureContinuation(input.continuation, attempt, composed.signal);
+        let result: AuthCompletionResult;
+        try {
+          const { response, body } = await this.request('', input, composed.signal); assertCurrent();
+          if (!response.ok) throw createAuthClientError(response, body, 'Your profile could not be completed.');
+          result = parseAuthCompletionResult(body);
+          const userId = this.options.readContinuation()?.user.userId;
+          if (userId !== undefined && result.user.userId !== userId) throw invalidResponse();
+        } catch (cause) {
+          // The ordinary auth.error event clears identity continuations. A
+          // rejected profile CAS/validation request must keep this restricted
+          // proof and draft available for explicit review/retry instead.
+          assertCurrent(); throw cause;
+        }
+        assertCurrent(); return await this.options.completeAuthentication(result, { ...attempt, assertCurrent });
+      } finally { composed.dispose(); }
+    }, undefined, signal);
   }
   private captureContinuation(proof: string, attempt: AuthAuthenticationAttempt, signal: AbortSignal): () => void {
     if (typeof proof !== 'string' || proof.length < 40 || proof.length > 200 || !/^zct_[A-Za-z0-9_-]+$/.test(proof)) throw invalidResponse();

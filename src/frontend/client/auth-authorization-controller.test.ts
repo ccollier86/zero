@@ -192,6 +192,35 @@ describe('AuthAuthorizationController', () => {
     harness.controller.dispose();
   });
 
+  test('synchronous retry-surface cleanup cannot cancel an already accepted projection', async () => {
+    const harness = createHarness(session('user-a', 'token-a'));
+    const cancellation = new AbortController();
+    const unsubscribe = harness.controller.subscribe(() => {
+      if (harness.controller.getSnapshot().status === 'ready') cancellation.abort();
+    });
+    const pending = harness.controller.refresh(cancellation.signal);
+    harness.loads.at(-1)!.resolve(snapshot('user-a', null, ['records:read'], 'accepted'));
+    expect((await pending)?.revision).toBe('accepted');
+    expect(harness.controller.getSnapshot()).toMatchObject({ status: 'ready', snapshot: { revision: 'accepted' } });
+    expect(harness.expirations).toBe(0);
+    unsubscribe(); harness.controller.dispose();
+  });
+
+  test('synchronous identity replacement during publication does not return a retired snapshot', async () => {
+    const harness = createHarness(session('user-a', 'token-a'));
+    const unsubscribe = harness.controller.subscribe(() => {
+      if (harness.controller.getSnapshot().snapshot?.identity.userId === 'user-a') {
+        harness.setSession(session('user-b', 'token-b'));
+      }
+    });
+    const pending = harness.controller.refresh();
+    harness.loads.at(-1)!.resolve(snapshot('user-a', null, ['records:read'], 'retired'));
+    expect(await pending).toBeNull();
+    expect(harness.controller.getSnapshot()).toMatchObject({ status: 'loading', snapshot: null });
+    expect(harness.expirations).toBe(0);
+    unsubscribe(); harness.controller.dispose();
+  });
+
   test('cancelling an older recovery cannot abort a newer authorization read', async () => {
     const harness = createHarness(session('user-a', 'token-a'));
     const cancellation = new AbortController();

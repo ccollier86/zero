@@ -82,7 +82,9 @@ export interface RouterPluginOptions {
     resolvePageAuth?: (
       request: Request
     ) => Promise<NonNullable<LoaderContext['auth']> | null>;
-    /** Build a deletion header after an attempted page credential is rejected. */
+    /** Classify ambient credentials without deleting cookies on a late GET. */
+    hasPageCredential?: (request: Request) => boolean;
+    /** @deprecated Classified as private only; returned deletion headers are never emitted. */
     clearRejectedPageSession?: (request: Request) => string | null;
   };
   /** App-local authorization services used by file pages, layouts, and route.ts APIs. */
@@ -293,9 +295,12 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           });
         }
       }
-      const rejectedPageSessionHeader = loaderCtx.auth
-        ? null
-        : options.authGuard?.clearRejectedPageSession?.(request) ?? null;
+      // Older custom hooks remain usable for private-response classification,
+      // but their deletion headers can never be committed by a document GET.
+      const rejectedPageCredential = !loaderCtx.auth
+        && Boolean(options.authGuard?.clearRejectedPageSession?.(request));
+      const privatePageRequest = Boolean(loaderCtx.auth || rejectedPageCredential
+        || options.authGuard?.hasPageCredential?.(request));
 
       // A valid ambient session should never strand a user on the login page.
       // Honor one safe return target first, then the configured app home.
@@ -350,8 +355,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
                   `${pathname}${url.search}`,
                 ),
               },
-            }),
-            rejectedPageSessionHeader
+            })
           );
         }
       }
@@ -376,13 +380,11 @@ export function createRouterPlugin(options: RouterPluginOptions) {
             );
             if (middlewareResult) {
               if (
-                loaderCtx.auth ||
                 pageAccess.user === 'required' ||
-                rejectedPageSessionHeader
+                privatePageRequest
               ) {
                 return withPrivatePageHeaders(
-                  middlewareResult,
-                  rejectedPageSessionHeader
+                  middlewareResult
                 );
               }
               return middlewareResult;
@@ -395,8 +397,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
             metadata: { stage: 'page-layout-policy' },
           });
           return withPrivatePageHeaders(
-            new Response('Route policy unavailable', { status: 500 }),
-            rejectedPageSessionHeader
+            new Response('Route policy unavailable', { status: 500 })
           );
         }
       }
@@ -427,18 +428,15 @@ export function createRouterPlugin(options: RouterPluginOptions) {
             });
             return withPrivatePageHeaders(
               new Response('Route policy unavailable', { status: 500 }),
-              rejectedPageSessionHeader,
             );
           }
           if (middlewareResult) {
             if (
-              loaderCtx.auth ||
               pageAccess.user === 'required' ||
-              rejectedPageSessionHeader
+              privatePageRequest
             ) {
               return withPrivatePageHeaders(
-                middlewareResult,
-                rejectedPageSessionHeader
+                middlewareResult
               );
             }
             return middlewareResult;
@@ -447,8 +445,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           // ISR: check cache
           if (
             isIsrRequest &&
-            !loaderCtx.auth &&
-            !rejectedPageSessionHeader &&
+            !privatePageRequest &&
             routeConfig.revalidate &&
             routeConfig.revalidate > 0
           ) {
@@ -484,8 +481,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         // ISR: cache the response
         if (
           isIsrRequest &&
-          !loaderCtx.auth &&
-          !rejectedPageSessionHeader &&
+          !privatePageRequest &&
           routeConfig?.revalidate &&
           routeConfig.revalidate > 0 &&
           response.status === 200
@@ -500,8 +496,8 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           });
         }
 
-        return loaderCtx.auth || rejectedPageSessionHeader
-          ? withPrivatePageHeaders(response, rejectedPageSessionHeader)
+        return privatePageRequest
+          ? withPrivatePageHeaders(response)
           : response;
       }
 
@@ -519,8 +515,8 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         loaderContext: loaderCtx,
         appDir,
       });
-      return loaderCtx.auth || rejectedPageSessionHeader
-        ? withPrivatePageHeaders(response, rejectedPageSessionHeader)
+      return privatePageRequest
+        ? withPrivatePageHeaders(response)
         : response;
     });
 }
@@ -633,15 +629,11 @@ function withPrivateApiHeaders(response: Response): Response {
   });
 }
 
-function withPrivatePageHeaders(
-  response: Response,
-  rejectedCookieHeader?: string | null
-): Response {
+function withPrivatePageHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Cache-Control', 'private, no-store');
-  if (rejectedCookieHeader) {
-    headers.append('Set-Cookie', rejectedCookieHeader);
-  }
+  // An old document response cannot compare-and-set the browser cookie. Even
+  // a custom legacy cleanup callback is classification only, never deletion.
 
   const vary = new Set(
     (headers.get('Vary') ?? '')

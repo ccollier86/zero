@@ -362,6 +362,7 @@ describe('AuthClient token lifecycle', () => {
   });
 
   it('does not let an older login completion overwrite a newer authentication scope', async () => {
+    const olderDispatched = deferred<void>();
     let resolveOlderLogin!: (response: Response) => void;
     const olderLoginResponse = new Promise<Response>((resolve) => {
       resolveOlderLogin = resolve;
@@ -373,6 +374,7 @@ describe('AuthClient token lifecycle', () => {
       const body = JSON.parse(String(init?.body)) as { username: string };
       if (body.username === 'older') {
         olderSignal = init?.signal ?? null;
+        olderDispatched.resolve();
         return olderLoginResponse;
       }
       return Response.json({
@@ -388,7 +390,7 @@ describe('AuthClient token lifecycle', () => {
     });
     const olderLogin = client.login('older', 'password');
     const observedOlderLogin = olderLogin.catch((error: unknown) => error);
-    await Promise.resolve();
+    await olderDispatched.promise;
 
     await client.login('newer', 'password');
     expect((olderSignal as AbortSignal | null)?.aborted).toBe(true);
@@ -404,15 +406,14 @@ describe('AuthClient token lifecycle', () => {
     const rejection = await observedOlderLogin;
 
     expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).message).toContain(
-      'Discarded a response from a previous authorization scope',
-    );
+    expect(rejection).toMatchObject({ name: 'AbortError' });
     expect(client.user?.userId).toBe('u_newer');
     expect(client.accessToken).toBe('access-newer');
     expect(client.activeTenant?.tenantId).toBe('ten_newer');
   });
 
   it('does not let an older transport failure clobber replacement auth state', async () => {
+    const olderDispatched = deferred<void>();
     let rejectOlderLogin!: (cause: unknown) => void;
     const olderLoginResponse = new Promise<Response>((_resolve, reject) => {
       rejectOlderLogin = reject;
@@ -421,7 +422,7 @@ describe('AuthClient token lifecycle', () => {
     mockFetch((url, init) => {
       if (!url.endsWith('/auth/login')) return Response.json({ ok: true });
       const body = JSON.parse(String(init?.body)) as { username: string };
-      if (body.username === 'older') return olderLoginResponse;
+      if (body.username === 'older') { olderDispatched.resolve(); return olderLoginResponse; }
       return Response.json({
         user: { ...authUser(), userId: 'u_newer', username: 'newer' },
         accessToken: 'access-newer',
@@ -435,15 +436,13 @@ describe('AuthClient token lifecycle', () => {
 
     const olderLogin = client.login('older', 'password');
     const observedOlderLogin = olderLogin.catch((cause: unknown) => cause);
-    await Promise.resolve();
+    await olderDispatched.promise;
     await client.login('newer', 'password');
     rejectOlderLogin(new Error('late network failure'));
 
     const rejection = await observedOlderLogin;
     expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).message).toContain(
-      'Discarded a response from a previous authorization scope',
-    );
+    expect(rejection).toMatchObject({ name: 'AbortError' });
     expect(client.user?.userId).toBe('u_newer');
     expect(client.activeTenant?.tenantId).toBe('ten_newer');
     expect(client.error).toBeNull();

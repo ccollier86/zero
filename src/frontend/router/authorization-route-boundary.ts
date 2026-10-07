@@ -65,11 +65,19 @@ export function routeAuthorizationBoundaryMatches(
   server: RouteAuthorizationBoundary,
   browser: BrowserRouteAuthorizationBoundary,
 ): boolean {
-  if (server.userId !== browser.userId
-    || server.platformRole !== browser.platformRole
-    || server.scopeKind !== browser.scopeKind
-    || server.scopeId !== browser.scopeId) return false;
+  if (!routeAuthorizationIdentityMatches(server, browser)) return false;
 
   if (!browser.authorizationReady) return true;
   return server.scopeRevision === browser.scopeRevision;
+}
+
+/** Identify stale loader authority without confusing it with another session. */
+export function routeAuthorizationIdentityMatches(
+  server: RouteAuthorizationBoundary,
+  browser: BrowserRouteAuthorizationBoundary,
+): boolean {
+  return server.userId === browser.userId
+    && server.platformRole === browser.platformRole
+    && server.scopeKind === browser.scopeKind
+    && server.scopeId === browser.scopeId;
 }

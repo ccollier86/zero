@@ -14,6 +14,7 @@ import { Elysia } from 'elysia';
 import {
   PAGE_SESSION_COOKIE_NAME,
   rejectedPageSessionCookieHeader,
+  hasPageSessionCredential,
 } from '../../auth/page-session';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import { createAuthorizationKernel } from '../../auth/authorization-kernel';
@@ -100,6 +101,14 @@ describe('router page-session authentication boundary', () => {
         'export default function Page() { return null; }',
       ].join('\n')
     );
+    await writeRoute('public-cached/page.ts', [
+      "'use client';",
+      'export const config = { auth: false, revalidate: 3600 };',
+      `const key = ${JSON.stringify(`${cacheCounterKey}-public`)};`,
+      'export function loader() { const state = globalThis as Record<string, number>;',
+      'return { requestNumber: state[key] = (state[key] ?? 0) + 1 }; }',
+      'export default function Page() { return null; }',
+    ].join('\n'));
 
     await writeRoute(
       'policy-error/layout.ts',
@@ -270,11 +279,12 @@ describe('router page-session authentication boundary', () => {
           },
           authGuard: {
             routeAuth: 'protected-by-default',
-            publicPaths: ['/sign-in'],
+            publicPaths: ['/sign-in', '/public-cached'],
             loginPath: '/sign-in',
             postLoginPath: '/dashboard',
             resolvePageAuth: resolveTestPageAuth,
             clearRejectedPageSession: request => rejectedPageSessionCookieHeader(request, { pageSessionCookieName: TEST_PAGE_COOKIE }),
+            hasPageCredential: request => hasPageSessionCredential(request, { pageSessionCookieName: TEST_PAGE_COOKIE }),
           },
         })
       );
@@ -282,6 +292,7 @@ describe('router page-session authentication boundary', () => {
 
   afterAll(async () => {
     delete (globalThis as Record<string, unknown>)[cacheCounterKey];
+    delete (globalThis as Record<string, unknown>)[`${cacheCounterKey}-public`];
     delete (globalThis as Record<string, unknown>)[apiHandlerCounterKey];
     delete (globalThis as Record<string, unknown>)[structuredHandlerCounterKey];
     await rm(appDir, { recursive: true, force: true });
@@ -318,7 +329,7 @@ describe('router page-session authentication boundary', () => {
     expect(pageResolverAccepts).toBe(acceptedBefore);
   });
 
-  test('clears a rejected page credential on the raw redirect response', async () => {
+  test('rejects a stale page credential privately without erasing newer browser proof', async () => {
     const response = await request('/protected', {
       cookieSession: 'revoked',
     });
@@ -327,10 +338,38 @@ describe('router page-session authentication boundary', () => {
     expect(response.headers.get('location')).toBe(
       '/sign-in?redirect=%2Fprotected',
     );
-    expect(response.headers.get('set-cookie')).toContain(
-      `${TEST_PAGE_COOKIE}=`
-    );
-    expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  test('legacy custom rejection callbacks cannot emit document cookie deletions', async () => {
+    const custom = new Elysia().use(createRouterPlugin({ appDir, authGuard: {
+      resolvePageAuth: async () => null,
+      clearRejectedPageSession: () => `${TEST_PAGE_COOKIE}=; Path=/; Max-Age=0`,
+    } }));
+    const response = await custom.handle(new Request('http://zero.test/protected', {
+      headers: { Cookie: `${TEST_PAGE_COOKIE}=obsolete` },
+    }));
+    expect(response.status).toBe(302);
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  test('invalid ambient credentials keep public pages private and bypass anonymous ISR', async () => {
+    const key = `${cacheCounterKey}-public`;
+    (globalThis as Record<string, unknown>)[key] = 0;
+    const anonymous = await request('/public-cached'); await anonymous.text();
+    const cached = await request('/public-cached'); await cached.text();
+    expect(cached.headers.get('x-cache')).toBe('HIT');
+    const rejected = await request('/public-cached', { cookieSession: 'revoked' });
+    expect(rejected.status).toBe(200);
+    expect(await rejected.text()).toContain('"requestNumber":2');
+    expect(rejected.headers.get('x-cache')).toBeNull();
+    expect(rejected.headers.get('cache-control')).toBe('private, no-store');
+    expect(rejected.headers.get('set-cookie')).toBeNull();
+    const again = await request('/public-cached');
+    expect(await again.text()).toContain('"requestNumber":1');
+    expect(again.headers.get('x-cache')).toBe('HIT');
   });
 
   test('keeps actual route.ts APIs cookie-unaware and Bearer-only', async () => {

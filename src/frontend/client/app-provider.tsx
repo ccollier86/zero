@@ -36,6 +36,7 @@ import {
   resolveAuthorizationScopeDisplay,
   resolveAuthorizationScopeReloadAction,
   resolveHydrationScopeMatch,
+  resolveHydratedAuthorizationWork,
 } from './authorization-scope-display';
 import {
   AuthorizationScopeRecoveryController,
@@ -50,6 +51,7 @@ import {
 import {
   readBrowserRouteAuthorizationBoundary,
   routeAuthorizationBoundaryMatches,
+  routeAuthorizationIdentityMatches,
   type RouteAuthorizationBoundary,
 } from '../router/authorization-route-boundary';
 import {
@@ -63,6 +65,7 @@ import {
   loginRedirectLocation,
   normalizeConfiguredAuthPath,
 } from '../router/auth-navigation';
+import { AuthorizationHintRecovery } from './authorization-hint-recovery';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -356,6 +359,7 @@ function AuthorizationScopeGuard({
     scopeKey: string | null;
     operation: AuthorizationScopeRecoveryOperation | null;
     error: string | null;
+    explicit?: boolean;
   } | null>(null);
   const recoveryControllerRef = useRef<AuthorizationScopeRecoveryController | null>(null);
   if (!recoveryControllerRef.current) {
@@ -363,6 +367,7 @@ function AuthorizationScopeGuard({
   }
   const recoveryController = recoveryControllerRef.current;
   const displayedScopeRef = useRef<string | null>(null);
+  const hintRecoveryScopeRef = useRef<string | null>(null);
   // AppProvider is a standalone public export. Do not rely on the ambient
   // Window augmentation declared by the separately exported hydration runtime;
   // package consumers may typecheck this module without importing that entry.
@@ -409,10 +414,23 @@ function AuthorizationScopeGuard({
     browserHasRecoverableSession: auth?.hasRecoverableSession ?? false,
     authorizationReady: browserRouteBoundary.authorizationReady,
   });
-  const needsRecovery = hasHydrationRoute && boundary.stable
-    && !auth?.isRestoring && !auth?.isLoading
-    && (requiresRouteReload || !boundary.ready
-      || Boolean(auth?.hasRecoverableSession && !auth.user));
+  const authorizationWork = resolveHydratedAuthorizationWork({
+    hasHydrationRoute, stable: boundary.stable, ready: boundary.ready,
+    isRestoring: auth?.isRestoring ?? false, isLoading: auth?.isLoading ?? false,
+    requiresRouteReload, browserUserId: browserRouteBoundary.userId,
+    browserHasRecoverableSession: auth?.hasRecoverableSession ?? false,
+    authorizationStatus: auth?.authorizationState.status ?? 'unauthenticated',
+    routeIdentityMatches: Boolean(routeData?.authorizationBoundary
+      && routeAuthorizationIdentityMatches(routeData.authorizationBoundary, browserRouteBoundary)),
+    acknowledgedPageCleanup: auth?.hasAcknowledgedPageSessionCleanup ?? false,
+  });
+  const needsRecovery = authorizationWork === 'recover-session' || authorizationWork === 'reload-route';
+  const hintRecoveryKey = JSON.stringify([
+    boundary.scopeKey, boundary.dataRevision, auth?.sessionTransition.revision ?? 0,
+  ]);
+  if (authorizationWork === 'retry-access') hintRecoveryScopeRef.current = hintRecoveryKey;
+  else if (authorizationWork === 'none' || needsRecovery
+    || hintRecoveryScopeRef.current !== hintRecoveryKey) hintRecoveryScopeRef.current = null;
   const recoveryPending = Boolean(auth && recoveryController.isPendingFor(auth));
   const currentRecovery = scopeRecovery?.scopeKey === recoveryScopeKey
     || (scopeRecovery?.operation && recoveryPending) ? scopeRecovery : null;
@@ -423,7 +441,7 @@ function AuthorizationScopeGuard({
     return () => recoveryController.retire();
   }, [auth, recoveryController]);
 
-  const runScopeRecovery = useCallback((operation: AuthorizationScopeRecoveryOperation) => {
+  const runScopeRecovery = useCallback((operation: AuthorizationScopeRecoveryOperation, explicit = false) => {
     if (!auth) return;
     const scopeKey = auth.authorizationScopeKey;
     void recoveryController.run({
@@ -432,7 +450,7 @@ function AuthorizationScopeGuard({
       operation,
       onStart: () => {
         recordAuthorizationScopeReload(readReloadKey());
-        setScopeRecovery({ scopeKey, operation, error: null });
+        setScopeRecovery({ scopeKey, operation, error: null, explicit });
       },
       onReload: () => {
         // A rejected proof/sign-out intentionally replaces the family with
@@ -509,17 +527,30 @@ function AuthorizationScopeGuard({
         : { scopeKey: recoveryScopeKey, operation: null, error: null });
       return;
     }
+    if (authorizationWork === 'reload-route') {
+      // Reload stale loader authority, or the core's acknowledged sign-out
+      // receipt. Neither requires another credential/cookie-clearing writer.
+      recordAuthorizationScopeReload(reloadKey);
+      window.location.reload();
+      return;
+    }
     if (!auth) {
       recordAuthorizationScopeReload(reloadKey);
       window.location.reload();
       return;
     }
     runScopeRecovery(action === 'clear-page-session-and-reload' ? 'sign-out' : 'recover');
-  }, [auth, browserRouteBoundary.userId, recoveryPending, needsRecovery,
+  }, [auth, authorizationWork, browserRouteBoundary.userId, recoveryPending, needsRecovery,
     recoveryScopeKey, recoverySettled, reloadKey, requiresRouteReload,
     routeData?.authorizationBoundary?.userId, runScopeRecovery]);
 
-  if (currentRecovery) {
+  if (hintRecoveryScopeRef.current === hintRecoveryKey && auth && !recoveryPending && !currentRecovery) {
+    return createElement(AuthorizationHintRecovery, {
+      key: hintRecoveryKey, auth, dataBoundary: authorizationDataBoundary,
+      checking: auth.authorizationState.status === 'loading' || auth.authorizationState.status === 'refreshing',
+    });
+  }
+  if (currentRecovery && (currentRecovery.operation === null || currentRecovery.explicit)) {
     const pending = currentRecovery.operation !== null;
     return createElement(
       'main',
@@ -539,11 +570,11 @@ function AuthorizationScopeGuard({
       createElement('div', { className: 'flex flex-wrap items-center gap-2' },
         createElement(Button, {
           type: 'button', size: 'sm', disabled: pending,
-          onClick: () => runScopeRecovery('recover'),
+          onClick: () => runScopeRecovery('recover', true),
         }, currentRecovery.operation === 'recover' ? 'Refreshing session…' : 'Retry session'),
         createElement(Button, {
           type: 'button', size: 'sm', variant: 'outline', disabled: pending,
-          onClick: () => runScopeRecovery('sign-out'),
+          onClick: () => runScopeRecovery('sign-out', true),
         }, currentRecovery.operation === 'sign-out' ? 'Signing out…' : 'Sign out'),
       ),
       pending && createElement('p', {
@@ -551,7 +582,7 @@ function AuthorizationScopeGuard({
       }, currentRecovery.operation === 'sign-out' ? 'Signing out securely…' : 'Refreshing your secure session…'),
     );
   }
-  if (!display.render || needsRecovery) {
+  if (!display.render || needsRecovery || recoveryPending || currentRecovery) {
     return createElement(
       'main',
       {
@@ -562,7 +593,9 @@ function AuthorizationScopeGuard({
         'data-zero-auth-transition': true,
         className: 'grid min-h-screen place-items-center p-6 text-sm text-muted-foreground',
       },
-      authorizationScopeTransitionMessage(auth?.sessionTransition.operation ?? null),
+      currentRecovery?.operation === 'recover' ? 'Refreshing your secure session…'
+        : currentRecovery?.operation === 'sign-out' ? 'Signing out securely…'
+          : authorizationScopeTransitionMessage(auth?.sessionTransition.operation ?? null),
     );
   }
   return createElement(Fragment, { key: display.displayedScopeKey }, children);

@@ -12,6 +12,7 @@ import { defineAuthTables } from './auth-schema';
 import {
   PAGE_SESSION_COOKIE_NAME,
   clearPageSessionCookie,
+  hasPageSessionCredential,
   readPageSessionCookie,
   revokeAndClearPageSessionCookie,
   rejectedPageSessionCookieHeader,
@@ -81,7 +82,7 @@ describe('TokenService page sessions', () => {
     await expect(tokenService.resolvePageSessionToken(pageSession!.token)).resolves.toBeNull();
   });
 
-  test('invalidates the old page JWT on refresh rotation and accepts one bound to the new session', async () => {
+  test('retains the parent-bound page JWT on refresh rotation and accepts its renewed view', async () => {
     const user = await createUser();
     const original = await tokenService.issueTokenPair(user);
     const originalPageSession = await tokenService.issuePageSessionToken(original.refreshToken);
@@ -91,7 +92,7 @@ describe('TokenService page sessions', () => {
     expect(rotated).not.toBeNull();
     await expect(
       tokenService.resolvePageSessionToken(originalPageSession!.token)
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ userId: user.userId });
 
     const rotatedPageSession = await tokenService.issuePageSessionToken(rotated!.refreshToken);
     expect(rotatedPageSession).not.toBeNull();
@@ -100,16 +101,16 @@ describe('TokenService page sessions', () => {
     ).resolves.toMatchObject({ userId: user.userId });
   });
 
-  test('rejects a page JWT when its backing refresh session expires', async () => {
+  test('rejects a page JWT when its durable parent session expires', async () => {
     const user = await createUser();
     const pair = await tokenService.issueTokenPair(user);
     const pageSession = await tokenService.issuePageSessionToken(pair.refreshToken);
     expect(pageSession).not.toBeNull();
 
-    const record = store.getRefreshTokenByHash(hashToken(pair.refreshToken));
-    expect(record).not.toBeNull();
-    db.prepare('UPDATE _refresh_tokens SET expires_at = ? WHERE token_id = ?')
-      .run(Date.now() - 1_000, record!.tokenId);
+    const context = await tokenService.resolveAuthContext(pair.accessToken);
+    expect(context?.sessionId).toBeString();
+    db.prepare('UPDATE _auth_sessions SET expires_at = ? WHERE session_id = ?')
+      .run(Date.now() - 1_000, context!.sessionId!);
 
     await expect(tokenService.resolvePageSessionToken(pageSession!.token)).resolves.toBeNull();
   });
@@ -296,7 +297,8 @@ describe('page-session cookie helpers', () => {
       headers: { Cookie: `${tokenService.pageSessionCookieName}=%ZZ` },
     });
     await expect(resolvePageSessionAuth(malformed, tokenService)).resolves.toBeNull();
-    expect(rejectedPageSessionCookieHeader(malformed, tokenService)).toContain('Max-Age=0');
+    expect(rejectedPageSessionCookieHeader(malformed, tokenService)).toBeNull();
+    expect(hasPageSessionCredential(malformed, tokenService)).toBe(true);
   });
 
   test('uses one persisted application namespace across TokenService recreation and continuations', async () => {
@@ -318,11 +320,13 @@ describe('page-session cookie helpers', () => {
     for (const invalid of ['', 'invalid', '%ZZ']) {
       const request = new Request('https://zero.test/app', { headers: { Cookie: `${legacy}; ${tokenService.pageSessionCookieName}=${invalid}` } });
       await expect(resolvePageSessionAuth(request, tokenService)).resolves.toBeNull();
-      expect(rejectedPageSessionCookieHeader(request, tokenService)).toStartWith(`${tokenService.pageSessionCookieName}=`);
+      expect(rejectedPageSessionCookieHeader(request, tokenService)).toBeNull();
+      expect(hasPageSessionCredential(request, tokenService)).toBe(true);
     }
     const bareCanonical = new Request('https://zero.test/app', { headers: { Cookie: `${legacy}; ${tokenService.pageSessionCookieName}` } });
     await expect(resolvePageSessionAuth(bareCanonical, tokenService)).resolves.toBeNull();
-    expect(rejectedPageSessionCookieHeader(bareCanonical, tokenService)).toStartWith(`${tokenService.pageSessionCookieName}=`);
+    expect(rejectedPageSessionCookieHeader(bareCanonical, tokenService)).toBeNull();
+    expect(hasPageSessionCredential(bareCanonical, tokenService)).toBe(true);
     const request = new Request('https://zero.test/app', { headers: { Cookie: `${PAGE_SESSION_COOKIE_NAME}=foreign` } });
     expect(rejectedPageSessionCookieHeader(request, tokenService)).toBeNull();
   });

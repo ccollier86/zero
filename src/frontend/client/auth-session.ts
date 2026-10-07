@@ -73,6 +73,17 @@ export interface AuthSessionControllerOptions {
   recoveryRequestTimeoutMs?: number;
 }
 
+/** @internal Per-operation capability; never retained beyond its issuing exchange. */
+export interface AuthCredentialIssuanceLease {
+  readonly signal: AbortSignal;
+  completeAuthentication(data: AuthCompletionResult, assertCurrent?: () => void): Promise<AuthCompletionResult>;
+  updateTokens(accessToken: string, refreshToken: string, activeTenant?: AuthTenantSummary, assertCurrent?: () => void): Promise<void>;
+  requestWithAuth<T extends { status: number }>(
+    request: (accessToken: string | null) => Promise<T>,
+    consumeStartingScope?: () => void,
+  ): Promise<T>;
+}
+
 export class AuthSessionController {
   readonly store: AuthStore;
 
@@ -83,9 +94,12 @@ export class AuthSessionController {
   private restorePromise: Promise<void> | null = null;
   private externalReconciliation: Promise<void> = Promise.resolve();
   private credentialRevision = 0;
+  private authenticationRevision = 0;
+  private acknowledgedPageCleanupRevision: number | null = null;
   private scopeId: string | null = null;
   private transitionOperation: AuthSessionTransitionOperation | null = null;
   private readonly recoveryRequests = new Set<AuthSessionRecoveryRequest>();
+  private readonly credentialIssuanceIntents = new Map<AuthSessionRecoveryRequest, () => boolean>();
   private readonly recoveryRequestTimeoutMs?: number;
   private disposed = false;
 
@@ -149,6 +163,17 @@ export class AuthSessionController {
     return this.context.refreshToken !== null;
   }
 
+  /** @internal Actual server cleanup receipt for this exact anonymous revision. */
+  get hasAcknowledgedPageSessionCleanup(): boolean {
+    const durable = this.coordinator.readCredential();
+    return !this.disposed && this.acknowledgedPageCleanupRevision !== null
+      && this.acknowledgedPageCleanupRevision === this.credentialRevision
+      && durable?.revision === this.credentialRevision
+      && durable.scopeId === null && durable.refreshToken === null
+      && this.scopeId === null && this.context.user === null
+      && this.context.accessToken === null && this.context.refreshToken === null;
+  }
+
   get revision(): number {
     return this.credentialRevision;
   }
@@ -176,7 +201,23 @@ export class AuthSessionController {
   }
 
   beginAuthentication(): void {
+    this.authenticationRevision += 1;
+    // Intent replacement is synchronous, independent of store notification
+    // deduplication. Only this client's uncommitted issuance is cancelled.
+    for (const [request, isConsumed] of this.credentialIssuanceIntents) {
+      if (!isConsumed()) request.cancel();
+    }
     this.send('auth.loading');
+  }
+
+  /** @internal Fence anonymous attempts which cannot yet have a family id. */
+  captureAuthenticationAttempt(): () => void {
+    const revision = this.authenticationRevision;
+    return () => {
+      if (this.disposed || this.authenticationRevision !== revision) {
+        throw new DOMException('Authentication attempt was replaced', 'AbortError');
+      }
+    };
   }
 
   failAuthentication(error: string): void {
@@ -192,44 +233,119 @@ export class AuthSessionController {
     data: AuthCompletionResult,
     assertRequestCurrent: () => void = () => {},
   ): Promise<AuthCompletionResult> {
-    return this.runCredentialOperation(async () => {
-      // Reconciliation while waiting for the cross-tab lock may have adopted
-      // a newer session. Refuse to let this older network result replace it.
-      assertRequestCurrent();
-      // An identity-only continuation does not establish an authorization
-      // scope. When the browser is already anonymous, keep the calling auth
-      // form mounted so it can render the one-time MFA/tenant continuation;
-      // there is no credential, Sync plane, or cached tenant data to purge.
-      if (!isAuthSessionResult(data) && !this.hasAuthorizationScope()) {
+    return this.runCredentialOperation(() => this.completeAuthenticationLocked(data, assertRequestCurrent));
+  }
+
+  private async completeAuthenticationLocked(
+    data: AuthCompletionResult,
+    assertRequestCurrent: () => void,
+    finishNetwork: () => void = () => {},
+  ): Promise<AuthCompletionResult> {
+    // Reconciliation while waiting for the cross-tab lock may have adopted
+    // a newer session. Refuse to let this older network result replace it.
+    assertRequestCurrent();
+    // An identity-only continuation does not establish an authorization
+    // scope. When the browser is already anonymous, keep the calling auth
+    // form mounted so it can render the one-time MFA/tenant continuation;
+    // there is no credential, Sync plane, or cached tenant data to purge.
+    if (!isAuthSessionResult(data) && !this.hasAuthorizationScope()) {
+      this.send('auth.continuation', { result: data });
+      finishNetwork();
+      return data;
+    }
+    let transitionStarted = false;
+    let committed = false;
+    try {
+      this.beginScopeTransition('authentication');
+      transitionStarted = true;
+      if (isAuthSessionResult(data)) {
+        this.installSession(data, 'session', true);
+      } else {
+        this.commitLogout();
+        // The authorization subtree remounts after the purge barrier. Keep
+        // the one-time identity result in memory so the new form instance
+        // can continue MFA/tenant binding without replaying credentials.
         this.send('auth.continuation', { result: data });
-        return data;
       }
-      let transitionStarted = false;
-      let committed = false;
-      try {
-        this.beginScopeTransition('authentication');
-        transitionStarted = true;
-        if (isAuthSessionResult(data)) {
-          this.installSession(data, 'session', true);
-        } else {
-          this.commitLogout();
-          // The authorization subtree remounts after the purge barrier. Keep
-          // the one-time identity result in memory so the new form instance
-          // can continue MFA/tenant binding without replaying credentials.
-          this.send('auth.continuation', { result: data });
-        }
-        this.markScopeTransitionCommitted();
-        committed = true;
-        await this.completeScopeTransition();
-        return data;
-      } catch (error) {
-        if (!committed && transitionStarted) await this.abortScopeTransition();
-        if (!committed) {
-          this.send('auth.error', { error: 'Unable to complete authentication' });
-        }
-        throw error;
+      finishNetwork();
+      this.markScopeTransitionCommitted();
+      committed = true;
+      await this.completeScopeTransition();
+      return data;
+    } catch (error) {
+      if (!committed && transitionStarted) await this.abortScopeTransition();
+      if (!committed) {
+        this.send('auth.error', { error: 'Unable to complete authentication' });
       }
-    });
+      throw error;
+    }
+  }
+
+  /** Own every cookie-producing HTTP exchange through parsing and local commit. */
+  async runCredentialIssuance<T>(
+    assertRequestCurrent: () => void,
+    operation: (lease: AuthCredentialIssuanceLease) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const request = this.createRecoveryRequest();
+    let scopeConsumed = false;
+    this.credentialIssuanceIntents.set(request, () => scopeConsumed);
+    const cancel = () => request.cancel();
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
+    this.recoveryRequests.add(request);
+    try {
+      return await request.waitForAdmission(admit => this.runCredentialOperation(async () => {
+        assertRequestCurrent();
+        let active = true, consumed = false;
+        try {
+          return await request.runCredentialExchange(async (ownedSignal, finishNetwork) => {
+            const assertOwned = () => {
+              ownedSignal.throwIfAborted();
+              if (!active || this.disposed) throw new DOMException('Credential exchange was retired', 'AbortError');
+              if (!consumed) assertRequestCurrent();
+            };
+            const lease: AuthCredentialIssuanceLease = {
+              signal: ownedSignal,
+              completeAuthentication: async (data, assertCurrent = () => {}) => {
+                assertOwned(); assertCurrent();
+                scopeConsumed = true;
+                consumed = true;
+                return this.completeAuthenticationLocked(data, () => { assertOwned(); assertCurrent(); }, finishNetwork);
+              },
+              updateTokens: async (accessToken, refreshToken, activeTenant, assertCurrent = () => {}) => {
+                assertOwned(); assertCurrent();
+                this.updateTokensLocked(accessToken, refreshToken, activeTenant);
+                finishNetwork();
+              },
+              requestWithAuth: async (transport, consumeStartingScope = () => {}) => {
+                assertOwned();
+                let response = await transport(this.accessToken);
+                assertOwned();
+                if (response.status !== 401) return response;
+                const consume = () => { assertOwned(); consumeStartingScope(); scopeConsumed = true; consumed = true; };
+                if (this.context.refreshToken) {
+                  const refreshed = await this.performRefreshLocked(0, consume, assertOwned, request);
+                  assertOwned();
+                  if (refreshed && this.accessToken) response = await transport(this.accessToken);
+                } else if (this.context.user) {
+                  await this.commitLogoutWithScopeBarrier('logout', consume);
+                }
+                assertOwned();
+                return response;
+              },
+            };
+            assertOwned();
+            return operation(lease);
+          });
+        } finally { active = false; }
+      }, true, admit));
+    } finally {
+      this.credentialIssuanceIntents.delete(request);
+      signal?.removeEventListener('abort', cancel);
+      request.cancel();
+      this.recoveryRequests.delete(request);
+    }
   }
 
   /**
@@ -250,11 +366,15 @@ export class AuthSessionController {
   ): Promise<void> {
     await this.runCredentialOperation(async () => {
       assertRequestCurrent();
-      const scopeId = this.scopeId ?? this.coordinator.createScopeId();
-      const record = this.coordinator.commitSession(refreshToken, scopeId, 'refresh');
-      this.adoptRecord(record);
-      this.send('auth.refresh', { accessToken, refreshToken, activeTenant });
+      this.updateTokensLocked(accessToken, refreshToken, activeTenant);
     });
+  }
+
+  private updateTokensLocked(accessToken: string, refreshToken: string, activeTenant?: AuthTenantSummary): void {
+    const scopeId = this.scopeId ?? this.coordinator.createScopeId();
+    const record = this.coordinator.commitSession(refreshToken, scopeId, 'refresh');
+    this.adoptRecord(record);
+    this.send('auth.refresh', { accessToken, refreshToken, activeTenant });
   }
 
   patchProperties(properties: Record<string, string>): void {
@@ -303,12 +423,12 @@ export class AuthSessionController {
         const refreshToken = this.context.refreshToken;
         // The HttpOnly page cookie must be cleared server-side even when local
         // token state is absent. Local logout still succeeds offline.
-        await this.notifyServerLogout(request, refreshToken).catch(() => undefined);
+        const cleanup = await this.notifyServerLogout(request, refreshToken).catch(() => undefined);
         assertStartingScopeCurrent();
         await this.commitLogoutWithScopeBarrier('logout', () => {
           consumeStartingScope();
           consumed = true;
-        });
+        }, cleanup?.ok ?? false);
       }, false, () => { admit(); assertStartingScopeCurrent(); }));
     } catch (cause) {
       if (!consumed) assertStartingScopeCurrent();
@@ -328,6 +448,68 @@ export class AuthSessionController {
   /** Expire only if the credential observed by a request is still current. */
   expireSessionAtRevision(expectedRevision: number): Promise<void> {
     return this.expireIfRevision(expectedRevision);
+  }
+
+  /**
+   * @internal Retire a definitively rejected authorization session and its page
+   * cookie under the exact originating proof. Returns null when a newer proof
+   * owns the browser, true for acknowledged server cleanup, or false when only
+   * local retirement is confirmed. The public expireSession() stays local-only.
+   */
+  async expireRejectedPageSessionAtRevision(
+    expectedRevision: number,
+    expectedScope: string | null,
+  ): Promise<boolean | null> {
+    const originatingTransition = this.context.sessionTransition;
+    const originatingAuthentication = this.authenticationRevision;
+    const request = this.createRecoveryRequest();
+    this.recoveryRequests.add(request);
+    const ownsProof = () => {
+      const durable = this.coordinator.readCredential();
+      return !this.disposed
+        && this.credentialRevision === expectedRevision
+        && this.authenticationRevision === originatingAuthentication
+        && this.scopeId === expectedScope
+        && durable?.revision === expectedRevision
+        && durable.scopeId === expectedScope;
+    };
+    try {
+      return await request.waitForAdmission((admit) => this.runCredentialOperation(async () => {
+        if (!ownsProof() || !this.hasAuthorizationScope()
+          || this.context.isLoading || this.context.isRestoring
+          || this.context.sessionTransition !== originatingTransition) return null;
+        // A definite denial fences reads, writes and cached data before the
+        // logout transport yields. Cookie cleanup is not permission to keep
+        // using the rejected authority while its response is pending.
+        this.beginScopeTransition('logout');
+        let committed = false;
+        try {
+          let cleanupConfirmed = false;
+          try {
+            cleanupConfirmed = (await this.notifyServerLogout(request, this.context.refreshToken)).ok;
+          } catch {
+            // A rejected session must still retire locally during an outage.
+            // The false result reports that remote cookie cleanup is unconfirmed.
+          }
+          if (!ownsProof()) {
+            await this.abortScopeTransition();
+            return null;
+          }
+          this.commitLogout();
+          if (cleanupConfirmed) this.acknowledgedPageCleanupRevision = this.credentialRevision;
+          this.markScopeTransitionCommitted();
+          committed = true;
+          await this.completeScopeTransition();
+          return cleanupConfirmed;
+        } catch (cause) {
+          if (!committed) await this.abortScopeTransition();
+          throw cause;
+        }
+      }, false, admit));
+    } finally {
+      request.cancel();
+      this.recoveryRequests.delete(request);
+    }
   }
 
   /** Refresh the access token, deduplicating concurrent calls in this tab. */
@@ -697,54 +879,56 @@ export class AuthSessionController {
     const request = this.createRecoveryRequest();
     this.recoveryRequests.add(request);
     try {
-      const refreshed = await request.waitForAdmission((admit) => this.runCredentialOperation(() => {
+      // Rotation and identity hydration are one credential operation. Releasing
+      // the cross-tab lock between them lets a legitimate same-family rotation
+      // supersede the exact proof before /me can commit, falsely turning an
+      // ordinary startup into a session-recovery error. Keep the existing exact
+      // proof fences and bounded reads; do not accept an older hydration result.
+      await request.waitForAdmission((admit) => this.runCredentialOperation(async () => {
         assertCurrent();
-        return this.performRefreshLocked(0, () => {}, assertCurrent, request);
-      }, false, () => { admit(); assertCurrent(); }));
-      if (!refreshed || !this.accessToken) {
-        // Definitively rejected refresh proof already committed logout.
-        // Temporary failures leave the persisted proof for explicit retry.
-        if (this.context.refreshToken) {
+        const refreshed = await this.performRefreshLocked(0, () => {}, assertCurrent, request);
+        if (!refreshed || !this.accessToken) {
+          // Definitively rejected refresh proof already committed logout.
+          // Temporary failures leave the persisted proof for explicit retry.
+          if (this.context.refreshToken) {
+            assertCurrent();
+            this.send('auth.error', { error: 'Unable to restore the browser session' });
+          }
+          return;
+        }
+        const revision = this.credentialRevision;
+        const assertHydrationCurrent = () => {
           assertCurrent();
-          this.send('auth.error', { error: 'Unable to restore the browser session' });
-        }
-        return;
-      }
-      const revision = this.credentialRevision;
-      const assertHydrationCurrent = () => {
-        assertCurrent();
-        if (revision !== this.credentialRevision
-          || this.coordinator.readCredential()?.revision !== revision) {
-          throw new Error('[client] Discarded a response from a previous authorization scope.');
-        }
-      };
-      const { response, body } = await request.request(`${this.baseUrl}/auth/me`, {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      });
-      assertHydrationCurrent();
-      if (!response.ok) {
-        if (isRejectedSessionResponse(response)) {
-          // A successful constructor refresh has also minted a page cookie.
-          // Retire it before publishing a fully signed-out browser, including
-          // when the initial server-rendered page was already anonymous.
-          await request.waitForAdmission((admit) => this.runCredentialOperation(async () => {
-            assertHydrationCurrent();
+          if (revision !== this.credentialRevision
+            || this.coordinator.readCredential()?.revision !== revision) {
+            throw new Error('[client] Discarded a response from a previous authorization scope.');
+          }
+        };
+        const { response, body } = await request.request(`${this.baseUrl}/auth/me`, {
+          headers: { Authorization: `Bearer ${this.accessToken}` },
+        });
+        assertHydrationCurrent();
+        if (!response.ok) {
+          if (isRejectedSessionResponse(response)) {
+            // The startup operation already owns the non-reentrant tab lock.
+            // Clear its newly minted page cookie here before publishing logout;
+            // acquiring another credential operation would deadlock admission.
             const cleared = await this.notifyServerLogout(request, this.context.refreshToken);
             assertHydrationCurrent();
             if (!cleared.ok) throw new Error('Unable to clear the restored page session');
             await this.commitLogoutWithScopeBarrier('logout', () => {});
-          }, false, () => { admit(); assertHydrationCurrent(); }));
-        } else this.send('auth.error', { error: 'Unable to restore the browser session' });
-        return;
-      }
-      const user = parseAuthUser(body);
-      assertHydrationCurrent();
-      this.send('auth.success', {
-        user,
-        activeTenant: this.context.activeTenant ?? undefined,
-        accessToken: this.context.accessToken!,
-        refreshToken: this.context.refreshToken!,
-      });
+          } else this.send('auth.error', { error: 'Unable to restore the browser session' });
+          return;
+        }
+        const user = parseAuthUser(body);
+        assertHydrationCurrent();
+        this.send('auth.success', {
+          user,
+          activeTenant: this.context.activeTenant ?? undefined,
+          accessToken: this.context.accessToken!,
+          refreshToken: this.context.refreshToken!,
+        });
+      }, false, () => { admit(); assertCurrent(); }));
     } catch {
       // An outage, malformed body or unconfirmed page-cookie cleanup must not
       // discard the rotating proof or falsely claim a settled sign-out.
@@ -894,6 +1078,7 @@ export class AuthSessionController {
   private async commitLogoutWithScopeBarrier(
     operation: AuthSessionTransitionOperation,
     consumeStartingScope: () => void,
+    acknowledgedPageCleanup = false,
   ): Promise<void> {
     consumeStartingScope();
     // Replacement-session reconciliation already owns the barrier. A refresh
@@ -902,6 +1087,7 @@ export class AuthSessionController {
     if (this.transitionOperation
       && this.context.sessionTransition.phase !== 'recovery-required') {
       this.commitLogout();
+      if (acknowledgedPageCleanup) this.acknowledgedPageCleanupRevision = this.credentialRevision;
       return;
     }
 
@@ -911,6 +1097,7 @@ export class AuthSessionController {
       this.beginScopeTransition(operation);
       transitionStarted = true;
       this.commitLogout();
+      if (acknowledgedPageCleanup) this.acknowledgedPageCleanupRevision = this.credentialRevision;
       this.markScopeTransitionCommitted();
       committed = true;
       await this.completeScopeTransition();

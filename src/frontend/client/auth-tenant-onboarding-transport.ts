@@ -18,6 +18,7 @@ import type {
 import {
   failCurrentAuthenticationCompletion,
   failCurrentAuthenticationAttempt,
+  runAuthenticationExchange,
   type AuthAuthenticationAttempt,
 } from './auth-authentication-attempt';
 import {
@@ -71,7 +72,7 @@ export class AuthTenantOnboardingTransport {
     params: AuthTenantAcceptInvitationParams,
   ): Promise<AuthTenantInvitationAcceptanceResult> {
     const attempt = this.options.beginAuthentication();
-    try {
+    return runAuthenticationExchange(attempt, async (attempt) => {
       let result: AuthTenantInvitationAcceptanceResult;
       let failureMessage = 'Failed to accept invitation';
       try {
@@ -114,9 +115,9 @@ export class AuthTenantOnboardingTransport {
           'Failed to accept invitation',
         );
       }
-    } finally {
-      attempt.dispose();
-    }
+    }, cause => failCurrentAuthenticationCompletion(
+      attempt, this.options.failAuthentication, cause, 'Failed to accept invitation',
+    ));
   }
 
   submitJoinRequest(params: {

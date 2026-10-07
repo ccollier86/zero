@@ -34,12 +34,24 @@ export interface TransitionTokenClaims {
   profileAuthorityFingerprint?: string;
 }
 
-export interface PageSessionClaims {
+export interface LegacyPageSessionClaims {
+  readonly version: 1;
   readonly tokenId: string;
   readonly userId: string;
   /** Null only for a verified page cookie issued before this claim existed. */
   readonly authGeneration: number | null;
 }
+
+/** Parent-bound page proof remains stable while its refresh children rotate. */
+export interface ParentPageSessionClaims {
+  readonly version: 2;
+  readonly sessionId: string;
+  readonly sessionGeneration: number;
+  readonly userId: string;
+  readonly authGeneration: number;
+}
+
+export type PageSessionClaims = LegacyPageSessionClaims | ParentPageSessionClaims;
 
 /**
  * Owns compact-token encoding, cryptographic verification, and JWKS projection.
@@ -166,13 +178,16 @@ export class AuthTokenCodec {
   }
 
   async signPageSessionToken(input: {
-    tokenId: string;
+    sessionId: string;
+    sessionGeneration: number;
     userId: string;
     authGeneration: number;
     expiresAtSeconds: number;
   }): Promise<string> {
     return new SignJWT({
-      sid: input.tokenId,
+      pageSessionVersion: 2,
+      sid: input.sessionId,
+      sessionGeneration: input.sessionGeneration,
       authGeneration: input.authGeneration,
     })
       .setProtectedHeader({ alg: 'ES256', kid: this.keys.keyId })
@@ -188,18 +203,32 @@ export class AuthTokenCodec {
     const { payload } = await jwtVerify(token, this.keys.publicKey, {
       algorithms: ['ES256'],
       issuer: 'auth-page-session',
+      requiredClaims: ['exp'],
     });
-    const tokenId = typeof payload.sid === 'string' ? payload.sid : null;
+    // Framework page proofs use whole-second NumericDates. jose enforces the
+    // deadline when present; reject missing, non-finite or unsupported values
+    // instead of admitting an internally malformed unbounded proof.
+    if (typeof payload.exp !== 'number' || !Number.isSafeInteger(payload.exp) || payload.exp <= 0) return null;
+    const subjectId = typeof payload.sid === 'string' && payload.sid ? payload.sid : null;
     const userId = typeof payload.sub === 'string' ? payload.sub : null;
     const authGeneration = payload.authGeneration === undefined
       ? null
       : readOptionalGeneration(payload.authGeneration);
-    if (authGeneration === undefined) return null;
-    return tokenId && userId ? {
-      tokenId,
+    if (!subjectId || !userId || authGeneration === undefined) return null;
+    if (payload.pageSessionVersion === 2) {
+      const sessionGeneration = readOptionalGeneration(payload.sessionGeneration);
+      if (authGeneration === null || sessionGeneration === undefined) return null;
+      return { version: 2, sessionId: subjectId, sessionGeneration, userId, authGeneration };
+    }
+    // Only absence denotes the original child-bound format. Unknown versions
+    // cannot fall through to a more permissive legacy interpretation.
+    if (payload.pageSessionVersion !== undefined || payload.sessionGeneration !== undefined) return null;
+    return {
+      version: 1,
+      tokenId: subjectId,
       userId,
       authGeneration,
-    } : null;
+    };
   }
 
   /** Re-verify issuance time for the narrow unbound-browser migration window. */

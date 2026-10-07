@@ -5,6 +5,7 @@ import { parseAuthCompletionResult } from './auth-completion-parser';
 import {
   failCurrentAuthenticationCompletion,
   failCurrentAuthenticationAttempt,
+  runAuthenticationExchange,
   type AuthAuthenticationAttempt,
 } from './auth-authentication-attempt';
 import type { AuthActionTokenInfo, AuthCompletionResult } from './auth-types';
@@ -67,7 +68,7 @@ export class AuthActionTransport {
     fallback: string,
   ): Promise<AuthCompletionResult> {
     const attempt = this.options.beginAuthentication();
-    try {
+    return runAuthenticationExchange(attempt, async attempt => {
       let result: AuthCompletionResult;
       let failureMessage = fallback;
       try {
@@ -107,8 +108,6 @@ export class AuthActionTransport {
           fallback,
         );
       }
-    } finally {
-      attempt.dispose();
-    }
+    }, cause => failCurrentAuthenticationCompletion(attempt, this.options.failAuthentication, cause, fallback));
   }
 }

@@ -206,8 +206,13 @@ export class AuthAuthorizationController {
     // newer request that subsequently supersedes it. Fence publication even
     // when a transport or response body ignores AbortSignal.
     let rejectCancellation!: (reason: unknown) => void;
+    let completed = false;
     const cancellation = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
     const cancelFromCaller = () => {
+      // Publishing a validated result may synchronously unmount its retry
+      // surface. That cleanup owns no pending work and must not revoke the
+      // projection which just made the application readable.
+      if (completed) return;
       const reason = callerSignal?.reason ?? new DOMException('Authorization read cancelled', 'AbortError');
       if (this.isRequestCurrent(revision, expected)) {
         this.requestRevision += 1;
@@ -231,13 +236,18 @@ export class AuthAuthorizationController {
             '[client] Discarded a current-authorization response for another identity or scope.',
           );
         }
+        completed = true;
         this.publish(Object.freeze({ status: 'ready', snapshot, error: null }));
-        return snapshot;
+        // Subscribers can synchronously replace the identity or begin a newer
+        // policy read while accepting this publication. The public promise
+        // must not hand their caller a receipt from that now-retired epoch.
+        return this.isRequestCurrent(revision, expected) ? snapshot : null;
       })
       .catch((cause: unknown) => {
         if (!this.isRequestCurrent(revision, expected) || isAbortError(cause)) return null;
         const revoked = cause instanceof AuthClientError
           && (cause.status === 401 || cause.status === 403);
+        completed = true;
         this.publish(Object.freeze({
           status: revoked ? 'revoked' : 'error',
           snapshot: null,
@@ -251,6 +261,7 @@ export class AuthAuthorizationController {
         return null;
       })
       .finally(() => {
+        completed = true;
         callerSignal?.removeEventListener('abort', cancelFromCaller);
         if (revision !== this.requestRevision) return;
         this.request = null;

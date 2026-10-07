@@ -17,6 +17,11 @@ export class AuthSessionRecoveryRequest {
     return this.execute((signal) => operation(signal));
   }
 
+  /** @internal Hand an accepted credential commit to the bounded local lifecycle owner. */
+  runCredentialExchange<T>(operation: (signal: AbortSignal, finishNetwork: () => void) => Promise<T>): Promise<T> {
+    return this.execute(operation);
+  }
+
   /** Bound only queue admission; the admitted operation owns its own reads. */
   waitForAdmission<T>(operation: (admit: () => void) => Promise<T>): Promise<T> {
     return this.execute((signal, clearDeadline) => operation(() => {

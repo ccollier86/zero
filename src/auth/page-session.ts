@@ -1,8 +1,8 @@
 /**
  * HttpOnly page-session cookie support for server-rendered routes.
  *
- * The cookie contains a dedicated signed page JWT bound to a persisted refresh
- * session. It is never accepted as API authentication and is never exposed to
+ * The cookie contains a dedicated signed page JWT bound to a persisted parent
+ * web session. It is never accepted as API authentication and is never exposed to
  * browser JavaScript.
  */
 
@@ -53,6 +53,13 @@ export function readPageSessionCookie(request: Request, tokenService: PageCookie
   return readCookie(request.headers.get('cookie'), tokenService.pageSessionCookieName);
 }
 
+/** Ambient page proof, including invalid input, makes a page response private. */
+export function hasPageSessionCredential(request: Request, tokenService: PageCookieNamespace | null): boolean {
+  return Boolean(tokenService && isSafePageMethod(request.method) && !request.headers.has('authorization')
+    && (readPageSessionCookie(request, tokenService) !== null
+      || readCookie(request.headers.get('cookie'), PAGE_SESSION_COOKIE_NAME) !== null));
+}
+
 /**
  * Server-only shared GET/native-POST resolution. Canonical presence is
  * authoritative, even when malformed or empty. A legacy cookie is selected
@@ -91,27 +98,32 @@ export async function syncPageSessionCookie(
   }
 }
 
-/** Set a persistent cookie whose lifetime matches the backing refresh session. */
+/** Renew a live parent view without revoking the same rotating browser family. */
 export async function setPageSessionCookie(
   set: ResponseSet,
   request: Request,
   tokenService: TokenService,
   rawRefreshToken: string
 ): Promise<void> {
+  const session = await tokenService.issuePageSessionToken(rawRefreshToken);
+  if (!session) {
+    // Issuance may lose to a newer rotation/logout while signing. A late
+    // response cannot compare-and-set a browser cookie; never erase newer proof.
+    return;
+  }
+  const incoming = await tokenService.resolvePageSessionToken(session.token);
+  if (!incoming) return;
+  const incomingAuthority = tokenService.captureAuthContextAuthority(incoming);
+  if (!incomingAuthority) return;
   const previousSession = await resolvePageSessionCookie(request, tokenService);
-  if (previousSession) {
+  if (previousSession && previousSession.auth.sessionId !== incoming.sessionId) {
     await tokenService.revokePageSessionToken(
       previousSession.token,
       authAuditRequestFromRequest(request),
     );
   }
+  if (!tokenService.resolveAuthContextAuthority(incomingAuthority)) return;
   clearValidatedLegacyCookie(set, request, tokenService);
-
-  const session = await tokenService.issuePageSessionToken(rawRefreshToken);
-  if (!session) {
-    clearPageSessionCookie(set, request, tokenService);
-    return;
-  }
 
   const maxAge = Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1_000));
   const parts = [
@@ -127,7 +139,7 @@ export async function setPageSessionCookie(
   appendSetCookieHeader(set, parts.join('; '));
 }
 
-/** Revoke the backing refresh session, when valid, and expire its cookie. */
+/** Explicitly revoke the backing parent, when valid, and expire its cookie. */
 export async function revokeAndClearPageSessionCookie(
   set: ResponseSet,
   request: Request,
@@ -176,21 +188,15 @@ function serializeClearedCookie(request: Request, name: string): string {
 }
 
 /**
- * Return a deletion header when a safe page request presented an ambient
- * credential that failed resolution. Explicit Authorization and unsafe
- * methods never attempt cookie auth, so they must not clear a valid cookie.
+ * @deprecated Safe document responses cannot compare-and-set cookies. Rejected
+ * proof remains unauthenticated but must not delete a newer response's cookie.
+ * Use hasPageSessionCredential for private/no-store response classification.
  */
 export function rejectedPageSessionCookieHeader(
-  request: Request,
-  tokenService: PageCookieNamespace | null,
+  _request: Request,
+  _tokenService: PageCookieNamespace | null,
 ): string | null {
-  if (!tokenService) return null;
-  if (!isSafePageMethod(request.method)) return null;
-  if (request.headers.has('authorization')) return null;
-  // Rejection cannot establish ownership of a legacy host-wide cookie.
-  // Never erase one which might belong to a different app on this hostname.
-  if (readPageSessionCookie(request, tokenService) === null) return null;
-  return serializeClearedPageSessionCookie(request, tokenService);
+  return null;
 }
 
 function getRefreshToken(response: unknown): string | null {

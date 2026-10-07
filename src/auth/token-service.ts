@@ -43,7 +43,7 @@ import { resolveApplicationId } from './auth-application-id';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import { createAuthStateInvariantError } from './auth-observability';
 
-/** Page credential bound to one persisted refresh-session record. */
+/** Page credential bound to one durable parent web-session generation. */
 export interface IssuedPageSession {
   token: string;
   expiresAt: number;
@@ -674,7 +674,7 @@ export class TokenService {
   // ─── Token Pair Issuance ─────────────────────────────────────────────
 
   /**
-   * Mint a page-only JWT bound to the persisted refresh session represented by
+   * Mint a page-only JWT bound to the durable parent session represented by
    * `rawRefreshToken`. The browser receives this token only in an HttpOnly
    * cookie; it is never returned in the auth JSON response.
    */
@@ -685,16 +685,17 @@ export class TokenService {
   }
 
   /**
-   * Resolve a page-only JWT against its live refresh-session row and current
-   * user record. Rotation, logout, session revocation, password actions,
-   * suspension, deletion, and expiry therefore invalidate SSR authentication
-   * immediately without granting cookie access to APIs.
+   * Resolve a versioned page JWT against its live parent and current user.
+   * Ordinary refresh rotation retains this proof; logout, session revocation,
+   * password actions, suspension, deletion and expiry reject it immediately.
+   * Original child-bound proofs still require their exact unconsumed refresh
+   * row. Neither format grants cookie authentication to API endpoints.
    */
   async resolvePageSessionToken(token: string): Promise<AuthContext | null> {
     return this.webSessions.resolvePageSessionToken(token);
   }
 
-  /** Revoke the refresh session referenced by an existing page cookie. */
+  /** Revoke the durable parent referenced by a valid page-only credential. */
   async revokePageSessionToken(
     token: string,
     auditRequest?: AuthAuditRequestContext,

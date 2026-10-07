@@ -437,10 +437,10 @@ describe('multi-tab auth session behavior', () => {
 
     const staleChange = client.changePassword('old-password', 'new-password');
     const observedChange = staleChange.catch((error: unknown) => error);
-    await waitFor(() => passwordChanges === 1);
-    // Let response parsing reach the queued token-commit lock before the
-    // external tab replaces the durable authorization family.
+    // Issuing HTTP now shares the credential lock, not only token commit.
+    // The stale password intent must never mint an out-of-order page cookie.
     await flushTasks();
+    expect(passwordChanges).toBe(0);
     server.currentRefresh = 'external-refresh';
     server.currentTenant = 'ten_external';
     blocker.commitSession(
@@ -452,12 +452,14 @@ describe('multi-tab auth session behavior', () => {
 
     const rejection = await observedChange;
     expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).message).toContain(
-      'Discarded a response from a previous authorization scope',
-    );
+    expect(rejection).toMatchObject({ name: 'AbortError' });
     expect(client.accessToken).not.toBe('stale-password-access');
+    // Cancellation retires the old writer promptly; peer reconciliation has
+    // its own queued hydration operation behind the just-released lock.
+    await waitFor(() => client.activeTenant?.tenantId === 'ten_external');
     expect(client.activeTenant?.tenantId).toBe('ten_external');
     expect(server.currentRefresh).not.toBe('stale-password-refresh');
+    expect(passwordChanges).toBe(0);
     blocker.dispose();
   });
 

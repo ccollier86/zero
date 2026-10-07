@@ -9,6 +9,7 @@ import {
 import {
   failCurrentAuthenticationCompletion,
   failCurrentAuthenticationAttempt,
+  runAuthenticationExchange,
   type AuthAuthenticationAttempt,
 } from './auth-authentication-attempt';
 import type {
@@ -66,7 +67,7 @@ export class AuthMfaTransport {
     code: string;
   }): Promise<AuthMfaSetupVerifyResult> {
     const attempt = this.options.beginAuthentication(false);
-    try {
+    return runAuthenticationExchange(attempt, async (attempt) => {
       const response = await this.options.optionalAuthenticatedFetch(
         `${this.options.baseUrl}/auth/mfa/setup/verify`,
         { ...jsonRequest(params), signal: attempt.signal },
@@ -88,9 +89,7 @@ export class AuthMfaTransport {
         ) as AuthMfaSetupVerifyResult;
       }
       return parseMfaSetupManagementResult(data);
-    } finally {
-      attempt.dispose();
-    }
+    });
   }
 
   async verifyMfaChallenge(params: {
@@ -98,7 +97,7 @@ export class AuthMfaTransport {
     code: string;
   }): Promise<AuthCompletionResult> {
     const attempt = this.options.beginAuthentication();
-    try {
+    return runAuthenticationExchange(attempt, async (attempt) => {
       let result: AuthCompletionResult;
       let failureMessage = 'Failed to verify MFA challenge';
       try {
@@ -134,9 +133,9 @@ export class AuthMfaTransport {
           'Failed to verify MFA challenge',
         );
       }
-    } finally {
-      attempt.dispose();
-    }
+    }, cause => failCurrentAuthenticationCompletion(
+      attempt, this.options.failAuthentication, cause, 'Failed to verify MFA challenge',
+    ));
   }
 }
 

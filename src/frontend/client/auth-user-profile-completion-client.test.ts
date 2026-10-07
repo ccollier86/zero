@@ -35,15 +35,20 @@ test('profile completion stays anonymous and uses private bodies, then continues
 });
 test('same completion deduplicates, a different concurrent intent rejects, and genuine accepted session alone installs credentials', async () => {
   const required = profileCompletionResult(); let resolve!: (response: Response) => void, dispatched = 0;
+  let markDispatched!: () => void;
+  const admitted = new Promise<void>(done => { markDispatched = done; });
   mock(url => {
     if (url.endsWith('/auth/login')) return Response.json(required);
-    if (url.endsWith('/auth/profile/completion')) { dispatched++; return new Promise<Response>(done => { resolve = done; }); }
+    if (url.endsWith('/auth/profile/completion')) {
+      dispatched++; markDispatched(); return new Promise<Response>(done => { resolve = done; });
+    }
     return Response.json({ error: 'Unavailable' }, { status: 503 });
   });
   const auth = client(); await auth.login('person', 'password');
   const input = { continuation: required.profileCompletion.continuation, expectedRevision: 1, changes: { firstName: 'Ada' } };
   const first = auth.profileCompletion.complete(input), duplicate = auth.profileCompletion.complete(input);
   expect(first).toBe(duplicate); await expect(auth.profileCompletion.complete({ ...input, expectedRevision: 2 })).rejects.toMatchObject({ code: 'AUTH_PROFILE_COMPLETION_IN_PROGRESS' });
+  await admitted;
   expect(dispatched).toBe(1);
   resolve(Response.json({ user: { ...completionUser(), firstName: 'Ada' }, accessToken: 'accepted-access', refreshToken: 'accepted-refresh' }));
   expect(await first).toMatchObject({ accessToken: 'accepted-access' });
@@ -66,17 +71,26 @@ test('current rejected CAS keeps the restricted continuation available for expli
 test('replacement anonymous continuation rejects late inspect bytes and late completion without overwriting its identity or error', async () => {
   for (const operation of ['inspect', 'complete'] as const) {
     const a = profileCompletionResult(), b = profileCompletionResult('user-b'); let resolve!: (response: Response) => void;
+    let markDispatched!: () => void;
+    const admitted = new Promise<void>(done => { markDispatched = done; });
     mock((url, init) => {
       if (url.endsWith('/auth/login')) return Response.json(JSON.parse(String(init.body)).username === 'b' ? b : a);
-      if (url.includes('/profile/completion')) return new Promise<Response>(done => { resolve = done; });
+      if (url.includes('/profile/completion')) {
+        markDispatched(); return new Promise<Response>(done => { resolve = done; });
+      }
       return Response.json({ error: 'Unavailable' }, { status: 503 });
     });
     const auth = client(); await auth.login('a', 'password');
     const pending = operation === 'inspect' ? auth.profileCompletion.inspect(a.profileCompletion.continuation)
       : auth.profileCompletion.complete({ continuation: a.profileCompletion.continuation, expectedRevision: 1, changes: { firstName: 'Ada' } });
+    const rejected = pending.then(
+      () => { throw new Error('A replaced profile request unexpectedly succeeded'); },
+      cause => cause,
+    );
+    await admitted;
     await auth.login('b', 'password');
     resolve(Response.json(operation === 'inspect' ? a.profileCompletion : { user: completionUser(), accessToken: 'stale-a', refreshToken: 'stale-a-refresh' }));
-    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(await rejected).toMatchObject({ name: 'AbortError' });
     expect(auth.authenticationContinuation?.user.userId).toBe('user-b'); expect(auth.accessToken).toBeNull(); expect(auth.error).toBeNull();
   }
 });

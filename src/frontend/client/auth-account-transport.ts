@@ -9,6 +9,7 @@ import {
 import {
   failCurrentAuthenticationCompletion,
   failCurrentAuthenticationAttempt,
+  runAuthenticationExchange,
   type AuthAuthenticationAttempt,
 } from './auth-authentication-attempt';
 import type {
@@ -72,16 +73,7 @@ export class AuthAccountTransport {
   }
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    const response = await this.options.authenticatedFetch(
-      `${this.options.baseUrl}/auth/change-password`,
-      jsonRequest({ currentPassword, newPassword }),
-    );
-    if (!response.ok) {
-      throw await responseError(response, 'Failed to change password');
-    }
-
-    const data = parseAuthRefreshResponse(await response.json());
-    await this.options.updateTokens(data.accessToken, data.refreshToken, response);
+    return changePasswordThroughTransport(this.options, currentPassword, newPassword);
   }
 
   private async authenticate<TResult extends AuthCompletionResult = AuthCompletionResult>(
@@ -90,7 +82,7 @@ export class AuthAccountTransport {
     fallback: string,
   ): Promise<TResult> {
     const attempt = this.options.beginAuthentication();
-    try {
+    return runAuthenticationExchange(attempt, async attempt => {
       let result: AuthCompletionResult;
       let failureMessage = fallback;
       try {
@@ -128,9 +120,7 @@ export class AuthAccountTransport {
           fallback,
         );
       }
-    } finally {
-      attempt.dispose();
-    }
+    }, cause => failCurrentAuthenticationCompletion(attempt, this.options.failAuthentication, cause, fallback));
   }
 
   private async genericEmailRequest(
@@ -148,6 +138,21 @@ export class AuthAccountTransport {
     );
     if (!response.ok) throw await responseError(response, fallback);
   }
+}
+
+/** @internal Reusable body for the operation-owned browser credential facade. */
+export async function changePasswordThroughTransport(
+  options: Pick<AuthAccountTransportOptions, 'baseUrl' | 'authenticatedFetch' | 'updateTokens'>,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const response = await options.authenticatedFetch(
+    `${options.baseUrl}/auth/change-password`,
+    jsonRequest({ currentPassword, newPassword }),
+  );
+  if (!response.ok) throw await responseError(response, 'Failed to change password');
+  const data = parseAuthRefreshResponse(await response.json());
+  await options.updateTokens(data.accessToken, data.refreshToken, response);
 }
 
 function jsonRequest(body: unknown): RequestInit {

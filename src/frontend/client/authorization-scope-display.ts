@@ -1,4 +1,5 @@
 import type { AuthSessionTransitionOperation } from './auth-types';
+import type { AuthAuthorizationStatus } from './auth-authorization-types';
 
 /**
  * Pure display decision for the root browser authorization boundary.
@@ -18,6 +19,52 @@ export type AuthorizationScopeReloadAction =
   | 'refresh-session-and-reload'
   | 'clear-page-session-and-reload'
   | 'show-recovery';
+
+export type HydratedAuthorizationWork = 'none' | 'wait' | 'retry-access' | 'reload-route' | 'recover-session';
+
+/**
+ * Separate unsafe live-policy loading from a failed session restoration.
+ * A policy purge still masks application data, but never rotates credentials
+ * merely because its replacement authorization projection has not arrived.
+ */
+export function resolveHydratedAuthorizationWork(input: {
+  hasHydrationRoute: boolean;
+  stable: boolean;
+  ready: boolean;
+  isRestoring: boolean;
+  isLoading: boolean;
+  requiresRouteReload: boolean;
+  browserUserId: string | null;
+  browserHasRecoverableSession: boolean;
+  authorizationStatus: AuthAuthorizationStatus;
+  routeIdentityMatches: boolean;
+  /** Exact current-anonymous cleanup receipt owned by the core AuthClient. */
+  acknowledgedPageCleanup?: boolean;
+}): HydratedAuthorizationWork {
+  if (!input.hasHydrationRoute) return 'none';
+  if (!input.stable || input.isRestoring || input.isLoading) return 'wait';
+  if (!input.browserUserId && input.browserHasRecoverableSession) return 'recover-session';
+  if (!input.ready) {
+    // Definitive-denial cleanup may have retained proof because its shared
+    // credential lock was unavailable. Only a settled scope offers retry;
+    // an admitted cleanup remains masked by the earlier stable/loading fence.
+    return input.browserUserId && (input.authorizationStatus === 'error'
+      || input.authorizationStatus === 'revoked') ? 'retry-access' : 'wait';
+  }
+  if (input.requiresRouteReload && input.browserUserId) {
+    // A provisional identity match is sufficient for ordinary initial UI,
+    // not for declaring a mismatched document repaired. Validate its current
+    // grants before reloading or reusing server-produced loader data.
+    if (input.authorizationStatus === 'error') return 'retry-access';
+    if (input.authorizationStatus !== 'ready' && input.authorizationStatus !== 'refreshing') return 'wait';
+  }
+  if (!input.requiresRouteReload) return 'none';
+  // Only the core's server-acknowledged, current-anonymous receipt can avoid
+  // another cookie-clearing writer. Display history is not cleanup evidence.
+  if (!input.browserUserId && !input.browserHasRecoverableSession
+    && input.acknowledgedPageCleanup) return 'reload-route';
+  return input.routeIdentityMatches ? 'reload-route' : 'recover-session';
+}
 
 /** Accessible status copy while the protected subtree is intentionally masked. */
 export function authorizationScopeTransitionMessage(

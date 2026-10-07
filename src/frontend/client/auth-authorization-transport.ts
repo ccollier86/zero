@@ -1,33 +1,56 @@
 /** Authenticated transport for the current browser authorization snapshot. */
 
 import type { AuthAuthorizationSnapshot } from './auth-authorization-types';
+import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
 
 export interface AuthAuthorizationTransportOptions {
   baseUrl: string;
   authenticatedFetch: (url: string, init?: RequestInit) => Promise<Response>;
   createResponseError: (response: Response, body: unknown, fallback: string) => Error;
   assertResponseCurrent: (response: Response) => void;
+  /** @internal Deterministic deadline injection; normal reads use 15 seconds. */
+  requestTimeoutMs?: number;
 }
 
 export class AuthAuthorizationTransport {
   constructor(private readonly options: AuthAuthorizationTransportOptions) {}
 
   async getCurrent(signal?: AbortSignal): Promise<AuthAuthorizationSnapshot> {
-    const response = await this.options.authenticatedFetch(
-      `${this.options.baseUrl}/auth/authorization`,
-      { method: 'GET', signal, cache: 'no-store' },
-    );
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw this.options.createResponseError(
-        response,
-        body,
-        'Failed to load current authorization',
-      );
+    // A masked post-purge view must not wait forever on an automatic read.
+    // Bound both headers and body in the SDK transport, not just its Retry UI.
+    const request = new AuthSessionRecoveryRequest(this.options.requestTimeoutMs);
+    const cancel = () => request.cancel();
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      return await request.run(async (ownedSignal) => {
+        const response = await this.options.authenticatedFetch(
+          `${this.options.baseUrl}/auth/authorization`,
+          { method: 'GET', signal: ownedSignal, cache: 'no-store' },
+        );
+        ownedSignal.throwIfAborted();
+        // Definitive admission denial is in the status, not an optional body.
+        // A stalled proxy error body must not defer revocation until timeout.
+        if (response.status === 401 || response.status === 403) {
+          throw this.options.createResponseError(response, null, 'Failed to load current authorization');
+        }
+        const body = await response.json().catch(() => null);
+        ownedSignal.throwIfAborted();
+        if (!response.ok) {
+          throw this.options.createResponseError(
+            response,
+            body,
+            'Failed to load current authorization',
+          );
+        }
+        const snapshot = parseAuthAuthorizationSnapshot(body);
+        this.options.assertResponseCurrent(response);
+        return snapshot;
+      });
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      request.cancel();
     }
-    const snapshot = parseAuthAuthorizationSnapshot(body);
-    this.options.assertResponseCurrent(response);
-    return snapshot;
   }
 }
 

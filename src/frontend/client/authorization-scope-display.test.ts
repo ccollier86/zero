@@ -5,9 +5,44 @@ import {
   resolveAuthorizationScopeDisplay,
   resolveAuthorizationScopeReloadAction,
   resolveHydrationScopeMatch,
+  resolveHydratedAuthorizationWork,
 } from './authorization-scope-display';
 
 describe('root authorization-scope display boundary', () => {
+  test('authorization revalidation is not a failed session restoration', () => {
+    const input = { hasHydrationRoute: true, stable: true, ready: false,
+      isRestoring: false, isLoading: false, requiresRouteReload: false,
+      browserUserId: 'user-a', browserHasRecoverableSession: true,
+      authorizationStatus: 'loading' as const, routeIdentityMatches: true };
+    expect(resolveHydratedAuthorizationWork(input)).toBe('wait');
+    expect(resolveHydratedAuthorizationWork({ ...input, authorizationStatus: 'error' })).toBe('retry-access');
+    expect(resolveHydratedAuthorizationWork({ ...input, authorizationStatus: 'revoked' })).toBe('retry-access');
+    expect(resolveHydratedAuthorizationWork({ ...input, authorizationStatus: 'revoked', stable: false })).toBe('wait');
+    expect(resolveHydratedAuthorizationWork({ ...input, authorizationStatus: 'revoked', isLoading: true })).toBe('wait');
+    expect(resolveHydratedAuthorizationWork({ ...input, browserUserId: null })).toBe('recover-session');
+    expect(resolveHydratedAuthorizationWork({ ...input, browserUserId: null, isRestoring: true })).toBe('wait');
+    expect(resolveHydratedAuthorizationWork({ ...input, hasHydrationRoute: false })).toBe('none');
+  });
+
+  test('stale same-identity loader authority reloads without rotating credentials', () => {
+    const input = { hasHydrationRoute: true, stable: true, ready: true,
+      isRestoring: false, isLoading: false, requiresRouteReload: true,
+      browserUserId: 'user-a', browserHasRecoverableSession: true,
+      authorizationStatus: 'ready' as const, routeIdentityMatches: true };
+    expect(resolveHydratedAuthorizationWork(input)).toBe('reload-route');
+    expect(resolveHydratedAuthorizationWork({ ...input, routeIdentityMatches: false })).toBe('recover-session');
+    expect(resolveHydratedAuthorizationWork({ ...input, requiresRouteReload: false })).toBe('none');
+    expect(resolveHydratedAuthorizationWork({ ...input, stable: false })).toBe('wait');
+    expect(resolveHydratedAuthorizationWork({ ...input, authorizationStatus: 'loading' })).toBe('wait');
+    expect(resolveHydratedAuthorizationWork({ ...input, authorizationStatus: 'error' })).toBe('retry-access');
+    const signedOut = { ...input, browserUserId: null, browserHasRecoverableSession: false,
+      authorizationStatus: 'unauthenticated' as const, routeIdentityMatches: false };
+    expect(resolveHydratedAuthorizationWork(signedOut)).toBe('recover-session');
+    expect(resolveHydratedAuthorizationWork({ ...signedOut, acknowledgedPageCleanup: false })).toBe('recover-session');
+    expect(resolveHydratedAuthorizationWork({ ...signedOut, acknowledgedPageCleanup: true })).toBe('reload-route');
+    expect(resolveHydratedAuthorizationWork({ ...input, routeIdentityMatches: false, acknowledgedPageCleanup: true }))
+      .toBe('recover-session');
+  });
   test('describes masked scope transitions without leaking tenant terminology', () => {
     expect(authorizationScopeTransitionMessage('tenant-switch'))
       .toBe('Switching secure access…');

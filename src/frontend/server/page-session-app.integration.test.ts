@@ -139,6 +139,7 @@ describe('createApp page-session SSR integration', () => {
     });
     expect(afterLogout.status).toBe(302);
     expect(afterLogout.headers.get('location')).toBe('/login?redirect=%2Fapp');
-    expect(afterLogout.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(afterLogout.headers.get('set-cookie')).toBeNull();
+    expect(afterLogout.headers.get('cache-control')).toBe('private, no-store');
   });
 });

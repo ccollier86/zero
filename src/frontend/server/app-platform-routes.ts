@@ -3,7 +3,7 @@
 import type { Elysia } from 'elysia';
 
 import {
-  rejectedPageSessionCookieHeader,
+  hasPageSessionCredential,
   resolvePageSessionAuth,
 } from '../../auth/page-session';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
@@ -233,7 +233,7 @@ export async function mountPlatformRoutes({
               const auth = await resolvePageSessionAuth(request, getTokenService());
               return auth ? { ...auth } : null;
             },
-            clearRejectedPageSession: (request: Request) => rejectedPageSessionCookieHeader(request, getTokenService()),
+            hasPageCredential: (request: Request) => hasPageSessionCredential(request, getTokenService()),
           },
         }
       : {}),

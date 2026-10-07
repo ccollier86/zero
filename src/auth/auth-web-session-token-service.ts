@@ -1,10 +1,11 @@
 /** Internal browser/page token-family lifecycle owned behind TokenService. */
 
 import type { UserStore } from './user-store';
-import type { AuthTokenCodec } from './auth-token-codec';
+import type { AuthTokenCodec, PageSessionClaims } from './auth-token-codec';
 import type { AuthSessionService } from './auth-session-service';
 import type {
   AuthSessionRecord,
+  ResolvedWebSessionAuthority,
   WebSessionIssueOptions,
 } from './auth-session-types';
 import type { AuthAuditRequestContext } from './auth-audit-types';
@@ -83,7 +84,8 @@ export class AuthWebSessionTokenService {
     const { session } = parent;
     const expiresAt = Math.min(record.expiresAt, session.expiresAt);
     const token = await this.options.codec.signPageSessionToken({
-      tokenId: record.tokenId,
+      sessionId: session.sessionId,
+      sessionGeneration: session.generation,
       userId: user.userId,
       authGeneration,
       expiresAtSeconds: Math.floor(expiresAt / 1_000),
@@ -104,19 +106,14 @@ export class AuthWebSessionTokenService {
 
   async resolvePageSessionToken(token: string): Promise<AuthContext | null> {
     this.options.assertCurrentProfile();
-    const proof = await this.resolvePageSessionRecord(token);
+    const claims = await this.verifyPageSessionProof(token);
     this.options.assertCurrentProfile();
-    const userStore = this.options.getUserStore();
-    if (!proof || !userStore) return null;
-
-    const user = userStore.getUserById(proof.record.userId);
-    if (!user || !canUserReceiveTokens(user)) return null;
-    const parent = this.resolveOrAdoptRefreshParent(proof.record);
-    return parent ? this.options.withAuthorizationRevision(this.toWebAuthContext(
-      user,
-      parent.session,
-      parent.tenantRole,
-      parent.tenantKind,
+    const proof = claims ? this.resolvePageSessionProof(claims) : null;
+    return proof ? this.options.withAuthorizationRevision(this.toWebAuthContext(
+      proof.user,
+      proof.parent.session,
+      proof.parent.tenantRole,
+      proof.parent.tenantKind,
       proof.authGeneration,
     )) : null;
   }
@@ -127,21 +124,18 @@ export class AuthWebSessionTokenService {
   ): Promise<boolean> {
     const capturedAuditRequest = captureAuthAuditRequestContext(auditRequest);
     this.options.assertCurrentProfile();
-    const proof = await this.resolvePageSessionRecord(token);
+    const claims = await this.verifyPageSessionProof(token);
     this.options.assertCurrentProfile();
     const userStore = this.options.getUserStore();
+    const proof = claims ? this.resolvePageSessionProof(claims) : null;
     if (!proof || !userStore) return false;
-    const { record } = proof;
-
-    if (record.sessionId) {
-      this.options.authSessionService.revoke(
-        record.sessionId,
-        'page-session-replaced',
-        Date.now(),
-        { provenance: 'authenticated-request', request: capturedAuditRequest },
-      );
-    }
-    userStore.revokeRefreshToken(record.tokenId);
+    this.options.authSessionService.revoke(
+      proof.parent.session.sessionId,
+      'page-session-replaced',
+      Date.now(),
+      { provenance: 'authenticated-request', request: capturedAuditRequest },
+    );
+    if (proof.legacyRecord) userStore.revokeRefreshToken(proof.legacyRecord.tokenId);
     return true;
   }
 
@@ -455,31 +449,42 @@ export class AuthWebSessionTokenService {
     return { accessToken, refreshToken };
   }
 
-  private async resolvePageSessionRecord(
-    token: string,
-  ): Promise<{
-    record: RefreshTokenRecord;
-    authGeneration: number;
-  } | null> {
+  /** Cryptographic work yields; all durable admission is re-read afterwards. */
+  private async verifyPageSessionProof(token: string): Promise<PageSessionClaims | null> {
     if (!this.options.getUserStore() || !token) return null;
     try {
-      const claims = await this.options.codec.verifyPageSessionToken(token);
-      if (!claims) return null;
-      const userStore = this.options.getUserStore();
-      if (!userStore) return null;
-      const record = userStore.getRefreshTokenById(claims.tokenId);
-      if (!record || record.userId !== claims.userId) return null;
-      if (record.revokedAt !== null || record.expiresAt <= Date.now()) return null;
-      const currentAuthGeneration = userStore.getAuthGeneration(record.userId);
-      if (claims.authGeneration !== null
-        && currentAuthGeneration !== claims.authGeneration) return null;
-      // Pre-claim page cookies remain safe to upgrade only while their exact
-      // durable refresh row is live. Every auth-generation transition revokes
-      // that row, so a missing legacy claim cannot cross a security change.
-      return { record, authGeneration: claims.authGeneration ?? currentAuthGeneration };
+      return await this.options.codec.verifyPageSessionToken(token);
     } catch {
       return null;
     }
+  }
+
+  /** Never infer a parent from a consumed legacy refresh credential. */
+  private resolvePageSessionProof(claims: PageSessionClaims): {
+    user: UserRecord;
+    authGeneration: number;
+    parent: ResolvedWebSessionAuthority;
+    legacyRecord?: RefreshTokenRecord;
+  } | null {
+    const userStore = this.options.getUserStore();
+    if (!userStore) return null;
+    const user = userStore.getUserById(claims.userId);
+    if (!user || !canUserReceiveTokens(user)) return null;
+    const authGeneration = userStore.getAuthGeneration(user.userId);
+    if (claims.authGeneration !== null && claims.authGeneration !== authGeneration) return null;
+    if (claims.version === 2) {
+      const parent = this.options.authSessionService.resolveWebSessionAuthority({
+        sessionId: claims.sessionId, userId: claims.userId, generation: claims.sessionGeneration,
+      });
+      return parent ? { user, authGeneration, parent } : null;
+    }
+    const record = userStore.getRefreshTokenById(claims.tokenId);
+    if (!record || record.userId !== claims.userId
+      || record.revokedAt !== null || record.expiresAt <= Date.now()) return null;
+    // Missing legacy generation is safe only while this exact child is live;
+    // security transitions retire it. Normal rotation does not make it valid.
+    const parent = this.resolveOrAdoptRefreshParent(record);
+    return parent ? { user, authGeneration, parent, legacyRecord: record } : null;
   }
 
   private resolveOrAdoptRefreshParent(record: RefreshTokenRecord): {

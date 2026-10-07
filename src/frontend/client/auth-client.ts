@@ -5,7 +5,7 @@
  * this class composes them while preserving the established AuthClient API.
  */
 
-import { AuthAccountTransport } from './auth-account-transport';
+import { AuthAccountTransport, changePasswordThroughTransport } from './auth-account-transport';
 import { AuthApiKeyTransport } from './auth-api-key-transport';
 import type { AuthApiKeySdkSurface } from './auth-api-key-types';
 import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
@@ -51,6 +51,7 @@ export type * from '../../auth/auth-user-contact-types';
 export type * from '../../auth/auth-user-profile-completion-types';
 export type * from '../../auth/auth-user-avatar-types';
 import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
+import { reportAuthClientActionFailure } from './auth-action-observability';
 import {
   composeAuthorizationScopeSignal,
   guardResponseAuthorizationScope,
@@ -385,11 +386,26 @@ export class AuthClient {
       }),
       subscribeSession: (callback) => this.session.subscribe(callback),
       expireSession: () => {
-        if (this.recoveryAuthorizationRequest) {
+        if (this.recoveryPromise) {
           this.recoveryAuthorizationRejectedRevision = this.session.revision;
           this.recoveryAuthorizationRejectedScope = this.session.captureAuthorizationScope();
+          // Explicit recovery already owns signed-out page-cookie cleanup.
+          // Its local expiry receipt must not enqueue a second logout writer.
+          this.session.expireSession();
+          return;
         }
-        this.session.expireSession();
+        const scope = this.session.captureAuthorizationScope();
+        void this.session.expireRejectedPageSessionAtRevision(this.session.revision, scope)
+          .then((confirmed) => {
+            if (confirmed === false) {
+              reportAuthClientActionFailure('rejectedSessionPageCleanup',
+                new Error('Page-session cleanup was not confirmed'), { codeOnly: true });
+            }
+          }).catch((cause) => {
+            if (this.session.captureAuthorizationScope() === scope) {
+              reportAuthClientActionFailure('rejectedSessionPageCleanup', cause, { codeOnly: true });
+            }
+          });
       },
       revalidateIntervalMs: options.authorizationRevalidationIntervalMs,
     });
@@ -403,7 +419,7 @@ export class AuthClient {
         this.session.failAuthentication(message);
       },
       completeAuthentication: (result, attempt) => (
-        this.session.completeAuthentication(result, attempt.assertCurrent)
+        this.completeAuthenticationAttempt(result, attempt)
       ),
       updateTokens: (accessToken, refreshToken, response) => (
         this.session.updateTokens(
@@ -428,7 +444,7 @@ export class AuthClient {
         this.session.failAuthentication(message);
       },
       completeAuthentication: (result, attempt) => (
-        this.session.completeAuthentication(result, attempt.assertCurrent)
+        this.completeAuthenticationAttempt(result, attempt)
       ),
     });
     this.mfa = new AuthMfaTransport({
@@ -444,7 +460,7 @@ export class AuthClient {
         this.session.failAuthentication(message);
       },
       completeAuthentication: (result, attempt) => (
-        this.session.completeAuthentication(result, attempt.assertCurrent)
+        this.completeAuthenticationAttempt(result, attempt)
       ),
     });
     this.properties = new AuthPropertyTransport({
@@ -471,7 +487,7 @@ export class AuthClient {
     this.profileCompletion = new AuthUserProfileCompletionTransport({
       baseUrl, beginAuthentication: loading => this.beginAuthenticationAttempt(loading),
       readContinuation: () => this.authenticationContinuation,
-      completeAuthentication: (result, attempt) => this.session.completeAuthentication(result, attempt.assertCurrent),
+      completeAuthentication: (result, attempt) => this.completeAuthenticationAttempt(result, attempt),
     });
     this.avatars = new AuthUserAvatarTransport({
       baseUrl,
@@ -587,7 +603,7 @@ export class AuthClient {
         this.session.failAuthentication(message);
       },
       completeAuthentication: (result, attempt) => (
-        this.session.completeAuthentication(result, attempt.assertCurrent)
+        this.completeAuthenticationAttempt(result, attempt)
       ),
     });
     this.tenantDomains = new AuthTenantDomainTransport({
@@ -663,6 +679,11 @@ export class AuthClient {
     return this.session.hasRecoverableSession;
   }
 
+  /** @internal Actual acknowledged page-cookie cleanup for the current anonymous revision. */
+  get hasAcknowledgedPageSessionCleanup(): boolean {
+    return this.session.hasAcknowledgedPageSessionCleanup;
+  }
+
   /** @internal Opaque browser-local authorization family for UI cache fences. */
   get authorizationScopeKey(): string | null {
     return this.session.authorizationScopeKey;
@@ -683,9 +704,9 @@ export class AuthClient {
     return this.authorizationController.ensureCurrent();
   }
 
-  /** Force a live server read of the current identity and scope. */
-  refreshAuthorization(): Promise<AuthAuthorizationSnapshot | null> {
-    return this.authorizationController.refresh();
+  /** Force a live identity/scope read; callers may bound and cancel their own operation. */
+  refreshAuthorization(signal?: AbortSignal): Promise<AuthAuthorizationSnapshot | null> {
+    return this.authorizationController.refresh(signal);
   }
 
   subscribeAuthorization(callback: () => void): () => void {
@@ -963,6 +984,8 @@ export class AuthClient {
   }
 
   private async performSessionRecovery(): Promise<AuthSessionRecoveryResult> {
+    this.recoveryAuthorizationRejectedRevision = null;
+    this.recoveryAuthorizationRejectedScope = null;
     if (this.session.sessionTransition.phase === 'recovery-required') {
       const scope = this.session.captureAuthorizationScope();
       try {
@@ -982,8 +1005,6 @@ export class AuthClient {
     const attempt = this.beginAuthorizationScopeAttempt();
     const request = new AuthSessionRecoveryRequest();
     this.recoveryAuthorizationRequest = request;
-    this.recoveryAuthorizationRejectedRevision = null;
-    this.recoveryAuthorizationRejectedScope = null;
     const cancel = () => request.cancel();
     attempt.signal.addEventListener('abort', cancel, { once: true });
     const unsubscribe = this.session.subscribe(() => {
@@ -1047,9 +1068,39 @@ export class AuthClient {
    * AuthSessionController before any session state can be replaced.
    */
   private beginAuthenticationAttempt(markLoading = true): AuthAuthenticationAttempt {
-    const attempt = this.beginAuthorizationScopeAttempt();
+    const scopeAttempt = this.beginAuthorizationScopeAttempt();
     if (markLoading) this.session.beginAuthentication();
-    return attempt;
+    const assertAuthenticationCurrent = this.session.captureAuthenticationAttempt();
+    const attempt: AuthAuthenticationAttempt = {
+      ...scopeAttempt,
+      assertCurrent() { assertAuthenticationCurrent(); scopeAttempt.assertCurrent(); },
+    };
+    return {
+      ...attempt,
+      runCredentialIssuance: async (operation, signal) => {
+        const admission = composeAuthorizationScopeSignal(signal, attempt.signal);
+        const assertCurrent = () => { admission.signal.throwIfAborted(); attempt.assertCurrent(); };
+        try {
+          return await this.session.runCredentialIssuance(assertCurrent, async lease => {
+            const composed = composeAuthorizationScopeSignal(admission.signal, lease.signal);
+            const owned: AuthAuthenticationAttempt = {
+              ...attempt, signal: composed.signal, credentialIssuance: lease,
+              assertCurrent() { composed.signal.throwIfAborted(); attempt.assertCurrent(); },
+            };
+            try { return await operation(owned); } finally { composed.dispose(); }
+          }, admission.signal);
+        } finally { admission.dispose(); }
+      },
+    };
+  }
+
+  private completeAuthenticationAttempt(result: AuthCompletionResult, attempt: AuthAuthenticationAttempt): Promise<AuthCompletionResult> {
+    if (!attempt.credentialIssuance) return this.session.completeAuthentication(result, attempt.assertCurrent);
+    attempt.assertCurrent();
+    // The owned exchange now commits intentionally. Stop its original scope
+    // cancellation listener before the purge barrier changes that scope.
+    attempt.dispose();
+    return attempt.credentialIssuance.completeAuthentication(result, attempt.assertCurrent);
   }
 
   private async runAuthorizationScopeOperation<T>(
@@ -1093,6 +1144,13 @@ export class AuthClient {
   private beginAuthorizationScopeAttempt(): AuthAuthenticationAttempt {
     const lifecycle = this.options.authorizationScopeLifecycle;
     const epoch = lifecycle?.beginRequest();
+    // Raw AuthClient consumers need the same admission fence as the composed
+    // SDK. Never issue a new page cookie while owned logout/restore work is
+    // waiting on the network; response ordering must not clear a newer login.
+    const transition = this.session.sessionTransition;
+    if (transition.phase !== 'idle' && transition.phase !== 'recovery-required') {
+      throw new Error('[client] Authorization scope is changing; retry after synchronization.');
+    }
     const sessionScope = this.session.captureAuthorizationScope();
     const assertCurrent = () => {
       if (epoch !== undefined && lifecycle) lifecycle.assertRequestCurrent(epoch);
@@ -1235,8 +1293,55 @@ export class AuthClient {
     }
   }
 
-  changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    return this.account.changePassword(currentPassword, newPassword);
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const attempt = this.beginAuthorizationScopeAttempt();
+    let startingScopeConsumed = false;
+    const assertCurrent = () => {
+      if (!startingScopeConsumed) attempt.assertCurrent();
+    };
+    const consumeStartingScope = () => {
+      attempt.assertCurrent();
+      startingScopeConsumed = true;
+      attempt.dispose();
+    };
+    try {
+      await this.session.runCredentialIssuance(assertCurrent, async lease => {
+        const ownedSignal = composeAuthorizationScopeSignal(attempt.signal, lease.signal);
+        try {
+          await changePasswordThroughTransport({
+            baseUrl: this.baseUrl,
+            authenticatedFetch: async (url, init) => lease.requestWithAuth(async accessToken => {
+              assertCurrent();
+              const requestUrl = resolveAuthRequestUrl(this.baseUrl, url);
+              const headers = new Headers(init?.headers);
+              if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+              const requestSignal = composeAuthorizationScopeSignal(init?.signal, ownedSignal.signal);
+              try {
+                const response = await fetch(requestUrl, {
+                  ...init,
+                  headers,
+                  signal: requestSignal.signal,
+                });
+                assertCurrent();
+                const scopedResponse = guardResponseAuthorizationScope(response, assertCurrent);
+                authenticatedResponseScopeAssertions.set(scopedResponse, assertCurrent);
+                return scopedResponse;
+              } finally {
+                requestSignal.dispose();
+              }
+            }, consumeStartingScope),
+            updateTokens: async (accessToken, refreshToken, response) => {
+              this.assertAuthenticatedResponseCurrent(response);
+              await lease.updateTokens(accessToken, refreshToken, undefined, assertCurrent);
+            },
+          }, currentPassword, newPassword);
+        } finally {
+          ownedSignal.dispose();
+        }
+      }, attempt.signal);
+    } finally {
+      attempt.dispose();
+    }
   }
 
   setProperty(key: string, value: unknown): Promise<void> {
