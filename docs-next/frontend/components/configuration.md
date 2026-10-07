@@ -39,6 +39,7 @@ does not create a package import; use each guide's actual public entrance.
 | Public Hero/navigation/content/code collection descriptors | [Public-page configuration](./public-pages/configuration.md). |
 | String source/replay/effect timing and callbacks | [Text configuration](./text/configuration.md). |
 | Browser-held secret masking/copy and QR matrix props | [Sensitive display](./sensitive-display.md). |
+| Phone country/format/validation and read-only native form behavior | [Phone input](./phone-input.md#presentation-options). |
 | Structured JSON/text drafts, validation and local commit handles | [JSON editor](./json-editor.md). |
 | Hierarchical choices, single/multi selection, async levels and full-path chips | [Cascader](./cascader.md#composition-configuration-and-interaction). |
 | Pointer ink, history, SVG/JSON form fields, receipt-locked agreements and initials | [Signature Pad](./signature-pad.md#drawing-state-api-and-export-configuration). |

@@ -69,6 +69,16 @@ input, not that wrapper. type='hidden' renders a plain hidden input. disabled,
 focus/blur callbacks and aria-invalid are preserved. This is a controlled native
 input when value/onChange are supplied; it does not debounce, normalize or save.
 
+`readOnly` is native read-only, not disabled: the input remains focusable,
+selectable/copyable and submittable. Working source on the 2.5.0 baseline now
+also suppresses the editable hover cue while retaining the keyboard focus
+indicator. `wrapperClassName` is an additive composition hook for the outer
+border wrapper; `className` still styles the actual input. Hidden inputs have no
+wrapper. These additions are not in the published 2.5.0 archive. Composite
+controls such as [PhoneInput](../phone-input.md#read-only-disabled-and-native-forms)
+honor read-only for their attached selectors too. None of these props enforces
+server write authority.
+
 Textarea accepts native textarea props, with token-based focus/invalid styling
 and an 80px minimum height. Label uses the Radix label contract, including htmlFor.
 Give fields stable IDs and accessible names; visual placeholders are not complete

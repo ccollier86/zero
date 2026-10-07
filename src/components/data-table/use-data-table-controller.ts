@@ -55,7 +55,7 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     ? searchable.fields
     : (options.columns ?? schema.fieldNames).filter((name) => {
         const type = schema.fields.get(name)?.type;
-        return type === 'text' || type === 'email' || type === 'url' || type === 'textarea';
+        return type === 'text' || type === 'email' || type === 'phone' || type === 'url' || type === 'textarea';
       });
   const resolved = useDataTableSource<T>({
     source, data: options.data, collection, lazy: options.lazy,

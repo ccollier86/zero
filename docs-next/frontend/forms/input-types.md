@@ -31,6 +31,7 @@ UI primitive.
 | Schema kind | Generated control | Logical value / clear behavior |
 | --- | --- | --- |
 | text/email/url/password | Input with corresponding type | string; nullable stored value displays blank |
+| phone — 2.5.0 working update | PhoneInput with country/flag selector | canonical international string draft; optional clear null; required blank stays invalid |
 | number | numeric Input | number; optional explicit clear null; required blank stays invalid |
 | textarea | Textarea | string |
 | boolean | Checkbox, or Switch override | boolean, including valid required false |
@@ -48,6 +49,29 @@ Date conversion uses ISO strings rather than sending Date objects. Date ranges
 validate both values/requiredness but do not impose a business ordering rule.
 Choose the appropriate application timezone/date policy explicitly when that
 distinction matters; a field type alone is not a calendar/workflow service.
+
+## Phone Values: 2.5.0 Working Update
+
+This addition is source-observed in the working profile-settings branch based
+on `39c0ed1de0501986810a2b99366f484e66ba80dc`, separate from the earlier
+full-page review identity and installed-package qualification.
+
+The [phone field](../../backend/schema/fields.md#phone-fields-250-working-update)
+chooses the reusable [PhoneInput](../components/phone-input.md). Display formatting
+is not the stored value: accepted nonblank values are canonical E.164 strings.
+Default country is `US`, configurable in the schema or per-field presentation
+override. The backend does not infer a country from national input.
+
+Incomplete nonempty drafts remain invalid and are not converted into optional
+absence. Clearing an optional phone emits null so a previous persisted value can
+be cleared; clearing a required phone retains an invalid blank. Optional stored
+null displays blank without changing the initial form payload. The normal
+useForm validation, acknowledgment and scope-replacement rules still apply.
+
+Default `possible` validation checks calling code/length; `valid` also checks
+current numbering-plan patterns. Neither verifies ownership, delivery or SMS
+availability. ReadOnly overrides preserve focus/copy/submitted value rather
+than using disabled-field omission. See [configuration](./configuration.md#phone-and-readonly-overrides-250-working-update).
 
 ## Defaults And Storage
 

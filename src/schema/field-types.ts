@@ -8,6 +8,8 @@ import * as v from 'valibot';
 import type { FieldSchema, NullableFieldSchema, NullableValue, NumberFieldSchema, ChoiceSchema, ComboboxSchema } from './field-schema-types';
 import { assertFieldDefault, scalarFieldSchema } from './field-schema-validation';
 import { SchemaConfigurationError } from './schema-configuration-error';
+import { phone } from './field-phone';
+import type { PhoneCountry, PhoneNumberValidation } from '../lib/phone-number';
 import {
   GUARDIAN_MEMBERSHIP_REFERENCE,
   GUARDIAN_USER_REFERENCE,
@@ -19,6 +21,7 @@ import {
 export type FieldType =
   | 'text'
   | 'email'
+  | 'phone'
   | 'url'
   | 'password'
   | 'number'
@@ -58,6 +61,9 @@ export interface FieldMeta {
   multiple?: boolean;
   optionIcon?: boolean;
   optionDescription?: boolean;
+  // Phone-specific presentation; server admission never guesses a country.
+  defaultCountry?: PhoneCountry;
+  phoneValidation?: PhoneNumberValidation;
 }
 
 export interface FieldDef<
@@ -663,6 +669,7 @@ function guardianMembership(opts: GuardianReferenceOptions = {}): FieldDef<Nulla
 export const field = {
   text,
   email,
+  phone,
   url,
   password,
   number,

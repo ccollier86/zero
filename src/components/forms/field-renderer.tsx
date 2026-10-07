@@ -23,6 +23,8 @@ import { DatePicker } from '#zero/components/ui/date-picker';
 import { DateRangePicker } from '#zero/components/ui/date-range-picker';
 import { TagInput } from '#zero/components/ui/tag-input';
 import { Combobox } from '#zero/components/ui/combobox';
+import { PhoneInput } from '#zero/components/phone-input';
+import type { PhoneCountry } from '../../lib/phone-number';
 import type { DateRange } from 'react-day-picker';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -35,6 +37,9 @@ export interface FieldRendererProps {
     autoFocus?: boolean;
     hidden?: boolean;
     useSwitch?: boolean;
+    readOnly?: boolean;
+    /** Phone controls only; does not change server normalization or validation. */
+    defaultCountry?: PhoneCountry;
   };
 }
 
@@ -62,6 +67,8 @@ export function FieldRenderer({
           ref,
           autoFocus: overrides?.autoFocus,
           useSwitch: overrides?.useSwitch,
+          readOnly: overrides?.readOnly,
+          defaultCountry: overrides?.defaultCountry,
         })}
       </FormControl>
       {meta.description && <FormDescription>{meta.description}</FormDescription>}
@@ -81,9 +88,11 @@ function renderInput(
     ref: (el: HTMLElement | null) => void;
     autoFocus?: boolean;
     useSwitch?: boolean;
+    readOnly?: boolean;
+    defaultCountry?: PhoneCountry;
   },
 ): React.ReactElement {
-  const { value, onChange, onBlur, ref, autoFocus, useSwitch } = props;
+  const { value, onChange, onBlur, ref, autoFocus, useSwitch, readOnly, defaultCountry } = props;
 
   switch (meta.type) {
     case 'text':
@@ -99,8 +108,25 @@ function renderInput(
           ref={ref as any}
           placeholder={meta.placeholder}
           autoFocus={autoFocus}
+          readOnly={readOnly}
           min={meta.min}
           max={meta.max}
+        />
+      );
+
+    case 'phone':
+      return (
+        <PhoneInput
+          value={typeof value === 'string' ? value : ''}
+          onChange={(next) => onChange(next === '' && !meta.required ? null : next)}
+          onBlur={onBlur}
+          ref={ref as React.Ref<HTMLInputElement>}
+          autoFocus={autoFocus}
+          placeholder={meta.placeholder}
+          readOnly={readOnly}
+          required={meta.required}
+          defaultCountry={defaultCountry ?? meta.defaultCountry ?? 'US'}
+          validation={meta.phoneValidation ?? 'possible'}
         />
       );
 
@@ -108,6 +134,7 @@ function renderInput(
       return (
         <Input
           type="number"
+          readOnly={readOnly}
           value={value === '' || value == null ? '' : String(value)}
           onChange={(e) => {
             const v = e.target.value;
@@ -125,6 +152,7 @@ function renderInput(
     case 'textarea':
       return (
         <Textarea
+          readOnly={readOnly}
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
@@ -268,6 +296,7 @@ function renderInput(
     case 'json':
       return (
         <Textarea
+          readOnly={readOnly}
           value={typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''}
           onChange={(e) => {
             try {
@@ -307,6 +336,7 @@ function renderInput(
     default:
       return (
         <Input
+          readOnly={readOnly}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}

@@ -73,6 +73,7 @@ which options a particular field accepts.
 | maxTags | TagInput presentation limit; not an automatic server array-length validator |
 | searchable/multiple | combobox search and single/multiple presentation |
 | optionIcon/optionDescription | available combobox metadata; not a promise that generated AutoForm enriches plain label/value choices with these details |
+| defaultCountry / phoneValidation — 2.5.0 working update | phone presentation defaults and the same possible/valid numbering-plan admission mode used by the phone schema |
 
 Undefined presentation options delegate to the consumer's documented defaults;
 they are not a globally normalized theme/config setting. Password tableVisible is
@@ -115,6 +116,33 @@ callback or acknowledged collection operation. Structured defaults are arrays,
 tuples or JSON null; optional scalar SQL null renders as an empty control without
 silently changing stored meaning. Optional numeric clearing emits explicit null;
 required numeric blank remains invalid.
+
+## Phone Presentation: 2.5.0 Working Update
+
+Source-observed additions on the working profile-settings branch based on
+`39c0ed1de0501986810a2b99366f484e66ba80dc` do not requalify the earlier
+full-page audit or an installed artifact.
+
+`field.phone()` renders the existing reusable
+[PhoneInput](../../frontend/components/phone-input.md), with a flag/country
+picker, formatted entry and canonical international string values. The metadata
+defaults `defaultCountry` to `US` and `phoneValidation` to `possible`; the builder's
+`validation: 'valid'` selects the stricter numbering-plan check. A nonempty
+partial number remains an invalid draft rather than becoming optional absence.
+
+`AutoForm.fields.phone.defaultCountry` can override the input's initial country
+without changing backend admission. `fields.phone.readOnly` keeps the value
+focusable, copyable and included in the form payload while preventing user
+editing/country changes. These are presentation controls, not authorization.
+The same readOnly override is forwarded to generated native text, number and
+textarea controls; it is not a generic promise for every rich selector.
+
+An optional phone clear emits explicit null; a required clear remains an invalid
+blank. Ref, blur and field context still use the normal form lifecycle. The
+generic table search defaults also recognize phone as a searchable string field;
+this does not automatically replace every table inline editor with PhoneInput.
+See [generated values](../../frontend/forms/input-types.md#phone-values-250-working-update)
+and [schema options](./configuration.md#phone-options-250-working-update).
 
 ## Generated Table Columns
 

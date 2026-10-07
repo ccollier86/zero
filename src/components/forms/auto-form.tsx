@@ -4,7 +4,7 @@ import * as React from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { FieldMeta } from '../../schema/field-types';
 import { useForm, type UseFormOptions } from '../../hooks/use-form';
-import { FieldRenderer } from './field-renderer';
+import { FieldRenderer, type FieldRendererProps } from './field-renderer';
 import { Button } from '#zero/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '#zero/components/ui/card';
 import { cn } from '#zero/lib/utils';
@@ -14,11 +14,7 @@ import { Loader } from '#zero/components/animate-ui/icons/loader';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface FieldOverrides {
-  autoFocus?: boolean;
-  hidden?: boolean;
-  useSwitch?: boolean;
-}
+type FieldOverrides = NonNullable<FieldRendererProps['overrides']>;
 
 export interface AutoFormProps<T extends Row = Row> {
   schema: SchemaDescriptor;

@@ -31,6 +31,8 @@ persistence simply because they are exported by Zero.
   semantic tables, charts and compact list/detail layout.
 - [Sensitive display](./sensitive-display.md) covers browser-held secret masking
   and QR presentation without claiming security from visual hiding.
+- [Phone input](./phone-input.md) covers flags, searchable countries, canonical
+  numbers, shared read-only semantics and generated-form integration.
 - [JSON editor](./json-editor.md) covers structured JSON/text drafts and explicit
   local admission before a caller-owned server save.
 - [Cascader](./cascader.md) combines nested selection, capped checkboxes,

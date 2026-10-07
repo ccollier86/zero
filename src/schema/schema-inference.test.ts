@@ -14,6 +14,8 @@ const optionalText=field.text();
 const requiredBoolean=field.boolean({required:true,defaultValue:false});
 const optionalBoolean=field.boolean();
 const optionalEmail=field.email();
+const optionalPhone=field.phone();
+const requiredPhone=field.phone({required:true,defaultCountry:'GB',validation:'valid'});
 const optionalDate=field.date();
 const optionalPassword=field.password();
 const optionalUrl=field.url();
@@ -38,6 +40,7 @@ const optionalAnchor=field.guardianUser({required:false});
 declare const dynamicRequired:boolean;
 declare const dynamicMultiple:boolean;
 const dynamicText=field.text({required:dynamicRequired});
+const dynamicPhone=field.phone({required:dynamicRequired});
 const dynamicNumber=field.number({required:dynamicRequired});
 const dynamicAnchor=field.guardianUser({required:dynamicRequired});
 const dynamicCombo=field.combobox([{label:'Low',value:'low'}],{multiple:dynamicMultiple,required:dynamicRequired});
@@ -48,6 +51,10 @@ type RequiredBooleanInput=Check<Equal<v.InferInput<typeof requiredBoolean._schem
 type OptionalBooleanInput=Check<Equal<v.InferInput<typeof optionalBoolean._schema>,boolean|undefined>>;
 type OptionalBooleanOutput=Check<Equal<v.InferOutput<typeof optionalBoolean._schema>,boolean>>;
 type EmailOutput=Check<Equal<v.InferOutput<typeof optionalEmail._schema>,string|null>>;
+type PhoneInput=Check<Equal<v.InferInput<typeof optionalPhone._schema>,string|null|undefined>>;
+type PhoneOutput=Check<Equal<v.InferOutput<typeof optionalPhone._schema>,string|null>>;
+type RequiredPhoneOutput=Check<Equal<v.InferOutput<typeof requiredPhone._schema>,string>>;
+type DynamicPhoneInput=Check<Equal<v.InferInput<typeof dynamicPhone._schema>,string|null|undefined>>;
 type DateOutput=Check<Equal<v.InferOutput<typeof optionalDate._schema>,string|null>>;
 type PasswordOutput=Check<Equal<v.InferOutput<typeof optionalPassword._schema>,string|null>>;
 type UrlOutput=Check<Equal<v.InferOutput<typeof optionalUrl._schema>,string|null>>;
@@ -93,6 +100,12 @@ type Key=Check<Equal<PrimaryKeyOf<Stored>,'task_id'>>;
 const nullableTable=defineTable('optional_fields',{optionalText,optionalNumber,optionalAnchor,requiredText});
 type NullableStored=InferRow<typeof nullableTable>;
 const nullableStored:NullableStored={id:'id',optionalText:null,optionalNumber:null,optionalAnchor:null,requiredText:'Task'};
+const phoneTable=defineTable('phones',{optionalPhone,requiredPhone});
+const phoneStored:InferRow<typeof phoneTable>={id:'id',optionalPhone:null,requiredPhone:'+442079460123'};
+// @ts-expect-error required stored phone values cannot be null.
+const invalidPhoneStored:InferRow<typeof phoneTable>={...phoneStored,requiredPhone:null};
+// @ts-expect-error country selectors use a supported CountryCode, not arbitrary labels.
+field.phone({defaultCountry:'Unknown'});
 declare module '@zero/framework/schema' {
  interface Register { tables: { registered_tasks: Stored } }
 }

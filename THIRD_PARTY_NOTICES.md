@@ -57,7 +57,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## ReUI — SVG Signature Pad, Button Group And Context Menu
+## ReUI — SVG Signature Pad, Button Group, Context Menu And Phone Input
 
 Source: https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry-reui/bases/radix/reui/signature-pad.tsx
 
@@ -65,6 +65,12 @@ Additional component references:
 
 - https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/bases/radix/ui/button-group.tsx
 - https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry/bases/radix/ui/context-menu.tsx
+- https://github.com/keenthemes/reui/blob/6e433ddaba3a4be38182c8c8883b6cc335183c42/registry-reui/bases/radix/reui/phone-input.tsx
+
+Phone Input examples inspected through the public `radix-vega` registry:
+
+- https://reui.io/r/radix-vega/c-phone-input-7.json
+- https://reui.io/r/radix-vega/c-phone-input-8.json
 
 Zero adapts its SVG outline geometry, pressure/velocity pointer handling,
 guides and preview presentation into focused modules using Zero's own controls,
@@ -74,6 +80,15 @@ logical-direction styling and Radix selection. Context Menu adapts the public
 item/submenu composition with Zero tokens, focused modules, native Radix
 behavior, keyboard opening and leading/trailing adornments. No paid ReUI Pro
 blocks or assets are redistributed.
+
+Phone Input adapts the flags, joined country/number composition, searchable
+picker, size variants and read-only example to Zero's existing Input, Button,
+Popover, Command, ScrollArea and icons. Formatting and bundled flags retain the
+`react-phone-number-input` engine; headless canonical validation uses
+`libphonenumber-js`. Native canonical form submission, shared read-only semantics,
+reset handling and schema/form integration are Zero additions. Its upstream MIT
+license was inspected directly in `LICENSE.md`; dependency packages retain their
+own distributed notices.
 
 MIT License
 

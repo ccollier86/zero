@@ -179,6 +179,18 @@ every helper in the original pinned counts.
 | `getCodeBlockPackageCommand` | root/React/`@zero/framework/components/code-block` | [Displayed command helper](../../../../src/components/code-block/code-block-package-manager.tsx) | `frontend/components/public-pages/code-block-examples.md` |
 | `CODE_BLOCK_PACKAGE_MANAGERS` | root/React/`@zero/framework/components/code-block` | [Supported managers](../../../../src/components/code-block/code-block-package-preference.ts) | `frontend/components/public-pages/code-block-examples.md` |
 
+## Phone Validation Working-Source Addition
+
+These pure helpers supplement, not replace, the pinned historical count. Dirty
+source on `39c0ed1de0501986810a2b99366f484e66ba80dc`, 2026-10-06, is not a
+released archive. Their types are `PhoneCountry` and `PhoneNumberValidation`.
+No phone ownership, delivery or provider support is inferred from admission.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `isPhoneNumber` | `@zero/framework/schema`, root/React | [Canonical validation](../../../../src/lib/phone-number.ts) | `frontend/components/phone-input.md` |
+| `isPhoneCountry` | `@zero/framework/schema`, root/React | [Country validation](../../../../src/lib/phone-number.ts) | `frontend/components/phone-input.md` |
+
 ## Reconciliation And Review
 
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

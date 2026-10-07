@@ -56,7 +56,7 @@ AutoForm accepts the preceding options plus:
 | layout | vertical, horizontal or inline | vertical; presentation option, not a schema mutation |
 | columns | number | 1; more than 1 sets a CSS grid for generated fields |
 | card | title and optional description object | no card wrapper |
-| fields | name-to-overrides map | optional autoFocus, hidden and useSwitch per field |
+| fields | name-to-overrides map | optional autoFocus, hidden and useSwitch per field; see 2.5.0 phone/readOnly additions below |
 | submitLabel | string | Save for edit, Create otherwise |
 | showReset | boolean | false; shown reset disabled when pending or not dirty |
 | className | string | optional class composition |
@@ -69,8 +69,32 @@ Generated controls still use [field metadata](../../backend/schema/ui-metadata.m
 
 name, meta and registration are required. registration is a useForm field
 registration containing value/change/blur/error/ref. overrides optionally supplies
-autoFocus, hidden or useSwitch. Hidden metadata/override returns no rendered
+autoFocus, hidden or useSwitch, plus the 2.5.0 phone/readOnly additions below. Hidden metadata/override returns no rendered
 control; Guardian anchors are hidden reference fields, not an automatic user picker.
+
+## Phone And ReadOnly Overrides: 2.5.0 Working Update
+
+Source-observed additions on the working profile-settings branch based on
+`39c0ed1de0501986810a2b99366f484e66ba80dc` are separate from the earlier
+full-page review identity and installed-artifact qualification.
+
+AutoForm `fields[name]` and FieldRenderer `overrides` share one override contract:
+
+| Added override | Accepted value | Effect |
+| --- | --- | --- |
+| readOnly | boolean | forwarded to phone and native text/number/textarea controls; retains focus, copy and submitted value; not an implicit rich-selector or authorization API |
+| defaultCountry | supported two-letter `PhoneCountry` | phone controls only; overrides schema defaultCountry for initial country presentation |
+
+Phone validation mode comes from `field.phone({ validation })`, not a presentation
+override. Omission uses possible-number checks; valid mode adds numbering-plan
+patterns. The backend always requires a canonical E.164 nonblank string, even
+when the input accepts national typing with a default country. Optional clears
+emit null; required clears remain invalid. Neither the field nor these overrides
+enable SMS verification or change Guardian user-property types.
+
+For direct control props or native form integration, use the
+[PhoneInput reference](../components/phone-input.md). Schema options are covered
+by [phone configuration](../../backend/schema/configuration.md#phone-options-250-working-update).
 
 ## WizardProps
 

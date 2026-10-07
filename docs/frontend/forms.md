@@ -7,6 +7,15 @@ without making the simple CRUD path harder to use.
 
 ## Current Surface
 
+The organized references are now [Forms](../../docs-next/frontend/forms/index.md),
+[schema fields](../../docs-next/backend/schema/fields.md) and
+[PhoneInput](../../docs-next/frontend/components/phone-input.md). The additive
+working-source phone control uses `field.phone()` with country flags,
+international-format validation and read-only number/country behavior. It is
+not included in the already published 2.5.0 archive; use the canonical guides for
+its actual release/evidence state. `fields.<key>.readOnly` is available for phone
+and native text/number/textarea renderers, not every rich choice control.
+
 | API | File | Current responsibility |
 | --- | --- | --- |
 | `useForm` | `src/hooks/use-form.ts` | Values, touched state, synchronous Valibot validation, optional `includeFields` projection, collection insert/update, reset, field registration. |

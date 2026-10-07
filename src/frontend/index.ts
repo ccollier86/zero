@@ -718,6 +718,10 @@ export type {
 } from '../components/streaming-text';
 export { SecretField } from '../components/secret-field';
 export type { SecretFieldProps } from '../components/secret-field';
+export { PhoneInput } from '../components/phone-input';
+export type { PhoneInputProps, PhoneInputSize } from '../components/phone-input';
+export { isPhoneNumber, isPhoneCountry } from '../lib/phone-number';
+export type { PhoneCountry, PhoneNumberValidation } from '../lib/phone-number';
 export { Faq } from '../components/faq';
 export type { FaqItem, FaqProps } from '../components/faq';
 export { ExpandableCards } from '../components/expandable-card';

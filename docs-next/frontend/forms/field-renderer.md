@@ -32,7 +32,8 @@ validator.
 
 FieldRenderer and FieldRendererProps are public from @zero/framework/react.
 Required props are name, meta and registration; overrides optionally supplies
-autoFocus, hidden and useSwitch.
+autoFocus, hidden and useSwitch. The 2.5.0 working additions below also supply
+phone defaultCountry and supported native-control readOnly overrides.
 
 ```tsx
 import { FieldRenderer, useForm } from '@zero/framework/react';
@@ -69,6 +70,30 @@ use maxTags presentation metadata. Combobox maps label/value options, honors
 multiple and defaults its generated search to true when metadata is omitted.
 optionIcon/optionDescription metadata does not automatically manufacture rich
 option content from a plain label/value declaration.
+
+## Phone Rendering: 2.5.0 Working Update
+
+These additions are source-observed in the working profile-settings branch based
+on `39c0ed1de0501986810a2b99366f484e66ba80dc`; they do not replace the
+earlier full-page audit or imply package qualification.
+
+Phone metadata renders the shared [PhoneInput](../components/phone-input.md).
+The renderer forwards current value, change, blur, input ref, required state,
+placeholder, autofocus, default country and numbering-plan validation mode.
+FormControl still supplies the ID/name/description/error linkage. The renderer
+does not invent a separate form controller or submit path.
+
+`overrides.defaultCountry` is phone-specific and takes precedence over schema
+metadata (`US` when omitted). It does not relax canonical backend validation.
+`overrides.readOnly` is forwarded to phone and generated native Input/Textarea
+controls; rich choice/date/boolean controls do not gain an implicit readOnly API.
+Read-only presentation is not a permission check and does not exclude a field
+from validation or submission.
+
+Optional phone null displays blank. A user clear emits null, while a required
+clear stays blank and invalid. Nonempty partial values remain drafts and must
+pass the [phone validator](../../backend/schema/fields.md#phone-fields-250-working-update)
+before ordinary form submission can succeed. See [form configuration](./configuration.md#phone-and-readonly-overrides-250-working-update).
 
 ## Custom Controls And Boundaries
 

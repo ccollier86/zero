@@ -44,6 +44,7 @@ The [internal bindings catalog](../catalogs/frontend-internal-bindings.md) recor
 | Public navigation/hero/content | ResizableNavbar; Hero/HeroActions/HeroBackground/HeroImageBackground/WavyBackground; FeaturesSection/CtaSection/FooterSection/Faq/CodeBlock/ExpandableCards/BentoGrid*/AnimatedList* | `frontend/components/public-pages/index.md` |
 | Text presentation | FlipWords/TextGenerateEffect/TypewriterEffect/StreamingText, StreamSource and status/props; [src/components/text-effects/index.ts](../../../../src/components/text-effects/index.ts), [src/components/streaming-text/index.ts](../../../../src/components/streaming-text/index.ts) | `frontend/components/text/index.md` |
 | Sensitive display/QR | SecretField/SecretFieldProps, QRCode/QRCodeProps; [src/components/secret-field/secret-field.tsx](../../../../src/components/secret-field/secret-field.tsx), [src/components/qr-code/index.ts](../../../../src/components/qr-code/index.ts) | `frontend/components/sensitive-display.md` |
+| Phone field | PhoneInput/PhoneInputProps/PhoneInputSize; canonical helpers and shared Input read-only composition; additive dirty 2.5.0 source, not part of the original audit | [Phone input](../../../frontend/components/phone-input.md) |
 | Hierarchical selection | Cascader composition, typed node/search/selection contracts and useCascaderSelection; [src/components/cascader/index.ts](../../../../src/components/cascader/index.ts) | [Cascader](../../../frontend/components/cascader.md) |
 | Handwritten signature capture | SignaturePad composition, SVG/JSON/native forms, useSignaturePad, SignatureAgreementCard, ClauseInitials; [src/components/signature-pad/index.ts](../../../../src/components/signature-pad/index.ts) | [Signature Pad](../../../frontend/components/signature-pad.md) |
 | Guardian forms/gates/control planes | Every auth/admin organism individually cataloged; useGate/usePropertyGate/native continuation/invitation hooks; [src/components/auth/index.ts](../../../../src/components/auth/index.ts) and adaptive user management | `frontend/guardian/index.md` |
@@ -94,6 +95,46 @@ pages with zero problems**. These are focused source/fixture checks, not a
 legal/compliance certification, npm publication, or proof of a shipped archive.
 
 ## Configuration And Integration Inventory
+
+### Phone Input And Shared Read-Only: 2026-10-06 Working Evidence
+
+The Phone Input row supplements the original inventory with authorized dirty
+source based on `39c0ed1de0501986810a2b99366f484e66ba80dc` (framework 2.5.0).
+Its [guide](../../../frontend/components/phone-input.md), schema/form guides and
+component/helper/export catalogs have reciprocal navigation. ReUI examples 7/8
+and the free radix primitive were inspected; adaptation attribution is retained
+in the root third-party notices. Current tokens and Zero controls are reused.
+
+Independent review caught an external-clear defect: a raw `+` and cleared value
+both mapped to the formatter's undefined value, retaining visible digits. A
+narrow reset bridge and regression correct it without remounting ordinary typed
+clears. Styled screenshot review also caught clipped dial codes due to the
+scroll area's intrinsic content width; the owned picker layout and geometry
+regression correct that without changing shared ScrollArea defaults.
+
+Executed with Bun's automatic env-file loading disabled, using only synthetic
+data and temporary consumers, on the final working phone source:
+
+- Focused helper/schema/generated-form/base-input/export tests plus a fresh
+  installed package consumer: **23 passed / 169 assertions**, including the
+  package smoke's **1 / 11**. This qualifies those public imports, browser build
+  and DOM-free rendering from a temporary dirty-source archive, not a release.
+- Phone SSR and actual styled Chromium: **10 passed / 74 assertions**, of which
+  **7** are browser tests. Countries/keyboard, US/FR formatting, canonical native
+  FormData, outside-form association, refs/focus/copy, locked open menus,
+  null/undefined and partial drafts, native reset, generated validation,
+  light/dark semantic overrides and a short 320px RTL viewport are covered.
+- Existing schema/default/configuration/inference regressions: **73 / 352**;
+  full project TypeScript clean. Actual reusable UI Markdown fences including
+  all three phone examples: **1 / 62**. Whitespace check clean.
+- Documentation structural check: **720** pages/IDs/reachable, zero problems;
+  catalog placement: **959** records assigned to **154** existing homes, zero
+  problems. These are placement measures, not complete platform qualification.
+
+Logs and settled screenshots are outside the source/package tree under the
+designated logs/artifacts roots. No Pantheon files, live account, app database,
+provider, environment file or deployment were used. Release versioning,
+merge/push and artifact provenance remain separate from these working checks.
 
 ### 2.4 Grouped Controls And Conventional Context Menus
 

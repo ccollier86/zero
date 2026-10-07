@@ -31,6 +31,12 @@ Backend expansion remains owned by the
 
 ## Known Direction
 
+- [ ] Provide a compact adaptive current-user profile/settings organism: core
+  identity, configured editable properties and capability-gated security,
+  composed from existing controls. Core-name editing needs a whitelisted
+  self-service backend contract; managed avatars and verified email changes
+  remain separate backend features, not merely hidden UI controls.
+
 - [ ] Continue refining the adaptable list/detail/action control plane without
   replacing it with disconnected one-action cards.
 - [ ] Expand organization-aware convenience gates where they remove repeated

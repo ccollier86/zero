@@ -72,6 +72,7 @@ wire representations as it is completed.
 | Builders | Accepted options beyond their choice/value arguments |
 | --- | --- |
 | text, email, url, password, textarea | label, placeholder, description, required, defaultValue, minLength, maxLength, tableVisible, sortable, filterable, columnWidth |
+| phone — 2.5.0 working update | label, placeholder, description, required, defaultValue, defaultCountry, validation, tableVisible, sortable, filterable, columnWidth |
 | number | label, placeholder, description, required, defaultValue, min, max, integer, tableVisible, sortable, filterable, columnWidth |
 | boolean | label, description, required, defaultValue, tableVisible, sortable, filterable, columnWidth |
 | select, enum | label, placeholder, description, required, defaultValue, tableVisible, sortable, filterable, columnWidth |
@@ -87,6 +88,29 @@ Choice arguments for select/multiSelect/combobox are label/value pairs. Enum
 takes a nonempty string-literal tuple and derives labels. Use `defaultValue`,
 not `default`. A builder accepting an option does not imply every option changes
 SQL validation: presentation metadata and logical constraints are distinct.
+
+## Phone Options: 2.5.0 Working Update
+
+These additions are source-observed in the working profile-settings branch based
+on `39c0ed1de0501986810a2b99366f484e66ba80dc`; they do not replace the
+earlier full-page review identity or claim an installed-package qualification.
+
+| Phone option | Accepted value | Default / effect |
+| --- | --- | --- |
+| required | boolean | false; required rejects omitted, blank and null values |
+| defaultValue | canonical E.164 string or optional null | omission defaults to `''`; an explicit default must pass the same validator as supplied values |
+| defaultCountry | supported two-letter `PhoneCountry` | `US`; generated input presentation only, not server normalization |
+| validation | `possible` or `valid` | `possible` checks calling code and number length; `valid` also checks current numbering-plan patterns |
+| label, placeholder, description | string | ordinary generated field label, prompt and help text |
+| tableVisible, sortable, filterable, columnWidth | existing table metadata types | ordinary table presentation eligibility and width |
+
+Invalid `defaultCountry` or `validation` declarations throw static, value-free
+TypeErrors. An invalid `defaultValue` uses `SchemaConfigurationError` with
+`SCHEMA_DEFAULT_INVALID`. The builder stores TEXT, not a new SQL type, and
+adds NOT NULL only when required. It emits no SQL DEFAULT clause. Both
+validation modes accept only canonical international nonblank strings; neither
+verifies the subscriber or adds SMS/MFA functionality. See [phone fields](./fields.md#phone-fields-250-working-update)
+and the [PhoneInput reference](../../frontend/components/phone-input.md).
 
 ## Defaults And Read Time
 

@@ -560,6 +560,17 @@ the focused guide pages. `CodeBlockClient` is an alias, not a second engine.
 | `CodeBlockPackageManager` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-examples.md` |
 | `CodeBlockPackageManagerSelector` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/code-block` | [CodeBlock public entry](../../../../src/components/code-block/index.ts) | `frontend/components/public-pages/code-block-examples.md` |
 
+## Phone Input Working-Source Addition
+
+Supplemental inspection at dirty `39c0ed1de0501986810a2b99366f484e66ba80dc`
+(framework 2.5.0 baseline, 2026-10-06) adds one component, not another generic
+input stack. It does not change the historical pinned counts or assert release
+qualification. Props and size types share the component's documentation home.
+
+| Symbol | Public imports | Evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `PhoneInput` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/phone-input` | [Phone public entry](../../../../src/components/phone-input/index.ts) | `frontend/components/phone-input.md` |
+
 ## Reconciliation And Review
 
 Packaging disposition: the original UI wildcard also resolves card.test, record-navigation-bar.test and list-detail-layout.test modules. They are test files, not supported components, and therefore are not rows or planned teaching targets here. The package export inventory records them as a finding; the user subsequently authorized a working-tree packaging correction. Export topology/counts here remain the pinned source baseline, not a claim that test-module exposure is supported.

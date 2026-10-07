@@ -12,6 +12,7 @@ const selected: Record<string, number[]> = {
   'frontend/data-studio/workspace.md': [0, 1, 2],
   'frontend/data-studio/controller.md': [0],
   'frontend/components/primitives/inputs.md': [0],
+  'frontend/components/phone-input.md': [0, 1, 2],
   'frontend/components/primitives/button-group.md': [0, 1, 2],
   'frontend/components/overlays/context-menu.md': [0, 1, 2],
   'frontend/components/primitives/choices.md': [0],

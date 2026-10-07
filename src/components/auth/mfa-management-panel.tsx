@@ -11,7 +11,8 @@
 import * as React from 'react';
 
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
-import type { AuthMfaMethod } from '../../frontend/client/auth-client';
+import type { AuthActions } from '../../frontend/client/auth-hooks';
+import { AuthorizationScopeBoundaryFence, useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { cn } from '#zero/lib/utils';
 import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
@@ -23,56 +24,66 @@ import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { AuthConfigLoadState } from './auth-config-load-state';
-import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import { resolveMfaManagementCapability, type MfaManagementCapability } from './mfa-management-policy';
+import { useMfaManagementMethods } from './use-mfa-management-methods';
 
 export interface MFAManagementPanelProps {
   className?: string;
 }
 /** Display and enroll current-user MFA methods. */
 export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
-  const { listMfaMethods } = useAuth();
+  const auth = useAuth();
   const authConfig = useAuthConfig();
-  const [methods, setMethods] = React.useState<AuthMfaMethod[]>([]);
-  const [required, setRequired] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
+  const boundary = useAuthorizationScopeBoundary();
+  const capability = resolveMfaManagementCapability(authConfig);
+  const scopeKey = JSON.stringify([boundary.key, boundary.ready, auth.user?.userId ?? null,
+    auth.isAuthenticated, capability.kind, capability.kind === 'enabled' ? capability.key : null]);
+  const fence = React.useRef(new AuthorizationScopeBoundaryFence());
+  const revision = fence.current.update(scopeKey);
+  const canReadScope = boundary.ready && auth.isAuthenticated && auth.user !== null;
+  const isCurrentScope = React.useCallback(() => fence.current.isCurrent(revision)
+    && canReadScope, [revision, canReadScope]);
+
+  if (capability.kind === 'disabled') return null;
+  if (capability.kind !== 'enabled') {
+    // Public config refresh retains its previous snapshot. Never let that
+    // retained snapshot authorize setup while the current request is pending.
+    return <AuthConfigLoadState
+      state={{ ...authConfig, config: null,
+        status: capability.kind === 'loading' ? 'loading' : 'error',
+        isLoading: capability.kind === 'loading',
+        error: capability.kind === 'unavailable' ? authConfig.error ?? 'MFA policy was unavailable.' : null }}
+      loadingMessage="Loading MFA policy…" unavailableMessage="MFA policy could not be loaded."
+      showUnknown className={className} />;
+  }
+  if (!boundary.ready || auth.isLoading) {
+    return <p role="status" aria-live="polite" className={cn('text-sm text-muted-foreground', className)}>Loading account security…</p>;
+  }
+  if (!auth.isAuthenticated || !auth.user) return null;
+  return <MFAManagementPanelScope key={revision} className={className}
+    capability={capability} listMfaMethods={auth.listMfaMethods} isCurrentScope={isCurrentScope} />;
+}
+
+function MFAManagementPanelScope({ className, capability, listMfaMethods, isCurrentScope }: MFAManagementPanelProps & {
+  capability: Extract<MfaManagementCapability, { kind: 'enabled' }>;
+  listMfaMethods: AuthActions['listMfaMethods'];
+  isCurrentScope: () => boolean;
+}) {
+  const { methods, required, loading, error, reload } = useMfaManagementMethods(listMfaMethods, isCurrentScope);
   const [enrolling, setEnrolling] = React.useState(false);
-
-  const reload = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await listMfaMethods();
-      setMethods(result?.methods ?? []);
-      setRequired(result?.required ?? false);
-    } catch (err) {
-      reportAuthUiError('listMfaMethods', err);
-      setError(getAuthDisplayMessage(err, 'Failed to load MFA settings'));
-    } finally {
-      setLoading(false);
-    }
-  }, [listMfaMethods]);
-
-  React.useEffect(() => {
-    void reload();
-  }, [reload]);
-
   const activeMethods = methods.filter((method) => method.status === 'active');
-  const mfaConfig = authConfig.config?.mfa;
-  const availableMethods = mfaConfig?.availableMethods.length
-    ? mfaConfig.availableMethods
-    : mfaConfig?.methods ?? ['totp', 'email'];
-
-  if (enrolling && authConfig.config) {
+  const canEnroll = capability.canEnroll && !loading && !error && activeMethods.length === 0;
+  if (enrolling && canEnroll) {
     return (
       <MFAEnrollmentForm
-        methods={availableMethods}
-        allowUserChoice={mfaConfig?.allowUserChoice ?? true}
+        methods={capability.methods}
+        allowUserChoice={capability.config.allowUserChoice}
         onSuccess={async () => {
+          if (!isCurrentScope()) return;
           setEnrolling(false);
           await reload();
         }}
-        onBack={() => setEnrolling(false)}
+        onBack={() => { if (isCurrentScope()) setEnrolling(false); }}
         className={className}
       />
     );
@@ -84,12 +95,6 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
         <AuthHeader
           title="Two-factor authentication"
           description="Protect this account with an email code or authenticator app."
-        />
-
-        <AuthConfigLoadState
-          state={authConfig}
-          loadingMessage="Loading MFA policy…"
-          unavailableMessage="MFA policy could not be loaded."
         />
 
         {loading ? (
@@ -130,14 +135,17 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
               </div>
             ))}
           </div>
-        ) : authConfig.config ? (
+        ) : (
           <div className="rounded-md border border-border/75 bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
-            MFA is not enabled for this account.
+            Two-factor authentication is not set up for this account.
           </div>
-        ) : null}
+        )}
 
-        {mfaConfig?.enabled && mfaConfig.ready && activeMethods.length === 0 && (
-          <Button type="button" className="w-full" onClick={() => setEnrolling(true)}>
+        {!capability.canEnroll && !loading && !error && activeMethods.length === 0 && (
+          <p role="status" className="text-sm text-muted-foreground">Two-factor setup is currently unavailable. Contact an administrator.</p>
+        )}
+        {canEnroll && (
+          <Button type="button" className="w-full" onClick={() => { if (isCurrentScope()) setEnrolling(true); }}>
             Set up two-factor
           </Button>
         )}

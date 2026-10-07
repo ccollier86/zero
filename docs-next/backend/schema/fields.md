@@ -83,6 +83,7 @@ are in [configuration](./configuration.md#field-options).
 | --- | --- | --- |
 | `text(options?)` | string; minLength/maxLength when set; required minimum defaults to 1; omitted optional becomes `''` or explicit default | TEXT; optional explicit string default emitted as a safely quoted SQL literal |
 | `email(options?)` | email string; optional `''`/null; omitted becomes `''` or explicit default | TEXT |
+| `phone(options?)` — 2.5.0 working update | canonical E.164 string; possible-number validation by default, stricter valid-number option; optional `''`/null; omitted becomes `''` or explicit default | TEXT; required adds NOT NULL; no implicit national-number conversion |
 | `url(options?)` | URL string; optional `''`/null; omitted becomes `''` or explicit default | TEXT |
 | `password(options?)` | string, minLength defaults to 8, optional maxLength; optional `''`/null; omitted becomes `''` or explicit default | TEXT; tableVisible is forced false, not encryption or hashing |
 | `number(options?)` | number with optional integer/min/max; optional null; omission uses explicit default or valid implicit 0, otherwise stays undefined | REAL, or INTEGER with integer=true; optional explicit numeric SQL default |
@@ -106,6 +107,43 @@ multiSelect/tags/dateRange is enforced by the logical validator even though its
 generated SQL type is TEXT without NOT NULL. Only use a raw SQL shape when its
 validation boundary is understood; [server validation](./validation.md) explains
 where Zero retains and uses the logical validator.
+
+## Phone Fields: 2.5.0 Working Update
+
+This additive contract is source-observed in the working profile-settings branch
+based on `39c0ed1de0501986810a2b99366f484e66ba80dc`. The front matter retains
+the earlier full-page audit; this addition does not claim package qualification.
+
+```ts
+import { defineTable, field } from '@zero/framework/schema';
+
+export const contacts = defineTable('contacts', {
+  phone: field.phone({
+    label: 'Contact phone', required: true,
+    defaultCountry: 'US', validation: 'possible',
+  }),
+});
+```
+
+`phone` uses the same logical validator in forms and the server mutation
+boundary. Nonblank values must already be canonical international strings such
+as `+12135550123`: at most 15 ASCII digits after `+`, a supported calling code
+and a possible number length. National numbers, formatted strings, extensions,
+incomplete drafts and invalid nonblank values are rejected, not silently cleared
+or converted using a default country.
+
+`validation: 'valid'` additionally checks the current numbering-plan patterns.
+Neither mode verifies ownership, deliverability, SMS support or consent to
+contact a number. `defaultCountry` defaults to `US` and only guides the generated
+[PhoneInput](../../frontend/components/phone-input.md). It does not change server
+normalization, SQL columns or Fabric realm schema identity.
+
+Optional omission defaults to `''` or the explicitly admitted `defaultValue`;
+blank and null remain valid absence. Required fields reject omission, blank and
+null even when a valid default is configured. Invalid defaults use the existing
+value-free `SCHEMA_DEFAULT_INVALID` error. Phone options and generated rendering
+are detailed in [configuration](./configuration.md#phone-options-250-working-update)
+and [UI metadata](./ui-metadata.md#phone-presentation-250-working-update).
 
 ## Choices And Literal Types
 

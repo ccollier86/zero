@@ -89,6 +89,32 @@ The panel loads current methods/required status, shows active method labels,
 reports load failures with retry and offers enrollment based on public policy.
 Accepted enrollment reloads status.
 
+### Capability Correction: 2.5.0 Working Update
+
+This focused UI correction is source-observed in the working profile-settings
+branch based on `39c0ed1de0501986810a2b99366f484e66ba80dc`. It does not
+replace the earlier full-page review identity or claim installed-artifact
+qualification.
+
+When the current ready auth configuration explicitly disables MFA, the panel
+renders nothing and makes no method-list request. Unknown/loading policy is
+shown as an explicit loading state; failed or missing MFA policy is shown as
+unavailable with retry. A previously cached configuration retained during refresh
+does not authorize enrollment while the new policy request is pending.
+
+An enabled panel loads status only for the current authenticated, readable
+authorization scope. Enrollment requires a successfully loaded status, no active
+method, `mfa.enabled: true`, `mfa.ready: true` and at least one method present in
+both `methods` and `availableMethods`. Empty availability does not fall back to
+email/TOTP or offer unusable setup.
+
+Configuration/capability or account/organization/authorization-boundary changes
+retire local enrollment and method-list state. Superseded or late responses,
+including failures, cannot repopulate a retired panel or dispatch a retained
+retry. Backend validation, permission checks and MFA proof lifecycle remain
+authoritative; hiding this UI does not change server policy or disable enrolled
+methods.
+
 It is a current-account settings UI, not a recovery-code manager, remembered
 device manager, passkey manager or administrator MFA-reset screen. Those are
 distinct capabilities; reserved unsupported options must not be documented as

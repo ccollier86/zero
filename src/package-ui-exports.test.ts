@@ -17,6 +17,14 @@ describe('public UI export boundary', () => {
       .toEndWith('/src/components/json-editor/index.ts');
   });
 
+  test('resolves only the focused phone facade, not its private modules or tests', () => {
+    expect(Bun.resolveSync('@zero/framework/components/phone-input', frameworkRoot))
+      .toEndWith('/src/components/phone-input/index.ts');
+    for (const name of ['phone-input', 'phone-input-country', 'phone-input.browser-fixture', 'phone-input.test']) {
+      expect(() => Bun.resolveSync(`@zero/framework/components/phone-input/${name}`, frameworkRoot)).toThrow();
+    }
+  });
+
   test('rejects every existing UI test or spec module without executing it', async () => {
     const modules = Array.from(new Bun.Glob('*.{test,spec}.tsx').scanSync({
       cwd: `${frameworkRoot}/src/components/ui`,

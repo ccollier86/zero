@@ -220,6 +220,20 @@ registry/main release is still separate.
 | `@zero/plugin-docs/react` | [Reader composition](../../../../packages/docs/src/ui/index.ts) | [Reader](../../../plugins/docs/reader.md) |
 | `@zero/plugin-docs/styles.css` | [Docs roles/layout](../../../../packages/docs/src/ui/docs.css) | [Reader](../../../plugins/docs/reader.md) |
 
+## Phone Input Working-Source Path
+
+The dirty 2.5.0 source at `39c0ed1de0501986810a2b99366f484e66ba80dc` adds
+`@zero/framework/components/phone-input` with `PhoneInput`, `PhoneInputProps`
+and `PhoneInputSize`, also re-exported from root/React. `/schema` adds the
+`PhoneFieldOptions` type and `isPhoneNumber`/`isPhoneCountry` helpers with
+`PhoneCountry`/`PhoneNumberValidation`; root/React also export those helpers
+and helper types. `field.phone` is an additive method on the existing namespace,
+not a new SQL type or Guardian property API. Shared `InputProps` adds
+`wrapperClassName` and retains native `readOnly`. The
+[phone guide](../../../frontend/components/phone-input.md) owns the new component;
+[schema](../../../backend/schema/fields.md) owns admitted field values. These
+records do not assert that the published 2.5.0 archive contains these changes.
+
 ## Review Gates
 
 - [ ] Every non-test target assigned to an inventory and canonical feature home.

@@ -192,6 +192,41 @@ or executed during this audit.
 
 ## Evidence And Verification
 
+### Adaptive Account Capability Correction: 2026-10-06
+
+This is a narrow supplemental dirty-source observation on top of
+`39c0ed1de0501986810a2b99366f484e66ba80dc` (Zero 2.5.0), not a change to
+the historical audit or a published profile-settings feature. The
+[account inventory](../../../frontend/guardian/account-actions.md#current-profile-composition-and-capability-boundaries)
+distinguishes actual identity/security/property/preference contracts from
+missing self-edit/managed-avatar capabilities. No new account backend or
+profile organism is claimed.
+
+The existing MFAManagementPanel unconditionally loaded methods and remained
+visible with MFA disabled, and guessed email/TOTP choices when actual
+availability was empty. Its [capability correction](../../../frontend/guardian/mfa-controls.md#capability-correction-250-working-update)
+now hides a definitively disabled panel without a request, treats unknown/
+refresh/error states explicitly, and admits enrollment only for current ready
+configured-and-available methods after accepted method status. It reuses the
+monotonic authorization boundary fence and standard auth UI error/observability
+helpers. Local request/enrollment state retires across policy, account and
+organization changes; no server policy or enrollment service was rewritten.
+
+Focused policy/lifecycle/SSR/config/enrollment regressions passed **13 tests /
+52 assertions**. Independent policy/request review passed **8 / 36**. Actual
+isolated Chromium passed **6 / 36**, covering disabled no-request behavior,
+loading/config failures/missing capability, method failures/retry, availability,
+policy refresh, account replacement, logout and delayed list/setup completions.
+One initial browser timeout was a synthetic fixture leaving authorization
+`ready` after clearing its user; fixing the fixture to match the SDK's
+`unauthenticated` logout model resolved it without a production workaround.
+
+The completed integrated production TypeScript check was clean. A later redundant
+full compiler run was interrupted and is not counted as a pass; final browser
+fixture bundling and acceptance passed separately. No app, credentials, provider,
+live database or Pantheon file was used. These working checks do not assert a
+released artifact or a full Guardian security audit.
+
 ### Authorized Configuration Truthfulness Corrections
 
 The original source baseline remains pinned above. On 2026-10-05, independent

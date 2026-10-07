@@ -1,4 +1,7 @@
 export { field } from './field-types';
+export type { PhoneFieldOptions } from './field-phone';
+export { isPhoneNumber, isPhoneCountry } from '../lib/phone-number';
+export type { PhoneCountry, PhoneNumberValidation } from '../lib/phone-number';
 export { SchemaConfigurationError } from './schema-configuration-error';
 export type {
   FieldType,
