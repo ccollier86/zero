@@ -712,7 +712,7 @@ The implemented client recovery path is refresh-token based:
 
 1. Access tokens are short-lived and stored only in memory.
 2. Refresh tokens are opaque, stored hashed in `_refresh_tokens`, persisted by the browser SDK, and rotated on every refresh.
-3. A signed HttpOnly page JWT is bound to the same refresh row and authenticates direct safe page requests during SSR.
+3. A versioned signed HttpOnly page JWT binds to the durable web-session parent and authenticates direct safe page requests during SSR. Normal refresh-child rotation leaves this page proof valid; live parent/security revocation still rejects it.
 4. Browser startup exchanges the stored refresh token for a fresh access token,
    then loads `/auth/me`. `useAuth().isRestoring` distinguishes only this
    persisted-session recovery from other auth loading states.

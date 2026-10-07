@@ -374,7 +374,8 @@ namespace remains stable across a restart of the same SYSTEM database; older
 host-wide cookies migrate only after local session ownership is verified.
 See the [current page-session contract](../../docs-next/backend/guardian/sessions.md#page-cookie-behavior).
 It contains no raw refresh token and is bound to
-the same revocable `_refresh_tokens` row. This lets a direct or refreshed
+the durable revocable web-session parent with explicit security generations.
+Normal refresh-child rotation does not retire that page proof. This lets a direct or refreshed
 `GET`/`HEAD` page request pass the server route guard before browser JavaScript
 runs. Ordinary auth APIs, `route.ts` handlers, mutations, server plugins and
 WebSocket sync remain Bearer-only. Native consent POST separately uses the

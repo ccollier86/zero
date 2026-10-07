@@ -63,6 +63,23 @@ services; an updater does not modify application settings or migrate live data.
 - Table page-size changes retain the logical result position for local and
   offset/page sources. Opaque cursor sources reset deliberately instead of
   fabricating a cursor; query/authorization resets remain independent.
+- Added tokenized live DataTable motion, stable-identity row transitions,
+  held new-row disclosure, animated result/page counters and loading/page
+  presentation without intermediate empty frames. Reduced motion and scoped
+  server-query cancellation retain their existing safety contracts.
+- Corrected false SSR/browser session disagreement during live authorization
+  rechecks. Startup rotation and identity hydration share one credential owner;
+  definitively rejected authority clears its page session with an acknowledged
+  cleanup receipt rather than relying on a page guard to infer cleanup.
+- Page credentials now bind to the durable web-session parent and mandatory
+  generations/expiry, so ordinary refresh-child rotation does not invalidate
+  safe page navigation. Consumed legacy children remain rejected. Read-only
+  rejected documents cannot erase a newer valid cookie with a delayed response.
+- Browser SDK cookie-producing authentication exchanges own HTTP, body parsing
+  and credential publication under the existing cross-tab lock. Stale queued
+  account intents dispatch no request; explicit newer same-client sign-in
+  retires uncommitted anonymous work. Password refresh retry avoids nested
+  locks, and one-time credential outcomes are never automatically replayed.
 - Data Studio inline cells retire queued focus/navigation when a newer edit
   begins, so an earlier acknowledged save cannot move focus out of the new draft.
 - Added exact SYSTEM migrations039–043, generation-bound feature policy,
@@ -84,7 +101,7 @@ requested explicitly; default identity scopes do not acquire writer powers.
 Use the [upgrade guide](./docs-next/guides/upgrade.md#opting-into-adaptive-profiles-after-provisioning)
 and [profile guide](./docs-next/frontend/guardian/profile-settings.md).
 Tenant-custom role definitions, direct individual grants, distributed presence,
-global theme/modal redesign and animated reactive table updates remain separate
+and global theme/modal redesign remain separate
 future work. This is the source/local channel, not public npm publication.
 
 ## 2.5.0 - 2026-10-06

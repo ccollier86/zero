@@ -3,20 +3,20 @@ id: zero.frontend.router.authentication
 type: reference
 audience: [developer, agent]
 owner: frontend-router
-status: draft
+status: verified
 visibility: internal
 system: frontend-router
 feature: authentication
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Inherited Route Access And Public Entrances
@@ -61,7 +61,8 @@ cookie/fabric selectors in custom browser guards.
 
 ## Verification
 
-Exercise public bootstrap/login, authenticated refresh, rejected cookie cleanup,
+Exercise public bootstrap/login, authenticated refresh, rejected-cookie admission
+without an unsafe document-response deletion,
 layout strengthening, API Bearer-only behavior, app-only and mixed admin roles,
 scope replacement and no stale cached loader response. Focused regression evidence
 does not replace exact-package multi-mode qualification.

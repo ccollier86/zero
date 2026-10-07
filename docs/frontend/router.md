@@ -661,7 +661,7 @@ briefly rendering login before refresh and `/auth/me` finish.
 For a direct navigation or browser refresh, the server restores page identity
 from Zero's signed HttpOnly page-session cookie before it evaluates these
 guards. That credential is accepted only for matched `GET`/`HEAD` pages and is
-validated against its live refresh-session row and current user. It is never
+validated against its live durable parent session, generations and current user. It is never
 used for `route.ts` APIs, unsafe methods, app server plugins, or WebSocket sync;
 those continue to require `Authorization: Bearer ...`. An explicit invalid
 Authorization header does not fall back to the cookie.
@@ -679,6 +679,14 @@ the recovery operation, not just another blind reload. Network/temporary server
 failures remain retryable; definitively rejected credentials settle sign-out
 and reach the normal login route. Do not remove the identity, role, tenant or
 revision comparisons to make a stuck page render.
+
+Ordinary post-purge authorization loading is not session disagreement: it masks
+unsafe data and rechecks access without rotating credentials. A same-identity
+authority revision change reloads stale loader data directly. First automatic
+cookie/session repair uses a neutral status; only failed/persistent recovery
+shows the explicit error panel. Rejected safe document responses cannot delete
+cookies by name, because a late response could erase newer proof. See the
+[current scope-transition contract](../../docs-next/frontend/runtime/scope-transitions.md).
 
 Because the cookie is intentionally limited to safe methods, page loaders and
 page middleware reached by `GET`/`HEAD` must remain read-only. Put state changes

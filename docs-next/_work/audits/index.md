@@ -18,6 +18,9 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Page/session refresh regression](./session-refresh-regression.md): separate
+  auth investigation, reproduced recheck/startup/cookie races and focused
+  correction/qualification evidence following the DataTable merge.
 - [2.4.2 array/trigger update](./trigger-production-update.md): scoped correction,
   independent review, synthetic regression and package-consumer evidence.
 

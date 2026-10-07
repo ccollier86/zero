@@ -13,7 +13,7 @@ modes: [browser, SSR, Guardian single, Guardian multi, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
   snapshot: clean
   date: "2026-10-07"
   evidence_level: implementation-verified
@@ -55,6 +55,25 @@ If a page is stuck, distinguish actual restoration, unresolved authority, data
 validation and an SSR/browser boundary mismatch. Do not suppress the guard or
 carry old rows into an apparently fresh session as a workaround.
 
+## Permission Rechecks Are Not Session Failures
+
+Live authorization hints can refresh on a timer, focus, visibility or network
+reconnection. After a server-declared read-authority purge, Zero masks protected
+data until replacement authority is ready. That temporary loading state does
+not, by itself, request credential recovery, rotate a refresh token or reload
+the document. An unchanged authority projection resumes the existing page.
+
+A failed recheck after a purge keeps unsafe data hidden and offers a bounded
+access-recheck retry. It does not label a network or policy-hint failure as
+proof that the session expired. Definite credential rejection still retires
+the session through the normal SDK lifecycle.
+
+When live authority genuinely changes, old SSR loader data must not be reused.
+For matching account, role and organization identity with a changed authority
+revision, Zero reloads the stale document without unnecessarily rotating
+credentials. Identity/page-cookie disagreement uses the separate recovery flow
+below. Neither path skips the strict revision comparison.
+
 ## Bounded Recovery
 
 A generated SSR payload missing a trustworthy authorization boundary is not
@@ -74,6 +93,11 @@ network/temporary server failures keep credentials available for retry, while
 definite rejection settles a clean signed-out state. Never edit injected
 globals or weaken identity/role/tenant/revision comparison to assert a match.
 
+The first automatic repair displays a neutral accessible transition status,
+not the `Session refresh required` error panel. That explicit panel is reserved
+for failed or persistent recovery. A healthy hard refresh or unchanged permission
+recheck should not present an error and then immediately sign the user back in.
+
 Credential-lock admission and each recovery network/body read have a bounded
 15-second deadline. Ordinary refresh and externally replaced browser sessions
 use the same bounded transport: a stalled refresh must not hold the credential
@@ -92,6 +116,13 @@ cookies is described in [Guardian sessions](../../backend/guardian/sessions.md#p
 Cookie namespace isolation is not a diagnosis of every deployed recovery
 incident: inspect whether proof was rejected, a request failed temporarily, or
 an SSR payload remains stale before attributing the cause.
+
+The current page proof binds to the durable session rather than the rotating
+refresh child. A late rejected read-only document cannot delete a newer cookie
+by name. Startup rotation and `/auth/me` hydration also share one browser lock,
+preventing a legal same-family rotation in another tab from interrupting that
+identity lookup. These are framework-owned corrections; consumers should not
+disable scope fences or clear cookies manually to obtain normal navigation.
 
 This page-session repair is separate from `reconcileAuthSession()`, which
 retries the local data barrier after credentials already committed. Do not

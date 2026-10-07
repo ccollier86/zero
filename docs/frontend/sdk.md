@@ -1589,7 +1589,8 @@ await client.refresh();
 2. `POST /auth/refresh` with the refresh token
 3. Server verifies: hash matches, not expired, not revoked
 4. Server **rotates** — revokes old refresh token, issues new access + refresh pair
-5. Server replaces the page cookie with a credential bound to the new refresh row
+5. Server renews the page cookie bound to the same durable parent session; ordinary
+   one-use child rotation does not invalidate the preceding page proof
 6. SDK stores the new access token in memory and the new refresh token in `localStorage`
 7. The top-level `client.refresh()` resolves after the attempt. If refresh is
    definitively rejected (`401`/`403`), the SDK clears the local session instead
@@ -1993,7 +1994,7 @@ continuation without probing token fields manually.
 |-------|---------|-----|
 | Access token | In-memory only (JS variable) | Short-lived (15min by default). It is not persisted by Zero, but JavaScript executing through XSS can still read application memory or make authenticated requests. |
 | Refresh token | URL-scoped, revisioned record in `localStorage` | Long-lived (7d by default), survives page refresh, and is serialized across tabs. Server stores only the SHA-256 hash. XSS can steal this browser copy, so CSP, output encoding, dependency hygiene, and refresh rotation/revocation remain essential. |
-| Page session | Signed JWT in a host-only HttpOnly `SameSite=Lax` cookie | Lets SSR authenticate direct safe page navigation before JavaScript runs; validation is bound to the live refresh row and current user. |
+| Page session | Versioned signed JWT in a host-only HttpOnly `SameSite=Lax` cookie | Lets SSR authenticate direct safe page navigation before JavaScript runs; validation is bound to the durable parent, live generations and current user, not a consumed refresh child. |
 
 The credentials intentionally have separate jobs. The page cookie is accepted
 only for matched `GET`/`HEAD` pages. APIs, mutations, `route.ts` handlers, and

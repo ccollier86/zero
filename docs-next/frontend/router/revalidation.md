@@ -3,20 +3,20 @@ id: zero.frontend.router.revalidation
 type: reference
 audience: [developer, agent]
 owner: frontend-router
-status: draft
+status: verified
 visibility: internal
 system: frontend-router
 feature: revalidation
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Deliberate Anonymous Route Caching
@@ -38,7 +38,9 @@ cannot weaken a protected inherited requirement. Omitted/zero revalidate means
 no cache. Cache keys include origin, pathname and search, not only a route pattern.
 
 Cache admission excludes requests with Authorization or Cookie headers, live page
-identity or a rejected page-session cleanup header. Access/middleware is evaluated
+identity or a presented ambient page credential, even when invalid. A rejected
+safe document does not delete cookies by name; that restriction must not turn it
+into shared public content. Access/middleware is evaluated
 before cache use. Authenticated/rejected-session responses remain private;
 a cached anonymous shell cannot replace a user's scoped page.
 Only successful200 render responses enter the cache. A fresh hit sends X-Cache=HIT

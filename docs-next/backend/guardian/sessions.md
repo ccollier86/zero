@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
   snapshot: clean
   date: "2026-10-07"
   evidence_level: implementation-verified
@@ -80,7 +80,12 @@ File-router page-cookie admission is limited to GET and HEAD. An explicit
 `Authorization` header takes precedence; invalid explicit credentials never
 silently fall back to a valid ambient cookie. A present application cookie is
 authoritative even if empty or malformed; it never falls back to another
-credential. An invalid application cookie on a safe page request is cleared.
+credential. An invalid application cookie on a safe page request is rejected,
+but that read-only response does not delete the cookie. A browser cannot
+conditionally apply `Set-Cookie` only if its value still matches the request:
+a delayed rejected document could otherwise erase a newer login or refresh.
+Explicit Guardian logout and authentication-completion operations own cookie
+replacement and clearing.
 Unsafe methods and API routes do not gain cookie-based authentication through
 this page mechanism. Native consent POST separately uses the same validated
 cookie resolver under its existing native origin/consent protections; it is
@@ -101,6 +106,29 @@ At a reverse proxy, preserve the request's HTTPS scheme correctly and configure
 trusted ingress. Cookie security does not make untrusted forwarded headers
 into an authentication authority.
 
+### Stable Page Proof During Refresh
+
+New page credentials are explicitly versioned and bind to the durable web
+session, its generation and the user's security generation. A normal refresh
+rotates the one-use refresh child without retiring that parent. An already
+issued page cookie therefore remains usable during concurrent page navigation
+and token rotation, up to its own signed expiry and the current parent's expiry.
+Refresh may replace the cookie to renew its lifetime; it must not revoke the
+same parent merely because the cookie token changed.
+
+Every page request still resolves live account, session, membership, tenant and
+MFA authority. Parent revocation, tenant switching, security-generation changes
+and expiry invalidate the page proof. It is not a stateless permission grant
+and remains unacceptable as API bearer authentication.
+
+Older child-bound page credentials retain their exact live-refresh-row checks.
+The narrow legacy format may omit its historical user-generation claim only
+while that exact child remains live; security changes retire the row. New
+parent proofs require both generations, and unknown versions cannot fall back
+to legacy admission. Normal authentication completion issues the new format;
+applications do not need a configuration change, database migration or custom
+cookie-repair implementation.
+
 ## Rotate And Log Out
 
 `POST /auth/refresh` accepts `{ refreshToken }` and returns a new access/refresh
@@ -109,6 +137,15 @@ once. Replay of a revoked refresh token invalidates the user's refresh/session
 families and bumps its security generation, rather than just rejecting that
 single token. Concurrent rotation is not a supported way to obtain two independent
 replacement children.
+
+In the supported browser SDK, cookie-changing credential exchanges share a
+per-server cross-tab critical section covering HTTP, response consumption and
+credential commit. Locking only the result commit is insufficient: a new login
+response could otherwise set a cookie while an older logout response is still
+pending. Operation-owned completion runs inside the admitted lock without
+reacquiring it. Queued intents from a retired account/family fail before HTTP;
+retry only as a fresh current-scope intent. These guarantees do not apply to
+custom concurrent requests which bypass the supported SDK.
 
 `POST /auth/logout` accepts an optional `refreshToken`, revokes that credential's
 family when supplied, revokes a valid page-session family from the request,
@@ -139,6 +176,12 @@ authority really changed, recovery must settle to a usable signed-out state,
 not require manual cookie deletion. See
 [bounded browser recovery](../../frontend/runtime/scope-transitions.md#bounded-recovery)
 for the SSR/browser reconciliation flow and its explicit Retry/Sign out paths.
+
+Startup restoration serializes refresh rotation and current-user hydration in
+one browser credential-lock operation. A second tab cannot legitimately rotate
+the same family in the gap before that identity lookup is committed. Stale
+results are still rejected after logout, family replacement or disposal; the
+fix does not weaken credential-revision checks.
 
 A tenant/user/authority change retires rows, selection, queued edits and stale
 request completions. Do not copy protected data into an unscoped application

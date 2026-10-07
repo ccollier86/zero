@@ -21,11 +21,12 @@ Four credential types with distinct verification and transport boundaries:
 | **Access** | JWT (ES256, issuer `auth`) | Short (default 15m) | Browser memory | Signature plus live user and durable parent-session authority |
 | **Auth transition** | JWT (ES256, issuer `auth-transition`) | Short | Browser memory | Signature, purpose, and current-user checks in account/MFA flows |
 | **Refresh** | Opaque UUID | Long (default 7d) | Raw value in browser `localStorage`; SHA-256 hash in `_refresh_tokens` | Stateful DB lookup, expiry, revocation, and rotation |
-| **Page session** | JWT (ES256, issuer `auth-page-session`) | No later than backing refresh row | Host-only HttpOnly cookie | Signature plus live refresh row and current user; safe SSR pages only |
+| **Page session** | JWT (ES256, issuer `auth-page-session`) | Signed expiry bounded by issuance-time refresh/parent authority | Host-only HttpOnly cookie | Signature plus live durable parent, generations and current user; safe SSR pages only |
 
 Access and transition JWTs are explicit credentials. Refresh tokens are random
-strings whose hashes map to database rows. Page JWTs contain only `sub` and the
-backing refresh-session ID (`sid`); they never expose the raw refresh token.
+strings whose hashes map to database rows. Versioned page JWTs identify the
+durable parent (`sid`) and user (`sub`), plus session/security generations;
+they never expose the raw refresh token or grant permanent role authority.
 
 ## ECDSA P-256 Keypair
 
@@ -237,35 +238,42 @@ Official MFA paths always supply the exact generation. Profile signing without
 When an auth flow produces a complete access/refresh pair, Zero signs a
 dedicated page JWT and sends it only as the HttpOnly
 application-owned cookie named by `TokenService.pageSessionCookieName`. Its
-expiration matches the backing refresh row. The persisted application ID
+expiration is bounded by the issuance-time refresh child and parent. The persisted application ID
 provides the namespace across restarts; no app should hard-code a deletion
 header for the older host-wide cookie name. Validated legacy migration and
 canonical-cookie precedence are documented in the
 [current session guide](../../docs-next/backend/guardian/sessions.md#page-cookie-behavior).
 
 ```ts
+// Internal claim outline, not an app-owned cookie-signing recipe.
 new SignJWT({
-  sid: refreshRecord.tokenId,
+  pageSessionVersion: 2,
+  sid: parent.sessionId,
+  sessionGeneration: parent.generation,
   authGeneration: currentAuthGeneration,
 })
   .setSubject(user.userId)
   .setIssuer('auth-page-session')
-  .setExpirationTime(Math.floor(refreshRecord.expiresAt / 1000));
+  .setExpirationTime(Math.floor(Math.min(refreshRecord.expiresAt, parent.expiresAt) / 1000));
 ```
 
-Resolution verifies the signature and issuer, loads `_refresh_tokens` by
-`sid`, checks user ownership, expiry, and revocation, then follows
-`_refresh_tokens.session_id` to the same durable parent used by browser access.
-The parent, current user, and any tenant/membership authority are revalidated.
+Resolution verifies signature, issuer, signed expiry and supported proof version,
+then resolves the exact durable web parent with its session and user generations.
+The parent, current user, and any tenant/membership/MFA authority are revalidated.
 Current role and email come from the database, not stale cookie claims.
+Legacy child-bound proofs remain subject to their exact live refresh row;
+an unknown version or consumed child cannot fall back to parent admission.
 
 This JWT is intentionally rejected by access-token verification. The file
 router accepts it only for actual `GET`/`HEAD` pages when no Authorization
 header is present. Ordinary APIs, mutations, server plugins and WebSocket sync
 remain Bearer-only; native consent POST is a separate protected ceremony using
-the same app-validated page resolver. Rotation and session revocation invalidate the page JWT through
-its backing refresh row; authenticated HTML is private/no-store and excluded
-from ISR.
+the same app-validated page resolver. Normal child rotation keeps the same parent
+and does not invalidate its page JWT. Logout, parent/security revocation, scope
+replacement and expiry still invalidate it. Rejected safe documents do not delete
+cookies by name: an out-of-order response could erase a newer login. Explicit auth
+operations own cookie mutation; credential-bearing HTML stays private/no-store
+and excluded from ISR. See the [current session guide](../../docs-next/backend/guardian/sessions.md).
 
 ## Refresh Token
 

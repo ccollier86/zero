@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
   snapshot: clean
   date: "2026-10-07"
   evidence_level: implementation-verified
@@ -99,6 +99,34 @@ AppProvider also clears page-cookie state through normal logout after a
 signed-out explicit recovery. Do not treat the result alone as confirmation
 that a remote cookie was deleted while its server was unavailable.
 
+Constructor restoration holds the same browser credential lock through both
+refresh rotation and current-user hydration. Peer tabs wait for that operation
+instead of advancing the durable credential revision while its `/auth/me`
+response is pending. Each admitted request/body wait remains bounded; logout,
+family replacement, disposal and stale-result fences still take precedence.
+Do not create another AuthClient merely to work around a pending restoration.
+
+Automatic authorization reads also bound response headers and body consumption
+to 15 seconds. A stalled recheck reaches a safe retry state without dropping
+proof; `401`/`403` denial is classified from response status without waiting on
+an optional error body. The lower-level `refreshAuthorization(signal?)` accepts
+an optional caller `AbortSignal`. Its cancellation is owned by that request and
+cannot revoke a newer or already accepted projection. The normal SDK facade
+keeps its existing API.
+
+Credential-issuing account/action/MFA/profile/tenant operations coordinate the
+entire cookie-changing exchange, not only the returned-token write. A bounded
+shared lock is acquired before HTTP; an operation-owned completion capability
+keeps result parsing and publication in that same critical section. A queued
+intent cannot survive another account/family replacement. Callers must start
+a fresh action in the current scope, not automatically replay an invitation,
+email verification, reset or other one-time credential after an unknown outcome.
+
+A new explicit sign-in in the same client retires an older uncommitted anonymous
+authentication exchange. Passive profile-continuation inspection does not
+supersede sign-in. Independent tabs still use the shared cookie-writer lock;
+an operation-local intent fence is not permission to replace another account.
+
 An externally replaced session clears the previous in-memory user/tenant before
 hydrating its replacement. Failure cannot leave the old account published under
 the new proof or keep `isLoading` true forever. A temporary failure retains the
@@ -111,7 +139,8 @@ Live Sync refresh outages also retain proof while clearing and read-fencing
 cached rows. Definite rejection still signs out. This correction has focused
 SDK and real-browser evidence in the
 [profile-upgrade qualification ledger](../../_work/audits/guardian-profile-qualification.md);
-it is not yet a published upgrade.
+the focused page/session corrections are tracked separately in the
+[session regression ledger](../../_work/audits/session-refresh-regression.md).
 
 `expireSession()` locally retires the current session; it is not the same as
 server revocation. Do not substitute it for logout/revoke operations.

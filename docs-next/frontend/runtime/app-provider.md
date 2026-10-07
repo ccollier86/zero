@@ -3,20 +3,20 @@ id: zero.frontend.runtime.app-provider
 type: how-to
 audience: [developer, agent]
 owner: frontend-runtime
-status: draft
+status: verified
 visibility: internal
 system: frontend-runtime
 feature: app-provider
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Compose An Application With AppProvider
@@ -103,6 +103,14 @@ boundary and reloaded when needed, preventing loader data from an old scope bein
 reused as if it belonged to the new organization. See [scope transitions](./scope-transitions.md)
 and [scope boundary](./authorization-scope-boundary.md) for custom state/callbacks.
 
+Temporary authorization-hint loading is not a request to repair the session.
+After a read-authority purge, the guard keeps unsafe content masked while the
+SDK rechecks access. An unchanged projection resumes normally; stale same-user
+loader authority reloads directly without unnecessary credential rotation.
+First automatic page repair uses a neutral status, with an explicit recovery
+alert only for failed or persistent disagreement. These behaviors require no
+new application prop; use the normal packaged provider.
+
 ## Verification And Troubleshooting
 
 Check an SSR page renders without a socket, hydration reads the intended table
@@ -116,9 +124,11 @@ fails, align the shared declaration with the running server instead of rewriting
 server-owned browser metadata. Render failures use the [error boundary](./error-boundaries.md),
 while rejected async operations use their SDK/component error contract.
 
-Source inspection and focused provider/scope tests inform this draft. Installed
-package/hydration/production bundle qualification remains distinct; a clean
-TypeScript build alone does not establish every Guardian/Fabric profile.
+Source inspection and focused provider/scope/browser tests establish these
+contracts. Exact installed-package and deployment qualification remain distinct;
+a clean TypeScript build alone does not establish every Guardian/Fabric profile.
+See the [session regression ledger](../../_work/audits/session-refresh-regression.md)
+for the focused corrections and their evidence boundaries.
 
 ## Related Guides And Next Steps
 
