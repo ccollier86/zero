@@ -505,7 +505,14 @@ describe('Signature agreement and clause initials prefabs', () => {
       expect(inputs.every((input) => input.value.startsWith('data:image/svg+xml;charset=utf-8,'))).toBe(true);
       await page.locator('[data-slot="clause-initials-item"]').first().getByRole('button', { name: 'Clear signature', exact: true }).click();
       expect(await counter.textContent()).toBe('1 of 2 initialed');
-      await page.evaluate(() => window.__signatureHarness.keepFirstClause()); expect(await counter.textContent()).toBe('0 of 1 initialed');
+      await page.evaluate(() => window.__signatureHarness.keepFirstClause());
+      // Updating the controlled clause list schedules a React render; evaluating
+      // the fixture callback does not itself acknowledge that render.
+      await page.waitForFunction(() => document.querySelector('[data-slot="clause-initials-completion"]')?.textContent === '0 of 1 initialed');
+      expect(await counter.textContent()).toBe('0 of 1 initialed');
+      expect(await page.locator('[data-slot="clause-initials-item"]').count()).toBe(1);
+      expect(await page.locator('input[name^="initials."]').evaluateAll((elements) => elements.map((element) => (element as HTMLInputElement).name)))
+        .toEqual(['initials.confidentiality']);
     } finally { await page.close(); }
   }, TIMEOUT);
 

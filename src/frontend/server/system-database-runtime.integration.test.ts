@@ -10,6 +10,8 @@ import { createPlatformSQLiteService } from '../../persistence';
 import type { PlatformSQLiteService } from '../../persistence';
 import { databaseAuthorityCommitFencePath } from '../../databases';
 import { migrations } from '../../migrations';
+import type { Migration } from '../../migrations';
+import { runSynchronousMigrationHandler } from '../../migrations/migration-handler-boundary';
 import { createApp } from './app-factory';
 import { WORKFLOW_SERVER_TABLE_NAMES } from '../../workflows/types';
 
@@ -102,6 +104,29 @@ describe('createApp system database runtime', () => {
       systemSqlite.close();
     }
   }, 20_000);
+
+  test('historical schema fixtures apply each migration atomically without a partial failed prefix', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zero-system-prefix-atomic-'));
+    roots.push(root);
+    const path = join(root, 'system.db');
+    const registry: Migration[] = [
+      { version: '001', description: 'Synthetic first prefix',
+        up: (database) => { database.exec('CREATE TABLE fixture_first (id TEXT PRIMARY KEY)'); },
+        down: (database) => { database.exec('DROP TABLE fixture_first'); } },
+      { version: '002', description: 'Synthetic rejected prefix',
+        up: (database) => {
+          database.exec('CREATE TABLE fixture_rejected (id TEXT PRIMARY KEY)');
+          throw new Error('Synthetic prefix rejected');
+        },
+        down: (database) => { database.exec('DROP TABLE fixture_rejected'); } },
+    ];
+    expect(() => applySystemMigrationsThrough(path, '002', registry)).toThrow('Synthetic prefix rejected');
+    const database = new Database(path, { readonly: true });
+    try {
+      expect(database.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all())
+        .toEqual([{ name: 'fixture_first' }]);
+    } finally { database.close(); }
+  });
 
   test('accepts workflow migration 032 with runtime integrity repair', async () => {
     const root = await mkdtemp(join(tmpdir(), 'zero-system-workflow-032-'));
@@ -404,12 +429,18 @@ function systemServiceTables(): readonly string[] {
   ];
 }
 
-function applySystemMigrationsThrough(path: string, version: string): void {
+function applySystemMigrationsThrough(path: string, version: string, registry: readonly Migration[] = migrations): void {
   const database = new Database(path, { strict: true });
   try {
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of migrations) {
-      migration.up(database);
+    // Match the production Migrator's atomic per-migration admission. Running
+    // every DDL statement in autocommit adds unrelated cold-fsync pressure and
+    // can leave a partially installed synthetic legacy schema on failure.
+    const apply = database.transaction((migration: Migration) => {
+      runSynchronousMigrationHandler(migration.up, database, 'up', migration);
+    });
+    for (const migration of registry) {
+      apply.immediate(migration);
       if (migration.version === version) return;
     }
     throw new Error(`Unknown system migration ${version}`);

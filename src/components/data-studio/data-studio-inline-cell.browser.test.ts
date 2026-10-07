@@ -121,6 +121,9 @@ describe('DataStudioInlineCell browser contract', () => {
           ?.getAttribute('data-save-state') === 'error'
       ));
       expect(await cell.textContent()).toContain('Grace');
+      await page.waitForFunction(() => (
+        document.activeElement === document.querySelector('button[data-data-studio-cell="true"]')
+      ));
       expect(await editButton().evaluate((element) => document.activeElement === element)).toBe(true);
 
       await page.evaluate(() => window.__dataStudioCellHarness.setMode('conflict'));
@@ -133,6 +136,79 @@ describe('DataStudioInlineCell browser contract', () => {
       ));
       expect(await cell.textContent()).toContain('Grace');
       expect(await page.evaluate(() => window.__dataStudioCellHarness.reloads())).toBe(2);
+    } finally {
+      await page.close();
+    }
+  }, TEST_TIMEOUT);
+
+  browserTest('restores failed-save focus only after the requested reload settles', async () => {
+    const page = await openHarness();
+    try {
+      await page.evaluate(() => {
+        window.__dataStudioCellHarness.setMode('error');
+        window.__dataStudioCellHarness.holdReload();
+      });
+      await page.getByRole('button', { name: /Edit Name/ }).click();
+      const input = page.getByRole('textbox', { name: 'Edit Name' });
+      await input.fill('Rejected draft');
+      await input.press('Tab');
+      await page.waitForFunction(() => (
+        document.querySelector('[data-slot="data-studio-inline-cell"]')
+          ?.getAttribute('data-save-state') === 'error'
+        && window.__dataStudioCellHarness.reloads() === 1
+      ));
+
+      const trigger = page.getByRole('button', { name: /Edit Name/ });
+      expect(await page.locator('[data-slot="data-studio-inline-cell"]').textContent()).toContain('Ada');
+      expect(await trigger.evaluate((element) => document.activeElement === element)).toBe(false);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.navigations())).toBe(0);
+
+      await page.evaluate(() => window.__dataStudioCellHarness.resolveReload());
+      await page.waitForFunction(() => (
+        document.activeElement === document.querySelector('button[data-data-studio-cell="true"]')
+      ));
+      expect(await trigger.evaluate((element) => document.activeElement === element)).toBe(true);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual(['Rejected draft']);
+    } finally {
+      await page.close();
+    }
+  }, TEST_TIMEOUT);
+
+  browserTest('does not navigate from an acknowledged older edit after a new edit starts', async () => {
+    const page = await openHarness();
+    try {
+      await page.getByRole('button', { name: /Edit Name/ }).click();
+      await page.getByRole('textbox', { name: 'Edit Name' }).fill('First save');
+      await page.getByRole('textbox', { name: 'Edit Name' }).press('Tab');
+      await page.waitForFunction(() => (
+        document.querySelector('[data-slot="data-studio-inline-cell"]')
+          ?.getAttribute('data-save-state') === 'pending'
+      ));
+      await page.evaluate(() => {
+        window.__dataStudioCellHarness.holdFrames();
+        window.__dataStudioCellHarness.resolve();
+      });
+      // These checks deliberately use timer polling: frame callbacks are held
+      // until a later edit has taken ownership of focus.
+      await page.waitForFunction(() => (
+        document.querySelector('[data-slot="data-studio-inline-cell"]')
+          ?.getAttribute('data-save-state') === 'saved'
+        && window.__dataStudioCellHarness.heldFrames() > 0
+      ), undefined, { polling: 10 });
+      const trigger = page.getByRole('button', { name: /Edit Name/ });
+      expect(await page.locator('[data-slot="data-studio-inline-cell"]').textContent()).toContain('First save');
+      await trigger.evaluate((element) => (element as HTMLButtonElement).click());
+      await page.waitForFunction(() => (
+        document.activeElement?.getAttribute('aria-label') === 'Edit Name'
+        && document.activeElement?.tagName === 'INPUT'
+      ), undefined, { polling: 10 });
+
+      await page.evaluate(() => window.__dataStudioCellHarness.releaseFrames());
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.navigations())).toBe(0);
+      expect(await page.getByRole('textbox', { name: 'Edit Name' }).evaluate(
+        (element) => document.activeElement === element,
+      )).toBe(true);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual(['First save']);
     } finally {
       await page.close();
     }
@@ -344,6 +420,14 @@ let mode = 'pending';
 let pending = null;
 let commitValues = [];
 let reloadCount = 0;
+let reloadPending = null;
+let reloadHeld = false;
+let navigationCount = 0;
+let frameCallbacks = new Map();
+let frameId = 0;
+let framesHeld = false;
+const requestFrame = window.requestAnimationFrame.bind(window);
+const cancelFrame = window.cancelAnimationFrame.bind(window);
 let outerClicks = 0;
 const root = createRoot(document.getElementById('root'));
 
@@ -372,13 +456,44 @@ function render() {
     column,
     revision,
     onCommit: commit,
-    onReload: async () => { reloadCount += 1; },
-    onNavigate: () => document.querySelector('[aria-label="Next cell"]')?.focus(),
+    onReload: async () => {
+      reloadCount += 1;
+      if (reloadHeld) await new Promise((resolve) => { reloadPending = resolve; });
+    },
+    onNavigate: () => {
+      navigationCount += 1;
+      document.querySelector('[aria-label="Next cell"]')?.focus();
+    },
   }), React.createElement('button', { type: 'button', 'aria-label': 'Next cell' }, 'Next')));
 }
 
 window.__dataStudioCellHarness = {
   resolve() { pending?.(); pending = null; },
+  holdReload() { reloadHeld = true; },
+  resolveReload() { reloadHeld = false; reloadPending?.(); reloadPending = null; },
+  navigations() { return navigationCount; },
+  holdFrames() {
+    if (framesHeld) throw new Error('Frame callbacks are already held');
+    framesHeld = true;
+    window.requestAnimationFrame = (callback) => {
+      const id = --frameId;
+      frameCallbacks.set(id, callback);
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      if (frameCallbacks.has(id)) frameCallbacks.delete(id);
+      else cancelFrame(id);
+    };
+  },
+  heldFrames() { return frameCallbacks.size; },
+  releaseFrames() {
+    window.requestAnimationFrame = requestFrame;
+    window.cancelAnimationFrame = cancelFrame;
+    framesHeld = false;
+    const callbacks = [...frameCallbacks.values()];
+    frameCallbacks.clear();
+    for (const callback of callbacks) callback(performance.now());
+  },
   setMode(next) { mode = next; },
   remote(next) { value = next; revision += 1; render(); },
   configure(name) {
@@ -425,6 +540,12 @@ declare global {
   interface Window {
     __dataStudioCellHarness: {
       resolve(): void;
+      holdReload(): void;
+      resolveReload(): void;
+      navigations(): number;
+      holdFrames(): void;
+      heldFrames(): number;
+      releaseFrames(): void;
       setMode(mode: 'pending' | 'error' | 'conflict'): void;
       remote(value: string): void;
       configure(name: string): void;

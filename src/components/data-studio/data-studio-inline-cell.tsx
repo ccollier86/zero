@@ -85,6 +85,18 @@ export function DataStudioInlineCell({
     savedTimer.current = null;
   }, []);
 
+  const scheduleInteraction = React.useCallback((
+    interaction: () => void,
+    generation = saveRevision.current,
+  ) => {
+    requestAnimationFrame(() => {
+      // A later edit or cancellation owns focus, even if this frame was
+      // queued while the preceding save was still the current operation.
+      if (!mounted.current || saveRevision.current !== generation) return;
+      interaction();
+    });
+  }, []);
+
   React.useEffect(() => {
     if (!editing && state !== 'pending') setDraft(dataStudioValueDraft(value, column));
   }, [column, editing, state, value]);
@@ -127,8 +139,8 @@ export function DataStudioInlineCell({
     setMessage(null);
     setState('idle');
     setEditing(false);
-    requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
-  }, [clearSavedTimer, column, value]);
+    scheduleInteraction(() => triggerRef.current?.focus());
+  }, [clearSavedTimer, column, scheduleInteraction, value]);
 
   const showAuthoritativeConflict = React.useCallback(() => {
     saveRevision.current += 1;
@@ -140,8 +152,8 @@ export function DataStudioInlineCell({
     setEditing(false);
     setState('conflict');
     setMessage('This record changed elsewhere. The latest value was restored.');
-    requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
-  }, [clearSavedTimer, column, value]);
+    scheduleInteraction(() => triggerRef.current?.focus());
+  }, [clearSavedTimer, column, scheduleInteraction, value]);
 
   React.useEffect(() => {
     if (!editing
@@ -161,9 +173,9 @@ export function DataStudioInlineCell({
     setEditing(false);
     setMessage(null);
     setState('idle');
-    if (move) requestAnimationFrame(() => { if (mounted.current) onNavigate?.(move); });
-    else if (restoreFocus) requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
-  }, [onNavigate]);
+    if (move) scheduleInteraction(() => onNavigate?.(move));
+    else if (restoreFocus) scheduleInteraction(() => triggerRef.current?.focus());
+  }, [onNavigate, scheduleInteraction]);
 
   const saveValue = React.useCallback(async (
     nextValue: DataStudioValue,
@@ -190,8 +202,8 @@ export function DataStudioInlineCell({
         savedTimer.current = null;
         setState('idle');
       }, 1200);
-      if (move) requestAnimationFrame(() => { if (mounted.current) onNavigate?.(move); });
-      else if (restoreFocus) requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
+      if (move) scheduleInteraction(() => onNavigate?.(move), requestRevision);
+      else if (restoreFocus) scheduleInteraction(() => triggerRef.current?.focus(), requestRevision);
     } catch (cause) {
       if (!mounted.current || saveRevision.current !== requestRevision) return;
       reportDataStudioFrontendFailure('row.replace', 'mutation', cause);
@@ -213,12 +225,12 @@ export function DataStudioInlineCell({
         // the reload failure at the workspace boundary.
       }
       if (mounted.current && saveRevision.current === requestRevision && (restoreFocus || move)) {
-        requestAnimationFrame(() => { if (mounted.current) triggerRef.current?.focus(); });
+        scheduleInteraction(() => triggerRef.current?.focus(), requestRevision);
       }
     } finally {
       commitPending.current = false;
     }
-  }, [clearSavedTimer, column, onNavigate, onReload, state, value]);
+  }, [clearSavedTimer, column, onNavigate, onReload, scheduleInteraction, state, value]);
 
   const saveDraft = React.useCallback(async (
     move?: -1 | 1,

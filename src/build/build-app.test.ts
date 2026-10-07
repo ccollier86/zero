@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { buildZeroApp } from './build-app';
 import { parseZeroBuildArgs } from './build-args';
+import { parseBuildFixtureEntryTime } from '../test-support/build-fixture-readiness';
 import sharp from 'sharp';
 
 const repository = resolve(import.meta.dir, '../..');
@@ -45,42 +46,58 @@ async function fixture(root: string, avatars = false): Promise<string> {
   await Bun.write(join(root, 'app/server.ts'), [
     'import { createApp } from "@zero/framework/server";',
     'import config,{customNamedExport} from "../zero.config";',
-    'await Bun.write("./startup-entry.txt",String(Date.now()));',
-    'await Bun.write("./startup-phase.txt","entry-evaluated");',
+    'import {publishBuildFixtureMarker} from "./fixture-readiness";',
+    'await publishBuildFixtureMarker("./startup-entry.txt",String(Date.now()));',
+    'await publishBuildFixtureMarker("./startup-phase.txt","entry-evaluated");',
     'const app=await createApp(config);',
-    'await Bun.write("./startup-phase.txt","app-created");',
+    'await publishBuildFixtureMarker("./startup-phase.txt","app-created");',
     'app.get("/entry-hook",()=>({custom:customNamedExport}));',
     'app.listen(0);',
-    'await Bun.write("./ready-port.txt",String(app.server.port));',
+    'await publishBuildFixtureMarker("./ready-port.txt",String(app.server.port));',
   ].join('\n'));
+  // This fixture-owned helper is bundled with the app, never loaded from the
+  // repository after relocation or mistaken for a public framework dependency.
+  await Bun.write(join(root, 'app/fixture-readiness.ts'), Bun.file(join(repository, 'src/test-support/build-fixture-readiness.ts')));
   return join(root, 'zero.config.ts');
 }
 
 async function running<T>(command: readonly string[], cwd: string, verify: (url: string) => Promise<T>): Promise<T> {
+  const started = Date.now();
   const child = Bun.spawn([...command], { cwd, env: { PATH: Bun.env.PATH ?? '', TMPDIR: Bun.env.TMPDIR, NODE_ENV: 'production' }, stdout: 'pipe', stderr: 'pipe' });
   const stdout = new Response(child.stdout).text(); const stderr = new Response(child.stderr).text();
+  const admissionMs = command.length === 1 ? 60_000 : 20_000;
+  const evidence = { pid: child.pid, command, startedAt: started, admissionMs, appStartupMs: 20_000 };
+  let entryStartedAt: number | undefined, entryMarker: string | undefined;
   try {
-    const started = Date.now();
-    let entryStartedAt: number | undefined;
+    await Bun.write(join(cwd, 'startup-parent.json'), JSON.stringify(evidence, null, 2));
     while (!(await Bun.file(join(cwd, 'ready-port.txt')).exists())) {
       if (child.exitCode !== null) throw new Error(`Built server exited ${child.exitCode}: ${await stderr}\n${await stdout}`);
-      if (entryStartedAt === undefined && await Bun.file(join(cwd, 'startup-entry.txt')).exists()) entryStartedAt = Number(await Bun.file(join(cwd, 'startup-entry.txt')).text());
+      if (entryStartedAt === undefined && await Bun.file(join(cwd, 'startup-entry.txt')).exists()) {
+        entryMarker = await Bun.file(join(cwd, 'startup-entry.txt')).text();
+        entryStartedAt = parseBuildFixtureEntryTime(entryMarker, started, Date.now());
+      }
       // macOS cold executables can remain in _dyld_start before Bun even loads
       // (qualified by a process sample). Bound that admission separately; app
       // startup still has a strict 20s deadline after the entry evaluates.
-      const deadline = entryStartedAt === undefined ? started + (command.length === 1 ? 60_000 : 20_000) : entryStartedAt + 20_000;
+      const deadline = entryStartedAt === undefined ? started + admissionMs : entryStartedAt + 20_000;
       if (Date.now() > deadline) {
         child.kill('SIGKILL');
         await child.exited;
-        const phase = await Bun.file(join(cwd, 'startup-phase.txt')).text().catch(() => 'entry-not-evaluated');
-        throw new Error(`Built server did not report its listening port (phase=${phase}): ${await stderr}\n${await stdout}`);
+        const phase = await Bun.file(join(cwd, 'startup-phase.txt')).text().catch(() => 'phase-marker-unpublished');
+        throw new Error(`Built server did not report its listening port (pid=${child.pid}, startedAt=${started}, phase=${phase}): ${await stderr}\n${await stdout}`);
       }
       await Bun.sleep(25);
     }
     const port = await Bun.file(join(cwd, 'ready-port.txt')).text();
-    const entryAt = Number(await Bun.file(join(cwd, 'startup-entry.txt')).text());
-    console.info('Synthetic build readiness', { mode: command.length === 1 ? 'compiled' : 'javascript', beforeEntryMs: entryAt - started, appStartupMs: Date.now() - entryAt });
+    const entryAt = parseBuildFixtureEntryTime(await Bun.file(join(cwd, 'startup-entry.txt')).text(), started, Date.now());
+    if (entryAt === undefined) throw new Error('Built server reported readiness without a valid current entry marker.');
+    console.info('Synthetic build readiness', { pid: child.pid, startedAt: started, mode: command.length === 1 ? 'compiled' : 'javascript', beforeEntryMs: entryAt - started, appStartupMs: Date.now() - entryAt });
     return await verify(`http://127.0.0.1:${port}`);
+  } catch (error) {
+    await Bun.write(join(cwd, 'startup-failure.json'), JSON.stringify({ ...evidence, failedAt: Date.now(),
+      exitCode: child.exitCode, signal: child.signalCode, entryMarker: entryMarker ?? null, admittedEntryAt: entryStartedAt ?? null,
+      phase: await Bun.file(join(cwd, 'startup-phase.txt')).text().catch(() => null) }, null, 2));
+    throw error;
   } finally {
     child.kill('SIGTERM');
     await Promise.race([child.exited, Bun.sleep(3_000).then(() => child.kill('SIGKILL'))]);

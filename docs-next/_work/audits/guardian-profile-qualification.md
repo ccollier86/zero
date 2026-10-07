@@ -559,3 +559,143 @@ The next frozen commit must still pass exact clean-checkout qualification and
 publication. Artifact-specific identities and completion evidence are recorded
 in the external release/provenance records; never infer a deployed Pantheon
 fix from a documentation review or a source-only checkpoint.
+
+### First Exact Clean-Checkout Run
+
+The detached clean checkpoint
+`f55c5ccce17d12d886f3e6fc53f99a74b8a94416` passes its frozen install,
+TypeScript, build, dependency audit, PDF readiness and full package gates. Its
+complete inventory is 942 files, including ten tests from the separately
+recorded clean Chrome preview fixture. The clean package includes the preserved
+CLI kit; its retained inspected archive has 4,270 entries and SHA-256
+`c003dc016f1b64e66b1f3260f4f1723ade1e23f2e40eaec55970912139673592`.
+
+The complete clean run nevertheless fails: 936 pass, six fail, zero are unrun
+or interrupted, exit 1 after 660,428 ms. Evidence is
+`guardian-2.6-clean-full.log`. The actual compiled/JIT signing case passes;
+this does not resolve the older host-admission delay.
+
+The inline-cell test observes error state before authoritative reload and
+deferred focus finish. Inspection also identifies a real missing generation
+check inside queued cell navigation. The clause-initials test reads immediately
+after scheduling its controlled React list update. Their intended assertions
+must be preserved while observing the actual asynchronous completion.
+
+The temporal-control test exits 0 but its stderr drain remains inside the CLI
+output consumer for 1,014 ms, so the unchanged one-second boundary correctly
+fails it. A finite concurrent/serialized/native-sink probe does not reproduce
+that stall; it is not evidence of a proven Bun concurrency defect or an
+explanation of the older SQLite output result.
+
+The compiled-avatar fixture can convert an existing but not yet populated
+entry-marker file into timestamp 0 and an already-expired deadline. Retained
+file timing matches that race, but the exact partial bytes read were not
+recorded. Fix marker admission without increasing startup deadlines. Doctor
+file inspection and the system-runtime migration fixture also fail; the latter
+times out and reports a later SQLite vnode I/O error during cleanup. Their
+causes still require diagnosis, not an assumed permission/schema defect.
+
+Publication remains held. No tag, push, saved-package refresh or live Pantheon
+update is inferred from the earlier candidate pass or clean package checks.
+
+### Focused Corrections After The Clean Run
+
+The cell repair checks the edit generation inside each deferred interaction,
+including accepted saves and rejected saves awaiting authoritative reload. A
+held-animation-frame regression fails against the earlier implementation and
+passes with the repair: a later edit cannot be navigated away by the older
+accepted save. The original failure assertion now awaits actual reload/focus
+completion instead of treating the earlier error-state publication as its
+acknowledgment. Styled browser checks pass nine cases /54 assertions; related
+temporal/unit/SSR checks pass 41 /135. Evidence:
+`data-studio-inline-focus-generation-red2.log`,
+`data-studio-inline-focus-generation-green.log` and
+`data-studio-inline-focus-temporal-unit.log`.
+
+The signature-clause fixture now waits for React's controlled-list render
+acknowledgment before reading its completion counter. Its original counter
+assertion remains, with added exact item-count and submitted-field checks.
+The complete styled signature browser file passes 33 cases /177 assertions in
+`guardian-signature-committed-view-focused.log`. No production signature
+behavior changed.
+
+The historical SYSTEM fixture had executed each migration's DDL in autocommit,
+unlike the production Migrator's per-migration transaction. Its unchanged
+isolated migration030 case passes; the complete file previously timed out under
+the clean run's combined cold-I/O pressure, with a later vnode cleanup error.
+The fixture now uses the existing synchronous-handler boundary and one immediate
+transaction per unchanged historical migration. A new failure regression proves
+the failed migration rolls back while the preceding committed prefix remains.
+No PRAGMA, deadline, migration contents or production admission changed. The
+complete file passes eight cases /100 assertions in
+`guardian-system-prefix-atomic-focused.log`; the isolated diagnostic remains in
+`guardian-clean-workflow-prefix-diagnostic.log` and is not a replacement for
+complete qualification.
+
+The synthetic compiled-startup marker is published atomically and admitted only
+as a canonical safe timestamp inside that child's startup window. Diagnostics
+retain the actual PID, start time and marker admission. Compiled admission stays
+60 seconds; app startup stays 20 seconds. The focused helper/build gate passes
+nine cases /119 assertions, including the real relocated enabled-avatar
+executable and two independent compiled-docs deployments, in
+`guardian-build-readiness-marker-final-focused.log`. This repairs a concrete
+fixture parser/publication gap, not a proven macOS AMFI cause or a retrospective
+explanation of every earlier native delay.
+
+Private fixture paths now honor the qualification host's temporary root rather
+than requiring a workstation-specific mounted volume. Existing local artifact
+storage is reused only when already present; other hosts have a dedicated
+temporary diagnostics fallback and explicit absolute overrides. Cleanup rejects
+broad/unrelated paths and symbolic-link directories. The portability/helper
+gate passes ten cases /75 assertions in
+`guardian-private-fixture-portability-final.log`, retaining the original
+binary-inode/error-identity and captured-process checks.
+
+Doctor's failure is reproduced using only native `bun:sqlite`: explicit
+`PERSIST_WAL=0` removes sidecars on final close, after which this host rejects
+read-only reopening with `SQLITE_CANTOPEN`. Earlier isolated passes depended on
+deferred statements retaining a writer and its sidecars. The test's unconditional
+schema-readiness assertion therefore assumed native availability it did not
+establish. Production Doctor and global WAL cleanup policy are unchanged.
+
+Coverage now preserves the original closed-file byte/schema/row/corruption
+assertions on a strictly closed readable rollback-journal fixture. A separate
+live-WAL test proves a committed marker present only in WAL is inspected while
+main/WAL bytes and writer change counts remain exact. A missing-sidecar test
+checks actual native admission: a rejected read yields the truthful unavailable
+warning and no invented feature-schema or policy findings; a readable native
+file must yield actual missing-schema findings. The full twelve-file Doctor
+family passes 119 cases /438 assertions in
+`guardian-doctor-readonly-admission-family-final.log`. The native reduction stays
+in `guardian-doctor-native-closed-wal-persist0.log`. Canonical and legacy guides
+state the limitation and safe handle/runtime alternatives; no read-write,
+immutable, no-lock or main-file-only snapshot fallback was introduced.
+
+Runner CLI output now owns one native Bun sink per standard descriptor and one
+serialized record lane, awaiting native write and flush as well as final close.
+Monotonic elapsed-time checks reject synchronous completions which overran the
+unchanged one-second boundary before timers could execute; JavaScript cannot
+preempt the synchronous call itself. Queued work cannot publish after retirement.
+Native Unicode/merged-output and held-FIFO regressions preserve complete output
+and bounded failure without leaving owned processes alive.
+
+A real large-Unicode probe disproves a proposed byte-count equality check:
+native write reports short progress while its internal buffer delivers all
+bytes. The implementation therefore awaits write/flush and never resubmits a
+suffix or misclassifies buffered progress as lost output. Five focused runner
+files pass 37 cases /191 assertions; their output is saved as an explicitly
+labeled captured-tool transcript in
+`test-suite-console-writer-focused-transcript.log`, not represented as an
+original redirected process log. Integrated TypeScript catches one test-only
+`toSorted()` call outside the existing library target; copied-array `sort()`
+preserves its exact comparison without widening compiler settings. The final
+writer file then passes sixteen cases /48 assertions in
+`guardian-console-writer-types-final-focused.log`, and integrated TypeScript
+passes in `guardian-2.6-closing-corrections-typecheck-final.log`.
+
+The closing inventory is 944 files, including the same ten separately recorded
+Chrome preview cases. Documentation structure remains 732 pages with zero
+problems and whitespace checks pass. None of these focused passes constitutes
+the complete clean-checkout release gate or a native-runtime fix claim. The
+next committed source must still complete the package/full/build/audit gates
+before publication and the stopped normal-updater proof.

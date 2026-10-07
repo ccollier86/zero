@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database, constants } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -157,23 +157,119 @@ describe('read-only desired/installed Guardian feature diagnostics', () => {
     } finally { sql.close(); }
   });
   test('existing file inspection leaves bytes/schema/rows unchanged and contains policy-marker corruption', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'zero-guardian-doctor-')); roots.push(root);
-    const path = join(root, 'system.db'); const db = createReactiveDB({ mode: 'file', path });
-    defineAuthTables(db);
-    db.prepare('INSERT INTO _auth_profile_completion_policy(singleton,policy_fingerprint,updated_at) VALUES (1,?,1)')
-      .run(profileCompletionPolicyFingerprint(normalizeAuthUserProfile(policy)));
-    db.dispose();
+    const { root, path } = await createAuthFile(true);
+    // The test owns this closed rollback-journal image explicitly. Readability
+    // must not depend on schema statements delaying a WAL writer's final close.
+    const writer = new Database(path, { readwrite: true });
+    writer.run('PRAGMA journal_mode=DELETE');
+    const beforeState = snapshot(writer);
+    writer.close(true);
     const before = await Bun.file(path).arrayBuffer();
     const result = runPlatformDoctor({ db: { mode: 'memory' }, systemDb: { mode: 'file', path }, tables: {},
       auth: { userProfile: policy }, email: false, migrate: false }, { env: {}, projectRoot: root, usageAudit: false });
     expect(codes(result)).toContain('auth.user_profile.completion.schema_ready');
     expect(codes(result)).not.toContain('auth.user_profile.completion.policy_pending');
     expect(await Bun.file(path).arrayBuffer()).toEqual(before);
-    const raw = new Database(path); raw.query('UPDATE _auth_profile_completion_policy SET policy_fingerprint=?').run('x'.repeat(64)); raw.close();
+    const reader = new Database(path, { readonly: true });
+    try { expect(snapshot(reader)).toEqual(beforeState); } finally { reader.close(true); }
+    const raw = new Database(path);
+    try { raw.run('UPDATE _auth_profile_completion_policy SET policy_fingerprint=?', ['x'.repeat(64)]); }
+    finally { raw.close(true); }
     const corruptedBytes = await Bun.file(path).arrayBuffer();
     const corrupt = runPlatformDoctor({ db: { mode: 'memory' }, systemDb: { mode: 'file', path }, tables: {},
       auth: { userProfile: policy }, email: false }, { env: {}, projectRoot: root, usageAudit: false });
     expect(codes(corrupt)).toContain('auth.user_profile.completion.policy_invalid');
     expect(await Bun.file(path).arrayBuffer()).toEqual(corruptedBytes);
   });
+
+  test('active WAL inspection sees committed policy state without changing main or WAL bytes', async () => {
+    const { root, path } = await createAuthFile(false);
+    const writer = new Database(path, { readwrite: true });
+    try {
+      writer.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+      writer.run('PRAGMA journal_mode=WAL');
+      const initialMain = await Bun.file(path).arrayBuffer();
+      writer.run('INSERT INTO _auth_profile_completion_policy(singleton,policy_fingerprint,updated_at) VALUES (1,?,1)',
+        [profileCompletionPolicyFingerprint(normalizeAuthUserProfile(policy))]);
+      const beforeMain = await Bun.file(path).arrayBuffer();
+      const beforeWal = await Bun.file(`${path}-wal`).arrayBuffer();
+      const beforeState = snapshot(writer);
+      expect(beforeMain).toEqual(initialMain);
+      expect(beforeWal.byteLength).toBeGreaterThan(0);
+
+      const result = runPlatformDoctor({ db: { mode: 'memory' }, systemDb: { mode: 'file', path }, tables: {},
+        auth: { userProfile: policy }, email: false, migrate: false }, { env: {}, projectRoot: root, usageAudit: false });
+      expect(codes(result)).toContain('auth.user_profile.completion.schema_ready');
+      // The marker was written only into WAL, so a main-file-only copy would
+      // incorrectly report policy_pending and fail this assertion.
+      expect(codes(result)).not.toContain('auth.user_profile.completion.policy_pending');
+      expect(codes(result)).not.toContain('database.system.file_inspection_unavailable');
+      expect(await Bun.file(path).arrayBuffer()).toEqual(beforeMain);
+      expect(await Bun.file(`${path}-wal`).arrayBuffer()).toEqual(beforeWal);
+      expect(snapshot(writer)).toEqual(beforeState);
+    } finally { writer.close(true); }
+  });
+
+  test('missing WAL sidecars follow actual native readonly admission without false-ready findings', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zero-guardian-doctor-')); roots.push(root);
+    const path = join(root, 'native.db');
+    const writer = new Database(path, { create: true, readwrite: true });
+    try {
+      writer.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+      writer.run('PRAGMA journal_mode=WAL');
+      writer.run('CREATE TABLE native_marker(id INTEGER PRIMARY KEY, value TEXT)');
+      writer.run('INSERT INTO native_marker VALUES (1, ?)', ['synthetic-committed']);
+      writer.run('PRAGMA wal_checkpoint(TRUNCATE)');
+    } finally { writer.close(true); }
+    expect(await Bun.file(`${path}-wal`).exists()).toBe(false);
+    expect(await Bun.file(`${path}-shm`).exists()).toBe(false);
+    const before = await Bun.file(path).arrayBuffer();
+    let available = false;
+    let reader: Database | null = null;
+    try {
+      reader = new Database(path, { readonly: true });
+      expect(reader.query('SELECT value FROM native_marker WHERE id=1').get())
+        .toEqual({ value: 'synthetic-committed' });
+      available = true;
+    } catch (error) {
+      // This is the native availability boundary, not a waived Doctor failure:
+      // unsupported closed-WAL reopening must yield no invented schema state.
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+      expect(code).toMatch(/^SQLITE_(?:CANTOPEN|READONLY)(?:_|$)/);
+    } finally { reader?.close(true); }
+    const result = runPlatformDoctor({ db: { mode: 'memory' }, systemDb: { mode: 'file', path }, tables: {},
+      auth: { userProfile: policy }, email: false, migrate: false },
+    { env: {}, projectRoot: root, usageAudit: false });
+    if (available) {
+      expect(codes(result)).not.toContain('database.system.file_inspection_unavailable');
+      expect(codes(result)).toContain('auth.authority_revision.schema_missing');
+      expect(codes(result)).toContain('auth.user_profile.profile.schema_missing');
+    } else {
+      expect(result.findings).toContainEqual(expect.objectContaining({
+        code: 'database.system.file_inspection_unavailable', severity: 'warning', path: 'systemDb',
+      }));
+      expect(codes(result).filter(code => code.endsWith('.schema_ready'))).toEqual([]);
+      expect(codes(result).filter(code => code.startsWith('auth.user_profile.')
+        && (code.includes('.schema_') || code.includes('.policy_')))).toEqual([]);
+      expect(codes(result)).not.toContain('auth.authority_revision.schema_missing');
+    }
+    expect(await Bun.file(path).arrayBuffer()).toEqual(before);
+  });
 });
+
+/** Produce a complete fixture image, not a copy of a changing file/WAL pair. */
+async function createAuthFile(withMarker: boolean): Promise<{ root: string; path: string }> {
+  const root = mkdtempSync(join(tmpdir(), 'zero-guardian-doctor-')); roots.push(root);
+  const path = join(root, 'system.db');
+  const memory = createReactiveDB({ mode: 'memory', emitTelemetry: false });
+  try {
+    defineAuthTables(memory);
+    if (withMarker) {
+      const marker = memory.prepare('INSERT INTO _auth_profile_completion_policy(singleton,policy_fingerprint,updated_at) VALUES (1,?,1)');
+      try { marker.run(profileCompletionPolicyFingerprint(normalizeAuthUserProfile(policy))); }
+      finally { marker.finalize(); }
+    }
+    await Bun.write(path, memory.getRawDatabase().serialize());
+  } finally { memory.dispose(); }
+  return { root, path };
+}

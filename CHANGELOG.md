@@ -63,6 +63,8 @@ services; an updater does not modify application settings or migrate live data.
 - Table page-size changes retain the logical result position for local and
   offset/page sources. Opaque cursor sources reset deliberately instead of
   fabricating a cursor; query/authorization resets remain independent.
+- Data Studio inline cells retire queued focus/navigation when a newer edit
+  begins, so an earlier acknowledged save cannot move focus out of the new draft.
 - Added exact SYSTEM migrations039–043, generation-bound feature policy,
   read-only Doctor readiness diagnostics, source-validated guides, indexes,
   backlinks, actual public examples and post-bootstrap upgrade instructions.

@@ -544,6 +544,12 @@ Doctor currently checks:
 Platform Doctor never creates, migrates, or repairs a database while inspecting it.
 Run it with a project root so durable SQLite files and filesystem aliases can
 be inspected read-only.
+Existing-file inspection is best effort: a native SQLite build can reject a
+closed WAL-mode file after its sidecars have been cleaned up. Doctor reports
+`database.system.file_inspection_unavailable` rather than opening it read-write,
+changing journal mode, or inventing schema readiness. See the
+[read-only inspection boundary](../../docs-next/cli/doctor/infrastructure-inspection.md#paths-and-readiness)
+for native WAL availability and safe alternatives.
 
 The legacy fence uses `DATABASE_SCHEMA_MISMATCH`. Projection failures use
 `IDENTITY_PROJECTION_NOT_READY`, `IDENTITY_PROJECTION_CONFLICT`,

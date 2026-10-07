@@ -72,6 +72,8 @@ The component chooses typed editors by column type and uses value helpers for
 logical parsing. Parsing is client feedback, not server schema enforcement.
 Optional values preserve absent versus stored null. onReload reconciles conflict
 state through the actual service, not blind retry with a stale revision.
+Error/conflict status can appear before that reload finishes. Requested focus
+restoration follows the reload; status alone is not a focus-completion signal.
 
 Standalone composition must change/remount its contextual identity on tenant/
 table/record replacement; the connected grid/controller owns those boundaries.
@@ -83,6 +85,8 @@ boolean toggles before React paints pending state. Unmount retires the pending
 save revision and saved-status timer; a late promise/animation-frame callback
 cannot restore state, navigate a replacement query or steal focus. Already
 accepted server work is not undone by that UI retirement.
+Queued focus/navigation also belongs to its captured edit generation: starting
+a newer edit or cancelling retires callbacks from the preceding interaction.
 
 ## Related Guides And Next Steps
 

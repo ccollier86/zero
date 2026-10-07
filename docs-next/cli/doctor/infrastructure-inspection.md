@@ -42,6 +42,24 @@ Missing/unsupported inspection targets produce absence/unavailable diagnostics
 or skip inapplicable reads; SQLite failures are contained as safe findings
 rather than exposing row contents.
 
+File inspection is best-effort native SQLite admission, not a promise that every
+offline WAL image can be opened. A fully closed WAL-mode file may have no `-wal`
+or `-shm` sidecars after normal cleanup. The native SQLite build can reject a
+read-only reopen in that state with `SQLITE_CANTOPEN`, even when the main file
+exists and is readable. Doctor then reports the warning
+`database.system.file_inspection_unavailable`; it does not invent schema-ready
+findings or change the file to make it inspectable. This condition is distinct
+from a missing or invalid installed feature schema.
+
+An active writer with readable WAL sidecars allows normal SQLite snapshot reads
+to include committed WAL state. Doctor does not copy only the main file, use
+an `immutable`/no-lock bypass, open a read-write fallback, checkpoint, or alter
+journal mode. Do not delete sidecars or rewrite a live database for diagnostics.
+Use normal runtime checks or an explicitly admitted caller-owned SQL handle
+when file inspection is unavailable; a runtime feature remains responsible for
+its own exact admission. Native read-only WAL requirements are described in
+[SQLite's WAL documentation](https://sqlite.org/wal.html#read_only_databases).
+
 Read access can still touch sensitive infrastructure. Use deliberate authority,
 inspected configuration and a disposable fixture for tests. `--no-usage-audit`
 does not remove these checks, and env:{} does not virtualize filesystem reads.
@@ -100,9 +118,11 @@ migrations own provisioning. `migrate: false` is not permission for Doctor to
 create, repair or seed feature state.
 
 Focused isolated regressions check unchanged schemas/row-change counts,
-byte-for-byte unchanged existing SQLite files, no adapter calls, exact presence
-realm admission and privacy-safe diagnostics. They do not establish production
-provider or installed-package readiness.
+byte-for-byte unchanged closed readable SQLite files, committed active-WAL
+state with unchanged main/WAL bytes, and truthful unavailable findings when a
+native missing-sidecar reopen is rejected. They also check no adapter calls,
+exact presence realm admission and privacy-safe diagnostics. They do not
+establish production provider or installed-package readiness.
 
 ## Related Guides And Next Steps
 

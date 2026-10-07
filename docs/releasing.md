@@ -484,8 +484,27 @@ git diff --check
    duration. These diagnostics do not turn an incomplete result into a pass or
    change the one-second drain boundary.
 
+   CLI emission owns one Bun `FileSink` per standard descriptor and serializes
+   complete records through one write/flush lane, including redirected merged
+   regular-file logs. Async write/flush and final sink retirement have one-second
+   bounds; synchronous native completions also fail if elapsed time exceeded the
+   boundary, although JavaScript timers cannot preempt synchronous native I/O.
+   The CLI awaits final close and unreferences its own sinks so a stalled async
+   output consumer cannot leave it alive indefinitely. This incremental
+   writer does not diagnose an intermittent Bun runtime cause or relax any test,
+   post-exit drain, inventory or no-retry requirement.
+
    This process harness does not add support for raw SQLite use inside nested JavaScript
    Workers; tests of production subprocess concurrency retain their own gates.
+
+   Private native-fixture scratch roots honor `TMPDIR`. Failed macOS binary
+   evidence uses the existing canonical external diagnostics directory when
+   available, otherwise a dedicated temporary diagnostics directory; it does
+   not create another workstation's `/Volumes/code-bank` tree. Absolute
+   `ZERO_MAC_NATIVE_SCRATCH_ROOT` and `ZERO_MAC_NATIVE_ARTIFACTS_ROOT` overrides
+   are available for qualification hosts. Cleanup admits only captured fixture
+   children, never a root or symbolic-link directory. Failed-binary retention
+   remains diagnostic evidence, not a retry or substitute passing test.
 
    For a candidate containing Fabric, also run the focused actor protocol,
    coordinator, file/root identity, liveness/orphan, subprocess, Resource CRUD,
