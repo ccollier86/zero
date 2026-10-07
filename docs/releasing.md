@@ -486,11 +486,25 @@ git diff --check
 
    CLI emission owns one Bun `FileSink` per standard descriptor and serializes
    complete records through one write/flush lane, including redirected merged
-   regular-file logs. Async write/flush and final sink retirement have one-second
-   bounds; synchronous native completions also fail if elapsed time exceeded the
-   boundary, although JavaScript timers cannot preempt synchronous native I/O.
-   The CLI awaits final close and unreferences its own sinks so a stalled async
-   output consumer cannot leave it alive indefinitely. This incremental
+   regular-file logs. Live and queued emission use the existing maximum file
+   budget and owned cancellation, not a new one-second running-output limit.
+   The unchanged one-second post-exit drain can retire an unfinished active
+   consumer. Ordinary events retire with root cancellation; only the final
+   summary and failure emission, after worker retirement, use a fresh one-second
+   retirement signal. Final sink retirement is separately bounded at one second. Native
+   synchronous I/O cannot be preempted by JavaScript timers. The CLI awaits final
+   close and unreferences its own sinks. A poisoned console also preserves a
+   payload-free failure receipt under an owned `zero-test-suite-failure-*`
+   directory in the normal temporary root (honoring `TMPDIR`); the inventory
+   advertises both the first receipt and container before file execution.
+   Subsequent stages use separate immutable receipt files, so timed-out writes
+   cannot replace newer evidence. It records phases, triggers,
+   counters and allowlisted native errno after runner cleanup, never child text
+   or raw error messages. Successful runs remove their empty diagnostic directory
+   within the same retirement boundary. Failed or timed-out cleanup retains a
+   replacement receipt in a distinct owned directory (identified by the runner
+   PID); late removal of the initial directory cannot delete that evidence.
+   Missing/incomplete output or a failed receipt still fails the run. This incremental
    writer does not diagnose an intermittent Bun runtime cause or relax any test,
    post-exit drain, inventory or no-retry requirement.
 

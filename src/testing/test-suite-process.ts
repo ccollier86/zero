@@ -25,7 +25,7 @@ export interface TestSuiteProcessOptions {
   fileTimeoutMs: number;
   signal: AbortSignal;
   bunExecutable?: string;
-  output?: (file: string, channel: 'stdout' | 'stderr', text: string) => void | Promise<void>;
+  output?: (file: string, channel: 'stdout' | 'stderr', text: string, signal?: AbortSignal) => void | Promise<void>;
 }
 
 /** Preserve conventional exit status for root interruption, native child signals and nonzero test exits. */
@@ -73,7 +73,7 @@ export async function runTestSuiteFile(options: TestSuiteProcessOptions): Promis
   options.signal.addEventListener('abort', abort, { once: true });
   if (options.signal.aborted) abort();
   const deadline = setTimeout(() => { timedOut = true; terminate(); }, options.fileTimeoutMs);
-  const output = drainTestSuiteOutput(child, (channel, text) => options.output?.(options.file, channel, text));
+  const output = drainTestSuiteOutput(child, (channel, text, outputSignal) => options.output?.(options.file, channel, text, outputSignal));
   const exited = child.exited.then(async exitCode => {
     const cleanup = await group.retireAfterExit();
     return { exitCode, ...cleanup };

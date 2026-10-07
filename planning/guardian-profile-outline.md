@@ -20,10 +20,12 @@ about them.
 
 The implemented 2.6.0 checkpoint is
 `bfc763919aeffa43d84556d6076ea18097b2cff1`, October 7, 2026. The earlier
-942-file candidate passed, but both exact clean runs failed; focused closing
-corrections and the final test-acknowledgment review are recorded in the
+942-file candidate passed, but two exact clean runs failed and a third exited
+with incomplete runner output; focused closing corrections and the final
+test-acknowledgment/output-lifecycle review are recorded in the
 [qualification ledger](../docs-next/_work/audits/guardian-profile-qualification.md).
-The complete inventory is 944 files. Remaining
+The current inventory is 945 files, including the private failure-receipt
+regressions and the same ten separately recorded Chrome preview cases. Remaining
 checkboxes include this checkpoint's exact clean-checkout/package qualification
 and actual publication; this is not yet an instruction to update a live app.
 

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'; // Bun has no temporary-director
 import { tmpdir } from 'node:os'; // Bun has no portable temporary-directory API.
 import { join } from 'node:path';
 import { createTestSuiteConsoleWriter } from './test-suite-console-writer';
+import { drainTestSuiteOutput } from './test-suite-output';
 
 function sink() {
   return { writes: [] as string[], closed: 0, unrefs: 0,
@@ -53,15 +54,13 @@ test('an asynchronously rejected native write preserves its error and retires bo
   expect([stdout.closed, stderr.closed, stdout.unrefs, stderr.unrefs]).toEqual([1, 1, 1, 1]);
 });
 
-test.each(['write', 'flush', 'end'] as const)('synchronous %s blocking beyond one second is never acknowledged as success', async stage => {
+test.each(['write', 'flush'] as const)('valid live %s beyond one second does not inherit the post-exit drain deadline', async stage => {
   const stdout = sink(), stderr = sink(), original = stdout[stage].bind(stdout);
   const block = () => { const end = performance.now() + 1050; while (performance.now() < end) {} };
   if (stage === 'write') stdout.write = text => { block(); return original(text); };
   else if (stage === 'flush') stdout.flush = () => { block(); return 0; };
-  else stdout.end = () => { block(); stdout.closed++; return 0; };
   const output = createTestSuiteConsoleWriter({ stdout, stderr });
-  if (stage !== 'end') await expect(output.write('stdout', 'late')).rejects.toThrow('one-second');
-  await expect(output.close()).rejects.toThrow('one-second');
+  await output.write('stdout', 'live'); await output.close();
   expect([stdout.closed, stderr.closed, stdout.unrefs, stderr.unrefs]).toEqual([1, 1, 1, 1]);
 }, 5000);
 
@@ -77,16 +76,34 @@ test.each(['write', 'flush', 'end'] as const)('%s rejection is preserved and bot
   expect([stdout.closed, stderr.closed, stdout.unrefs, stderr.unrefs]).toEqual([1, 1, 1, 1]);
 });
 
-test('held flush stays a failure at one second and queued writes cannot publish after retirement', async () => {
+test('post-exit one-second drain retires an active writer and queued writes cannot publish late', async () => {
   const stdout = sink(), stderr = sink(); let release!: () => void;
   stdout.flush = () => new Promise<number>(resolve => { release = () => resolve(0); });
   const output = createTestSuiteConsoleWriter({ stdout, stderr }), started = performance.now();
-  const results = await Promise.allSettled([output.write('stdout', 'held'), output.write('stderr', 'never')]);
-  expect(results.every(result => result.status === 'rejected')).toBe(true);
+  const streams = { stdout: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([65])); controller.close(); } }),
+    stderr: new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }) };
+  const drain = drainTestSuiteOutput(streams, (channel, text, signal) => output.write(channel, text, signal));
+  await Bun.sleep(0);
+  const queued = output.write('stderr', 'never').catch(() => {});
+  expect(await drain.settle()).toMatchObject({ outputIncomplete: true }); await queued;
   expect(performance.now() - started).toBeGreaterThanOrEqual(900);
   expect(stderr.writes).toEqual([]);
-  release(); await expect(output.close()).rejects.toThrow('one-second');
+  expect(output.diagnostics().fault).toMatchObject({ trigger: 'output-retired', phase: 'flush' });
+  release(); await expect(output.close()).rejects.toThrow('retired');
   expect(stderr.writes).toEqual([]); expect([stdout.unrefs, stderr.unrefs]).toEqual([1, 1]);
+}, 5000);
+
+test('canceling a queued call does not fault the lane, skip another record or overlap valid live output', async () => {
+  const stdout = sink(), stderr = sink(); let release!: () => void;
+  stdout.flush = () => new Promise<number>(resolve => { release = () => resolve(0); });
+  const output = createTestSuiteConsoleWriter({ stdout, stderr }), controller = new AbortController();
+  const first = output.write('stdout', 'live');
+  const canceled = output.write('stderr', 'retired', controller.signal).catch(() => {});
+  const third = output.write('stderr', 'valid');
+  await Bun.sleep(1100); controller.abort(); await canceled;
+  expect(output.diagnostics().fault).toBeNull(); expect(stderr.writes).toEqual([]);
+  release(); await Promise.all([first, third]); await output.close();
+  expect(stderr.writes).toEqual(['valid']);
 }, 5000);
 
 test('held final close is bounded and unrefs both owned sinks without converting failure to success', async () => {
@@ -147,7 +164,7 @@ test('an actual unread native pipe applies backpressure and fails boundedly with
       { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' });
     await Bun.write(fixture, `import {createTestSuiteConsoleWriter} from ${JSON.stringify(`${import.meta.dir}/test-suite-console-writer.ts`)};
       const output=createTestSuiteConsoleWriter();let writeFailed=false,closeFailed=false;
-      try{await output.write('stdout','x'.repeat(1024*1024));}catch{writeFailed=true;}
+      try{await output.write('stdout','x'.repeat(1024*1024),AbortSignal.timeout(1000));}catch{writeFailed=true;}
       try{await output.close();}catch{closeFailed=true;}
       await Bun.write(${JSON.stringify(report)},JSON.stringify({writeFailed,closeFailed}));
       process.exitCode=writeFailed&&closeFailed?2:0;`);

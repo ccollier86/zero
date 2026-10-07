@@ -20,7 +20,7 @@ export type TestSuiteOutputDiagnostics = Record<'stdout' | 'stderr', TestSuiteOu
 /** Consume only these admitted child's streams; cancel readers after a bounded one-second post-exit drain. */
 export function drainTestSuiteOutput(
   streams: { stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array> },
-  output?: (channel: 'stdout' | 'stderr', text: string) => void | Promise<void>,
+  output?: (channel: 'stdout' | 'stderr', text: string, signal: AbortSignal) => void | Promise<void>,
 ): TestSuiteOutputDrain {
   const readers = [streams.stdout.getReader(), streams.stderr.getReader()];
   const progress = readers.map(() => ({ bytesRead: 0, chunksRead: 0, eof: false,
@@ -34,20 +34,21 @@ export function drainTestSuiteOutput(
     return { stdout: snapshot(0), stderr: snapshot(1) };
   };
   let stopped = false, error: string | undefined;
+  const outputScope = new AbortController();
   let stop!: () => void, reject!: (error: unknown) => void;
   const cancelled = new Promise<null>(resolve => { stop = () => resolve(null); });
   const failure = new Promise<never>((_resolve, fail) => { reject = fail; });
   void failure.catch(() => {});
   const cancel = () => {
     if (stopped) return;
-    stopped = true; stop();
+    stopped = true; stop(); outputScope.abort();
     for (const reader of readers) void reader.cancel().catch(() => {});
   };
   const pump = async (index: number, channel: 'stdout' | 'stderr') => {
     const reader = readers[index]!, state = progress[index]!, decoder = new TextDecoder();
     const write = async (text: string) => {
       state.pending = 'sink'; state.pendingSince = performance.now();
-      await Promise.race([output?.(channel, text), cancelled]);
+      await Promise.race([output?.(channel, text, outputScope.signal), cancelled]);
       state.pending = null;
     };
     try {

@@ -18,9 +18,11 @@ visibility: internal
 The current implementation checkpoint is
 `bfc763919aeffa43d84556d6076ea18097b2cff1`, package 2.6.0, October 7, 2026.
 It contains the committed adaptive Guardian upgrade and the preserved main CLI
-setup kit plus the focused closing corrections recorded below. Its complete
-inventory is 944 files. The earlier 942-file candidate pass and subsequent
-failed clean run are historical evidence, not this checkpoint's release gate.
+setup kit plus the focused closing corrections recorded below. Its historical
+complete inventory was 944 files; the additional private receipt regression
+file makes the pending qualification inventory 945. The earlier candidate pass
+and subsequent failed/incomplete clean runs are historical evidence, not the
+pending checkpoint's release gate.
 Exact clean-checkout/publication gates remain pending;
 this checkpoint is not yet the saved stable release or a Pantheon deployment.
 
@@ -759,3 +761,70 @@ correction; integrated TypeScript passes in
 `guardian-2.6-workspace-final-typecheck.log`, and the next exact clean run must
 qualify the final complete browser file. No retry, skip, animation or test
 deadline changed.
+
+### Third Exact Clean-Checkout Run: Incomplete Runner Output
+
+The detached clean checkpoint
+`0df9ebd7ed2bdb1054fe643a9b7f2740042a4c8a` passes frozen installation,
+TypeScript, build, dependency audit, PDF readiness, documentation structure and
+the complete installed-package gates. Its independently inspected diagnostic
+archive has 4,274 ordinary entries matching tracked source, SHA-256
+`90337fa8ad5cc955a1018734e9307ea7c43bd20d701b267960c94dad449b86b4`.
+The final complete workspace browser file passes in this run, including the
+bounded builder cleanup correction.
+
+The full run is nevertheless **failed and incomplete**: of its 944 inventoried
+files, 355 passing result events and no failing result events are recorded
+before emission stops at 10:05:11 UTC on October 7, 2026. The runner exits 2
+without a final summary or normal error event. It is not a 355-file successful
+qualification. No runner or captured child remains active when inspected.
+The underlying native/runtime cause is unknown. Evidence remains in
+`guardian-2.6-qualified-clean-full.log` and that checkout's external failed
+qualification receipt; its archive is not a released package.
+
+Review identifies a concrete policy regression in the newly introduced CLI
+writer, independent of that unknown cause: it applies a one-second bound to
+queued/live emission, although the established one-second policy concerns
+post-exit draining. A sticky console fault also prevents the normal JSON error
+event from explaining an infrastructure failure. The previous focused writer
+passes above did not establish correctness of that policy. Publication remains
+held while these private harness defects are corrected and qualified.
+
+### Runner Output And Failure-Evidence Correction
+
+Live/queued CLI emission now uses the existing maximum file budget and owned
+cancellation, not the accidental one-second global running-output limit. The
+unchanged one-second post-exit drain retires unfinished child-output consumers.
+Ordinary events also observe root cancellation, including pre-spawn events;
+final summary/error emission uses a fresh one-second retirement signal after
+workers settle. Final native sink retirement remains separately bounded.
+No test/file deadline, inventory exclusion, retry or pass conversion is added.
+
+An independently owned, payload-free receipt records phases, triggers, counters
+and allowlisted native errno even if the console is poisoned. Distinct immutable
+attempt files fence late persistence; native elapsed-time checks reject late
+synchronous completion without claiming JavaScript can preempt native I/O.
+Rejected write/flush still retires the exact sink. Bounded directory cleanup
+uses a separate replacement directory on failure, so late removal cannot erase
+the replacement receipt. The release guide documents discovery and limits.
+
+The six-file focused family passes 50 cases /280 assertions in the actual
+redirected `test-suite-output-retirement-final-focused.log`, including native
+Unicode/FIFO output, root SIGINT/SIGTERM before child admission, final emission
+stalls, captured child/descendant retirement and late receipt/cleanup work.
+Independent scoped rereview finds no remaining blocker. Integrated TypeScript
+then catches a test-only stream async-iteration call outside the existing DOM
+library contract. Explicit `getReader()`/`read()`/`releaseLock()` preserves the
+collector assertions without widening compiler settings. The exact final
+receipt file passes 13 cases /91 assertions in
+`test-suite-failure-receipt-final-dom-compatible.log`; the earlier six-file
+receipt predates this sole collector adjustment.
+
+Integrated TypeScript passes against the frozen final sources in
+`guardian-2.6-runner-repair-typecheck-final.log`. Documentation structure remains
+732 pages with zero problems; `git diff --check` passes.
+
+The final inventory is 945 files, including the same ten private Chrome preview
+cases. These focused passes and source review do not replace the forthcoming
+complete exact clean-checkout qualification, publication or stopped-updater
+proof. The third incomplete run remains failed and its precise cause unknown.
