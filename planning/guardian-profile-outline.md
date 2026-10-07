@@ -105,19 +105,25 @@ records the source/browser gates and remaining archive/release boundary.
 
 ### Avatar stack
 
-- [ ] Integrate the exact REUI `c-avatar-29` avatar group with icon count and
+- [x] Integrate the exact REUI `c-avatar-29` avatar group with icon count and
   optional add button, using Zero's existing avatar/group primitives.
-- [ ] Add button is configurable, with an accessible app-supplied action;
+- [x] Add button is configurable, with an accessible app-supplied action;
   showing it does not grant invitation/member-management authority.
-- [ ] Preserve configured avatar shape/size and individual presence indicators.
-- [ ] Render presence rings/status only when app presence is enabled and the
+- [x] Preserve configured avatar shape/size and individual presence indicators.
+- [x] Render presence rings/status only when app presence is enabled and the
   caller supplies an admitted observation; disabled presence is a plain avatar
   stack with no implied offline state or presence subscription.
-- [ ] Square avatars use a matching rounded-square presence outline, not a
+- [x] Square avatars use a matching rounded-square presence outline, not a
   circular ring imposed over the app's square configuration.
-- [ ] Stack overlap/z-index must not clip presence rings, count or keyboard
+- [x] Stack overlap/z-index must not clip presence rings, count or keyboard
   focus; include tooltip/full member labels and narrow-width behavior.
-- [ ] Tokenize the reference styling and document standalone/Guardian-bound usage.
+- [x] Tokenize the reference styling and document standalone presentation usage.
+- [ ] Wire and document the connected Guardian profile/presence adapter.
+
+The [current avatar-group guide](../docs-next/frontend/components/avatar-group.md)
+documents the presentation component. A connected Guardian profile/presence
+adapter remains part of the later service stage; the visual metadata does not
+prove a live status by itself.
 
 ## Verified contacts
 
@@ -168,24 +174,31 @@ records the source/browser gates and remaining archive/release boundary.
 
 ## Settings matrix
 
-- [ ] Reusable row name/description and one to three choice columns.
-- [ ] Column icons/labels, aligned choices, thin separators and compact spacing.
-- [ ] Optional count/status and pinned or clearly attached help footer.
-- [ ] Existing Checkbox/Switch/Table and consistent per-cell state feedback.
-- [ ] Per-cell read-only/permission locks with explanatory reasons.
-- [ ] Responsive labeled choices without offscreen/clipped checkbox columns.
+- [x] Reusable row name/description and one to three choice columns.
+- [x] Column icons/labels, aligned choices, thin separators and compact spacing.
+- [x] Enabled/editable counts and a clearly attached optional help footer.
+- [x] Existing Checkbox/Switch/Table and consistent per-cell state feedback.
+- [x] Per-cell read-only/permission locks with explanatory reasons.
+- [x] Responsive labeled choices without offscreen/clipped checkbox columns.
 - [ ] Notification preference adapter distinct from notification receipts/inbox.
 - [ ] Actual persistence/delivery constraints when used for notifications.
 
 ## Integration settings list
 
-- [ ] Single section or multiple labeled groups, matching the supplied list reference.
-- [ ] Leading icon/logo, title, description and compact labeled status.
-- [ ] Existing DropdownMenu/ContextMenu actions with icons and destructive styling.
-- [ ] Authorized async Review/Reconnect/Remove and app-defined callbacks.
+- [x] Single section or multiple labeled groups, matching the supplied list reference.
+- [x] Leading icon/logo, title, description and compact labeled status.
+- [x] Existing DropdownMenu/ContextMenu actions with icons and destructive styling.
+- [x] App-defined async Review/Reconnect/Remove callbacks with live scope fences;
+  the owning adapter still authorizes actual server operations.
 - [ ] User/org/platform scope adapters without trusting a browser scope selector.
-- [ ] Confirmation, pending states, refresh/reconciliation and secret-free results.
-- [ ] No duplicate OAuth/connection backend implied by a presentation component.
+- [x] Confirmation, pending states and secret-free errors; actual data refresh
+  remains the controlled callback/adapter's responsibility.
+- [x] No duplicate OAuth/connection backend implied by a presentation component.
+
+The standalone [matrix](../docs-next/frontend/components/settings-matrix.md)
+and [integration list](../docs-next/frontend/components/integration-settings-list.md)
+are source-qualified UI foundations. Their domain persistence/delivery adapters
+and the full Guardian profile composition remain separate unchecked stages.
 
 ## Guardian presence
 

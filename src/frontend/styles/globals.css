@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "./code-block-tokens.css";
 @import "../../components/code-block/code-block.styles.css";
+@import "../../components/avatar-group/avatar-group.styles.css";
+@import "../../components/integration-settings-list/integration-settings-list.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 

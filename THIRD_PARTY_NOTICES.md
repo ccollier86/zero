@@ -57,7 +57,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## ReUI — SVG Signature Pad, Button Group, Context Menu And Phone Input
+## ReUI — SVG Signature Pad, Button Group, Context Menu, Phone Input And Avatar Group
 
 Source: https://github.com/keenthemes/reui/blob/ef0fe1252d9b24d69bdedee48a69ec9b29d1f217/registry-reui/bases/radix/reui/signature-pad.tsx
 
@@ -71,6 +71,11 @@ Phone Input examples inspected through the public `radix-vega` registry:
 
 - https://reui.io/r/radix-vega/c-phone-input-7.json
 - https://reui.io/r/radix-vega/c-phone-input-8.json
+
+Avatar Group references inspected through the public `radix-vega` registry:
+
+- https://reui.io/r/radix-vega/c-avatar-29.json
+- https://reui.io/r/radix-vega/c-avatar-12.json
 
 Zero adapts its SVG outline geometry, pressure/velocity pointer handling,
 guides and preview presentation into focused modules using Zero's own controls,
@@ -89,6 +94,11 @@ Popover, Command, ScrollArea and icons. Formatting and bundled flags retain the
 reset handling and schema/form integration are Zero additions. Its upstream MIT
 license was inspected directly in `LICENSE.md`; dependency packages retain their
 own distributed notices.
+
+Avatar Group adapts the overlapping avatars, overflow count/icon and optional
+separate add action to Zero's existing Avatar, animated group, Button and
+Tooltip controls. Shape/size and opt-in presence decoration are presentation
+extensions; no upstream example is represented as a connected presence service.
 
 MIT License
 

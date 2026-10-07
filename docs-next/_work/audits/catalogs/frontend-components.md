@@ -571,6 +571,21 @@ qualification. Props and size types share the component's documentation home.
 | --- | --- | --- | --- |
 | `PhoneInput` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/phone-input` | [Phone public entry](../../../../src/components/phone-input/index.ts) | `frontend/components/phone-input.md` |
 
+## Adaptive Settings Working-Source Additions
+
+These additive records describe source based on `43b718a5fdf6fec4acf61524ba8d490da784e747`
+(framework 2.5.0, October 6, 2026), not the published 2.5.0 archive or the
+historical catalog counts. Corresponding Props/member/descriptor/context types
+share each component's guide. Runtime callbacks remain app-owned; the visual
+presence contract does not implement a connection tracker or database projection.
+
+| Symbol | Public imports | Evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `AvatarGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/avatar-group` | [Avatar group entry](../../../../src/components/avatar-group/index.ts) | `frontend/components/avatar-group.md` |
+| `AvatarPresenceIndicator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/avatar-group` | [Avatar group entry](../../../../src/components/avatar-group/index.ts) | `frontend/components/avatar-group.md` |
+| `SettingsMatrix` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/settings-matrix` | [Settings matrix entry](../../../../src/components/settings-matrix/index.ts) | `frontend/components/settings-matrix.md` |
+| `IntegrationSettingsList` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/integration-settings-list` | [Integration list entry](../../../../src/components/integration-settings-list/index.ts) | `frontend/components/integration-settings-list.md` |
+
 ## Reconciliation And Review
 
 Packaging disposition: the original UI wildcard also resolves card.test, record-navigation-bar.test and list-detail-layout.test modules. They are test files, not supported components, and therefore are not rows or planned teaching targets here. The package export inventory records them as a finding; the user subsequently authorized a working-tree packaging correction. Export topology/counts here remain the pinned source baseline, not a claim that test-module exposure is supported.

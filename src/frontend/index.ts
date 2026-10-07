@@ -895,6 +895,24 @@ export { ScrollArea, ScrollBar } from '../components/ui/scroll-area';
 export { Separator } from '../components/ui/separator';
 export { Skeleton } from '../components/ui/skeleton';
 export { Avatar, AvatarImage, AvatarFallback } from '../components/ui/avatar';
+export { AvatarGroup, AvatarPresenceIndicator } from '../components/avatar-group';
+export type {
+  AvatarGroupProps, AvatarGroupMember, AvatarGroupAddAction, AvatarGroupShape,
+  AvatarGroupSize, AvatarPresence, AvatarPresenceTone, AvatarPresenceIndicatorProps,
+} from '../components/avatar-group';
+export { SettingsMatrix } from '../components/settings-matrix';
+export type {
+  SettingsMatrixCapability, SettingsMatrixColumn, SettingsMatrixRow,
+  SettingsMatrixValue, SettingsMatrixChange, SettingsMatrixChangeContext,
+  SettingsMatrixProps,
+} from '../components/settings-matrix';
+export { IntegrationSettingsList } from '../components/integration-settings-list';
+export type {
+  IntegrationSettingsListProps, IntegrationSettingsGroup, IntegrationSettingsItem,
+  IntegrationSettingsStatus, IntegrationSettingsStatusTone, IntegrationSettingsAction,
+  IntegrationSettingsActionContext, IntegrationSettingsPrimaryAction,
+  IntegrationSettingsConfirmation, IntegrationSettingsErrorContext,
+} from '../components/integration-settings-list';
 export {
   Breadcrumb,
   BreadcrumbList,

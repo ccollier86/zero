@@ -41,6 +41,15 @@ ideas/plans, not newly implemented component exports:
   justify a reusable plugin rather than app-specific screens.
 - [ ] Additional compact application/organization administration blocks and
   optional in-table mini-graphs with accessible exact data.
+- [ ] Connect first-class editable profiles, avatar staging/cropping, verified
+  contacts, regional preferences and required-completion policy to the adaptive
+  user-settings experience, with safe post-bootstrap feature provisioning.
+- [ ] First-class Guardian presence with multi-device leases, inactivity and
+  admitted Reactive DB/Fabric projections. The working-source
+  [avatar group](./avatar-group.md) supplies opt-in visual decoration, not this
+  service; [settings matrix](./settings-matrix.md) and
+  [integration list](./integration-settings-list.md) supply controlled settings
+  compositions without inventing persistence or provider management.
 - [ ] Review the user's additional component references and expand the library
   with coherent token-themed controls, accessibility and SSR support; use those
   additions to refine the default visual language rather than introduce unrelated

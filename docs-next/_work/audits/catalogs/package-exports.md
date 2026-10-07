@@ -236,6 +236,19 @@ records do not assert that the published 2.5.0 archive contains these changes.
 
 ## Review Gates
 
+Supplemental adaptive-settings source adds three explicit component paths:
+
+| Public path | Owner | Guide |
+| --- | --- | --- |
+| `@zero/framework/components/avatar-group` | [Avatar presentation entry](../../../../src/components/avatar-group/index.ts) | [Avatar group](../../../frontend/components/avatar-group.md) |
+| `@zero/framework/components/settings-matrix` | [Choice matrix entry](../../../../src/components/settings-matrix/index.ts) | [Settings matrix](../../../frontend/components/settings-matrix.md) |
+| `@zero/framework/components/integration-settings-list` | [Integration presentation entry](../../../../src/components/integration-settings-list/index.ts) | [Integration list](../../../frontend/components/integration-settings-list.md) |
+
+The React/root facade also exports these components and their public types.
+These are working-source records after the session correction at `43b718a`,
+not a claim that a new package was published. Existing plain Avatar, forms,
+menus and status services remain separate contracts.
+
 - [ ] Every non-test target assigned to an inventory and canonical feature home.
 - [ ] Mixed-barrel symbols reconciled, aliases and internal annotations classified.
 - [ ] Exact archive paths and public imports checked against a qualified artifact.

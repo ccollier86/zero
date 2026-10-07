@@ -96,6 +96,9 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Toggle`, `ToggleGroup` | `animate-ui/components/radix/toggle*.tsx` | Animated pressed-state controls from Animate UI/Radix. |
 | `Badge`, `badgeVariants` | `ui/badge.tsx` | Small status/tag primitive. |
 | `Avatar`, `AvatarImage`, `AvatarFallback` | `ui/avatar.tsx` | User/avatar primitive. |
+| `AvatarGroup`, `AvatarPresenceIndicator` | `components/avatar-group` | Working-source compact roster/count/optional add composition; shape-matched presence decoration only when enabled. See [Avatar Group](../../docs-next/frontend/components/avatar-group.md); no presence backend is implied. |
+| `SettingsMatrix` | `components/settings-matrix` | Working-source compact controlled boolean settings with one to three choice columns, per-cell pending/locks and scope retirement; [guide](../../docs-next/frontend/components/settings-matrix.md). |
+| `IntegrationSettingsList` | `components/integration-settings-list` | Working-source flat/grouped connection presentation, labeled status and confirmed async actions; [guide](../../docs-next/frontend/components/integration-settings-list.md). |
 | `Skeleton` | `ui/skeleton.tsx` | Loading placeholder. |
 | `Separator` | `ui/separator.tsx` | Horizontal/vertical divider. |
 | `ScrollArea`, `ScrollBar` | `ui/scroll-area.tsx` | Tokenized custom scroll area. |

@@ -18,8 +18,10 @@ visibility: internal
 This ledger records focused implementation evidence for the adaptive-profile
 upgrade. The session-recovery correction was checked on October 6, 2026, in
 the working tree based on `55ca1e6b649f5652831714ad93749918bd92a6bd`, branch
-`feature/adaptive-profile-settings`, package version `2.5.0`. It is not yet
-merged, packaged, tagged or published as a new release.
+`feature/adaptive-profile-settings`, package version `2.5.0`. The correction
+is committed as `43b718a5fdf6fec4acf61524ba8d490da784e747`, but is not yet
+merged, tagged or published as a new release. Temporary qualification archives
+are not release artifacts.
 
 Phone inputs, schema/form integration, read-only input behavior and MFA
 settings gating are committed in that baseline. Extended profile persistence,
@@ -83,6 +85,45 @@ Source logs are under `/Volumes/code-bank/logs/zero-platform`:
 `guardian-session-recovery-final-typecheck.log` and
 `guardian-session-page-boundaries.log`. Browser test results are also reported
 by their source fixtures; this ledger does not invent an archive identity.
+
+## Reusable Profile-Settings Presentation
+
+The follow-up source based on `43b718a` adds
+[Avatar Group](../../frontend/components/avatar-group.md),
+[Settings Matrix](../../frontend/components/settings-matrix.md) and
+[Integration Settings List](../../frontend/components/integration-settings-list.md).
+These reuse Zero primitives, tokens, lifecycle guards and observability.
+They do not implement connected profiles, avatar upload/cropping, verification,
+notification delivery, OAuth providers or first-class presence persistence.
+
+Executed against the final frozen component source on October 6:
+
+| Gate | Evidence |
+| --- | --- |
+| Combined helpers/SSR/controllers/real browser | 57 passed, 0 failed, 318 assertions across eight files. This includes 24 styled-browser cases; the counts overlap family-specific gates below. |
+| Avatar family | 11 tests /65 assertions; optional add/count actions, disabled presence, keyboard/touch, stable member keys, square rings, tokens, RTL and reduced motion. |
+| Matrix family | 28 /118; controlled unavailable/read-only choices, pending/retry, per-cell locks, scoped cancellation, live boundary admission before notification, keyboard/320px/tokens and both control variants. |
+| Integrations family | 18 /135; flat/grouped keys, read-only and live capability retirement, confirmed destructive actions, menu/dialog focus, safe error callbacks, long-copy/narrow/RTL geometry and inherited theme metrics. |
+| Fresh installed temporary package | 1 /16 after source freeze; root/React/focused export identity, actual browser build, DOM-free SSR, included guides/notices, session-recovery method and disabled presence. No exact release/archive identity is inferred. |
+| Project TypeScript | Final integrated `tsc --noEmit --incremental false` completed with exit 0, including the final browser fixtures and public facade types. |
+| Actual UI Markdown examples | The public-source fragment compiler passed 1 test /66 assertions, including both avatar examples and the matrix/integration examples. It does not execute app callbacks. |
+| Documentation navigation and catalog placement | 724 pages/IDs/reachable with zero problems; 963 catalog records assigned to 157 existing guide homes with zero problems. These are coverage/navigation measures, not release qualification. |
+
+Review corrected new-component issues before release: overlapping menu/dialog
+focus and pointer-lock cleanup, long-label mobile overflow, a native HTML
+`contextMenu` type collision, and flat/named-group key identity. Theme metric
+defaults use inherited public variables rather than shadowing parent values.
+Matrix's live SDK getter is defense-in-depth: ordinary notified transitions
+did not reproduce stale admission, while the stronger before-notification
+regression verifies its new fence. None of these is a claimed old-release defect.
+
+Root inspected settled avatar light/dark, matrix light/mobile and integration
+desktop-menu/mobile screenshots under the designated external diagnostics root.
+Logs: `guardian-profile-ui-final.log`, `guardian-profile-ui-final-package.log`
+and `guardian-profile-ui-final-typecheck.log`. Installed consumers and browser
+fixtures are disposable synthetic checks, not application migrations.
+Documentation logs: `guardian-profile-ui-final-examples.log`,
+`guardian-profile-docs-check.log` and `guardian-profile-catalog-homes.log`.
 
 ## Remaining Release Gates
 

@@ -1,0 +1,65 @@
+/* Local geometry uses overridable Zero semantic metrics; colors follow the active theme. */
+.integration-settings-list {
+  --_integration-unit: var(--integration-settings-unit, var(--spacing, .25rem));
+  --_integration-gap: var(--integration-settings-gap, calc(var(--_integration-unit) * 4));
+  --_integration-padding: var(--integration-settings-padding, calc(var(--_integration-unit) * 5));
+  --_integration-logo-size: var(--integration-settings-logo-size, calc(var(--_integration-unit) * 10));
+  --_integration-radius: var(--integration-settings-radius, var(--radius, .625rem));
+  --_integration-text-size: var(--integration-settings-text-size, var(--text-sm, .875rem));
+  --_integration-detail-size: var(--integration-settings-detail-size, var(--text-xs, .75rem));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--_integration-gap);
+  min-width: 0;
+  padding: var(--_integration-padding);
+  border: var(--integration-settings-border-width, 1px) solid var(--border);
+  border-radius: var(--_integration-radius);
+  background: var(--card);
+  color: var(--card-foreground);
+  font-size: var(--_integration-text-size);
+}
+.integration-settings-list__header,
+.integration-settings-list__row,
+.integration-settings-list__identity,
+.integration-settings-list__tools { display: flex; align-items: center; gap: var(--_integration-gap); }
+.integration-settings-list__header { align-items: start; justify-content: space-between; }
+.integration-settings-list__heading,
+.integration-settings-list__copy { min-width: 0; }
+.integration-settings-list__title { margin: 0; font-size: var(--integration-settings-title-size, var(--text-lg, 1.125rem)); font-weight: var(--font-weight-semibold, 600); }
+.integration-settings-list__description,
+.integration-settings-list__reason { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.integration-settings-list__description { margin-top: var(--_integration-unit); font-size: var(--_integration-detail-size); }
+.integration-settings-list__primary { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; gap: var(--_integration-unit); min-width: 0; max-width: 100%; }
+.integration-settings-list__new { max-width: 100%; height: auto; min-height: calc(var(--_integration-unit) * 8); white-space: normal; overflow-wrap: anywhere; }
+.integration-settings-list__groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--_integration-gap); min-width: 0; }
+.integration-settings-list__group { border: var(--integration-settings-border-width, 1px) solid var(--border); border-radius: var(--_integration-radius); min-width: 0; }
+.integration-settings-list__group-header { padding: calc(var(--_integration-unit) * 4); border-bottom: var(--integration-settings-border-width, 1px) solid var(--border); }
+.integration-settings-list__group-title { margin: 0; font-size: var(--_integration-text-size); font-weight: var(--font-weight-semibold, 600); }
+.integration-settings-list__rows { list-style: none; margin: 0; padding: 0 calc(var(--_integration-unit) * 4); }
+.integration-settings-list__flat .integration-settings-list__rows { padding: 0; }
+.integration-settings-list__row { position: relative; flex-wrap: wrap; justify-content: space-between; padding: calc(var(--_integration-unit) * 4) 0; outline-offset: calc(var(--_integration-unit) * -1); }
+.integration-settings-list__row + .integration-settings-list__row { border-top: var(--integration-settings-border-width, 1px) dashed var(--border); }
+.integration-settings-list__identity { flex: 1; min-width: 0; }
+.integration-settings-list__logo { flex-shrink: 0; width: var(--_integration-logo-size); height: var(--_integration-logo-size); border: var(--integration-settings-border-width, 1px) solid var(--border); border-radius: var(--_integration-radius); }
+.integration-settings-list__logo-fallback { border-radius: inherit; background: var(--muted); color: var(--foreground); }
+.integration-settings-list__logo svg { width: calc(var(--_integration-unit) * 5); height: calc(var(--_integration-unit) * 5); }
+.integration-settings-list__item-title { font-weight: var(--font-weight-medium, 500); overflow-wrap: anywhere; }
+.integration-settings-list__tools { min-width: 0; max-width: 100%; gap: calc(var(--_integration-unit) * 3); }
+.integration-settings-list__status { min-width: 0; flex-shrink: 1; gap: calc(var(--_integration-unit) * 1.5); font-size: var(--_integration-detail-size); font-weight: var(--font-weight-medium, 500); padding: var(--_integration-unit) calc(var(--_integration-unit) * 2); white-space: normal; overflow-wrap: anywhere; }
+.integration-settings-list__dot { width: calc(var(--_integration-unit) * 1.5); height: calc(var(--_integration-unit) * 1.5); flex-shrink: 0; border-radius: var(--radius-full, 9999px); background: var(--muted-foreground); }
+.integration-settings-list__status[data-tone=success] .integration-settings-list__dot { background: var(--success); }
+.integration-settings-list__status[data-tone=warning] .integration-settings-list__dot { background: var(--warning); }
+.integration-settings-list__status[data-tone=destructive] .integration-settings-list__dot { background: var(--destructive); }
+.integration-settings-list__status[data-tone=info] .integration-settings-list__dot { background: var(--primary); }
+.integration-settings-list__reason { margin: 0; font-size: var(--_integration-detail-size, var(--integration-settings-detail-size, var(--text-xs, .75rem))); white-space: normal; }
+.integration-settings-list__error { margin: 0; color: var(--destructive); font-size: var(--_integration-detail-size, var(--integration-settings-detail-size, var(--text-xs, .75rem))); overflow-wrap: anywhere; }
+.integration-settings-list__row-feedback { flex-basis: 100%; margin: 0; font-size: var(--_integration-detail-size); }
+.integration-settings-list__empty { margin: 0; padding: calc(var(--_integration-unit) * 4); color: var(--muted-foreground); }
+.integration-settings-list__action-label { display: grid; gap: var(--integration-settings-unit, var(--spacing, .25rem)); }
+.integration-settings-list__menu { max-width: calc(100vw - var(--integration-settings-menu-gutter, 2rem)); }
+@media (max-width: 40rem) {
+  .integration-settings-list__header { flex-wrap: wrap; }
+  .integration-settings-list__primary { justify-items: start; }
+  .integration-settings-list__identity { flex-basis: 100%; }
+  .integration-settings-list__tools { width: 100%; justify-content: space-between; }
+}

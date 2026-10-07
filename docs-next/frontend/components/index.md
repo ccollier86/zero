@@ -33,6 +33,12 @@ persistence simply because they are exported by Zero.
   and QR presentation without claiming security from visual hiding.
 - [Phone input](./phone-input.md) covers flags, searchable countries, canonical
   numbers, shared read-only semantics and generated-form integration.
+- [Avatar group](./avatar-group.md) covers compact rosters, overflow counts,
+  optional add actions and explicitly enabled shape-matched status decoration.
+- [Settings matrix](./settings-matrix.md) covers one to three choice columns,
+  controlled preferences, per-cell save state and capability/scope retirement.
+- [Integration settings list](./integration-settings-list.md) covers flat/grouped
+  service rows, labeled status, confirmed actions and app-owned target lifetimes.
 - [JSON editor](./json-editor.md) covers structured JSON/text drafts and explicit
   local admission before a caller-owned server save.
 - [Cascader](./cascader.md) combines nested selection, capped checkboxes,

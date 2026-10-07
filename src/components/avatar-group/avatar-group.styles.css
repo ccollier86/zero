@@ -1,0 +1,76 @@
+/* Compact avatar metrics/shape hooks. Colors inherit Zero's semantic tokens. */
+.zero-avatar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--zero-avatar-group-action-gap, 0.5rem);
+  isolation: isolate;
+}
+.zero-avatar-group-stack { min-width: 0; }
+.zero-avatar-group-stack > [data-slot="avatar-container"] + [data-slot="avatar-container"] {
+  margin-inline-start: calc(-1 * var(--zero-avatar-group-overlap, 0.5rem));
+}
+.zero-avatar-group-member, .zero-avatar-group-count, .zero-avatar-group-add {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--zero-avatar-group-avatar-size, 2rem);
+  height: var(--zero-avatar-group-avatar-size, 2rem);
+  border-radius: var(--zero-avatar-group-radius, 9999px);
+}
+.zero-avatar-group-member, .zero-avatar-group-count {
+  box-shadow: 0 0 0 var(--zero-avatar-group-outline-width, 2px) var(--background);
+}
+.zero-avatar-group-image {
+  width: 100%; height: 100%; border-radius: inherit;
+}
+.zero-avatar-group-image [data-slot="avatar-image"] { object-fit: cover; }
+.zero-avatar-group-fallback {
+  border-radius: inherit;
+  font-family: inherit;
+  font-size: var(--zero-avatar-group-initials-font-size, 0.75rem);
+  font-weight: var(--zero-avatar-group-initials-font-weight, 500);
+}
+.zero-avatar-group-count {
+  background: var(--muted); color: var(--muted-foreground);
+  font-size: var(--zero-avatar-group-count-font-size, 0.875rem);
+  font-family: inherit;
+  font-weight: var(--zero-avatar-group-count-font-weight, 500);
+}
+.zero-avatar-group-count svg, .zero-avatar-group-add svg {
+  width: var(--zero-avatar-group-icon-size, 1rem);
+  height: var(--zero-avatar-group-icon-size, 1rem);
+}
+.zero-avatar-group-member:focus-visible, .zero-avatar-group-count:focus-visible {
+  outline: var(--zero-avatar-group-focus-width, 2px) solid var(--ring);
+  outline-offset: var(--zero-avatar-group-focus-offset, 3px);
+}
+.zero-avatar-group-stack > [data-slot="avatar-container"]:focus-within { z-index: var(--zero-avatar-group-focus-z-index, 50) !important; }
+.zero-avatar-presence-indicator {
+  pointer-events: none; position: absolute; z-index: 1;
+  --zero-avatar-presence-color: var(--muted-foreground);
+}
+.zero-avatar-presence-indicator[data-tone="success"] { --zero-avatar-presence-color: var(--success); }
+.zero-avatar-presence-indicator[data-tone="warning"] { --zero-avatar-presence-color: var(--warning); }
+.zero-avatar-presence-indicator[data-tone="destructive"] { --zero-avatar-presence-color: var(--destructive); }
+.zero-avatar-presence-indicator[data-tone="primary"] { --zero-avatar-presence-color: var(--primary); }
+.zero-avatar-presence-indicator[data-variant="ring"] {
+  inset: 0; border-radius: inherit;
+  border: var(--zero-avatar-presence-ring-width, 2px) solid var(--zero-avatar-presence-color);
+}
+.zero-avatar-presence-indicator[data-variant="dot"], .zero-avatar-presence-indicator[data-variant="badge"] {
+  inset-inline-end: 0; bottom: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--zero-avatar-presence-badge-size, 0.625rem); height: var(--zero-avatar-presence-badge-size, 0.625rem);
+  border-radius: var(--zero-avatar-presence-badge-radius, 9999px);
+  background: var(--zero-avatar-presence-color); color: var(--background);
+  box-shadow: 0 0 0 var(--zero-avatar-presence-outline-width, 2px) var(--background);
+}
+.zero-avatar-presence-indicator[data-variant="badge"] svg {
+  width: var(--zero-avatar-presence-icon-size, 0.5rem);
+  height: var(--zero-avatar-presence-icon-size, 0.5rem);
+}
+@media (prefers-reduced-motion: reduce) {
+  .zero-avatar-group button { transition-duration: 0s; }
+}

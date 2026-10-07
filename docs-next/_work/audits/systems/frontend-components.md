@@ -96,6 +96,34 @@ legal/compliance certification, npm publication, or proof of a shipped archive.
 
 ## Configuration And Integration Inventory
 
+### Adaptive Settings Presentation: October 6 Working Source
+
+Three source additions follow the session-recovery checkpoint
+`43b718a5fdf6fec4acf61524ba8d490da784e747`, framework 2.5.0. They have
+focused component paths plus root/React exports and do not change the
+historical 2.1.1 catalog counts:
+
+- [Avatar Group](../../../frontend/components/avatar-group.md) owns a compact
+  roster/count/optional add composition. Existing Avatar primitives remain
+  unchanged. Status decoration defaults off, is presentation-only, and follows
+  square/rounded/circle geometry; no tracking/subscription is mounted.
+- [Settings Matrix](../../../frontend/components/settings-matrix.md) owns
+  controlled boolean choices in one to three columns, per-cell async state,
+  locked/unavailable explanations and provider/app-target retirement.
+- [Integration Settings List](../../../frontend/components/integration-settings-list.md)
+  owns flat/grouped service presentation, labeled statuses, optional header
+  action, read-only mode, menus and acknowledged/confirmed action interaction.
+
+The first fresh installed temporary consumer passed one test /16 assertions:
+root/React/focused export identity, browser build, SSR without a domain service,
+package-local guides, notices, the recovery API and disabled presence semantics.
+This is an intermediate dirty-source check, not a clean release/archive claim;
+final source/browser evidence belongs in the
+[profile-upgrade qualification ledger](../guardian-profile-qualification.md).
+Existing profile/notification/integration/storage services remain their own
+authority/persistence owners. Connected profiles, uploads and first-class
+presence are not implemented merely by these presentation additions.
+
 ### Phone Input And Shared Read-Only: 2026-10-06 Working Evidence
 
 The Phone Input row supplements the original inventory with authorized dirty

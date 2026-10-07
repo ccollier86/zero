@@ -19,6 +19,7 @@ type AvatarProps = Omit<HTMLMotionProps<'div'>, 'translate'> & {
   children: React.ReactNode;
   zIndex: number;
   translate?: string | number;
+  tooltips?: boolean;
 } & Omit<TooltipProps, 'children'>;
 
 function AvatarContainer({
@@ -28,8 +29,24 @@ function AvatarContainer({
   sideOffset,
   align,
   alignOffset,
+  tooltips = true,
   ...props
 }: AvatarProps) {
+  const avatar = (
+    <motion.div
+      data-slot="avatar-container"
+      initial="initial"
+      whileHover="hover"
+      whileTap={tooltips ? 'hover' : undefined}
+      style={{ position: 'relative', zIndex }}
+    >
+      <motion.div
+        variants={{ initial: { y: 0 }, hover: { y: translate } }}
+        {...props}
+      />
+    </motion.div>
+  );
+  if (!tooltips) return avatar;
   return (
     <Tooltip
       side={side}
@@ -38,21 +55,7 @@ function AvatarContainer({
       alignOffset={alignOffset}
     >
       <TooltipTrigger asChild>
-        <motion.div
-          data-slot="avatar-container"
-          initial="initial"
-          whileHover="hover"
-          whileTap="hover"
-          style={{ position: 'relative', zIndex }}
-        >
-          <motion.div
-            variants={{
-              initial: { y: 0 },
-              hover: { y: translate },
-            }}
-            {...props}
-          />
-        </motion.div>
+        {avatar}
       </TooltipTrigger>
     </Tooltip>
   );
@@ -64,6 +67,8 @@ type AvatarGroupProps = Omit<React.ComponentProps<'div'>, 'translate'> & {
   translate?: string | number;
   transition?: Transition;
   tooltipTransition?: Transition;
+  /** Disable legacy tooltips when a composition supplies its own triggers. */
+  tooltips?: boolean;
 } & Omit<TooltipProviderProps, 'children'> &
   Omit<TooltipProps, 'children'>;
 
@@ -81,16 +86,11 @@ function AvatarGroup({
   align = 'center',
   alignOffset = 0,
   tooltipTransition = { type: 'spring', stiffness: 300, damping: 35 },
+  tooltips = true,
   style,
   ...props
 }: AvatarGroupProps) {
-  return (
-    <TooltipProvider
-      id={id}
-      openDelay={openDelay}
-      closeDelay={closeDelay}
-      transition={tooltipTransition}
-    >
+  const group = (
       <div
         ref={ref}
         data-slot="avatar-group"
@@ -103,7 +103,7 @@ function AvatarGroup({
       >
         {children?.map((child, index) => (
           <AvatarContainer
-            key={index}
+            key={child.key ?? index}
             zIndex={
               invertOverlap ? React.Children.count(children) - index : index
             }
@@ -113,11 +113,22 @@ function AvatarGroup({
             sideOffset={sideOffset}
             align={align}
             alignOffset={alignOffset}
+            tooltips={tooltips}
           >
             {child}
           </AvatarContainer>
         ))}
       </div>
+  );
+  if (!tooltips) return group;
+  return (
+    <TooltipProvider
+      id={id}
+      openDelay={openDelay}
+      closeDelay={closeDelay}
+      transition={tooltipTransition}
+    >
+      {group}
     </TooltipProvider>
   );
 }

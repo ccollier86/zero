@@ -115,6 +115,9 @@
     "#zero/components/dropdown-menu": "./src/components/dropdown-menu/index.ts",
     "#zero/components/hero": "./src/components/hero/index.ts",
     "#zero/components/phone-input": "./src/components/phone-input/index.ts",
+    "#zero/components/avatar-group": "./src/components/avatar-group/index.ts",
+    "#zero/components/settings-matrix": "./src/components/settings-matrix/index.ts",
+    "#zero/components/integration-settings-list": "./src/components/integration-settings-list/index.ts",
     "#zero/components/qr-code": "./src/components/qr-code/index.ts",
     "#zero/components/secret-field": "./src/components/secret-field/index.ts",
     "#zero/components/sidebar": "./src/components/sidebar/index.ts",
@@ -446,6 +449,18 @@
     "./components/phone-input": {
       "types": "./src/components/phone-input/index.ts",
       "import": "./src/components/phone-input/index.ts"
+    },
+    "./components/avatar-group": {
+      "types": "./src/components/avatar-group/index.ts",
+      "import": "./src/components/avatar-group/index.ts"
+    },
+    "./components/settings-matrix": {
+      "types": "./src/components/settings-matrix/index.ts",
+      "import": "./src/components/settings-matrix/index.ts"
+    },
+    "./components/integration-settings-list": {
+      "types": "./src/components/integration-settings-list/index.ts",
+      "import": "./src/components/integration-settings-list/index.ts"
     },
     "./components/cascader": {
       "types": "./src/components/cascader/index.ts",
