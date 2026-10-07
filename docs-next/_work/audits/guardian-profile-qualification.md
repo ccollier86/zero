@@ -701,3 +701,61 @@ problems and whitespace checks pass. None of these focused passes constitutes
 the complete clean-checkout release gate or a native-runtime fix claim. The
 next committed source must still complete the package/full/build/audit gates
 before publication and the stopped normal-updater proof.
+
+### Second Exact Clean-Checkout Run
+
+The detached clean checkpoint
+`ef2f7a3f74d914d371698a67c4055efe42cfc390` passes its frozen install,
+TypeScript, build, dependency audit, PDF readiness, documentation structure and
+complete installed-package gates. Its inspected archive has 4,274 ordinary
+entries, every one byte-identical to tracked source, SHA-256
+`ea761a601dfaadea3e6c84de1d1b4172d835542f0a5416c9b8bc701c9e416022`.
+Manifest, declared exports/private imports, CLI kit, migrations/helpers,
+styles and guides are present, without runtime/credential payload. The same
+archive identity is reported by the final installed group/menu consumer.
+
+The complete 944-file run finishes with 943 passing, one failing, zero unrun or
+interrupted, exit 1 after 651,863 ms. Evidence is
+`guardian-2.6-final-clean-full.log` and the external exact-source qualification
+receipt. All six failures from the first clean run now pass. The sole failure
+is the existing mobile workspace test reading the Record tab immediately after
+the return button becomes visible.
+
+A deterministic held-frame proof establishes the lifecycle: the return control
+is outside the keyed detail transition and can be visible while the outgoing
+table-only inspector still has a disabled, unselected Record tab. Releasing
+normal frames admits the new selected Record pane and exact accepted value.
+The test now acknowledges that actual pane before its unchanged assertion and
+adds the held-exit regression. The focused complete workspace passes seven
+cases /33 assertions in `data-studio-workspace-acknowledgment-final.log`, with
+the separate proof in `data-studio-workspace-held-exit-isolated-proof.log`.
+Organization replacement remounts the workspace boundary; this is not
+permission to animate stale cross-organization contents.
+
+The initial proof attempt encounters a separate in-process broad-graph build
+failure for two tracked, present relative targets. Their existence/hashes and
+the failure are preserved in `data-studio-workspace-build-targets.log` and
+`data-studio-workspace-held-exit-proof.log`. The fixture uses the established
+one-shot isolated builder with the identical entry, output, browser/IIFE options
+and production stylesheet builder; no missing source, retry, assertion or
+deadline is waived. Its underlying runtime cause is not claimed resolved.
+
+These are test-only corrections, not a production selection/animation change.
+The failed exact clean run remains failed. The corrected committed checkpoint
+still requires clean release qualification before merge/tag/push and saved
+archive/updater verification. No live Pantheon mutation or publication occurred.
+
+The isolated build child now owns a native timeout and SIGKILL within the
+original sixty-second setup budget, including output capture, cancellation and
+reaping. Cleanup attempts both stream cancellations and lock releases, surfaces
+rejected results, and preserves a primary build failure if cleanup also fails.
+Directory removal cannot race a still-live captured builder. The exact final
+helper passes success, nonzero exit, timeout/reap, cleanup rejection and combined
+primary/cleanup failure probes in
+`data-studio-workspace-builder-lifecycle-final-probe.log`; its helper SHA-256 is
+`0cc93db3998b361450c8d78fdaded0b35c8bf06a36a121a2c6b69d7eb02e861e`.
+The earlier seven-case browser receipt is explicitly pre-this final cleanup
+correction; integrated TypeScript passes in
+`guardian-2.6-workspace-final-typecheck.log`, and the next exact clean run must
+qualify the final complete browser file. No retry, skip, animation or test
+deadline changed.
