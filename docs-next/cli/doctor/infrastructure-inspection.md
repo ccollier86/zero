@@ -13,7 +13,7 @@ modes: ["configuration values", "trusted CLI modules", "explicit infrastructure 
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "bfc763919aeffa43d84556d6076ea18097b2cff1"
   snapshot: clean
   date: "2026-10-07"
   evidence_level: source-observed

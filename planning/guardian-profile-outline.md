@@ -19,10 +19,11 @@ remain discussion items; they are not added to this implementation by asking
 about them.
 
 The implemented 2.6.0 checkpoint is
-`c5656b306051b04ec6adc641b7057a0672fd7a3e`, October 7, 2026. Its frozen
-candidate passes all 942 fresh-process test files. Remaining checkboxes include
-exact clean-checkout/package qualification and actual publication; this is not
-yet an instruction to update a live app.
+`bfc763919aeffa43d84556d6076ea18097b2cff1`, October 7, 2026. The earlier
+942-file candidate passed, but the first exact clean run failed; focused closing
+corrections are now committed and the complete inventory is 944 files. Remaining
+checkboxes include this checkpoint's exact clean-checkout/package qualification
+and actual publication; this is not yet an instruction to update a live app.
 
 ## Design references and shared rules
 

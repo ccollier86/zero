@@ -3,20 +3,20 @@ id: zero.frontend.data-studio.inline-cell
 type: reference
 audience: [developer, agent]
 owner: data-studio
-status: draft
+status: verified
 visibility: internal
 system: data-studio
 feature: inline-cell
 maturity: supported
-applies_to: ["2.2.1 development source with temporal-editor changes; package qualification pending"]
+applies_to: ["2.6.0"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.2.1"
-  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "bfc763919aeffa43d84556d6076ea18097b2cff1"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Smooth Revisioned Inline Cells

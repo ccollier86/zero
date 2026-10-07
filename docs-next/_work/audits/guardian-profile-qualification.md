@@ -16,10 +16,12 @@ visibility: internal
 ## Source And Release Boundary
 
 The current implementation checkpoint is
-`c5656b306051b04ec6adc641b7057a0672fd7a3e`, package 2.6.0, October 7, 2026.
+`bfc763919aeffa43d84556d6076ea18097b2cff1`, package 2.6.0, October 7, 2026.
 It contains the committed adaptive Guardian upgrade and the preserved main CLI
-setup kit. The frozen candidate passes all 942 fresh-process test files.
-Final documentation and exact clean-checkout/publication gates remain pending;
+setup kit plus the focused closing corrections recorded below. Its complete
+inventory is 944 files. The earlier 942-file candidate pass and subsequent
+failed clean run are historical evidence, not this checkpoint's release gate.
+Exact clean-checkout/publication gates remain pending;
 this checkpoint is not yet the saved stable release or a Pantheon deployment.
 
 This ledger records implementation evidence for the adaptive-profile upgrade.
