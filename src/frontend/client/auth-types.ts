@@ -402,6 +402,12 @@ export type AuthSessionTransitionOperation =
   | 'tenant-switch'
   | 'logout';
 
+/** Secret-free outcome of explicitly restoring the current browser session. */
+export type AuthSessionRecoveryResult =
+  | { readonly kind: 'authenticated' }
+  | { readonly kind: 'signed-out' }
+  | { readonly kind: 'retryable'; readonly error: string };
+
 /** Observable phase for an authorization-scope replacement. */
 export interface AuthSessionTransitionState {
   phase:

@@ -519,6 +519,9 @@ describe('multi-tab auth session behavior', () => {
       'Discarded a response from a previous authorization scope',
     );
     expect(fixture.intentRequests()).toBe(0);
+    // Cancellation now retires the stale logout promptly. The separately
+    // queued peer reconciliation still owns hydration of the new scope.
+    await waitFor(() => fixture.client.activeTenant?.tenantId === 'ten_external');
     expect(fixture.client.isAuthenticated).toBe(true);
     expect(fixture.client.activeTenant?.tenantId).toBe('ten_external');
     fixture.blocker.dispose();

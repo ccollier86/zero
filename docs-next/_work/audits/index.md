@@ -39,6 +39,9 @@ against code, public exports, runtime composition and actual checks.
   optional reader, shared CodeBlock replacement, native builds, confirmed fixes
   and actual source/browser/installed/compiled evidence for the main-branch 2.5.0
   release; Git release, registry publication and public-tree cutover are separate.
+- [Guardian profile-upgrade qualification](./guardian-profile-qualification.md):
+  current session-recovery correction, focused SDK/server/browser evidence and
+  the boundary between completed source changes and upcoming profile/presence work.
 - [Informal naming candidates](./naming.md): approved aliases and unapproved
   suggestions, explicitly separate from API/import/config names.
 

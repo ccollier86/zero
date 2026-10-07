@@ -666,6 +666,20 @@ used for `route.ts` APIs, unsafe methods, app server plugins, or WebSocket sync;
 those continue to require `Authorization: Bearer ...`. An explicit invalid
 Authorization header does not fall back to the cookie.
 
+If the hydrated browser and server page boundaries disagree after a rebuild,
+AppProvider keeps the old loader subtree hidden and performs bounded session
+recovery. A recoverable browser credential is revalidated and its user/current
+authorization reloaded before a fresh document is requested. A server-only
+page session is cleared through normal logout only when the browser has no
+recoverable credential. A missing loaded user after a network failure is not,
+by itself, proof that the browser signed out.
+
+Persistent mismatch offers Retry session and explicit Sign out. Retry performs
+the recovery operation, not just another blind reload. Network/temporary server
+failures remain retryable; definitively rejected credentials settle sign-out
+and reach the normal login route. Do not remove the identity, role, tenant or
+revision comparisons to make a stuck page render.
+
 Because the cookie is intentionally limited to safe methods, page loaders and
 page middleware reached by `GET`/`HEAD` must remain read-only. Put state changes
 in Bearer-authorized API or server-plugin endpoints.

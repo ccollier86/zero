@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-runtime
 feature: scope-transitions
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["Working source on Zero 2.5.0; session-recovery release qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.5.0"
+  commit: "55ca1e6b649f5652831714ad93749918bd92a6bd"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -58,14 +58,32 @@ carry old rows into an apparently fresh session as a workaround.
 ## Bounded Recovery
 
 A generated SSR payload missing a trustworthy authorization boundary is not
-assumed to match. An initial page-cookie/browser-session mismatch reloads once
-under its recorded boundary. If only the server page session is signed in, the
-normal logout route can clear that HttpOnly page session before reload.
+assumed to match. When browser credentials can be recovered, a mismatch performs
+credential restoration, current-user hydration and live authorization before a
+fresh document reload. The refresh route synchronizes the HttpOnly page cookie.
+If the server alone is signed in and no browser proof remains, the normal logout
+route clears that page session before reload. User-null after interrupted
+restoration is not equivalent to having no recoverable credential.
 
 A same-document recovery marker prevents an endless reload loop for an unchanged
-mismatch. Persistent disagreement displays recovery instead of continuously
-reloading or exposing stale loader data. Use normal login/logout/configuration
-paths to resolve it; never edit injected globals to assert a match.
+mismatch. The marker survives pending restoration and provisional authority;
+clear it only on settled authoritative agreement. Persistent disagreement
+displays Retry session and explicit Sign out instead of continuously reloading
+or exposing stale loader data. Retry performs the actual recovery operation;
+network/temporary server failures keep credentials available for retry, while
+definite rejection settles a clean signed-out state. Never edit injected
+globals or weaken identity/role/tenant/revision comparison to assert a match.
+
+Credential-lock admission and each recovery network/body read have a bounded
+15-second deadline. An initial restore and one automatic repair may each use
+their own deadline; the UI does not promise a 15-second whole-page timeout.
+Sign out retires local authority even if the remote server is unreachable, but
+does not claim that an unreachable server acknowledged HttpOnly-cookie cleanup.
+
+This page-session repair is separate from `reconcileAuthSession()`, which
+retries the local data barrier after credentials already committed. Do not
+replay login, invitation or other one-time proof issuance to repair a cookie
+or a local barrier.
 
 ## Async Work And Ownership
 
@@ -91,6 +109,9 @@ Source-boundary tests and focused component regressions support this draft;
 installed artifact and full production hydration mode qualification remain
 separate. [Guardian sessions](../../backend/guardian/sessions.md) specifies the
 canonical revocation/refresh semantics.
+The current session correction also has synthetic HTTP/cookie and real-browser
+evidence in the
+[profile-upgrade qualification ledger](../../_work/audits/guardian-profile-qualification.md).
 
 ## Related Guides And Next Steps
 

@@ -1361,6 +1361,12 @@ interface AuthClient {
   /** Refresh the access token using the stored refresh token. */
   refresh(): Promise<boolean>;
 
+  /** Retained rotating proof is available for retry; not authenticated authority. */
+  readonly hasRecoverableSession: boolean;
+
+  /** Restore the current session, hydrate its user and validate live authorization. */
+  recoverSession(): Promise<AuthSessionRecoveryResult>;
+
   /** Change password. Requires current password. Revokes all sessions. */
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
 
@@ -1586,8 +1592,10 @@ await client.refresh();
 5. Server replaces the page cookie with a credential bound to the new refresh row
 6. SDK stores the new access token in memory and the new refresh token in `localStorage`
 7. The top-level `client.refresh()` resolves after the attempt. If refresh is
-   unavailable or rejected, the SDK clears the local session instead of
-   surfacing the endpoint's token error.
+   definitively rejected (`401`/`403`), the SDK clears the local session instead
+   of surfacing the endpoint's token error. Network, `5xx`, and invalid-response
+   failures retain recoverable credentials for a later retry; they do not prove
+   that the session expired.
 
 **Automatic refresh:** The SDK intercepts 401 responses from authenticated
 HTTP calls and automatically refreshes before retrying once. The component
@@ -1605,8 +1613,37 @@ If an old token is still replayed, the server revokes the entire token family.
 The lower-level exported `AuthClient.refresh()` returns `Promise<boolean>` so
 custom transport code can distinguish success from failure. The top-level
 `Client` and `useAuth()` deliberately expose `Promise<void>` and reflect failure
-through cleared auth state. They do not throw `TOKEN_EXPIRED`, `TOKEN_REVOKED`,
+through auth state. Only definite rejection clears that state. They do not throw `TOKEN_EXPIRED`, `TOKEN_REVOKED`,
 or `NO_TOKEN` to callers of `refresh()`.
+
+The lower-level `AuthClient.recoverSession()` repairs a browser/page-session
+disagreement by restoring the current rotating proof, reloading `/auth/me`,
+and validating current authorization. It returns `AuthSessionRecoveryResult`:
+`authenticated`, `signed-out`, or `retryable` with safe error text. The
+secret-free `hasRecoverableSession` getter distinguishes retained proof after
+an interrupted restore from a truly signed-out browser. It is not authority,
+and `refresh()` alone does not reload the account profile.
+
+Startup and explicit recovery bound credential-lock admission and each
+network-and-response-body operation to 15 seconds. Timed-out queued operations
+cannot later adopt proof or issue requests. These are per-operation deadlines,
+not a single 15-second whole-page timeout. Disposal or replacement of the
+credential family cancels the
+owned request; ignored/late responses cannot publish an old user or token.
+A `signed-out` recovery result describes the browser authority state, not a
+general guarantee that an unreachable server acknowledged cookie deletion.
+
+Normal applications do not need a second AuthClient or custom reload loop:
+AppProvider owns this bounded recovery. It keeps mismatched server-loader
+data hidden while repairing the page cookie. Persistent disagreement offers
+Retry session and an explicit Sign out instead of unlimited reloads. This is
+different from `reconcileAuthSession()`, which retries an already committed
+session's local Sync/cache barrier without repeating credential issuance.
+
+A temporary live Sync refresh failure also retains recoverable proof while
+purging and read-fencing cached rows. Definitively rejected credentials still
+settle sign-out; a late result from an older socket cannot reset a newer
+read-authority epoch.
 
 ### Session Persistence And Expiry
 
@@ -1624,7 +1661,10 @@ The SDK keeps the user logged in across normal access-token expiry:
 3. Authenticated HTTP calls that receive 401 refresh and retry once.
 4. Sync opens and reconnects with the latest access token instead of a stale token captured at startup.
 5. Login, registration, and refresh reconnect sync when the auth token changes.
-6. Logout, rejected refresh, revoked refresh token, or unknown 401 clears auth state and resets local synced table/state data.
+6. Logout, definitively rejected refresh, revoked refresh token, or a current
+   definitive authorization rejection clears auth state and resets local
+   synced table/state data. Temporary startup transport/service failures keep
+   proof available for recovery without displaying mismatched loader data.
 
 When auth is enabled, `AppProvider` watches auth state on the client. During
 persisted-session restoration it withholds the login subtree, preventing a

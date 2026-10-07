@@ -1040,8 +1040,15 @@ export function createClient(config: ClientConfig): Client {
     if (syncAuthRefresh) return;
 
     const refreshScope = authClient.authorizationScopeKey;
+    const refreshEpoch = authorizationScopeEpoch;
     syncAuthRefresh = (async () => {
       const refreshed = await authClient.refresh();
+      // A newer scope/read-authority transition owns its own cache teardown.
+      // Do not let the previous socket's failed refresh reset that replacement.
+      const signedOut = !authClient.authorizationScopeKey
+        && !authClient.isAuthenticated && !authClient.hasRecoverableSession;
+      if ((authClient.authorizationScopeKey !== refreshScope
+        || authorizationScopeEpoch !== refreshEpoch) && !signedOut) return;
       if (refreshed && currentAuthToken()) {
         syncClient.connect();
         return;
@@ -1049,8 +1056,11 @@ export function createClient(config: ClientConfig): Client {
 
       // A rejected refresh already commits expiry through AuthSession's scope
       // purge barrier. Only transports that returned false without expiring
-      // an established scope still need the revision-fenced fallback.
-      if (authClient.authorizationScopeKey || authClient.isAuthenticated) {
+      // an established scope with no retryable proof need that fallback.
+      // A transport/proxy outage is not proof that the rotating credential was
+      // rejected. Keep it for real recovery, while still purging local rows.
+      if (!authClient.hasRecoverableSession
+        && (authClient.authorizationScopeKey || authClient.isAuthenticated)) {
         authClient.expireSession();
       }
       resetClientSessionState();
@@ -1062,6 +1072,7 @@ export function createClient(config: ClientConfig): Client {
         // cache state, so cancellation is neither an app error nor a reason
         // to expire the newly committed session.
         if (authClient.authorizationScopeKey !== refreshScope
+          || authorizationScopeEpoch !== refreshEpoch
           || authClient.sessionTransition.phase !== 'idle') return;
         onError?.(error);
       })

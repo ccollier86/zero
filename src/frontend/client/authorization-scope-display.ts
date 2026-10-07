@@ -15,6 +15,7 @@ export interface AuthorizationScopeDisplayDecision {
 
 export type AuthorizationScopeReloadAction =
   | 'reload'
+  | 'refresh-session-and-reload'
   | 'clear-page-session-and-reload'
   | 'show-recovery';
 
@@ -50,12 +51,36 @@ export function resolveAuthorizationScopeReloadAction(input: {
   reloadKey: string;
   serverUserId: string | null;
   browserUserId: string | null;
+  browserHasRecoverableSession?: boolean;
 }): AuthorizationScopeReloadAction {
   if (input.recordedReloadKey === input.reloadKey) return 'show-recovery';
+  // A transient restore can retain rotating proof without a hydrated user.
+  // That is recoverable authentication, not a server-only cookie to discard.
+  if (input.browserUserId || input.browserHasRecoverableSession) {
+    return 'refresh-session-and-reload';
+  }
   if (input.serverUserId && !input.browserUserId) {
     return 'clear-page-session-and-reload';
   }
   return 'reload';
+}
+
+/** An attempt marker survives provisional restoration and access-hint states. */
+export function isHydrationScopeRecoverySettled(input: {
+  ready: boolean;
+  isRestoring: boolean;
+  isLoading: boolean;
+  hasHydrationRoute: boolean;
+  hydrationScopeMatches?: boolean;
+  browserUserId: string | null;
+  browserHasRecoverableSession: boolean;
+  authorizationReady: boolean;
+}): boolean {
+  if (!input.ready || input.isRestoring || input.isLoading) return false;
+  if (input.hasHydrationRoute && input.hydrationScopeMatches !== true) return false;
+  return input.browserUserId
+    ? input.authorizationReady
+    : !input.browserHasRecoverableSession;
 }
 
 export function resolveAuthorizationScopeDisplay(input: {

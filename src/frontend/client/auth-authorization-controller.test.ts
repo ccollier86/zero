@@ -176,6 +176,48 @@ describe('AuthAuthorizationController', () => {
     unsubscribe();
     harness.controller.dispose();
   });
+
+  test('recovery cancellation settles an ignored abort and never publishes its late grants', async () => {
+    const harness = createHarness(session('user-a', 'token-a'));
+    const cancellation = new AbortController();
+    const pending = harness.controller.refresh(cancellation.signal);
+    expect(harness.loads).toHaveLength(1);
+    cancellation.abort(new DOMException('Timed out', 'TimeoutError'));
+    expect(await pending).toBeNull();
+    expect(harness.controller.getSnapshot()).toMatchObject({ status: 'error', snapshot: null });
+    expect(harness.expirations).toBe(0);
+    harness.loads[0]!.resolve(snapshot('user-a', null, ['records:write'], 'late'));
+    await flush();
+    expect(harness.controller.getSnapshot().snapshot).toBeNull();
+    harness.controller.dispose();
+  });
+
+  test('cancelling an older recovery cannot abort a newer authorization read', async () => {
+    const harness = createHarness(session('user-a', 'token-a'));
+    const cancellation = new AbortController();
+    const older = harness.controller.refresh(cancellation.signal);
+    const newer = harness.controller.refresh();
+    cancellation.abort();
+    expect(await older).toBeNull();
+    harness.loads[1]!.resolve(snapshot('user-a', null, ['records:read'], 'newer'));
+    expect((await newer)?.revision).toBe('newer');
+    harness.loads[0]!.resolve(snapshot('user-a', null, ['records:write'], 'older'));
+    await flush();
+    expect(harness.controller.getSnapshot().snapshot?.revision).toBe('newer');
+    expect(harness.expirations).toBe(0);
+    harness.controller.dispose();
+  });
+
+  test('already-cancelled recovery does not send an authorization request', async () => {
+    const harness = createHarness(session('user-a', 'token-a'));
+    const cancellation = new AbortController();
+    cancellation.abort();
+    expect(await harness.controller.refresh(cancellation.signal)).toBeNull();
+    expect(harness.loads).toHaveLength(0);
+    expect(harness.expirations).toBe(0);
+    expect(harness.controller.getSnapshot()).toMatchObject({ status: 'error', snapshot: null });
+    harness.controller.dispose();
+  });
 });
 
 function createHarness(initial: AuthAuthorizationSessionView) {

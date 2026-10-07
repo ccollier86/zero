@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   authorizationScopeTransitionMessage,
+  isHydrationScopeRecoverySettled,
   resolveAuthorizationScopeDisplay,
   resolveAuthorizationScopeReloadAction,
   resolveHydrationScopeMatch,
@@ -116,12 +117,42 @@ describe('root authorization-scope display boundary', () => {
     })).toBe('show-recovery');
   });
 
-  test('reloads a mismatched authenticated browser without logging it out', () => {
+  test('repairs a mismatched authenticated browser before reloading without logging it out', () => {
     expect(resolveAuthorizationScopeReloadAction({
       recordedReloadKey: null,
       reloadKey: 'server-a/browser-b',
       serverUserId: 'user-a',
       browserUserId: 'user-b',
-    })).toBe('reload');
+    })).toBe('refresh-session-and-reload');
+  });
+
+  test('a retained proof without a user is recoverable rather than a server-only page session', () => {
+    expect(resolveAuthorizationScopeReloadAction({
+      recordedReloadKey: null,
+      reloadKey: 'server-a/browser-restoration-failed',
+      serverUserId: 'user-a',
+      browserUserId: null,
+      browserHasRecoverableSession: true,
+    })).toBe('refresh-session-and-reload');
+  });
+
+  test('does not clear a bounded attempt during restoration, unreadable data or provisional revision matching', () => {
+    const settled = {
+      ready: true, isRestoring: false, isLoading: false,
+      hasHydrationRoute: true, hydrationScopeMatches: true,
+      browserUserId: 'user-a', browserHasRecoverableSession: true,
+      authorizationReady: true,
+    };
+    expect(isHydrationScopeRecoverySettled(settled)).toBe(true);
+    expect(isHydrationScopeRecoverySettled({ ...settled, isRestoring: true })).toBe(false);
+    expect(isHydrationScopeRecoverySettled({ ...settled, isLoading: true })).toBe(false);
+    expect(isHydrationScopeRecoverySettled({ ...settled, ready: false })).toBe(false);
+    expect(isHydrationScopeRecoverySettled({ ...settled, authorizationReady: false })).toBe(false);
+    expect(isHydrationScopeRecoverySettled({ ...settled, hydrationScopeMatches: false })).toBe(false);
+    expect(isHydrationScopeRecoverySettled({ ...settled, browserUserId: null })).toBe(false);
+    expect(isHydrationScopeRecoverySettled({
+      ...settled, browserUserId: null, browserHasRecoverableSession: false,
+      authorizationReady: false,
+    })).toBe(true);
   });
 });

@@ -8,7 +8,7 @@
  * remains inside the SDK client.
  */
 
-import { createElement, Fragment, useEffect, useRef, useState } from 'react';
+import { createElement, Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   SyncDataPlaneName,
@@ -32,10 +32,17 @@ import {
 } from './authorization-scope-hooks';
 import {
   authorizationScopeTransitionMessage,
+  isHydrationScopeRecoverySettled,
   resolveAuthorizationScopeDisplay,
   resolveAuthorizationScopeReloadAction,
   resolveHydrationScopeMatch,
 } from './authorization-scope-display';
+import {
+  AuthorizationScopeRecoveryController,
+  type AuthorizationScopeRecoveryOperation,
+} from './authorization-scope-recovery';
+import { reportAuthClientActionFailure } from './auth-action-observability';
+import { Button } from '../../components/ui/button';
 import {
   shouldRequireAuthForRoute,
   type RouteAuthMode,
@@ -336,7 +343,16 @@ function AuthorizationScopeGuard({
   const auth = internal.auth;
   const authorizationDataBoundary = internal._authorizationDataBoundary;
   const authorizationState = useAuthorization();
-  const [scopeRecoveryRequired, setScopeRecoveryRequired] = useState(false);
+  const [scopeRecovery, setScopeRecovery] = useState<{
+    scopeKey: string | null;
+    operation: AuthorizationScopeRecoveryOperation | null;
+    error: string | null;
+  } | null>(null);
+  const recoveryControllerRef = useRef<AuthorizationScopeRecoveryController | null>(null);
+  if (!recoveryControllerRef.current) {
+    recoveryControllerRef.current = new AuthorizationScopeRecoveryController();
+  }
+  const recoveryController = recoveryControllerRef.current;
   const displayedScopeRef = useRef<string | null>(null);
   // AppProvider is a standalone public export. Do not rely on the ambient
   // Window augmentation declared by the separately exported hydration runtime;
@@ -366,11 +382,62 @@ function AuthorizationScopeGuard({
   });
   displayedScopeRef.current = display.displayedScopeKey;
   const requiresRouteReload = display.reload;
-  const reloadKey = JSON.stringify([
-    typeof window === 'undefined' ? '' : window.location.pathname,
-    routeData?.authorizationBoundary ?? null,
-    browserRouteBoundary,
-  ]);
+  const recoveryScopeKey = auth?.authorizationScopeKey ?? null;
+  // Only the document and opaque credential family identify the bounded
+  // attempt. Provisional hint status/revisions must not reset the loop guard.
+  const readReloadKey = useCallback(() => JSON.stringify([
+    typeof window === 'undefined' ? '' : `${window.location.pathname}${window.location.search}`,
+    auth?.authorizationScopeKey ?? null,
+  ]), [auth]);
+  const reloadKey = readReloadKey();
+  const recoverySettled = isHydrationScopeRecoverySettled({
+    ready: boundary.ready,
+    isRestoring: auth?.isRestoring ?? false,
+    isLoading: auth?.isLoading ?? false,
+    hasHydrationRoute,
+    hydrationScopeMatches,
+    browserUserId: browserRouteBoundary.userId,
+    browserHasRecoverableSession: auth?.hasRecoverableSession ?? false,
+    authorizationReady: browserRouteBoundary.authorizationReady,
+  });
+  const needsRecovery = hasHydrationRoute && boundary.stable
+    && !auth?.isRestoring && !auth?.isLoading
+    && (requiresRouteReload || !boundary.ready
+      || Boolean(auth?.hasRecoverableSession && !auth.user));
+  const recoveryPending = Boolean(auth && recoveryController.isPendingFor(auth));
+  const currentRecovery = scopeRecovery?.scopeKey === recoveryScopeKey
+    || (scopeRecovery?.operation && recoveryPending) ? scopeRecovery : null;
+
+  useEffect(() => {
+    recoveryController.activate();
+    setScopeRecovery(null);
+    return () => recoveryController.retire();
+  }, [auth, recoveryController]);
+
+  const runScopeRecovery = useCallback((operation: AuthorizationScopeRecoveryOperation) => {
+    if (!auth) return;
+    const scopeKey = auth.authorizationScopeKey;
+    void recoveryController.run({
+      client: auth,
+      scopeKey,
+      operation,
+      onStart: () => {
+        recordAuthorizationScopeReload(readReloadKey());
+        setScopeRecovery({ scopeKey, operation, error: null });
+      },
+      onReload: () => {
+        // A rejected proof/sign-out intentionally replaces the family with
+        // anonymous. Preserve the bound for that outcome too if cookie clearing
+        // was unavailable; never pretend a local logout wiped a remote cookie.
+        recordAuthorizationScopeReload(readReloadKey());
+        window.location.reload();
+      },
+      onRetryable: (error, cause) => {
+        reportAuthClientActionFailure('hydratedSessionRecovery', cause, { codeOnly: true });
+        setScopeRecovery({ scopeKey, operation: null, error });
+      },
+    });
+  }, [auth, readReloadKey, recoveryController]);
   useEffect(() => {
     if (!auth) return;
     let observedBoundaryKey = readAuthorizationScopeBoundaryKey(
@@ -404,8 +471,10 @@ function AuthorizationScopeGuard({
     const historyState = isPlainHistoryState(window.history.state)
       ? window.history.state
       : {};
-    if (!requiresRouteReload) {
-      setScopeRecoveryRequired(false);
+    // Restoring/provisional access is not a verified agreement. In particular,
+    // a failed restore may have no user yet still retain retryable proof.
+    if (!requiresRouteReload && recoverySettled && !recoveryPending) {
+      setScopeRecovery(null);
       if (marker in historyState) {
         const nextState = { ...historyState };
         delete nextState[marker];
@@ -413,6 +482,7 @@ function AuthorizationScopeGuard({
       }
       return;
     }
+    if (!needsRecovery || recoveryPending) return;
     const action = resolveAuthorizationScopeReloadAction({
       recordedReloadKey: typeof historyState[marker] === 'string'
         ? historyState[marker]
@@ -420,53 +490,59 @@ function AuthorizationScopeGuard({
       reloadKey,
       serverUserId: routeData?.authorizationBoundary?.userId ?? null,
       browserUserId: browserRouteBoundary.userId,
+      browserHasRecoverableSession: auth?.hasRecoverableSession ?? false,
     });
     // A same-document history marker makes a persistent cookie/session
     // disagreement fail closed without creating an infinite reload loop.
     if (action === 'show-recovery') {
-      setScopeRecoveryRequired(true);
+      setScopeRecovery((previous) => previous?.scopeKey === recoveryScopeKey
+        ? previous
+        : { scopeKey: recoveryScopeKey, operation: null, error: null });
       return;
     }
-    setScopeRecoveryRequired(false);
-    window.history.replaceState({ ...historyState, [marker]: reloadKey }, '');
-    void (async () => {
-      if (action === 'clear-page-session-and-reload') {
-        // No browser credential exists to supersede the server-only page
-        // session. Use the normal logout route to clear its HttpOnly cookie.
-        await auth?.logout().catch(() => undefined);
-      }
+    if (!auth) {
+      recordAuthorizationScopeReload(reloadKey);
       window.location.reload();
-    })();
-  }, [auth, browserRouteBoundary.userId, reloadKey, requiresRouteReload,
-    routeData?.authorizationBoundary?.userId]);
-
-  const retryScopeRecovery = async () => {
-    const historyState = isPlainHistoryState(window.history.state)
-      ? { ...window.history.state }
-      : {};
-    delete historyState.__zeroAuthorizationBoundaryReload;
-    window.history.replaceState(historyState, '');
-    setScopeRecoveryRequired(false);
-    if (routeData?.authorizationBoundary?.userId && !browserRouteBoundary.userId) {
-      await auth?.logout().catch(() => undefined);
+      return;
     }
-    window.location.reload();
-  };
+    runScopeRecovery(action === 'clear-page-session-and-reload' ? 'sign-out' : 'recover');
+  }, [auth, browserRouteBoundary.userId, recoveryPending, needsRecovery,
+    recoveryScopeKey, recoverySettled, reloadKey, requiresRouteReload,
+    routeData?.authorizationBoundary?.userId, runScopeRecovery]);
 
-  if (scopeRecoveryRequired) {
+  if (currentRecovery) {
+    const pending = currentRecovery.operation !== null;
     return createElement(
       'main',
-      { role: 'alert', 'data-zero-auth-recovery': true },
-      createElement('h1', null, 'Session refresh required'),
+      {
+        role: 'alert', 'data-zero-auth-recovery': true,
+        className: 'grid min-h-screen place-content-center gap-4 px-6 py-10 text-foreground',
+      },
+      createElement('h1', { className: 'text-lg font-semibold tracking-tight' }, 'Session refresh required'),
       createElement(
         'p',
-        null,
-        'The browser and server sessions still disagree. Retry to safely clear the stale page session.',
+        { className: 'max-w-md text-sm leading-relaxed text-muted-foreground' },
+        'This page could not be matched to your current session. Retry to refresh it safely, or sign out.',
       ),
-      createElement('button', { type: 'button', onClick: retryScopeRecovery }, 'Retry session'),
+      currentRecovery.error && createElement('p', {
+        className: 'max-w-md text-sm text-destructive',
+      }, currentRecovery.error),
+      createElement('div', { className: 'flex flex-wrap items-center gap-2' },
+        createElement(Button, {
+          type: 'button', size: 'sm', disabled: pending,
+          onClick: () => runScopeRecovery('recover'),
+        }, currentRecovery.operation === 'recover' ? 'Refreshing session…' : 'Retry session'),
+        createElement(Button, {
+          type: 'button', size: 'sm', variant: 'outline', disabled: pending,
+          onClick: () => runScopeRecovery('sign-out'),
+        }, currentRecovery.operation === 'sign-out' ? 'Signing out…' : 'Sign out'),
+      ),
+      pending && createElement('p', {
+        role: 'status', 'aria-live': 'polite', className: 'text-sm text-muted-foreground',
+      }, currentRecovery.operation === 'sign-out' ? 'Signing out securely…' : 'Refreshing your secure session…'),
     );
   }
-  if (!display.render) {
+  if (!display.render || needsRecovery) {
     return createElement(
       'main',
       {
@@ -485,6 +561,11 @@ function AuthorizationScopeGuard({
 
 function isPlainHistoryState(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function recordAuthorizationScopeReload(reloadKey: string): void {
+  const historyState = isPlainHistoryState(window.history.state) ? window.history.state : {};
+  window.history.replaceState({ ...historyState, __zeroAuthorizationBoundaryReload: reloadKey }, '');
 }
 
 function AuthRouteGuard({

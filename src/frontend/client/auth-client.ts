@@ -42,6 +42,7 @@ import {
 } from './auth-errors';
 import { AuthMfaTransport } from './auth-mfa-transport';
 import { AuthPropertyTransport } from './auth-property-transport';
+import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
 import {
   composeAuthorizationScopeSignal,
   guardResponseAuthorizationScope,
@@ -71,6 +72,7 @@ import type {
   AuthPasswordUpdatedResult,
   AuthPublicConfig,
   AuthRegistrationResult,
+  AuthSessionRecoveryResult,
   AuthSessionResult,
   AuthSessionTransitionState,
   AuthTenantListResult,
@@ -225,6 +227,7 @@ export type {
   AuthPublicConfig,
   AuthRegistrationResult,
   AuthRegistrationTenant,
+  AuthSessionRecoveryResult,
   AuthSessionResult,
   AuthSessionTransitionOperation,
   AuthSessionTransitionState,
@@ -333,6 +336,10 @@ export class AuthClient {
   private readonly tenantDomains: AuthTenantDomainTransport;
   private readonly domainOnboarding: AuthDomainOnboardingTransport;
   private readonly admin: AuthAdminTransport;
+  private recoveryPromise: Promise<AuthSessionRecoveryResult> | null = null;
+  private recoveryAuthorizationRequest: AuthSessionRecoveryRequest | null = null;
+  private recoveryAuthorizationRejectedRevision: number | null = null;
+  private recoveryAuthorizationRejectedScope: string | null = null;
 
   constructor(
     private readonly baseUrl: string,
@@ -359,7 +366,13 @@ export class AuthClient {
         transition: this.session.sessionTransition,
       }),
       subscribeSession: (callback) => this.session.subscribe(callback),
-      expireSession: () => this.session.expireSession(),
+      expireSession: () => {
+        if (this.recoveryAuthorizationRequest) {
+          this.recoveryAuthorizationRejectedRevision = this.session.revision;
+          this.recoveryAuthorizationRejectedScope = this.session.captureAuthorizationScope();
+        }
+        this.session.expireSession();
+      },
       revalidateIntervalMs: options.authorizationRevalidationIntervalMs,
     });
 
@@ -576,6 +589,11 @@ export class AuthClient {
 
   get accessToken(): string | null {
     return this.session.accessToken;
+  }
+
+  /** Retained proof can be retried even before its user loads; not authorization. */
+  get hasRecoverableSession(): boolean {
+    return this.session.hasRecoverableSession;
   }
 
   /** @internal Opaque browser-local authorization family for UI cache fences. */
@@ -863,6 +881,94 @@ export class AuthClient {
       .finally(() => attempt.dispose());
   }
 
+  /**
+   * Repair browser/page-session disagreement through real credential rotation,
+   * user hydration and live authorization. Transient failure keeps proof and
+   * returns safe retry copy; a replaced scope rejects without affecting it.
+   */
+  recoverSession(): Promise<AuthSessionRecoveryResult> {
+    if (this.recoveryPromise) return this.recoveryPromise;
+    const pending = this.performSessionRecovery().finally(() => {
+      if (this.recoveryPromise === pending) this.recoveryPromise = null;
+    });
+    this.recoveryPromise = pending;
+    return pending;
+  }
+
+  private async performSessionRecovery(): Promise<AuthSessionRecoveryResult> {
+    if (this.session.sessionTransition.phase === 'recovery-required') {
+      const scope = this.session.captureAuthorizationScope();
+      try {
+        await this.session.reconcileSession();
+      } catch {
+        this.session.assertAuthorizationScopeCurrent(scope);
+        return { kind: 'retryable', error: 'Unable to synchronize the browser session. Please retry.' };
+      }
+      this.session.assertAuthorizationScopeCurrent(scope);
+    }
+    const recovered = await this.runScopeChangingOperation((attempt) => (
+      this.session.recoverSession(attempt.assertCurrent, attempt.consumeStartingScope)
+    ));
+    if (recovered.kind !== 'authenticated') return recovered;
+    const revision = this.session.revision;
+    const recoveredScope = this.session.captureAuthorizationScope();
+    const attempt = this.beginAuthorizationScopeAttempt();
+    const request = new AuthSessionRecoveryRequest();
+    this.recoveryAuthorizationRequest = request;
+    this.recoveryAuthorizationRejectedRevision = null;
+    this.recoveryAuthorizationRejectedScope = null;
+    const cancel = () => request.cancel();
+    attempt.signal.addEventListener('abort', cancel, { once: true });
+    const unsubscribe = this.session.subscribe(() => {
+      try { attempt.assertCurrent(); } catch { request.cancel(); }
+    });
+    try {
+      const snapshot = await request.run((signal) => this.authorizationController.refresh(signal));
+      if (this.authorizationState.status === 'revoked'
+        || (this.recoveryAuthorizationRejectedRevision !== null
+          && this.recoveryAuthorizationRejectedScope === recoveredScope)) {
+        // The controller may already have queued this same revision's expiry.
+        // Wait for that barrier without testing the intentionally retired scope.
+        await this.session.expireSessionAtRevision(this.recoveryAuthorizationRejectedRevision ?? revision);
+        if (!this.isAuthenticated && !this.hasRecoverableSession) {
+          this.session.assertAuthorizationScopeCurrent(null);
+          return { kind: 'signed-out' };
+        }
+      }
+      attempt.assertCurrent();
+      if (!snapshot) {
+        return { kind: 'retryable', error: 'Unable to verify current access. Please retry.' };
+      }
+      return { kind: 'authenticated' };
+    } catch {
+      // Revocation may trigger the controller's revision-fenced expiry before
+      // this awaited read settles. That intentional transition cancels its
+      // request epoch; wait for its tombstone rather than testing the retired
+      // family as though it were an unrelated replacement.
+      if (this.authorizationState.status === 'revoked'
+        || (this.recoveryAuthorizationRejectedRevision !== null
+          && this.recoveryAuthorizationRejectedScope === recoveredScope)) {
+        await this.session.expireSessionAtRevision(this.recoveryAuthorizationRejectedRevision ?? revision);
+        if (!this.isAuthenticated && !this.hasRecoverableSession) {
+          this.session.assertAuthorizationScopeCurrent(null);
+          return { kind: 'signed-out' };
+        }
+      }
+      attempt.assertCurrent();
+      return { kind: 'retryable', error: 'Unable to verify current access. Please retry.' };
+    } finally {
+      unsubscribe();
+      attempt.signal.removeEventListener('abort', cancel);
+      request.cancel();
+      if (this.recoveryAuthorizationRequest === request) {
+        this.recoveryAuthorizationRequest = null;
+        this.recoveryAuthorizationRejectedRevision = null;
+        this.recoveryAuthorizationRejectedScope = null;
+      }
+      attempt.dispose();
+    }
+  }
+
   /** Retry a committed transition's local Sync baseline reconciliation. */
   reconcileSession(): Promise<void> {
     return this.session.reconcileSession();
@@ -1088,6 +1194,7 @@ export class AuthClient {
 
   /** @internal Release cross-tab listeners when the SDK client disconnects. */
   dispose(): void {
+    this.recoveryAuthorizationRequest?.cancel();
     this.authorizationController.dispose();
     this.session.dispose();
   }

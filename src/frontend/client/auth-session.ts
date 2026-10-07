@@ -7,6 +7,7 @@
  */
 
 import {
+  BrowserAuthCoordinationError,
   BrowserAuthCoordinator,
   type BrowserAuthCoordinationEnvironment,
   type BrowserAuthCredentialRecord,
@@ -19,16 +20,25 @@ import {
   parseAuthUser,
 } from './auth-completion-parser';
 import { createAuthStore, sendAuthStoreEvent } from './auth-store';
+import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
 import type { AuthStore, AuthStoreContext } from './auth-store';
 import { isAuthSessionResult } from './auth-types';
 import type {
   AuthCompletionResult,
   AuthSessionResult,
+  AuthSessionRecoveryResult,
   AuthSessionTransitionOperation,
   AuthSessionTransitionState,
   AuthTenantSummary,
   AuthUser,
 } from './auth-types';
+
+const SESSION_RECOVERY_UNAVAILABLE = 'Unable to verify the browser session. Please retry.';
+
+/** Only a definitive auth denial retires proof; outages/protocol errors do not. */
+function isRejectedSessionResponse(response: Pick<Response, 'status'>): boolean {
+  return response.status === 401 || response.status === 403;
+}
 
 export interface AuthSessionScopeLifecycle {
   beginTransition(): void;
@@ -59,6 +69,8 @@ export class AuthSessionSynchronizationError extends Error {
 export interface AuthSessionControllerOptions {
   scopeLifecycle?: AuthSessionScopeLifecycle;
   coordination?: BrowserAuthCoordinationEnvironment;
+  /** @internal Synthetic tests only; public clients keep the 15-second bound. */
+  recoveryRequestTimeoutMs?: number;
 }
 
 export class AuthSessionController {
@@ -73,6 +85,8 @@ export class AuthSessionController {
   private credentialRevision = 0;
   private scopeId: string | null = null;
   private transitionOperation: AuthSessionTransitionOperation | null = null;
+  private readonly recoveryRequests = new Set<AuthSessionRecoveryRequest>();
+  private readonly recoveryRequestTimeoutMs?: number;
   private disposed = false;
 
   constructor(
@@ -81,6 +95,7 @@ export class AuthSessionController {
   ) {
     this.store = createAuthStore();
     this.scopeLifecycle = options.scopeLifecycle;
+    this.recoveryRequestTimeoutMs = options.recoveryRequestTimeoutMs;
     this.coordinator = new BrowserAuthCoordinator(baseUrl, options.coordination);
     this.unsubscribeSignals = this.coordinator.subscribe((signal) => {
       this.queueExternalSignal(signal);
@@ -129,6 +144,11 @@ export class AuthSessionController {
     return this.context.refreshToken;
   }
 
+  /** A retained credential can be retried; this is not authenticated authority. */
+  get hasRecoverableSession(): boolean {
+    return this.context.refreshToken !== null;
+  }
+
   get revision(): number {
     return this.credentialRevision;
   }
@@ -150,7 +170,7 @@ export class AuthSessionController {
    */
   assertAuthorizationScopeCurrent(expectedScopeId: string | null): void {
     const storedScopeId = this.coordinator.readCredential()?.scopeId ?? null;
-    if (this.scopeId !== expectedScopeId || storedScopeId !== expectedScopeId) {
+    if (this.disposed || this.scopeId !== expectedScopeId || storedScopeId !== expectedScopeId) {
       throw new Error('[client] Discarded a response from a previous authorization scope.');
     }
   }
@@ -253,8 +273,12 @@ export class AuthSessionController {
   runCredentialOperation<T>(
     operation: () => Promise<T>,
     adoptStoredCredential = true,
+    assertAdmittedCurrent: () => void = () => {},
   ): Promise<T> {
     return this.coordinator.runExclusive(async () => {
+      // Recovery can time out while queued. Its abandoned callback must not
+      // adopt credentials or begin replacement-scope reconciliation later.
+      assertAdmittedCurrent();
       if (adoptStoredCredential) await this.reconcileStoredCredentialBeforeOperation();
       return operation();
     });
@@ -264,21 +288,35 @@ export class AuthSessionController {
     assertStartingScopeCurrent: () => void = () => {},
     consumeStartingScope: () => void = assertStartingScopeCurrent,
   ): Promise<void> {
-    await this.runCredentialOperation(async () => {
-      // A retained logout intent must not survive adoption of another tab's
-      // replacement account while it waited for the credential lock.
-      assertStartingScopeCurrent();
-      const refreshToken = this.context.refreshToken;
-      // The HttpOnly page cookie must be cleared server-side even when local
-      // token state is absent. Local logout still succeeds offline.
-      await fetch(`${this.baseUrl}/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
-      }).catch(() => undefined);
-      assertStartingScopeCurrent();
-      await this.commitLogoutWithScopeBarrier('logout', consumeStartingScope);
-    });
+    const request = this.createRecoveryRequest();
+    this.recoveryRequests.add(request);
+    let consumed = false;
+    try {
+      await request.waitForAdmission((admit) => this.runCredentialOperation(async () => {
+        // A retained logout intent must not survive adoption of another tab's
+        // replacement account while it waited for the credential lock.
+        assertStartingScopeCurrent();
+        // A peer may have rotated this same family while logout was queued.
+        // Adopt only its newer proof; replacement families remain fenced out.
+        this.adoptStoredCredential();
+        assertStartingScopeCurrent();
+        const refreshToken = this.context.refreshToken;
+        // The HttpOnly page cookie must be cleared server-side even when local
+        // token state is absent. Local logout still succeeds offline.
+        await this.notifyServerLogout(request, refreshToken).catch(() => undefined);
+        assertStartingScopeCurrent();
+        await this.commitLogoutWithScopeBarrier('logout', () => {
+          consumeStartingScope();
+          consumed = true;
+        });
+      }, false, () => { admit(); assertStartingScopeCurrent(); }));
+    } catch (cause) {
+      if (!consumed) assertStartingScopeCurrent();
+      throw cause;
+    } finally {
+      request.cancel();
+      this.recoveryRequests.delete(request);
+    }
   }
 
   /** Clear local state after a rejected or no-longer-trusted session. */
@@ -319,6 +357,134 @@ export class AuthSessionController {
       return result;
     } finally {
       this.refreshPromise = null;
+    }
+  }
+
+  /**
+   * Retry the current rotating proof and hydrate its user behind the existing
+   * purge barrier. Rejection settles sign-out; transient failures retain proof.
+   * A replacement family or disposal rejects rather than publishing stale work.
+   */
+  async recoverSession(
+    assertStartingScopeCurrent: () => void = () => {},
+    consumeStartingScope: () => void = assertStartingScopeCurrent,
+  ): Promise<AuthSessionRecoveryResult> {
+    if (this.restorePromise) await this.restorePromise;
+    assertStartingScopeCurrent();
+    const recoveryRequest = this.createRecoveryRequest();
+    this.recoveryRequests.add(recoveryRequest);
+    try {
+      return await recoveryRequest.waitForAdmission((admit) => this.runCredentialOperation(async () => {
+        assertStartingScopeCurrent();
+        if (!this.hasRecoverableSession && !this.hasAuthorizationScope()) {
+          return { kind: 'signed-out' };
+        }
+        const scope = this.scopeId;
+        const assertCurrent = () => this.assertAuthorizationScopeCurrent(scope);
+        consumeStartingScope();
+        this.beginScopeTransition('restore');
+        this.send('auth.restoring');
+        let committed = false;
+        let retiredScope: string | null | undefined;
+        let retiredRevision: number | undefined;
+        try {
+          const refreshed = await this.performRefreshLocked(0, () => {}, assertCurrent, recoveryRequest);
+          if (!this.hasRecoverableSession) {
+            // A definitive refresh denial may have retired the scope itself.
+            // Clear any legacy identity-only state as well, without reusing
+            // its consumed starting-scope assertion after our own logout.
+            if (this.user || this.accessToken || this.activeTenant) this.commitLogout();
+            retiredScope = this.scopeId;
+            retiredRevision = this.credentialRevision;
+            this.markScopeTransitionCommitted();
+            committed = true;
+            await this.completeScopeTransition();
+            this.assertAuthorizationScopeCurrent(retiredScope);
+            if (this.credentialRevision !== retiredRevision) throw new Error('The session changed during recovery.');
+            return { kind: 'signed-out' };
+          }
+          assertCurrent();
+          if (!refreshed || !this.accessToken) {
+            this.send('auth.error', { error: SESSION_RECOVERY_UNAVAILABLE });
+            await this.abortScopeTransition();
+            return { kind: 'retryable', error: SESSION_RECOVERY_UNAVAILABLE };
+          }
+          this.markScopeTransitionCommitted();
+          committed = true;
+          const hydrationRevision = this.credentialRevision;
+          const hydrationToken = this.accessToken;
+          const assertHydrationCurrent = () => {
+            assertCurrent();
+            if (hydrationRevision !== this.credentialRevision
+              || hydrationToken !== this.accessToken
+              || this.coordinator.readCredential()?.revision !== hydrationRevision) {
+              throw new Error('[client] Discarded a response from a previous authorization scope.');
+            }
+          };
+          const { response, body } = await recoveryRequest.request(`${this.baseUrl}/auth/me`, {
+            headers: { Authorization: `Bearer ${hydrationToken}` },
+            cache: 'no-store',
+          });
+          assertHydrationCurrent();
+          if (!response.ok) {
+            if (isRejectedSessionResponse(response)) {
+              this.commitLogout();
+              retiredScope = this.scopeId;
+              retiredRevision = this.credentialRevision;
+              await this.completeScopeTransition();
+              this.assertAuthorizationScopeCurrent(retiredScope);
+              if (this.credentialRevision !== retiredRevision) throw new Error('The session changed during recovery.');
+              return { kind: 'signed-out' };
+            }
+            this.send('auth.error', { error: SESSION_RECOVERY_UNAVAILABLE });
+            await this.completeScopeTransition();
+            assertHydrationCurrent();
+            return { kind: 'retryable', error: SESSION_RECOVERY_UNAVAILABLE };
+          }
+          const user = parseAuthUser(body);
+          if (this.user && user.userId !== this.user.userId) {
+            throw new Error('The recovered session identity did not match.');
+          }
+          this.send('auth.success', {
+            user,
+            activeTenant: this.activeTenant ?? undefined,
+            accessToken: this.accessToken,
+            refreshToken: this.refreshToken,
+          });
+          await this.completeScopeTransition();
+          assertHydrationCurrent();
+          return { kind: 'authenticated' };
+        } catch (cause) {
+          // Never classify a retired family/disposed controller as an outage.
+          try {
+            if (retiredScope !== undefined) {
+              this.assertAuthorizationScopeCurrent(retiredScope);
+              if (this.credentialRevision !== retiredRevision) throw new Error('The session changed during recovery.');
+            } else assertCurrent();
+          } catch (stale) {
+            if (!committed) await this.abortScopeTransition();
+            else if (this.sessionTransition.phase !== 'idle') {
+              await this.completeScopeTransition().catch(() => undefined);
+            }
+            throw stale;
+          }
+          this.send('auth.error', { error: SESSION_RECOVERY_UNAVAILABLE });
+          if (!committed) await this.abortScopeTransition();
+          else if (this.sessionTransition.phase !== 'idle'
+            && !(cause instanceof AuthSessionSynchronizationError)) {
+            await this.completeScopeTransition();
+          }
+          return { kind: 'retryable', error: SESSION_RECOVERY_UNAVAILABLE };
+        }
+      }, false, () => { admit(); assertStartingScopeCurrent(); }));
+    } catch (cause) {
+      assertStartingScopeCurrent();
+      if (!(cause instanceof BrowserAuthCoordinationError)
+        && !(cause instanceof DOMException && cause.name === 'TimeoutError')) throw cause;
+      return { kind: 'retryable', error: SESSION_RECOVERY_UNAVAILABLE };
+    } finally {
+      recoveryRequest.cancel();
+      this.recoveryRequests.delete(recoveryRequest);
     }
   }
 
@@ -468,6 +634,7 @@ export class AuthSessionController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const request of this.recoveryRequests) request.cancel();
     this.unsubscribeSignals();
     this.coordinator.dispose();
   }
@@ -509,41 +676,53 @@ export class AuthSessionController {
   }
 
   private async restoreSession(): Promise<void> {
-    let refreshed: boolean;
+    const scope = this.scopeId;
+    const assertCurrent = () => this.assertAuthorizationScopeCurrent(scope);
+    const request = this.createRecoveryRequest();
+    this.recoveryRequests.add(request);
     try {
-      refreshed = await this.refresh();
-    } catch {
-      // Coordination can fail before the refresh transport runs (for example,
-      // when a bounded fallback lock times out). Keep the persisted proof for a
-      // later retry, but always finish the startup-loading state.
-      if (this.context.refreshToken) {
-        this.send('auth.error', { error: 'Unable to restore the browser session' });
-      }
-      return;
-    }
-    if (!refreshed || !this.accessToken) {
-      // Rejected proof commits logout inside performRefreshLocked. A transient
-      // network failure retains the rotating proof for a later retry, but the
-      // startup restoration state must still finish.
-      if (this.context.refreshToken) {
-        this.send('auth.error', { error: 'Unable to restore the browser session' });
-      }
-      return;
-    }
-
-    const revision = this.credentialRevision;
-    try {
-      const response = await fetch(`${this.baseUrl}/auth/me`, {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      });
-      if (revision !== this.credentialRevision) return;
-      if (!response.ok) {
-        await this.expireIfRevision(revision);
+      const refreshed = await request.waitForAdmission((admit) => this.runCredentialOperation(() => {
+        assertCurrent();
+        return this.performRefreshLocked(0, () => {}, assertCurrent, request);
+      }, false, () => { admit(); assertCurrent(); }));
+      if (!refreshed || !this.accessToken) {
+        // Definitively rejected refresh proof already committed logout.
+        // Temporary failures leave the persisted proof for explicit retry.
+        if (this.context.refreshToken) {
+          assertCurrent();
+          this.send('auth.error', { error: 'Unable to restore the browser session' });
+        }
         return;
       }
-
-      const user = parseAuthUser(await response.json());
-      if (revision !== this.credentialRevision) return;
+      const revision = this.credentialRevision;
+      const assertHydrationCurrent = () => {
+        assertCurrent();
+        if (revision !== this.credentialRevision
+          || this.coordinator.readCredential()?.revision !== revision) {
+          throw new Error('[client] Discarded a response from a previous authorization scope.');
+        }
+      };
+      const { response, body } = await request.request(`${this.baseUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      });
+      assertHydrationCurrent();
+      if (!response.ok) {
+        if (isRejectedSessionResponse(response)) {
+          // A successful constructor refresh has also minted a page cookie.
+          // Retire it before publishing a fully signed-out browser, including
+          // when the initial server-rendered page was already anonymous.
+          await request.waitForAdmission((admit) => this.runCredentialOperation(async () => {
+            assertHydrationCurrent();
+            const cleared = await this.notifyServerLogout(request, this.context.refreshToken);
+            assertHydrationCurrent();
+            if (!cleared.ok) throw new Error('Unable to clear the restored page session');
+            await this.commitLogoutWithScopeBarrier('logout', () => {});
+          }, false, () => { admit(); assertHydrationCurrent(); }));
+        } else this.send('auth.error', { error: 'Unable to restore the browser session' });
+        return;
+      }
+      const user = parseAuthUser(body);
+      assertHydrationCurrent();
       this.send('auth.success', {
         user,
         activeTenant: this.context.activeTenant ?? undefined,
@@ -551,38 +730,75 @@ export class AuthSessionController {
         refreshToken: this.context.refreshToken!,
       });
     } catch {
-      // A transient /auth/me failure does not revoke the committed rotating
-      // credential. Leave it available for the next explicit restoration.
-      this.send('auth.error', { error: 'Unable to restore the browser session' });
+      // An outage, malformed body or unconfirmed page-cookie cleanup must not
+      // discard the rotating proof or falsely claim a settled sign-out.
+      try { assertCurrent(); } catch { return; }
+      if (this.context.refreshToken && !this.context.user) {
+        this.send('auth.error', { error: 'Unable to restore the browser session' });
+      }
+    } finally {
+      request.cancel();
+      this.recoveryRequests.delete(request);
     }
+  }
+
+  private notifyServerLogout(
+    request: AuthSessionRecoveryRequest,
+    refreshToken: string | null,
+  ): Promise<Response> {
+    // Logout has no user-facing response body. Its acknowledged HTTP outcome
+    // is enough; a stalled unused JSON body must not block local retirement.
+    return request.run((signal) => fetch(`${this.baseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+      signal,
+      cache: 'no-store',
+    }));
+  }
+
+  private createRecoveryRequest(): AuthSessionRecoveryRequest {
+    return new AuthSessionRecoveryRequest(this.recoveryRequestTimeoutMs);
   }
 
   private async performRefreshLocked(
     attempt = 0,
     consumeStartingScope: () => void = () => {},
+    assertRequestCurrent: () => void = () => {},
+    recoveryRequest?: AuthSessionRecoveryRequest,
   ): Promise<boolean> {
+    assertRequestCurrent();
     this.adoptStoredCredential();
     const refreshToken = this.context.refreshToken;
     const attemptRevision = this.credentialRevision;
     if (!refreshToken) return false;
 
     try {
-      const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+      const init: RequestInit = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
-      });
+      };
+      const recovered = recoveryRequest
+        ? await recoveryRequest.request(`${this.baseUrl}/auth/refresh`, init)
+        : null;
+      const response = recovered?.response ?? await fetch(`${this.baseUrl}/auth/refresh`, init);
+      assertRequestCurrent();
 
       const latest = this.coordinator.readCredential();
       if ((latest?.revision ?? 0) !== attemptRevision
         || latest?.refreshToken !== refreshToken) {
         this.adoptStoredCredential();
         return attempt < 1 && this.context.refreshToken
-          ? this.performRefreshLocked(attempt + 1, consumeStartingScope)
+          ? this.performRefreshLocked(attempt + 1, consumeStartingScope, assertRequestCurrent, recoveryRequest)
           : Boolean(this.accessToken);
       }
 
       if (!response.ok) {
+        if (!isRejectedSessionResponse(response)) {
+          this.send('auth.error', { error: 'Unable to refresh the browser session' });
+          return false;
+        }
         // The rejected proof belongs to the request's own starting scope.
         // Let its caller consume that scope before this intentional logout so
         // a final stale-response assertion does not reject the useful 401.
@@ -592,10 +808,23 @@ export class AuthSessionController {
 
       let data;
       try {
-        data = parseAuthRefreshResponse(await response.json());
+        data = parseAuthRefreshResponse(recovered ? recovered.body : await response.json());
+        assertRequestCurrent();
       } catch {
+        assertRequestCurrent();
         this.send('auth.error', { error: 'Invalid refresh response' });
         return false;
+      }
+
+      // Parsing a streaming body can outlive a same-family rotation from a
+      // peer. Do not replace its newer proof with this older response.
+      const latestAfterBody = this.coordinator.readCredential();
+      if ((latestAfterBody?.revision ?? 0) !== attemptRevision
+        || latestAfterBody?.refreshToken !== refreshToken) {
+        this.adoptStoredCredential();
+        return attempt < 1 && this.context.refreshToken
+          ? this.performRefreshLocked(attempt + 1, consumeStartingScope, assertRequestCurrent, recoveryRequest)
+          : Boolean(this.accessToken);
       }
 
       const scopeId = this.scopeId ?? this.coordinator.createScopeId();
@@ -608,6 +837,7 @@ export class AuthSessionController {
       });
       return true;
     } catch {
+      assertRequestCurrent();
       return false;
     }
   }
@@ -700,6 +930,9 @@ export class AuthSessionController {
 
   private queueExternalSignal(signal: BrowserAuthSignal): void {
     if (this.disposed || signal.revision <= this.credentialRevision) return;
+    if (signal.scopeId !== this.scopeId) {
+      for (const request of this.recoveryRequests) request.cancel();
+    }
     this.externalReconciliation = this.externalReconciliation
       .catch(() => undefined)
       .then(() => this.reconcileExternalSignal(signal));
@@ -774,7 +1007,8 @@ export class AuthSessionController {
         headers: { Authorization: `Bearer ${this.accessToken}` },
       });
       if (!response.ok) {
-        this.commitLogout();
+        if (isRejectedSessionResponse(response)) this.commitLogout();
+        else throw new Error('Unable to restore the replacement browser session');
       } else {
         const user = parseAuthUser(await response.json());
         this.send('auth.success', {

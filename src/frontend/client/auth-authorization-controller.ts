@@ -91,8 +91,8 @@ export class AuthAuthorizationController {
   }
 
   /** Force a new server read and supersede every pending response. */
-  refresh(): Promise<AuthAuthorizationSnapshot | null> {
-    return this.startRequest(true);
+  refresh(signal?: AbortSignal): Promise<AuthAuthorizationSnapshot | null> {
+    return this.startRequest(true, signal);
   }
 
   /**
@@ -176,7 +176,7 @@ export class AuthAuthorizationController {
     if (this.listeners.size > 0) void this.ensureCurrent();
   }
 
-  private startRequest(supersede: boolean): Promise<AuthAuthorizationSnapshot | null> {
+  private startRequest(supersede: boolean, callerSignal?: AbortSignal): Promise<AuthAuthorizationSnapshot | null> {
     if (this.disposed) return Promise.resolve(null);
     const view = this.options.readSession();
     const expected = readSessionIdentity(view);
@@ -202,7 +202,28 @@ export class AuthAuthorizationController {
       error: null,
     }));
 
-    const pending = this.options.load(abortController.signal)
+    // Explicit recovery owns this request's cancellation/deadline, not any
+    // newer request that subsequently supersedes it. Fence publication even
+    // when a transport or response body ignores AbortSignal.
+    let rejectCancellation!: (reason: unknown) => void;
+    const cancellation = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
+    const cancelFromCaller = () => {
+      const reason = callerSignal?.reason ?? new DOMException('Authorization read cancelled', 'AbortError');
+      if (this.isRequestCurrent(revision, expected)) {
+        this.requestRevision += 1;
+        abortController.abort(reason);
+        this.abortController = null;
+        this.request = null;
+        this.publish(Object.freeze({ status: 'error', snapshot: null, error: 'Unable to load current authorization' }));
+      }
+      rejectCancellation(reason);
+    };
+    callerSignal?.addEventListener('abort', cancelFromCaller, { once: true });
+
+    const load = callerSignal?.aborted
+      ? Promise.reject(callerSignal.reason)
+      : this.options.load(abortController.signal);
+    const pending = (callerSignal ? Promise.race([load, cancellation]) : load)
       .then((snapshot) => {
         if (!this.isRequestCurrent(revision, expected)) return null;
         if (!snapshotMatchesSession(snapshot, expected)) {
@@ -230,12 +251,14 @@ export class AuthAuthorizationController {
         return null;
       })
       .finally(() => {
+        callerSignal?.removeEventListener('abort', cancelFromCaller);
         if (revision !== this.requestRevision) return;
         this.request = null;
         this.abortController = null;
         this.scheduleRevalidation();
       });
-    this.request = pending;
+    if (revision === this.requestRevision) this.request = pending;
+    if (callerSignal?.aborted) cancelFromCaller();
     return pending;
   }
 

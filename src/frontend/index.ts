@@ -236,6 +236,7 @@ export type {
   AuthPublicConfig,
   AuthRegistrationResult,
   AuthRegistrationTenant,
+  AuthSessionRecoveryResult,
   AuthSessionResult,
   AuthSessionTransitionOperation,
   AuthSessionTransitionState,

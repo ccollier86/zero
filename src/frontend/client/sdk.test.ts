@@ -409,6 +409,121 @@ describe('createClient auth configuration', () => {
     expect(todos.getAll()).toEqual({});
   });
 
+  for (const failure of ['server', 'network'] as const) {
+    test(`a live Sync ${failure} refresh failure masks cached rows but retains proof for explicit recovery`, async () => {
+      mockAuthFetch();
+      const healthyFetch = globalThis.fetch;
+      const errors: string[] = [];
+      let outage = false;
+      let refreshes = 0;
+      globalThis.fetch = ((input, init) => {
+        const url = String(input);
+        if (url.endsWith('/auth/refresh')) {
+          refreshes += 1;
+          if (outage) return failure === 'network'
+            ? Promise.reject(new Error('PRIVATE_TRANSPORT_DETAIL'))
+            : Promise.resolve(Response.json({ error: 'PRIVATE_TRANSPORT_DETAIL' }, { status: 503 }));
+        }
+        if (url.endsWith('/auth/me')) return Promise.resolve(Response.json(SDK_AUTH_TEST_USER));
+        if (url.endsWith('/auth/authorization')) return Promise.resolve(outage
+          ? Response.json({}, { status: 503 })
+          : Response.json(sdkAuthorizationSnapshot()));
+        return healthyFetch(input, init);
+      }) as typeof fetch;
+      const client = createClient({
+        url: 'http://localhost:3000', tables, auth: true,
+        onError: (error) => { errors.push(error); },
+      }) as InternalClient;
+      await flushMicrotasks();
+      await client.login('alice', 'password');
+      const stopObserving = client.subscribeAuthorization(() => {});
+      await client.refreshAuthorization();
+      const startingScope = client.auth!.authorizationScopeKey;
+      const collection = client.collection('todos');
+      collection.load([{ id: 'private', title: 'Previous authority' }]);
+      outage = true;
+      MockWebSocket.latest().close(4001, 'Sync read authority changed');
+      expect(collection.getAll()).toEqual({});
+      await waitForSdk(() => errors.length > 0 && client.auth!.sessionTransition.phase === 'idle'
+        && client.authorizationState.status === 'error');
+      expect(refreshes).toBe(1);
+      expect(client.auth!.hasRecoverableSession).toBe(true);
+      expect(client.auth!.authorizationScopeKey).toBe(startingScope);
+      expect(client.isAuthenticated).toBe(true);
+      expect(client.authorizationState.status).toBe('error');
+      expect(isAuthorizationDataReady(
+        client._authorizationDataBoundary.revision,
+        client.authorizationState.status,
+        client.isAuthenticated,
+      )).toBe(false);
+      expect(errors).toEqual(['Auth failed (code 4001): Sync read authority changed']);
+      expect(errors.join(' ')).not.toContain('PRIVATE');
+      outage = false;
+      expect(await client.auth!.recoverSession()).toEqual({ kind: 'authenticated' });
+      expect(client.auth!.authorizationScopeKey).toBe(startingScope);
+      expect(client.auth!.hasRecoverableSession).toBe(true);
+      expect(client.authorizationState.status).toBe('ready');
+      expect(collection.getAll()).toEqual({});
+      expect(JSON.parse(MockWebSocket.latest().sent[0]!)).toEqual({ type: 'sync.auth', token: 'access-2' });
+      stopObserving();
+    });
+  }
+
+  test('a definitively rejected live Sync refresh still settles sign-out and purges rows', async () => {
+    mockAuthFetch();
+    const healthyFetch = globalThis.fetch;
+    let rejected = false;
+    globalThis.fetch = ((input, init) => String(input).endsWith('/auth/refresh') && rejected
+      ? Promise.resolve(Response.json({}, { status: 401 }))
+      : healthyFetch(input, init)) as typeof fetch;
+    const client = createClient({ url: 'http://localhost:3000', tables, auth: true }) as InternalClient;
+    await flushMicrotasks();
+    await client.login('alice', 'password');
+    client.collection('todos').load([{ id: 'private', title: 'Previous identity' }]);
+    rejected = true;
+    MockWebSocket.latest().close(4001, 'Sync read authority changed');
+    await waitForSdk(() => !client.isAuthenticated && client.auth!.sessionTransition.phase === 'idle');
+    expect(client.auth!.hasRecoverableSession).toBe(false);
+    expect(client.auth!.authorizationScopeKey).toBeNull();
+    expect(client.collection('todos').getAll()).toEqual({});
+  });
+
+  test('a failed previous socket refresh cannot reset a newer read-authority epoch', async () => {
+    mockAuthFetch();
+    const healthyFetch = globalThis.fetch;
+    let waiting = false;
+    let release!: (response: Response) => void;
+    const held = new Promise<Response>((resolve) => { release = resolve; });
+    globalThis.fetch = ((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/auth/refresh')) { waiting = true; return held; }
+      if (url.endsWith('/auth/authorization')) return Promise.resolve(Response.json(sdkAuthorizationSnapshot()));
+      return healthyFetch(input, init);
+    }) as typeof fetch;
+    const errors: string[] = [];
+    const client = createClient({ url: 'http://localhost:3000', tables, auth: true,
+      onError: (error) => { errors.push(error); },
+    }) as InternalClient;
+    await flushMicrotasks();
+    await client.login('alice', 'password');
+    const stopObserving = client.subscribeAuthorization(() => {});
+    await client.refreshAuthorization();
+    MockWebSocket.latest().close(4001, 'Sync read authority changed');
+    await waitForSdk(() => waiting);
+    const previousEpoch = client._authorizationDataBoundary.revision;
+    client._syncClient.reset();
+    expect(client._authorizationDataBoundary.revision).toBeGreaterThan(previousEpoch);
+    await client.refreshAuthorization();
+    client.collection('todos').load([{ id: 'replacement', title: 'New authority result' }]);
+    release(Response.json({}, { status: 503 }));
+    for (let attempt = 0; attempt < 12; attempt += 1) await flushMicrotasks();
+    expect(Object.keys(client.collection('todos').getAll())).toEqual(['replacement']);
+    expect(client.auth!.hasRecoverableSession).toBe(true);
+    expect(client.authorizationState.status).toBe('ready');
+    expect(errors).toEqual([]);
+    stopObserving();
+  });
+
   test('autoConnect false waits for manual connect even after login', async () => {
     mockAuthFetch();
     const client = createClient({
@@ -499,22 +614,7 @@ function mockAuthFetch(requests?: string[]): void {
     requests?.push(url);
     if (url.endsWith('/auth/login')) {
       return Promise.resolve(Response.json({
-        user: {
-          userId: 'u_1',
-          username: 'alice',
-          email: 'alice@example.com',
-          firstName: null,
-          lastName: null,
-          role: 'user',
-          status: 'active',
-          passwordChangeRequired: false,
-          emailVerifiedAt: 1,
-          emailVerificationRequired: false,
-          mfaRequired: false,
-          properties: {},
-          createdAt: 1,
-          updatedAt: null,
-        },
+        user: SDK_AUTH_TEST_USER,
         accessToken: 'access-1',
         refreshToken: 'refresh-1',
       }));
@@ -551,4 +651,30 @@ function mockAuthFetch(requests?: string[]): void {
 
 async function flushMicrotasks(): Promise<void> {
   await new Promise<void>((resolve) => queueMicrotask(resolve));
+}
+
+const SDK_AUTH_TEST_USER = {
+  userId: 'u_1', username: 'alice', email: 'alice@example.com',
+  firstName: null, lastName: null, role: 'user', status: 'active',
+  passwordChangeRequired: false, emailVerifiedAt: 1,
+  emailVerificationRequired: false, mfaRequired: false,
+  properties: {}, createdAt: 1, updatedAt: null,
+};
+
+function sdkAuthorizationSnapshot() {
+  return {
+    version: 1, identity: { userId: 'u_1', platformRole: 'user' },
+    profile: { tenancy: 'single', authorization: 'advanced' },
+    scope: { kind: 'application', scopeId: 'application', roles: ['member'],
+      permissions: [], allPermissions: false, revision: 'scope-1' },
+    revision: 'projection-1',
+  };
+}
+
+async function waitForSdk(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('Synthetic SDK lifecycle did not settle');
 }

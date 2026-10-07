@@ -6,6 +6,15 @@ are not in the framework's current package publication list.
 
 - [UI rework](./ui-rework.md): Linear-inspired shared theme, typography, density,
   tasteful microinteractions, component organization, and possible optional UI packages.
+- [Guardian profiles and adaptive settings](./guardian-profile-settings.md):
+  first-class profiles, staged avatars, contact verification, completion,
+  shared save behavior, reusable settings organisms and the final Kbd step.
+- [Guardian profile implementation outline](./guardian-profile-outline.md):
+  the complete requirements checklist, screenshot relationships, feature-enable
+  provisioning, delivery order and qualification gates for this run.
+- [Guardian presence with Fabric and Reactive DB](./guardian-presence.md):
+  connection leases, activity/status aggregation, protected reactive projections,
+  actor reads, freshness, scope retirement and service lifetime.
 - [Documentation plugin](./documentation-plugin.md): an optional, tokenized
   Markdown-folder-to-docs experience, its integration requirements, delivery
   sequence, and acceptance gates.

@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: low-level-account-controller-and-errors
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["Working source on Zero 2.5.0; session-recovery release qualification pending"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.5.0"
+  commit: "55ca1e6b649f5652831714ad93749918bd92a6bd"
+  snapshot: dirty
+  date: "2026-10-06"
   evidence_level: source-observed
 ---
 
@@ -54,7 +54,9 @@ not itself perform the remote logout ceremony.
 
 Getters: user, activeTenant, isAuthenticated, isLoading, isRestoring, error,
 authenticationContinuation, sessionTransition, accessToken, authorization,
-authorizationState. `authorizationScopeKey` is an internal opaque cache family,
+authorizationState, hasRecoverableSession. The last getter is only a
+secret-free hint that rotating proof is retained after an interrupted restore;
+it is not authentication or permission. `authorizationScopeKey` is an internal opaque cache family,
 not authority. `invalidateAuthorization` is internal cache retirement.
 
 The account/MFA/tenant/domain/property families have the same method names and
@@ -65,6 +67,12 @@ result contracts as the public facade, except:
 - Public `client.reconcileAuthSession()` delegates to `reconcileSession()`.
 - Class `refresh(): Promise<boolean>` reports refresh outcome; the high-level
   facade's `refresh(): Promise<void>` hides that return.
+- Class `recoverSession(): Promise<AuthSessionRecoveryResult>` performs real
+  credential restoration, `/auth/me` hydration and live authorization recovery.
+  Results are `{ kind: 'authenticated' }`, `{ kind: 'signed-out' }`, or
+  `{ kind: 'retryable', error: string }`. The latter retains recoverable proof
+  after a temporary failure; account/scope replacement rejects stale work.
+  AppProvider uses this operation for bounded SSR/browser disagreement recovery.
 - Canonical admin class methods omit the `Auth` segment:
   `getAdminConfig`, `listAdminUsers`, `getAdminUser`, `createAdminUser`,
   `updateAdminUser`, `setAdminUserProperty`, `deleteAdminUserProperty`,
@@ -77,6 +85,25 @@ result contracts as the public facade, except:
   Inputs/results match [canonical facade operations](./sdk-surfaces.md#canonical-global-account-administration).
 
 `clearAuthenticationContinuation()` clears in-memory UI continuation.
+
+Startup restoration and explicit recovery use a 15-second deadline for
+credential-lock admission and each network/response-body operation, including
+current-user hydration and live authorization. A timed-out queued operation
+cannot later adopt credentials or begin a request. Temporary HTTP,
+network, body/protocol and deadline failures retain recoverable proof; `401`
+or `403` is definite rejection. A constructor-restored page cookie is cleared
+through bounded normal logout before a rejected current-user read is published
+as fully signed out. Family replacement/disposal rejects or retires late work.
+AppProvider also clears page-cookie state through normal logout after a
+signed-out explicit recovery. Do not treat the result alone as confirmation
+that a remote cookie was deleted while its server was unavailable.
+
+Live Sync refresh outages also retain proof while clearing and read-fencing
+cached rows. Definite rejection still signs out. This correction has focused
+SDK and real-browser evidence in the
+[profile-upgrade qualification ledger](../../_work/audits/guardian-profile-qualification.md);
+it is not yet a published upgrade.
+
 `expireSession()` locally retires the current session; it is not the same as
 server revocation. Do not substitute it for logout/revoke operations.
 
