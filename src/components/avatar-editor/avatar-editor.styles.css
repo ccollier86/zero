@@ -21,6 +21,9 @@ button.zero-avatar-editor-trigger:disabled { cursor: wait; }
 .zero-avatar-editor-hint { color: var(--muted-foreground); }
 .zero-avatar-editor-error { color: var(--destructive); }
 .zero-avatar-crop-dialog { width: min(var(--avatar-crop-dialog-width,28rem),calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto; gap: var(--avatar-crop-dialog-gap,.75rem); padding: var(--avatar-crop-dialog-padding,1rem); }
+/* Measured cropping surfaces intentionally keep their ancestor geometry stable. */
+.zero-avatar-crop-modal { --zero-modal-rise-y: 0px; --zero-modal-rise-scale: 1; --zero-modal-rise-exit-y: 0px; --zero-modal-fade-exit-scale: 1; }
+.zero-avatar-crop-modal .zero-modal__body { display: flex; flex-direction: column; gap: var(--avatar-crop-dialog-gap,.75rem); }
 .zero-avatar-crop-dialog [data-slot=dialog-title] { font-size: var(--avatar-crop-title-size,var(--text-base,1rem)); }
 .zero-avatar-crop-dialog [data-slot=dialog-description] { margin-top: var(--spacing,.25rem); font-size: var(--avatar-crop-detail-size,var(--text-xs,.75rem)); }
 .zero-avatar-crop-surface { position: relative; width: min(100%,var(--avatar-crop-surface-size,min(55dvh,22rem))); aspect-ratio: 1; margin-inline: auto; background: var(--muted); border-radius: var(--avatar-crop-surface-radius,var(--radius)); overflow: hidden; }

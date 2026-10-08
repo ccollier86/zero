@@ -13,6 +13,8 @@ import { cn } from '#zero/lib/utils';
 import type { Row } from '../../sync/types';
 import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
+import type { ModalContext } from '../../modals/modal-system.types';
+import { useModalForm } from '../../modals/modal-form';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,10 @@ export interface AutoFormProps<T extends Row = Row> {
   submitLabel?: string;
   showReset?: boolean;
   className?: string;
+  /** Use the shared modal's header/footer; only this form's acknowledged submit may accept its exact context. */
+  modalContext?: ModalContext<T>;
+  /** Native form association for the manager footer; defaults to the owned modal id. */
+  formId?: string;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -66,6 +72,8 @@ export function AutoForm<T extends Row = Row>({
   submitLabel,
   showReset = false,
   className,
+  modalContext,
+  formId,
 }: AutoFormProps<T>) {
   const form = useForm<T>({
     schema,
@@ -75,7 +83,7 @@ export function AutoForm<T extends Row = Row>({
     editId,
     includeFields,
     onSubmit,
-    baseline: baseline ?? (saveBar ? 'accepted' : 'initial'),
+    baseline: modalContext ? 'accepted' : baseline ?? (saveBar ? 'accepted' : 'initial'),
     initialRevision,
     scopeKey,
     onSuccess,
@@ -85,6 +93,15 @@ export function AutoForm<T extends Row = Row>({
   const gridStyle = columns > 1
     ? { display: 'grid', gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: '1rem' }
     : undefined;
+
+  if (modalContext) return <ManagedAutoForm form={form} context={modalContext} scopeKey={scopeKey}
+    formId={formId ?? `auto-form-${modalContext.id}`} className={className}>
+    <div style={gridStyle} className={columns <= 1 ? 'space-y-4' : undefined}>{form.fieldNames.map(name => {
+      const meta = form.getFieldMeta(name), overrides = fieldOverrides[name];
+      return !meta || overrides?.hidden ? null : <FieldRenderer key={name} name={name} meta={meta}
+        registration={form.register(name)} overrides={overrides} />;
+    })}</div>
+  </ManagedAutoForm>;
 
   const content = (
     <form onSubmit={form.handleSubmit} className={cn('space-y-4', className)}>
@@ -150,6 +167,17 @@ export function AutoForm<T extends Row = Row>({
   }
 
   return content;
+}
+
+function ManagedAutoForm<T extends Row>({ form, context, scopeKey, formId, className, children }: {
+  form: UseFormReturn<T>; context: ModalContext<T>; scopeKey?: string | number; formId: string;
+  className?: string; children: React.ReactNode;
+}) {
+  const save = useFormSave({ form, scopeKey, guardNavigation: false });
+  const binding = useModalForm({ context, form, save });
+  return <><form id={formId} onSubmit={binding.onSubmit} className={cn('space-y-4', className)} aria-busy={binding.isBusy}>
+    {children}
+  </form><UnsavedChangesDialog controller={save} /></>;
 }
 
 function AutoFormSaveControls<T extends Row>({ form, scopeKey, placement }: {

@@ -36,6 +36,28 @@ preview. [Config loading](./config-loading.md) explains the exact stages.
 
 ## Results And CI Policy
 
+### Config-Free Source Review
+
+The **unreleased structured-modal upgrade** provides a separate inspection path:
+
+```sh
+zero doctor --source-only --project-root . --strict --json
+```
+
+It reads explicitly owned source and installed package metadata without invoking
+app config discovery/imports, resource/plugin initialization or database checks.
+The root is required and source-only mode rejects `--config` and
+`--no-usage-audit`. Repeatable includes/excludes choose static roots rather than
+asking executable configuration where to scan. A source-only success is not a
+layout, runtime or migration-completion certification.
+
+Initial Bun invocation can load environment files before command dispatch.
+Use the explicit `bun --no-env-file` launch documented in
+[source-only inspection](./source-audit.md#source-only-command-and-api) when that
+must be disabled as well. Ambient process variables are not a sandbox.
+
+### Exit Policy
+
 Without strict, errors fail and warnings do not. Strict additionally fails
 warnings; info remains descriptive. CLI successful report exits zero; failed
 report/loader errors exit one. JSON prints the report and leaves effective
@@ -83,7 +105,8 @@ native platform compatibility or absence of defects.
 
 ## Related Guides And Next Steps
 
-[Configuration](./configuration.md) for flags/defaults,
+[Source-only migration review](./source-audit.md) for AST evidence and capability
+limits, [configuration](./configuration.md) for flags/defaults,
 [programmatic reports](./configuration-checks.md) for app-owned CI integration,
 [infrastructure reads](./infrastructure-inspection.md) for plane safety, and
 [zero-doctor](../tooling/zero-doctor.md) for installed-version launchers.

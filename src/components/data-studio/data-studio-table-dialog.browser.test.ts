@@ -1,7 +1,6 @@
 /** Actual composed dialog/JSON controls with synthetic callbacks and compiled Zero styles only. */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Browser, Page } from 'playwright';
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
@@ -12,10 +11,12 @@ let browser: Browser, lease: PlaywrightTestBrowserLease, directory: string, scri
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   lease = await acquirePlaywrightTestBrowser(); browser = lease.browser;
-  directory = await mkdtemp(join(tmpdir(), 'zero-studio-dialog-'));
-  const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'data-studio-table-dialog.browser-fixture.tsx')],
-    outdir: directory, naming: 'bundle.js', target: 'browser', format: 'iife' });
-  if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
+  directory = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/table-dialog-browser-');
+  const build = Bun.spawn([process.execPath, '--no-env-file', 'build',
+    join(import.meta.dir, 'data-studio-table-dialog.browser-fixture.tsx'), '--target=browser', '--format=iife',
+    '--outfile', join(directory, 'bundle.js')], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
+  const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
+  if (code !== 0) throw new Error('Table dialog fixture build failed: ' + (stderr || stdout));
   script = await Bun.file(join(directory, 'bundle.js')).text();
   css = await Bun.file((await buildPlatformStyles(directory, join(directory, 'missing-app'))).cssPath).text();
 }, 60_000);
@@ -61,10 +62,10 @@ browserTest('invalid JSON blocks mode switching/saving without discarding text a
     expect(await page.getByRole('tab', { name: 'JSON', exact: true }).getAttribute('aria-selected')).toBe('true');
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
     expect(await page.evaluate(() => window.__studioDialog.operations())).toHaveLength(0);
-    await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.locator('[data-slot="data-studio-table-dialog-footer"]').getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
     expect(await text.inputValue()).toBe('{ "version": 1,');
-    await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.locator('[data-slot="data-studio-table-dialog-footer"]').getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('[data-slot="data-studio-table-dialog"]'));
     expect(await page.evaluate(() => window.__studioDialog.closes())).toBe(1);

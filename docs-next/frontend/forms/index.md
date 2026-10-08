@@ -38,12 +38,17 @@ The SDK or custom callback owns persistence, and the server remains authoritativ
 - [Submission and scope](./submission-and-scope.md): accepted writes, stale callbacks
   and identity/organization replacement.
 - [Settings saves and leave guards](./save-and-leave.md): accepted baselines, field Check/Cancel, floating saves and Save/Discard/Stay.
+- [Reactive record baselines](./reactive-records.md): explicit readiness,
+  changed-elsewhere drafts and admitted reloads (unreleased addition).
+- [Managed form dialogs](../modals/forms.md): native footer submission and
+  Save/Discard/Stay through the shared host (unreleased addition).
 - [Configuration](./configuration.md): exact props/defaults/read-time semantics.
 - [Roadmap](./roadmap.md): future editor/autosave direction, not current APIs.
 
 useForm and generated forms are public from @zero/framework/react; there is no
-@zero/framework/components/forms package subpath. Generic /hooks is not the
-useForm entrance. Individual field-context primitives have the documented
+@zero/framework/components/forms package subpath. The unreleased generic
+@zero/framework/hooks additions also export useForm/useFormSave and the reactive
+record helper. Individual field-context primitives retain the documented
 @zero/framework/components/ui/form-field route.
 
 ## Integration And Philosophy

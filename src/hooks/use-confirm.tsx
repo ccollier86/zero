@@ -3,24 +3,18 @@
 /**
  * use-confirm.tsx
  *
- * Provides a promise-based confirmation dialog hook and provider. This file
- * owns confirmation UI state only; callers own the action being confirmed.
+ * Adapts the single-slot confirmation hook to Zero's owned modal manager.
+ * Supersession/unmount settle false; callers still own the confirmed operation.
  */
 
 import * as React from 'react';
-import { createContext, useContext, useCallback, useEffect, useRef, useState } from 'react';
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogFooter,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogAction,
-  AlertDialogCancel,
-} from '#zero/components/animate-ui/components/radix/alert-dialog';
-import { buttonVariants } from '#zero/components/ui/button';
-import { cn } from '#zero/lib/utils';
+import { createContext, useContext, useCallback, useEffect, useRef } from 'react';
+import { modals } from '../modals/modal-events';
+import { ModalManager } from '../modals/modal-manager';
+import { useModalHostPresent } from '../modals/modal-host-context';
+import type { ModalHandle } from '../modals/modal-system.types';
+import { useOverlayScope } from '../components/overlays/overlay-scope';
+import { modalStore } from '../modals/modal-store';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -30,37 +24,31 @@ export interface ConfirmOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'default' | 'destructive';
+  /** Optional deliberate hold; motion pace never scales its safety interval. */
+  holdToConfirm?: boolean;
+  holdDuration?: number;
 }
 
 type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
+type OwnedConfirmFn = (options: ConfirmOptions, parentId?: string) => Promise<boolean>;
 
 // ─── Context ────────────────────────────────────────────────────────────────
 
-const ConfirmContext = createContext<ConfirmFn | null>(null);
+const ConfirmContext = createContext<OwnedConfirmFn | null>(null);
 
 // ─── Provider ───────────────────────────────────────────────────────────────
-
-interface ConfirmState extends ConfirmOptions {
-  open: boolean;
-  requestId: number;
-  returnFocus?: HTMLElement;
-}
 
 /**
  * Render one shared confirmation dialog. Replaced or unmounted requests settle
  * false; accepting settles only that request. Callers still own the action.
  */
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<ConfirmState>({
-    open: false,
-    title: '',
-    requestId: 0,
-  });
-
+  const inheritedHost = useModalHostPresent();
   const pendingRef = useRef<{
     requestId: number;
     resolve: (value: boolean) => void;
-    returnFocus?: HTMLElement;
+    handle: ModalHandle<boolean>;
+    returnFocus?: Element;
   } | null>(null);
   const nextRequestId = useRef(0);
   const mountedRef = useRef(true);
@@ -72,76 +60,50 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       const pending = pendingRef.current;
       pendingRef.current = null;
       pending?.resolve(false);
+      if (pending) modals.disposeHost([pending.handle.id]);
     };
   }, []);
 
-  const confirm = useCallback<ConfirmFn>((options) => {
+  const confirm = useCallback<OwnedConfirmFn>((options, parentId) => {
     if (!mountedRef.current) return Promise.resolve(false);
+    if (parentId) {
+      const state = modalStore.getSnapshot().context;
+      if (!modals.getContext(parentId) || !state.modals.some(modal => modal.id === parentId)
+        || state.closingIds.includes(parentId)) return Promise.resolve(false);
+    }
     // This provider has one dialog, not a queue. A new request safely cancels
     // the previous one instead of leaving its awaiting caller suspended.
     const previous = pendingRef.current;
     pendingRef.current = null;
     previous?.resolve(false);
+    if (previous) modals.disposeHost([previous.handle.id]);
     const requestId = ++nextRequestId.current;
     const returnFocus = previous?.returnFocus
-      ?? (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+      ?? (typeof document !== 'undefined' && document.activeElement
         ? document.activeElement
         : undefined);
     return new Promise<boolean>((resolve) => {
-      pendingRef.current = { requestId, resolve, returnFocus };
-      setState({ ...options, open: true, requestId, returnFocus });
+      const destructive = options.variant === 'destructive';
+      const handle = modals.show<boolean>({ title: options.title,
+        parentId,
+        description: options.description ?? 'Choose Confirm to continue, or Cancel to stop.',
+        trigger: returnFocus, role: 'alertdialog', size: 'sm', tone: destructive ? 'danger' : 'default',
+        guard: false, initialFocus: destructive ? 'cancel' : 'primary', actions: [
+          { id: 'cancel', label: options.cancelLabel ?? 'Cancel', role: 'cancel' },
+          { id: 'confirm', label: options.confirmLabel ?? 'Confirm', variant: destructive ? 'danger' : 'primary',
+            value: true, holdToConfirm: options.holdToConfirm, holdDuration: options.holdDuration },
+        ] });
+      const request = { requestId, resolve, returnFocus, handle };
+      pendingRef.current = request;
+      void handle.result.then(result => {
+        if (pendingRef.current !== request || !mountedRef.current) { resolve(false); return; }
+        pendingRef.current = null;
+        resolve(result.kind === 'accepted' && result.value === true);
+      });
     });
   }, []);
-
-  const handleResult = useCallback((result: boolean) => {
-    const pending = pendingRef.current;
-    if (!pending || pending.requestId !== state.requestId) return;
-    pendingRef.current = null;
-    setState((prev) => prev.requestId === pending.requestId
-      ? { ...prev, open: false }
-      : prev);
-    pending.resolve(result);
-  }, [state.requestId]);
-
-  return (
-    <ConfirmContext.Provider value={confirm}>
-      {children}
-      <AlertDialog
-        open={state.open}
-        onOpenChange={(open) => { if (!open) handleResult(false); }}
-      >
-        <AlertDialogContent
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            // Programmatic confirmations have no Radix Trigger. Restore their
-            // actual opener, unless another request or scope has replaced it.
-            if (pendingRef.current || nextRequestId.current !== state.requestId) return;
-            if (state.returnFocus?.isConnected) state.returnFocus.focus({ preventScroll: true });
-          }}
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle>{state.title}</AlertDialogTitle>
-            <AlertDialogDescription className={state.description ? undefined : 'sr-only'}>
-              {state.description ?? 'Choose Confirm to continue, or Cancel to stop.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => handleResult(false)}>
-              {state.cancelLabel ?? 'Cancel'}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className={cn(
-                state.variant === 'destructive' && buttonVariants({ variant: 'destructive' }),
-              )}
-              onClick={() => handleResult(true)}
-            >
-              {state.confirmLabel ?? 'Confirm'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </ConfirmContext.Provider>
-  );
+  const content = <ConfirmContext.Provider value={confirm}>{children}</ConfirmContext.Provider>;
+  return inheritedHost ? content : <ModalManager>{content}</ModalManager>;
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────────
@@ -150,9 +112,10 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
  * Return the shared confirmation function from `ConfirmProvider`.
  */
 export function useConfirm(): ConfirmFn {
-  const confirm = useContext(ConfirmContext);
+  const confirm = useContext(ConfirmContext), owner = useOverlayScope();
+  const scoped = useCallback<ConfirmFn>(options => confirm!(options, owner?.id), [confirm, owner?.id]);
   if (!confirm) {
     throw new Error('useConfirm must be used within a <ConfirmProvider>');
   }
-  return confirm;
+  return scoped;
 }

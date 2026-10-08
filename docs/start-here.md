@@ -104,6 +104,13 @@ KanbanBoard, auth bootstrap routes, owner-scoped resources, and the platform
 modal manager together. See [LaunchBoard](./frontend/launchboard.md) before
 building dashboard/work-queue style apps.
 
+For the unreleased structured-modal upgrade, start with the
+[new modal guide](../docs-next/frontend/modals/index.md) and
+[migration checklist](../docs-next/frontend/modals/migration.md). Supply title,
+body/panels and actions to the managed shell; do not copy a second header, X,
+backdrop or dialog stack. Use source-only Doctor to find likely migration sites
+without importing app configuration, then qualify the affected UI separately.
+
 Core backend primitives include ReactiveDB, generated resources, WebSocket
 sync, Guardian auth/authorization, email, storage,
 [Torrent durable workflows](./workflows.md), notifications,

@@ -3,7 +3,6 @@
 import * as React from 'react';
 import type { AuthTenantMember } from '../../frontend/client/auth-types';
 import type { useAuthConfig } from '../../frontend/client/auth-hooks';
-import { AlertDialog } from '#zero/components/animate-ui/components/radix/alert-dialog';
 import { Button } from '#zero/components/ui/button';
 import { ListDetailLayout } from '#zero/components/ui/list-detail-layout';
 import {
@@ -19,6 +18,7 @@ import { TenantMemberList, TenantMemberListControls } from './tenant-member-list
 import { ConfirmationDialog } from './tenant-member-management-parts';
 import { reduceTenantMemberMobileDetail } from './tenant-member-mobile-detail-state';
 import type { TenantMemberManagementController } from './use-tenant-member-management-controller';
+import { ModalManager } from '../../modals/modal-manager';
 
 export interface TenantMemberManagementSurfaceProps {
   controller: TenantMemberManagementSurfaceController;
@@ -84,12 +84,12 @@ export interface TenantMemberManagementSurfaceController {
   setEmail: React.Dispatch<React.SetStateAction<string>>;
   addRoles: string[];
   setAddRoles: React.Dispatch<React.SetStateAction<string[]>>;
-  addMember(event: React.FormEvent): Promise<void>;
+  addMember(event: React.FormEvent): Promise<boolean>;
   openAddDialog(): void;
   setAddDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   visibleConfirmation: TenantMemberManagementController['visibleConfirmation'];
   setConfirmation: TenantMemberManagementController['setConfirmation'];
-  confirmAction(): Promise<void>;
+  confirmAction(): Promise<boolean>;
   restoreDialogFocus(event: Event): void;
   saveRoles(): Promise<void>;
   membershipActions: NavigationAction[];
@@ -137,7 +137,7 @@ export function TenantMemberManagementSurface({
   const list = tenantMemberListState(controller, tenantSingular, selectMember);
 
   return (
-    <div
+    <ModalManager><div
       data-slot="tenant-member-management"
       className={cn('flex min-h-[30rem] flex-col gap-3', className)}
       aria-busy={tenant.isLoading || tenant.isMutating}
@@ -254,16 +254,10 @@ export function TenantMemberManagementSurface({
         onOpenChange={(open) => controller.setAddDialogOpen(open)}
         onEmailChange={controller.setEmail}
         onRolesChange={controller.setAddRoles}
-        onSubmit={(event) => { void controller.addMember(event); }}
+        onSubmit={event => controller.addMember(event)}
         onCloseAutoFocus={controller.restoreDialogFocus}
       />
-      <AlertDialog
-        open={controller.visibleConfirmation !== null}
-        onOpenChange={(open) => {
-          if (!open && !tenant.isMutating) controller.setConfirmation(null);
-        }}
-      >
-        {controller.visibleConfirmation && (
+      {controller.visibleConfirmation && (
           <ConfirmationDialog
             key={`${controller.visibleConfirmation.action}:${controller.visibleConfirmation.member.membershipId}`}
             confirmation={controller.visibleConfirmation}
@@ -271,15 +265,15 @@ export function TenantMemberManagementSurface({
             transferDescription={transferDescription}
             busy={tenant.isMutating}
             error={controller.localError}
-            onConfirm={() => { void controller.confirmAction(); }}
+            onConfirm={() => controller.confirmAction()}
             onCloseAutoFocus={controller.restoreDialogFocus}
+            onOpenChange={open => { if (!open) controller.setConfirmation(null); }}
           />
-        )}
-      </AlertDialog>
+      )}
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {controller.announcement}
       </p>
-    </div>
+    </div></ModalManager>
   );
 }
 

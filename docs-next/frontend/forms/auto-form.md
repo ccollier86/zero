@@ -105,6 +105,56 @@ Receipt/default corrections preserve ordinary calls while fixing premature
 success and impossible optional submissions. Optional scalar reads now have
 honest nullable types; adapt app null handling instead of weakening the server.
 
+## Managed Modal Forms (Unreleased Source Addition)
+
+Pass `modalContext` from the shared manager's body callback to place AutoForm
+inside its standardized frame. This mode always uses an accepted baseline and
+binds dirty state, pending work, safe errors and Save/Discard/Stay to that exact
+modal lifetime. It does not create a second writer.
+
+The manager supplies the title, close control and footer. AutoForm therefore
+omits its card wrapper, submit/reset row and save bar in managed mode; `card`,
+`submitLabel`, `showReset` and `saveBar` do not add another frame or action row.
+Use the descriptor to configure those presentation slots.
+
+For example, this composition fragment assumes a declared `tasks` collection,
+its schema, a current `task` and the normal client/shared modal providers:
+
+```tsx
+import { AutoForm, modals } from '@zero/framework/react';
+
+modals.show<typeof task>({
+  title: 'Edit task',
+  actions: [
+    { id: 'cancel', label: 'Cancel', role: 'cancel' },
+    { id: 'save', label: 'Save', variant: 'primary', submit: true,
+      onClick: () => false },
+  ],
+  body: context => <AutoForm
+    modalContext={context}
+    schema={tasks.schema}
+    collection="tasks"
+    mode="edit"
+    editId={task.id}
+    defaultValues={task}
+  />,
+});
+```
+
+The submit footer is associated with the single native form. AutoForm handles
+that event once and accepts only an acknowledged, current, clean result. The
+action's `false` fallback prevents an unhandled submit from manufacturing
+acceptance. `formId` optionally sets an explicit native association; otherwise
+AutoForm derives it from the modal ID. If the body contains multiple forms,
+give the action and its intended form the same explicit `formId`.
+
+Do not call `closeLast()` or close the dialog from `onSuccess`. Use notifications
+for accepted follow-up effects and let the binding own exact-context closure.
+For a custom domain writer, return its complete promise and canonical
+`FormSubmissionAcceptance`; generic collection receipts do not supply backend
+revision/CAS policy. See [managed forms](../modals/forms.md) and
+[reactive record baselines](./reactive-records.md).
+
 ## Related Guides And Next Steps
 
 - [Configuration](./configuration.md#autoformprops) lists props/defaults.

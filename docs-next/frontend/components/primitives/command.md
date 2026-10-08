@@ -75,6 +75,20 @@ is a complete server-search example; its
 [qualification ledger](../../../_work/audits/docs-plugin-qualification.md)
 distinguishes source browser and installed compiled checks from this older baseline.
 
+In the unreleased [structured-modal upgrade](../../modals/migration.md#deliberate-command-palette-compatibility),
+this remains a deliberately separate command-palette composition, audited on its
+own layout/focus contracts. Do not mechanically replace it with a copied ordinary
+form modal. Source-only Doctor can flag direct dialog usage for manual review;
+it cannot prove this palette's responsive presentation or interaction correctness.
+
+Within a managed modal's React ownership context, CommandDialog now registers
+an owned floating branch and inherits the portal container, live token lane and
+active-owner state. Its overlay/content occupy the owning layer's supported
+slots above the parent; Escape closes the palette without also dismissing the
+parent. Its specialized cmdk anatomy and legacy content/overlay transition
+options remain unchanged. Outside that context, it remains the standalone
+controlled palette described above.
+
 ## Related Guides And Next Steps
 
 - [Generic hotkeys](../../hooks/browser-interactions.md) installs explicit shortcuts.

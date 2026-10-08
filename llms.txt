@@ -2657,6 +2657,17 @@ organism and keep domain ownership in app data tables.
 ## Modal Manager
 
 Use Zero's modal manager for app modals. Do not create a one-off modal stack.
+For the unreleased structured upgrade, follow
+[the modal guide](docs-next/frontend/modals/index.md) and
+[migration guide](docs-next/frontend/modals/migration.md). Use modals.show with
+title, body/sections and actions; the manager owns header, compact X, viewport,
+focus, scrolling, portals, stacking and motion. Supply an actual event trigger
+for button-origin motion; programmatic opens use Rise. Use useModalForm for
+acknowledged form saves and close guards, not an onSuccess workaround around
+void legacy submit results. Await the existing domain writer before acceptance.
+Source-only Doctor can identify likely migrations without loading app config;
+it cannot prove visual layout or accessibility. Confirm/useConfirm is intent;
+actionConfirm keeps an awaited writer inside the managed owner.
 If a modal reopens or loops, fix the modal state integration rather than
 forking a new manager.
 

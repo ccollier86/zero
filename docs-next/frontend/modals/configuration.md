@@ -8,51 +8,123 @@ visibility: internal
 system: modals
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
-modes: [browser, Guardian single, Guardian multi, single-database, Fabric]
+applies_to: ["2.6.0 source; structured-modal upgrade unreleased"]
+modes: [browser, standalone, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
-# Modal Options And Exported Shapes
+# Modal Configuration Reference
 
 [Modals index](./index.md) · [Documentation index](../../index.md)
 
-React/open-call inputs are browser-time configuration; there are no modal env
-bindings, server tables or Doctor settings. Normal AppProvider mounts the host.
+These are browser-time public contracts in the **unreleased structured upgrade**.
+There are no modal environment bindings, permission tables or backend migrations.
+Import the facade/types from `@zero/framework/modals` or the React/root facade.
+All visual values come from the active Zero theme.
 
-ModalSize is xs/sm/md/lg/xl/full. MODAL_SIZE_CLASSES gives viewport-bounded
-widths20/24/32/40/48rem and full viewport minus2rem; content defaults md, confirms sm.
-customSize.width overrides the preset; maxWidth/height/maxHeight/overflow are CSS
-values. maxHeight defaults calc(100vh - 2rem), overflow auto.
-ModalOverflow is auto/scroll/hidden/visible.
+## Host Options
 
-OpenModalOptions omits internal id/type/_resolve from ModalInstance; open requires
-content. title supplies the accessible name. from defaults top and follows the
-underlying dialog direction contract. showCloseButton/closeOnClickOutside/
-closeOnEscape default true. className and onClose customize presentation/notification.
+| ModalManagerProps | Default / behavior |
+| --- | --- |
+| `children` | Optional application content; safe page-recession surface wraps it |
+| `motion` | Optional provider motion defaults; per-call settings override |
+| `recedeSurface` | true; register an app-only surface outside portal hosts; false disables host-owned recession |
+| `portalContainer` | document.body; optional app-owned, same-document, non-transformed HTMLElement outside the recession surface |
 
-ConfirmModalOptions requires title and optionally description/confirmLabel/cancelLabel/
-variant(default|destructive)/holdToConfirm/holdDuration. OpenConfirmOptions adds
-size/customSize/from/className; it does not include every content dismissal prop.
-Hold duration defaults1500ms and must be finite/positive.
+Normal AppProvider hosts dialogs. Nested managers inherit an existing host rather
+than creating independent global stacks. A plain host with no useful app surface
+still opens dialogs; missing page recession does not fail an open.
 
-ModalType includes content/confirm/context as a exported shape, but there is no
-public modals.openContext method. ModalStoreState and ModalInstance are exported
-types for integration; modalStore and _resolve are not public mutation/resolver
-APIs. There is no public useModals hook. Do not reach into private files to invent one.
+portalContainer does not enable iframe/cross-document rendering or ShadowRoot
+styling. Cross-document containers are rejected; keep the portal host in the same
+browser document as ModalManager and outside its page-recession surface.
 
-Generic ConfirmProvider/useConfirm uses its separate ConfirmOptions, not these
-host sizing/hold options. See [generic confirmation](../hooks/confirmation.md).
+## Descriptor
+
+`ModalDescriptor<T>` requires a nonempty string `title`.
+A content descriptor uses `layout:"content"` (default) and optional `body`.
+A `tabs`/`nav` descriptor requires nonempty `sections`, forbids `body`, and
+optionally accepts `initialSection` identifying a supplied panel.
+
+| Option | Default / accepted values |
+| --- | --- |
+| `title` | Required visible title and accessible name |
+| `meta`, `description`, `icon` | Optional React nodes; icon omitted means no empty leading tile |
+| `tone` | default; default/info/success/danger |
+| `size` | md; xs/sm/md/lg/xl/full |
+| `customSize` | Optional width/maxWidth/height/maxHeight CSS values; viewport bounds remain |
+| `placement` | center; center/left/right/bottom |
+| `height` | auto for content, fixed for tabs/nav; auto/fixed |
+| `scrollbar` | auto; auto/thin/hidden for content body |
+| `navScrollbar` | auto; independent auto/thin/hidden for navigation |
+| `dismissible` | true; false hides X and blocks advisory dismissal |
+| `closeOnClickOutside`, `closeOnEscape` | true; individual dismissal paths can be disabled |
+| `allowEditingWhilePending` | false; true deliberately permits newer drafts while actions remain locked |
+| `guard` | true; tracked dirty state opens a discard decision if no explicit/bound close guard exists |
+| `beforeClose` | Optional boolean/async admission receiving reason and AbortSignal |
+| `footer.start` | Optional helper React node; current action error replaces it |
+| `actions` | Optional ordered action list, secondary first / primary last |
+| `headerActions` | Up to two labeled icon actions; each needs a unique id and callback |
+| `motion` | Optional [validated motion profile](./motion.md) |
+| `trigger` | Explicit initiating Element; absent/unusable origin safely uses Rise |
+| `initialFocus` | auto; auto/cancel/primary or a selector inside the dialog |
+| `role` | dialog; dialog/alertdialog |
+| `className` | Managed customization without replacing naming/lifecycle/ownership |
+| `dataSlot` | Optional stable component/test slot on the managed frame |
+| `parentId` | Optional active parent; prefer context.show for ordinary children |
+| `onClose` | Post-commit notification, never a veto or durable save receipt |
+| `onCloseAutoFocus` | Optional exact-owner focus policy; preventDefault suppresses opener restoration |
+
+Sizes use CSS tokens: xs320px (legacy-compatible extra size), sm420px, md560px,
+lg760px, xl1000px, full available viewport. Fixed height is 640px; desktop gutter 32px,
+body pad 20px and nav 212px. Theme overrides are centralized in
+`--zero-modal-*` tokens. Legacy MODAL_SIZE_CLASSES remains a compatibility helper;
+it is not the new shell's sizing authority.
+
+`scrollbar:"hidden"` hides only the scrollbar. Body scroll, wheel/touch/keyboard
+and focus visibility remain available; do not emulate it with overflow:hidden.
+
+## Sections And Actions
+
+A section requires unique nonempty `id`/`label` and `body`; optional `icon`,
+`badge`, `group` configure presentation. Retain IDs while updating panels.
+
+Each action requires unique nonempty `id`/`label`:
+
+| ModalAction field | Behavior |
+| --- | --- |
+| `role:"cancel"` | Requests dismissal through the normal guard |
+| `variant` | secondary(default)/primary/danger/ghost |
+| `onClick(context)` | Optional supplied writer; awaited, generation-fenced, single-flight |
+| `value` | Acceptance value for actions without a returned value |
+| `closes` | true; false keeps modal open |
+| `disabled` | false; context.setActionDisabled can update exact action UI |
+| `submit` | false; native form submission rather than global Enter interception |
+| `formId` | Explicit native form target; required when more than one active form exists |
+| `holdToConfirm` | false; deliberate sustained confirmation |
+| `holdDuration` | 1500ms; structured actions admit 250–60000ms finite values, unscaled by motion |
+
+Header callbacks are awaited and locked but do not automatically accept the modal.
+An action error is safe presentation; backend permissions, conditional writes,
+idempotency and unknown-outcome reconciliation remain the writer's responsibility.
+
+## Legacy Compatibility
+
+`OpenModalOptions` still configures `open({content})`; `OpenConfirmOptions` still
+configures the boolean confirm, including additive motion/trigger/icon/tone.
+Legacy `from` is retained in types but does not
+select a new Motion Lab preset; use structured `motion` when migrating.
+`showCloseButton` belongs to legacy opaque content; structured X ownership is
+`dismissible`. Private instance/store/resolver fields are not app mutation APIs.
 
 ## Related Guides And Next Steps
 
-- [Content](./content.md) owns ordinary opening/updating.
-- [Confirmation](./confirm.md) owns promise/options.
-- [HoldButton](./hold-button.md) owns duration/cancellation.
-- [Host](./modal-manager.md) owns mounting/rendering.
+[Layouts](./layouts.md) shows composed shapes; [motion](./motion.md) explains pace;
+[forms](./forms.md) owns accepted submission; [migration](./migration.md) maps old
+calls without breaking their return-value or action semantics.

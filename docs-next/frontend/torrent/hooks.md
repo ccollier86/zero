@@ -100,6 +100,24 @@ export function RunStatus() {
 The hook retains actionError for presentation; the catch avoids an unhandled
 event-handler promise. A successful start is not completed external work.
 
+## Readiness For A Durable Run (Unreleased Addition)
+
+The 2.6.0 working-source addition `useWorkflowObservation(instanceId, liveInstance)`
+is public from root/React and the React hooks subpath. Pair it with useWorkflow
+or useWorkflowRun and pass their instance to avoid creating another collection
+subscription. It returns status, instance, connected, isLoading and reload().
+
+Status is idle/loading/ready/unavailable/reconnecting/offline/error/retired.
+A missing local row or connected socket is not authoritative availability.
+The helper performs an authenticated SDK read when needed; reconnect or explicit
+reload reconciles current server authority. It does not poll, write the Sync
+store, start workflows or replay mutations. Not-found resources use the safe
+unavailable state rather than a fabricated zero-percent run.
+
+The [managed workflow progress body](../modals/workflow-progress.md) uses this
+readiness with existing run counters and separately authorized controls.
+Closing that body is not workflow cancellation or rollback.
+
 ## Privacy And Related Guides
 
 Public input/output/error/event payloads are redacted for every format.

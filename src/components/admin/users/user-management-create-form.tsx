@@ -27,6 +27,9 @@ import {
 import type { UserRoleOption } from './user-management-types';
 import { UserPropertyControls } from './user-property-controls';
 import { toAdminUserCreateParams } from './user-management-mappers';
+import type { ModalContext } from '../../../modals/modal-system.types';
+import { useAdminModalFormState, reportAdminModalFailure } from './use-admin-modal-form-state';
+import { areFormValuesEqual } from '../../../hooks/form-value-utils';
 
 export interface UserManagementCreateFormProps {
   config: AuthAdminConfig | null;
@@ -34,6 +37,10 @@ export interface UserManagementCreateFormProps {
   /** @internal Controlled surfaces may own global-role authority themselves. */
   allowGlobalAdminRole?: boolean;
   onSubmit: (params: AuthAdminCreateUserParams) => Promise<void>;
+  /** Managed dialogs place submit actions in the shared footer. */
+  modalContext?: ModalContext<void>;
+  formId?: string;
+  showSubmit?: boolean;
 }
 
 interface CreateFormState {
@@ -54,6 +61,7 @@ export function UserManagementCreateForm({
   roleOptions,
   allowGlobalAdminRole = config?.capabilities.canManageGlobalAdmins === true,
   onSubmit,
+  modalContext, formId, showSubmit = true,
 }: UserManagementCreateFormProps) {
   const setupEmailReady = Boolean(config?.capabilities.setupEmail);
   const availableRoleOptions = allowGlobalAdminRole
@@ -80,6 +88,11 @@ export function UserManagementCreateForm({
   });
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false);
+  const initial = React.useRef(state);
+  const mounted = React.useRef(true);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useAdminModalFormState(modalContext, { dirty: !areFormValuesEqual(state, initial.current), busy: submitting, error });
 
   const update = React.useCallback(
     <K extends keyof CreateFormState>(key: K, value: CreateFormState[K]) => {
@@ -96,7 +109,8 @@ export function UserManagementCreateForm({
   const handleSubmit = React.useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault();
-      if (submitting) return;
+      event.stopPropagation();
+      if (submittingRef.current || modalContext?.signal.aborted) return;
 
       if (!state.username.trim() || !state.email.trim()) {
         setError('Username and email are required.');
@@ -107,7 +121,8 @@ export function UserManagementCreateForm({
         return;
       }
 
-      setSubmitting(true);
+      submittingRef.current = true;
+      setSubmitting(true); modalContext?.setBusy(true);
       setError(null);
       try {
         await onSubmit(toAdminUserCreateParams({
@@ -121,17 +136,19 @@ export function UserManagementCreateForm({
           mfaRequired: state.mfaRequired,
           properties: state.properties,
         }));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create user');
+        if (mounted.current && !modalContext?.signal.aborted) modalContext?.accept(undefined);
+      } catch {
+        if (mounted.current && !modalContext?.signal.aborted) setError(reportAdminModalFailure('create-user'));
       } finally {
-        setSubmitting(false);
+        submittingRef.current = false;
+        if (mounted.current && !modalContext?.signal.aborted) { setSubmitting(false); modalContext?.setBusy(false); }
       }
     },
-    [onSubmit, setupEmailReady, state, submitting],
+    [onSubmit, setupEmailReady, state, modalContext],
   );
 
   return (
-    <form className="space-y-5" onSubmit={handleSubmit} aria-busy={submitting}>
+    <form id={formId} className="space-y-5" onSubmit={handleSubmit} aria-busy={submitting}>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="zero-admin-create-username">Username</Label>
@@ -256,13 +273,13 @@ export function UserManagementCreateForm({
         }}
       />
 
-      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+      {!modalContext && error && <p className="text-sm text-destructive" role="alert">{error}</p>}
 
-      <div className="flex justify-end gap-2">
+      {showSubmit && <div className="flex justify-end gap-2">
         <Button type="submit" disabled={submitting}>
           Create user
         </Button>
-      </div>
+      </div>}
     </form>
   );
 }

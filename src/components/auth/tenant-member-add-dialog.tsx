@@ -2,18 +2,11 @@
 
 import * as React from 'react';
 import type { AuthTenantRoleDescriptor } from '../../frontend/client/auth-types';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '#zero/components/animate-ui/components/radix/dialog';
-import { Button } from '#zero/components/ui/button';
+import type { DialogContent } from '#zero/components/animate-ui/components/radix/dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
 import { Input } from '#zero/components/ui/input';
 import { TenantRolePicker } from './tenant-role-picker';
+import { submitOwnedAuthModal } from './auth-modal-submit';
 
 export interface TenantMemberAddDialogProps {
   open: boolean;
@@ -28,7 +21,7 @@ export interface TenantMemberAddDialogProps {
   onOpenChange(open: boolean): void;
   onEmailChange(email: string): void;
   onRolesChange(roles: string[]): void;
-  onSubmit(event: React.FormEvent): void;
+  onSubmit(event: React.FormEvent): Promise<boolean>;
   onCloseAutoFocus: React.ComponentProps<typeof DialogContent>['onCloseAutoFocus'];
 }
 
@@ -51,24 +44,22 @@ export function TenantMemberAddDialog({
 }: TenantMemberAddDialogProps) {
   const canSubmit = email.trim().length > 0
     && (!canChooseRoles || selectedRoles.length > 0);
+  const pending = React.useRef(false);
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!busy || nextOpen) onOpenChange(nextOpen);
-    }}>
-      <DialogContent
-        className="max-h-[calc(100vh-2rem)] overflow-y-auto"
-        onCloseAutoFocus={onCloseAutoFocus}
-      >
-        <form className="space-y-4" onSubmit={onSubmit}>
-          <DialogHeader>
-            <DialogTitle>Add member</DialogTitle>
-            <DialogDescription>
-              Add an existing Zero account to this {tenantSingular} and choose its
-              initial access.
-            </DialogDescription>
-          </DialogHeader>
-
+    <ControlledModal open={open} busy={busy} error={error}
+      onOpenChange={onOpenChange}
+      descriptor={{ title: 'Add member',
+        description: `Add an existing Zero account to this ${tenantSingular} and choose its initial access.`,
+        onCloseAutoFocus, guard: false,
+        actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel', disabled: busy },
+          { id: 'add', label: busy ? 'Adding…' : 'Add member', variant: 'primary', submit: true, disabled: busy || !canSubmit }],
+        body: context => <form id={`${context.id}-add-member`} className="space-y-4" onSubmit={event => {
+          if (!busy) void submitOwnedAuthModal(context, event, pending, async () => {
+            if (await onSubmit(event) && !context.signal.aborted) context.accept(undefined);
+          });
+          else { event.preventDefault(); event.stopPropagation(); }
+        }}>
           <Input
             autoFocus
             type="email"
@@ -95,27 +86,7 @@ export function TenantMemberAddDialog({
             />
           )}
 
-          {error && (
-            <div
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-            >
-              {error}
-            </div>
-          )}
-
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button type="button" size="sm" variant="outline" disabled={busy}>
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button type="submit" size="sm" disabled={busy || !canSubmit}>
-              {busy ? 'Adding…' : 'Add member'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        </form>,
+      }} />
   );
 }

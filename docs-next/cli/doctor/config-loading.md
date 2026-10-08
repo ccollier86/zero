@@ -23,6 +23,14 @@ reviewed_against:
 
 [Doctor index](./index.md) · [Documentation index](../../index.md)
 
+The following describes ordinary configuration-backed Doctor. The **unreleased
+structured-modal upgrade** adds `--source-only --project-root <directory>`:
+that branch bypasses config discovery and loader imports entirely. It parses
+source/package metadata without executing app config/resources/plugins or opening
+databases. It is not a sandbox for an already started outer Bun process;
+[source-only usage](./source-audit.md#source-only-command-and-api) explains
+explicit `--no-env-file` launch and the distinction from ambient environment.
+
 `resolveDoctorConfigPath(input?)` resolves an explicit path, otherwise checks
 these names in order under the current directory:
 

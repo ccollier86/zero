@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { act, createElement, type ReactNode } from 'react';
+import { act, createElement, Fragment, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
 
 import { defineSchema, field } from '../schema';
@@ -9,6 +9,9 @@ import type { Collection } from '../frontend/client/sdk';
 import type { AuthClient } from '../frontend/client/auth-client';
 import type { Client } from '../frontend/client/sdk';
 import { useForm, type UseFormOptions } from './use-form';
+import { useReactiveFormRecord } from './use-reactive-form-record';
+import { useFormSave, type UseFormSaveReturn } from './use-form-save';
+import type { FormRecordSnapshot } from './form-save-types';
 import { configureFrontendObservability, type FrontendObservabilityEvent } from '../frontend/client/observability';
 
 type FormRow = Row & { id: string; title: string };
@@ -39,6 +42,132 @@ afterEach(async () => {
 });
 
 describe('useForm collection submission', () => {
+  test('form record incarnations automatically retire Save/Discard/Stay without duplicate scope configuration', async () => {
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'a', withSave: true });
+    await act(async () => { rendered.current.setValue('title', 'Original target draft'); });
+    let continued = 0, pending!: Promise<boolean>;
+    await act(async () => { pending = rendered.save!.requestLeave(() => { continued++; }); });
+    expect(rendered.save!.confirmationOpen).toBe(true); const key = rendered.current.boundaryKey;
+    await rendered.update({ recordIdentity: 'b' });
+    expect(await pending).toBe(false); expect(rendered.save!.confirmationOpen).toBe(false);
+    await rendered.update({ recordIdentity: 'a' });
+    expect(rendered.current.boundaryKey).not.toBe(key); expect(continued).toBe(0);
+  });
+  test('cancelled close admission still accepts an admitted current form save without continuing its close', async () => {
+    const receipt = deferred<{ values: Partial<FormRow>; revision: number }>(); let submitSignal!: AbortSignal;
+    const rendered = await renderForm({ baseline: 'accepted', initialRevision: 1, withSave: true,
+      onSubmit: (_, ctx) => { submitSignal = ctx.signal; return receipt.promise; } });
+    const closeSignal = new AbortController(); let continued = 0, leaving!: Promise<boolean>, saving!: Promise<void>;
+    await act(async () => { rendered.current.setValue('title', 'Sent');
+      leaving = rendered.save!.requestLeave(() => { continued++; }, { signal: closeSignal.signal }); });
+    await act(async () => { saving = rendered.save!.chooseLeave('save'); });
+    await act(async () => closeSignal.abort());
+    expect(await leaving).toBe(false); expect(submitSignal.aborted).toBe(false);
+    expect(rendered.save!.confirmationOpen).toBe(false); expect(rendered.save!.isSaving).toBe(true);
+    await act(async () => { receipt.resolve({ values: { title: 'Accepted' }, revision: 2 }); await saving; });
+    expect(rendered.current.watch('title')).toBe('Accepted'); expect(rendered.current.revision).toBe(2);
+    expect(rendered.current.isDirty).toBe(false); expect(continued).toBe(0);
+  });
+  test('late explicit source hydration loads canonical values/revision atomically and ignores pending local echoes', async () => {
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'row-1',
+      source: { identity: 'row-1', status: 'loading' }, onSubmit: async () => {} });
+    expect(rendered.current.recordState.status).toBe('loading'); expect(await rendered.current.submit()).toEqual({ kind: 'blocked' });
+    await rendered.update({ source: { identity: 'row-1', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'Loaded later' }, revision: 8 } });
+    expect(rendered.current.watch('title')).toBe('Loaded later'); expect(rendered.current.revision).toBe(8);
+    expect(rendered.current.isDirty).toBe(false); expect(rendered.current.recordState.status).toBe('ready');
+    await rendered.update({ source: { identity: 'row-1', status: 'ready', origin: 'pending-local',
+      values: { id: 'row-1', title: 'Optimistic only' }, revision: 9 } });
+    expect(rendered.current.watch('title')).toBe('Loaded later'); expect(rendered.current.revision).toBe(8);
+    expect(rendered.current.recordState.changedElsewhere).toBe(false);
+  });
+  test('re-created unchanged source descriptors never roll an accepted baseline back while reactive data catches up', async () => {
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'row-1', initialRevision: 1,
+      source: { identity: 'row-1', status: 'ready', origin: 'authoritative', values: { id: 'row-1', title: 'A title' }, revision: 1 },
+      onSubmit: async () => ({ values: { title: 'Canonical accepted' }, revision: 2 }) });
+    await act(async () => { rendered.current.setValue('title', 'Submitted'); await rendered.current.submit(); });
+    expect(rendered.current.watch('title')).toBe('Canonical accepted'); expect(rendered.current.revision).toBe(2);
+    await rendered.update({});
+    expect(rendered.current.watch('title')).toBe('Canonical accepted'); expect(rendered.current.revision).toBe(2);
+    await rendered.update({ source: { identity: 'row-1', status: 'loading' } });
+    await rendered.update({ source: { identity: 'row-1', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'A title' }, revision: 1 } });
+    expect(rendered.current.watch('title')).toBe('Canonical accepted'); expect(rendered.current.revision).toBe(2);
+    expect(rendered.current.recordState.status).toBe('loading');
+    await rendered.update({ source: { identity: 'row-1', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'A later remote update' }, revision: 3 } });
+    expect(rendered.current.watch('title')).toBe('A later remote update'); expect(rendered.current.revision).toBe(3);
+  });
+  test('dirty remote updates keep the expected revision and deliberate reload replaces the entire baseline', async () => {
+    let expected: unknown;
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'row-1', initialRevision: 1,
+      onSubmit: async (_, ctx) => { expected = ctx.expectedRevision; throw { code: 'REVISION_CONFLICT' }; } });
+    await act(async () => { rendered.current.reconcileRecord({ identity: 'row-1', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'A title' }, revision: 1 }); rendered.current.setValue('title', 'My draft'); });
+    await act(async () => { rendered.current.reconcileRecord({ identity: 'row-1', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'Changed remotely' }, revision: 2 }); });
+    expect(rendered.current.watch('title')).toBe('My draft'); expect(rendered.current.revision).toBe(1);
+    expect(rendered.current.recordState.changedElsewhere).toBe(true); expect(rendered.current.recordState.incomingRevision).toBe(2);
+    expect(rendered.current.reloadRecord()).toEqual({ kind: 'blocked', reason: 'draft' });
+    await act(async () => { expect((await rendered.current.submit()).kind).toBe('failed'); });
+    expect(expected).toBe(1); expect(rendered.current.hasConflict).toBe(true);
+    await act(async () => { expect(rendered.current.reloadRecord({ discardDraft: true }).kind).toBe('adopted'); });
+    expect(rendered.current.watch('title')).toBe('Changed remotely'); expect(rendered.current.revision).toBe(2);
+    expect(rendered.current.isDirty).toBe(false); expect(rendered.current.hasConflict).toBe(false);
+    expect(rendered.current.recordState.changedElsewhere).toBe(false);
+  });
+  test('a matching authoritative save echo clears awareness without losing edits made during the write', async () => {
+    const receipt = deferred<{ values: Partial<FormRow>; revision: number }>();
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'row-1', initialRevision: 1, onSubmit: () => receipt.promise });
+    let saving!: ReturnType<typeof rendered.current.submit>;
+    await act(async () => { rendered.current.reconcileRecord({ identity: 'row-1', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'A title' }, revision: 1 }); rendered.current.setValue('title', 'Sent'); saving = rendered.current.submit(); });
+    await act(async () => { rendered.current.setValue('title', 'Newer draft');
+      rendered.current.reconcileRecord({ identity: 'row-1', status: 'ready', origin: 'authoritative',
+        values: { id: 'row-1', title: 'Canonical' }, revision: 2 }); });
+    expect(rendered.current.reloadRecord({ discardDraft: true })).toEqual({ kind: 'blocked', reason: 'saving' });
+    await act(async () => { receipt.resolve({ values: { title: 'Canonical' }, revision: 2 }); await saving; });
+    expect((await saving).kind).toBe('accepted');
+    expect(events).toEqual([]);
+    expect(rendered.current.captureValues().expectedRevision).toBe(2);
+    expect(rendered.current.watch('title')).toBe('Newer draft'); expect(rendered.current.revision).toBe(2);
+    expect(rendered.current.isDirty).toBe(true); expect(rendered.current.recordState.changedElsewhere).toBe(false);
+  });
+  test('record identity A→B→A retires original callbacks, captures and pending acknowledgments', async () => {
+    const receipt = deferred<{ values: Partial<FormRow>; revision: number }>(); let successes = 0;
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'a', initialRevision: 1,
+      onSubmit: () => receipt.promise, onSuccess: () => { successes++; } });
+    let pending!: ReturnType<typeof rendered.current.submit>;
+    await act(async () => { rendered.current.reconcileRecord({ identity: 'a', status: 'ready', origin: 'authoritative',
+      values: { id: 'row-1', title: 'A title' }, revision: 1 }); pending = rendered.current.submit(); });
+    const old = rendered.current, capture = old.captureValues();
+    await rendered.update({ recordIdentity: 'b' }); await rendered.update({ recordIdentity: 'a' });
+    await act(async () => { receipt.resolve({ values: { title: 'Old result' }, revision: 9 }); await pending; });
+    expect((await pending).kind).toBe('retired'); expect(successes).toBe(0);
+    expect(old.reconcileRecord({ identity: 'a', status: 'ready', origin: 'authoritative', values: { title: 'Old source' }, revision: 9 }))
+      .toEqual({ kind: 'ignored', reason: 'retired' });
+    expect(Object.keys(old.getValues())).toEqual([]); expect(old.watch('title')).toBeUndefined();
+    expect(rendered.current.acceptValues({ values: { title: 'Old capture' } }, capture)).toBe(false);
+    expect(rendered.current.watch('title')).toBe('A title'); expect(rendered.current.revision).toBe(1);
+  });
+  test('explicit forbidden record read masks fields and blocks saves instead of guessing from cache absence', async () => {
+    const rendered = await renderForm({ baseline: 'accepted', recordIdentity: 'row-1', onSubmit: async () => {} });
+    await act(async () => { rendered.current.reconcileRecord({ identity: 'row-1', status: 'forbidden' }); });
+    expect(rendered.current.watch('title')).toBeUndefined(); expect(Object.keys(rendered.current.getValues())).toEqual([]);
+    expect(rendered.current.captureValues().fields).toEqual([]); expect(rendered.current.isValid).toBe(false);
+    expect(rendered.current.register('title').value).toBe(''); expect(await rendered.current.submit()).toEqual({ kind: 'blocked' });
+  });
+  test('collection-backed submissions forward their exact abort signal without pretending to provide CAS', async () => {
+    const receipt = deferred<void>(); let signal: AbortSignal | undefined;
+    const rendered = await renderForm({ recordIdentity: undefined, collection: { insertAsync: (_: unknown, options: { signal?: AbortSignal }) => {
+      signal = options.signal; return receipt.promise;
+    } } as unknown as Collection<FormRow> });
+    let pending!: ReturnType<typeof rendered.current.submit>;
+    await act(async () => { pending = rendered.current.submit(); });
+    expect(signal).toBeInstanceOf(AbortSignal); expect(signal!.aborted).toBe(false);
+    await rendered.update({ scopeKey: 'new-target' }); expect(signal!.aborted).toBe(true);
+    await act(async () => { receipt.resolve(); await pending; }); expect((await pending).kind).toBe('retired');
+  });
   test('manual field validation uses declared schema errors and cannot validate foreign fields', async () => {
     const rendered = await renderForm({ baseline: 'accepted' });
     await act(async () => rendered.current.setValue('title', ''));
@@ -308,7 +437,7 @@ describe('useForm collection submission', () => {
   });
 });
 
-async function renderForm(options: {
+interface RenderFormOptions {
   collection?: Collection<FormRow>;
   mode?: 'create' | 'edit';
   editId?: string;
@@ -318,11 +447,18 @@ async function renderForm(options: {
   baseline?: UseFormOptions<FormRow>['baseline'];
   initialRevision?: number;
   onSubmit?: UseFormOptions<FormRow>['onSubmit'];
-}): Promise<{ current: ReturnType<typeof useForm<FormRow>> }> {
+  recordIdentity?: string | number;
+  scopeKey?: string | number;
+  source?: FormRecordSnapshot<FormRow>;
+  withSave?: boolean;
+}
+async function renderForm(options: RenderFormOptions): Promise<{ current: ReturnType<typeof useForm<FormRow>>;
+  readonly save: UseFormSaveReturn | undefined; update(next: Partial<RenderFormOptions>): Promise<void> }> {
   const { createRoot } = await import('react-dom/client');
   const root = createRoot(createContainer());
   activeRoots.add(root);
   let current!: ReturnType<typeof useForm<FormRow>>;
+  let save: UseFormSaveReturn | undefined;
 
   function Capture(): ReactNode {
     current = useForm<FormRow>({
@@ -336,9 +472,22 @@ async function renderForm(options: {
       onSubmit: options.onSubmit,
       baseline: options.baseline,
       initialRevision: options.initialRevision,
+      recordIdentity: options.recordIdentity,
+      scopeKey: options.scopeKey,
     });
-    return null;
+    return createElement(Fragment, null,
+      options.source ? createElement(Source, { record: { ...options.source }, form: current }) : null,
+      options.withSave ? createElement(Save, { form: current }) : null);
   }
+
+  function Source({ record, form }: { record: FormRecordSnapshot<FormRow>; form: ReturnType<typeof useForm<FormRow>> }): ReactNode {
+    useReactiveFormRecord({ form, record }); return null;
+  }
+  function Save({ form }: { form: ReturnType<typeof useForm<FormRow>> }): ReactNode {
+    save = useFormSave({ form, guardNavigation: false, beforeUnload: false }); return null;
+  }
+
+  const element = () => options.client ? createElement(ClientProvider, { client: options.client, children: createElement(Capture) }) : createElement(Capture);
 
   await act(async () => root.render(options.client
     ? createElement(ClientProvider, {
@@ -346,7 +495,7 @@ async function renderForm(options: {
         children: createElement(Capture),
       })
     : createElement(Capture)));
-  return { get current() { return current; } };
+  return { get current() { return current; }, get save() { return save; }, async update(next) { Object.assign(options, next); await act(async () => root.render(element())); } };
 }
 
 function createScopeClient(): { value: Client; replaceScope(): void } {
@@ -446,13 +595,13 @@ function installMinimalDom(): () => void {
 
 function deferred<T>(): {
   promise: Promise<T>;
-  resolve: () => void;
+  resolve: (value?: T) => void;
   reject: (error: Error) => void;
 } {
-  let resolve!: () => void;
+  let resolve!: (value?: T) => void;
   let reject!: (error: Error) => void;
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = () => resolvePromise(undefined as T);
+    resolve = value => resolvePromise(value as T);
     reject = rejectPromise;
   });
   return { promise, resolve, reject };

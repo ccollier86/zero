@@ -12,12 +12,11 @@ beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   lease = await acquirePlaywrightTestBrowser();
   browser = lease.browser;
-  const build = await Bun.build({
-    entrypoints: [`${import.meta.dir}/auto-form-defaults.browser-fixture.tsx`],
-    target: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': JSON.stringify('test') },
-  });
-  if (!build.success) throw new Error(build.logs.map((log) => log.message).join('\n'));
-  bundle = await build.outputs[0]!.text();
+  const script = `const result=await Bun.build({entrypoints:[${JSON.stringify(`${import.meta.dir}/auto-form-defaults.browser-fixture.tsx`)}],target:'browser',format:'iife',define:{'process.env.NODE_ENV':JSON.stringify('test')}});if(!result.success){for(const log of result.logs)await Bun.write(Bun.stderr,log.message+'\\n');process.exit(1);}await Bun.write(Bun.stdout,await result.outputs[0].text());`;
+  const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', '-e', script], cwd: `${import.meta.dir}/../../..`, stdout: 'pipe', stderr: 'pipe' });
+  const [output, diagnostics, code] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
+  if (code !== 0) throw new Error(diagnostics || 'Isolated generated-form build failed.');
+  bundle = output;
 }, 60_000);
 afterAll(() => lease?.release());
 

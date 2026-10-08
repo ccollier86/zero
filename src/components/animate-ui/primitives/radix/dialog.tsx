@@ -102,6 +102,7 @@ function DialogContent({
   onCloseAutoFocus,
   onEscapeKeyDown,
   onPointerDownOutside,
+  onFocusOutside,
   onInteractOutside,
   transition = { type: 'spring', stiffness: 150, damping: 25 },
   ...props
@@ -119,6 +120,7 @@ function DialogContent({
       onCloseAutoFocus={onCloseAutoFocus}
       onEscapeKeyDown={onEscapeKeyDown}
       onPointerDownOutside={onPointerDownOutside}
+      onFocusOutside={onFocusOutside}
       onInteractOutside={onInteractOutside}
     >
       <motion.div

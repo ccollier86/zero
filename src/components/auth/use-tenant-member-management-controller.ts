@@ -15,6 +15,7 @@ import {
   type PendingConfirmation,
 } from './tenant-member-management-parts';
 import { rolesForTenantKind } from './tenant-role-scope';
+import { reportAuthUiError } from './auth-error';
 
 export interface TenantMemberControllerOptions {
   pageSize: number;
@@ -149,9 +150,9 @@ export function useTenantMemberManagementController({
     });
   }, [canChooseAddRoles, simpleMode, addRoleChoices.map((role) => role.key).join('|')]);
 
-  async function addMember(event: React.FormEvent) {
+  async function addMember(event: React.FormEvent): Promise<boolean> {
     event.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim()) return false;
     const addedEmail = email.trim();
     beginOperation();
     try {
@@ -161,11 +162,12 @@ export function useTenantMemberManagementController({
       });
       if (mounted.current) {
         setEmail('');
-        setAddDialogOpen(false);
         setAnnouncement(`Added ${addedEmail} to this ${tenantSingular}`);
       }
+      return mounted.current;
     } catch (cause) {
       if (mounted.current) setLocalError(errorMessage(cause, tenantSingular));
+      return false;
     }
   }
 
@@ -194,8 +196,8 @@ export function useTenantMemberManagementController({
     }
   }
 
-  async function confirmAction() {
-    if (!visibleConfirmation) return;
+  async function confirmAction(): Promise<boolean> {
+    if (!visibleConfirmation) return false;
     const pending = visibleConfirmation;
     beginOperation();
     try {
@@ -212,16 +214,20 @@ export function useTenantMemberManagementController({
         ).actorSessionInvalidated;
       }
       if (mounted.current) {
-        setConfirmation(null);
         setAnnouncement(tenantConfirmationAnnouncement(
           pending.action,
           tenantMemberName(pending.member),
           tenantSingular,
         ));
       }
-      if (actorSessionInvalidated) onActorSessionInvalidated?.();
+      if (actorSessionInvalidated) {
+        try { onActorSessionInvalidated?.(); }
+        catch (cause) { reportAuthUiError('tenantMemberAcceptedNotification', cause); }
+      }
+      return mounted.current;
     } catch (cause) {
       if (mounted.current) setLocalError(errorMessage(cause, tenantSingular));
+      return false;
     }
   }
 

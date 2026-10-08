@@ -12,6 +12,17 @@ import { toast } from 'sonner';
 import type { AuthAdminCreateUserParams, AuthAdminUpdateUserParams } from '../../../frontend/client/auth-client';
 import type { UserManagementProps } from './user-management-props';
 import type { UseAdminUsersResult } from './user-management-types';
+import { emitFrontendCode } from '../../../frontend/client/observability';
+import { OBS_CODES } from '../../../observability/codes';
+
+/** Notifications are not mutation receipts: their failures cannot authorize a duplicate retry. */
+async function notifyAcceptedMutation(action: 'create-user' | 'update-user' | 'delete-property' | 'delete-user',
+  callback: () => unknown | Promise<unknown>, success?: () => void): Promise<void> {
+  try { await callback(); }
+  catch { emitFrontendCode(OBS_CODES.FRONTEND_ADMIN_USER_NOTIFICATION_FAILED, { metadata: { action, stage: 'callback' } }); }
+  try { success?.(); }
+  catch { emitFrontendCode(OBS_CODES.FRONTEND_ADMIN_USER_NOTIFICATION_FAILED, { metadata: { action, stage: 'toast' } }); }
+}
 
 /** Return mutation adapters that preserve controlled-mode handler boundaries. */
 export function useUserManagementMutations(params: {
@@ -27,8 +38,8 @@ export function useUserManagementMutations(params: {
       return;
     }
     const result = await live.createUser(input);
-    await handlers.onCreate?.(input);
-    toast.success(result.setupEmailSent ? 'User created and setup email sent' : 'User created');
+    await notifyAcceptedMutation('create-user', () => handlers.onCreate?.(input),
+      () => { toast.success(result.setupEmailSent ? 'User created and setup email sent' : 'User created'); });
   }, [controlled, handlers.onCreate, live.createUser]);
 
   const updateUser = React.useCallback(async (id: string, changes: AuthAdminUpdateUserParams) => {
@@ -38,8 +49,8 @@ export function useUserManagementMutations(params: {
       return;
     }
     await live.updateUser(id, changes);
-    await handlers.onUpdate?.(id, changes);
-    toast.success('User updated');
+    await notifyAcceptedMutation('update-user', () => handlers.onUpdate?.(id, changes),
+      () => { toast.success('User updated'); });
   }, [controlled, handlers.onUpdate, live.updateUser]);
 
   const deleteProperty = React.useCallback(async (id: string, key: string) => {
@@ -49,7 +60,7 @@ export function useUserManagementMutations(params: {
       return;
     }
     await live.deleteUserProperty(id, key);
-    await handlers.onDeleteProperty?.(id, key);
+    await notifyAcceptedMutation('delete-property', () => handlers.onDeleteProperty?.(id, key));
   }, [controlled, handlers.onDeleteProperty, live.deleteUserProperty]);
 
   const deleteUser = React.useCallback(async (id: string) => {
@@ -59,8 +70,8 @@ export function useUserManagementMutations(params: {
       return;
     }
     await live.deleteUser(id);
-    await handlers.onDelete?.(id);
-    toast.success('User deleted');
+    await notifyAcceptedMutation('delete-user', () => handlers.onDelete?.(id),
+      () => { toast.success('User deleted'); });
   }, [controlled, handlers.onDelete, live.deleteUser]);
 
   return { createUser, updateUser, deleteProperty, deleteUser };

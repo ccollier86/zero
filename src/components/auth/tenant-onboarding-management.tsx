@@ -12,8 +12,8 @@ import {
   CardHeader,
   CardTitle,
 } from '#zero/components/ui/card';
-import { AlertDialog } from '#zero/components/animate-ui/components/radix/alert-dialog';
 import { cn } from '#zero/lib/utils';
+import { ModalManager } from '../../modals/modal-manager';
 import { createAuthRoleLabelMap } from './auth-role-presentation';
 import { writeAuthClipboardText } from './auth-clipboard';
 import { TenantDomainManagement } from './tenant-domain-management';
@@ -74,11 +74,11 @@ export function TenantOnboardingManagement(
     auth.activeTenant?.tenantId ?? null,
   );
   return (
-    <TenantOnboardingManagementScope
+    <ModalManager><TenantOnboardingManagementScope
       key={boundary}
       {...props}
       tenantKind={auth.activeTenant?.kind ?? null}
-    />
+    /></ModalManager>
   );
 }
 
@@ -213,8 +213,8 @@ function TenantOnboardingManagementScope({
     }
   }
 
-  async function confirmOnboardingAction() {
-    if (!confirmation) return;
+  async function confirmOnboardingAction(): Promise<boolean> {
+    if (!confirmation) return false;
     const pending = confirmation;
     const succeeded = pending.action === 'revoke-invitation'
       ? await mutateInvitation(
@@ -235,8 +235,8 @@ function TenantOnboardingManagementScope({
           : 'join-requests',
         sawLoading: false,
       });
-      setConfirmation(null);
     }
+    return succeeded;
   }
 
   async function copyManualInvitationToken() {
@@ -364,16 +364,7 @@ function TenantOnboardingManagementScope({
         <CardContent className="space-y-6 pt-5">
           <TenantOnboardingTenantKindNotice kind={tenantKind} />
 
-          <AlertDialog
-            open={confirmation !== null}
-            onOpenChange={(open) => {
-              const confirmationBusy = confirmation?.action === 'revoke-invitation'
-                ? onboarding.isMutatingInvitations
-                : onboarding.isMutatingJoinRequests;
-              if (!open && !confirmationBusy) setConfirmation(null);
-            }}
-          >
-            {confirmation && (
+          {confirmation && (
               <OnboardingConfirmationDialog
                 key={onboardingConfirmationKey(confirmation)}
                 confirmation={confirmation}
@@ -383,7 +374,10 @@ function TenantOnboardingManagementScope({
                 error={confirmation.action === 'revoke-invitation'
                   ? invitationLocalError
                   : joinRequestLocalError}
-                onConfirm={() => void confirmOnboardingAction()}
+                onConfirm={() => confirmOnboardingAction()}
+                onOpenChange={open => {
+                  if (!open) setConfirmation(null);
+                }}
                 onCloseAutoFocus={(event) => {
                   event.preventDefault();
                   if (confirmationTriggerRef.current?.isConnected) {
@@ -396,8 +390,7 @@ function TenantOnboardingManagementScope({
                   fallback?.focus();
                 }}
               />
-            )}
-          </AlertDialog>
+          )}
 
           {tenantKind === null ? (
             <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">

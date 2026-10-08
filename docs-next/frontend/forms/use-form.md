@@ -28,6 +28,12 @@ baselines, typed submit outcomes, expected revisions, field acknowledgements and
 shared Save/Discard/Stay guards. Legacy initial/reset and handleSubmit behavior
 remain compatible; opt into accepted baselines deliberately.
 
+The unreleased [reactive record contract](./reactive-records.md) adds
+recordIdentity, reconcileRecord/reloadRecord, recordState and incomingRecord.
+It preserves drafts instead of continuously resetting defaultValues.
+[useModalForm](../modals/forms.md) supplies owned close guards and accepts
+only a current acknowledged, clean save in a managed dialog.
+
 useForm manages schema-backed values, validation, dirty state and an optional
 submission path. Rendering stays with the app or [AutoForm](./auto-form.md).
 Persisting/authorizing values remains with the SDK/callback and server.
@@ -53,7 +59,8 @@ function TaskForm() {
 This fragment needs the normal AppProvider/ClientProvider and matching configured
 collection; taskFields is the app descriptor with a known title field. Render
 all needed required fields or supply appropriate values. useForm is imported
-from the React/root barrel, not the generic /hooks package route.
+from the React/root barrel. The unreleased generic /hooks additions also expose
+the headless form hooks; generated field rendering remains on the UI facade.
 
 ## Result Members
 

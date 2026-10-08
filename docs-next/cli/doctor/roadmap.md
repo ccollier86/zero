@@ -33,6 +33,12 @@ Future ideas, not current APIs:
 - [ ] More representative installed-package/mode verification recipes.
 - [ ] Clearer machine-consumable documentation destinations for stable findings.
 - [ ] Evaluate additional focused configuration organization checks as those features exist.
+- [ ] Add the [modal migration analysis](../../_work/modal-system-redesign-plan.md#phase-6--existing-consumers-public-distribution-and-doctor)
+  from the modal redesign: focused import/JSX checks, installed Zero capability
+  inspection and file/line migration hints. Current source audit is heuristic;
+  unknown wrappers and runtime layout/focus behavior must not be reported as
+  statically proven. Preserve project-root fences, exclusions and exceptions,
+  and do not execute application configuration for static migration analysis.
 
 Automatic repair, security certification, MCP discovery and agent lifecycle
 hooks are not shipped by this checker. Confirmed defects are corrected with

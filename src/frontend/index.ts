@@ -578,6 +578,9 @@ export { useForm } from '../hooks/use-form';
 export type { UseFormOptions, UseFormReturn } from '../hooks/use-form';
 export { useFormSave } from '../hooks/use-form-save';
 export type { UseFormSaveOptions, UseFormSaveReturn } from '../hooks/use-form-save';
+export type { FormLeaveOptions } from '../hooks/use-form-save';
+export { useReactiveFormRecord } from '../hooks/use-reactive-form-record';
+export type { UseReactiveFormRecordOptions } from '../hooks/use-reactive-form-record';
 export type * from '../hooks/form-save-types';
 export { FormSaveBar, UnsavedChangesDialog } from '../components/form-save';
 export type { FormSaveBarProps, UnsavedChangesDialogProps } from '../components/form-save';
@@ -1198,6 +1201,8 @@ export type {
   WorkflowInteractionSubmissionResult,
 } from './client/workflow-hooks';
 export { useWorkflowRun } from './client/hooks';
+export { useWorkflowObservation } from './client/hooks';
+export type { UseWorkflowObservationResult, WorkflowObservationStatus } from './client/hooks';
 export type {
   UseWorkflowRunOptions,
   UseWorkflowRunResult,
@@ -1449,7 +1454,21 @@ export { ThemeTogglerButton } from '../components/animate-ui/components/buttons/
 export type { ThemeTogglerButtonProps } from '../components/animate-ui/components/buttons/theme-toggler';
 
 // ─── Modal Manager ──────────────────────────────────────────────────────
-export { ModalManager, modals, HoldButton } from '../modals';
+export { ModalManager, ControlledModal, modals, HoldButton, useModalForm, createModalFormGuard, ModalWorkflowProgress,
+  MODAL_MOTION_DEFAULTS, MODAL_MOTION_EASING, MODAL_MOTION_TIMINGS, MODAL_MOTION_GEOMETRY,
+  MODAL_MOTION_TIMING_TOKENS, resolveModalMotion } from '../modals';
+export type * from '../modals/modal-system.types';
+export type * from '../modals/modal-motion-types';
+export type * from '../modals/modal-workflow-progress.types';
+export type { UseModalFormOptions } from '../modals/modal-form';
+export type { ControlledModalProps } from '../modals/modal-controlled';
+export type { ModalPromptOptions } from '../modals/modal-prompt';
+export { DenseList, DenseListItem, DenseListGroup, DenseListChoice } from '../components/dense-list';
+export type * from '../components/dense-list';
+export { Switch } from '../components/ui/switch';
+export type { SwitchProps } from '../components/ui/switch';
+export { Tabs, TabsList, TabsTrigger, TabsContents, TabsContent } from '../components/ui/tabs';
+export type { TabsProps, TabsListProps, TabsTriggerProps, TabsContentsProps, TabsContentProps } from '../components/ui/tabs';
 export type { ModalManagerProps } from '../modals';
 export type {
   ModalSize,

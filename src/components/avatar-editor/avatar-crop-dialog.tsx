@@ -4,8 +4,9 @@
 import { useEffect, useRef, useState } from 'react';
 import Cropper, { type Area } from 'react-easy-crop';
 import { Minus, Plus } from 'lucide-react';
-import { useReducedMotion } from 'motion/react';
-import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter, type DialogContentProps } from '../animate-ui/components/radix/dialog';
+import type { DialogContentProps } from '../animate-ui/components/radix/dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
+import type { ModalContext } from '../../modals/modal-system.types';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 import type { UserAvatarCapabilities } from '../../auth/auth-user-avatar-types';
@@ -28,16 +29,14 @@ export interface AvatarCropDialogProps {
 }
 /** Fade-only dialog avoids scaling the crop library's measured parent. Circle presentation still stores a square raster. */
 export function AvatarCropDialog(props: AvatarCropDialogProps) {
-  return <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-    {props.open && <AvatarCropDraft key={`${props.capabilities.shape}:${props.capabilities.outputSize}`} {...props} />}
-  </Dialog>;
+  return props.open ? <AvatarCropDraft key={`${props.capabilities.shape}:${props.capabilities.outputSize}`} {...props} /> : null;
 }
 function AvatarCropDraft({ image, capabilities, readOnly, onOpenChange, onSave, onCloseAutoFocus, onReviewLatest, className }: AvatarCropDialogProps) {
   const [source, setSource] = useState<string | null>(null), [crop, setCrop] = useState({ x: 0, y: 0 }), [zoom, setZoom] = useState(1);
   const [area, setArea] = useState<Area | null>(null), [error, setError] = useState<string | null>(null), [pending, setPending] = useState(false);
   const [invalidMedia, setInvalidMedia] = useState(false);
   const mounted = useRef(true), operation = useRef<AbortController | null>(null), latest = useRef({ readOnly, image, onSave });
-  latest.current = { readOnly, image, onSave }; const reducedMotion = useReducedMotion();
+  latest.current = { readOnly, image, onSave };
   useEffect(() => {
     mounted.current = true;
     operation.current?.abort(); operation.current = null; setPending(false);
@@ -50,40 +49,46 @@ function AvatarCropDraft({ image, capabilities, readOnly, onOpenChange, onSave, 
     return () => { mounted.current = false; operation.current?.abort(); URL.revokeObjectURL(url); };
   }, [image, capabilities.maxUploadBytes]);
   useEffect(() => { if (readOnly) { operation.current?.abort(); operation.current = null; setPending(false); } }, [readOnly]);
-  const save = async () => {
-    if (!area || invalidMedia || readOnly || latest.current.readOnly || operation.current) return;
+  const save = async (): Promise<boolean> => {
+    if (!area || invalidMedia || readOnly || latest.current.readOnly || operation.current) return false;
     const controller = new AbortController(), original = image; operation.current = controller; setPending(true); setError(null);
     const current = () => mounted.current && operation.current === controller && !controller.signal.aborted
       && !latest.current.readOnly && latest.current.image === original;
     try {
       const blob = await exportAvatarCrop(original, area, capabilities, controller.signal);
-      if (!current()) return;
+      if (!current()) return false;
       await latest.current.onSave(blob, controller.signal);
-      if (current()) onOpenChange(false);
+      // Only the exact acknowledged operation may accept. The manager owns
+      // dismissal/focus; changing controlled open here would retire it instead.
+      return current();
     } catch (cause) {
-      if (!current() || cause instanceof DOMException && cause.name === 'AbortError') return;
+      if (!current() || cause instanceof DOMException && cause.name === 'AbortError') return false;
       reportAuthClientActionFailure('avatarCrop', cause, { codeOnly: true }); setError(userAvatarError(cause));
+      return false;
     } finally { if (operation.current === controller) { operation.current = null; if (mounted.current) setPending(false); } }
   };
-  const cancel = () => { operation.current?.abort(); operation.current = null; onOpenChange(false); };
-  const review = async () => {
+  const cancel = () => { operation.current?.abort(); operation.current = null; return true; };
+  const review = async (context: ModalContext<unknown>) => {
     if (!onReviewLatest || readOnly || operation.current) return;
     const controller = new AbortController(); operation.current = controller; setPending(true);
     try {
       const admitted = await onReviewLatest();
-      if (admitted && mounted.current && operation.current === controller && !controller.signal.aborted) onOpenChange(false);
+      if (admitted && mounted.current && operation.current === controller && !controller.signal.aborted && !context.signal.aborted) context.accept(true);
     } catch (cause) {
       if (mounted.current && operation.current === controller && !controller.signal.aborted) {
         reportAuthClientActionFailure('avatarReview', cause, { codeOnly: true }); setError(userAvatarError(cause));
       }
     } finally { if (operation.current === controller) { operation.current = null; if (mounted.current) setPending(false); } }
   };
-  return <DialogContent className={cn('zero-avatar-crop-dialog', className)} showCloseButton={false}
-    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-    transition={{ duration: reducedMotion ? 0 : .16 }}
-    onCloseAutoFocus={onCloseAutoFocus}
-    onEscapeKeyDown={event => { event.preventDefault(); cancel(); }} onInteractOutside={event => event.preventDefault()}>
-    <header><DialogTitle>Choose your crop</DialogTitle><DialogDescription>Drag the image to position it. Zoom to keep what matters in frame.</DialogDescription></header>
+  return <ControlledModal open onOpenChange={onOpenChange} busy={pending} error={error}
+    descriptor={{ title: 'Choose your crop', description: 'Drag the image to position it. Zoom to keep what matters in frame.',
+      size: 'sm', customSize: { width: 'var(--avatar-crop-dialog-width,28rem)' }, className: cn('zero-avatar-crop-modal', className),
+      motion: { entrance: 'rise', exit: 'fade', pageRecedes: false }, onCloseAutoFocus,
+      beforeClose: cancel, closeOnClickOutside: false,
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel', variant: 'ghost' },
+        { id: 'save', label: pending ? 'Saving picture…' : 'Save picture', variant: 'primary',
+          disabled: readOnly || pending || !area || invalidMedia, onClick: save }],
+      body: context => <>
     <div data-slot="avatar-crop-surface" className="zero-avatar-crop-surface" aria-label="Profile picture crop">
       {source && <Cropper image={source} crop={crop} zoom={zoom} rotation={0} aspect={1} minZoom={1} maxZoom={3}
         cropShape={capabilities.shape === 'circle' ? 'round' : 'rect'} showGrid={false} restrictPosition
@@ -105,12 +110,9 @@ function AvatarCropDraft({ image, capabilities, readOnly, onOpenChange, onSave, 
       <Button type="button" size="icon" variant="outline" animateIcon={false} aria-label="Zoom in" disabled={readOnly || pending || zoom >= 3}
         onClick={() => setZoom(value => Math.min(3, value + .2))}><Plus /></Button>
     </div>
-    {error && <div><p role="alert" className="zero-avatar-editor-error">{error}</p>
+    {error && <div>
       {onReviewLatest && !invalidMedia && <><p className="zero-avatar-editor-hint">Keep this crop and retry, or discard it to review the latest profile.</p>
-        <Button type="button" size="sm" variant="ghost" disabled={readOnly || pending} onClick={() => { void review(); }}>Review latest profile</Button></>}
+        <Button type="button" size="sm" variant="ghost" disabled={readOnly || pending} onClick={() => { void review(context); }}>Review latest profile</Button></>}
     </div>}
-    <DialogFooter><Button type="button" size="sm" variant="ghost" onClick={cancel}>Cancel</Button>
-      <Button type="button" size="sm" disabled={readOnly || pending || !area || invalidMedia} onClick={() => { void save(); }}>
-        {pending ? 'Saving picture…' : 'Save picture'}</Button></DialogFooter>
-  </DialogContent>;
+      </> }} />;
 }

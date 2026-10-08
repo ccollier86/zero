@@ -1,0 +1,126 @@
+/* Modal presentation defaults. Colors/fonts remain semantic active Zero theme aliases. */
+:root {
+  --zero-modal-entrance: origin;
+  --zero-modal-exit: mirror;
+  --zero-modal-backdrop: blur;
+  --zero-modal-page-recedes: true;
+  --zero-modal-duration-multiplier: 1.5;
+  --zero-modal-ease-out: cubic-bezier(.2,0,0,1);
+  --zero-modal-ease-in: cubic-bezier(.4,0,1,1);
+  --zero-modal-ease-soft: cubic-bezier(.16,1,.3,1);
+  --zero-modal-ease-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+  --zero-modal-ease-bouncy: linear(0, .133, .41, .697, .918, 1.05, 1.1, 1.091, 1.05, 1.006, .978, .968, .973, .986, .999, 1.006, 1.007, 1.004, 1.001, 1);
+  --zero-modal-motion-rise-enter: 600ms;
+  --zero-modal-motion-rise-fade: 260ms;
+  --zero-modal-motion-rise-exit: 260ms;
+  --zero-modal-motion-grow-enter: 500ms;
+  --zero-modal-motion-grow-fade: 240ms;
+  --zero-modal-motion-grow-exit: 240ms;
+  --zero-modal-motion-origin-enter: 650ms;
+  --zero-modal-motion-origin-fade: 220ms;
+  --zero-modal-motion-origin-exit: 380ms;
+  --zero-modal-motion-origin-shell-fade: 140ms;
+  --zero-modal-motion-origin-content-delay: 160ms;
+  --zero-modal-motion-origin-content-exit: 120ms;
+  --zero-modal-motion-spring-enter: 700ms;
+  --zero-modal-motion-spring-fade: 200ms;
+  --zero-modal-motion-spring-exit: 220ms;
+  --zero-modal-motion-focus-enter: 560ms;
+  --zero-modal-motion-focus-fade: 300ms;
+  --zero-modal-motion-focus-exit: 260ms;
+  --zero-modal-motion-drop-enter: 600ms;
+  --zero-modal-motion-drop-fade: 240ms;
+  --zero-modal-motion-drop-exit: 240ms;
+  --zero-modal-motion-fade-exit: 180ms;
+  --zero-modal-motion-backdrop-in: 320ms;
+  --zero-modal-motion-backdrop-out: 260ms;
+  --zero-modal-motion-recede-in: 600ms;
+  --zero-modal-motion-recede-out: 420ms;
+  --zero-modal-motion-stack: 450ms;
+  --zero-modal-motion-tabs: 350ms;
+  --zero-modal-motion-nudge: 260ms;
+  --zero-modal-motion-ui: 120ms;
+
+  --zero-modal-rise-y: 18px;
+  --zero-modal-rise-scale: .98;
+  --zero-modal-rise-exit-y: 10px;
+  --zero-modal-grow-scale: .86;
+  --zero-modal-grow-exit-scale: .92;
+  --zero-modal-spring-scale: .72;
+  --zero-modal-spring-exit-scale: .9;
+  --zero-modal-focus-scale: 1.06;
+  --zero-modal-focus-blur: 12px;
+  --zero-modal-focus-exit-scale: 1.03;
+  --zero-modal-focus-exit-blur: 8px;
+  --zero-modal-drop-y: -36px;
+  --zero-modal-drop-exit-y: -16px;
+  --zero-modal-fade-exit-scale: .98;
+  --zero-modal-backdrop-blur: 6px;
+  --zero-modal-recede-scale: .965;
+  --zero-modal-recede-origin: 50% 30vh;
+  --zero-modal-recede-radius: calc(var(--radius) + 10px);
+  --zero-modal-stack-y: -12px;
+  --zero-modal-stack-scale: .04;
+
+  --zero-modal-width-xs: 320px;
+  --zero-modal-layer-base: 1000;
+  --zero-modal-width-sm: 420px;
+  --zero-modal-width-md: 560px;
+  --zero-modal-width-lg: 760px;
+  --zero-modal-width-xl: 1000px;
+  --zero-modal-fixed-height: 640px;
+  --zero-modal-gutter: 32px;
+  --zero-modal-pad: 20px;
+  --zero-modal-nav-width: 212px;
+  --zero-modal-radius: calc(var(--radius) + 8px);
+  --zero-modal-close-glyph: 14px;
+  --zero-modal-close-target: 32px;
+  --zero-modal-icon-size: 36px;
+  --zero-modal-font-family: var(--font-platform-sans);
+  --zero-modal-title-size: 1.02rem;
+  --zero-modal-title-weight: 600;
+  --zero-modal-title-leading: 1.35;
+  --zero-modal-title-tracking: -.01em;
+  --zero-modal-body-size: .875rem;
+  --zero-modal-body-leading: 1.5;
+  --zero-modal-description-size: .86rem;
+  --zero-modal-meta-size: .8rem;
+  --zero-modal-footer-size: .8rem;
+  --zero-modal-background: var(--popover);
+  --zero-modal-foreground: var(--popover-foreground);
+  --zero-modal-muted: var(--muted-foreground);
+  --zero-modal-border: var(--border);
+  --zero-modal-hover: var(--muted);
+  --zero-modal-nav-background: var(--surface);
+  --zero-modal-ring: var(--ring);
+  --zero-modal-danger: var(--destructive);
+  --zero-modal-danger-background: color-mix(in oklch, var(--destructive) 12%, transparent);
+  --zero-modal-info: var(--primary);
+  --zero-modal-info-background: color-mix(in oklch, var(--primary) 12%, transparent);
+  --zero-modal-success: var(--success);
+  --zero-modal-success-background: color-mix(in oklch, var(--success) 12%, transparent);
+  --zero-modal-backdrop-color: color-mix(in oklch, var(--foreground) 42%, transparent);
+  --zero-modal-shadow: var(--shadow-2xl);
+}
+
+.dark { --zero-modal-backdrop-color: color-mix(in oklch, var(--surface-inset) 78%, transparent); }
+
+:where(.zero-public, .zero-public-page, [data-zero-surface="public"], [data-zero-page="public"]) {
+  --zero-modal-background: var(--public-surface);
+  --zero-modal-foreground: var(--public-surface-foreground);
+  --zero-modal-muted: var(--public-muted-foreground);
+  --zero-modal-border: var(--public-border);
+  --zero-modal-hover: var(--public-muted);
+  --zero-modal-nav-background: var(--public-background);
+  --zero-modal-ring: var(--public-ring);
+  --zero-modal-info: var(--public-accent);
+  --zero-modal-info-background: var(--public-accent-soft);
+  --zero-modal-shadow: var(--public-shadow-floating);
+}
+
+@supports not (animation-timing-function: linear(0, 1)) {
+  :root {
+    --zero-modal-ease-spring: cubic-bezier(.22,1.2,.36,1);
+    --zero-modal-ease-bouncy: cubic-bezier(.34,1.56,.64,1);
+  }
+}

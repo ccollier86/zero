@@ -3,6 +3,7 @@ import { Select as SelectPrimitive } from "radix-ui"
 import { Check, ChevronDown, ChevronUp } from "lucide-react"
 
 import { cn } from "#zero/lib/utils"
+import { useOwnedFloatingOverlay, composeOverlayRefs } from '../overlays/overlay-scope'
 
 const Select = SelectPrimitive.Root
 const SelectGroup = SelectPrimitive.Group
@@ -64,11 +65,16 @@ function SelectContent({
   className,
   children,
   position = "popper",
+  ref,
+  style,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const floating = useOwnedFloatingOverlay()
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={floating.owner?.container}>
       <SelectPrimitive.Content
+        {...floating.contentProps}
+        ref={composeOverlayRefs(floating.ref, ref)}
         data-slot="select-content"
         className={cn(
           "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-border/85 bg-popover text-popover-foreground shadow-lg dark:shadow-none",
@@ -81,6 +87,7 @@ function SelectContent({
         )}
         position={position}
         {...props}
+        style={{ ...floating.contentProps.style, ...style }}
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport

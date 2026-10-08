@@ -33,6 +33,8 @@ complete control plane.
 - [Buttons and text inputs](./inputs.md): native props, slots and form behavior.
 - [Button groups](./button-group.md): joined actions, addons, split controls and separate single/multiple selection.
 - [Choice controls](./choices.md): Select, Combobox, Checkbox and RadioGroup.
+- [Tab panels](./tabs.md): controlled local selection through the public animated
+  facade; use managed layouts for modal tabs (unreleased facade addition).
 - [Tags, progress and validation](./tags-and-validation.md): controlled lists,
   range-correct progress and caller-computed rule feedback.
 - [Dates and time](./dates-and-time.md): Date/DateRange/HH:mm values and calendar policy.

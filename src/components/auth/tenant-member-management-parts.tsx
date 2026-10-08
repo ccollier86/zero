@@ -2,15 +2,8 @@
 
 import * as React from 'react';
 import type { AuthTenantMember } from '../../frontend/client/auth-types';
-import {
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '#zero/components/animate-ui/components/radix/alert-dialog';
-import { Button } from '#zero/components/ui/button';
+import type { AlertDialogContent } from '#zero/components/animate-ui/components/radix/alert-dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
 
 export type ConfirmationAction = 'suspend' | 'remove' | 'transfer';
 
@@ -44,13 +37,15 @@ export function ConfirmationDialog({
   error,
   onConfirm,
   onCloseAutoFocus,
+  onOpenChange,
 }: {
   confirmation: PendingConfirmation;
   tenantSingular: string;
   transferDescription?: string;
   busy: boolean;
   error: string | null;
-  onConfirm(): void;
+  onConfirm(): Promise<boolean>;
+  onOpenChange(open: boolean): void;
   onCloseAutoFocus: React.ComponentProps<typeof AlertDialogContent>['onCloseAutoFocus'];
 }) {
   const labels = {
@@ -65,32 +60,15 @@ export function ConfirmationDialog({
   } as const;
   const [heading, description, action] = labels[confirmation.action];
   return (
-    <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
-      <AlertDialogHeader>
-        <AlertDialogTitle>{heading}</AlertDialogTitle>
-        <AlertDialogDescription>
-          {tenantMemberName(confirmation.member)} — {description}
-        </AlertDialogDescription>
-      </AlertDialogHeader>
-      {error && (
-        <div
-          role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        >
-          {error}
-        </div>
-      )}
-      <AlertDialogFooter>
-        <AlertDialogCancel asChild>
-          <Button type="button" size="sm" variant="outline" disabled={busy}>
-            Cancel
-          </Button>
-        </AlertDialogCancel>
-        <Button type="button" size="sm" variant={confirmation.action === 'remove' ? 'destructive' : 'default'} onClick={onConfirm} disabled={busy}>
-          {busy ? 'Working…' : action}
-        </Button>
-      </AlertDialogFooter>
-    </AlertDialogContent>
+    <ControlledModal open busy={busy} error={error} onOpenChange={onOpenChange}
+      identityKey={`${confirmation.action}:${confirmation.member.membershipId}`} descriptor={{
+        title: heading, description: `${tenantMemberName(confirmation.member)} — ${description}`,
+        role: 'alertdialog', size: 'sm', guard: false, initialFocus: 'cancel', onCloseAutoFocus,
+        tone: confirmation.action === 'remove' ? 'danger' : 'default',
+        actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel', disabled: busy },
+          { id: 'confirm', label: action, variant: confirmation.action === 'remove' ? 'danger' : 'primary',
+            disabled: busy, onClick: async context => { const accepted = await onConfirm(); return context.signal.aborted ? false : accepted; } }],
+      }} />
   );
 }
 

@@ -16,6 +16,10 @@ export interface PlatformDoctorFinding {
   path?: string;
   hint?: string;
   docs?: string;
+  /** Static source evidence only; omitted by existing configuration checks. */
+  line?: number;
+  category?: 'required' | 'recommended' | 'manual-review';
+  confidence?: 'high' | 'medium' | 'low';
 }
 
 /** Platform doctor result. */

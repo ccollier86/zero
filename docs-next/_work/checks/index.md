@@ -88,6 +88,12 @@ load environment files, run Doctor, open databases or call providers.
   transport or persistence operation runs. Execute alone in a coordinated compiler
   window: `bun --no-env-file test docs-next/_work/checks/frontend-ui-examples.test.ts`.
 
+- [Structured modal example typecheck](./modal-examples.test.ts): actual complete
+  modal, motion, form, workflow-progress, prompt, DenseList, reactive-record and
+  confirmation snippets compile against current public source exports in memory.
+  This does not mount UI, execute app configuration or run any writer.
+  Run `bun --no-env-file test docs-next/_work/checks/modal-examples.test.ts`.
+
 - [Guardian, Storage and small-service example typecheck](./storage-service-examples.test.ts):
   all 53 actual TS/TSX fences in the Guardian/Storage UI, Email, Notifications, Rooms,
   Tokens, Observability, KV and PDF families compile against public source

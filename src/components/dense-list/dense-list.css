@@ -1,0 +1,31 @@
+:root {
+  --zero-list-gap: .75rem;
+  --zero-list-row-padding: .75rem;
+  --zero-list-compact-padding: .5rem;
+  --zero-list-title-size: .875rem;
+  --zero-list-description-size: .8125rem;
+  --zero-list-leading-size: 2rem;
+}
+.zero-dense-list { margin: 0; padding: 0; list-style: none; color: var(--foreground); }
+.zero-dense-list__item, .zero-dense-list__choice { margin: 0; min-width: 0; }
+.zero-dense-list__row { display: flex; align-items: center; gap: var(--zero-list-gap); min-width: 0; padding-block: var(--zero-list-row-padding); }
+.zero-dense-list[data-density="compact"] .zero-dense-list__row { padding-block: var(--zero-list-compact-padding); }
+.zero-dense-list[data-separators] > li + li { border-top: 1px solid var(--border); }
+.zero-dense-list__leading { flex: none; display: grid; place-items: center; min-width: var(--zero-list-leading-size); }
+.zero-dense-list__text { flex: 1; min-width: 0; }
+.zero-dense-list__title { display: block; font-size: var(--zero-list-title-size); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.zero-dense-list__description { display: block; margin-top: .125rem; font-size: var(--zero-list-description-size); line-height: 1.45; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.zero-dense-list__trailing { flex: none; display: flex; align-items: center; gap: var(--zero-list-gap); max-width: 50%; }
+.zero-dense-list__detail { padding-bottom: var(--zero-list-row-padding); }
+.zero-dense-list__group > header { margin-block: 0 .5rem; }
+.zero-dense-list__group > header h3 { margin: 0; font-size: var(--zero-list-title-size); font-weight: 600; }
+.zero-dense-list__group > header p { margin: .25rem 0 0; font-size: var(--zero-list-description-size); color: var(--muted-foreground); }
+.zero-dense-list__choice button { width: 100%; border: 0; border-radius: var(--radius); padding-inline: var(--zero-list-gap); background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; transition: background-color 120ms cubic-bezier(.2,0,0,1); }
+.zero-dense-list__choice button:hover:not(:disabled) { background: var(--accent); }
+.zero-dense-list__choice button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.zero-dense-list__choice button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 520px) {
+  .zero-dense-list__row { flex-wrap: wrap; }
+  .zero-dense-list__trailing { max-width: 100%; margin-left: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .zero-dense-list__choice button { transition-duration: 1ms; } }

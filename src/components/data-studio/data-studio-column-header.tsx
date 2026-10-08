@@ -10,8 +10,7 @@ import { reportDataStudioFrontendFailure } from '../../frontend/client/data-stud
 import { TableHead } from '../ui/table';
 import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../animate-ui/components/radix/popover';
-import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogCancel } from '../animate-ui/components/radix/alert-dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
 import { DataStudioColumnEditor } from './data-studio-column-editor';
 import { editableDataStudioColumn } from './data-studio-schema-draft';
 import { DataStudioColumnMenu } from './data-studio-column-menu';
@@ -127,22 +126,18 @@ export function DataStudioColumnHeader({ column, index, count, resizeHeader, onW
     </div>
     {!editorOpen && !removeOpen && error && <span role="alert" className="sr-only">{error}</span>}
     <DataStudioColumnResize label={column.label} header={resizeHeader} onChange={onWidthChange} />
-    <AlertDialog open={removeOpen} onOpenChange={(open) => { if (!pending) setRemoveOpen(open); }}>
-      <AlertDialogContent>
-        <AlertDialogTitle>Remove {column.label}?</AlertDialogTitle>
-        <AlertDialogDescription>This removes the column from the schema. Review dependent functions and saved values before applying this change.</AlertDialogDescription>
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <Button variant="destructive" disabled={pending || !schemaEditable || !onRemoveColumn}
-            onClick={() => {
+    <ControlledModal open={removeOpen} identityKey={column.columnId} busy={pending} error={error}
+      onOpenChange={open => { if (!pending) setRemoveOpen(open); }} descriptor={{
+        title: `Remove ${column.label}?`, size: 'sm', role: 'alertdialog', tone: 'danger', initialFocus: 'cancel', guard: false,
+        description: 'This removes the column from the schema. Review dependent functions and saved values before applying this change.',
+        actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+          { id: 'remove', label: pending ? 'Removing…' : 'Remove column', variant: 'danger', disabled: pending || !schemaEditable || !onRemoveColumn,
+            onClick: async context => {
               const { commit, revision } = removal.current;
-              if (commit) void run(() => commit(column.columnId, revision)).then((accepted) => { if (accepted) setRemoveOpen(false); });
-            }}>
-            {pending ? 'Removing…' : 'Remove column'}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+              if (!commit) return false;
+              const accepted = await run(() => commit(column.columnId, revision));
+              return accepted && !context.signal.aborted;
+            } }],
+      }} />
   </TableHead>;
 }

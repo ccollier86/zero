@@ -47,6 +47,22 @@ Identity/tenant boundary replacement resets form state from the current initial
 configuration. Edit mode's collection lookup is the local row available at the
 configured lifecycle point, not an implicit server get request.
 
+### Accepted And Reactive Additions
+
+The existing [save-and-leave contract](./save-and-leave.md) adds baseline,
+initialRevision and scopeKey; custom submit callbacks can receive
+FormSubmitContext and return canonical FormSubmissionAcceptance values/revision.
+The unreleased structured-modal integration additionally adds
+`recordIdentity: string | number` and typed record reconciliation. See the
+[reactive record guide](./reactive-records.md) for loading/ready/missing/forbidden,
+authoritative versus pending-local source, changed-elsewhere drafts and explicit
+discard/reload admission. This configuration does not create conditional backend
+writes or an implicit query/subscription.
+
+Use [useModalForm](../modals/forms.md) to bind accepted saves and lifetime-owned
+leave decisions to the managed shell; a legacy void handleSubmit result remains
+insufficient evidence to close an editor.
+
 ## AutoFormProps
 
 AutoForm accepts the preceding options plus:
@@ -60,6 +76,8 @@ AutoForm accepts the preceding options plus:
 | submitLabel | string | Save for edit, Create otherwise |
 | showReset | boolean | false; shown reset disabled when pending or not dirty |
 | className | string | optional class composition |
+| modalContext | `ModalContext<T>` | unreleased shared-manager integration; forces accepted baseline and binds dirty/busy/errors/leave decisions to this exact modal; omits the card and local action/save rows |
+| formId | string | optional native footer association; managed mode derives a unique ID from the modal when omitted |
 
 fields[name].hidden hides a rendered control only. includeFields selects rendered,
 validated and submitted fields. Neither is a server authorization boundary.

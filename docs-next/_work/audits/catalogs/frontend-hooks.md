@@ -31,6 +31,18 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Owned Modal And Record Hooks Working Source — 2026-10-08
+
+Dirty source on the 2.6.0 baseline
+`1b5a1fa0281deba69b3809471d2467d596516e4b`; these do not alter the original
+clean counts or claim published-package qualification.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `useModalForm` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Modal form binding](../../../../src/modals/modal-form.tsx) | [Form dialogs](../../../frontend/modals/forms.md) |
+| `useReactiveFormRecord` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/hooks` | [Record hook](../../../../src/hooks/use-reactive-form-record.ts) | [Reactive records](../../../frontend/forms/reactive-records.md) |
+| `useWorkflowObservation` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/react/hooks` | [Durable readiness](../../../../src/frontend/client/workflow-observation-hooks.ts) | [Workflow hooks](../../../frontend/torrent/hooks.md) |
+
 ### Authorized Working-Source Additions
 
 This row describes the unreleased Cascader addition on top of Zero 2.2.1; it is

@@ -15,6 +15,7 @@ import { IntegrationSettingsRow } from './integration-settings-row';
 import { integrationSettingsDisabled, integrationSettingsGroups } from './integration-settings-list-policy';
 import { reportIntegrationSettingsActionError, useIntegrationSettingsAction } from './use-integration-settings-action';
 import type { IntegrationSettingsListProps } from './integration-settings-list.types';
+import { ModalManager } from '../../modals/modal-manager';
 
 export interface IntegrationSettingsListOwner {
   readonly props: IntegrationSettingsListProps;
@@ -44,11 +45,11 @@ export function IntegrationSettingsList(props: IntegrationSettingsListProps) {
     },
   };
   if (!boundary.ready) {
-    return <section className={cn('integration-settings-list', props.className)}
-      aria-busy="true"><p role="status">Updating secure access…</p></section>;
+    return <ModalManager><section className={cn('integration-settings-list', props.className)}
+      aria-busy="true"><p role="status">Updating secure access…</p></section></ModalManager>;
   }
-  return <IntegrationSettingsListContent
-    key={JSON.stringify([boundary.key, props.operationScopeKey, capturedReadOnly])} props={props} owner={owner} />;
+  return <ModalManager><IntegrationSettingsListContent
+    key={JSON.stringify([boundary.key, props.operationScopeKey, capturedReadOnly])} props={props} owner={owner} /></ModalManager>;
 }
 
 function IntegrationSettingsListContent({ props, owner }: {

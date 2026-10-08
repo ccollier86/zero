@@ -52,6 +52,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Public shared-layout expandable cards.',
   },
   {
+    id: 'components/dense-list',
+    sourceRel: 'components/dense-list',
+    description: 'Semantic settings lists, grouped rows and single-action picker choices.',
+  },
+  {
     id: 'components/faq',
     sourceRel: 'components/faq',
     description: 'Public FAQ accordion with generated answer text.',

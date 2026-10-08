@@ -33,6 +33,7 @@ export function TenantInvitationComposer({
   onModeChange,
   onRolesChange,
   onSubmit,
+  formId, showSubmit = true,
 }: {
   email: string;
   mode: 'email' | 'manual';
@@ -48,10 +49,12 @@ export function TenantInvitationComposer({
   onModeChange(value: 'email' | 'manual'): void;
   onRolesChange(roles: string[]): void;
   onSubmit(event: React.FormEvent): void;
+  formId?: string;
+  showSubmit?: boolean;
 }) {
   return (
-    <form className="space-y-3" onSubmit={onSubmit}>
-      <div className="grid gap-2 sm:grid-cols-[1fr_10rem_auto]">
+    <form id={formId} className="space-y-3" onSubmit={onSubmit}>
+      <div className={showSubmit ? 'grid gap-2 sm:grid-cols-[1fr_10rem_auto]' : 'grid gap-2 sm:grid-cols-[1fr_10rem]'}>
         <Input
           type="email"
           value={email}
@@ -75,12 +78,12 @@ export function TenantInvitationComposer({
             {manualDelivery && <SelectItem value="manual">Copy token</SelectItem>}
           </SelectContent>
         </Select>
-        <Button
+        {showSubmit && <Button
           type="submit"
           disabled={busy || !email.trim() || (canChooseRoles && selectedRoles.length === 0)}
         >
           Invite
-        </Button>
+        </Button>}
       </div>
       {canChooseRoles && (
         <TenantRolePicker

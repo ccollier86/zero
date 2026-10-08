@@ -294,7 +294,7 @@ export function useTenantInvitationAction(
           onEmailChange={setEmail}
           onModeChange={setMode}
           onRolesChange={setRoles}
-          onSubmit={(event) => { void issue(event); }}
+          onSubmit={event => issue(event)}
           onCopyToken={() => { void copyToken(); }}
           onDismissToken={clearSensitiveState}
         />

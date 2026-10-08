@@ -81,6 +81,7 @@ browserTest('avatar readiness preserves core drafts and an accepted picture adva
     // The real modal intentionally aria-hides background profile fields.
     expect(await page.locator('textarea').inputValue()).toBe('Unsubmitted biography');
     await page.evaluate(() => window.__profileSettings.resolveAvatar(0)); await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.classList.contains('zero-avatar-editor-trigger'));
     await page.waitForFunction(() => window.__profileSettings.avatarDeliveries.length === 1);
     expect(await page.getByRole('textbox', { name: 'About you' }).inputValue()).toBe('Unsubmitted biography');
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -584,6 +585,65 @@ browserTest('candidate email requires current password, stays pending and never 
     expect(await section.getByText('Ownership verified', { exact: true }).count()).toBe(0);
     expect(await page.getByLabel('Current password', { exact: true }).count()).toBe(0);
     expect(await page.evaluate(() => JSON.stringify(window.__profileSettings.observations))).not.toContain('synthetic-private-password');
+  } finally { await close(page); }
+}, 30_000);
+
+browserTest('email cancellation restores its trigger and Enter submits the acknowledged native form exactly once', async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => window.__profileSettings.enableContacts());
+    const section = page.locator('[data-slot="user-contact-settings"]');
+    const trigger = section.getByRole('button', { name: 'Change email', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog'); await dialog.waitFor();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Change email');
+    expect(await page.evaluate(() => window.__profileSettings.contactCalls.length)).toBe(0);
+    await trigger.click();
+    await dialog.getByRole('textbox', { name: 'New email address' }).fill('native@example.test');
+    await dialog.getByLabel('Current password', { exact: true }).fill('synthetic-native-password');
+    await dialog.getByLabel('Current password', { exact: true }).press('Enter');
+    await page.waitForFunction(() => window.__profileSettings.contactCalls.length === 1);
+    expect(await page.evaluate(() => window.__profileSettings.contactCalls[0]!.input.email)).toBe('native@example.test');
+    await page.evaluate(() => window.__profileSettings.resolveContact(0)); await dialog.waitFor({ state: 'hidden' });
+    expect(await page.evaluate(() => window.__profileSettings.contactCalls.length)).toBe(1);
+    expect(await page.getByLabel('Current password', { exact: true }).count()).toBe(0);
+  } finally { await close(page); }
+}, 30_000);
+
+browserTest('profile password dialog has one managed frame, retains rejected secrets only in its draft, and waits for the Guardian receipt', async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => window.__profileSettings.setProps({ security: true }));
+    const trigger = page.getByRole('region', { name: 'Account security' }).getByRole('button', { name: 'Change password', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Change your password', exact: true }); await dialog.waitFor();
+    expect(await dialog.getByRole('heading').count()).toBe(1);
+    expect(await dialog.getByRole('button', { name: 'Change password', exact: true }).count()).toBe(1);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Change password');
+    await trigger.click();
+    await dialog.getByLabel('Current password', { exact: true }).fill('synthetic-current-password');
+    await dialog.getByLabel('New password', { exact: true }).fill('short');
+    await dialog.getByLabel('Confirm password', { exact: true }).fill('short');
+    await dialog.getByRole('button', { name: 'Change password', exact: true }).click();
+    await dialog.getByRole('alert').waitFor(); expect(await dialog.getByRole('alert').innerText()).toContain('at least 8');
+    expect(await page.evaluate(() => window.__profileSettings.passwordCalls.length)).toBe(0);
+    await dialog.getByLabel('New password', { exact: true }).fill('synthetic-new-password');
+    await dialog.getByLabel('Confirm password', { exact: true }).fill('synthetic-new-password');
+    await dialog.getByLabel('Confirm password', { exact: true }).press('Enter');
+    await page.waitForFunction(() => window.__profileSettings.passwordCalls.length === 1);
+    expect(await dialog.getByRole('button', { name: 'Close', exact: true }).isDisabled()).toBe(true);
+    expect(await dialog.getByRole('button', { name: 'Change password', exact: true }).isDisabled()).toBe(true);
+    await page.evaluate(() => window.__profileSettings.rejectPassword(0));
+    await dialog.getByRole('alert').waitFor(); expect(await dialog.getByLabel('New password', { exact: true }).inputValue()).toBe('synthetic-new-password');
+    await dialog.getByRole('button', { name: 'Change password', exact: true }).click();
+    await page.waitForFunction(() => window.__profileSettings.passwordCalls.length === 2);
+    await page.evaluate(() => window.__profileSettings.resolvePassword(1)); await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Change password');
+    expect(await page.getByLabel('Current password', { exact: true }).count()).toBe(0);
+    expect(await page.evaluate(() => JSON.stringify(window.__profileSettings.observationEvents))).not.toContain('synthetic-current-password');
+    expect(await page.evaluate(() => JSON.stringify(window.__profileSettings.observationEvents))).not.toContain('synthetic-new-password');
   } finally { await close(page); }
 }, 30_000);
 

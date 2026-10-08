@@ -240,6 +240,7 @@ function toPublicFrameworkImport(sourcePath: string, sourceRoot: string): string
   if (rel === 'frontend/client/authorization-scope-hooks.ts') return '@zero/framework/react/authorization-scope';
   if (rel.startsWith('frontend/client/')) return '@zero/framework/react';
   if (rel === 'observability/codes.ts') return '@zero/framework/observability/codes';
+  if (rel === 'workflows/types.ts') return '@zero/framework/workflows';
   if (rel.startsWith('storage/storage-hooks.') || rel.startsWith('storage/upload-dropzone-hooks.')) {
     return '@zero/framework/react';
   }

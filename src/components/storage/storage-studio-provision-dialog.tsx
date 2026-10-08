@@ -14,7 +14,7 @@ import type {
   StorageStudioProvisionRequest,
 } from '../../storage/storage-studio-contracts';
 import { modals } from '../../modals';
-import { Button } from '../ui/button';
+import type { ModalContext } from '../../modals/modal-system.types';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import {
@@ -35,38 +35,27 @@ export type StorageStudioProvisionDraft = Omit<StorageStudioProvisionRequest, 'o
 export function openStorageStudioProvisionDialog(
   capabilities: StorageStudioCapabilities,
 ): Promise<StorageStudioProvisionDraft | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let modalId = '';
-    const finish = (value: StorageStudioProvisionDraft | null) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-      if (modalId) modals.close(modalId);
-    };
-    modalId = modals.open({
+  return modals.show<StorageStudioProvisionDraft>({
       title: 'New storage drive',
       size: 'md',
-      onClose: () => finish(null),
-      content: (
+      description: 'Create a stable, policy-managed drive in the current authorization scope.',
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'create', label: 'Create drive', variant: 'primary', submit: true, disabled: true }],
+      body: context => (
         <StorageStudioProvisionForm
           capabilities={capabilities}
-          onSubmit={(value) => finish(value)}
-          onCancel={() => finish(null)}
+          context={context}
         />
       ),
-    });
-  });
+    }).result.then(result => result.kind === 'accepted' ? result.value : null);
 }
 
 function StorageStudioProvisionForm({
   capabilities,
-  onSubmit,
-  onCancel,
+  context,
 }: {
   readonly capabilities: StorageStudioCapabilities;
-  readonly onSubmit: (value: StorageStudioProvisionDraft) => void;
-  readonly onCancel: () => void;
+  readonly context: ModalContext<StorageStudioProvisionDraft>;
 }) {
   const allowedOwners = capabilities.ownerChoices.filter((owner) => (
     owner === 'organization'
@@ -86,14 +75,21 @@ function StorageStudioProvisionForm({
     if (!keyEdited) setKey(storageStudioDriveKey(value));
   }, [keyEdited]);
   const valid = Boolean(owner && name.trim() && /^[a-z][a-z0-9_-]{0,99}$/u.test(key));
+  const initialOwner = React.useRef(owner);
+  React.useEffect(() => {
+    context.setActionDisabled('create', !valid);
+    context.setDirty(name !== '' || key !== '' || isPublic || owner !== initialOwner.current);
+  }, [context, valid, name, key, isPublic, owner]);
 
   return (
     <form
+      id={`${context.id}-provision-drive`}
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!valid || !owner) return;
-        onSubmit({
+        event.stopPropagation();
+        if (context.signal.aborted || !valid || !owner) return;
+        context.accept({
           owner,
           key,
           name: name.trim(),
@@ -104,10 +100,6 @@ function StorageStudioProvisionForm({
         });
       }}
     >
-      <p className="text-sm text-muted-foreground">
-        Create a stable, policy-managed drive in the current authorization scope.
-      </p>
-
       {allowedOwners.length > 1 && (
         <ProvisionField label="Owner">
           <Select value={owner ?? undefined} onValueChange={(value) => setOwner(
@@ -168,10 +160,6 @@ function StorageStudioProvisionForm({
         </ProvisionField>
       )}
 
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={!valid}>Create drive</Button>
-      </div>
     </form>
   );
 }

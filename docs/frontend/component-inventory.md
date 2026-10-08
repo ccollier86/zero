@@ -275,7 +275,7 @@ all equal in platform status.
 | Tabs | Animate UI has animated tabs and animated Radix tabs. | Define one app-default `Tabs` path before telling agents to use tabs broadly. |
 | Notification list | `ui/notification-list.tsx` and Animate UI community `notification-list.tsx`. | Keep Zero notification components as platform default because they know platform notification shape. Treat community version as source/reference only. |
 | Sidebar | Raw Animate UI sidebar and Zero `AppShell` both expose sidebar pieces. | Default to `AppShell`; use raw sidebar only for custom shells. |
-| Dialog/modal | Animate UI dialog exists, while app flows should use the platform modal manager. | Agents should use modal manager for app modals; direct dialog is for building reusable components or special cases. |
+| Dialog/modal | The shared modal manager owns application dialogs; primitive dialogs remain reusable building blocks. | The unreleased [structured upgrade](../../docs-next/frontend/modals/index.md) standardizes title/body/actions, tabs/nav, motion, acknowledged form saves and workflow progress. Follow its [migration guide](../../docs-next/frontend/modals/migration.md); do not copy a second header/X. |
 | Select/switch | Select has a `ui/` wrapper, while switch remains on an Animate UI/Radix path. | Add a Zero `ui/switch` wrapper when package-mode app use requires it. |
 | App-specific organisms | Auth, admin, storage, data table, and kanban share `src/components`. | Keep until package structure stabilizes, but docs should label these as domain/data organisms, not base UI. |
 

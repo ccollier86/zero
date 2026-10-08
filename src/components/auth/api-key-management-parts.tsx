@@ -5,14 +5,8 @@ import type {
   AuthApiKeyIssueInput,
   AuthApiKeySummary,
 } from '../../frontend/client/auth-api-key-types';
-import {
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '#zero/components/animate-ui/components/radix/alert-dialog';
+import type { AlertDialogContent } from '#zero/components/animate-ui/components/radix/alert-dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
 import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
 import { Input } from '#zero/components/ui/input';
@@ -211,13 +205,15 @@ export function ApiKeyConfirmationDialog({
   error,
   tenantSingular = 'organization',
   onConfirm,
+  onOpenChange,
   onCloseAutoFocus,
 }: {
   confirmation: PendingApiKeyConfirmation;
   busy: boolean;
   error: string | null;
   tenantSingular?: string;
-  onConfirm(): void;
+  onConfirm(): Promise<boolean>;
+  onOpenChange(open: boolean): void;
   onCloseAutoFocus: React.ComponentProps<typeof AlertDialogContent>['onCloseAutoFocus'];
 }) {
   const rotating = confirmation.action === 'rotate';
@@ -226,34 +222,19 @@ export function ApiKeyConfirmationDialog({
     tenantSingular,
   );
   return (
-    <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
-      <AlertDialogHeader>
-        <AlertDialogTitle>
-          {rotating
-            ? `Rotate API key ${confirmation.apiKey.label} ending in ${confirmation.apiKey.hint}?`
-            : `Revoke API key ${confirmation.apiKey.label} ending in ${confirmation.apiKey.hint}?`}
-        </AlertDialogTitle>
-        <AlertDialogDescription>
-          {rotating
-            ? `${keyDescription} will stop working immediately. The replacement secret will be shown once and use the configured default lifetime.`
-            : `${keyDescription} will stop working immediately. This cannot be undone.`}
-        </AlertDialogDescription>
-      </AlertDialogHeader>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <AlertDialogFooter>
-        <AlertDialogCancel asChild>
-          <Button type="button" variant="outline" disabled={busy}>Cancel</Button>
-        </AlertDialogCancel>
-        <Button
-          type="button"
-          variant={rotating ? 'default' : 'destructive'}
-          disabled={busy}
-          onClick={onConfirm}
-        >
-          {busy ? (rotating ? 'Rotating…' : 'Revoking…') : (rotating ? 'Rotate key' : 'Revoke key')}
-        </Button>
-      </AlertDialogFooter>
-    </AlertDialogContent>
+    <ControlledModal<boolean> open busy={busy} error={error} onOpenChange={onOpenChange}
+      identityKey={`${confirmation.apiKey.keyId}:${confirmation.action}`} descriptor={{
+        title: rotating ? `Rotate API key ${confirmation.apiKey.label} ending in ${confirmation.apiKey.hint}?`
+          : `Revoke API key ${confirmation.apiKey.label} ending in ${confirmation.apiKey.hint}?`,
+        description: rotating
+          ? `${keyDescription} will stop working immediately. The replacement secret will be shown once and use the configured default lifetime.`
+          : `${keyDescription} will stop working immediately. This cannot be undone.`,
+        role: 'alertdialog', size: 'sm', tone: rotating ? 'default' : 'danger', guard: false, initialFocus: 'cancel',
+        onCloseAutoFocus,
+        actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+          { id: 'confirm', label: busy ? rotating ? 'Rotating…' : 'Revoking…' : rotating ? 'Rotate key' : 'Revoke key', variant: rotating ? 'primary' : 'danger',
+            onClick: async context => { const accepted = await onConfirm(); return context.signal.aborted ? false : accepted; } }],
+      }} />
   );
 }
 

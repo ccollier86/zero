@@ -72,6 +72,10 @@ Follow the narrower [primitive roadmap](./primitives/roadmap.md),
 and [design-system roadmap](../design-system/roadmap.md) for the relevant owner.
 The modal-manager redesign remains with [modals](../modals/roadmap.md), not a
 second conflicting global manager in this umbrella.
+Its [implementation plan](../../_work/modal-system-redesign-plan.md#dense-list-composite)
+also specifies a general dense list for settings, members and picker rows, using
+existing Zero controls. This is planned layout reuse, not a replacement for the
+domain controllers behind IntegrationSettingsList or SettingsMatrix.
 
 Confirmed defects are corrected and tested during the audit rather than deferred
 as product limitations. Additional whole-device, assistive-technology and

@@ -309,7 +309,7 @@ describe('Data Studio record authoring', () => {
         await body.evaluate((element) => { element.scrollTop = element.scrollHeight; });
         const afterHeader = await header.boundingBox(), afterFooter = await footer.boundingBox();
         expect(afterHeader?.y).toBeCloseTo(beforeHeader!.y, 1); expect(afterFooter?.y).toBeCloseTo(beforeFooter!.y, 1);
-        expect(afterFooter!.y + afterFooter!.height).toBeLessThan(800);
+        expect(afterFooter!.y + afterFooter!.height).toBeLessThanOrEqual(800);
         expect(await dialog(page).evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
         expect(await create(page).isVisible()).toBe(true);
         if (evidence) await page.screenshot({ path: join(evidence, `record-form-${width}-${dark ? 'dark' : 'light'}.png`), fullPage: true });

@@ -8,53 +8,110 @@ visibility: internal
 system: modals
 feature: modal-manager
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
-modes: [browser, Guardian single, Guardian multi, single-database, Fabric]
+applies_to: ["2.6.0 source; structured-modal upgrade unreleased"]
+modes: [browser, standalone, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
-# Install One Modal Host
+# Host Ownership And Application Composition
 
 [Modals index](./index.md) · [Documentation index](../../index.md)
 
-```tsx
-import { ModalManager } from '@zero/framework/modals';
+Mount one modal host for the application. Normal [AppProvider](../runtime/app-provider.md)
+composition supplies it; a standalone browser UI can mount ModalManager directly.
+This guide describes the unreleased structured-modal host, not an extra modal
+service for every page.
 
-<ModalManager><Application /></ModalManager>;
-```
+~~~tsx
+import { ModalManager } from "@zero/framework/modals";
+import "@zero/framework/styles.css";
 
-This advanced fragment assumes an app component; normal AppProvider already
-mounts ModalManager. Do not install another host inside every page.
-ModalManagerProps has required children only, not separate env/service settings.
+export function StandaloneUi() {
+  return <ModalManager motion={{ durationMultiplier: 1.5 }}>
+    <Application />
+  </ModalManager>;
+}
+~~~
 
-The host subscribes to a shared @xstate/store, renders a modal stack and removes
-closing instances after their exit animation. Dialog semantics provide keyboard/
-focus/overlay composition. Accessible titles use the supplied content/confirm
-title or "Dialog"; supply meaningful titles for real tasks.
+Application is an app-owned component in this composition fragment. Do not open
+modals from SSR/server services or treat the process-global UI store as request-local.
+Without a mounted host, an opened dialog cannot provide its normal interactive
+lifecycle.
 
-Modals are browser UI. Do not open them during server rendering or from trusted
-server services; a process-global UI store is not request-local state.
-Open promises require a mounted host and normal app lifecycle; this is not a
-distributed dialog service.
+## Frame And Scene Ownership
 
-Content owns its forms/buttons/sections; the host owns dialog close/size/animation.
-Current close-button placement is the existing top-right host control, not a
-new packaged header/body/footer manager. The [roadmap](./roadmap.md) records
-planned section/layout evolution without pretending it is already implemented.
+The manager owns accessible naming, the fixed header/footer, small X glyph,
+viewport sizing, active body scroll, one shared dim/blur backdrop, the page
+recession surface, background scroll protection and focus handoff. Radix owns
+dialog semantics and focus/dismissal mechanics; the platform does not ship a
+second handwritten focus trap.
 
-Scope replacement uses explicit discard through the managed runtime. See
-[scope transitions](./scope-transitions.md); host ownership alone is not
-authorization. Use server-checked domain operations after confirmation.
+Page recession applies to a dedicated application-content wrapper, never blindly
+to body or a portal host. Modal/floating roots remain outside that surface. Original
+surface/body styles are restored after owned visual cleanup; rapid reopen cannot
+let an obsolete completion clear a new scene reservation.
+
+An optional portalContainer must be an app-owned, non-transformed HTMLElement
+in the same browser document as the host and outside that recession surface.
+Cross-document/iframe containers are rejected. This option does not provide
+iframe rendering or ShadowRoot styling support. Preserve this boundary rather
+than portaling into an arbitrary transformed feature wrapper.
+
+Nested ModalManager mounts inherit the existing host. A standalone ConfirmProvider
+or controlled dialog can provide a fallback host; under AppProvider they share its
+stack instead of duplicating global dialogs.
+
+Prefer a persistent AppProvider/ModalManager around feature lifetimes. If an owning
+sibling host unmounts, its captured openings are authoritatively retired before
+another host can claim presentation. Live forms/writers are not silently remounted
+under a new renderer; their results retire and obsolete callbacks remain fenced.
+
+## Stacking And Floating Children
+
+Only the active top dialog accepts ordinary dismissal. Lower dialogs stay mounted
+but are inert and recede visually. `context.show` establishes explicit parent
+ownership; an unrelated modal is not implicitly a child just because it appears later.
+
+Use Zero's existing controls inside modal content. The owned Select/Popover
+and menu branches retain the originating modal's layer/theme
+context. A child popup's Escape must close that popup, not the containing dialog
+as well. Avoid ad-hoc global Escape listeners or unrelated z-index constants.
+Special overlays such as CommandDialog are audited on their own composition
+contracts; [migration](./migration.md#deliberate-command-palette-compatibility)
+explains why they are not blindly converted to an ordinary form frame.
+
+The close glyph is 14px with a 32px interaction target by default. Mouse activation
+does not leave a persistent decorative ring; keyboard focus remains visible.
+Required-step dialogs hide it through `dismissible:false`, not caller-built
+replacement close controls.
+
+The fixed layer follows VisualViewport offsets and available dimensions where
+supported, so browser zoom or an on-screen keyboard can reduce the usable frame.
+Theme tokens are copied from the initiating surface and follow its live
+class/style and public-lane attribute changes, including scoped public and dark
+lanes, through owned portals. Changing the public lane does not require a simultaneous
+light/dark class change.
+
+## Customization And Qualification
+
+Use descriptor sizing/placement/layout/scrollbar options before className-based
+changes. Body components may be fully custom while the host still owns the frame.
+Portals and fixed children must preserve owned overlay boundaries; custom DOM
+cannot be assumed equivalent just because it has role=dialog.
+
+Store/controller unit tests and static SSR markup tests are separate from browser
+qualification. Test scrolling, keyboard/focus, stacked popups, clipping, small
+viewports and reduced motion when integration changes those responsibilities.
+Do not report a clean Doctor scan as a visual or accessibility certification.
 
 ## Related Guides And Next Steps
 
-- [Content](./content.md) opens actual instances.
-- [Configuration](./configuration.md) owns dialog options.
-- [Lifecycle](./lifecycle.md) owns close/animation/callback behavior.
-- [AppProvider](../runtime/app-provider.md) owns normal mounting.
+[Configuration](./configuration.md) owns public props; [layouts](./layouts.md)
+covers sizing/scroll chains; [lifecycle](./lifecycle.md) covers results/cleanup;
+[scope transitions](./scope-transitions.md) fences authorization replacement.

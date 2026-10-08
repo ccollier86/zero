@@ -5,6 +5,7 @@ import { Command as CommandPrimitive } from 'cmdk';
 import { SearchIcon } from 'lucide-react';
 
 import { cn } from '#zero/lib/utils';
+import { useOwnedFloatingOverlay } from '../overlays/overlay-scope';
 import {
   Dialog,
   DialogContent,
@@ -47,9 +48,16 @@ interface CommandDialogProps extends React.ComponentProps<typeof Dialog> {
 }
 
 function CommandDialog({ children, title = 'Commands', description = 'Search and choose a command.', contentClassName, contentStyle, shouldFilter = true, onCloseAutoFocus, contentTransition, overlayTransition, ...props }: CommandDialogProps) {
+  const floating = useOwnedFloatingOverlay();
   return (
     <Dialog {...props}>
-      <DialogContent className={cn('overflow-hidden p-0', contentClassName)} style={contentStyle} onCloseAutoFocus={onCloseAutoFocus} transition={contentTransition} overlayTransition={overlayTransition} showCloseButton={false}>
+      <DialogContent {...floating.contentProps} ref={floating.ref}
+        portalContainer={floating.owner?.container}
+        overlayStyle={floating.owner ? { ...floating.owner.themeStyle, zIndex: floating.owner.zIndex + 1,
+          ...(!floating.owner.active ? { pointerEvents: 'none' } : {}) } : undefined}
+        className={cn('overflow-hidden p-0', contentClassName)}
+        style={{ ...contentStyle, ...floating.contentProps.style }} onCloseAutoFocus={onCloseAutoFocus}
+        transition={contentTransition} overlayTransition={overlayTransition} showCloseButton={false}>
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">{description}</DialogDescription>
         <Command label={title} shouldFilter={shouldFilter} className="[&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:size-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3">

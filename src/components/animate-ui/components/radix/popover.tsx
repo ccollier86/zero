@@ -12,6 +12,7 @@ import {
   type PopoverCloseProps as PopoverClosePrimitiveProps,
 } from '#zero/components/animate-ui/primitives/radix/popover';
 import { cn } from '#zero/lib/utils';
+import { useOwnedFloatingOverlay, composeOverlayRefs } from '../../../overlays/overlay-scope';
 
 type PopoverProps = PopoverPrimitiveProps;
 
@@ -25,17 +26,23 @@ function PopoverTrigger(props: PopoverTriggerProps) {
   return <PopoverTriggerPrimitive {...props} />;
 }
 
-type PopoverContentProps = PopoverContentPrimitiveProps;
+type PopoverContentProps = PopoverContentPrimitiveProps & { portalContainer?: HTMLElement | null };
 
 function PopoverContent({
   className,
   align = 'center',
   sideOffset = 4,
+  portalContainer,
+  ref,
+  style,
   ...props
 }: PopoverContentProps) {
+  const floating = useOwnedFloatingOverlay();
   return (
-    <PopoverPortalPrimitive>
+    <PopoverPortalPrimitive container={portalContainer ?? floating.owner?.container}>
       <PopoverContentPrimitive
+        {...floating.contentProps}
+        ref={composeOverlayRefs(floating.ref, ref)}
         align={align}
         sideOffset={sideOffset}
         className={cn(
@@ -43,6 +50,7 @@ function PopoverContent({
           className,
         )}
         {...props}
+        style={{ ...floating.contentProps.style, ...style }}
       />
     </PopoverPortalPrimitive>
   );

@@ -38,7 +38,9 @@ global Doctor settings table or automatic config rewrite.
 `runPlatformDoctor(config, options?)` synchronously returns
 `{ findings: PlatformDoctorFinding[], ok: boolean }`.
 Each finding contains `severity: info | warning | error`, stable `code`,
-`message`, and optional `path`, `hint`, `docs`. Findings are diagnostics;
+`message`, and optional `path`, `hint`, `docs`. Static source findings may also
+contain `line`, `category` and `confidence`; existing configuration findings need
+not supply those fields. Findings are diagnostics;
 do not serialize the effective secret-bearing config into your report.
 
 ## UsageAuditOptions
@@ -63,6 +65,33 @@ the unreleased recursive-glob correction.
 `--no-usage-audit`, `--max-file-lines <positive integer>`,
 repeatable `--usage-include <path>` / `--usage-exclude <pattern>`,
 and `--help/-h`. Invocation options select diagnostics, not backend access.
+
+The **unreleased structured-modal upgrade** additionally accepts
+`--source-only --project-root <directory>`. This is an independent, config-free
+source path; it rejects `--config`/`--no-usage-audit` and preserves strict/JSON,
+include/exclude and file-size-threshold flags. It does not infer custom app
+directories by executing config. [Source-only trust and coverage](./source-audit.md)
+describe the exact reads and limits.
+
+## SourceOnlyDoctorOptions
+
+`await runSourceOnlyDoctor(options)` returns `SourceOnlyDoctorReport` through
+`@zero/framework/doctor` in the unreleased source baseline.
+
+| Field | Default / semantics |
+| --- | --- |
+| `projectRoot` | Required existing application directory; canonical root owns source/package inspection |
+| `include` | Default app/src/components/hooks/lib/server conventions; a nonempty list replaces them; external roots must be explicit |
+| `exclude` | Appends to built-in source exclusions; does not enable dependency/runtime/cache directory scanning |
+| `maxFileLines` | 400; review threshold, not proof of mixed responsibilities |
+| `rules` | Code → info/warning/error/off; omitted codes retain their defined severity |
+| `allow` | Matching `{code,path}` exemptions after inspection; path line suffix ignored |
+| `strict` | false; warnings additionally make `ok` false when true |
+
+The report adds `mode: "source-only"`, `scannedFiles` and `installedFramework`
+(`status`, `version`, `publicExports`, `modalShow`) to `findings`/`ok`. Unknown
+installed capabilities do not turn into recommendations for unavailable APIs.
+This API does not accept executable config or synthetic-env/database inputs.
 There is no CLI synthetic-env option; process/env-file behavior remains Bun's
 execution environment. Use the programmatic API for explicit synthetic env.
 

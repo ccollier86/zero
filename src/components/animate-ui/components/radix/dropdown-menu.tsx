@@ -35,6 +35,7 @@ import {
 } from '#zero/components/animate-ui/primitives/radix/dropdown-menu';
 import { cn } from '#zero/lib/utils';
 import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
+import { useOwnedFloatingOverlay, composeOverlayRefs } from '../../../overlays/overlay-scope';
 
 type DropdownMenuProps = DropdownMenuPrimitiveProps;
 
@@ -54,16 +55,22 @@ function DropdownMenuContent({
   sideOffset = 4,
   className,
   children,
+  ref,
+  style,
   ...props
 }: DropdownMenuContentProps) {
+  const floating = useOwnedFloatingOverlay();
   return (
     <DropdownMenuContentPrimitive
+      {...floating.contentProps}
+      ref={composeOverlayRefs(floating.ref, ref)}
       sideOffset={sideOffset}
       className={cn(
         'z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border border-border/85 bg-popover p-1 text-popover-foreground shadow-lg outline-none dark:shadow-none',
         className,
       )}
       {...props}
+      style={{ ...floating.contentProps.style, ...style }}
     >
       <DropdownMenuHighlightPrimitive className="absolute inset-0 bg-accent z-0 rounded-sm">
         {children}
@@ -274,15 +281,21 @@ type DropdownMenuSubContentProps = DropdownMenuSubContentPrimitiveProps;
 
 function DropdownMenuSubContent({
   className,
+  ref,
+  style,
   ...props
 }: DropdownMenuSubContentProps) {
+  const floating = useOwnedFloatingOverlay();
   return (
     <DropdownMenuSubContentPrimitive
+      {...floating.contentProps}
+      ref={composeOverlayRefs(floating.ref, ref)}
       className={cn(
         'z-50 min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-md border border-border/85 bg-popover p-1 text-popover-foreground shadow-lg outline-none dark:shadow-none',
         className,
       )}
       {...props}
+      style={{ ...floating.contentProps.style, ...style }}
     />
   );
 }

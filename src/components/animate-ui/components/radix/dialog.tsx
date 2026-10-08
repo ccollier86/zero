@@ -56,6 +56,9 @@ function DialogOverlay({ className, ...props }: DialogOverlayProps) {
 type DialogContentProps = DialogContentPrimitiveProps & {
   showCloseButton?: boolean;
   overlayTransition?: DialogOverlayPrimitiveProps['transition'];
+  /** Specialized overlays may inherit their managed parent's portal root/layers. */
+  portalContainer?: HTMLElement | null;
+  overlayStyle?: DialogOverlayPrimitiveProps['style'];
 };
 
 function DialogContent({
@@ -63,11 +66,13 @@ function DialogContent({
   children,
   showCloseButton = true,
   overlayTransition,
+  portalContainer,
+  overlayStyle,
   ...props
 }: DialogContentProps) {
   return (
-    <DialogPortalPrimitive>
-      <DialogOverlay transition={overlayTransition} />
+    <DialogPortalPrimitive container={portalContainer}>
+      <DialogOverlay transition={overlayTransition} style={overlayStyle} />
       <DialogContentPrimitive
         className={cn(
           'fixed top-[50%] left-[50%] z-50 grid w-[min(32rem,calc(100vw-2rem))] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border border-border/85 bg-card p-5 text-card-foreground shadow-xl dark:shadow-none',

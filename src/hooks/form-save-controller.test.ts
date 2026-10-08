@@ -64,4 +64,46 @@ describe('FormSaveController', () => {
     f.replace('a', false); expect(f.controller.needsLeavePrompt()).toBe(false);
     f.controller.retire(); expect(f.controller.needsLeavePrompt()).toBe(false);
   });
+  test('an already aborted close never opens a decision or calls its continuation', async () => {
+    const f = fixture(), signal = new AbortController(); let continued = 0;
+    signal.abort();
+    expect(await f.controller.requestLeave(() => { continued++; }, { signal: signal.signal })).toBe(false);
+    expect(continued).toBe(0); expect(f.controller.getSnapshot().confirmationOpen).toBe(false);
+  });
+  test('cancelled leave hides only its prompt and allows a replacement decision', async () => {
+    const f = fixture(), signal = new AbortController(); let continued = 0;
+    const obsolete = f.controller.requestLeave(() => { continued++; }, { signal: signal.signal });
+    signal.abort(); expect(await obsolete).toBe(false);
+    expect(f.controller.getSnapshot().confirmationOpen).toBe(false);
+    const replacement = f.controller.requestLeave(() => { continued++; });
+    await f.controller.chooseLeave('discard');
+    expect(await replacement).toBe(true); expect(continued).toBe(1);
+  });
+  test('cancelling while save is pending does not cancel acceptance or continue the old leave', async () => {
+    const f = fixture(), signal = new AbortController(); let continued = 0;
+    const leaving = f.controller.requestLeave(() => { continued++; }, { signal: signal.signal });
+    const saving = f.controller.chooseLeave('save');
+    signal.abort(); expect(await leaving).toBe(false);
+    expect(f.controller.getSnapshot()).toEqual({ saving: true, confirmationOpen: false, error: null });
+    f.setDirty(false); f.receipt.resolve({ kind: 'accepted', values: {} }); await saving;
+    expect(f.writes()).toBe(1); expect(continued).toBe(0);
+    expect(f.controller.getSnapshot()).toEqual({ saving: false, confirmationOpen: false, error: null });
+  });
+  test('aborting an old signal after Stay cannot cancel the replacement leave', async () => {
+    const f = fixture(), signal = new AbortController(); let continued = 0;
+    const obsolete = f.controller.requestLeave(() => {}, { signal: signal.signal });
+    await f.controller.chooseLeave('stay'); expect(await obsolete).toBe(false);
+    const replacement = f.controller.requestLeave(() => { continued++; });
+    signal.abort(); expect(f.controller.getSnapshot().confirmationOpen).toBe(true);
+    await f.controller.chooseLeave('discard'); expect(await replacement).toBe(true); expect(continued).toBe(1);
+  });
+  test('a clean async continuation settles false promptly when its exact signal aborts', async () => {
+    const f = fixture(), signal = new AbortController(); f.setDirty(false);
+    let finish!: () => void;
+    const work = new Promise<void>(resolve => { finish = resolve; });
+    const leaving = f.controller.requestLeave(() => work, { signal: signal.signal });
+    signal.abort(); expect(await leaving).toBe(false);
+    const replacement = f.controller.requestLeave(() => {}); expect(await replacement).toBe(true);
+    finish(); await work; expect(f.controller.getSnapshot().confirmationOpen).toBe(false);
+  });
 });

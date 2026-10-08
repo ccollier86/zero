@@ -6,6 +6,8 @@ export {
   type PlatformDoctorSeverity,
 } from './platform-doctor';
 export { loadDoctorConfig, resolveDoctorConfigPath } from './config-loader';
+export { runSourceOnlyDoctor } from './source-only-doctor';
+export type { SourceOnlyDoctorOptions, SourceOnlyDoctorReport, SourceOnlyFrameworkInspection } from './source-only-types';
 export {
   checkDatabaseAutomations,
   type DatabaseAutomationDoctorInput,

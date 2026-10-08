@@ -1,5 +1,8 @@
+/** Legacy modal compatibility types and immutable manager instance projections. */
 import type { ReactNode } from 'react';
 import type { DialogFlipDirection } from '#zero/components/animate-ui/primitives/radix/dialog';
+import type { ModalCloseReason, ModalDescriptor, ModalResult, ModalSystemState } from './modal-system.types';
+import type { ModalMotionOptions } from './modal-motion-types';
 
 // ─── Size Presets ────────────────────────────────────────────────────────────
 
@@ -85,22 +88,36 @@ export interface ModalInstance {
   beforeClose?: (context: ModalCloseContext) => boolean | Promise<boolean>;
   /** Promise resolver for confirm modals */
   _resolve?: (value: boolean) => void;
+  /** Structured shell descriptor; absent for retained legacy content rendering. */
+  descriptor?: ModalDescriptor<unknown>;
+  /** Parent graph owns child cleanup, independently of stack position. */
+  parentId?: string;
+  /** Descriptor generation fences callbacks from superseded presentations. */
+  generation?: number;
+  /** Immutable view state. Domain data and writes stay with the supplied controller. */
+  systemState?: ModalSystemState;
+  /** Internal logical settlement, never callable through public open options. */
+  _settle?: (result: ModalResult<unknown>) => void;
 }
 
 /** Scope retirement/force-close cancels any pending advisory decision. */
-export interface ModalCloseContext { readonly signal: AbortSignal }
+export interface ModalCloseContext { readonly signal: AbortSignal; readonly reason: ModalCloseReason }
 /** Explicit bypass for authoritative retirement; discardAll also suppresses stale callbacks. */
-export interface ModalCloseOptions { readonly force?: boolean }
+export interface ModalCloseOptions { readonly force?: boolean; readonly reason?: ModalCloseReason }
 
 // ─── Open Options (user-facing, without internal fields) ─────────────────────
 
-export type OpenModalOptions = Omit<ModalInstance, 'id' | 'type' | '_resolve'>;
+export type OpenModalOptions = Omit<ModalInstance, 'id' | 'type' | '_resolve' | '_settle' | 'descriptor' | 'generation' | 'systemState' | 'parentId'>;
 
 export type OpenConfirmOptions = ConfirmModalOptions & {
   size?: ModalSize;
   customSize?: ModalCustomSize;
   from?: DialogFlipDirection;
   className?: string;
+  motion?: ModalMotionOptions;
+  trigger?: Element | null;
+  icon?: ReactNode;
+  tone?: 'default' | 'info' | 'success' | 'danger';
 };
 
 // ─── Store State ─────────────────────────────────────────────────────────────

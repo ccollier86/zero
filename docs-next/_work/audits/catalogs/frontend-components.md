@@ -31,6 +31,27 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Structured Modal And Dense List Working Source — 2026-10-08
+
+These additions are observed in dirty 2.6.0 source at baseline
+`1b5a1fa0281deba69b3809471d2467d596516e4b`. They supplement the pinned counts,
+not a published or independently browser-qualified package.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `ControlledModal` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Controlled adapter](../../../../src/modals/modal-controlled.tsx) | [Migration](../../../frontend/modals/migration.md) |
+| `ModalWorkflowProgress` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Progress body](../../../../src/modals/modal-workflow-progress.tsx) | [Workflow progress](../../../frontend/modals/workflow-progress.md) |
+| `DenseList` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/dense-list` | [Native list](../../../../src/components/dense-list/dense-list.tsx) | [DenseList](../../../frontend/components/dense-list.md) |
+| `DenseListItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/dense-list` | [Native row](../../../../src/components/dense-list/dense-list.tsx) | [DenseList](../../../frontend/components/dense-list.md) |
+| `DenseListGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/dense-list` | [Group section](../../../../src/components/dense-list/dense-list.tsx) | [DenseList](../../../frontend/components/dense-list.md) |
+| `DenseListChoice` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/dense-list` | [Picker action](../../../../src/components/dense-list/dense-list.tsx) | [DenseList](../../../frontend/components/dense-list.md) |
+| `Switch` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/switch` | [Public switch](../../../../src/components/ui/switch.tsx) | [Choice controls](../../../frontend/components/primitives/choices.md) |
+| `Tabs` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/tabs` | [Public tabs](../../../../src/components/ui/tabs.tsx) | [Tab panels](../../../frontend/components/primitives/tabs.md) |
+| `TabsList` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/tabs` | [Public tab list](../../../../src/components/ui/tabs.tsx) | [Tab panels](../../../frontend/components/primitives/tabs.md) |
+| `TabsTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/tabs` | [Public tab trigger](../../../../src/components/ui/tabs.tsx) | [Tab panels](../../../frontend/components/primitives/tabs.md) |
+| `TabsContents` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/tabs` | [Public content wrapper](../../../../src/components/ui/tabs.tsx) | [Tab panels](../../../frontend/components/primitives/tabs.md) |
+| `TabsContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/tabs` | [Public tab panel](../../../../src/components/ui/tabs.tsx) | [Tab panels](../../../frontend/components/primitives/tabs.md) |
+
 ### Authorized Working-Source Additions
 
 These additive symbols are not counted as part of the original clean baseline.

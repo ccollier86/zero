@@ -3,6 +3,8 @@
 import type { FormSubmitResult } from './form-save-types';
 
 export interface FormSaveAdapter {
+  /** Optional opaque draft-target incarnation; supplied automatically by useForm. */
+  readonly boundaryKey?: string;
   readonly isDirty: boolean;
   readonly isSubmitting: boolean;
   readonly submitError?: string | null;
@@ -19,11 +21,17 @@ export interface FormSaveState {
   readonly confirmationOpen: boolean;
   readonly error: string | null;
 }
+/** Cancels only the leave decision; a separately admitted save still owns its acknowledgment. */
+export interface FormLeaveOptions {
+  readonly signal?: AbortSignal;
+}
 const IDLE: FormSaveState = Object.freeze({ saving: false, confirmationOpen: false, error: null });
 interface LeaveAttempt {
   readonly key: string;
   readonly continuation: () => void | Promise<void>;
   readonly resolve: (continued: boolean) => void;
+  readonly signal?: AbortSignal;
+  dispose(): void;
 }
 
 /** Single-flight save and scope-fenced continuation; security retirement never asks permission. */
@@ -48,12 +56,12 @@ export class FormSaveController {
   /** Resolve obsolete navigation false; retiring auth never retains/vetoes old draft UI. */
   retire(): void {
     this.active = false; this.epoch += 1; this.saveAttempt = null;
-    this.leave?.resolve(false); this.leave = null; this.publish(IDLE);
+    this.cancelLeave(); this.publish(IDLE);
   }
   reconcile(): void {
     const boundary = this.options.readBoundary();
     if (!boundary.ready || this.stateKey !== null && this.stateKey !== boundary.key) {
-      this.epoch += 1; this.saveAttempt = null; this.leave?.resolve(false); this.leave = null; this.publish(IDLE);
+      this.epoch += 1; this.saveAttempt = null; this.cancelLeave(); this.publish(IDLE);
     }
   }
   /** Native beforeunload asks only for a current readable draft/pending operation. */
@@ -105,14 +113,24 @@ export class FormSaveController {
   }
 
   /** Root-owned router/modal adapters supply the actual continuation, not this controller. */
-  requestLeave(continuation: () => void | Promise<void>): Promise<boolean> {
+  requestLeave(continuation: () => void | Promise<void>, options: FormLeaveOptions = {}): Promise<boolean> {
     this.reconcile();
     const boundary = this.options.readBoundary();
-    if (!this.active || !boundary.ready || this.leave) return Promise.resolve(false);
-    if (!this.needsLeavePrompt()) return this.continue({ key: boundary.key, continuation, resolve: () => {} });
+    if (!this.active || !boundary.ready || this.leave || options.signal?.aborted) return Promise.resolve(false);
     return new Promise(resolve => {
-      this.leave = { key: boundary.key, continuation, resolve };
-      this.publish({ saving: this.saveAttempt !== null, confirmationOpen: true, error: null });
+      const attempt: LeaveAttempt = { key: boundary.key, continuation, resolve, signal: options.signal,
+        dispose: () => options.signal?.removeEventListener('abort', abort) };
+      const abort = () => {
+        if (this.leave !== attempt) return;
+        this.cancelLeave();
+        this.publish({ saving: this.saveAttempt !== null, confirmationOpen: false, error: null });
+      };
+      this.leave = attempt;
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (options.signal?.aborted) { abort(); return; }
+      if (!this.needsLeavePrompt()) {
+        void this.continue(attempt).then(continued => this.finishLeave(attempt, continued));
+      } else this.publish({ saving: this.saveAttempt !== null, confirmationOpen: true, error: null });
     });
   }
 
@@ -121,7 +139,7 @@ export class FormSaveController {
     if (!leave || !this.active || !this.options.readBoundary().ready || leave.key !== this.options.readBoundary().key) return;
     if (choice === 'stay') {
       if (this.saveAttempt) return;
-      this.leave = null; leave.resolve(false); this.publish(IDLE); return;
+      this.finishLeave(leave, false); return;
     }
     if (choice === 'save') {
       const result = await this.save();
@@ -132,19 +150,28 @@ export class FormSaveController {
       }
     } else if (!this.discard()) return;
     if (this.leave !== leave) return;
-    this.leave = null;
-    this.publish(IDLE);
-    leave.resolve(await this.continue(leave));
+    this.publish({ saving: false, confirmationOpen: false, error: null });
+    this.finishLeave(leave, await this.continue(leave));
   }
 
   private async continue(leave: LeaveAttempt): Promise<boolean> {
     const boundary = this.options.readBoundary();
-    if (!this.active || !boundary.ready || boundary.key !== leave.key) return false;
+    if (!this.active || !boundary.ready || boundary.key !== leave.key || this.leave !== leave || leave.signal?.aborted) return false;
     const epoch = this.epoch;
-    const current = () => this.active && epoch === this.epoch && this.options.readBoundary().ready
+    const current = () => this.active && epoch === this.epoch && this.leave === leave && !leave.signal?.aborted && this.options.readBoundary().ready
       && this.options.readBoundary().key === leave.key;
     try { await leave.continuation(); return current(); }
     catch { if (current()) this.options.onNotificationFailure(); return false; }
+  }
+  private cancelLeave(): void {
+    const leave = this.leave;
+    if (!leave) return;
+    this.leave = null; leave.dispose(); leave.resolve(false);
+  }
+  private finishLeave(leave: LeaveAttempt, continued: boolean): void {
+    if (this.leave !== leave) return;
+    this.leave = null; leave.dispose(); leave.resolve(continued);
+    this.publish({ saving: this.saveAttempt !== null, confirmationOpen: false, error: null });
   }
   private publish(state: FormSaveState): void {
     this.stateKey = this.options.readBoundary().key;

@@ -35,7 +35,7 @@ readiness.
 - [Config loading](./config-loading.md): discovery/import/resource trust boundaries.
 - [Configuration checks](./configuration-checks.md): public report API and resolution.
 - [Check families](./check-families.md): which system owns each finding/remedy.
-- [Source audit](./source-audit.md): paths, rules, severity and deliberate exceptions.
+- [Source audit](./source-audit.md): config-free AST migration inspection, legacy heuristics, roots, confidence and deliberate exceptions.
 - [Infrastructure inspection](./infrastructure-inspection.md): system/app planes and read-only existing SQLite.
 - [Automation diagnostics](./database-automations.md): caller-supplied readiness/health/fingerprints.
 - [Roadmap](./roadmap.md): proposed discovery and agent verification work.
@@ -46,6 +46,11 @@ Passing an already constructed config value can avoid module discovery, but
 `projectRoot` enables filesystem/source and existing DB inspection. The CLI
 loads config and conventional resources, which **executes trusted code**.
 Supplying synthetic env does not sandbox those imports.
+
+The unreleased structured-modal upgrade also offers **source-only inspection**:
+`zero doctor --source-only --project-root <directory>`. This deliberately bypasses
+the config/DB stages and reads source plus the selected installed package's
+metadata. It does not prove visual layout or runtime correctness.
 
 Treat a warning as a question to resolve, not permission to disable the owning
 service's security fence. Inferred philosophy: small focused checkers explain

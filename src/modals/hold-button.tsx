@@ -9,6 +9,8 @@ import { cn } from '#zero/lib/utils';
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface HoldButtonProps {
+  /** Native disabled state also cancels any in-progress hold. */
+  disabled?: boolean;
   /** Callback when hold completes */
   onConfirm: () => void;
   /** Positive finite hold duration in ms. Default: 1500. Invalid values throw at render. */
@@ -37,6 +39,7 @@ export interface HoldButtonProps {
  * onConfirm owns the action; this component does not await its side effects.
  */
 export function HoldButton({
+  disabled = false,
   onConfirm,
   holdDuration = 1500,
   label = 'Hold to Delete',
@@ -85,12 +88,12 @@ export function HoldButton({
   }, [holdDuration, handleComplete]);
 
   const startHold = useCallback(() => {
-    if (activeHoldRef.current) return;
+    if (disabled || activeHoldRef.current) return;
     activeHoldRef.current = true;
     startRef.current = performance.now();
     setHolding(true);
     rafRef.current = requestAnimationFrame(tick);
-  }, [tick]);
+  }, [tick, disabled]);
 
   const endHold = reset;
 
@@ -111,11 +114,12 @@ export function HoldButton({
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-  }, [reset, holdDuration, onConfirm]);
+  }, [reset, holdDuration, onConfirm, disabled]);
 
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-label={label}
       onPointerDown={(event) => {
         if (event.button === 0 && event.isPrimary) startHold();
@@ -136,7 +140,7 @@ export function HoldButton({
       }}
       onContextMenu={(e) => e.preventDefault()}
       className={cn(
-        'relative h-11 w-full cursor-pointer select-none touch-none overflow-hidden rounded-md border border-destructive text-sm font-medium transition-colors',
+        'relative h-11 w-full cursor-pointer select-none touch-none overflow-hidden rounded-md border border-destructive text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
     >

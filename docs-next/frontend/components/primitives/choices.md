@@ -81,6 +81,20 @@ value/onValueChange or defaultValue, supply item values, labels, disabled and
 orientation/loop where needed. They are not keyboard shortcut registries.
 For row selection prefer [DataTable selection](../../data-controls/data-table/export-and-selection.md).
 
+## Switch (Unreleased Public Facade Addition)
+
+Switch is available from root/React and @zero/framework/components/ui/switch.
+It reuses the existing animated Radix switch and its shared styling rather than
+creating another boolean state controller. Use checked/onCheckedChange or
+defaultChecked, give it an accessible label, and supply disabled/name/required
+when appropriate. Checkbox indeterminate state is not a Switch state.
+
+Additional presentation props are pressedWidth (default 19), startIcon, endIcon
+and thumbIcon (React elements). Change/pending/error persistence remains with
+the caller. [DenseList](../dense-list.md) supplies safe settings rows without
+an outer button around the switch; [SettingsMatrix](../settings-matrix.md)
+supplies multiple controlled choice columns.
+
 ## Related Guides And Next Steps
 
 - [Configuration](./configuration.md) explains inherited prop contracts.

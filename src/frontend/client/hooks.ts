@@ -273,6 +273,8 @@ export type {
   WorkflowInteractionSubmissionResult,
 } from './workflow-hooks';
 export { useWorkflowRun } from './workflow-run-hooks';
+export { useWorkflowObservation } from './workflow-observation-hooks';
+export type { UseWorkflowObservationResult, WorkflowObservationStatus } from './workflow-observation-hooks';
 export type {
   UseWorkflowRunOptions,
   UseWorkflowRunResult,

@@ -37,14 +37,19 @@ export function buildUserPasswordActions(params: {
   });
   if (policy.setPassword) actions.push({
     icon: <KeyRound size={20} />, label: 'Set Password', variant: 'warning', disabled,
-    onClick: () => modals.open({
+    onClick: () => modals.show<void>({
       title: 'Set password', size: 'md',
-      content: <UserManagementPasswordResetForm username={user.username} onSubmit={async (password) => {
+      description: `Set a new password for ${user.username}. Existing sessions will be revoked.`,
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'save', label: 'Set password', variant: 'primary', submit: true }],
+      body: context => <UserManagementPasswordResetForm username={user.username}
+        modalContext={context} formId={`${context.id}-set-password`} showSubmit={false} onSubmit={async (password) => {
+        if (context.signal.aborted) throw new Error('This dialog is no longer active.');
         const completed = await runner.run('set-password', async () => {
           await operations.resetPassword(user.userId, password);
-          toast.success('Password reset; existing sessions were revoked');
+          if (!context.signal.aborted) toast.success('Password reset; existing sessions were revoked');
         });
-        if (completed) modals.closeLast();
+        if (!completed) throw new Error('Password action was not admitted.');
       }} />,
     }),
   });

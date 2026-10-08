@@ -35,14 +35,14 @@ export function IntegrationSettingsRow({ item, groupId, owner, contextMenu }: {
   const confirmation = confirmationId ? lookup(confirmationId)?.action ?? null : null;
   confirming.current = Boolean(confirmation);
   const close = () => { setConfirmationId(null); confirming.current = false; };
-  const run = (actionId: string) => {
-    void session.run({
+  const run = (actionId: string, closeAfter = true) => {
+    return session.run({
       isCurrent: () => Boolean(lookup(actionId)),
       onSelect: signal => {
         const current = lookup(actionId)!;
         return current.action.onSelect({ item: current.item, groupId: groupId || null, signal });
       },
-      onCompleted: close,
+      onCompleted: closeAfter ? close : undefined,
       onFailed: cause => reportIntegrationSettingsActionError(cause,
         { itemId: item.id, groupId: groupId || null, actionId }, owner.props.onActionError),
     });
@@ -52,7 +52,7 @@ export function IntegrationSettingsRow({ item, groupId, owner, contextMenu }: {
     if (!current || pending) return;
     if (current.action.destructive || current.action.confirmation) {
       confirming.current = true; setConfirmationId(actionId);
-    } else run(actionId);
+    } else void run(actionId);
   };
   const restoreFocus = (event: Event) => {
     event.preventDefault();
@@ -107,6 +107,7 @@ export function IntegrationSettingsRow({ item, groupId, owner, contextMenu }: {
         onSelect={request} onCloseAutoFocus={closeMenuFocus} />
     </ContextMenu> : row}
     <IntegrationSettingsConfirmationDialog item={item} action={confirmation} pending={pending} error={error}
-      onClose={close} onConfirm={() => { if (confirmationId) run(confirmationId); }} onCloseAutoFocus={restoreFocus} />
+      onClose={close} onConfirm={async () => confirmationId ? await run(confirmationId, false) === 'completed' : false}
+      onCloseAutoFocus={restoreFocus} />
   </>;
 }

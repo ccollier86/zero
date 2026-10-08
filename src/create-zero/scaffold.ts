@@ -354,6 +354,15 @@ creating custom replacements. Start with the installed, organized documentation:
 - \`node_modules/@zero/framework/docs-next/index.md\`: system and task references.
 - \`node_modules/@zero/framework/docs-next/agents/index.md\`: coding-agent guidance.
 
+For dialogs, use \`modals.show({ title, body, actions })\` from
+\`@zero/framework/react\`, or \`ControlledModal\` for React-controlled settings.
+The manager owns the header, close button, footer, scrolling, focus and motion;
+feature code supplies content and acknowledged actions. Read
+\`docs-next/frontend/modals/index.md\` and \`migration.md\` in the installed package
+before creating a modal. Do not construct another frame inside its body.
+To inspect source without loading application configuration, run
+\`zero doctor --source-only --project-root .\`.
+
 Check each feature's version/evidence against your installed package. The older
 \`node_modules/@zero/framework/docs/start-here.md\` remains a compatibility link.
 

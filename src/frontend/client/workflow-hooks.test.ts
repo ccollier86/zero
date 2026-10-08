@@ -17,7 +17,7 @@ import { ApiError } from './api';
 import { AuthorizationDataBoundaryController } from './authorization-data-boundary';
 import { ClientProvider } from './client-context';
 import type { Collection } from './collection';
-import type { Client } from './sdk';
+import { FetchError, type Client } from './sdk';
 import {
   useWorkflow,
   useWorkflowActions,
@@ -26,6 +26,7 @@ import {
 } from './workflow-hooks';
 import { useWorkflowRun, type UseWorkflowRunOptions } from './workflow-run-hooks';
 import { useWorkflowTopology } from './workflow-topology-hooks';
+import { useWorkflowObservation } from './workflow-observation-hooks';
 import {
   configureFrontendObservability,
   type FrontendObservabilityEvent,
@@ -61,6 +62,7 @@ interface WorkflowTransport {
     channel: string | undefined,
   ) => Promise<EdenResult<WorkflowInteractionSubmissionResult>>;
   topology: (instanceId: string) => Promise<EdenResult<WorkflowPublicTopology>>;
+  read: (instanceId: string, signal?: AbortSignal) => Promise<WorkflowClientInstanceRecord>;
 }
 
 const activeRoots = new Set<Root>();
@@ -1094,6 +1096,145 @@ describe('useWorkflowRun', () => {
   });
 });
 
+describe('optional workflow observation readiness', () => {
+  test('connected local null remains loading until an authorized response arrives', async () => {
+    const client = workflowClient();
+    const response = deferred<WorkflowClientInstanceRecord>();
+    client.transport.read = async () => response.promise;
+    const rendered = await renderHook(() => useWorkflowObservation('read_1', null), undefined, client.value);
+    expect(rendered.current.status).toBe('loading');
+    expect(rendered.current.instance).toBeNull();
+    await act(async () => { response.resolve(instance('read_1', 'running', 0, '2030-01-01')); await Promise.resolve(); });
+    expect(rendered.current.status).toBe('ready');
+    expect(rendered.current.instance?.instance_id).toBe('read_1');
+    expect(client.transport.calls).toEqual([{ action: 'read', args: ['read_1'] }]);
+  });
+
+  test('authorized 404 means unavailable, not a guessed missing-versus-forbidden diagnosis', async () => {
+    const client = workflowClient();
+    const rendered = await renderHook(() => useWorkflowObservation('hidden', null), undefined, client.value);
+    expect(rendered.current.status).toBe('unavailable');
+    expect(rendered.current.instance).toBeNull();
+  });
+
+  test('a ready live projection avoids redundant reads; reconnect reconciles through the SDK', async () => {
+    const row = instance('live_1', 'running', 0, '2030-01-01');
+    const client = workflowClient({ instances: [row] });
+    const rendered = await renderHook(() => useWorkflowObservation('live_1', row), undefined, client.value);
+    expect(rendered.current.status).toBe('ready'); expect(client.transport.calls).toEqual([]);
+    await act(async () => client.setConnected(false));
+    expect(rendered.current.status).toBe('reconnecting');
+    expect(rendered.current.instance?.instance_id).toBe('live_1');
+    await act(async () => client.setConnected(true));
+    expect(rendered.current.status).toBe('ready');
+    expect(client.transport.calls).toEqual([{ action: 'read', args: ['live_1'] }]);
+  });
+
+  test('explicit status refresh never starts work and safely handles private transport failure', async () => {
+    const client = workflowClient();
+    const observed: FrontendObservabilityEvent[] = [];
+    configureFrontendObservability({ sink: { emit(value) { observed.push(value); } } });
+    client.transport.read = async () => { throw new Error('PRIVATE_WORKFLOW_PAYLOAD'); };
+    const rendered = await renderHook(() => useWorkflowObservation('read_error', null), undefined, client.value);
+    expect(rendered.current.status).toBe('error');
+    expect(observed).toHaveLength(1); expect(JSON.stringify(observed)).not.toContain('PRIVATE_WORKFLOW_PAYLOAD');
+    client.transport.read = async () => instance('read_error', 'completed', 0, '2030-01-01');
+    await act(async () => rendered.current.reload());
+    expect(rendered.current.status).toBe('ready');
+    expect(client.transport.calls.map(call => call.action)).toEqual(['read', 'read']);
+  });
+
+  test('changing selected run aborts and fences old reads and captured reload callbacks', async () => {
+    const client = workflowClient();
+    const old = deferred<WorkflowClientInstanceRecord>();
+    let oldSignal: AbortSignal | undefined;
+    client.transport.read = async (id, signal) => {
+      if (id === 'old') { oldSignal = signal; return old.promise; }
+      return instance(id, 'paused', 0, '2030-01-01');
+    };
+    const rendered = await renderHook(({ id }: { id: string }) => useWorkflowObservation(id, null), { id: 'old' }, client.value);
+    const reloadOld = rendered.current.reload;
+    await rendered.rerender({ id: 'new' });
+    expect(oldSignal?.aborted).toBe(true);
+    expect(rendered.current.instance?.instance_id).toBe('new');
+    await act(async () => { old.resolve(instance('old', 'running', 0, '2030-01-01')); reloadOld(); await Promise.resolve(); });
+    expect(rendered.current.instance?.instance_id).toBe('new');
+    expect(client.transport.calls).toHaveLength(2);
+  });
+
+  test('returning A after B never revives an A snapshot or its retained reload callback', async () => {
+    const client = workflowClient();
+    const returned = deferred<WorkflowClientInstanceRecord>();
+    let aReads = 0;
+    client.transport.read = async id => {
+      if (id === 'A' && ++aReads > 1) return returned.promise;
+      return instance(id, 'paused', 0, '2030-01-01');
+    };
+    const frames: Array<ReturnType<typeof useWorkflowObservation>> = [];
+    const rendered = await renderHook(({ id }: { id: string }) => {
+      const result = useWorkflowObservation(id, null); frames.push(result); return result;
+    }, { id: 'A' }, client.value);
+    const oldReload = rendered.current.reload;
+    expect(rendered.current.status).toBe('ready');
+    await rendered.rerender({ id: 'B' });
+    frames.length = 0;
+    await rendered.rerender({ id: 'A' });
+    expect(frames.every(frame => frame.instance === null && frame.status === 'loading')).toBe(true);
+    expect(rendered.current.instance).toBeNull();
+    await act(async () => oldReload());
+    expect(client.transport.calls.map(call => call.args[0])).toEqual(['A', 'B', 'A']);
+    await act(async () => { returned.resolve(instance('A', 'running', 0, '2030-01-02')); await Promise.resolve(); });
+    expect(rendered.current.instance?.status).toBe('running');
+    await act(async () => oldReload());
+    expect(client.transport.calls).toHaveLength(3);
+  });
+
+  test('a retained status-refresh callback is inert after unmount and cannot affect a reopened observation', async () => {
+    const row = instance('reopened', 'running', 0, '2030-01-01');
+    const client = workflowClient({ instances: [row] });
+    const old = await renderHook(() => useWorkflowObservation('reopened', row), undefined, client.value);
+    const reload = old.current.reload;
+    await old.unmount();
+    const reopened = await renderHook(() => useWorkflowObservation('reopened', row), undefined, client.value);
+    await act(async () => reload());
+    expect(reopened.current.status).toBe('ready');
+    expect(client.transport.calls).toEqual([]);
+    await act(async () => reopened.current.reload());
+    expect(client.transport.calls.map(call => call.action)).toEqual(['read']);
+  });
+
+  test('scope revision masks retained HTTP snapshots and aborts old requests synchronously', async () => {
+    const client = workflowClient();
+    const old = deferred<WorkflowClientInstanceRecord>();
+    const current = deferred<WorkflowClientInstanceRecord>();
+    let signal: AbortSignal | undefined;
+    client.transport.read = async (_id, requestSignal) => {
+      signal = requestSignal;
+      return client.authorizationData.revision === 0 ? old.promise : current.promise;
+    };
+    const rendered = await renderHook(() => useWorkflowObservation('scoped', null), undefined, client.value);
+    const firstSignal = signal;
+    await act(async () => { client.authorizationData.invalidate(); });
+    expect(firstSignal?.aborted).toBe(true);
+    expect(rendered.current.instance).toBeNull();
+    await act(async () => { old.resolve(instance('scoped', 'running', 0, '2030-01-01')); await Promise.resolve(); });
+    expect(rendered.current.instance).toBeNull();
+    await act(async () => { current.resolve(instance('scoped', 'paused', 0, '2030-01-01')); await Promise.resolve(); });
+    expect(rendered.current.instance?.status).toBe('paused');
+    expect(client.transport.calls).toHaveLength(2);
+  });
+  test('authoritative explicit read unavailability masks a stale cached parent projection', async () => {
+    const row = instance('stale', 'running', 0, '2030-01-01');
+    const client = workflowClient({ instances: [row] });
+    const rendered = await renderHook(() => useWorkflowObservation('stale', row), undefined, client.value);
+    expect(rendered.current.instance).toEqual(row);
+    client.transport.read = async () => { throw new FetchError('Not found', 404, {}); };
+    await act(async () => rendered.current.reload());
+    expect(rendered.current.status).toBe('unavailable');
+    expect(rendered.current.instance).toBeNull();
+  });
+});
+
 function instance(
   instanceId: string,
   status: WorkflowStatus,
@@ -1310,6 +1451,7 @@ function workflowClient(initial: {
   interactions: TestCollection<WorkflowClientInteractionRecord & Row>;
   events: TestCollection<WorkflowEventRecord & Row>;
   transport: WorkflowTransport;
+  setConnected(connected: boolean): void;
 } {
   const authorizationData = new AuthorizationDataBoundaryController();
   const instances = new TestCollection(initial.instances ?? [], 'instance_id');
@@ -1330,7 +1472,14 @@ function workflowClient(initial: {
       });
     },
     async topology(instanceId) { return success(publicTopology(instanceId)); },
+    async read(instanceId) {
+      const value = instances.asCollection('workflow_instances').getOne(instanceId);
+      if (!value) throw new FetchError('Workflow not found', 404, { code: 'WORKFLOW_NOT_FOUND' });
+      return value;
+    },
   };
+  let connected = true;
+  const connectionListeners = new Set<(connected: boolean) => void>();
   const routes = new Proxy({
     post: async ({ name, input, version }: {
       name: string;
@@ -1405,6 +1554,15 @@ function workflowClient(initial: {
     api: { workflows: routes },
     collection: (name: string) => collections[name],
     _authorizationDataBoundary: authorizationData,
+    fetch: async (path: string, options?: { signal?: AbortSignal }) => {
+      const instanceId = decodeURIComponent(path.slice('/workflows/'.length));
+      transport.calls.push({ action: 'read', args: [instanceId] });
+      return transport.read(instanceId, options?.signal);
+    },
+    get connected() { return connected; },
+    onConnectionChange: (callback: (connected: boolean) => void) => {
+      connectionListeners.add(callback); return () => connectionListeners.delete(callback);
+    },
   } as unknown as Client;
   return {
     value,
@@ -1414,6 +1572,7 @@ function workflowClient(initial: {
     interactions,
     events,
     transport,
+    setConnected(next) { connected = next; for (const listener of connectionListeners) listener(next); },
   };
 }
 
@@ -1432,6 +1591,7 @@ async function renderHook<Props, Result>(
 ): Promise<{
   readonly current: Result;
   rerender: (props: Props) => Promise<void>;
+  unmount: () => Promise<void>;
 }> {
   const { createRoot } = await import('react-dom/client');
   const root = createRoot(createContainer());
@@ -1456,6 +1616,7 @@ async function renderHook<Props, Result>(
   return {
     get current() { return current; },
     rerender,
+    async unmount() { await act(async () => root.unmount()); activeRoots.delete(root); },
   };
 }
 

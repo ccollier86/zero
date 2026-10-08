@@ -14,19 +14,26 @@ export function useTenantAccountEditDialog(params: {
   updateUser(userId: string, changes: AuthAdminUpdateUserParams): Promise<void>;
 }) {
   return React.useCallback((user: UserManagementUser) => {
-    if (!params.config || params.editableFields.length === 0) return;
-    let modalId = '';
-    modalId = modals.open({
+    const config = params.config;
+    if (!config || params.editableFields.length === 0) return;
+    modals.show<UserManagementUser>({
       title: `Edit ${user.username}`,
       size: 'lg',
-      content: (
+      description: 'Update this account without changing its organization membership.',
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'save', label: 'Save account', variant: 'primary', submit: true }],
+      body: context => (
         <TenantAccountEditForm
           user={user}
-          config={params.config}
+          config={config}
           roleOptions={params.roleOptions}
           editableFields={params.editableFields}
-          onSubmit={(changes) => params.updateUser(user.userId, changes)}
-          onSuccess={() => modals.close(modalId)}
+          modalContext={context} formId={`${context.id}-edit-account`}
+          onSubmit={changes => {
+            if (context.signal.aborted) return Promise.reject(new Error('This dialog is no longer active.'));
+            return params.updateUser(user.userId, changes);
+          }}
+          onSuccess={() => {}}
         />
       ),
     });

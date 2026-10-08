@@ -231,6 +231,8 @@ the linked documentation.
 
 - [ ] **Modal manager redesign** — **Core**. Harden the existing modal manager
   rather than creating a competing system.
+  - Follow the [source-backed implementation roadmap](../docs-next/_work/modal-system-redesign-plan.md)
+    and [owning system roadmap](../docs-next/frontend/modals/roadmap.md).
   - Reserve a safe close-control lane so the close button cannot overlap
     application content.
   - Add consistent header, description, body, section, scrolling, and action
@@ -239,6 +241,17 @@ the linked documentation.
     modals, animations, and programmatic control.
   - Review existing Zero applications and provide compatibility helpers or a
     concise migration guide for unavoidable layout changes.
+  - Include reference-based tabs/grouped navigation, a reusable dense list,
+    slightly smaller close glyph, custom sizing/placement and scrollbar appearance.
+  - Include the full Motion Lab preset/options system. Defaults: From button with
+    Rise fallback, paired exit, dim+blur, page recession and 1.5 duration multiplier;
+    preserve exact timings, theme tokens and coordinated reduced-motion cleanup.
+  - Reuse acknowledged forms and scope-safe actions, add reactive-record/draft
+    awareness and durable Torrent progress, and qualify owned portal/stack behavior.
+  - Add version-aware Doctor migration assistance with explicit static-analysis
+    limits, then update public guides, examples and agent/scaffold instructions.
+    Professionally rewrite the modal documentation family in the new track,
+    covering layouts, motion/defaults, integrations and migration end to end.
 
 - [ ] **Autosave audit and shared contract** — **Core**. Start by auditing the
   existing Zero mechanisms and the production app that already provides an

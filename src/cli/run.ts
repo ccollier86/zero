@@ -58,7 +58,8 @@ switch (command) {
 
 async function runBunScript(relativeScript: string, scriptArgs: string[]): Promise<number> {
   const scriptPath = fileURLToPath(new URL(relativeScript, import.meta.url));
-  const child = Bun.spawn([process.execPath, scriptPath, ...scriptArgs], {
+  const staticDoctor = relativeScript === '../doctor/run.ts' && scriptArgs.includes('--source-only');
+  const child = Bun.spawn([process.execPath, ...(staticDoctor ? ['--no-env-file'] : []), scriptPath, ...scriptArgs], {
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',

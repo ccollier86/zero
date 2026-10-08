@@ -36,6 +36,7 @@ function PasswordInput({
         <Input
           {...inputProps}
           type={visible ? 'text' : 'password'}
+          data-zero-sensitive="true"
           className={cn('pr-9', className)}
           onFocus={(event) => {
             setFocused(true);

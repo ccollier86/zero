@@ -91,6 +91,25 @@ shows feedback and invokes success. It is an authenticated current-user
 operation, not an administrator reset UI; use the adaptable administration
 control plane for administrator-issued reset/setup actions.
 
+The unreleased structured-modal integration also accepts
+`modalContext?: ModalContext<void>` and `formId?: string`. When context is
+supplied, the manager owns the title, close control, footer and safe error
+presentation; the form omits its duplicate header and submit button. Associate
+the footer's `submit: true` action with `formId`, using an `onClick: () => false`
+fallback. The existing native form owns validation and the single Guardian
+operation, and accepts the exact context only after `changePassword` resolves
+and all password fields are cleared. Do not close it from `onSuccess`.
+
+Managed mode aggregates dirty/pending state and locks the frame while the
+operation is admitted. Length/mismatch errors and rejected acknowledgments keep
+the draft open; retired lifetimes cannot surface late errors or accept another
+dialog. The profile security section uses this managed composition. A failing
+success notification does not undo or replay an accepted password rotation.
+See [modal forms](../modals/forms.md) for the shared native-submit and lifecycle
+contract. Password verification and credential rotation remain Guardian-owned;
+these presentation inputs do not add a transport or cancellation guarantee to
+the underlying account operation.
+
 ## UserPropertiesForm
 
 `UserPropertiesFormProps` accepts `title` (Account settings),

@@ -85,12 +85,29 @@ schema primary key before submission; update strips the primary key from changes
 Destructive delete uses confirmation. Missing writers or replaced scope fail
 closed, and duplicate/pending work is not silently repeated.
 
+The unreleased structured-modal integration uses `modals.show` with managed
+AutoForm bodies for create/edit. One manager header and native footer replace
+the older free-form dialog content; Save/Discard/Stay retains the same draft.
+Delete uses `actionConfirm`, so the held destructive action, Cancel and close
+controls remain locked until its acknowledged remove operation finishes. A
+rejected delete stays open with safe actionable feedback; deciding to delete is
+not itself write acceptance. Both layouts share this contract.
+
 Success feedback, follow-up callbacks and exact-modal closure occur after accepted
 writes. If an accepted follow-up throws, the write is not recast as failed or
 reissued. A create modal finishing late cannot close a newer modal.
+`onAfterCreate` and `onAfterDelete` may return promises. Their best-effort
+notifications are observed without holding write acknowledgment or dialog
+closure; synchronous and asynchronous failures use a safe follow-up message and
+standard observation code. A retired page/source/account incarnation suppresses
+late notifications rather than reporting them into a replacement scope.
 Transform/write failures use the common safe frontend mutation presentation and
 observability, not raw row/provider payloads. Scope changes and unmount prevent
 late UI success in the new context; they cannot roll back accepted server effects.
+Page/source teardown retires only its owned dialogs. Form/modal cancellation is
+coupled to the existing mutation runner's signal, with source and server
+authorization still responsible for actual write admission. It does not imply
+generic collection CAS or rollback of already accepted work.
 
 App-specific custom row/navigation callbacks remain app-owned complete operations.
 Return promises and use the public mutation runner where pending/refresh/error

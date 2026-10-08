@@ -31,6 +31,21 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Structured Modal Working-Source Helpers — 2026-10-08
+
+Dirty 2.6.0 source additions at baseline
+`1b5a1fa0281deba69b3809471d2467d596516e4b`; pinned counts remain historical.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `MODAL_MOTION_DEFAULTS` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Defaults](../../../../src/modals/modal-motion.ts) | [Motion](../../../frontend/modals/motion.md) |
+| `MODAL_MOTION_EASING` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Exact curves](../../../../src/modals/modal-motion.ts) | [Motion](../../../frontend/modals/motion.md) |
+| `MODAL_MOTION_TIMINGS` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Base timing constants](../../../../src/modals/modal-motion.ts) | [Motion](../../../frontend/modals/motion.md) |
+| `MODAL_MOTION_GEOMETRY` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Motion geometry](../../../../src/modals/modal-motion.ts) | [Motion](../../../frontend/modals/motion.md) |
+| `MODAL_MOTION_TIMING_TOKENS` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [CSS timing map](../../../../src/modals/modal-motion.ts) | [Motion](../../../frontend/modals/motion.md) |
+| `resolveModalMotion` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Inherited resolver](../../../../src/modals/modal-motion.ts) | [Motion](../../../frontend/modals/motion.md) |
+| `createModalFormGuard` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/modals` | [Leave guard](../../../../src/modals/modal-form.tsx) | [Form dialogs](../../../frontend/modals/forms.md) |
+
 ### Working Table Motion Defaults — 2026-10-07
 
 This additive runtime constant was source-observed in the dirty framework 2.6.0

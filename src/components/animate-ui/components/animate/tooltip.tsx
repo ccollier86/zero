@@ -13,6 +13,7 @@ import {
   type TooltipContentProps as TooltipContentPrimitiveProps,
 } from '#zero/components/animate-ui/primitives/animate/tooltip';
 import { cn } from '#zero/lib/utils';
+import { useOverlayScope } from '../../../overlays/overlay-scope';
 
 type TooltipProviderProps = TooltipProviderPrimitiveProps;
 
@@ -41,8 +42,10 @@ function TooltipContent({
   className,
   children,
   layout = 'preserve-aspect',
+  style,
   ...props
 }: TooltipContentProps) {
+  const owner = useOverlayScope();
   return (
     <TooltipContentPrimitive
       className={cn(
@@ -50,6 +53,10 @@ function TooltipContent({
         className,
       )}
       {...props}
+      inert={owner && !owner.active || undefined}
+      data-zero-overlay-owner={owner?.id}
+      style={{ ...owner?.themeStyle, ...style, ...(owner ? { zIndex: owner.zIndex + 2,
+        ...(!owner.active ? { pointerEvents: 'none' } : {}) } : {}) }}
     >
       <motion.div className="overflow-hidden px-3 py-1.5 text-xs text-balance">
         <motion.div layout={layout}>{children}</motion.div>

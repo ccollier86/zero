@@ -8,8 +8,7 @@
 
 import { basename, dirname } from 'node:path';
 
-import { loadDoctorConfig, resolveDoctorConfigPath } from './config-loader';
-import { runPlatformDoctor, type PlatformDoctorFinding } from './platform-doctor';
+import type { PlatformDoctorFinding } from './platform-doctor-contracts';
 import type { UsageAuditOptions } from './usage-audit';
 
 const args = process.argv.slice(2);
@@ -17,7 +16,6 @@ const args = process.argv.slice(2);
 const strict = args.includes('--strict');
 const json = args.includes('--json');
 const noUsageAudit = args.includes('--no-usage-audit');
-const configPath = resolveDoctorConfigPath(getArg('--config'));
 const usageInclude = getArgs('--usage-include');
 const usageExclude = getArgs('--usage-exclude');
 let maxFileLines: number | undefined;
@@ -30,26 +28,27 @@ try {
 
   maxFileLines = parsePositiveIntArg('--max-file-lines');
 
-  if (!configPath) {
-    throw new Error(
-      '[doctor] No config module found. Pass --config ./zero.config.ts or create config/zero.config.ts.'
-    );
-  }
-
-  const config = await loadDoctorConfig(configPath);
-  const report = runPlatformDoctor(config, {
-    strict,
-    projectRoot: deriveProjectRoot(configPath),
-    usageAudit: noUsageAudit ? false : buildUsageAuditOptions(),
-  });
-
-  if (json) {
-    console.log(JSON.stringify(report, null, 2));
+  if (args.includes('--source-only')) {
+    if (args.includes('--config') || noUsageAudit) throw new Error('[doctor] --source-only cannot be combined with --config or --no-usage-audit.');
+    const projectRoot = getArg('--project-root');
+    if (!projectRoot || projectRoot.startsWith('--')) throw new Error('[doctor] --source-only requires --project-root <application-directory>.');
+    const { runSourceOnlyDoctor } = await import('./source-only-doctor');
+    const report = await runSourceOnlyDoctor({ projectRoot, strict, ...buildUsageAuditOptions() });
+    if (json) console.log(JSON.stringify(report, null, 2));
+    else { printReport(`Source-only root: ${projectRoot}`, report.findings, report.ok); console.log('Source-only checks do not verify runtime behavior or visual layout.'); }
+    if (!report.ok) process.exitCode = 1;
   } else {
-    printReport(configPath, report.findings, report.ok);
+    // Deliberately branch before even config discovery: static mode must not
+    // import the executable loader, server checks, resource definitions or DBs.
+    const { loadDoctorConfig, resolveDoctorConfigPath } = await import('./config-loader');
+    const { runPlatformDoctor } = await import('./platform-doctor');
+    const configPath = resolveDoctorConfigPath(getArg('--config'));
+    if (!configPath) throw new Error('[doctor] No config module found. Pass --config ./zero.config.ts or create config/zero.config.ts.');
+    const config = await loadDoctorConfig(configPath);
+    const report = runPlatformDoctor(config, { strict, projectRoot: deriveProjectRoot(configPath), usageAudit: noUsageAudit ? false : buildUsageAuditOptions() });
+    if (json) console.log(JSON.stringify(report, null, 2)); else printReport(configPath, report.findings, report.ok);
+    if (!report.ok) process.exitCode = 1;
   }
-
-  if (!report.ok) process.exitCode = 1;
 } catch (error) {
   if (json) {
     console.log(JSON.stringify({
@@ -146,6 +145,7 @@ function printFindings(title: string, findings: PlatformDoctorFinding[]): void {
     console.log(`    ${finding.message}`);
     if (finding.hint) console.log(`    hint: ${finding.hint}`);
     if (finding.docs) console.log(`    docs: ${finding.docs}`);
+    if (finding.category || finding.confidence) console.log(`    review: ${finding.category ?? 'unspecified'}; confidence: ${finding.confidence ?? 'unspecified'}`);
   }
   console.log('');
 }
@@ -173,10 +173,13 @@ function mark(severity: PlatformDoctorFinding['severity']): string {
 
 function printUsage(): void {
   console.log('Usage: zero doctor --config ./zero.config.ts [options]');
+  console.log('       zero doctor --source-only --project-root <app-directory> [options]');
   console.log('');
   console.log('Options:');
   console.log('  --strict                    Treat warnings as failures');
   console.log('  --json                      Print JSON report');
+  console.log('  --source-only              Read source/package metadata without loading application config');
+  console.log('  --project-root <directory> Explicit root for --source-only; no config-derived roots');
   console.log('  --no-usage-audit            Disable app source usage scanning');
   console.log('  --max-file-lines <count>    Large-file warning threshold (default: 400)');
   console.log('  --usage-include <path>      Add/override a source scan root; repeatable');

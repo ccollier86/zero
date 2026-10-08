@@ -6,7 +6,7 @@
  * this component owns forms, action placement and accepted UI effects only.
  */
 
-import { createElement, useCallback, useMemo } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { ComponentType, ReactNode } from 'react';
 import type { Row } from '../../sync/types';
 import type { SchemaDescriptor } from '../../schema/define-schema';
@@ -40,6 +40,8 @@ import { Button } from '../ui/button';
 import { Skeleton } from '../ui/skeleton';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { composeAuthorizationScopeSignal } from '../../frontend/client/auth-response-scope';
+import type { ModalDescriptor, ModalHandle } from '../../modals/modal-system.types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -111,10 +113,10 @@ export interface CrudPageProps<T extends Row = Row> {
   onBeforeCreate?: (data: T) => T;
   /** Transform data before update. */
   onBeforeUpdate?: (id: string, data: Partial<T>) => Partial<T>;
-  /** Called after successful create. */
-  onAfterCreate?: (row: T) => void;
-  /** Called after successful delete. */
-  onAfterDelete?: (id: string) => void;
+  /** Best-effort notification after successful create; returned values are ignored and promises observed. */
+  onAfterCreate?: (row: T) => unknown;
+  /** Best-effort notification after successful delete; returned values are ignored and promises observed. */
+  onAfterDelete?: (id: string) => unknown;
 
   // ── Customization (shared) ────────────────────────────────
   /** Additional row actions (merged with default edit/delete). */
@@ -221,6 +223,56 @@ function CrudPageCore<T extends Row = Row>(props: CrudPageCoreProps<T>) {
   return createElement(TableLayout<T>, { ...props, mutation });
 }
 
+/** Page-owned leases retire only these dialogs when the feature leaves the React tree. */
+function useCrudModalOwnership(sourceKey: string) {
+  const handles = useRef(new Map<string, ModalHandle<unknown>>()), deletions = useRef(new Map<string, ModalHandle<unknown>>());
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => {
+    active.current = false; modals.disposeHost([...handles.current.keys()]); handles.current.clear(); deletions.current.clear();
+  }; }, [sourceKey]);
+  return useMemo(() => {
+    const retain = <T,>(handle: ModalHandle<T>): ModalHandle<T> => {
+      handles.current.set(handle.id, handle as ModalHandle<unknown>);
+      void handle.result.then(() => handles.current.delete(handle.id));
+      return handle;
+    };
+    return { show: <T,>(descriptor: ModalDescriptor<T>) => {
+        if (!active.current) throw mutationCancelledError();
+        return retain(modals.show(descriptor));
+      },
+      remove(id: string, onConfirm: Parameters<typeof modals.actionConfirm>[0]['onConfirm']) {
+        if (!active.current) return;
+        const previous = deletions.current.get(id);
+        if (previous && !modals.getContext(previous.id)?.signal.aborted && modals.getContext(previous.id)) return;
+        const handle = retain(modals.actionConfirm({ title: 'Delete record?', description: 'This action cannot be undone.',
+          tone: 'danger', confirmLabel: 'Delete', holdToConfirm: true, onConfirm: async context => {
+            try { return await onConfirm(context); }
+            catch {
+              // The shared CRUD mutation runner has already classified/logged
+              // the failure. Keep this decision actionable without logging it twice.
+              if (!context.signal.aborted) context.setError('The row action could not be completed. Try again.');
+              return false;
+            }
+          } }));
+        deletions.current.set(id, handle);
+        void handle.result.then(() => { if (deletions.current.get(id) === handle) deletions.current.delete(id); });
+      } };
+  }, []);
+}
+
+/** Couple exact form/dialog lifetime to the existing source/auth mutation runner. */
+async function runOwnedCrudMutation(mutation: CrudMutationRunner, key: string, caller: AbortSignal,
+  execute: (signal: AbortSignal) => void | Promise<void>, accepted?: () => unknown): Promise<void> {
+  await mutation.run(key, async ({ signal }) => {
+    const owned = composeAuthorizationScopeSignal(caller, signal);
+    try {
+      if (owned.signal.aborted) throw mutationCancelledError();
+      await execute(owned.signal);
+      if (owned.signal.aborted) throw mutationCancelledError();
+    } finally { owned.dispose(); }
+  }, () => { if (!caller.aborted) return accepted?.(); });
+}
+
 // ─── Table Layout ───────────────────────────────────────────────────────────
 
 function TableLayout<T extends Row = Row>({
@@ -259,41 +311,48 @@ function TableLayout<T extends Row = Row>({
   className,
 }: CrudPageCoreProps<T> & { mutation: CrudMutationRunner }) {
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
+  const owned = useCrudModalOwnership(table);
 
   const openCreateModal = useCallback(() => {
-    const modalId = modals.open({
+    owned.show<T>({
       title: createLabel,
       size: modalSize,
-      content: createElement(AutoForm<T>, {
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'submit', label: createLabel, variant: 'primary', submit: true, onClick: () => false }],
+      body: context => createElement(AutoForm<T>, {
+        modalContext: context,
         schema,
         mode: 'create',
         columns: formColumns,
         fields: createFields,
         includeFields: resourceFields?.create,
         submitLabel: createLabel,
-        onSubmit: async (formData: T) => {
+        onSubmit: async (formData, submission) => {
           let row!: T;
-          await mutation.run(JSON.stringify(['create', modalId]), ({ signal }) => {
+          await runOwnedCrudMutation(mutation, JSON.stringify(['create', context.id]), submission.signal, signal => {
             const draft = onBeforeCreate ? onBeforeCreate(formData) : formData;
             row = ensureRowPrimaryKey(draft, primaryKey, { table, identity: schema.identity });
             return invokeDataTableSourceWrite('insert', true, actions ? () => actions.insert(row, { signal }) : undefined);
           },
           () => {
             toast.success(`${createLabel} successful`);
-            try { onAfterCreate?.(row); }
-            finally { modals.close(modalId); }
+            return onAfterCreate?.(row);
           });
+          return { values: row };
         },
       }),
     });
-  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, actions, mutation, onBeforeCreate, onAfterCreate, primaryKey]);
+  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, actions, mutation, onBeforeCreate, onAfterCreate, primaryKey, owned]);
 
   const openEditModal = useCallback((row: T) => {
     const rowId = requireRowPrimaryKey(row, primaryKey);
-    const modalId = modals.open({
+    owned.show<T>({
       title: 'Edit',
       size: modalSize,
-      content: createElement(AutoForm<T>, {
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'submit', label: 'Save', variant: 'primary', submit: true, onClick: () => false }],
+      body: context => createElement(AutoForm<T>, {
+        modalContext: context,
         schema,
         mode: 'edit',
         defaultValues: row,
@@ -301,40 +360,29 @@ function TableLayout<T extends Row = Row>({
         fields: editFields,
         includeFields: resourceFields?.update,
         submitLabel: 'Save',
-        onSubmit: async (formData: T) => {
+        onSubmit: async (formData, submission) => {
           const id = rowId;
-          await mutation.run(JSON.stringify(['edit', modalId]), ({ signal }) => {
+          await runOwnedCrudMutation(mutation, JSON.stringify(['edit', context.id]), submission.signal, signal => {
             const updateData = stripRowPrimaryKey(formData as Partial<T>, primaryKey);
             const changes = onBeforeUpdate ? onBeforeUpdate(id, updateData) : updateData;
             return invokeDataTableSourceWrite('update', true, actions ? () => actions.update(id, stripRowPrimaryKey(changes, primaryKey), { signal }) : undefined);
           },
           () => {
             toast.success('Updated successfully');
-            modals.close(modalId);
           });
         },
       }),
     });
-  }, [schema, modalSize, formColumns, editFields, resourceFields, actions, mutation, onBeforeUpdate, primaryKey]);
+  }, [schema, modalSize, formColumns, editFields, resourceFields, actions, mutation, onBeforeUpdate, primaryKey, owned]);
 
   const handleDelete = useCallback(async (row: T) => {
     const id = requireRowPrimaryKey(row, primaryKey);
-    try {
-      await mutation.run(JSON.stringify(['delete', id]), async ({ signal }) => {
-        const confirmed = await modals.confirm({
-          title: 'Delete record?', description: 'This action cannot be undone.',
-          variant: 'destructive', holdToConfirm: true,
-        });
-        if (!confirmed || signal.aborted) throw mutationCancelledError();
-        await invokeDataTableSourceWrite('remove', true, actions ? () => actions.remove(id, { signal }) : undefined);
-      }, () => {
+    owned.remove(id, context => runOwnedCrudMutation(mutation, JSON.stringify(['delete', id]), context.signal,
+      signal => invokeDataTableSourceWrite('remove', true, actions ? () => actions.remove(id, { signal }) : undefined), () => {
         toast.success('Deleted successfully');
-        onAfterDelete?.(id);
-      });
-    } catch {
-      // The shared runner owns safe errors, observability and cancellation.
-    }
-  }, [actions, mutation, onAfterDelete, primaryKey]);
+        return onAfterDelete?.(id);
+      }));
+  }, [actions, mutation, onAfterDelete, primaryKey, owned]);
 
   const allActions = useMemo((): RowAction<T>[] => {
     const defaults: RowAction<T>[] = [];
@@ -436,34 +484,38 @@ function MasterDetailLayout<T extends Row = Row>({
   className,
 }: CrudPageCoreProps<T> & { mutation: CrudMutationRunner }) {
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
+  const owned = useCrudModalOwnership(table);
 
   const openCreateModal = useCallback(() => {
-    const modalId = modals.open({
+    owned.show<T>({
       title: createLabel,
       size: modalSize,
-      content: createElement(AutoForm<T>, {
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'submit', label: createLabel, variant: 'primary', submit: true, onClick: () => false }],
+      body: context => createElement(AutoForm<T>, {
+        modalContext: context,
         schema,
         mode: 'create',
         columns: formColumns,
         fields: createFields,
         includeFields: resourceFields?.create,
         submitLabel: createLabel,
-        onSubmit: async (formData: T) => {
+        onSubmit: async (formData, submission) => {
           let row!: T;
-          await mutation.run(JSON.stringify(['create', modalId]), ({ signal }) => {
+          await runOwnedCrudMutation(mutation, JSON.stringify(['create', context.id]), submission.signal, signal => {
             const draft = onBeforeCreate ? onBeforeCreate(formData) : formData;
             row = ensureRowPrimaryKey(draft, primaryKey, { table, identity: schema.identity });
             return invokeDataTableSourceWrite('insert', true, actions ? () => actions.insert(row, { signal }) : undefined);
           },
           () => {
             toast.success(`${createLabel} successful`);
-            try { onAfterCreate?.(row); }
-            finally { modals.close(modalId); }
+            return onAfterCreate?.(row);
           });
+          return { values: row };
         },
       }),
     });
-  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, actions, mutation, onBeforeCreate, onAfterCreate, primaryKey]);
+  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, actions, mutation, onBeforeCreate, onAfterCreate, primaryKey, owned]);
 
   const handleUpdate = useCallback(async (id: string, changes: Partial<T>) => {
     await mutation.run(JSON.stringify(['detail-update', id]), ({ signal }) => {
@@ -487,25 +539,15 @@ function MasterDetailLayout<T extends Row = Row>({
         disabled: mutation.isPending(JSON.stringify(['delete', requireRowPrimaryKey(item, primaryKey)])),
         onClick: async () => {
           const id = requireRowPrimaryKey(item, primaryKey);
-          try {
-            await mutation.run(JSON.stringify(['delete', id]), async ({ signal }) => {
-              const confirmed = await modals.confirm({
-                title: 'Delete record?', description: 'This action cannot be undone.',
-                variant: 'destructive', holdToConfirm: true,
-              });
-              if (!confirmed || signal.aborted) throw mutationCancelledError();
-              await invokeDataTableSourceWrite('remove', true, actions ? () => actions.remove(id, { signal }) : undefined);
-            }, () => {
+          owned.remove(id, context => runOwnedCrudMutation(mutation, JSON.stringify(['delete', id]), context.signal,
+            signal => invokeDataTableSourceWrite('remove', true, actions ? () => actions.remove(id, { signal }) : undefined), () => {
               toast.success('Deleted successfully');
-              onAfterDelete?.(id);
-            });
-          } catch {
-            // The shared runner owns safe errors, observability and cancellation.
-          }
+              return onAfterDelete?.(id);
+            }));
         },
       },
     ];
-  }, [navigationActions, hideDelete, actions, mutation, onAfterDelete, primaryKey]);
+  }, [navigationActions, hideDelete, actions, mutation, onAfterDelete, primaryKey, owned]);
 
   // Build primary action — default to create button if not provided and not hidden
   const resolvedPrimaryAction = primaryAction ?? (!hideCreate ? {

@@ -6,13 +6,15 @@
  * no transport, database authorization, form rendering or modal composition.
  */
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { useClientMaybe } from '../../frontend/client/client-context';
 import {
   isAuthorizationScopeCallbackCurrent,
+  readAuthorizationScopeBoundaryKey,
   useAuthorizationScopeBoundary,
 } from '../../frontend/client/authorization-scope-hooks';
+import type { InternalClient } from '../../frontend/client/sdk';
 import { emitFrontendCode } from '../../frontend/client/observability';
 import { OBS_CODES } from '../../observability/codes';
 import {
@@ -25,7 +27,7 @@ export interface CrudMutationRunner {
   run(
     key: string,
     execute: (context: DataTableMutationContext) => void | Promise<void>,
-    accepted?: () => void,
+    accepted?: () => unknown,
   ): Promise<void>;
   isPending(key: string): boolean;
 }
@@ -39,17 +41,26 @@ export function useCrudMutation(boundaryKey: string): CrudMutationRunner {
   currentKey.current = boundary.key;
   ready.current = boundary.ready;
   const capturedKey = boundary.key;
+  const mounted = useRef(true), incarnation = useRef({ key: JSON.stringify([capturedKey, boundaryKey]), token: {} });
+  const targetKey = JSON.stringify([capturedKey, boundaryKey]);
+  if (incarnation.current.key !== targetKey) incarnation.current = { key: targetKey, token: {} };
+  const token = incarnation.current.token;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const runner = useDataTableMutationRunner({ boundaryKey });
   const run = useCallback((
     key: string,
     execute: (context: DataTableMutationContext) => void | Promise<void>,
-    accepted?: () => void,
+    accepted?: () => unknown,
   ) => runner.run({
     key,
     kind: 'row',
     execute: async (context) => {
-      const isCurrent = () => !context.signal.aborted
-        && isAuthorizationScopeCallbackCurrent(currentKey.current, ready.current, capturedKey);
+      const isCurrent = () => {
+        const internal = client as InternalClient | null;
+        return mounted.current && incarnation.current.token === token && !context.signal.aborted
+          && isAuthorizationScopeCallbackCurrent(currentKey.current, ready.current, capturedKey)
+          && readAuthorizationScopeBoundaryKey(internal?.auth ?? null, internal?._authorizationDataBoundary?.revision ?? 0) === capturedKey;
+      };
       if (!isCurrent()) {
         throw mutationCancelledError();
       }
@@ -59,9 +70,7 @@ export function useCrudMutation(boundaryKey: string): CrudMutationRunner {
       if (!isCurrent()) {
         throw mutationCancelledError();
       }
-      try {
-        accepted?.();
-      } catch {
+      const notificationFailed = () => {
         // The write was accepted. An app follow-up failure must not turn it
         // into a failed write that a retry could issue a second time.
         if (!isCurrent()) return;
@@ -69,8 +78,10 @@ export function useCrudMutation(boundaryKey: string): CrudMutationRunner {
           metadata: { surface: 'crud-page', stage: 'accepted-callback' },
         });
         toast.error('The record change was accepted, but a follow-up action failed.');
-      }
+      };
+      try { void Promise.resolve(accepted?.()).catch(notificationFailed); }
+      catch { notificationFailed(); }
     },
-  }), [capturedKey, runner]);
+  }), [capturedKey, runner, client, token]);
   return { run, isPending: runner.isPending };
 }

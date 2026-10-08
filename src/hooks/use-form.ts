@@ -12,6 +12,7 @@ import {
   useRef,
   useMemo,
   useEffect,
+  useLayoutEffect,
   type FormEvent,
 } from 'react';
 import * as v from 'valibot';
@@ -25,10 +26,13 @@ import { isAuthorizationDataReady, isAuthorizationScopeReady, readAuthorizationS
 import type { InternalClient } from '../frontend/client/sdk';
 import { areFormValuesEqual } from './form-value-utils';
 import { copyFormValue, FormAcceptanceController, isFormRevisionConflict } from './form-acceptance-controller';
+import { FormRecordController } from './form-record-controller';
 import type { FormRevision, FormSubmissionAcceptance, FormSubmissionSnapshot, FormSubmitContext,
-  FormSubmitResult } from './form-save-types';
+  FormSubmitResult, FormRecordSnapshot, FormRecordState, FormRecordReconcileOptions,
+  FormRecordReconcileResult } from './form-save-types';
 export type { FormRevision, FormSubmissionAcceptance, FormSubmissionSnapshot, FormSubmitContext,
-  FormSubmitResult } from './form-save-types';
+  FormSubmitResult, FormRecordSnapshot, FormRecordState, FormRecordReconcileOptions,
+  FormRecordReconcileResult } from './form-save-types';
 import { emitFrontendCode } from '../frontend/client/observability';
 import { OBS_CODES } from '../observability/codes';
 
@@ -50,6 +54,8 @@ export interface UseFormOptions<T extends Row = Row> {
   initialRevision?: FormRevision;
   /** Additional application target fence, independent of Guardian identity. */
   scopeKey?: string | number;
+  /** Required for explicit reactive-record reconciliation; independent from a collection's edit id. */
+  recordIdentity?: string | number;
   /** Called after custom submission resolves or a collection write is acknowledged. */
   onSuccess?: () => void;
   /** Called when custom submission or an acknowledged collection write fails. */
@@ -66,6 +72,8 @@ export interface FieldRegistration {
 }
 
 export interface UseFormReturn<T extends Row = Row> {
+  /** Opaque draft-target incarnation for save/leave adapters; not a backend revision. */
+  readonly boundaryKey: string;
   register(name: string): FieldRegistration;
   handleSubmit(e?: FormEvent): Promise<void>;
   submit(): Promise<FormSubmitResult<T>>;
@@ -73,6 +81,12 @@ export interface UseFormReturn<T extends Row = Row> {
   validateFields(fields?: readonly string[]): boolean;
   captureValues(fields?: readonly string[]): FormSubmissionSnapshot<T>;
   acceptValues(accepted: FormSubmissionAcceptance<T>, snapshot: FormSubmissionSnapshot<T>): boolean;
+  /** Atomically install an authoritative pristine baseline, or preserve a dirty draft for review. */
+  reconcileRecord(record: FormRecordSnapshot<T>, options?: FormRecordReconcileOptions): FormRecordReconcileResult;
+  /** Discard/reload requires explicit admission; cannot replace values while a save is pending. */
+  reloadRecord(options?: FormRecordReconcileOptions): FormRecordReconcileResult;
+  readonly recordState: FormRecordState;
+  readonly incomingRecord: Extract<FormRecordSnapshot<T>, { readonly status: 'ready' }> | null;
   readonly revision?: FormRevision;
   readonly submitError: string | null;
   readonly hasConflict: boolean;
@@ -102,7 +116,14 @@ export function useForm<T extends Row = Row>(
 
   const client = useClientMaybe();
   const authorizationBoundary = useAuthorizationScopeBoundary(client);
-  const effectiveBoundaryKey = JSON.stringify([authorizationBoundary.key, options.scopeKey ?? null, mode, editId ?? null]);
+  const effectiveBoundaryKey = JSON.stringify([authorizationBoundary.key, options.scopeKey ?? null, mode, editId ?? null,
+    options.recordIdentity ?? null]);
+  // A→B→A must not resurrect callbacks captured in the first A. Fence each observed
+  // incarnation synchronously, before effects can reset the visible form state.
+  const incarnationRef = useRef({ key: effectiveBoundaryKey, token: {}, sequence: 0 });
+  if (incarnationRef.current.key !== effectiveBoundaryKey) incarnationRef.current = { key: effectiveBoundaryKey, token: {},
+    sequence: incarnationRef.current.sequence + 1 };
+  const incarnation = incarnationRef.current.token;
   const collection = useMemo((): Collection<T> | null => {
     if (typeof options.collection === 'string') {
       if (!client) {
@@ -158,43 +179,54 @@ export function useForm<T extends Row = Row>(
   const acceptanceRef = useRef<FormAcceptanceController | null>(null);
   if (!acceptanceRef.current) { acceptanceRef.current = new FormAcceptanceController(); acceptanceRef.current.reset(options.initialRevision); }
   const acceptance = acceptanceRef.current;
+  const recordRef = useRef<FormRecordController<T> | null>(null);
+  if (!recordRef.current) recordRef.current = new FormRecordController<T>();
+  const recordController = recordRef.current;
   const [, setBaselineVersion] = useState(0);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [hasConflict, setHasConflict] = useState(false);
   const conflictRef = useRef(false);
   const mounted = useRef(true);
   const fieldRefs = useRef<Map<string, HTMLElement | null>>(new Map());
-  const currentScopeRef = useRef({ client, scopeKey: options.scopeKey, mode, editId });
-  currentScopeRef.current = { client, scopeKey: options.scopeKey, mode, editId };
+  const currentScopeRef = useRef({ client, scopeKey: options.scopeKey, mode, editId, recordIdentity: options.recordIdentity });
+  currentScopeRef.current = { client, scopeKey: options.scopeKey, mode, editId, recordIdentity: options.recordIdentity };
   const callbackBoundaryKey = effectiveBoundaryKey;
   const readBoundary = useCallback(() => {
     const current = currentScopeRef.current;
     const internal = current.client as InternalClient | null;
     const auth = internal?.auth ?? null, revision = internal?._authorizationDataBoundary?.revision ?? 0;
-    return { key: JSON.stringify([readAuthorizationScopeBoundaryKey(auth, revision), current.scopeKey ?? null, current.mode, current.editId ?? null]),
+    return { key: JSON.stringify([readAuthorizationScopeBoundaryKey(auth, revision), current.scopeKey ?? null, current.mode, current.editId ?? null,
+      current.recordIdentity ?? null]),
       ready: !auth || isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
         && isAuthorizationDataReady(revision, auth.authorizationState.status, auth.isAuthenticated) };
   }, []);
   const isCurrentScope = useCallback(
-    () => { const boundary = readBoundary(); return mounted.current && boundary.ready && boundary.key === callbackBoundaryKey; },
-    [callbackBoundaryKey, readBoundary],
+    () => { const boundary = readBoundary(); return mounted.current && boundary.ready && boundary.key === callbackBoundaryKey
+      && incarnationRef.current.token === incarnation; },
+    [callbackBoundaryKey, incarnation, readBoundary],
   );
+  const isRecordReadable = useCallback(() => recordController.state.status !== 'missing'
+    && recordController.state.status !== 'forbidden', [recordController]);
   const visible = authorizationBoundary.ready
     && loadedBoundaryKey === effectiveBoundaryKey;
-  const visibleValues = visible ? values : initialValues;
+  const recordReadable = recordController.state.status !== 'missing' && recordController.state.status !== 'forbidden';
+  const visibleValues = !recordReadable ? {} : visible ? values : initialValues;
 
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; submissionRef.current?.controller.abort(); submissionRef.current = null; acceptance.reset(); };
   }, [acceptance]);
 
-  useEffect(() => {
+  // Retire/reset before any caller's passive source adapter can admit the new
+  // record. Passive parent reset would erase a child's initial/late hydration.
+  useLayoutEffect(() => {
     submissionRef.current?.controller.abort();
     setLoadedBoundaryKey(effectiveBoundaryKey);
     initialRef.current = copyFormValue(initialValues);
     valuesRef.current = initialValues;
     setValues(initialValues);
     acceptance.reset(options.initialRevision);
+    recordController.reset();
     setBaselineVersion(version => version + 1);
     setSubmitError(null); conflictRef.current = false; setHasConflict(false);
     setErrors({});
@@ -206,6 +238,7 @@ export function useForm<T extends Row = Row>(
   // ─── Edit mode: load existing row from collection ─────────────────
   useEffect(() => {
     if (authorizationBoundary.ready
+      && options.recordIdentity === undefined
       && mode === 'edit'
       && editId
       && collection) {
@@ -276,8 +309,8 @@ export function useForm<T extends Row = Row>(
   }, [fieldNames, options.includeFields, schema, validateField]);
 
   const isValid = useMemo(() => {
-    return visible && Object.keys(collectValidationErrors(visibleValues)).length === 0;
-  }, [collectValidationErrors, visible, visibleValues]);
+    return visible && recordReadable && Object.keys(collectValidationErrors(visibleValues)).length === 0;
+  }, [collectValidationErrors, recordReadable, visible, visibleValues]);
 
   // ─── Register ───────────────────────────────────────────────────────
 
@@ -286,7 +319,7 @@ export function useForm<T extends Row = Row>(
       name,
       value: visibleValues[name] ?? '',
       onChange: (valueOrEvent: unknown) => {
-        if (!isCurrentScope()) return;
+        if (!isCurrentScope() || !isRecordReadable()) return;
         let newValue: unknown;
         if (
           valueOrEvent &&
@@ -319,7 +352,7 @@ export function useForm<T extends Row = Row>(
         }
       },
       onBlur: () => {
-        if (!isCurrentScope()) return;
+        if (!isCurrentScope() || !isRecordReadable()) return;
         setTouched((prev) => new Set(prev).add(name));
         const error = validateField(name, visibleValues[name]);
         if (error) {
@@ -337,7 +370,7 @@ export function useForm<T extends Row = Row>(
         fieldRefs.current.set(name, el);
       },
     }),
-    [acceptance, errors, isCurrentScope, validateField, visible, visibleValues],
+    [acceptance, errors, isCurrentScope, isRecordReadable, validateField, visible, visibleValues],
   );
 
   // ─── Submit ─────────────────────────────────────────────────────────
@@ -347,15 +380,16 @@ export function useForm<T extends Row = Row>(
     if (fields.some(field => !allowed.has(field)) || new Set(fields).size !== fields.length) {
       throw new Error('Form snapshots require unique declared fields.');
     }
-    return acceptance.capture(isCurrentScope() ? valuesRef.current : {}, isCurrentScope() ? fields : []) as FormSubmissionSnapshot<T>;
-  }, [acceptance, fieldNames, isCurrentScope]);
+    const readable = isCurrentScope() && isRecordReadable();
+    return acceptance.capture(readable ? valuesRef.current : {}, readable ? fields : []) as FormSubmissionSnapshot<T>;
+  }, [acceptance, fieldNames, isCurrentScope, isRecordReadable]);
 
   const validateFields = useCallback((fields: readonly string[] = fieldNames): boolean => {
     const allowed = new Set(fieldNames);
     if (fields.some(field => !allowed.has(field)) || new Set(fields).size !== fields.length) {
       throw new Error('Form validation requires unique declared fields.');
     }
-    if (!isCurrentScope()) return false;
+    if (!isCurrentScope() || !isRecordReadable()) return false;
     const invalid = Object.fromEntries(fields.flatMap(field => {
       const error = validateField(field, valuesRef.current[field]);
       return error ? [[field, error]] : [];
@@ -365,10 +399,10 @@ export function useForm<T extends Row = Row>(
     const first = fields.find(field => invalid[field]);
     if (first) fieldRefs.current.get(first)?.focus();
     return first === undefined;
-  }, [fieldNames, isCurrentScope, validateField]);
+  }, [fieldNames, isCurrentScope, isRecordReadable, validateField]);
 
   const acceptValues = useCallback((accepted: FormSubmissionAcceptance<T>, snapshot: FormSubmissionSnapshot<T>): boolean => {
-    if (!isCurrentScope()) return false;
+    if (!isCurrentScope() || !isRecordReadable()) return false;
     const submitted = acceptance.read(snapshot);
     if (!submitted) return false;
     const canonical = accepted.values === undefined ? submitted
@@ -377,16 +411,51 @@ export function useForm<T extends Row = Row>(
     if (!patch) return false;
     initialRef.current = { ...initialRef.current, ...patch.baseline };
     valuesRef.current = { ...valuesRef.current, ...patch.draft };
+    recordController.accepted(initialRef.current as Partial<T>, acceptance.revision, snapshot.expectedRevision);
     setValues(valuesRef.current);
     setBaselineVersion(version => version + 1);
     setSubmitError(null); conflictRef.current = false; setHasConflict(false);
     setErrors(previous => Object.fromEntries(Object.entries(previous).filter(([field]) => !snapshot.fields.includes(field))));
     return true;
-  }, [acceptance, isCurrentScope, schema]);
+  }, [acceptance, isCurrentScope, isRecordReadable, recordController, schema]);
+
+  const adoptRecord = useCallback((record: Extract<FormRecordSnapshot<T>, { readonly status: 'ready' }>) => {
+    submissionRef.current?.controller.abort();
+    initialRef.current = copyFormValue(record.values);
+    valuesRef.current = copyFormValue(record.values);
+    acceptance.reset(record.revision);
+    setValues(valuesRef.current); setBaselineVersion(version => version + 1);
+    setErrors({}); setTouched(new Set());
+    setSubmitError(null); conflictRef.current = false; setHasConflict(false);
+  }, [acceptance]);
+
+  const reconcileRecord = useCallback((record: FormRecordSnapshot<T>, reconcileOptions: FormRecordReconcileOptions = {}): FormRecordReconcileResult => {
+    if (!isCurrentScope()) return { kind: 'ignored', reason: 'retired' };
+    if (options.recordIdentity === undefined || !Object.is(record.identity, options.recordIdentity)) return { kind: 'ignored', reason: 'identity' };
+    const canonical = record.status === 'ready' ? { ...record,
+      values: pickFormFields(schema.decodeRow({ ...schema.getDefaults(), ...record.values }), fieldNames) as Partial<T> } : record;
+    const dirty = fieldNames.some(field => !areFormValuesEqual(valuesRef.current[field], initialRef.current[field]));
+    const previousState = recordController.state;
+    const result = recordController.reconcile(canonical, initialRef.current as Partial<T>, acceptance.revision,
+      dirty, submissionRef.current !== null, reconcileOptions.discardDraft);
+    if (result.kind === 'adopted' && canonical.status === 'ready') adoptRecord(canonical);
+    if (recordController.state !== previousState) setBaselineVersion(version => version + 1);
+    return result;
+  }, [acceptance, adoptRecord, fieldNames, isCurrentScope, options.recordIdentity, recordController, schema]);
+
+  const reloadRecord = useCallback((reconcileOptions: FormRecordReconcileOptions = {}): FormRecordReconcileResult => {
+    if (!isCurrentScope()) return { kind: 'ignored', reason: 'retired' };
+    const incoming = recordController.incomingRecord;
+    const dirty = fieldNames.some(field => !areFormValuesEqual(valuesRef.current[field], initialRef.current[field]));
+    const result = recordController.reload(dirty, submissionRef.current !== null, reconcileOptions.discardDraft);
+    if (result.kind === 'adopted' && incoming) adoptRecord(incoming);
+    return result;
+  }, [adoptRecord, fieldNames, isCurrentScope, recordController]);
 
   const submit = useCallback(
     async (): Promise<FormSubmitResult<T>> => {
       if (!visible || !isCurrentScope()) return { kind: 'retired' };
+      if (options.recordIdentity !== undefined && recordController.state.status !== 'ready') return { kind: 'blocked' };
       if (options.baseline === 'accepted' && conflictRef.current) return { kind: 'failed', conflict: true,
         error: 'These settings changed elsewhere. Your draft is preserved. Reload and review before saving.' };
       if (submissionRef.current !== null) return { kind: 'blocked' };
@@ -427,13 +496,14 @@ export function useForm<T extends Row = Row>(
           if (mode === 'edit' && editId) {
             const updateData = { ...data } as Record<string, unknown>;
             delete updateData[schema.primaryKey];
-            await collection.updateAsync(editId, updateData as Partial<T>);
+            await collection.updateAsync(editId, updateData as Partial<T>, { signal: submission.controller.signal });
           } else {
-            await collection.insertAsync(data);
+            await collection.insertAsync(data, { signal: submission.controller.signal });
           }
         }
 
-        if (!operationIsCurrent() || submission.controller.signal.aborted) return { kind: 'retired' };
+        if (!operationIsCurrent() || submission.controller.signal.aborted
+          || recordController.state.status === 'missing' || recordController.state.status === 'forbidden') return { kind: 'retired' };
         const acknowledgment = accepted || {};
         const acceptedValues = (acknowledgment.values === undefined ? acceptance.read(snapshot)
           : schema.decodeRow({ ...schema.encodeRow(snapshot.values), ...acknowledgment.values })) as T;
@@ -483,6 +553,8 @@ export function useForm<T extends Row = Row>(
       onSuccess,
       options.includeFields,
       options.baseline,
+      options.recordIdentity,
+      recordController,
       schema,
       visible,
     ],
@@ -506,7 +578,7 @@ export function useForm<T extends Row = Row>(
   // ─── Utilities ──────────────────────────────────────────────────────
 
   const reset = useCallback(() => {
-    if (!isCurrentScope() || submissionRef.current) return;
+    if (!isCurrentScope() || !isRecordReadable() || submissionRef.current) return;
     for (const field of fieldNames) acceptance.edited(field);
     valuesRef.current = copyFormValue(initialRef.current);
     setValues(valuesRef.current);
@@ -514,24 +586,25 @@ export function useForm<T extends Row = Row>(
     setTouched(new Set());
     setIsSubmitting(false);
     setSubmitError(null); conflictRef.current = false; setHasConflict(false);
-  }, [acceptance, fieldNames, isCurrentScope]);
+  }, [acceptance, fieldNames, isCurrentScope, isRecordReadable]);
 
   const setValue = useCallback((name: string, value: unknown) => {
-    if (!isCurrentScope()) return;
+    if (!isCurrentScope() || !isRecordReadable()) return;
     if (!fieldNames.includes(name)) throw new Error('Form edits require a declared field.');
     acceptance.edited(name);
     valuesRef.current = { ...valuesRef.current, [name]: value };
     setValues(valuesRef.current);
-  }, [acceptance, fieldNames, isCurrentScope]);
+  }, [acceptance, fieldNames, isCurrentScope, isRecordReadable]);
 
   const watch = useCallback(
-    (name: string) => isCurrentScope() ? valuesRef.current[name] : undefined,
-    [isCurrentScope],
+    (name: string) => isCurrentScope() && recordController.state.status !== 'missing' && recordController.state.status !== 'forbidden'
+      ? valuesRef.current[name] : undefined,
+    [isCurrentScope, recordController],
   );
 
   const getValues = useCallback(
-    () => copyFormValue(isCurrentScope() ? valuesRef.current : initialValues) as T,
-    [initialValues, isCurrentScope],
+    () => copyFormValue(visible && isCurrentScope() && isRecordReadable() ? valuesRef.current : {}) as T,
+    [visible, isCurrentScope, isRecordReadable],
   );
 
   const getFieldMeta = useCallback(
@@ -540,19 +613,24 @@ export function useForm<T extends Row = Row>(
   );
 
   return {
+    boundaryKey: JSON.stringify([effectiveBoundaryKey, incarnationRef.current.sequence]),
     register,
     handleSubmit,
     submit,
     validateFields,
     captureValues,
     acceptValues,
+    reconcileRecord,
+    reloadRecord,
+    recordState: visible ? recordController.state : { status: 'idle', changedElsewhere: false },
+    incomingRecord: visible ? recordController.incomingRecord : null,
     revision: visible ? acceptance.revision : undefined,
     submitError: visible ? submitError : null,
     hasConflict: visible && hasConflict,
-    get dirtyFields() { return isCurrentScope() ? fieldNames.filter(field => !areFormValuesEqual(valuesRef.current[field], initialRef.current[field])) : []; },
-    errors: visible ? errors : {},
+    get dirtyFields() { return isCurrentScope() && isRecordReadable() ? fieldNames.filter(field => !areFormValuesEqual(valuesRef.current[field], initialRef.current[field])) : []; },
+    errors: visible && recordReadable ? errors : {},
     get isSubmitting() { return visible && isCurrentScope() && submissionRef.current !== null; },
-    get isDirty() { return visible && isCurrentScope() && fieldNames.some(field => !areFormValuesEqual(valuesRef.current[field], initialRef.current[field])); },
+    get isDirty() { return visible && isCurrentScope() && isRecordReadable() && fieldNames.some(field => !areFormValuesEqual(valuesRef.current[field], initialRef.current[field])); },
     isValid,
     reset,
     setValue,

@@ -60,6 +60,17 @@ responsibility when concerns mix, not solely because a test is long.
 
 ## Discovery And Verification
 
+For the unreleased [structured modal upgrade](../../frontend/modals/index.md),
+feature code supplies title, body/sections and actions to the shared shell.
+Do not recreate headers, close buttons, backdrops, focus traps or modal stacks.
+Use public DenseList rows for settings/pickers instead of wrapping native
+controls in clickable rows. Bind forms with useModalForm and await current
+domain acknowledgments; do not close an editor because a legacy void submit
+function returned. [Source-only Doctor](../../cli/doctor/source-audit.md)
+finds likely migration sites without executing configuration, not proof that
+a custom frame renders correctly. Consult the installed app's public exports
+before recommending working-source additions.
+
 Prefer public root/react/server or owning subpaths over node_modules/src,
 private aliases or source-local exports. [Doctor rules](../../cli/doctor/source-audit.md)
 can highlight suspicious usage but do not prove every boundary. Read

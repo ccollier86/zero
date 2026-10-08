@@ -148,22 +148,23 @@ export function usePlatformWorkspaceMemberController({
     });
   }, [addRoleChoices.map((role) => role.key).join('|'), canChooseAddRoles, simpleMode]);
 
-  async function addMember(event: React.FormEvent) {
+  async function addMember(event: React.FormEvent): Promise<boolean> {
     event.preventDefault();
     const normalizedEmail = email.trim();
-    if (!normalizedEmail) return;
+    if (!normalizedEmail) return false;
     beginOperation();
     try {
       await directory.addTenantMember(workspaceId, {
         email: normalizedEmail,
         ...(canChooseAddRoles ? { roles: addRoles } : {}),
       });
-      if (!mounted.current) return;
+      if (!mounted.current) return false;
       setEmail('');
-      setAddDialogOpen(false);
       setAnnouncement(`Added ${normalizedEmail} to this ${tenantSingular}`);
+      return true;
     } catch (cause) {
       if (mounted.current) setLocalError(errorMessage(cause, tenantSingular));
+      return false;
     }
   }
 
@@ -191,8 +192,8 @@ export function usePlatformWorkspaceMemberController({
     }
   }
 
-  async function confirmAction() {
-    if (!visibleConfirmation) return;
+  async function confirmAction(): Promise<boolean> {
+    if (!visibleConfirmation) return false;
     const pending = visibleConfirmation;
     beginOperation();
     try {
@@ -207,15 +208,16 @@ export function usePlatformWorkspaceMemberController({
       } else {
         await directory.transferTenantOwnership(workspaceId, pending.member.membershipId);
       }
-      if (!mounted.current) return;
-      setConfirmation(null);
+      if (!mounted.current) return false;
       setAnnouncement(tenantConfirmationAnnouncement(
         pending.action,
         tenantMemberName(pending.member),
         tenantSingular,
       ));
+      return true;
     } catch (cause) {
       if (mounted.current) setLocalError(errorMessage(cause, tenantSingular));
+      return false;
     }
   }
 

@@ -21,6 +21,9 @@ import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import type { ModalContext } from '../../modals/modal-system.types';
+import { bindModalFormState } from '../../modals/modal-form';
+import { submitOwnedAuthModal } from './auth-modal-submit';
 import {
   authFeedbackAnimate,
   authFeedbackExit,
@@ -31,10 +34,13 @@ import {
 export interface ChangePasswordFormProps {
   onSuccess?: () => void;
   className?: string;
+  /** Optional shared-manager ownership; the shell supplies the header and native submit footer. */
+  modalContext?: ModalContext<void>;
+  formId?: string;
 }
 
 /** Render a current-user password change form. */
-export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormProps) {
+export function ChangePasswordForm({ onSuccess, className, modalContext, formId }: ChangePasswordFormProps) {
   const { changePassword } = useAuth();
   const [currentPassword, setCurrentPassword] = React.useState('');
   const [newPassword, setNewPassword] = React.useState('');
@@ -42,10 +48,32 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState(false);
+  const pending = React.useRef(false), mounted = React.useRef(true), sequence = React.useRef(0);
+  const registration = React.useRef<ReturnType<typeof bindModalFormState> | null>(null);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; }; }, []);
+  React.useEffect(() => {
+    if (!modalContext) return;
+    const binding = bindModalFormState(modalContext as unknown as ModalContext<unknown>); registration.current = binding;
+    return () => { binding.dispose(); if (registration.current === binding) registration.current = null; };
+  }, [modalContext]);
+  React.useEffect(() => { registration.current?.update({ dirty: Boolean(currentPassword || newPassword || confirm), busy: submitting, error }); },
+    [modalContext, currentPassword, newPassword, confirm, submitting, error]);
 
   async function handleSubmit(event: React.FormEvent) {
+    if (modalContext) {
+      await submitOwnedAuthModal(modalContext, event, pending, submit);
+      return;
+    }
     event.preventDefault();
-    if (submitting) return;
+    if (pending.current || !mounted.current) return;
+    pending.current = true;
+    try { await submit(); } finally { pending.current = false; }
+  }
+
+  async function submit() {
+    if (!mounted.current || modalContext?.signal.aborted) return;
+    const ticket = ++sequence.current;
+    const current = () => mounted.current && sequence.current === ticket && !modalContext?.signal.aborted;
 
     if (newPassword.length < 8) {
       setError('Password must be at least 8 characters.');
@@ -61,22 +89,28 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
     setSuccess(false);
     try {
       await changePassword(currentPassword, newPassword);
+      if (!current()) return;
       setCurrentPassword('');
       setNewPassword('');
       setConfirm('');
       setSuccess(true);
-      onSuccess?.();
+      modalContext?.accept(undefined);
+      // Consumer notifications cannot turn an acknowledged password rotation
+      // into a failed write or replay the credential-changing operation.
+      try { void Promise.resolve(onSuccess?.()).catch(cause => reportAuthUiError('changePasswordCallback', cause)); }
+      catch (cause) { reportAuthUiError('changePasswordCallback', cause); }
     } catch (err) {
+      if (!current()) return;
       reportAuthUiError('changePassword', err);
       setError(getAuthDisplayMessage(err, 'Failed to change password'));
     } finally {
-      setSubmitting(false);
+      if (current()) setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-3', className)} aria-busy={submitting}>
-      <AuthHeader title="Change password" description="Update the password for the signed-in account" />
+    <form id={formId} onSubmit={handleSubmit} className={cn('space-y-3', className)} aria-busy={submitting}>
+      {!modalContext && <AuthHeader title="Change password" description="Update the password for the signed-in account" />}
 
       <div className="space-y-3">
         <div className="space-y-1.5">
@@ -87,6 +121,7 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
             onChange={(event) => setCurrentPassword(event.target.value)}
             autoComplete="current-password"
             required
+            disabled={submitting}
             className="h-8 text-sm"
           />
         </div>
@@ -99,6 +134,7 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
             autoComplete="new-password"
             showStrength
             required
+            disabled={submitting}
             className="h-8 text-sm"
           />
         </div>
@@ -110,14 +146,16 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
             onChange={(event) => setConfirm(event.target.value)}
             autoComplete="new-password"
             required
+            disabled={submitting}
             className="h-8 text-sm"
           />
         </div>
       </div>
 
-      <FormFeedback error={error} success={success ? 'Password changed.' : null} />
+      {!modalContext && <FormFeedback error={error} success={success ? 'Password changed.' : null} />}
+      {modalContext && submitting && <p role="status" className="text-sm text-muted-foreground">Changing your password…</p>}
 
-      <Button type="submit" size="sm" className="h-8 w-full" disabled={submitting}>
+      {!modalContext && <Button type="submit" size="sm" className="h-8 w-full" disabled={submitting}>
         {submitting ? (
           <>
             <AnimateIcon animate loop>
@@ -128,7 +166,7 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
         ) : (
           'Change password'
         )}
-      </Button>
+      </Button>}
     </form>
   );
 }

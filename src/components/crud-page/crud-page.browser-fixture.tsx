@@ -1,6 +1,6 @@
 /** Synthetic receipt-controlled browser fixture; no app or transport is started. */
 
-import React, { useState, type ReactNode } from 'react';
+import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { ClientProvider } from '../../frontend/client/client-context';
 import type { Client } from '../../frontend/client/sdk';
@@ -8,11 +8,12 @@ import { configureFrontendObservability } from '../../frontend/client/observabil
 import { defineSchema, field } from '../../schema';
 import { CrudPage } from './crud-page';
 import { modals as modalApi } from '../../modals';
+import { ModalManager } from '../../modals/modal-manager';
+import { modalStore } from '../../modals/modal-store';
 import { toast } from 'sonner';
 
 type RecordRow = { key: string; name: string; notes?: string };
 type Call = { action: string; id?: string; value?: unknown; aborted?: boolean };
-type Modal = { id: string; content: ReactNode };
 type Toast = { level: string; message: string };
 const calls: Call[] = [];
 const toasts: Toast[] = [];
@@ -22,11 +23,19 @@ const deleted: string[] = [];
 const observability: string[] = [];
 let failTransform = false;
 let failAcceptedCallback = false;
+let deferCreatedNotification = false, deferDeletedNotification = false;
+const notifications: { action: string; reject(cause: unknown): void }[] = [];
 let modalSequence = 0;
-let modals: Modal[] = [];
-let renderModals = (_modals: Modal[]) => {};
-let finishConfirm: ((value: boolean) => void) | null = null;
-let confirmations = 0;
+const aliases = new Map<string, string>();
+modalStore.subscribe(() => {
+  const state = modalStore.getSnapshot().context;
+  for (const modal of state.modals) if (!aliases.has(modal.id)) aliases.set(modal.id, `modal-${++modalSequence}`);
+  for (const id of state.closingIds) { const alias = aliases.get(id); if (alias && !closes.includes(alias)) closes.push(alias); }
+});
+const pendingConfirmation = () => {
+  const state = modalStore.getSnapshot().context;
+  return state.modals.find(modal => modal.title === 'Delete record?' && !state.closingIds.includes(modal.id));
+};
 const receipts: Array<{ resolve(): void; reject(error: Error): void }> = [];
 const listeners = new Set<() => void>();
 let rows: Record<string, RecordRow> = { 'record-a': { key: 'record-a', name: 'Alpha', notes: 'Original' } };
@@ -74,29 +83,17 @@ const lazy = container.dataset.lazy === 'true';
 const root = createRoot(container);
 
 const harness = {
-  calls, toasts, closes, created, deleted, observability,
-  openModal(options: { content: ReactNode }) {
-    const id = `modal-${++modalSequence}`;
-    modals = [...modals, { id, content: options.content }];
-    renderModals(modals);
-    return id;
-  },
-  closeModal(id: string) {
-    closes.push(id);
-    modals = modals.filter((modal) => modal.id !== id);
-    renderModals(modals);
-  },
-  closeLast() { const last = modals.at(-1); if (last) harness.closeModal(last.id); },
-  discardAll() { modals = []; renderModals(modals); finishConfirm?.(false); finishConfirm = null; },
-  confirm() { confirmations += 1; return new Promise<boolean>((resolve) => { finishConfirm = resolve; }); },
-  confirmationCount: () => confirmations,
-  confirmPending: () => finishConfirm !== null,
-  acceptConfirm(value: boolean) { finishConfirm?.(value); finishConfirm = null; },
+  calls, toasts, closes, created, deleted, observability, notifications,
+  discardAll() { modalApi.discardAll(); },
+  confirmationCount: () => [...aliases.keys()].filter(id => modalStore.getSnapshot().context.modals.find(modal => modal.id === id)?.title === 'Delete record?').length,
+  confirmPending: () => pendingConfirmation() !== undefined,
+  acceptConfirm(value: boolean) { const modal = pendingConfirmation(); if (!modal) return;
+    if (value) void modalApi.performAction(modal.id, 'confirm'); else void modalApi.requestClose(modal.id, { reason: 'cancel' }); },
   toast(level: string, message: string) { toasts.push({ level, message }); },
   resolveReceipt(index: number) { receipts[index]!.resolve(); },
   rejectReceipt(index: number) { receipts[index]!.reject(new Error('synthetic private rejection')); },
-  modalIds: () => modals.map((modal) => modal.id),
-  openUnrelatedModal() { return harness.openModal({ content: <p>Unrelated modal content</p> }); },
+  modalIds: () => { const state = modalStore.getSnapshot().context; return state.modals.filter(modal => !state.closingIds.includes(modal.id)).map(modal => aliases.get(modal.id)); },
+  openUnrelatedModal() { return modalApi.show({ title: 'Unrelated', body: <p>Unrelated modal content</p> }).id; },
   switchScope() {
     Object.assign(auth, { authorizationScopeKey: 'scope-b', user: { userId: 'user-b' }, activeTenant: { tenantId: 'tenant-b' } });
     rows = { 'record-b': { key: 'record-b', name: 'Beta' } };
@@ -106,30 +103,32 @@ const harness = {
   unmount() { root.unmount(); },
   failTransform() { failTransform = true; },
   failAcceptedCallback() { failAcceptedCallback = true; },
+  deferNotification(action: 'create' | 'delete') { if (action === 'create') deferCreatedNotification = true; else deferDeletedNotification = true; },
+  rejectNotification(index: number) { notifications[index]!.reject(new Error('synthetic private notification failure')); },
 };
 declare global { interface Window { __crudTest: typeof harness } }
 window.__crudTest = harness;
-// Test doubles replace presentation only inside this isolated browser bundle.
-Object.assign(modalApi, {
-  open: harness.openModal, close: harness.closeModal, closeLast: harness.closeLast,
-  discardAll: harness.discardAll, confirm: harness.confirm,
-});
 toast.success = ((message: string) => { harness.toast('success', message); return 'synthetic-toast'; }) as typeof toast.success;
 toast.error = ((message: string) => { harness.toast('error', message); return 'synthetic-toast'; }) as typeof toast.error;
 configureFrontendObservability({ sink: { emit: (event) => { observability.push(event.code); } } });
 
 function Harness() {
-  const [openModals, setOpenModals] = useState<Modal[]>([]);
-  renderModals = setOpenModals;
   return (
     <ClientProvider client={client}>
+      <ModalManager>
       <CrudPage<RecordRow>
         table="records" schema={schema} columns={['name']} layout={layout} lazy={lazy}
         onBeforeCreate={(row) => { if (failTransform) throw new Error('synthetic private transform failure'); return { ...row, key: 'created-record' }; }}
         onBeforeUpdate={(_id, row) => ({ ...row, key: 'cannot-replace-key' })}
-        onAfterCreate={(row) => { if (failAcceptedCallback) throw new Error('synthetic private callback failure'); created.push(row); }} onAfterDelete={(id) => deleted.push(id)}
+        onAfterCreate={(row) => {
+          if (failAcceptedCallback) throw new Error('synthetic private callback failure'); created.push(row);
+          if (deferCreatedNotification) return new Promise<void>((_resolve, reject) => notifications.push({ action: 'create', reject }));
+        }} onAfterDelete={(id) => {
+          deleted.push(id);
+          if (deferDeletedNotification) return new Promise<void>((_resolve, reject) => notifications.push({ action: 'delete', reject }));
+        }}
       />
-      {openModals.map((modal) => <div data-crud-modal={modal.id} key={modal.id}>{modal.content}</div>)}
+      </ModalManager>
     </ClientProvider>
   );
 }

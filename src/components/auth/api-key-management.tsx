@@ -9,7 +9,6 @@ import {
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { useAuthorization } from '../../frontend/client/authorization-hooks';
 import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
-import { AlertDialog } from '#zero/components/animate-ui/components/radix/alert-dialog';
 import { Button } from '#zero/components/ui/button';
 import {
   Card,
@@ -19,6 +18,7 @@ import {
   CardTitle,
 } from '#zero/components/ui/card';
 import { cn } from '#zero/lib/utils';
+import { ModalManager } from '../../modals/modal-manager';
 import { AuthConfigLoadState } from './auth-config-load-state';
 import {
   ApiKeyConfirmationDialog,
@@ -57,12 +57,12 @@ export function ApiKeyManagement(props: ApiKeyManagementProps) {
     apiKeyManagementBoundaryTarget(props),
   ]);
   return (
-    <ApiKeyManagementScope
+    <ModalManager><ApiKeyManagementScope
       key={boundary}
       props={props}
       isAuthenticated={auth.isAuthenticated}
       isAuthLoading={auth.isLoading}
-    />
+    /></ModalManager>
   );
 }
 
@@ -127,8 +127,8 @@ function ApiKeyManagementScope({
     }
   }
 
-  async function confirmAction() {
-    if (!confirmation) return;
+  async function confirmAction(): Promise<boolean> {
+    if (!confirmation) return false;
     const pending = confirmation;
     setLocalError(null);
     setAnnouncement('');
@@ -137,18 +137,19 @@ function ApiKeyManagementScope({
         const result = await management.rotate(pending.apiKey.keyId, {
           label: pending.apiKey.label,
         });
-        if (!mounted.current) return;
+        if (!mounted.current) return false;
         dispatchSecret({ type: 'show', issued: result });
         setAnnouncement(`Rotated API key ${pending.apiKey.label}. Copy its new secret now.`);
       } else {
         await management.revoke(pending.apiKey.keyId);
-        if (!mounted.current) return;
+        if (!mounted.current) return false;
         setAnnouncement(`Revoked API key ${pending.apiKey.label}.`);
       }
       completedAction.current = pending.action;
-      setConfirmation(null);
+      return true;
     } catch (cause) {
       if (mounted.current) setLocalError(errorMessage(cause));
+      return false;
     }
   }
 
@@ -227,22 +228,14 @@ function ApiKeyManagementScope({
           </div>
         )}
 
-        <AlertDialog
-          open={confirmation !== null}
-          onOpenChange={(open) => {
-            if (!open && !management.isMutating) {
-              setConfirmation(null);
-              setLocalError(null);
-            }
-          }}
-        >
           {confirmation && (
             <ApiKeyConfirmationDialog
               confirmation={confirmation}
               busy={management.isMutating}
               error={localError}
               tenantSingular={terminology.singular}
-              onConfirm={() => void confirmAction()}
+              onConfirm={confirmAction}
+              onOpenChange={open => { if (!open) { setConfirmation(null); setLocalError(null); } }}
               onCloseAutoFocus={(event) => {
                 event.preventDefault();
                 const action = completedAction.current;
@@ -259,7 +252,6 @@ function ApiKeyManagementScope({
               }}
             />
           )}
-        </AlertDialog>
 
         {config.config === null ? (
           <AuthConfigLoadState

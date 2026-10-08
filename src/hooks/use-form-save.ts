@@ -9,7 +9,8 @@ import { isAuthorizationDataReady, isAuthorizationScopeReady, readAuthorizationS
 import { emitFrontendCode } from '../frontend/client/observability';
 import { OBS_CODES } from '../observability/codes';
 import { useNavigationGuard } from '../frontend/client/router-context';
-import { FormSaveController, type FormSaveAdapter } from './form-save-controller';
+import { FormSaveController, type FormLeaveOptions, type FormSaveAdapter } from './form-save-controller';
+export type { FormLeaveOptions } from './form-save-controller';
 
 export interface UseFormSaveOptions {
   readonly form: FormSaveAdapter;
@@ -31,7 +32,8 @@ export function useFormSave(options: UseFormSaveOptions) {
       const { client, options } = latest.current;
       const internal = client as InternalClient | null, auth = internal?.auth ?? null;
       const revision = internal?._authorizationDataBoundary?.revision ?? 0;
-      return { key: JSON.stringify([readAuthorizationScopeBoundaryKey(auth, revision), options.scopeKey ?? null]),
+      return { key: JSON.stringify([readAuthorizationScopeBoundaryKey(auth, revision), options.scopeKey ?? null,
+        options.form.boundaryKey ?? null]),
         ready: !auth || isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
           && isAuthorizationDataReady(revision, auth.authorizationState.status, auth.isAuthenticated) };
     },
@@ -42,7 +44,7 @@ export function useFormSave(options: UseFormSaveOptions) {
   useNavigationGuard(() => controller.requestLeave(() => {}), options.guardNavigation !== false
     && boundary.ready);
   useEffect(() => { controller.activate(); return () => controller.retire(); }, [controller]);
-  useEffect(() => { controller.reconcile(); }, [boundary.key, boundary.ready, controller, options.scopeKey]);
+  useEffect(() => { controller.reconcile(); }, [boundary.key, boundary.ready, controller, options.scopeKey, options.form.boundaryKey]);
   useEffect(() => {
     if (options.beforeUnload === false) return;
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -54,7 +56,8 @@ export function useFormSave(options: UseFormSaveOptions) {
   }, [controller, options.beforeUnload]);
   const save = useCallback(() => controller.save(), [controller]);
   const discard = useCallback(() => controller.discard(), [controller]);
-  const requestLeave = useCallback((continuation: () => void | Promise<void>) => controller.requestLeave(continuation), [controller]);
+  const requestLeave = useCallback((continuation: () => void | Promise<void>, leaveOptions?: FormLeaveOptions) =>
+    controller.requestLeave(continuation, leaveOptions), [controller]);
   const chooseLeave = useCallback((choice: 'save' | 'discard' | 'stay') => controller.chooseLeave(choice), [controller]);
   return { ...state, error: state.error ?? options.form.submitError ?? null, isDirty: boundary.ready && options.form.isDirty,
     isSaving: state.saving || boundary.ready && options.form.isSubmitting,

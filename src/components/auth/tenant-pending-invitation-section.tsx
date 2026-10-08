@@ -7,7 +7,6 @@ import type {
   AuthTenantInvitationPage,
 } from '../../frontend/client/auth-types';
 import type { AuthConfigStatus } from '../../frontend/client/auth-hooks';
-import { AlertDialog } from '#zero/components/animate-ui/components/radix/alert-dialog';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import { TenantInvitationList } from './tenant-onboarding-invitations';
 import {
@@ -112,16 +111,16 @@ export function TenantPendingInvitationSection({
     error: confirmation ? null : localError ?? error,
   });
 
-  async function confirmRevoke() {
-    if (!confirmation) return;
+  async function confirmRevoke(): Promise<boolean> {
+    if (!confirmation) return false;
     const pending = confirmation;
     setLocalError(null);
     try {
       const revoked = await onRevoke(pending.invitation.invitationId);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       const message = `Revoked invitation for ${pending.invitation.email}`;
-      setConfirmation(null);
-      toast.success(message);
+      try { toast.success(message); }
+      catch (cause) { reportAuthUiError('tenantInvitationAcceptedToast', cause); }
       try {
         onRevoked?.(revoked);
       } catch (callbackError) {
@@ -132,13 +131,14 @@ export function TenantPendingInvitationSection({
       } catch (callbackError) {
         reportAuthUiError('tenantInvitationAnnouncementCallback', callbackError);
       }
-      requestAnimationFrameSafe(() => headingRef.current?.focus());
+      return true;
     } catch (cause) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       setLocalError(getAuthDisplayMessage(
         cause,
         `Unable to revoke this ${tenantSingular} invitation.`,
       ));
+      return false;
     }
   }
 
@@ -184,38 +184,23 @@ export function TenantPendingInvitationSection({
         />
       )}
 
-      <AlertDialog
-        open={confirmation !== null}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen && !isMutating) {
-            setConfirmation(null);
-            setLocalError(null);
-          }
-        }}
-      >
-        {confirmation && (
+      {confirmation && (
           <OnboardingConfirmationDialog
             key={onboardingConfirmationKey(confirmation)}
             confirmation={confirmation}
             busy={isMutating}
             error={localError}
-            onConfirm={() => { void confirmRevoke(); }}
+            onConfirm={() => confirmRevoke()}
+            onOpenChange={nextOpen => {
+              if (!nextOpen) { setConfirmation(null); setLocalError(null); }
+            }}
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               if (triggerRef.current?.isConnected) triggerRef.current.focus();
               else headingRef.current?.focus();
             }}
           />
-        )}
-      </AlertDialog>
+      )}
     </div>
   );
-}
-
-function requestAnimationFrameSafe(callback: () => void): void {
-  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(callback);
-    return;
-  }
-  callback();
 }

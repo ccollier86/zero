@@ -3,14 +3,14 @@
 import * as React from 'react';
 import type { AuthTenantRoleDescriptor } from '../../frontend/client/auth-types';
 import {
-  Dialog,
   DialogClose,
-  DialogContent as RadixDialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '#zero/components/animate-ui/components/radix/dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
+import { submitOwnedAuthModal } from './auth-modal-submit';
 import { Button } from '#zero/components/ui/button';
 import {
   ManualInvitationToken,
@@ -38,7 +38,7 @@ export interface TenantInvitationDialogProps {
   onEmailChange(email: string): void;
   onModeChange(mode: TenantInvitationDeliveryMode): void;
   onRolesChange(roles: string[]): void;
-  onSubmit(event: React.FormEvent): void;
+  onSubmit(event: React.FormEvent): void | Promise<void>;
   onCopyToken(): void;
   onDismissToken(): void;
 }
@@ -46,7 +46,7 @@ export interface TenantInvitationDialogProps {
 export type TenantInvitationDialogBodyProps = Omit<
   TenantInvitationDialogProps,
   'open' | 'onOpenChange'
->;
+> & { managed?: boolean; formId?: string };
 
 /** Focused invitation workflow composed beside the member-directory Add action. */
 export function TenantInvitationDialog({
@@ -73,15 +73,20 @@ export function TenantInvitationDialog({
   onCopyToken,
   onDismissToken,
 }: TenantInvitationDialogProps) {
+  const pending = React.useRef(false);
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
+    <ControlledModal
+      open={open} busy={busy} error={error} identityKey={manualToken ? 'issued-token' : canIssue ? 'composer' : 'pending'}
+      onOpenChange={nextOpen => {
         if (!busy || nextOpen) onOpenChange(nextOpen);
       }}
-    >
-      <RadixDialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl">
-        <TenantInvitationDialogBody
+      descriptor={{ title: canIssue ? 'Invite member' : 'Pending invitations', size: 'lg', guard: false,
+        description: canIssue ? `Invite someone to this ${tenantSingular} and choose the access they receive after accepting.`
+          : `Review pending invitations for this ${tenantSingular}.`,
+        actions: manualToken ? [] : [{ id: 'cancel', label: canIssue ? 'Cancel' : 'Close', role: 'cancel', disabled: busy },
+          ...(canIssue ? [{ id: 'invite', label: 'Invite', variant: 'primary' as const, submit: true,
+            disabled: busy || !email.trim() || canChooseRoles && selectedRoles.length === 0 }] : [])],
+        body: context => <TenantInvitationDialogBody managed formId={`${context.id}-invite`}
           email={email}
           mode={mode}
           availableModes={availableModes}
@@ -91,7 +96,7 @@ export function TenantInvitationDialog({
           canChooseRoles={canChooseRoles}
           canIssue={canIssue}
           busy={busy}
-          error={error}
+          error={null}
           manualToken={manualToken}
           manualTokenError={manualTokenError}
           pendingContent={pendingContent}
@@ -99,12 +104,12 @@ export function TenantInvitationDialog({
           onEmailChange={onEmailChange}
           onModeChange={onModeChange}
           onRolesChange={onRolesChange}
-          onSubmit={onSubmit}
+          onSubmit={event => { if (!busy) void submitOwnedAuthModal(context, event, pending, () => onSubmit(event));
+            else { event.preventDefault(); event.stopPropagation(); } }}
           onCopyToken={onCopyToken}
           onDismissToken={onDismissToken}
-        />
-      </RadixDialogContent>
-    </Dialog>
+        />,
+      }} />
   );
 }
 
@@ -130,19 +135,20 @@ export function TenantInvitationDialogBody({
   onSubmit,
   onCopyToken,
   onDismissToken,
+  managed = false, formId,
 }: TenantInvitationDialogBodyProps) {
   const headingId = React.useId();
 
   return (
     <>
-      <DialogHeader>
+      {!managed && <DialogHeader>
         <DialogTitle>{canIssue ? 'Invite member' : 'Pending invitations'}</DialogTitle>
         <DialogDescription>
           {canIssue
             ? `Invite someone to this ${tenantSingular} and choose the access they receive after accepting.`
             : `Review pending invitations for this ${tenantSingular}.`}
         </DialogDescription>
-      </DialogHeader>
+      </DialogHeader>}
 
       {manualToken ? (
         <ManualInvitationToken
@@ -169,6 +175,7 @@ export function TenantInvitationDialogBody({
           onModeChange={onModeChange}
           onRolesChange={onRolesChange}
           onSubmit={onSubmit}
+          formId={formId} showSubmit={!managed}
         />
       ) : null}
 
@@ -183,7 +190,7 @@ export function TenantInvitationDialogBody({
 
       {pendingContent}
 
-      {!manualToken && (
+      {!managed && !manualToken && (
         <DialogFooter>
           <DialogClose asChild>
             <Button type="button" size="sm" variant="outline" disabled={busy}>

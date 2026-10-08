@@ -8,14 +8,14 @@ visibility: internal
 system: modals
 feature: hold-button
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 source; structured-modal upgrade unreleased"]
 modes: [browser, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
@@ -48,6 +48,12 @@ Elapsed duration uses performance.now so wall-clock changes cannot shorten it.
 Progress is presentation, not an accepted deletion receipt. The callback remains
 void/caller-owned and can arrange an awaited mutation lifecycle separately.
 Do not hide backend failures behind a completed fill animation.
+
+In the unreleased structured shell, actions/actionConfirm can set holdToConfirm
+and holdDuration directly. Their admission bounds are250–60000ms; the standalone
+HoldButton retains its finite-positive compatibility contract. The1500ms default
+is actual elapsed safety time: durationMultiplier and reduced motion never shorten
+it. Prefer actionConfirm when the dialog must stay open until deletion is accepted.
 
 ## Verification
 

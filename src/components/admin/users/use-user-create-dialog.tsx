@@ -21,17 +21,21 @@ export function useUserCreateDialog(params: {
   createUser: (input: AuthAdminCreateUserParams) => Promise<void>;
 }) {
   return React.useCallback(() => {
-    modals.open({
+    modals.show<void>({
       title: 'Add user',
       size: 'lg',
-      content: (
+      description: 'Create an account and configure its initial access.',
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
+        { id: 'create', label: 'Create user', variant: 'primary', submit: true }],
+      body: context => (
         <UserManagementCreateForm
           config={params.config}
           roleOptions={params.roleOptions}
           allowGlobalAdminRole={params.allowGlobalAdminRole}
+          modalContext={context} formId={`${context.id}-create-user`} showSubmit={false}
           onSubmit={async (input) => {
+            if (context.signal.aborted) throw new Error('This dialog is no longer active.');
             await params.createUser(input);
-            modals.closeLast();
           }}
         />
       ),

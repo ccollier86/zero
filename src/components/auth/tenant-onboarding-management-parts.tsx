@@ -6,14 +6,8 @@ import type {
   AuthTenantJoinRequest,
 } from '../../frontend/client/auth-types';
 import type { AuthConfigStatus } from '../../frontend/client/auth-hooks';
-import {
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '#zero/components/animate-ui/components/radix/alert-dialog';
+import type { AlertDialogContent } from '#zero/components/animate-ui/components/radix/alert-dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
 import { Button } from '#zero/components/ui/button';
 import { cn } from '#zero/lib/utils';
 
@@ -193,11 +187,13 @@ export function OnboardingConfirmationDialog({
   error,
   onConfirm,
   onCloseAutoFocus,
+  onOpenChange,
 }: {
   confirmation: OnboardingConfirmation;
   busy: boolean;
   error: string | null;
-  onConfirm(): void;
+  onConfirm(): Promise<boolean>;
+  onOpenChange(open: boolean): void;
   onCloseAutoFocus: React.ComponentProps<typeof AlertDialogContent>['onCloseAutoFocus'];
 }) {
   const invitation = confirmation.action === 'revoke-invitation';
@@ -205,44 +201,16 @@ export function OnboardingConfirmationDialog({
     ? confirmation.invitation.email
     : confirmation.request.applicant.email;
   return (
-    <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
-      <AlertDialogHeader>
-        <AlertDialogTitle>
-          {invitation ? 'Revoke invitation?' : 'Deny access request?'}
-        </AlertDialogTitle>
-        <AlertDialogDescription>
-          {invitation
-            ? `${subject} will no longer be able to use this invitation.`
-            : `${subject} will not receive access from this request. The decision is retained in the onboarding history.`}
-        </AlertDialogDescription>
-      </AlertDialogHeader>
-      {error && (
-        <div
-          role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        >
-          {error}
-        </div>
-      )}
-      <AlertDialogFooter>
-        <AlertDialogCancel asChild>
-          <Button type="button" size="sm" variant="outline" disabled={busy}>
-            Cancel
-          </Button>
-        </AlertDialogCancel>
-        <Button
-          type="button"
-          size="sm"
-          variant="destructive"
-          disabled={busy}
-          onClick={onConfirm}
-        >
-          {busy
-            ? invitation ? 'Revoking…' : 'Denying…'
-            : invitation ? 'Revoke invitation' : 'Deny request'}
-        </Button>
-      </AlertDialogFooter>
-    </AlertDialogContent>
+    <ControlledModal open busy={busy} error={error} onOpenChange={onOpenChange}
+      identityKey={onboardingConfirmationKey(confirmation)} descriptor={{
+        title: invitation ? 'Revoke invitation?' : 'Deny access request?',
+        description: invitation ? `${subject} will no longer be able to use this invitation.`
+          : `${subject} will not receive access from this request. The decision is retained in the onboarding history.`,
+        role: 'alertdialog', size: 'sm', tone: 'danger', initialFocus: 'cancel', guard: false, onCloseAutoFocus,
+        actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel', disabled: busy },
+          { id: 'confirm', label: invitation ? 'Revoke invitation' : 'Deny request', variant: 'danger',
+            disabled: busy, onClick: async context => { const accepted = await onConfirm(); return context.signal.aborted ? false : accepted; } }],
+      }} />
   );
 }
 

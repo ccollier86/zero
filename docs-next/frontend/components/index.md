@@ -39,6 +39,8 @@ persistence simply because they are exported by Zero.
   optional add actions and explicitly enabled shape-matched status decoration.
 - [Settings matrix](./settings-matrix.md) covers one to three choice columns,
   controlled preferences, per-cell save state and capability/scope retirement.
+- [Dense settings lists](./dense-list.md) covers grouped native rows with optional
+  media, trailing controls and safe single-action picker composition.
 - [Integration settings list](./integration-settings-list.md) covers flat/grouped
   service rows, labeled status, confirmed actions and app-owned target lifetimes.
 - [JSON editor](./json-editor.md) covers structured JSON/text drafts and explicit

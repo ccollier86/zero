@@ -65,6 +65,9 @@ const auth = {
   store: { getSnapshot: () => ({ context }) },
   subscribe(fn: () => void) { listeners.add(fn); return () => listeners.delete(fn); },
   subscribeAuthorization(fn: () => void) { listeners.add(fn); return () => listeners.delete(fn); },
+  changePassword(currentPassword: string, newPassword: string) {
+    return new Promise<void>((resolve, reject) => passwordCalls.push({ currentPassword, newPassword, resolve, reject }));
+  },
   async getConfig(): Promise<AuthPublicConfig> { return { registration: { mode: 'disabled', bootstrapRequired: false,
     publicRegistrationEnabled: false }, userProfile: { ...structuredClone(snapshot.capabilities),
       ...(contactsEnabled ? { contacts: structuredClone(contactSnapshot.capabilities) } : {}),
@@ -78,6 +81,7 @@ interface Receipt {
   reject(cause: unknown): void;
 }
 const calls: Receipt[] = [];
+const passwordCalls: { currentPassword: string; newPassword: string; resolve(): void; reject(cause: unknown): void }[] = [];
 interface ContactReceipt { action: string; input: Record<string, unknown>; signal?: AbortSignal; previous: UserContactSnapshot;
   resolve(value: UserContactSnapshot): void; reject(cause: unknown): void }
 const contactCalls: ContactReceipt[] = [];
@@ -127,7 +131,9 @@ const client = { auth, _authorizationDataBoundary: data, presence: {
 } } as unknown as Client;
 const config = getAuthConfigController(auth);
 const harness = {
-  calls, contactCalls, completions, verified, observations, observationEvents, avatarCalls, avatarDeliveries, profileReads, avatarAcceptedCallbacks, gets: () => gets,
+  calls, passwordCalls, contactCalls, completions, verified, observations, observationEvents, avatarCalls, avatarDeliveries, profileReads, avatarAcceptedCallbacks, gets: () => gets,
+  resolvePassword(index: number) { passwordCalls[index]!.resolve(); },
+  rejectPassword(index: number) { passwordCalls[index]!.reject({ code: 'INVALID_CREDENTIALS', status: 401 }); },
   showAvatarConsumer: (_deferred = false) => {},
   rejectAvatarAccepted(index: number) { avatarAcceptedCallbacks[index]!.reject(new Error('PRIVATE_AVATAR_CALLBACK_FAILURE')); },
   holdNextProfileRead() { holdProfileRead = true; },

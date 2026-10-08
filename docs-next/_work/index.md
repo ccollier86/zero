@@ -26,6 +26,13 @@ publication, search, and production agent bundles.
 - [Filters integration plan](./filters-integration-plan.md): planned standalone
   query editing, compact visuals, DataTable/Data Studio integration, execution
   parity, authorization, verification and documentation deliverables.
+- [Modal system redesign](./modal-system-redesign-plan.md): source-backed,
+  dependency-ordered plan for standardized modal layouts, dense lists, owned
+  overlays, acknowledged forms, reactive-record awareness, Torrent progress,
+  Doctor migration assistance and package/documentation qualification.
+- [Modal system independent review](./modal-system-review.md): findings,
+  corrected ownership/acknowledgment defects, actual synthetic/archive evidence
+  and remaining release qualification; not a shipped release assertion.
 
 ## Working Status
 

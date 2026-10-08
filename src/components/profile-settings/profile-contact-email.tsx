@@ -1,13 +1,14 @@
 'use client';
 
 /** Security-sensitive candidate email ceremony using Zero's existing dialog and password/form controls. */
-import { useId, useState } from 'react';
+import { useId, useState, useRef } from 'react';
 import { Mail, Pencil, X } from 'lucide-react';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
 import { PasswordInput } from '../auth/password-input';
-import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from '../animate-ui/components/radix/dialog';
+import { ControlledModal } from '../../modals/modal-controlled';
+import { createModalFormGuard } from '../../modals/modal-form';
 import { UnsavedChangesDialog } from '../form-save';
 import { useForm } from '../../hooks/use-form';
 import { useFormSave } from '../../hooks/use-form-save';
@@ -28,6 +29,7 @@ export interface UserContactEmailProps {
 }
 export function UserContactEmail({ snapshot, readOnly, pending, error, verify, cancel, change }: UserContactEmailProps) {
   const [changing, setChanging] = useState(false), id = useId();
+  const trigger = useRef<Element | null>(null);
   const contact = snapshot.email, capabilities = snapshot.capabilities.email;
   if (!capabilities.readable || !contact) return null;
   const expired = contact.expiresAt !== null && contact.expiresAt <= Date.now();
@@ -47,18 +49,18 @@ export function UserContactEmail({ snapshot, readOnly, pending, error, verify, c
         {capabilities.verifyReady && contact.value && contact.state !== 'possession-verified' && !contact.challengeId && <Button type="button" size="sm" variant="outline" disabled={pending}
           onClick={() => { void verify(); }}><Mail />Verify email</Button>}
         {capabilities.changeReady && !contact.challengeId && <Button type="button" size="sm" variant="ghost" disabled={pending}
-          onClick={() => setChanging(true)}><Pencil />Change email</Button>}
+          onClick={event => { trigger.current = event.currentTarget; setChanging(true); }}><Pencil />Change email</Button>}
       </div>}
       {!capabilities.verifyReady && !capabilities.changeReady && !readOnly && contact.state !== 'possession-verified'
         && <p className="profile-settings__hint">Email verification or changes are not available for this session or server.</p>}
-      <Dialog open={changing} onOpenChange={open => { if (open) setChanging(true); }}>
-        {changing && <EmailChangeDraft userId={snapshot.userId} pending={pending} error={error} change={change} close={() => setChanging(false)} />}
-      </Dialog>
+      {changing && <EmailChangeDraft key={snapshot.userId} userId={snapshot.userId} trigger={trigger.current}
+        pending={pending} error={error} change={change} close={() => setChanging(false)} />}
     </div>
   </div>;
 }
-function EmailChangeDraft({ userId, pending, error, change, close }: {
+function EmailChangeDraft({ userId, pending, error, change, close, trigger }: {
   userId: string; pending: boolean; error?: string | null; change(email: string, password: string, signal: AbortSignal): Promise<void>; close(): void;
+  trigger: Element | null;
 }) {
   const prefix = useId();
   const form = useForm({ schema: emailSchema, defaultValues: { email: '', currentPassword: '' }, baseline: 'accepted', scopeKey: userId,
@@ -66,16 +68,25 @@ function EmailChangeDraft({ userId, pending, error, change, close }: {
       await change(String(values.email), String(values.currentPassword), context.signal);
       // Passwords never become an accepted reset baseline or remain after delivery.
       return { values: { email: '', currentPassword: '' } };
-    }, onSuccess: close });
+    } });
   const save = useFormSave({ form, scopeKey: userId });
   const email = form.register('email'), password = form.register('currentPassword');
-  return <>
-    <DialogContent className="profile-settings__contact-dialog" onEscapeKeyDown={event => { event.preventDefault(); void save.requestLeave(close); }}
-      onPointerDownOutside={event => { event.preventDefault(); void save.requestLeave(close); }}
-      showCloseButton={false}>
-      <DialogTitle>Change your sign-in email</DialogTitle>
-      <DialogDescription>Your current email remains active until you verify the new address. You will need to sign in again after it changes.</DialogDescription>
-      <form onSubmit={event => { event.preventDefault(); void save.save(); }} className="space-y-4">
+  const formId = `email-change-${prefix}`;
+  return <ControlledModal open identityKey={userId} busy={pending || save.isSaving} dirty={save.isDirty} error={error ?? save.error}
+    onOpenChange={open => { if (!open) close(); }} descriptor={{
+      title: 'Change your sign-in email', icon: <Mail />, size: 'sm', trigger,
+      customSize: { width: 'var(--profile-settings-dialog-width,28rem)' },
+      description: 'Your current email remains active until you verify the new address. You will need to sign in again after it changes.',
+      beforeClose: createModalFormGuard(save),
+      actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel', variant: 'ghost' },
+        { id: 'save', label: save.isSaving ? 'Sending verification…' : 'Send verification link', variant: 'primary', submit: true,
+          formId, disabled: pending || save.isSaving, onClick: async () => {
+            const result = await save.save();
+            // Failed/blocked/retired writes and newer drafts keep the dialog.
+            // Acknowledgment closes through the manager, never owner retirement.
+            return result.kind === 'accepted' && !form.isDirty;
+          } }],
+      body: <><form id={formId} className="space-y-4">
         <div className="space-y-1.5"><Label htmlFor={`${prefix}-email`}>New email address</Label>
           <Input id={`${prefix}-email`} ref={email.ref} type="email" autoComplete="email" value={String(email.value)}
             onChange={email.onChange} onBlur={email.onBlur} disabled={pending} aria-invalid={Boolean(email.error)} />
@@ -84,11 +95,7 @@ function EmailChangeDraft({ userId, pending, error, change, close }: {
           <PasswordInput id={`${prefix}-password`} ref={password.ref} autoComplete="current-password" value={String(password.value)}
             onChange={password.onChange} onBlur={password.onBlur} disabled={pending} aria-invalid={Boolean(password.error)} />
           {password.error && <p role="alert" className="profile-settings__contact-error">{password.error}</p>}</div>
-        {(error || save.error) && <p role="alert" className="profile-settings__contact-error">{error ?? save.error}</p>}
-        <DialogFooter><Button type="button" size="sm" variant="ghost" disabled={pending || save.isSaving} onClick={() => { void save.requestLeave(close); }}>Cancel</Button>
-          <Button type="submit" size="sm" disabled={pending || save.isSaving}>{save.isSaving ? 'Sending verification…' : 'Send verification link'}</Button></DialogFooter>
       </form>
-    </DialogContent>
-    <UnsavedChangesDialog controller={save} />
-  </>;
+      <UnsavedChangesDialog controller={save} /></>,
+    }} />;
 }
