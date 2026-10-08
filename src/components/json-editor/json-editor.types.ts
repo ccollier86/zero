@@ -25,6 +25,8 @@ export interface JsonEditorProps<T = unknown> {
   readonly className?: string;
   /** Self owns a bounded viewport; parent uses its enclosing scroll region. */
   readonly scrollMode?: 'self' | 'parent';
+  /** Compact text drafts suit anchored value editing; full documents retain the default roomy editor. */
+  readonly density?: 'default' | 'compact';
   /** Optional parent-owned unfinished JSON buffer, separate from the last admitted object. */
   readonly rawTextDraft?: string | null;
   readonly onRawTextDraftChange?: (value: string | null) => void;

@@ -30,7 +30,7 @@ export function DataStudioRowField({ column, draft, id, disabled, error, onChang
   const common = { id, disabled, 'aria-required': column.required || undefined,
     'aria-invalid': Boolean(error) || undefined, 'aria-describedby': describedBy };
   return <div data-slot="data-studio-row-field" data-column-id={column.columnId}
-    className={column.type === 'json' || column.type === 'datetime' ? 'min-w-0 space-y-2 sm:col-span-2' : 'min-w-0 space-y-2'}>
+    className={column.type === 'json' || column.type === 'datetime' ? 'min-w-0 space-y-1.5 sm:col-span-2' : 'min-w-0 space-y-1.5'}>
     <div className="flex min-w-0 items-center justify-between gap-2">
       <Label htmlFor={id} className="min-w-0 leading-snug"><Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="break-words">{column.label}</span>
@@ -39,16 +39,16 @@ export function DataStudioRowField({ column, draft, id, disabled, error, onChang
       <span className="shrink-0 text-[11px] text-muted-foreground">{type.label}</span>
     </div>
     {column.type === 'boolean' ? <Select value={draft.raw} disabled={disabled} onValueChange={onChange}>
-      <SelectTrigger {...common}><SelectValue placeholder={column.required ? 'Choose True or False' : 'Not set'} /></SelectTrigger>
+      <SelectTrigger {...common} className="h-8"><SelectValue placeholder={column.required ? 'Choose True or False' : 'Not set'} /></SelectTrigger>
       <SelectContent><SelectItem value="true">True</SelectItem><SelectItem value="false">False</SelectItem>
         {!column.required && <SelectItem value="null">Empty (null)</SelectItem>}</SelectContent>
     </Select> : column.type === 'json' ? <Textarea {...common} value={draft.raw} rows={4}
       className="min-h-24 max-h-48 resize-y font-mono text-xs leading-relaxed" placeholder={column.required ? '{ "key": "value" }' : 'Optional JSON value'}
       onChange={event => onChange(event.target.value)} /> : column.type === 'date' || column.type === 'datetime'
       ? <DataStudioTemporalInput id={id} type={column.type} value={draft.raw} onValueChange={onChange} disabled={disabled}
-        required={column.required} invalid={Boolean(error)} aria-label={column.label} aria-describedby={describedBy} />
+        required={column.required} invalid={Boolean(error)} aria-label={column.label} aria-describedby={describedBy} size="sm" />
       : <Input {...common} value={draft.raw} type="text" inputMode={column.type === 'number' ? 'decimal' : undefined}
-        autoComplete="off" placeholder={column.type === 'number' ? 'Enter a number' : column.required ? `Enter ${column.label.toLowerCase()}` : 'Optional value'}
+        className="h-8 text-sm" autoComplete="off" placeholder={column.type === 'number' ? 'Enter a number' : column.required ? `Enter ${column.label.toLowerCase()}` : 'Optional value'}
         onChange={event => onChange(event.target.value)} />}
     {(column.description || hasDefault || column.type === 'datetime') && <div id={hintId} className="space-y-1 text-xs leading-relaxed text-muted-foreground">
       {column.description && <p>{column.description}</p>}

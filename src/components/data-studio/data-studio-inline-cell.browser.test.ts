@@ -254,9 +254,11 @@ describe('DataStudioInlineCell browser contract', () => {
       try {
         await page.evaluate((name) => window.__dataStudioCellHarness.configure(name), fixture);
         await page.getByRole('button', { name: new RegExp(`Edit ${label}`) }).click();
-        const editor = page.locator(`input[aria-label="Edit ${label}"]`);
+        const editor = fixture === 'optional-json-undefined'
+          ? page.locator('[data-slot="json-editor"]')
+          : page.locator(`input[aria-label="Edit ${label}"]`);
         await editor.waitFor({ state: 'visible' });
-        if (fixture === 'optional-date-undefined' || fixture === 'precise-datetime') {
+        if (fixture === 'optional-date-undefined' || fixture === 'precise-datetime' || fixture === 'optional-json-undefined') {
           // The floating picker may cover the synthetic next-cell button.
           await page.mouse.click(650, 500);
         } else await page.getByRole('button', { name: 'Next cell' }).click();
@@ -270,6 +272,163 @@ describe('DataStudioInlineCell browser contract', () => {
     }
   }, TEST_TIMEOUT);
 
+  browserTest('JSON opens the shared structured editor near the cell, retains invalid text and requires an acknowledged Apply', async () => {
+    const page = await openHarness();
+    try {
+      await page.evaluate(() => window.__dataStudioCellHarness.configure('metadata-json'));
+      const cell = page.locator('[data-slot="data-studio-inline-cell"]');
+      const before = await cell.boundingBox();
+      await page.getByRole('button', { name: /Edit Metadata/ }).click();
+      const popup = page.locator('[data-slot="data-studio-cell-editor"]');
+      await popup.waitFor();
+      expect(await popup.locator('[data-slot="json-editor"]').count()).toBe(1);
+      expect(await cell.locator('input').count()).toBe(0);
+      const during = await cell.boundingBox();
+      expect(during?.height).toBeCloseTo(before!.height, 1);
+      expect(during?.width).toBeCloseTo(before!.width, 1);
+      expect((await popup.boundingBox())!.y).toBeLessThan(before!.y + 90);
+      await popup.getByRole('button', { name: 'Edit as text', exact: true }).click();
+      const text = page.getByRole('textbox', { name: 'Edit Metadata JSON text', exact: true });
+      await text.fill('{ invalid json');
+      await popup.getByRole('button', { name: 'Apply', exact: true }).click();
+      expect(await text.inputValue()).toBe('{ invalid json');
+      expect(await popup.getByRole('alert').textContent()).toContain('Invalid JSON');
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      await page.mouse.click(850, 650);
+      await popup.getByRole('button', { name: 'Keep editing', exact: true }).click();
+      expect(await text.inputValue()).toBe('{ invalid json');
+      await text.fill('{"state":"published","attempts":2}');
+      await popup.getByRole('button', { name: 'Apply', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[data-slot="data-studio-inline-cell"]')?.getAttribute('data-save-state') === 'pending');
+      expect(await popup.getByRole('button', { name: 'Saving…', exact: true }).isDisabled()).toBe(true);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([{ state: 'published', attempts: 2 }]);
+      expect(await popup.isVisible()).toBe(true);
+      await page.evaluate(() => window.__dataStudioCellHarness.resolve());
+      await popup.waitFor({ state: 'detached' });
+      expect(await cell.getAttribute('data-save-state')).toBe('saved');
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.current())).toEqual({ present: true, value: { state: 'published', attempts: 2 } });
+    } finally { await page.close(); }
+  }, TEST_TIMEOUT);
+
+  browserTest('JSON dirty Escape retains the draft, explicit discard is a no-op, and remote revisions retire stale editors', async () => {
+    const page = await openHarness();
+    try {
+      await page.evaluate(() => window.__dataStudioCellHarness.configure('metadata-json'));
+      await page.getByRole('button', { name: /Edit Metadata/ }).click();
+      await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+      const text = page.getByRole('textbox', { name: 'Edit Metadata JSON text', exact: true });
+      await text.fill('{"state":"unsaved"}');
+      await page.keyboard.press('Escape');
+      expect(await text.inputValue()).toBe('{"state":"unsaved"}');
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.current())).toEqual({ present: true, value: { state: 'draft' } });
+      await page.getByRole('button', { name: /Edit Metadata/ }).click();
+      await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+      await text.fill('{"state":"stale"}');
+      await page.evaluate(() => window.__dataStudioCellHarness.remote({ state: 'authoritative' }));
+      await page.waitForFunction(() => document.querySelector('[data-slot="data-studio-inline-cell"]')?.getAttribute('data-save-state') === 'conflict');
+      await page.locator('[data-slot="data-studio-cell-editor"]').waitFor({ state: 'detached' });
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+      expect(await page.locator('[data-slot="data-studio-inline-cell"]').textContent()).toContain('authoritative');
+    } finally { await page.close(); }
+  }, TEST_TIMEOUT);
+
+  browserTest('JSON applies untouched absence as a no-op and validates required null without losing text', async () => {
+    const page = await openHarness();
+    try {
+      for (const [name, expected] of [
+        ['optional-json-undefined', { present: false }],
+        ['optional-json-null', { present: true, value: null }],
+        ['optional-json-empty', { present: true, value: '' }],
+        ['optional-json-string', { present: true, value: 'unchanged' }],
+        ['metadata-json', { present: true, value: { state: 'draft' } }],
+      ] as const) {
+        await page.evaluate(name => window.__dataStudioCellHarness.configure(name), name);
+        await page.getByRole('button', { name: /Edit (Optional JSON|Metadata)/ }).click();
+        await page.getByRole('button', { name: 'Apply', exact: true }).click();
+        await page.locator('[data-slot="data-studio-cell-editor"]').waitFor({ state: 'detached' });
+        expect(await page.evaluate(() => window.__dataStudioCellHarness.current())).toEqual(expected);
+        expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+        if (name === 'metadata-json') {
+          // Opening the package's pretty text view must not manufacture a
+          // mutation just because it serializes the same object differently.
+          await page.getByRole('button', { name: /Edit Metadata/ }).click();
+          await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+          await page.getByRole('textbox', { name: 'Edit Metadata JSON text', exact: true }).waitFor();
+          await page.getByRole('button', { name: 'Apply', exact: true }).click();
+          await page.locator('[data-slot="data-studio-cell-editor"]').waitFor({ state: 'detached' });
+          expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+          expect(await page.evaluate(() => window.__dataStudioCellHarness.current())).toEqual(expected);
+        }
+      }
+      await page.evaluate(() => window.__dataStudioCellHarness.configure('required-json'));
+      await page.getByRole('button', { name: /Edit Metadata/ }).click();
+      await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+      const text = page.getByRole('textbox', { name: 'Edit Metadata JSON text', exact: true });
+      await text.fill('null'); await page.getByRole('button', { name: 'Apply', exact: true }).click();
+      expect(await text.inputValue()).toBe('null');
+      expect(await page.getByRole('alert').count()).toBeGreaterThan(0);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
+    } finally { await page.close(); }
+  }, TEST_TIMEOUT);
+
+  browserTest('a pending JSON acknowledgment cannot close or populate an editor in a replacement source', async () => {
+    const page = await openHarness();
+    try {
+      await page.evaluate(() => window.__dataStudioCellHarness.configure('metadata-json'));
+      await page.getByRole('button', { name: /Edit Metadata/ }).click();
+      await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+      const text = page.getByRole('textbox', { name: 'Edit Metadata JSON text', exact: true });
+      await text.fill('{"state":"old-scope"}');
+      await page.getByRole('button', { name: 'Apply', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[data-slot="data-studio-inline-cell"]')?.getAttribute('data-save-state') === 'pending');
+      await page.evaluate(() => window.__dataStudioCellHarness.retire());
+      await page.locator('[data-slot="data-studio-cell-editor"]').waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: /Edit Metadata/ }).click();
+      await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+      await text.fill('{"state":"successor-draft"}');
+      await page.evaluate(() => window.__dataStudioCellHarness.resolve());
+      expect(await text.inputValue()).toBe('{"state":"successor-draft"}');
+      expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
+      expect(await page.evaluate(() => window.__dataStudioCellHarness.current())).toEqual({ present: true, value: { state: 'successor' } });
+      expect(await page.locator('[data-slot="data-studio-inline-cell"]').getAttribute('data-save-state')).toBe('idle');
+    } finally { await page.close(); }
+  }, TEST_TIMEOUT);
+
+  browserTest('anchored JSON drafts fit mobile and desktop viewports in both themes without widening the cell', async () => {
+    const evidence = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/calendar-field-editors';
+    await mkdir(evidence, { recursive: true });
+    for (const [width, dark] of [[1000, false], [1000, true], [390, false], [390, true]] as const) {
+      const page = await openHarness();
+      try {
+        await page.setViewportSize({ width, height: 720 });
+        if (dark) await page.evaluate(() => document.documentElement.classList.add('dark'));
+        await page.evaluate(() => window.__dataStudioCellHarness.configure('metadata-json'));
+        await page.getByRole('button', { name: /Edit Metadata/ }).click();
+        const popup = page.locator('[data-slot="data-studio-cell-editor"]');
+        await popup.waitFor();
+        await page.getByRole('button', { name: 'Edit as text', exact: true }).click();
+        const text = page.getByRole('textbox', { name: 'Edit Metadata JSON text', exact: true });
+        await text.fill('{\n  "example": "A local JSON draft",\n  "enabled": true\n}');
+        expect(await popup.locator('[data-slot="json-editor"]').getAttribute('data-density')).toBe('compact');
+        expect(await text.getAttribute('rows')).toBe('6');
+        expect((await text.boundingBox())!.height).toBeLessThan(170);
+        await page.waitForFunction(() => {
+          const popup = document.querySelector('[data-slot="data-studio-cell-editor"]')!;
+          return Number(getComputedStyle(popup).opacity) > .99;
+        });
+        const box = await popup.boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+        expect(box!.height + box!.y).toBeLessThanOrEqual(720);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+        expect(await popup.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
+        await page.screenshot({ path: join(evidence, `json-cell-${width}-${dark ? 'dark' : 'light'}.png`) });
+      } finally { await page.close(); }
+    }
+  }, TEST_TIMEOUT);
+
   browserTest('retains seconds and milliseconds during an intentional datetime edit', async () => {
     const page = await openHarness();
     try {
@@ -277,8 +436,8 @@ describe('DataStudioInlineCell browser contract', () => {
       await page.getByRole('button', { name: /Edit Precise datetime/ }).click();
       const seconds = page.getByRole('textbox', { name: 'Edit Precise datetime seconds', exact: true });
       expect(await seconds.inputValue()).toBe('37.123');
-      await page.getByRole('combobox', { name: 'Edit Precise datetime time minute', exact: true }).click();
-      await page.getByRole('option', { name: '46', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Edit Precise datetime time', exact: true }).click();
+      await page.getByRole('option', { name: '5:46 PM', exact: true }).click();
       expect(await seconds.inputValue()).toBe('37.123');
       expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
       await page.getByRole('button', { name: 'Apply', exact: true }).click();
@@ -309,14 +468,14 @@ describe('DataStudioInlineCell browser contract', () => {
       expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
       expect(await page.evaluate(() => window.__dataStudioCellHarness.outerClicks())).toBe(0);
       expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
-      await page.getByRole('combobox', { name: 'Edit Precise datetime time minute', exact: true }).click();
-      await page.getByRole('option', { name: '46', exact: true }).press('Enter');
+      await page.getByRole('combobox', { name: 'Edit Precise datetime time', exact: true }).click();
+      await page.getByRole('option', { name: '5:46 PM', exact: true }).press('Enter');
       expect(await page.evaluate(() => window.__dataStudioCellHarness.commits())).toEqual([]);
       expect(await page.evaluate(() => window.__dataStudioCellHarness.outerClicks())).toBe(0);
       await page.getByRole('button', { name: 'Open date picker', exact: true }).click();
       await page.keyboard.press('Escape');
       expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
-      await page.getByRole('combobox', { name: 'Edit Precise datetime time minute', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Edit Precise datetime time', exact: true }).click();
       await page.keyboard.press('Escape');
       expect(await page.getByRole('button', { name: 'Apply', exact: true }).isVisible()).toBe(true);
       await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -416,6 +575,7 @@ let column = {
 };
 let value = 'Ada';
 let revision = 1;
+let sourceRevision = 0;
 let mode = 'pending';
 let pending = null;
 let commitValues = [];
@@ -432,6 +592,7 @@ let outerClicks = 0;
 const root = createRoot(document.getElementById('root'));
 
 function commit(next) {
+  const owner = sourceRevision;
   commitValues.push(next);
   if (mode === 'error') return Promise.reject(new Error('Save rejected'));
   if (mode === 'conflict') return Promise.reject(new DataStudioMutationError(
@@ -439,9 +600,7 @@ function commit(next) {
   ));
   return new Promise((resolve) => {
     pending = () => {
-      value = next;
-      revision += 1;
-      render();
+      if (owner === sourceRevision) { value = next; revision += 1; render(); }
       resolve();
     };
   });
@@ -452,6 +611,7 @@ function render() {
     style: { width: '240px', fontFamily: 'system-ui', fontSize: '14px' },
     onClick(){ outerClicks += 1; },
   }, React.createElement(DataStudioInlineCell, {
+    key: sourceRevision,
     value,
     column,
     revision,
@@ -496,6 +656,7 @@ window.__dataStudioCellHarness = {
   },
   setMode(next) { mode = next; },
   remote(next) { value = next; revision += 1; render(); },
+  retire() { sourceRevision += 1; value = { state: 'successor' }; revision = 1; render(); },
   configure(name) {
     mode = 'pending';
     pending = null;
@@ -513,9 +674,12 @@ window.__dataStudioCellHarness = {
     } else if (name === 'optional-date-undefined') {
       value = undefined;
       column = { columnId: 'value', key: 'value', label: 'Optional date', type: 'date', required: false };
-    } else if (name === 'optional-json-undefined') {
-      value = undefined;
+    } else if (name === 'optional-json-undefined' || name === 'optional-json-null' || name === 'optional-json-empty' || name === 'optional-json-string') {
+      value = name === 'optional-json-null' ? null : name === 'optional-json-empty' ? '' : name === 'optional-json-string' ? 'unchanged' : undefined;
       column = { columnId: 'value', key: 'value', label: 'Optional JSON', type: 'json', required: false };
+    } else if (name === 'metadata-json' || name === 'required-json') {
+      value = { state: 'draft' };
+      column = { columnId: 'value', key: 'value', label: 'Metadata', type: 'json', required: name === 'required-json' };
     } else if (name === 'precise-datetime') {
       value = '2026-02-03T17:45:37.123Z';
       column = { columnId: 'value', key: 'value', label: 'Precise datetime', type: 'datetime', required: false };
@@ -547,7 +711,8 @@ declare global {
       heldFrames(): number;
       releaseFrames(): void;
       setMode(mode: 'pending' | 'error' | 'conflict'): void;
-      remote(value: string): void;
+      remote(value: unknown): void;
+      retire(): void;
       configure(name: string): void;
       current(): { present: boolean; value?: unknown };
       commits(): unknown[];

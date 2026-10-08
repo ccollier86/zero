@@ -15,7 +15,7 @@ import type { JsonEditorCommitResult, JsonEditorProps } from './json-editor.type
 export function JsonEditor<T = unknown>({
   value, onChange, validate, disabled = false, label = 'JSON editor', rootName = 'schema',
   collapse = 3, className, rawTextDraft, onRawTextDraftChange, onEditingChange, editorRef,
-  scrollMode = 'self',
+  scrollMode = 'self', density = 'default',
 }: JsonEditorProps<T>) {
   const packageRef = React.useRef<PackageHandle>(null);
   const current = React.useRef({ value, onChange, validate, disabled, onRawTextDraftChange, onEditingChange });
@@ -89,7 +89,7 @@ export function JsonEditor<T = unknown>({
   } }));
   React.useEffect(() => { if (raw.current !== null) startTextEdit(); }, []);
 
-  return <div data-slot="json-editor" role="group" aria-label={label}
+  return <div data-slot="json-editor" data-density={density} role="group" aria-label={label}
     className={cn('min-w-0 rounded-lg border border-border bg-background', className)}>
     <div className="flex items-center justify-between border-b border-border px-3 py-2">
       <span className="text-xs font-medium text-muted-foreground">Structured JSON</span>
@@ -97,7 +97,7 @@ export function JsonEditor<T = unknown>({
         <Braces className="size-3.5" aria-hidden="true" />Edit as text
       </Button>
     </div>
-    <JsonTextDraftContext.Provider value={{ raw, disabled, label: label + ' text', change: text => {
+    <JsonTextDraftContext.Provider value={{ raw, disabled, density, label: label + ' text', change: text => {
       if (!mounted.current || current.current.disabled) return;
       setRaw(text); errorRef.current = null; setError(null);
     } }}>

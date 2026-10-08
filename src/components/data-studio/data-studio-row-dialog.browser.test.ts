@@ -88,14 +88,35 @@ describe('Data Studio record authoring', () => {
     }
   }, TIMEOUT);
 
-  test('uses a substantial tokenized two-column form and real DatePicker/TimePicker instead of native date inputs', async () => {
+  test('uses a compact tokenized two-column form and real DatePicker/TimePicker instead of native date inputs', async () => {
     const page = await open(); try {
-      const box = await dialog(page).boundingBox(); expect(box?.width).toBeGreaterThan(700); expect(box?.width).toBeLessThan(1000);
+      const box = await dialog(page).boundingBox(); expect(box?.width).toBeGreaterThan(680); expect(box?.width).toBeLessThan(740);
       expect(await dialog(page).locator('input[type="date"], input[type="datetime-local"], input[type="time"]').count()).toBe(0);
       expect(await dialog(page).locator('[data-slot="date-picker"]').count()).toBe(2);
       expect(await dialog(page).locator('[data-slot="time-picker"]').count()).toBe(1);
       expect(await field(page, 'Meeting at seconds').inputValue()).toBe('37.123');
-      expect(await page.getByRole('combobox', { name: 'Meeting at time minute', exact: true }).textContent()).toBe('45');
+      expect(await page.getByRole('combobox', { name: 'Meeting at time', exact: true }).textContent()).toContain('5:45 PM');
+    } finally { await page.close(); }
+  }, TIMEOUT);
+
+  test('Escape dismisses only the nested calendar or time menu without losing or submitting the record draft', async () => {
+    const page = await open(); try {
+      await field(page, 'Full name').fill('Keep this record draft');
+      const due = dialog(page).locator('[data-slot="data-studio-row-field"][data-column-id="due_on"]');
+      await due.getByRole('button', { name: 'Open date picker', exact: true }).click();
+      await page.getByRole('grid').waitFor();
+      await page.keyboard.press('Escape');
+      expect(await dialog(page).isVisible()).toBe(true);
+      expect(await field(page, 'Full name').inputValue()).toBe('Keep this record draft');
+      expect(await page.getByRole('button', { name: 'Discard draft', exact: true }).count()).toBe(0);
+      expect(await page.evaluate(() => window.__rowDialog.writes().length)).toBe(0);
+      await dialog(page).getByRole('combobox', { name: 'Meeting at time', exact: true }).click();
+      await page.getByRole('option', { name: '5:46 PM', exact: true }).waitFor();
+      await page.keyboard.press('Escape');
+      expect(await dialog(page).isVisible()).toBe(true);
+      expect(await field(page, 'Full name').inputValue()).toBe('Keep this record draft');
+      expect(await page.getByRole('button', { name: 'Discard draft', exact: true }).count()).toBe(0);
+      expect(await page.evaluate(() => window.__rowDialog.writes().length)).toBe(0);
     } finally { await page.close(); }
   }, TIMEOUT);
 
@@ -151,7 +172,7 @@ describe('Data Studio record authoring', () => {
       await dialog(page).locator('[data-slot="data-studio-row-field"][data-column-id="due_on"]')
         .getByRole('button', { name: 'Open date picker', exact: true }).click();
       await page.getByRole('button', { name: /February 5th, 2026/ }).click();
-      await choose(page, 'Meeting at time minute', '46');
+      await choose(page, 'Meeting at time', '5:46 PM');
       expect(await field(page, 'Meeting at seconds').inputValue()).toBe('37.123');
       await create(page).click(); await request(page);
       expect(await page.evaluate(() => window.__rowDialog.writes()[0]!.values)).toMatchObject({

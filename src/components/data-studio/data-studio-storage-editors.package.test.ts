@@ -30,7 +30,7 @@ test('packed Data Studio and Storage editors retain public exports, browser modu
       html: string; iso: string; calendar: string; noDom: boolean;
     };
     expect(result.identityCount).toBe(6);
-    expect(result.runtimeModules).toBe(8);
+    expect(result.runtimeModules).toBe(10);
     expect(result.browserBytes).toBeGreaterThan(0);
     expect(result.noDom).toBe(true);
     expect(result.iso).toBe('2026-02-03T17:45:37.123Z');
@@ -106,6 +106,7 @@ export function Consumer() {
     <Studio.DataStudioGrid table={table} rows={[]} selectedRowId={null} editable onSelectRow={()=>undefined}
       onCommit={async()=>undefined} onReload={async()=>undefined}/>
     <Studio.DataStudioInlineCell value="2026-02-03T17:45:37.123Z" column={meeting} revision={1} onCommit={async()=>undefined}/>
+    <Studio.DataStudioInlineCell value={{status:'draft'}} column={{columnId:'metadata',key:'metadata',label:'Package JSON',type:'json',required:false}} revision={1} onCommit={async()=>undefined}/>
     <Studio.DataStudioFilterControl columns={[meeting]} filters={[]} onChange={()=>undefined}/>
     <Storage.StorageDriveSettingsPanel drive={drive} onSave={async()=>undefined}/>
     <Storage.StorageDrivePermissionsPanel driveId={drive.id} canAdmin/>
@@ -126,6 +127,8 @@ const modules = [
   'src/components/data-studio/data-studio-temporal-input.tsx',
   'src/components/data-studio/data-studio-temporal-value.ts',
   'src/components/data-studio/data-studio-temporal-cell-editor.tsx',
+  'src/components/data-studio/data-studio-cell-editor.tsx',
+  'src/components/data-studio/data-studio-json-cell-editor.tsx',
   'src/components/data-studio/data-studio-cell-state-indicator.tsx',
   'src/components/storage/storage-permission-list.tsx',
 ];

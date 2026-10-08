@@ -135,3 +135,38 @@ browserTest('always-visible opt-out, reduced-motion disclosure, and built-in Stu
     await studio.click(); expect(await page.evaluate(() => window.__recordActions.invoked())).toEqual(['studio.inspect']);
   } finally { await close(page); }
 }, 30_000);
+
+browserTest('Data Studio and Storage callers slide labels on real hover and return to icon-only rest in both themes', async () => {
+  const page = await open();
+  try {
+    const captures = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/calendar-field-editors';
+    await mkdir(captures, { recursive: true });
+    for (const dark of [false, true]) {
+      await page.evaluate(value => document.documentElement.classList.toggle('dark', value), dark);
+      await page.mouse.move(0, 0);
+      for (const [caller, label] of [['storage', 'Open'], ['studio', 'Inspect record']] as const) {
+        const action = page.getByTestId(caller).getByRole('button', { name: label, exact: true });
+        expect(await action.getAttribute('data-label-mode')).toBe('expand');
+        expect(await action.getAttribute('data-expanded')).toBe('false');
+        await action.hover();
+        await action.locator('[data-slot="record-navigation-action-label"]').evaluate(element => new Promise<void>((resolve, reject) => {
+          let frames = 0, stable = 0, previousWidth = -1;
+          function sample() {
+            const width = element.getBoundingClientRect().width;
+            stable = Math.abs(width - previousWidth) < .05 ? stable + 1 : 0;
+            previousWidth = width;
+            if (Number(getComputedStyle(element).opacity) >= .999 && width > 20 && stable >= 4) resolve();
+            else if (++frames > 180) reject(new Error('Built-in action label did not slide open.'));
+            else requestAnimationFrame(sample);
+          }
+          sample();
+        }));
+        expect((await action.boundingBox())!.width).toBeGreaterThan(60);
+        await page.screenshot({ path: join(captures, `${caller}-action-${dark ? 'dark' : 'light'}.png`) });
+        await page.mouse.move(0, 0);
+        await page.waitForFunction(({ caller, label }) => document.querySelector(`[data-testid="${caller}"] [aria-label="${label}"]`)?.getAttribute('data-expanded') === 'false', { caller, label });
+      }
+      expect(await page.evaluate(() => window.__recordActions.invoked())).toEqual([]);
+    }
+  } finally { await close(page); }
+}, 30_000);

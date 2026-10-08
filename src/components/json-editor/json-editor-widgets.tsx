@@ -5,12 +5,14 @@ import * as React from 'react';
 import type { TextEditorProps, SelectProps } from 'json-edit-react';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/select';
+import { cn } from '../../lib/utils';
 
 export interface JsonTextDraftContextValue {
   readonly raw: React.RefObject<string | null>;
   readonly change: (text: string) => void;
   readonly disabled: boolean;
   readonly label: string;
+  readonly density?: 'default' | 'compact';
 }
 export const JsonTextDraftContext = React.createContext<JsonTextDraftContextValue | null>(null);
 
@@ -24,10 +26,11 @@ export function JsonTextEditor({ value, onChange, onKeyDown }: TextEditorProps) 
     if (context?.raw.current !== null && context?.raw.current !== undefined) onChange(context.raw.current);
     // Restore only on this slot's mount, not every controlled object re-render.
   }, []);
+  const compact = context?.density === 'compact';
   return <Textarea ref={input} aria-label={context?.label ?? 'JSON text'} value={text}
-    disabled={context?.disabled} spellCheck={false} rows={Math.max(14, text.split('\n').length + 1)} wrap="off"
+    disabled={context?.disabled} spellCheck={false} rows={Math.max(compact ? 6 : 14, text.split('\n').length + 1)} wrap="off"
     style={{ overflowY: 'hidden' }}
-    className="min-h-64 resize-none font-mono text-xs leading-5"
+    className={cn('resize-none font-mono text-xs leading-5', compact ? 'min-h-32' : 'min-h-64')}
     onKeyDown={onKeyDown} onChange={event => {
       const next = event.target.value; setText(next); context?.change(next); onChange(next);
     }} />;

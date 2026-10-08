@@ -113,7 +113,7 @@ export function DataStudioTemporalInput({
         <TimePicker value={parts.time} onChange={(time) => change(updateDataStudioTemporalTime(current.current, time))}
           disabled={disabled || readOnly} aria-label={`${label} time`} aria-describedby={describedBy}
           aria-invalid={inputInvalid || undefined}
-          className={cn('min-w-0', size === 'sm' && '[&_[data-slot=select-trigger]]:h-8')} />
+          className="min-w-0 flex-1" triggerClassName={size === 'sm' ? 'h-8' : undefined} />
         <div className="w-[6.5rem] min-w-0 shrink-0">
           <Input type="text" inputMode="decimal" value={parts.seconds} maxLength={6}
             disabled={disabled} readOnly={readOnly} aria-label={`${label} seconds`}

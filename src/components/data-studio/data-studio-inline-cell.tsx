@@ -16,6 +16,7 @@ import {
   parseDataStudioValueDraft,
 } from './data-studio-value';
 import { DataStudioTemporalCellEditor } from './data-studio-temporal-cell-editor';
+import { DataStudioJsonCellEditor } from './data-studio-json-cell-editor';
 import { DataStudioCellStateIndicator } from './data-studio-cell-state-indicator';
 
 export type DataStudioCellSaveState =
@@ -235,6 +236,7 @@ export function DataStudioInlineCell({
   const saveDraft = React.useCallback(async (
     move?: -1 | 1,
     restoreFocus = false,
+    acceptedDraft = draft,
   ) => {
     if (editRevision.current !== null
       && editRevision.current !== revision) {
@@ -244,13 +246,13 @@ export function DataStudioInlineCell({
     // A blank draft can represent absent, null, or the empty string. An
     // untouched blank remains an exact no-op, but typing and deleting back to
     // blank is an intentional edit and must be parsed/committed.
-    if (draft === initialDraft.current && !(draft === '' && draftDirty.current)) {
+    if (acceptedDraft === initialDraft.current && !(acceptedDraft === '' && draftDirty.current)) {
       finishWithoutCommit(move, restoreFocus);
       return;
     }
     let parsed: DataStudioValue;
     try {
-      parsed = parseDataStudioValueDraft(draft, column);
+      parsed = parseDataStudioValueDraft(acceptedDraft, column);
     } catch (cause) {
       setState('error');
       setMessage(errorMessage(cause));
@@ -281,6 +283,8 @@ export function DataStudioInlineCell({
   const display = formatDataStudioValue(value, column);
   const isBoolean = column.type === 'boolean';
   const isTemporal = column.type === 'date' || column.type === 'datetime';
+  const isJson = column.type === 'json';
+  const isAnchored = isTemporal || isJson;
   const booleanValue = value === true ? true : value === false ? false : null;
   const nextBooleanValue = booleanValue === true
     ? false
@@ -336,7 +340,7 @@ export function DataStudioInlineCell({
             className={cn(
               'block min-h-5 truncate whitespace-nowrap',
               value == null && 'text-muted-foreground/70 italic',
-              editing && !isTemporal && 'invisible',
+              editing && !isAnchored && 'invisible',
             )}
           >
             {display || '\u00a0'}
@@ -344,7 +348,7 @@ export function DataStudioInlineCell({
           {isTemporal ? (
             <DataStudioTemporalCellEditor open={editing} type={column.type as 'date' | 'datetime'}
               label={column.label} required={column.required} value={draft} disabled={disabled}
-              pending={state === 'pending'} error={editing ? message : null}
+              pending={state === 'pending'} dirty={draft !== initialDraft.current} error={editing ? message : null}
               onOpenChange={(open) => { if (open) beginEdit(); else cancel(); }}
               onValueChange={(next) => { draftDirty.current = true; setDraft(next); }}
               onApply={() => { void saveDraft(undefined, true); }} onCancel={cancel}>
@@ -355,6 +359,19 @@ export function DataStudioInlineCell({
                 <span className="sr-only">Edit {column.label}</span>
               </button>
             </DataStudioTemporalCellEditor>
+          ) : isJson ? (
+            <DataStudioJsonCellEditor open={editing} column={column} value={draft} disabled={disabled}
+              pending={state === 'pending'} dirty={draft !== initialDraft.current} error={editing ? message : null}
+              onOpenChange={open => { if (open) beginEdit(); else cancel(); }}
+              onValueChange={next => { draftDirty.current = true; setDraft(next); }}
+              onApply={next => { void saveDraft(undefined, true, next); }} onCancel={cancel}>
+              <button ref={triggerRef} type="button" data-data-studio-cell="true"
+                className="absolute inset-0 size-full cursor-pointer rounded-sm bg-transparent p-0 text-left outline-none ring-inset hover:bg-accent/25 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
+                disabled={state === 'pending'}
+                aria-label={`${disabled ? 'Select' : 'Edit'} ${column.label}${display ? `, current value ${display}` : ''}`}>
+                <span className="sr-only">Edit {column.label}</span>
+              </button>
+            </DataStudioJsonCellEditor>
           ) : !editing && (
             <button
               ref={triggerRef}
@@ -368,7 +385,7 @@ export function DataStudioInlineCell({
               <span className="sr-only">Edit {column.label}</span>
             </button>
           )}
-          {editing && !isTemporal && (
+          {editing && !isAnchored && (
             <input
               ref={inputRef}
               type={inlineInputType(column)}

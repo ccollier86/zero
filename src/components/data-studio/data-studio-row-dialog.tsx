@@ -3,7 +3,7 @@
 /**
  * data-studio-row-dialog.tsx
  *
- * Composes a roomy, bounded create-record form from Zero's existing dialog and
+ * Composes a compact, bounded create-record form from Zero's existing dialog and
  * field controls. Draft validation and acknowledged-write lifecycles live in
  * focused modules; this view never fetches, provisions storage or grants access.
  */
@@ -42,14 +42,14 @@ function RowDialogSession({ closeRef, ...props }: DataStudioRowDialogProps & {
   const columns = state.opening.schema.columns;
   const required = columns.filter(column => column.required && !Object.hasOwn(column, 'defaultValue')).length;
   return <DialogContent data-slot="data-studio-row-dialog" showCloseButton={!state.pending && !props.busy}
-    style={{ width: 'min(52rem, calc(100vw - 2rem))' }}
+    style={{ width: 'min(44rem, calc(100vw - 2rem))' }}
     className="flex max-h-[calc(100dvh-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0"
     onOpenAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => state.focusField()); }}>
-    <DialogHeader className="shrink-0 border-b border-border/85 bg-muted/15 px-5 py-5 pr-16 text-left sm:px-6 sm:pr-16">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-primary"><Database className="size-4" aria-hidden="true" /></span>
-        <div className="min-w-0 space-y-1.5"><DialogTitle className="break-words leading-snug">Add record to {props.table?.name}</DialogTitle>
-          <DialogDescription>Add the values below. Fields marked * need a value.</DialogDescription>
+    <DialogHeader className="shrink-0 border-b border-border/85 bg-muted/15 px-4 py-3.5 pr-14 text-left sm:px-5 sm:pr-14">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-primary"><Database className="size-4" aria-hidden="true" /></span>
+        <div className="min-w-0 space-y-1"><DialogTitle className="break-words text-base leading-snug">Add record to {props.table?.name}</DialogTitle>
+          <DialogDescription className="text-xs">Enter a value for each required field. Other fields are optional.</DialogDescription>
           <div className="flex flex-wrap items-center gap-2 pt-0.5"><Badge variant="outline" className="text-[11px] font-normal">{columns.length} fields</Badge>
             {required > 0 && <span className="text-xs text-muted-foreground">{required} required without a default</span>}
           </div>
@@ -58,7 +58,7 @@ function RowDialogSession({ closeRef, ...props }: DataStudioRowDialogProps & {
     </DialogHeader>
     <form ref={state.formRef} noValidate className="flex min-h-0 flex-1 flex-col overflow-hidden"
       onSubmit={event => { event.preventDefault(); void state.save(); }}>
-      <div data-slot="data-studio-row-dialog-body" className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
+      <div data-slot="data-studio-row-dialog-body" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
         {state.schemaChanged && <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
           <div className="min-w-0"><p className="text-sm font-medium">The table fields changed</p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your values are kept. Reload the fields before creating this record.</p></div>
@@ -67,13 +67,13 @@ function RowDialogSession({ closeRef, ...props }: DataStudioRowDialogProps & {
           </Button>
         </div>}
         {state.archived && <p role="status" className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">This table is archived. Restore it before adding records.</p>}
-        <div data-slot="data-studio-row-dialog-fields" className="grid min-w-0 gap-x-6 gap-y-5 sm:grid-cols-2">
+        <div data-slot="data-studio-row-dialog-fields" className="grid min-w-0 gap-x-4 gap-y-3.5 sm:grid-cols-2">
           {columns.map(column => <DataStudioRowField key={column.columnId} column={column} draft={state.draft[column.columnId]}
             id={id + '-' + column.columnId} disabled={state.fieldsBlocked || state.confirmation !== null}
             error={state.fieldErrors[column.columnId]} onChange={raw => state.changeField(column.columnId, raw)} />)}
         </div>
       </div>
-      <div data-slot="data-studio-row-dialog-footer" className="shrink-0 border-t border-border/85 bg-muted/10 px-5 py-4 sm:px-6">
+      <div data-slot="data-studio-row-dialog-footer" className="shrink-0 border-t border-border/85 bg-muted/10 px-4 py-3 sm:px-5">
         {state.error && <p role="alert" className="mb-3 text-sm leading-relaxed text-destructive">{state.error}</p>}
         {state.accepted && <p role="status" className="mb-3 text-sm text-muted-foreground">Record created successfully.</p>}
         {state.confirmation ? <div className="space-y-3" role="alert">
