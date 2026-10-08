@@ -3,20 +3,20 @@ id: zero.frontend.data-studio.dialogs
 type: reference
 audience: [developer, agent]
 owner: data-studio
-status: draft
+status: verified
 visibility: internal
 system: data-studio
 feature: dialogs
 maturity: supported
-applies_to: ["2.2.1 development source with record-editor changes; package qualification pending"]
+applies_to: ["2.6.0 source/local archive with compact record editors"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.2.1"
-  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Table, Record And Confirmation Dialogs
@@ -100,7 +100,7 @@ authorization/source context. Opening, changing table identity or changing
 scope starts a new draft lifetime. A retired request cannot close, populate or
 report its failure into a replacement lifetime, including A→B→A transitions.
 
-The title identifies the destination table. A responsive 52rem frame presents
+The title identifies the destination table. A compact responsive 44rem frame presents
 typed fields with recognizable type icons, required markers, descriptions and
 default hints. Desktop fields use two columns; JSON and datetime fields use
 the full width. On narrow screens fields stack. Only the body scrolls; the
@@ -113,6 +113,9 @@ True/False/Empty (null) choices distinguish boolean false from an absent field
 or null. Numeric/JSON input retains incomplete text until validation rather
 than losing it to a native number control. Date/datetime fields reuse Zero's
 calendar/time controls and preserve seconds/milliseconds; see [values](./values.md).
+The date calendar has focused month/year drill-down and a Close action; time
+selection uses one compact trigger/list rather than three oversized selectors.
+Selecting or dismissing those nested controls does not submit the record.
 Validation highlights and focuses the first invalid field without discarding
 other values. Client feedback does not replace backend schema/authority checks.
 

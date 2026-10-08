@@ -13,7 +13,7 @@ modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "bfc763919aeffa43d84556d6076ea18097b2cff1"
+  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
   snapshot: clean
   date: "2026-10-07"
   evidence_level: implementation-verified
@@ -24,9 +24,10 @@ reviewed_against:
 [Data Studio index](./index.md) · [Documentation index](../../index.md)
 
 DataStudioInlineCell preserves the grid cell's typographic box and geometry.
-Text, numeric and JSON editors overlay the cell without turning it into a
-decorated framework Input. Date/datetime cells keep their compact display and
-open an anchored editor using Zero's calendar/time controls. Import from the
+Text/numeric editors overlay the cell without turning it into a decorated
+framework Input. Date/datetime and JSON cells keep their compact display and
+open an anchored draft editor using Zero's shared calendar/time controls or
+validated JsonEditor. Import from the
 Studio subpath or root/React barrel.
 
 Required props: value (DataStudioValue or undefined), column, revision and
@@ -36,24 +37,36 @@ Capture the authoritative revision and writer at edit start, not a later unrelat
 row/callback. The connected controller already supplies revision-aware writes.
 
 DataStudioCellSaveState is idle/pending/saved/error/conflict. For in-cell text,
-numeric and JSON editing, Enter saves; Tab/Shift+Tab save then move forward/back;
+numeric editing, Enter saves; Tab/Shift+Tab save then move forward/back;
 Escape cancels, and blur saves a changed valid draft. Composition input
 suppresses those shortcut decisions. resolveDataStudioCellKeyAction(key,
 shiftKey=false,isComposing=false) returns save/save-and-move/cancel or null.
 It is a public pure helper; it does not execute a write.
 
-## Date And Datetime Cells
+## Anchored Date, Datetime And JSON Cells
 
 The focused popover has **Apply** and **Cancel** controls. Choosing a calendar
-date or changing a time selector only changes the local draft; leaving a portal
+date or choosing a time only changes the local draft; leaving a portal
 control does not implicitly save. Apply validates and
 awaits the captured writer. Enter in the date field normalizes/validates that
 field; it does not commit the cell. Enter on a calendar day or time choice selects
 that choice without saving the cell. An unconsumed Enter in the precision text
 field can Apply; use the explicit Apply button for the common save path.
-Escape, Cancel or outside dismissal discards
-the local change. A nested calendar/selector consumes its own Escape before the
-cell editor closes. Pending saves block dismissal and duplicate interaction.
+Explicit Cancel discards. Escape/outside/trigger dismissal closes an unchanged
+draft, but offers **Keep editing** or **Discard changes** for a changed draft.
+A nested calendar/time list consumes its own Escape before the cell editor
+closes; calendar month/year Escape first returns to days. Pending saves block
+dismissal and duplicate interaction. The compact heading/actions stay reachable
+while the draft body scrolls within its viewport-constrained panel.
+
+JSON cells use [Zero JsonEditor](../components/json-editor.md), including its
+structured tree and **Edit as text** mode. The admitted object and unfinished
+raw text are separate: invalid JSON stays editable and reports actionable
+syntax/column-validation feedback. Apply finishes the local JSON edit, validates
+the public column codec, then awaits the captured cell writer; a locally valid
+document is not yet a persisted save. A dirty text editor's Escape does not
+silently discard its buffer before the shell's Keep/Discard decision. Enter in
+the multiline editor is text input, not an accidental cell save.
 
 Datetime editors include explicit seconds/milliseconds, so changing a minute
 does not truncate an existing timestamp's precision. Invalid typed values remain

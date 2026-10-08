@@ -3,20 +3,20 @@ id: zero.frontend.components.primitives.list-detail
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: list-detail-layout
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 source/local archive"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Compact List, Details And Bottom Actions
@@ -29,8 +29,9 @@ primitives behind dense control planes. Import the `/list-detail-layout`,
 [MasterDetailPage](../../data-controls/master-detail.md) adds source/selection/write
 behavior; these layout primitives do not query or save on their own.
 
-The additive workspace, visibility and resizing controls below describe the dirty
-working source, not an already-qualified published 2.1.1 archive.
+The controls below describe the committed source/local archive. This review
+includes actual Data Studio/Storage action-bar callers, but does not claim a new
+public npm publication or changes inside consuming applications.
 
 ## ListDetailLayout
 
@@ -84,7 +85,8 @@ scrolling and the bottom bar can work together.
 ## RecordNavigationBar
 
 Required props: currentIndex (zero-based), totalCount, onPrevious and onNext.
-Optional showNavigation=true, status, actions, secondaryPrimaryAction,
+Optional showNavigation=true, status, actions, actionLabelMode='expand',
+actionContextKey, secondaryPrimaryAction,
 primaryAction and className. It displays
 one-based current position (0 when empty), disables Previous at index<=0 and Next
 at index>=totalCount-1. This is record navigation, not cursor/page pagination.
@@ -101,7 +103,23 @@ visually while retaining their accessible text. The shortcut badge is hidden
 in narrow containers, not used as a replacement for the visible action name.
 
 NavigationAction requires icon, label and onClick; optionally disabled and
-variant default|destructive|success|warning. Place compact operational commands
+variant default|destructive|success|warning and `labelMode='expand'|'visible'`.
+Operational actions are icon-only at rest by default and slide their label out
+on mouse hover or keyboard focus. Mouse click focus alone does not leave the
+label stuck open. Touch deliberately reveals a label on the first tap and runs
+the command on a second tap; disabled actions cannot run. Full accessible names
+remain available even with visually hidden labels. Reduced motion retains
+disclosure without spring movement. Set `actionLabelMode="visible"` on the bar,
+or `labelMode="visible"` on a particular action, only for deliberate permanent
+labels. Changing `actionContextKey` retires disclosure/touch intent when the
+selected target changes.
+
+Data Studio and Storage Studio inherit this shared expand default; consuming
+apps need no separate action-button CSS or configuration. Primary workflows
+(for example New table or Upload) remain labeled buttons rather than hidden
+operational actions.
+
+Place compact operational commands
 here, such as suspend, reset or archive, while role/property/information editing
 belongs in the details region. RecordPrimaryAction requires label/onClick and
 optionally sublabel, shortcut, disabled and ariaHasPopup. Displayed shortcuts do

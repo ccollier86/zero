@@ -3,20 +3,20 @@ id: zero.frontend.data-studio.values
 type: reference
 audience: [developer, agent]
 owner: data-studio
-status: draft
+status: verified
 visibility: internal
 system: data-studio
 feature: values
 maturity: supported
-applies_to: ["2.2.1 development source with record-editor changes; package qualification pending"]
+applies_to: ["2.6.0 source/local archive with shared date/time editors"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.2.1"
-  commit: "95ba0578f6625fc4597a9ec6786ee1d3353f29cd"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Logical Values, Stable Keys And Examples
@@ -43,7 +43,7 @@ checks that would drop valid zero or false defaults. Required fields reject null
 JSON defaults use the existing multiline Textarea; boolean defaults use Select;
 date/datetime drafts reuse Zero's [DatePicker and TimePicker](../components/primitives/dates-and-time.md).
 Date fields offer typed input and calendar selection; datetime fields also offer
-hour/minute/period selectors and a seconds field that preserves milliseconds
+one compact time trigger/list and a seconds field that preserves milliseconds
 (for example, `37.123`). These controls use the application's design tokens in
 both themes rather than browser-native date/time inputs. Numeric defaults use a text input with decimal input
 mode so unfinished/incompatible text remains visible rather than being silently

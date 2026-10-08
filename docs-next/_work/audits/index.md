@@ -18,6 +18,8 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Calendar/field-editor follow-up](./calendar-field-editors.md): shared picker
+  drill-down/navigation, anchored validated Studio cells and management disclosure.
 - [Page/session refresh regression](./session-refresh-regression.md): separate
   auth investigation, reproduced recheck/startup/cookie races and focused
   correction/qualification evidence following the DataTable merge.

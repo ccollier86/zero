@@ -82,6 +82,15 @@ services; an updater does not modify application settings or migrate live data.
   locks, and one-time credential outcomes are never automatically replayed.
 - Data Studio inline cells retire queued focus/navigation when a newer edit
   begins, so an earlier acknowledged save cannot move focus out of the new draft.
+- Modernized shared Calendar/DatePicker/TimePicker with working month/year
+  drill-down, correctly anchored header navigation, keyboard-operated time
+  choices, explicit dismissal and theme-resolved subtle motion. DayPicker policy,
+  controlled date buffers and canonical `HH:mm` values remain intact.
+- JSON cells now compose the validated structured/text JsonEditor in a compact
+  anchored draft panel. Invalid text remains editable, dirty dismissal is
+  deliberate, and Apply awaits the existing revision-aware cell writer. Compact
+  record dialogs reuse the same shared date/time controls; table/storage actions
+  retain and verify the existing icon-first hover/focus disclosure default.
 - Added exact SYSTEM migrations039–043, generation-bound feature policy,
   read-only Doctor readiness diagnostics, source-validated guides, indexes,
   backlinks, actual public examples and post-bootstrap upgrade instructions.

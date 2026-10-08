@@ -170,10 +170,10 @@ intake behavior through the planned blueprint/draft/attachment layer.
 
 | Component | File | Role |
 | --- | --- | --- |
-| `Calendar` | `ui/calendar.tsx` | Calendar primitive backed by react-day-picker. |
-| `DatePicker` | `ui/date-picker.tsx` | Typed date input + popover + calendar. Valid numeric dates normalize to the long display; `calendarProps` owns bounded month/year navigation and disabled dates. Optional `inputValue`/`onInputValueChange` retain parent-owned invalid/incomplete buffers; `inputProps` supplies native field/ARIA attributes; `readOnly` disables mutations without hiding the value. |
+| `Calendar` | `ui/calendar.tsx` | DayPicker-backed selection with shared clickable month/year grids, bounded navigation, keyboard focus, virtualized long year lists and theme-controlled motion. [Guide](../../docs-next/frontend/components/primitives/dates-and-time.md). |
+| `DatePicker` | `ui/date-picker.tsx` | Typed date input or optional animated button, shared drill-down calendar, explicit Close/Clear and controlled popup. Valid numeric dates normalize to the long display; `calendarProps` owns navigation/disabled-date policy. Optional `inputValue`/`onInputValueChange` retain invalid/incomplete buffers; `inputProps` supplies native field/ARIA attributes; `readOnly` prevents mutation. |
 | `DateRangePicker` | `ui/date-range-picker.tsx` | Range picker composition. |
-| `TimePicker` | `ui/time-picker.tsx` | Accessible hour/minute/period input that emits canonical `HH:mm`. |
+| `TimePicker` | `ui/time-picker.tsx` | Compact keyboard-operated trigger/time list with 12h/24h presentation, explicit dismissal and off-step retention; emits canonical `HH:mm`. |
 | `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut` | `ui/command.tsx` | cmdk command palette primitives. |
 | `Combobox` | `ui/combobox.tsx` | Searchable select, including grouped/multi options. |
 | `TagInput` | `ui/tag-input.tsx` | Chip-based tag entry. |

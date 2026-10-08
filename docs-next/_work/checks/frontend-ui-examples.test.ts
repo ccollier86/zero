@@ -28,7 +28,7 @@ const selected: Record<string, number[]> = {
   'frontend/components/overlays/context-menu.md': [0, 1, 2],
   'frontend/components/primitives/choices.md': [0],
   'frontend/components/primitives/tags-and-validation.md': [0],
-  'frontend/components/primitives/dates-and-time.md': [0],
+  'frontend/components/primitives/dates-and-time.md': [0, 1],
   'frontend/components/primitives/inline-editing.md': [0],
   'frontend/components/primitives/surfaces.md': [0],
   'frontend/components/primitives/list-detail.md': [0],

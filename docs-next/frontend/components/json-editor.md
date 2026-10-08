@@ -3,20 +3,20 @@ id: zero.frontend.components.json-editor
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: draft
+status: verified
 visibility: internal
 system: frontend-components
 feature: json-editor
 maturity: supported
-applies_to: ["2.1.1 working source; package qualification pending"]
+applies_to: ["2.6.0 source/local archive with compact JSON draft presentation"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
+  snapshot: clean
+  date: "2026-10-07"
+  evidence_level: implementation-verified
 ---
 
 # Structured JSON Editing
@@ -52,6 +52,7 @@ Optional props:
 | `collapse` | `3` | Initial structured tree expansion depth; accepts a boolean or number. |
 | `className` | None | Outer layout composition. |
 | `scrollMode` | `self` | `self` owns the bounded viewport; `parent` uses an enclosing dialog/panel's scroll region. |
+| `density` | `default` | `compact` gives the text editor a shorter initial surface for anchored single-value panels; it does not narrow validation or change document behavior. |
 | `rawTextDraft` | Uncontrolled local retention | Parent-owned unfinished JSON string, or null when absent. |
 | `onRawTextDraftChange` | None | Observe raw text or explicit discard/accepted local application; store separately from `value`. |
 | `onEditingChange` | None | Observe open inline editing for dirty-close prompts. |
@@ -62,7 +63,9 @@ icons and Zero Select/Textarea controls. The bounded editor area scrolls rather
 than forcing an entire application page to grow. Color/font overrides belong to
 the [design system](../design-system/tokens.md), not per-app hard-coded palettes.
 When embedded in an already bounded dialog, use `scrollMode="parent"`; the text
-slot grows with its lines and the enclosing body owns vertical scrolling.
+slot grows with its lines and the enclosing body owns vertical scrolling. Use
+`density="compact"` for a focused [Studio JSON cell](../data-studio/inline-cell.md);
+full schema/dialog editors retain their default text surface.
 
 ## Commit Is Local Admission, Not A Save
 
