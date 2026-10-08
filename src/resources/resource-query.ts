@@ -74,6 +74,8 @@ export interface ResourceListQueryPlanOptions {
   query?: ResourceListQueryInput;
   defaultLimit?: number;
   maxLimit?: number;
+  /** Include an exact aggregate of the same authorized WHERE, without page bounds. */
+  includeTotal?: boolean;
 }
 
 /** Structured query planning failure. */
@@ -85,6 +87,8 @@ export interface ResourceQueryError {
 /** Executable SQL read plan for a paginated list request. */
 export interface ResourceListQueryPlan {
   sql: string;
+  /** Only emitted for explicit total opt-in; consumes the same `params` as the page. */
+  countSql?: string;
   params: QueryParam[];
   limit: number;
   offset: number;
@@ -219,6 +223,9 @@ export function buildResourceListQueryPlan(
 
   return {
     sql: `SELECT ${select.selectClause} FROM ${quoteResourceIdentifier(options.table)}${whereClause}${order.orderClause} LIMIT ? OFFSET ?`,
+    ...(options.includeTotal ? {
+      countSql: `SELECT COUNT(*) AS total FROM ${quoteResourceIdentifier(options.table)}${whereClause}`,
+    } : {}),
     params,
     limit: page.limit,
     offset: page.offset,

@@ -23,7 +23,7 @@ import {
   type DatabaseBindingIdentity,
 } from './database-binding-identity';
 import type { DatabaseRef } from './database-file';
-import { runDatabaseFind } from './database-find';
+import { runDatabaseFind, runDatabaseFindPage } from './database-find';
 import { createDatabaseListQueryPlan } from './database-list-query';
 import {
   cloneDatabaseSerializableValue,
@@ -350,6 +350,8 @@ export class DatabaseReaderRuntime {
         return this.list(operation);
       case 'find':
         return runDatabaseFind(this.database, operation, this.catalog);
+      case 'find-page':
+        return runDatabaseFindPage(this.database, operation, this.catalog);
       case 'query':
         return withDatabaseReadQuerySession(
           createDatabaseReadQuerySession(this.database),
@@ -458,6 +460,7 @@ function isReadOperation(
   return operation.type === 'get'
     || operation.type === 'list'
     || operation.type === 'find'
+    || operation.type === 'find-page'
     || operation.type === 'query';
 }
 

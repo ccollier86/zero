@@ -161,13 +161,17 @@ describe('DataTable complete server interaction', () => {
     const page = await mount();
     try {
       await page.evaluate(() => window.__fullTableHarness.mode('layout'));
-      const cell = page.locator('tbody td').first();
+      // The independent initial skeleton crossfade intentionally has an
+      // aria-hidden table copy. Measure the real accessible grid, not that
+      // temporary visual overlay.
+      const nativeTable = page.getByRole('table');
+      const cell = nativeTable.locator('tbody td').first();
       await cell.waitFor();
       const width = await cell.evaluate((element) => element.getBoundingClientRect().width);
-      const tableWidth = await page.locator('table').evaluate((element) => element.getBoundingClientRect().width);
+      const tableWidth = await nativeTable.evaluate((element) => element.getBoundingClientRect().width);
       await page.getByRole('button', { name: 'Reveal secret' }).click();
       const revealedWidth = await cell.evaluate((element) => element.getBoundingClientRect().width);
-      const revealedTableWidth = await page.locator('table').evaluate((element) => element.getBoundingClientRect().width);
+      const revealedTableWidth = await nativeTable.evaluate((element) => element.getBoundingClientRect().width);
       expect(Math.abs(revealedWidth - width)).toBeLessThan(1);
       expect(Math.abs(revealedTableWidth - tableWidth)).toBeLessThan(1);
       expect(revealedTableWidth).toBeLessThanOrEqual(650);

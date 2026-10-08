@@ -93,6 +93,8 @@ export function validateDatabaseOperation(
     }
     case 'find':
       return finalizeOperation(validateDatabaseFindOperation(record, catalog));
+    case 'find-page':
+      return finalizeOperation(validateDatabaseFindOperation(record, catalog, type));
     case 'query': {
       assertExactDatabaseFields(record, ['type', 'name', 'input', 'consistency']);
       requireDatabaseOwnField(record, 'input');

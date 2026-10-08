@@ -106,4 +106,12 @@ describe('DataTableServerRequestCoordinator', () => {
     expect(dataTableServerSourceIdentity(source, first)).toBe(dataTableServerSourceIdentity(source, first));
     expect(dataTableServerSourceIdentity(source, first)).not.toBe(dataTableServerSourceIdentity(source, second));
   });
+  test('built-in count mode partitions accepted pages without imposing policy on custom adapter totals', () => {
+    const source = { type: 'server' as const, table: 'tasks' }, client = {};
+    expect(dataTableServerSourceIdentity(source, client)).toBe(dataTableServerSourceIdentity({ ...source, includeTotal: true }, client));
+    expect(dataTableServerSourceIdentity(source, client)).not.toBe(dataTableServerSourceIdentity({ ...source, includeTotal: false }, client));
+    const adapter = { query: async () => ({ rows: [], page: { mode: 'offset' as const, offset: 0, total: 0, hasMore: false } }) };
+    expect(dataTableServerSourceIdentity({ ...source, adapter }, client))
+      .toBe(dataTableServerSourceIdentity({ ...source, adapter, includeTotal: false }, client));
+  });
 });

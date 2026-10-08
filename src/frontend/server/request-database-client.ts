@@ -16,6 +16,7 @@ import type {
   DatabaseBatchInput,
   DatabaseCommitResult,
   DatabaseFindInput,
+  DatabaseFindPage,
   DatabaseFindRows,
   DatabaseListPage,
   DatabaseListPageOptions,
@@ -136,6 +137,15 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseFindRows>> {
     return await this.#withBinding((client) => client.find(table, input, options));
+  }
+
+  /** Read one exact-total page using the same short-lived trusted binding and final fence. */
+  async findPage(
+    table: string,
+    input: DatabaseFindInput,
+    options?: DatabaseReadOptions,
+  ): Promise<DatabaseReadResult<DatabaseFindPage>> {
+    return await this.#withBinding((client) => client.findPage(table, input, options));
   }
 
   async query(

@@ -17,6 +17,8 @@ import type {
   DatabaseFindArrayOverlapFilter,
   DatabaseFindFilter,
   DatabaseFindOperation,
+  DatabaseFindPage,
+  DatabaseFindPageOperation,
   DatabaseFindRows,
   DatabaseOperationCatalog,
   DatabaseSerializableScalar,
@@ -33,7 +35,10 @@ export interface DatabaseFindClause {
   readonly params: readonly DatabaseFindBinding[];
 }
 
-type DatabaseFindPlan = DatabaseFindClause;
+interface DatabaseFindPlan extends DatabaseFindClause {
+  readonly countSql: string;
+  readonly countParams: readonly DatabaseFindBinding[];
+}
 
 /** Execute one validated find against an actor-owned SQLite connection. */
 export function runDatabaseFind(
@@ -50,9 +55,38 @@ export function runDatabaseFind(
   }
 }
 
+/**
+ * Execute the page and exact count inside the caller's actor-owned read snapshot.
+ * Only the bounded page leaves SQLite; pagination never changes the count predicate.
+ */
+export function runDatabaseFindPage(
+  database: DatabaseFindConnection,
+  operation: DatabaseFindPageOperation,
+  catalog: DatabaseOperationCatalog,
+): DatabaseFindPage {
+  const plan = buildDatabaseFindPlan(operation, catalog);
+  const count = database.prepare(plan.countSql);
+  let total: number;
+  try {
+    const result = count.get(...plan.countParams) as { total: unknown } | null;
+    if (!result || !Number.isSafeInteger(result.total) || (result.total as number) < 0) {
+      throw new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Database matching total is invalid.');
+    }
+    total = result.total as number;
+  } finally {
+    count.finalize();
+  }
+  const page = database.prepare(plan.sql);
+  try {
+    return { rows: page.all(...plan.params) as DatabaseFindRows, total };
+  } finally {
+    page.finalize();
+  }
+}
+
 /** Build a parameterized plan. Kept internal to the actor implementation. */
 function buildDatabaseFindPlan(
-  operation: DatabaseFindOperation,
+  operation: DatabaseFindOperation | DatabaseFindPageOperation,
   catalog: DatabaseOperationCatalog,
 ): DatabaseFindPlan {
   const columns = catalog.columns?.[operation.table];
@@ -91,6 +125,8 @@ function buildDatabaseFindPlan(
       operation.limit,
       operation.offset ?? 0,
     ]),
+    countSql: `SELECT COUNT(*) AS total FROM main.${quoteSqlIdentifier(operation.table)}${whereSql}`,
+    countParams: Object.freeze(params),
   });
 }
 

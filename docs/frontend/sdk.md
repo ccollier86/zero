@@ -1126,7 +1126,10 @@ offset=0
 Filters are repeatable and ANDed together. `field:value` is equality; explicit
 operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `contains`, and
 `in`. The response is `{ rows, page }`, where `page` includes `limit`, `offset`,
-`count`, `hasMore`, and `nextOffset`.
+`count`, `hasMore`, and `nextOffset`. Optional `includeTotal=true` adds an exact
+authorized filtered `page.total` read in the same transaction/Fabric snapshot;
+omitted or false preserves lookahead-only behavior. Built-in offset DataTables
+request totals by default, with `source.includeTotal: false` as an opt-out.
 
 The endpoint validates table/column names, parameterizes values, caps result
 size, and enforces the same sync read policy used by WebSocket subscriptions.

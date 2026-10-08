@@ -110,6 +110,7 @@ export function dataTableServerQueryKey(
 export function buildDataTableServerQuery(
   table: string,
   queryInput: DataTableServerQuery,
+  options: { includeTotal?: boolean } = {},
 ): string {
   assertIdentifier(table);
   const query = normalizeDataTableServerQuery(queryInput);
@@ -127,6 +128,7 @@ export function buildDataTableServerQuery(
     limit: String(query.pagination.pageSize),
     offset: String(offset),
   });
+  if (options.includeTotal !== false) params.set('includeTotal', 'true');
   const search = query.search.trim();
   if (search && !query.searchFields?.length) throw invalidQuery();
   if (search && query.searchFields?.length) {
@@ -153,17 +155,21 @@ export function createDataTableApiAdapter<T extends Row>(
   client: Client,
   table: string,
   primaryKey?: string,
+  options: { includeTotal?: boolean } = {},
 ): DataTableServerAdapter<T> {
+  const read = async (query: DataTableServerQuery, signal: AbortSignal, includeTotal: boolean) => {
+    const response = await client.fetch<DataTableApiResponse<T>>(
+      buildDataTableServerQuery(table, query, { includeTotal }),
+      { signal },
+    );
+    return normalizeDataTableApiResponse<T>(response, {
+      limit: query.pagination.pageSize,
+      offset: query.pagination.pageIndex * query.pagination.pageSize,
+    });
+  };
   const adapter: DataTableServerAdapter<T> = {
     async query(query, { signal }) {
-      const response = await client.fetch<DataTableApiResponse<T>>(
-        buildDataTableServerQuery(table, query),
-        { signal },
-      );
-      return normalizeDataTableApiResponse<T>(response, {
-        limit: query.pagination.pageSize,
-        offset: query.pagination.pageIndex * query.pagination.pageSize,
-      });
+      return read(query, signal, options.includeTotal !== false);
     },
   };
   if (primaryKey && IDENTIFIER.test(primaryKey) && primaryKey.length <= 128) {
@@ -171,7 +177,9 @@ export function createDataTableApiAdapter<T extends Row>(
       const confirmed = new Set<string>();
       for (const lookup of dataTableServerMembershipQueries(normalizeDataTableServerQuery(query), primaryKey, rowIds)) {
         if (signal.aborted) return [];
-        const result = await adapter.query(lookup, { signal });
+        // Membership asks only whether supplied identities match; a global
+        // filtered count adds cost and cannot make this bounded lookup safer.
+        const result = await read(lookup, signal, false);
         if (signal.aborted) return [];
         const filter = lookup.filters[lookup.filters.length - 1]!.value as DataFilterExpression;
         const candidates = new Set(filter.value as string[]);

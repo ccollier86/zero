@@ -363,6 +363,102 @@ describe('/api/data', () => {
     });
   });
 
+  test('returns an opt-in exact filtered total in the same finalized page transaction', async () => {
+    app = createTestApp();
+    seedItems(app);
+    const db = getAppDatabase(app);
+    const originalPrepare = db.prepare.bind(db);
+    const originalTransaction = db.transaction.bind(db);
+    const statements: Array<ReturnType<ReactiveDB['prepare']>> = [];
+    const queries: string[] = [];
+    let insidePageSnapshot = false;
+    let pageSnapshots = 0;
+    const transaction = spyOn(db, 'transaction').mockImplementation((read) => {
+      pageSnapshots += 1;
+      return originalTransaction(() => {
+        insidePageSnapshot = true;
+        try { return read(); }
+        finally { insidePageSnapshot = false; }
+      });
+    });
+    const prepare = spyOn(db, 'prepare').mockImplementation((sql: string) => {
+      expect(insidePageSnapshot).toBe(true);
+      queries.push(sql);
+      const statement = originalPrepare(sql);
+      statements.push(statement);
+      return statement;
+    });
+    try {
+      const result = await getJson(
+        '/api/data?table=items&includeTotal=true&filter=category:a&search=a&searchField=title&sort=priority:asc&limit=1&offset=1',
+      );
+      expect(result.status).toBe(200);
+      expect(result.body.rows.map((row: { id: string }) => row.id)).toEqual(['i2']);
+      expect(result.body.page).toEqual({
+        limit: 1, offset: 1, count: 1, hasMore: true, nextOffset: 2, total: 3,
+      });
+      expect(pageSnapshots).toBe(1);
+      expect(queries[0]).toBe('SELECT COUNT(*) AS total FROM "items" WHERE "category" = ? AND ("title" LIKE ? ESCAPE \'\\\')');
+      expect(queries[1]).toContain(' ORDER BY "priority" ASC LIMIT ? OFFSET ?');
+      expect(statements).toHaveLength(2);
+      expect(statements.every(statementIsFinalized)).toBe(true);
+    } finally {
+      transaction.mockRestore();
+      prepare.mockRestore();
+      for (const statement of statements) {
+        if (!statementIsFinalized(statement)) statement.finalize();
+      }
+    }
+  });
+
+  test('does not execute counts when total is absent or explicitly false', async () => {
+    app = createTestApp();
+    seedItems(app);
+    const prepare = spyOn(getAppDatabase(app), 'prepare');
+    try {
+      for (const suffix of ['', '&includeTotal=false']) {
+        const result = await getJson(`/api/data?table=items&limit=1${suffix}`);
+        expect(result.status).toBe(200);
+        expect(result.body.page).not.toHaveProperty('total');
+      }
+      expect(prepare).toHaveBeenCalledTimes(2);
+      expect(prepare.mock.calls.every(([sql]) => !sql.includes('COUNT(*)'))).toBe(true);
+    } finally { prepare.mockRestore(); }
+  });
+
+  test('recomputes exact totals after changes and for empty or out-of-range pages', async () => {
+    app = createTestApp();
+    seedItems(app);
+    const path = '/api/data?table=items&includeTotal=true&filter=category:a&limit=1';
+    expect((await getJson(path)).body.page.total).toBe(3);
+    const db = getAppDatabase(app);
+    db.insert('items', { id: 'i5', category: 'a', title: 'Another', priority: 5 });
+    db.insert('items', { id: 'i6', category: 'b', title: 'Not a match', priority: 6 });
+    expect((await getJson(path)).body.page.total).toBe(4);
+    db.delete('items', 'i5');
+    expect((await getJson(path)).body.page.total).toBe(3);
+    const beyondLast = await getJson(`${path}&offset=999`);
+    expect(beyondLast.body.rows).toEqual([]);
+    expect(beyondLast.body.page).toMatchObject({ total: 3, count: 0, hasMore: false });
+    const empty = await getJson('/api/data?table=items&includeTotal=true&filter=category:empty');
+    expect(empty.body.page).toMatchObject({ total: 0, count: 0, hasMore: false });
+  });
+
+  test('strictly bounds total opt-in and rejects malformed values before querying', async () => {
+    app = createTestApp();
+    const prepare = spyOn(getAppDatabase(app), 'prepare');
+    try {
+      for (const invalid of ['1', '0', 'yes', '', 'TRUE', 'private-value'.repeat(40)]) {
+        const result = await getJson(`/api/data?table=items&includeTotal=${invalid}`);
+        expect(result).toEqual({
+          status: 400,
+          body: { error: 'Invalid data query', code: 'invalid-data-query' },
+        });
+      }
+      expect(prepare).not.toHaveBeenCalled();
+    } finally { prepare.mockRestore(); }
+  });
+
   test('supports explicit filter operators', async () => {
     app = createTestApp();
     seedItems(app);
@@ -573,6 +669,64 @@ describe('/api/data', () => {
     });
     expect(admin.status).toBe(200);
     expect(admin.body.rows.map((row: any) => row.id)).toEqual(['o1', 'o2']);
+  });
+
+  test('counts only resource-authorized rows and never enables hidden-field probing', async () => {
+    const registry = new ResourceRegistry();
+    registry.register(defineResource({
+      table: 'owned_items', actions: ['list'],
+      fields: { read: ['id', 'title'], filter: ['id', 'title'], sort: ['id'] },
+      policy: ownerPolicy({ userField: 'owner_id' }),
+    }), { tables: testTables, authConfig: { userProperties: {} } });
+    app = createTestApp({
+      getTokenService: () => createTokenService(),
+      resourceRegistry: registry,
+    });
+    seedResourceRows(app);
+    const headers = { authorization: 'Bearer user-token' };
+    const result = await getJson('/api/data?table=owned_items&includeTotal=true&limit=1', headers);
+    expect(result.status).toBe(200);
+    expect(result.body.rows).toEqual([{ id: 'o1', title: 'Mine' }]);
+    expect(result.body.page).toMatchObject({ total: 1, count: 1, hasMore: false });
+    const hiddenFilter = await getJson(
+      '/api/data?table=owned_items&includeTotal=true&filter=owner_id:user-2', headers,
+    );
+    expect(hiddenFilter.status).toBe(400);
+    expect(hiddenFilter.body).not.toHaveProperty('page');
+    const hiddenSearch = await getJson(
+      '/api/data?table=owned_items&includeTotal=true&search=user&searchField=owner_id', headers,
+    );
+    expect(hiddenSearch.status).toBe(400);
+    const filtered = await getJson(
+      '/api/data?table=owned_items&includeTotal=true&search=Theirs&searchField=title', headers,
+    );
+    expect(filtered.body.page.total).toBe(0);
+  });
+
+  test('sanitizes aggregate failures through the existing observability boundary', async () => {
+    const events = new MemoryEventStore();
+    app = createTestApp({
+      observability: {
+        sink: events, store: events,
+        config: { console: false, store: events },
+      },
+    });
+    seedItems(app);
+    const db = getAppDatabase(app);
+    const originalPrepare = db.prepare.bind(db);
+    const prepare = spyOn(db, 'prepare').mockImplementation((sql: string) => {
+      if (sql.startsWith('SELECT COUNT(*)')) throw new Error('private SQL/tenant/error detail');
+      return originalPrepare(sql);
+    });
+    try {
+      const result = await getJson('/api/data?table=items&includeTotal=true');
+      expect(result).toEqual({
+        status: 500, body: { error: 'Data query failed', code: 'data-query-failed' },
+      });
+      expect(events.query().events.map((event) => event.code)).toEqual([OBS_CODES.DATA_QUERY_FAILED.code]);
+      expect(events.query().events[0]?.metadata).toEqual({ table: 'items' });
+      expect(JSON.stringify([result, events.query()])).not.toContain('private SQL');
+    } finally { prepare.mockRestore(); }
   });
 
   test('hydrates metadata policy properties for registered data resources', async () => {
@@ -889,6 +1043,48 @@ describe('/api/data', () => {
     expect(commitResolutions).toBe(1);
   });
 
+  test('fences aggregate and rows again after the shared database read before delivery', async () => {
+    const context: AuthContext = {
+      userId: 'user-1', email: 'user@test.local', role: 'user',
+      sessionKind: 'web', sessionId: 'delivery-session', sessionGeneration: 0,
+      sessionScopeKind: 'application', sessionScopeId: 'application',
+    };
+    let durable: AuthContext | null = context;
+    const tokenService = {
+      async resolveAuthContext() { return context; },
+      captureAuthContextAuthority() { return { kind: 'test-reference' }; },
+      resolveAuthContextAuthority() { return durable; },
+    } as unknown as TokenService;
+    const registry = new ResourceRegistry();
+    registry.register(defineResource({ table: 'items', actions: ['list'], policy: authenticatedOnly() }), {
+      tables: testTables, authConfig: { userProperties: {} },
+    });
+    app = createTestApp({ getTokenService: () => tokenService, resourceRegistry: registry });
+    seedItems(app);
+    const db = getAppDatabase(app);
+    const originalTransaction = db.transaction.bind(db);
+    const transaction = spyOn(db, 'transaction').mockImplementation((read) => {
+      const result = originalTransaction(read);
+      durable = null;
+      return result;
+    });
+    try {
+      const result = await getJson('/api/data?table=items&includeTotal=true', {
+        authorization: 'Bearer delivery-token',
+      });
+      expect(result).toEqual({
+        status: 403,
+        body: {
+          error: 'Resource authorization changed during the request',
+          code: 'resource-authority-changed',
+        },
+      });
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(result.body).not.toHaveProperty('page');
+      expect(result.body).not.toHaveProperty('rows');
+    } finally { transaction.mockRestore(); }
+  });
+
   test('ANDs the durable tenant realm and rejects unclassified multi-mode query tables at startup', async () => {
     const registry = new ResourceRegistry();
     registry.register(defineResource({
@@ -950,11 +1146,12 @@ describe('/api/data', () => {
     db.insert('tenant_docs', { id: 'a', tenant_id: 'tenant-a', title: 'A' });
     db.insert('tenant_docs', { id: 'b', tenant_id: 'tenant-b', title: 'B' });
 
-    const scoped = await getJson('/api/data?table=tenant_docs&order=id', {
+    const scoped = await getJson('/api/data?table=tenant_docs&order=id&includeTotal=true', {
       authorization: 'Bearer tenant-a-token',
     });
     expect(scoped.status).toBe(200);
     expect(scoped.body.rows.map((row: any) => row.id)).toEqual(['a']);
+    expect(scoped.body.page.total).toBe(1);
 
     const nativeScoped = await getJson('/api/data?table=tenant_docs&order=id', {
       authorization: 'Bearer native-tenant-a-token',
@@ -963,11 +1160,12 @@ describe('/api/data', () => {
     expect(nativeScoped.body.rows.map((row: any) => row.id)).toEqual(['a']);
 
     const attemptedWiden = await getJson(
-      '/api/data?table=tenant_docs&filter=tenant_id:tenant-b',
+      '/api/data?table=tenant_docs&includeTotal=true&filter=tenant_id:tenant-b',
       { authorization: 'Bearer tenant-a-token' },
     );
     expect(attemptedWiden.status).toBe(200);
     expect(attemptedWiden.body.rows).toEqual([]);
+    expect(attemptedWiden.body.page.total).toBe(0);
 
     const anonymous = await getJson('/api/data?table=tenant_docs');
     expect(anonymous).toEqual({
@@ -1020,6 +1218,7 @@ describe('/api/data', () => {
 
     const boundTenantIds: string[] = [];
     const findCalls: Array<{ table: string; input: DatabaseFindInput }> = [];
+    const findPageCalls: Array<{ table: string; input: DatabaseFindInput; signal?: AbortSignal }> = [];
     let releases = 0;
     const manager = {
       async bindTenant(options: {
@@ -1031,6 +1230,15 @@ describe('/api/data', () => {
         options.assertCurrentAuthoritySync();
         return {
           client: {
+            async findPage(table: string, input: DatabaseFindInput, readOptions?: { signal?: AbortSignal }) {
+              options.assertCurrentReadAuthority?.();
+              findPageCalls.push({ table, input, signal: readOptions?.signal });
+              options.assertCurrentReadAuthority?.();
+              return {
+                value: { rows: [{ id: 'a', title: 'Alpha' }, { id: 'b', title: 'Almanac' }], total: 41 },
+                sequence: { seq: 7 },
+              };
+            },
             async find(table: string, input: DatabaseFindInput) {
               options.assertCurrentReadAuthority?.();
               findCalls.push({ table, input });
@@ -1105,6 +1313,23 @@ describe('/api/data', () => {
     });
     expect(JSON.stringify(findCalls)).not.toContain('tenant_id');
     expect(releases).toBe(1);
+
+    const counted = await getJson(
+      '/api/data?table=isolated_docs&includeTotal=true&search=Al&searchField=title&sort=id:asc&sort=title:desc',
+      { authorization: 'Bearer isolated-token' },
+    );
+    expect(counted.status).toBe(200);
+    expect(counted.body.rows).toEqual([{ id: 'a', title: 'Alpha' }]);
+    expect(counted.body.page).toEqual({
+      limit: 1, offset: 0, count: 1, hasMore: true, nextOffset: 1, total: 41,
+    });
+    expect(findCalls).toHaveLength(1);
+    expect(findPageCalls).toHaveLength(1);
+    expect(findPageCalls[0]?.table).toBe(findCalls[0]?.table);
+    expect(findPageCalls[0]?.input).toEqual(findCalls[0]?.input);
+    expect(findPageCalls[0]?.signal).toBeInstanceOf(AbortSignal);
+    expect(boundTenantIds).toEqual(['tenant-a', 'tenant-a']);
+    expect(releases).toBe(2);
   });
 
   test('rechecks physical-tenant authority after actor read and immediately before row delivery', async () => {
@@ -1147,6 +1372,15 @@ describe('/api/data', () => {
         options.assertCurrentAuthoritySync();
         return {
           client: {
+            async findPage() {
+              options.assertCurrentReadAuthority?.();
+              options.assertCurrentReadAuthority?.();
+              queueMicrotask(() => { durableContext = null; });
+              return {
+                value: { rows: [{ id: 'private', title: 'Must not escape' }], total: 999 },
+                sequence: { seq: 7 },
+              };
+            },
             async find() {
               options.assertCurrentReadAuthority?.();
               options.assertCurrentReadAuthority?.();
@@ -1188,6 +1422,14 @@ describe('/api/data', () => {
       },
     });
     expect(releases).toBe(1);
+    durableContext = tenantContext;
+    const counted = await getJson('/api/data?table=isolated_docs&includeTotal=true', {
+      authorization: 'Bearer isolated-token',
+    });
+    expect(counted).toEqual(result);
+    expect(counted.body).not.toHaveProperty('page');
+    expect(counted.body).not.toHaveProperty('rows');
+    expect(releases).toBe(2);
   });
 
   test('classifies actor 4xx before ERROR emission and logs unavailable failures locally', async () => {

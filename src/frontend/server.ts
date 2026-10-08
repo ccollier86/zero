@@ -151,6 +151,8 @@ export type {
   DatabaseFindFilterGroup,
   DatabaseFindFilterOperator,
   DatabaseFindInput,
+  DatabaseFindPage,
+  DatabaseFindPageOperation,
   DatabaseFindOrder,
   DatabaseFindRows,
   DatabaseHotDurability,

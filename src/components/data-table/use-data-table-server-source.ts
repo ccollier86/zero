@@ -108,7 +108,8 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   };
   const transport = (captured: typeof current.current) => {
     const source = captured.options.source!;
-    const adapter = source.adapter ?? (captured.client ? createDataTableApiAdapter<T>(captured.client, source.table) : null);
+    const adapter = source.adapter ?? (captured.client ? createDataTableApiAdapter<T>(captured.client, source.table,
+      undefined, { includeTotal: source.includeTotal }) : null);
     if (!adapter) throw new DataTableServerSourceError('The built-in DataTable server source requires a Zero client provider.', 'DATA_TABLE_SERVER_CLIENT_REQUIRED');
     return async (query: DataTableServerQuery, signal: AbortSignal) => {
       if (!admitted(captured) || signal.aborted) throw new Error('DataTable server request was retired.');
@@ -176,7 +177,8 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   useLayout(() => {
     const captured = current.current, source = captured.options.source, query = captured.resolution.query;
     const adapter = source?.adapter ?? (captured.client && source && !source.getRowId
-      ? createDataTableApiAdapter<T>(captured.client, source.table, captured.options.primaryKey) : null);
+      ? createDataTableApiAdapter<T>(captured.client, source.table, captured.options.primaryKey,
+        { includeTotal: source.includeTotal }) : null);
     const supported = source && query && source.live !== false && captured.options.confirmLiveInsertions !== false
       && adapter?.confirmInsertedRows && authorization.ready;
     const isCurrent = () => admitted(captured) && current.current.membershipKey === captured.membershipKey

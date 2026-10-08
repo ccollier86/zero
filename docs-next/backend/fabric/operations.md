@@ -8,14 +8,14 @@ visibility: internal
 system: fabric
 feature: operations
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased actor environment corrections"]
+applies_to: ["2.6.0 baseline with unreleased structured exact-total pages"]
 modes: [single, multiple, shared-row, tenant-database, file, hot]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "b3b17b48af079ed56ebfd94f0d76889ee7d91267"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
@@ -47,12 +47,39 @@ export async function listNotes(data: AsyncDatabaseClient) {
 exclusive cursor and `nextCursor`; maximum limit is 500.
 `find(table, input, options?)` provides schema-validated projection, typed
 filter groups, deterministic order and bounded offset pagination.
+`findPage(table, input, options?)` uses the same input contract and returns
+`value: { rows, total }`: a bounded page plus the exact matching total before
+limit/offset, in one actor snapshot and sequence.
 `query(name, input, options?)` invokes a registered synchronous read handler.
 
 Read results are `{ value, sequence: { seq } }`. Find returns an ordered row
 array, not an exact total or automatic UI-page metadata. Its maximum limit is
 1001, offset 1000000, order fields 8 and projected fields 128.
 All columns/filter operators are admitted; raw SQL is not accepted as input.
+
+`findPage` retains those same projection/filter/limit bounds and read consistency
+options on both writer and follower actors. Its count and rows cannot straddle a
+concurrent write. `find` keeps its original array response and avoids the aggregate
+query. An empty page beyond the end still carries its exact matching total;
+zero matches returns `{ rows: [], total: 0 }`.
+
+For example, inside an already-authorized request:
+
+```ts
+const result = await data.findPage('notes', {
+  select: ['id', 'title'],
+  order: [{ field: 'id', direction: 'asc' }],
+  limit: 20,
+  offset: 40,
+});
+// result.value.rows and result.value.total share result.sequence.
+```
+
+This remains a bound database capability, not automatic resource authorization.
+The managed `/api/data?includeTotal=true` owner compiles resource row policy into
+both predicates and rechecks authority before delivery. App-owned handlers must
+enforce their own admitted policy just as for `find`. Exact COUNT can require
+scanning matching rows; it does not fetch all those rows over IPC or to a browser.
 
 ### Array Membership Filters
 

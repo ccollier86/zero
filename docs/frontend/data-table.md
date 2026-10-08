@@ -137,7 +137,16 @@ server still enforces the table's Resource exposure, list policy, tenant realm,
 and row constraints. A browser-supplied table name, filter, or active tenant is
 never an authority boundary.
 
-Exact totals are optional. `hasMore` controls Next when a count is unavailable,
+Built-in offset sources request an exact authorized filtered total by default.
+Rows and total share one ReactiveDB transaction or Fabric actor snapshot, and
+existing Sync revalidation updates both. The footer derives the animated progress
+fraction from current page and `ceil(total / pageSize)`, so arrivals/deletions
+that change the number of pages adjust it automatically. Set
+`source.includeTotal: false` for cheaper lookahead-only reads. Custom adapters
+still own their optional `page.total`; no total is inferred from cached rows.
+See the [exact-total contract](../../docs-next/frontend/data-controls/data-table/server-sources.md).
+
+Exact totals remain optional. `hasMore` controls Next when a count is unavailable,
 and the footer shows the loaded range without inventing a total or last page.
 This lets an endpoint avoid an extra count query:
 

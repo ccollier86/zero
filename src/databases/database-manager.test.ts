@@ -118,6 +118,54 @@ describe('DatabaseManager', () => {
     }
   }, 20_000);
 
+  test('reads exact filtered totals through real tenant actors without crossing realm ownership', async () => {
+    const harness = createMultipleManager(roots, { tenantDatabases: true });
+    managers.push(harness.manager);
+    harness.manager.start();
+    let authorityCurrent = true;
+    const tenantA = await harness.manager.bindTenant({
+      tenantId: 'exact-page-a',
+      assertCurrentAuthoritySync: () => {
+        if (!authorityCurrent) throw new Error('revoked');
+        return undefined;
+      },
+    });
+    const tenantB = await harness.manager.bindTenant({
+      tenantId: 'exact-page-b', assertCurrentAuthoritySync: () => undefined,
+    });
+    try {
+      await tenantA.client.batch({ mutations: [
+        { type: 'create', table: 'todos', row: { id: 'a', title: 'Match first' } },
+        { type: 'create', table: 'todos', row: { id: 'b', title: 'Hidden' } },
+        { type: 'create', table: 'todos', row: { id: 'c', title: 'Match second' } },
+      ] }, { idempotencyKey: 'exact-page:a:seed' });
+      await tenantB.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'a', title: 'Match other tenant' },
+      }, { idempotencyKey: 'exact-page:b:seed' });
+      const input = {
+        limit: 1, offset: 1, select: ['id'],
+        filters: [{ type: 'field', field: 'title', operator: 'contains', value: 'Match' }],
+      } as const;
+      expect(await tenantA.client.findPage('todos', input, {
+        consistency: { mode: 'snapshot' },
+      })).toEqual({ value: { rows: [{ id: 'c' }], total: 2 }, sequence: { seq: 3 } });
+      expect(await tenantA.client.findPage('todos', input, {
+        consistency: { mode: 'strong' },
+      })).toEqual({ value: { rows: [{ id: 'c' }], total: 2 }, sequence: { seq: 3 } });
+      expect(await tenantB.client.findPage('todos', { ...input, offset: 0 }))
+        .toEqual({ value: { rows: [{ id: 'a' }], total: 1 }, sequence: { seq: 1 } });
+      const commit = await tenantA.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'd', title: 'Match live' },
+      }, { idempotencyKey: 'exact-page:a:live' });
+      expect(await tenantA.client.findPage('todos', input, {
+        consistency: { mode: 'read-your-writes', minSeq: commit.sequence },
+      })).toEqual({ value: { rows: [{ id: 'c' }], total: 3 }, sequence: { seq: 4 } });
+      authorityCurrent = false;
+      expect(await databaseCode(() => tenantA.client.findPage('todos', input)))
+        .toBe('DATABASE_AUTHORITY_CHANGED');
+    } finally { tenantB.release(); tenantA.release(); }
+  }, 20_000);
+
   test('owns future service database planes through the generic pinned lifecycle', async () => {
     const systemRuntime = createSystemRuntime();
     const appRuntime = createDefaultRuntime();

@@ -15,7 +15,7 @@ reviewed_against:
   version: "2.6.0"
   commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
   snapshot: dirty
-  date: "2026-10-07"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
@@ -29,7 +29,7 @@ second time in the browser. While a new query loads, the preceding same-scope
 page can remain presentation-only; it is not the new query's accepted response. Use this mode for large
 tables, server policy/query budgets or strict query membership.
 
-The bounded cache/prefetch, previous-page metadata and live-INSERT evidence below
+The bounded cache/prefetch, exact filtered totals, previous-page metadata and live-INSERT evidence below
 describe current working-tree additions. Their presence in this draft is not a
 claim that the published 2.6.0 archive contains the new behavior.
 
@@ -57,6 +57,13 @@ createDataTableApiAdapter and buildDataTableServerQuery are public from the
 data-table subpath for explicit composition. The generated built-in API supports
 offset, not opaque cursor pagination; cursor requires a custom adapter.
 
+Built-in offset sources request `includeTotal=true` by default. The response's
+`page.total` is the exact number of authorized rows matching the current search
+and filters, not the current batch size or the shared client cache's size. Set
+`source.includeTotal: false` to use the cheaper lookahead-only query when exact
+counts are unnecessary. This option controls the built-in request; it does not
+discard a valid total supplied by a custom adapter or manufacture cursor progress.
+
 Lower-level, browser-safe query helpers are available from
 `@zero/framework/react/query-params`: `appendDataFilter`, `appendDataFilters`,
 `buildDataPageQuery`, `buildResourceListQuery`, `normalizePage`,
@@ -77,6 +84,12 @@ DataTableServerQuery contains:
 | sorting | ordered `{ id, desc }` entries |
 | pagination | mode offset/cursor, nonnegative pageIndex, positive pageSize and optional cursor |
 | searchFields | optional explicit column names for built-in OR search |
+
+The built-in encoder accepts `buildDataTableServerQuery(table, query,
+{ includeTotal?: boolean })`; explicit adapters accept
+`createDataTableApiAdapter(client, table, primaryKey?, { includeTotal?: boolean })`.
+The default is true. Aggregate preference belongs to the source/transport, not
+the custom adapter's search/filter query snapshot.
 
 Built-in fields/table IDs must be safe column identifiers. Query snapshots validate
 criteria before async work: search length at most1024, filters at most64, sort
@@ -139,6 +152,22 @@ an available nextCursor; previous-page navigation uses retained query cursor
 history. Even with an exact total, cursor mode does not invent a last-page cursor.
 Hiding pagination does not remove server limits or fetch all records.
 
+With an accepted exact offset total, the footer derives
+`pageCount = ceil(total / pageSize)` and fills its progress track to
+`min(pageIndex + 1, pageCount) / pageCount`. The accepted total rolls per digit;
+the fill animates with the shared 700ms motion. Live INSERT, UPDATE and DELETE
+invalidation re-queries the same filters and returns rows and total together. An
+arrival that adds another page automatically changes the denominator; deletion
+can reduce it. There is no separate polling loop or guessed count increment.
+The held-new-record pill counts confirmed received INSERTs, not all matching rows.
+
+The built-in `/api/data` handler reads COUNT and the bounded page inside one
+ReactiveDB transaction, or one Fabric `findPage` actor snapshot for tenant files.
+Both use the same validated row-policy/search/filter predicates; field projection,
+current authority and delivery fences still apply. No additional schema or
+migration is needed. Exact COUNT can cost more than lookahead on large or complex
+filtered datasets; use appropriate existing indexes or the explicit opt-out.
+
 If an accepted offset response supplies an exact total and the current index
 is no longer in range, the table requests the last remaining page. It does not
 infer a total or clamp from a short/empty unknown-total batch. Search, filter,
@@ -184,7 +213,8 @@ transports. Larger custom batches remain valid foreground results but are not
 cached/speculatively downloaded. These are page/row bounds, not a guarantee
 about arbitrary custom row byte sizes. Identity includes table, adapter/client,
 row identity, authorization boundary and the complete normalized search/filter/
-sort/page/cursor query. Refresh and live invalidation discard stale cached pages.
+sort/page/cursor query. Built-in source identity also includes its aggregate
+request preference. Refresh and live invalidation discard stale cached pages.
 Authorization/source replacement discards the whole old partition.
 
 Abort is advisory to the endpoint, but retired promises settle and late ignored-
@@ -243,6 +273,8 @@ authenticated query API: it retains search, search fields, filters and sorting,
 adds an `IN` filter for the candidate IDs, and requests a bounded first batch.
 Only exact candidate IDs returned by this authorized query are admitted. These
 lookup records do not enter the current page, its cache or the shared collection.
+Membership probes explicitly omit exact counts; totals come from the normal page
+request, not these bounded candidate checks.
 
 For an app-owned transport, optionally implement:
 

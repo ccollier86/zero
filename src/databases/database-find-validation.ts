@@ -12,6 +12,7 @@ import {
   type DatabaseFindFilter,
   type DatabaseFindFilterOperator,
   type DatabaseFindOperation,
+  type DatabaseFindPageOperation,
   type DatabaseFindOrder,
   type DatabaseOperationCatalog,
   type DatabaseSerializableScalar,
@@ -46,7 +47,17 @@ interface FindFilterValidationState {
 export function validateDatabaseFindOperation(
   record: DatabaseOperationRecord,
   catalog: DatabaseOperationCatalog,
-): DatabaseFindOperation {
+): DatabaseFindOperation;
+export function validateDatabaseFindOperation(
+  record: DatabaseOperationRecord,
+  catalog: DatabaseOperationCatalog,
+  type: 'find-page',
+): DatabaseFindPageOperation;
+export function validateDatabaseFindOperation(
+  record: DatabaseOperationRecord,
+  catalog: DatabaseOperationCatalog,
+  type: 'find' | 'find-page' = 'find',
+): DatabaseFindOperation | DatabaseFindPageOperation {
   assertExactDatabaseFields(record, [
     'type',
     'table',
@@ -85,7 +96,7 @@ export function validateDatabaseFindOperation(
     ? undefined
     : validateFindOrder(record.order, columns);
   return {
-    type: 'find',
+    type,
     table,
     ...(select === undefined ? {} : { select }),
     ...(filters === undefined ? {} : { filters }),

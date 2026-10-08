@@ -2222,6 +2222,11 @@ Server mode projects search, column filters, sorting, and pagination into a
 optional, and accepted rows are fenced by the current query and authorization
 scope. Offset mode can use the built-in adapter; cursor mode requires a custom
 `DataTableServerAdapter` returning opaque `nextCursor`/`previousCursor` values.
+Built-in offset sources request exact authorized filtered totals by default;
+`source.includeTotal: false` opts out. Live revalidation updates that total and
+the progress fraction as `ceil(total / pageSize)` changes. Rows and count share
+one ReactiveDB/Fabric snapshot; custom adapters still own optional `page.total`.
+See [server source totals](../docs-next/frontend/data-controls/data-table/server-sources.md).
 The table retains cursors only for visited pages. Use a stable source
 `getRowId` when results do not contain the schema primary key.
 

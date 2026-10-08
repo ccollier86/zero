@@ -4,6 +4,17 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Built-in offset DataTables now request exact authorized filtered totals through
+  `/api/data?includeTotal=true`, with an explicit `source.includeTotal: false`
+  opt-out. Rows and total share one ReactiveDB transaction or Fabric actor read.
+  Existing Sync invalidation updates totals, page counts and the animated footer
+  progress fraction live, including page-boundary growth and shrinkage; held new
+  records remain a separate counter. Legacy lazy queries retain lookahead-only
+  responses and membership probes do not request aggregates.
+- Added bound Fabric `findPage()` reads with the existing structured predicates,
+  projection, pagination, consistency and authority fences. Writer and follower
+  actors return `{ rows, total }` under one sequence while `find()` retains its
+  original bounded array contract. No new schema or migration is required.
 - Removed DataTable's nested native scroll owner and contained row/page/skeleton
   motion so animation cannot manufacture a temporary horizontal scroll range.
   Horizontal scrollbar chrome is hidden by default with a

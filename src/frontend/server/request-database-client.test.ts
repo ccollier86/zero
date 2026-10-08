@@ -64,6 +64,7 @@ describe('createRequestDatabaseClient', () => {
     await client!.get('todos', 'a');
     await client!.list('todos', { limit: 10 });
     await client!.find('todos', { limit: 10 });
+    await client!.findPage('todos', { limit: 10 });
     await client!.query('todos.count', null);
     await client!.mutate(
       { type: 'delete', table: 'todos', id: 'a' },
@@ -74,19 +75,19 @@ describe('createRequestDatabaseClient', () => {
     }, { idempotencyKey: 'delete:b' });
     await client!.command('todos.clear', null, { idempotencyKey: 'clear' });
 
-    expect(harness.binds).toHaveLength(7);
+    expect(harness.binds).toHaveLength(8);
     expect(harness.binds.map((binding) => binding.options.tenantId))
-      .toEqual(Array(7).fill('tenant-from-authority'));
+      .toEqual(Array(8).fill('tenant-from-authority'));
     expect(harness.binds.map((binding) => binding.releaseCount))
-      .toEqual(Array(7).fill(1));
+      .toEqual(Array(8).fill(1));
     expect(harness.calls.map((call) => call.method)).toEqual([
-      'get', 'list', 'find', 'query', 'mutate', 'batch', 'command',
+      'get', 'list', 'find', 'findPage', 'query', 'mutate', 'batch', 'command',
     ]);
   });
 
   test('releases every acquired lease when each operation fails', async () => {
     const methods = [
-      'get', 'list', 'find', 'query', 'mutate', 'batch', 'command',
+      'get', 'list', 'find', 'findPage', 'query', 'mutate', 'batch', 'command',
     ] as const;
 
     for (const failedMethod of methods) {
@@ -229,6 +230,7 @@ type ClientMethod =
   | 'get'
   | 'list'
   | 'find'
+  | 'findPage'
   | 'query'
   | 'mutate'
   | 'batch'
@@ -259,6 +261,7 @@ function createManagerHarness(options: {
         if (options.invokeAuthority) bindingOptions.assertCurrentReadAuthority?.();
         if (options.failedMethod === method) throw new Error(`failed:${method}`);
         options.afterOperation?.();
+        if (method === 'findPage') return readResult({ rows: [], total: 0 });
         return method === 'get'
           || method === 'list'
           || method === 'find'
@@ -288,6 +291,7 @@ function clientFixture(
     get: (...args) => call('get', args) as ReturnType<AsyncDatabaseClient['get']>,
     list: (...args) => call('list', args) as ReturnType<AsyncDatabaseClient['list']>,
     find: (...args) => call('find', args) as ReturnType<AsyncDatabaseClient['find']>,
+    findPage: (...args) => call('findPage', args) as ReturnType<AsyncDatabaseClient['findPage']>,
     query: (...args) => call('query', args) as ReturnType<AsyncDatabaseClient['query']>,
     mutate: (...args) => call('mutate', args) as ReturnType<AsyncDatabaseClient['mutate']>,
     batch: (...args) => call('batch', args) as ReturnType<AsyncDatabaseClient['batch']>,
@@ -317,6 +321,7 @@ function invoke(client: AsyncDatabaseClient, method: ClientMethod): Promise<unkn
     case 'get': return client.get('todos', 'a');
     case 'list': return client.list('todos', { limit: 1 });
     case 'find': return client.find('todos', { limit: 1 });
+    case 'findPage': return client.findPage('todos', { limit: 1 });
     case 'query': return client.query('todos.count', null);
     case 'mutate': return client.mutate(
       { type: 'delete', table: 'todos', id: 'a' },

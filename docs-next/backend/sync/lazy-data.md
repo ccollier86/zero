@@ -8,14 +8,14 @@ visibility: internal
 system: sync
 feature: lazy-data
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased paged-query ownership correction"]
+applies_to: ["2.6.0 baseline with unreleased authorized exact-total queries"]
 modes: [single, multi, default-plane, system-plane, tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "b3b17b48af079ed56ebfd94f0d76889ee7d91267"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
@@ -31,14 +31,29 @@ export to copy into app code.
 
 Requests name an admitted table and may include repeated filter (field:value),
 search plus searchField, repeated sort (field:asc|desc), legacy order/dir,
-limit and offset. Columns are checked against the server catalog and values
+limit, offset and optional `includeTotal=true|false`. Columns are checked against the server catalog and values
 remain parameterized. Resource HTTP exposure and current read/row/field policy
 still apply.
 
 The internal endpoint defaults to 500 rows, caps limit at 1000 and returns rows
 plus page metadata: limit, offset, count, hasMore and nextOffset. count describes
 the returned page, not an exact global total. The endpoint requests one extra
-row to determine hasMore instead of requiring an expensive total-count query.
+row to determine hasMore. Exact counting is opt-in at the HTTP boundary; omitted
+or false `includeTotal` preserves the existing lookahead-only response without
+`page.total`. Other flag values are rejected, not interpreted as truthy strings.
+
+With `includeTotal=true`, `page.total` counts all rows matching the same admitted
+search/filter and row-policy predicates, excluding pagination. COUNT and the
+bounded page share one ReactiveDB transaction or one tenant-bound Fabric
+`findPage` snapshot and sequence. Read authority is checked again before either
+rows or count can be delivered. A caller-selected table or flag grants no new
+tenant/field authority; counts never include unauthorized rows.
+
+Built-in offset DataTable sources request exact totals by default and revalidate
+them through existing Sync invalidation. Set `source.includeTotal: false` for
+lookahead-only navigation when count cost is undesirable. Ordinary lazy reads
+remain unchanged. Exact counting downloads no full dataset and requires no new
+table/migration, but complex unindexed predicates can still be expensive.
 
 ## Page Ownership
 

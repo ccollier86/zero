@@ -2,7 +2,7 @@
 
 import type { Change, Row } from '../sync/types';
 import { DatabaseError } from './database-error';
-import { runDatabaseFind } from './database-find';
+import { runDatabaseFind, runDatabaseFindPage } from './database-find';
 import { createDatabaseListQueryPlan } from './database-list-query';
 import {
   openDatabaseWriterReadQuerySession,
@@ -48,6 +48,8 @@ export function executeDatabaseWriterRead(
               return readListPage(runtime, catalog, operation);
             case 'find':
               return runDatabaseFind(runtime.sqlite.raw, operation, catalog);
+            case 'find-page':
+              return runDatabaseFindPage(runtime.sqlite.raw, operation, catalog);
             case 'query':
               return withDatabaseReadQuerySession(
                 openDatabaseWriterReadQuerySession(runtime),

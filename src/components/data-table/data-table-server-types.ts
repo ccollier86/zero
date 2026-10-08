@@ -89,6 +89,8 @@ export interface DataTableServerSource<T extends Row> {
   pagination?: DataTableServerPaginationMode;
   /** Required for cursor mode; optional override for offset mode. */
   adapter?: DataTableServerAdapter<T>;
+  /** Request an exact filtered total with built-in offset reads. Defaults to true; false preserves count-free reads. Custom adapters own their returned totals. */
+  includeTotal?: boolean;
   /** Refetch after relevant reactive collection changes. Defaults to true. */
   live?: boolean;
   /** Speculatively load known neighboring pages. Defaults to true; never invents cursors. */

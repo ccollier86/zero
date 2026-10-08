@@ -15,6 +15,7 @@ export function dataTableServerSourceIdentity<T extends Row>(
     source.adapter ? objectIdentity(source.adapter) : 'builtin',
     source.getRowId ? objectIdentity(source.getRowId) : 'schema-primary-key',
     client ? objectIdentity(client) : 'standalone',
+    source.adapter ? 'adapter-total-policy' : source.includeTotal !== false,
   ]);
 }
 

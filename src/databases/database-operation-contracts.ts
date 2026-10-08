@@ -206,6 +206,11 @@ export interface DatabaseFindOperation {
   readonly consistency?: DatabaseReadConsistency;
 }
 
+/** Bounded filtered rows and their exact matching total from one read snapshot. */
+export interface DatabaseFindPageOperation extends Omit<DatabaseFindOperation, 'type'> {
+  readonly type: 'find-page';
+}
+
 /** Invoke a named, actor-local, synchronous read handler. */
 export interface DatabaseQueryOperation {
   readonly type: 'query';
@@ -312,6 +317,7 @@ export type DatabaseReadOperation =
   | DatabaseGetOperation
   | DatabaseListOperation
   | DatabaseFindOperation
+  | DatabaseFindPageOperation
   | DatabaseQueryOperation;
 
 export type DatabaseWriteOperation =
@@ -362,6 +368,12 @@ export interface DatabaseFindInput {
 
 /** Rows returned by one structured find operation. */
 export type DatabaseFindRows = readonly DatabaseOperationRow[];
+
+/** Exact filtered total excludes pagination; rows and total share the result sequence. */
+export type DatabaseFindPage = Readonly<{
+  readonly rows: DatabaseFindRows;
+  readonly total: number;
+}>;
 
 /** Low-level asynchronous executor contract used by bound public facades. */
 export interface AsyncDatabaseOperationExecutor {
@@ -425,6 +437,12 @@ export interface AsyncDatabaseClient {
     input: DatabaseFindInput,
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseFindRows>>;
+  /** Read a bounded page and its exact total using the same validated predicates. */
+  findPage(
+    table: string,
+    input: DatabaseFindInput,
+    options?: DatabaseReadOptions,
+  ): Promise<DatabaseReadResult<DatabaseFindPage>>;
   query(
     name: string,
     input: DatabaseSerializableValue,

@@ -225,6 +225,8 @@ export type {
   DatabaseFindFilterGroup,
   DatabaseFindFilterOperator,
   DatabaseFindInput,
+  DatabaseFindPage,
+  DatabaseFindPageOperation,
   DatabaseFindOrder,
   DatabaseFindRows,
   DatabaseListPage,

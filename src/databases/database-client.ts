@@ -12,6 +12,7 @@ import {
   type DatabaseBatchInput,
   type DatabaseCommitResult,
   type DatabaseFindInput,
+  type DatabaseFindPage,
   type DatabaseFindRows,
   type DatabaseListPage,
   type DatabaseListPageOptions,
@@ -124,6 +125,25 @@ class BoundAsyncDatabaseClient implements AsyncDatabaseClient {
       ...(normalized.offset === undefined ? {} : { offset: normalized.offset }),
       ...readConsistency(options),
     }, executionOptions(options)) as DatabaseReadResult<DatabaseFindRows>;
+  }
+
+  /** Return rows and their exact filtered total under one actor snapshot and authority fence. */
+  async findPage(
+    table: string,
+    input: DatabaseFindInput,
+    options: DatabaseReadOptions = {},
+  ): Promise<DatabaseReadResult<DatabaseFindPage>> {
+    const normalized = normalizeFindInput(input);
+    return await this.#read({
+      type: 'find-page',
+      table,
+      ...(normalized.select === undefined ? {} : { select: normalized.select }),
+      ...(normalized.filters === undefined ? {} : { filters: normalized.filters }),
+      ...(normalized.order === undefined ? {} : { order: normalized.order }),
+      limit: normalized.limit,
+      ...(normalized.offset === undefined ? {} : { offset: normalized.offset }),
+      ...readConsistency(options),
+    }, executionOptions(options)) as DatabaseReadResult<DatabaseFindPage>;
   }
 
   async query(

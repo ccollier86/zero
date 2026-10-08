@@ -19,6 +19,7 @@ import {
   validateDatabaseReadResult,
   type DatabaseCommitResult,
   type DatabaseFindOperation,
+  type DatabaseFindPageOperation,
   type DatabaseMutation,
   type DatabaseOperation,
   type DatabaseOperationCatalog,
@@ -52,6 +53,7 @@ import type {
 const MUTATION_VALUE_FIELDS = new Set(['kind', 'mutation']);
 const BATCH_VALUE_FIELDS = new Set(['kind', 'mutations']);
 const COMMAND_VALUE_FIELDS = new Set(['kind', 'name', 'output']);
+const FIND_PAGE_VALUE_FIELDS = new Set(['rows', 'total']);
 const MUTATION_EFFECT_FIELDS = new Set([
   'type',
   'table',
@@ -151,6 +153,8 @@ export function validateDatabaseActorExecuteResult(
     }
     if (operation.type === 'find') {
       validateFindResult(result.value, operation, catalog);
+    } else if (operation.type === 'find-page') {
+      validateFindPageResult(result.value, operation, catalog);
     }
     return result;
   });
@@ -580,7 +584,7 @@ function validateReplayChange(value: unknown, expectedSeq: number): void {
 
 function validateFindResult(
   value: DatabaseSerializableValue,
-  operation: DatabaseFindOperation,
+  operation: DatabaseFindOperation | DatabaseFindPageOperation,
   catalog: DatabaseOperationCatalog,
 ): void {
   if (!Array.isArray(value) || value.length > operation.limit) {
@@ -596,6 +600,25 @@ function validateFindResult(
       || fields.some((field) => !expectedFields.has(field))) {
       throw protocolFailure(false);
     }
+  }
+}
+
+/** Correlate exact-total pages with the requested offset, bound and projection. */
+function validateFindPageResult(
+  value: DatabaseSerializableValue,
+  operation: DatabaseFindPageOperation,
+  catalog: DatabaseOperationCatalog,
+): void {
+  const record = readDatabaseExecutorDataRecord(value);
+  if (!record || !hasExactDatabaseExecutorKeys(record, FIND_PAGE_VALUE_FIELDS)
+    || !isNonNegativeSafeInteger(record.total)) {
+    throw protocolFailure(false);
+  }
+  validateFindResult(record.rows as DatabaseSerializableValue, operation, catalog);
+  const expectedLength = Math.min(operation.limit, Math.max(0,
+    record.total - (operation.offset ?? 0)));
+  if ((record.rows as readonly unknown[]).length !== expectedLength) {
+    throw protocolFailure(false);
   }
 }
 

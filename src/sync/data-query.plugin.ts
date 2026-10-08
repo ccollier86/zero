@@ -139,6 +139,11 @@ const dataQuerySchema = t.Object({
   dir: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.directionLength })),
   limit: t.Optional(t.Numeric()),
   offset: t.Optional(t.Numeric()),
+  includeTotal: t.Optional(t.Union([
+    t.Literal('true'),
+    t.Literal('false'),
+    t.Boolean(),
+  ])),
 });
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
@@ -154,6 +159,7 @@ const dataQuerySchema = t.Object({
  * - `sort` (repeatable) — `field:asc|desc` multi-column ordering
  * - `order`/`dir` (optional) — legacy single-column ordering
  * - `limit` (optional) — max rows, capped at MAX_LIMIT
+ * - `includeTotal=true` (optional) — exact authorized filtered total from the page snapshot
  *
  * Security:
  * - Table name validated against explicit resource HTTP exposure or the
@@ -216,6 +222,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
       const db = config.getDB ? config.getDB() : getSyncDB();
 
       const { table } = query;
+      const includeTotal = query.includeTotal === true || query.includeTotal === 'true';
 
       // ─── Validate table ──────────────────────────────────
       if (!table) {
@@ -302,9 +309,11 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         query,
         defaultLimit,
         maxLimit,
+        includeTotal,
       } as const;
 
       let resultRows: DatabaseFindRows | any[];
+      let total: number | undefined;
       let page: { limit: number; offset: number };
       if (usesTenantDatabase) {
         const findPlan = buildResourceListFindPlan(planOptions);
@@ -317,13 +326,21 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
           return { error: findPlan.error, code: 'invalid-data-query' };
         }
         try {
-          resultRows = await database.findTenant({
+          const readRequest = {
             scope: resourceDecision.scope,
             authority: commitAuthority,
             authorityFingerprint: resourceDecision.authorityFingerprint,
             table,
             clientInput: findPlan.input,
-          });
+            signal: request.signal,
+          };
+          if (includeTotal) {
+            const result = await database.findTenantPage(readRequest);
+            resultRows = result.rows;
+            total = result.total;
+          } else {
+            resultRows = await database.findTenant(readRequest);
+          }
         } catch (error) {
           const response = database.classifyFailure(error);
           // Validation, authority, and optimistic conflicts are expected HTTP
@@ -336,22 +353,6 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
           }
           set.status = response.status;
           return { error: response.error, code: response.code };
-        }
-        // The actor client fences authority immediately after its read, but
-        // returning through that async boundary yields once more before this
-        // route can expose the rows. Recheck synchronously at the delivery
-        // boundary so a revocation queued by the read cannot leak one final
-        // response from the former tenant scope.
-        if (resourceDecision.authorityFingerprint
-          && !database.isAuthorityCurrentAtCommit(
-            commitAuthority,
-            resourceDecision.authorityFingerprint,
-          )) {
-          set.status = 403;
-          return {
-            error: 'Resource authorization changed during the request',
-            code: 'resource-authority-changed',
-          };
         }
         page = findPlan;
       } else {
@@ -381,6 +382,23 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
               authorityChangedAtCommit = true;
               return [];
             }
+            // Both aggregate and bounded page use the identical validated
+            // predicate and one SQLite snapshot. Counting never fetches every
+            // matching record and cannot bypass hidden policy constraints.
+            if (includeTotal) {
+              const countStatement = db.prepare(sqlPlan.countSql!);
+              try {
+                const counted = countStatement.get(...(sqlPlan.params as any[])) as {
+                  total: number;
+                } | null;
+                if (!counted || !Number.isSafeInteger(counted.total) || counted.total < 0) {
+                  throw new Error('Data query total is invalid');
+                }
+                total = counted.total;
+              } finally {
+                countStatement.finalize();
+              }
+            }
             const statement = db.prepare(sqlPlan.sql);
             try {
               return statement.all(...(params as any[]));
@@ -403,6 +421,20 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         page = sqlPlan;
       }
 
+      // Returning through an actor await or a synchronous SQL boundary must
+      // not expose either rows or an aggregate after authority was revoked.
+      if (resourceDecision.authorityFingerprint
+        && !database.isAuthorityCurrentAtCommit(
+          commitAuthority,
+          resourceDecision.authorityFingerprint,
+        )) {
+        set.status = 403;
+        return {
+          error: 'Resource authorization changed during the request',
+          code: 'resource-authority-changed',
+        };
+      }
+
       const hasMore = resultRows.length > page.limit;
       const authorizedRows = hasMore ? resultRows.slice(0, page.limit) : resultRows;
       const rows = projectResourceRows(
@@ -418,6 +450,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
           count: rows.length,
           hasMore,
           nextOffset: hasMore ? page.offset + page.limit : null,
+          ...(total === undefined ? {} : { total }),
         },
       };
     }, {

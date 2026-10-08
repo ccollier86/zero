@@ -13,10 +13,12 @@ import {
 } from './data-table-source';
 import {
   buildDataTableServerQuery,
+  createDataTableApiAdapter,
   normalizeDataTableApiResponse,
   normalizeDataTableServerResult,
 } from './data-table-server-query';
 import { DataTableServerSourceError } from './data-table-server-types';
+import type { Client } from '../../frontend/client/sdk';
 
 describe('buildDataTableLazyQuery', () => {
   test('builds a stable /api/data query with filters and options', () => {
@@ -38,6 +40,7 @@ describe('buildDataTableLazyQuery', () => {
     expect(params.get('dir')).toBe('desc');
     expect(params.get('limit')).toBe('50');
     expect(params.get('offset')).toBe('100');
+    expect(params.has('includeTotal')).toBe(false);
   });
 });
 
@@ -74,6 +77,7 @@ describe('DataTable server query contract', () => {
     expect(parsed.searchParams.get('table')).toBe('documents');
     expect(parsed.searchParams.get('limit')).toBe('25');
     expect(parsed.searchParams.get('offset')).toBe('50');
+    expect(parsed.searchParams.get('includeTotal')).toBe('true');
     expect(parsed.searchParams.get('search')).toBe('quarterly report');
     expect(parsed.searchParams.getAll('searchField')).toEqual(['summary', 'title']);
     expect(parsed.searchParams.getAll('filter')).toEqual([
@@ -84,6 +88,34 @@ describe('DataTable server query contract', () => {
       'updated_at:desc',
       'title:asc',
     ]);
+  });
+
+  test('exact totals are on for built-in table reads and explicitly optional for expensive endpoints', () => {
+    const query = { search: '', filters: [], sorting: [],
+      pagination: { mode: 'offset' as const, pageIndex: 0, pageSize: 20 } };
+    expect(new URL(buildDataTableServerQuery('documents', query), 'http://zero.test').searchParams.get('includeTotal')).toBe('true');
+    expect(new URL(buildDataTableServerQuery('documents', query, { includeTotal: false }), 'http://zero.test').searchParams.has('includeTotal')).toBe(false);
+  });
+
+  test('bounded live-insert membership reads never request an unnecessary total', async () => {
+    const paths: string[] = [];
+    const client = { async fetch(path: string) {
+      paths.push(path);
+      const params = new URL(path, 'http://zero.test').searchParams;
+      const limit = Number(params.get('limit')), offset = Number(params.get('offset'));
+      return { rows: [{ id: 'one' }], page: { limit, offset, count: 1, hasMore: false,
+        nextOffset: null, ...(params.has('includeTotal') ? { total: 13 } : {}) } };
+    } } as unknown as Client;
+    const query = { search: '', filters: [], sorting: [],
+      pagination: { mode: 'offset' as const, pageIndex: 0, pageSize: 20 } };
+    const adapter = createDataTableApiAdapter(client, 'documents', 'id');
+    const signal = new AbortController().signal;
+    expect((await adapter.query(query, { signal })).page.total).toBe(13);
+    expect(await adapter.confirmInsertedRows!(query, ['one'], { signal })).toEqual(['one']);
+    expect(new URL(paths[0]!, 'http://zero.test').searchParams.get('includeTotal')).toBe('true');
+    expect(new URL(paths[1]!, 'http://zero.test').searchParams.has('includeTotal')).toBe(false);
+    const legacy = createDataTableApiAdapter(client, 'documents', 'id', { includeTotal: false });
+    expect((await legacy.query(query, { signal })).page.total).toBeUndefined();
   });
 
   test('requires a custom adapter for cursor pagination', () => {

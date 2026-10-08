@@ -17,8 +17,12 @@ import {
 import { classifyDatabaseHttpFailure } from '../databases/database-http-error';
 import type { DatabaseManager } from '../databases/database-manager';
 import type {
+  AsyncDatabaseClient,
   DatabaseFindInput,
+  DatabaseFindPage,
   DatabaseFindRows,
+  DatabaseReadResult,
+  DatabaseSerializableValue,
 } from '../databases/database-operations';
 import type { ResourceTenantScope } from '../resources/resource-realm';
 
@@ -47,6 +51,8 @@ export interface DataQueryTenantFindRequest {
   readonly authorityFingerprint: string | undefined;
   readonly table: string;
   readonly clientInput: DatabaseFindInput;
+  /** Cancellation remains actor execution metadata, never part of the wire predicate. */
+  readonly signal?: AbortSignal;
 }
 
 /** App-local adapter for authority-fenced managed-table database reads. */
@@ -148,6 +154,27 @@ export class DataQueryDatabaseAdapter {
 
   /** Execute one read through a capability derived only from verified scope. */
   async findTenant(request: DataQueryTenantFindRequest): Promise<DatabaseFindRows> {
+    return this.readTenant(request, (client) => client.find(
+      request.table,
+      request.clientInput,
+      request.signal ? { signal: request.signal } : undefined,
+    ));
+  }
+
+  /** Read bounded rows and their exact authorized total from one actor snapshot. */
+  async findTenantPage(request: DataQueryTenantFindRequest): Promise<DatabaseFindPage> {
+    return this.readTenant(request, (client) => client.findPage(
+      request.table,
+      request.clientInput,
+      request.signal ? { signal: request.signal } : undefined,
+    ));
+  }
+
+  /** Own acquisition/release and fencing once for both supported read result shapes. */
+  private async readTenant<T extends DatabaseSerializableValue>(
+    request: DataQueryTenantFindRequest,
+    read: (client: AsyncDatabaseClient) => Promise<DatabaseReadResult<T>>,
+  ): Promise<T> {
     if (request.scope?.isolation !== 'tenant-database'
       || !request.authority
       || !request.authorityFingerprint) {
@@ -186,7 +213,7 @@ export class DataQueryDatabaseAdapter {
       assertCurrentReadAuthority: assertCurrentAuthority,
     });
     try {
-      const result = await binding.client.find(request.table, request.clientInput);
+      const result = await read(binding.client);
       return result.value;
     } finally {
       binding.release();

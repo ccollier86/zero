@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -152,6 +152,43 @@ describe('DatabaseReaderRuntime', () => {
       name: 'decoy_constraints.count',
       input: null,
     }).value).toEqual({ count: 0 });
+  });
+
+  test('keeps exact total and page rows at the accepted WAL snapshot during concurrent writes', () => {
+    const raw = (reader as unknown as { database: Database }).database;
+    const prepare = raw.prepare.bind(raw);
+    let injected = false;
+    const injection = spyOn(raw, 'prepare').mockImplementation(((sql: string) => {
+      const statement = prepare(sql);
+      if (sql.startsWith('SELECT COUNT(*) AS total')) {
+        const get = statement.get.bind(statement);
+        spyOn(statement, 'get').mockImplementation((...parameters) => {
+          const count = get(...parameters);
+          if (!injected) {
+            injected = true;
+            // The count is finished but the reader transaction remains open.
+            writer.db.createStrict('todos', { id: 'aa', title: 'Arrived between count and page' });
+          }
+          return count;
+        });
+      }
+      return statement;
+    }) as unknown as Database['prepare']);
+    try {
+      expect(reader.execute({
+        type: 'find-page', table: 'todos', limit: 2, select: ['id'],
+        consistency: { mode: 'snapshot' },
+      })).toEqual({
+        value: { rows: [{ id: 'a' }, { id: 'b' }], total: 3 }, sequence: { seq: 3 },
+      });
+      expect(injected).toBe(true);
+      expect(reader.execute({
+        type: 'find-page', table: 'todos', limit: 2, select: ['id'],
+        consistency: { mode: 'read-your-writes', minSeq: { seq: 4 } },
+      })).toEqual({
+        value: { rows: [{ id: 'a' }, { id: 'aa' }], total: 4 }, sequence: { seq: 4 },
+      });
+    } finally { injection.mockRestore(); }
   });
 
   test('rejects a readonly realm file whose Guardian FK was retargeted', () => {

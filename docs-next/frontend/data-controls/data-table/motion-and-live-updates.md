@@ -256,12 +256,16 @@ to last page over the existing 700ms transform transition. The scoped tokens
 Reduced motion removes the transition, not the progress indicator.
 
 This is navigation progress, not a timer or request-completion percentage.
-Unknown-total and opaque-cursor results do not fabricate the track. The built-in
-`/api/data` paged response currently supplies a page-local `count`, `hasMore` and
-`nextOffset`, not an exact filtered `total`. A server adapter must supply that
-authoritative total in its accepted page metadata before an offset table can
-render a true percentage. A separate summary request must not be treated as the
-same query's total without a matching authorization/filter/response contract.
+Unknown-total and opaque-cursor results do not fabricate the track. Built-in
+offset sources now request an exact filtered `page.total` through `/api/data` by
+default; `source.includeTotal: false` retains lookahead-only paging. With a known
+total, the track derives its fraction directly from current page and
+`ceil(total / pageSize)`. Accepted live revalidation updates that total, so the
+fill adjusts when new rows add a page or deletions remove one. Rows and count use
+one authorized ReactiveDB/Fabric snapshot, not the shared cache or the new-row
+pill. Custom offset adapters can supply the same total contract. A separate
+summary request must not be treated as the same query's total without a matching
+authorization/filter/response contract.
 
 ## Verification And Related Guides
 
