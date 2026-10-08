@@ -30,13 +30,13 @@
     align-items: center;
     gap: var(--zero-kbd-group-gap, 0.25rem);
   }
-  /* Zero's tooltip visual slot is popover-content, with its own tooltip arrow.
-     Do not target upstream's absent tooltip-content or tint ordinary popovers. */
-  :where([data-slot="popover-content"]:has([data-slot="tooltip-arrow"])) .zero-kbd {
+  /* The canonical marker also covers shared groups and arrowless hints.
+     Keep the legacy arrow-bearing slot without tinting ordinary popovers. */
+  :where([data-zero-tooltip], [data-slot="popover-content"]:has([data-slot="tooltip-arrow"])) .zero-kbd {
     color: var(--zero-kbd-tooltip-foreground, inherit);
     background: var(--zero-kbd-tooltip-background, color-mix(in srgb, currentColor var(--zero-kbd-tooltip-opacity, 20%), transparent));
   }
-  :where(.dark [data-slot="popover-content"]:has([data-slot="tooltip-arrow"])) .zero-kbd {
+  :where(.dark [data-zero-tooltip], .dark [data-slot="popover-content"]:has([data-slot="tooltip-arrow"])) .zero-kbd {
     background: var(--zero-kbd-tooltip-background, color-mix(in srgb, currentColor var(--zero-kbd-tooltip-opacity, 10%), transparent));
   }
 }

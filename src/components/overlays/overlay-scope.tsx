@@ -48,7 +48,7 @@ export function useOwnedFloatingOverlay() {
 }
 
 /** Compose an owned mounted-branch ref with an existing control's measurement/focus ref. */
-export function composeOverlayRefs<T extends HTMLElement>(...refs: (React.Ref<T> | undefined)[]): React.RefCallback<T> {
+export function composeOverlayRefs<T extends Element>(...refs: (React.Ref<T> | undefined)[]): React.RefCallback<T> {
   return element => {
     const cleanups = refs.map(ref => {
       if (typeof ref === 'function') return { ref, cleanup: ref(element) };

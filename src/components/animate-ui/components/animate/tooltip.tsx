@@ -1,5 +1,4 @@
 import * as React from 'react';
-import * as motion from 'motion/react-client';
 
 import {
   TooltipProvider as TooltipProviderPrimitive,
@@ -17,14 +16,14 @@ import { useOverlayScope } from '../../../overlays/overlay-scope';
 
 type TooltipProviderProps = TooltipProviderPrimitiveProps;
 
-function TooltipProvider({ openDelay = 0, ...props }: TooltipProviderProps) {
-  return <TooltipProviderPrimitive openDelay={openDelay} {...props} />;
+function TooltipProvider(props: TooltipProviderProps) {
+  return <TooltipProviderPrimitive {...props} />;
 }
 
 type TooltipProps = TooltipPrimitiveProps;
 
-function Tooltip({ sideOffset = 10, ...props }: TooltipProps) {
-  return <TooltipPrimitive sideOffset={sideOffset} {...props} />;
+function Tooltip(props: TooltipProps) {
+  return <TooltipPrimitive {...props} />;
 }
 
 type TooltipTriggerProps = TooltipTriggerPrimitiveProps;
@@ -43,28 +42,27 @@ function TooltipContent({
   children,
   layout = 'preserve-aspect',
   style,
+  arrow,
+  variant,
   ...props
 }: TooltipContentProps) {
   const owner = useOverlayScope();
   return (
     <TooltipContentPrimitive
       className={cn(
-        'z-50 w-fit bg-primary text-primary-foreground rounded-md',
+        'zero-tooltip',
         className,
       )}
       {...props}
+      arrow={arrow}
+      variant={variant}
       inert={owner && !owner.active || undefined}
       data-zero-overlay-owner={owner?.id}
       style={{ ...owner?.themeStyle, ...style, ...(owner ? { zIndex: owner.zIndex + 2,
         ...(!owner.active ? { pointerEvents: 'none' } : {}) } : {}) }}
     >
-      <motion.div className="overflow-hidden px-3 py-1.5 text-xs text-balance">
-        <motion.div layout={layout}>{children}</motion.div>
-      </motion.div>
-      <TooltipArrowPrimitive
-        className="fill-primary size-3 data-[side='bottom']:translate-y-[1px] data-[side='right']:translate-x-[1px] data-[side='left']:translate-x-[-1px] data-[side='top']:translate-y-[-1px]"
-        tipRadius={2}
-      />
+      <div className="zero-tooltip-body" data-layout={layout}>{children}</div>
+      {arrow !== false && <TooltipArrowPrimitive className="zero-tooltip-arrow" width={9} height={5} tipRadius={1} />}
     </TooltipContentPrimitive>
   );
 }

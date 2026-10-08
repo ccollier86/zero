@@ -2,6 +2,17 @@
 
 All notable Zero Platform changes are tracked here.
 
+## Unreleased
+
+- Upgraded Zero tooltips with exact Grow/Spring/Blur/Swing motion, default arrows,
+  inherited theme tokens, rich descriptions/shared keyboard hints and overflow-only
+  activation. Explicit groups reuse one sliding surface with interrupted
+  position/size/text/arrow morphs. Live reduced motion, scoped portals and
+  child-first modal dismissal are qualified independently.
+- Added the tooltip provider/group API, source-copy target and expanded guides.
+  Corrected source-copy routing for existing authorization readiness helpers
+  discovered while qualifying copied table components.
+
 ## 2.6.0 - 2026-10-07
 
 Adaptive Guardian account settings, private avatars, scoped presence and bounded

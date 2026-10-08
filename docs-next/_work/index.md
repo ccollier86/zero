@@ -36,6 +36,9 @@ publication, search, and production agent bundles.
 
 ## Working Status
 
+[Tooltip Motion Kit implementation](./tooltip-system-plan.md) records the
+existing-primitive integration sequence, motion defaults and qualification gates.
+
 The whole-platform audit is in progress. Its indexes distinguish existing
 evidence from planned inventories and guides; none of those plans should be
 read as a completed audit or qualification result.

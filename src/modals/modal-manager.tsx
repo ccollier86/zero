@@ -183,6 +183,8 @@ function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalC
           data-height={descriptor?.height ?? (descriptor?.layout === 'tabs' || descriptor?.layout === 'nav' ? 'fixed' : 'auto')}
           style={style} onOpenAutoFocus={initialFocus} onCloseAutoFocus={closeFocus}
           onEscapeKeyDown={event => {
+            // Child retirement must not turn its handled Escape into a parent dismissal.
+            if (event.defaultPrevented) return;
             if (active && !closing && !modal.systemState?.busy && descriptor?.dismissible === false && shell.current) animateModalNudge(shell.current, motion);
             if (!active || closing || modal.closeOnEscape === false || descriptor?.closeOnEscape === false
               || descriptor?.dismissible === false || modal.systemState?.busy || hasOwnedFloatingOverlay(modal.id)) { event.preventDefault(); return; }

@@ -434,6 +434,7 @@ export const OBS_CODES = {
   FRONTEND_SIGNATURE_PAD_CALLBACK_FAILED: code('frontend', 'signature_pad.callback_failed', 'error', 'Signature capture callback failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
   FRONTEND_MODAL_CALLBACK_FAILED: code('frontend', 'modal_callback.failed', 'error', 'A modal callback failed.'),
+  FRONTEND_TOOLTIP_PLACEMENT_FAILED: code('frontend', 'tooltip_placement.failed', 'warn', 'A tooltip collision calculation failed.'),
   FRONTEND_WORKFLOW_TOPOLOGY_FAILED: code('frontend', 'workflow.topology_failed', 'error', 'Workflow topology query failed.'),
   FRONTEND_WORKFLOW_OBSERVATION_FAILED: code('frontend', 'workflow.observation_failed', 'error', 'Workflow status reconciliation failed.'),
   FRONTEND_WORKFLOW_PROGRESS_ACTION_FAILED: code('frontend', 'workflow.progress_action_failed', 'error', 'Workflow progress action could not be confirmed.'),

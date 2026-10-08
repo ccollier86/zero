@@ -1,79 +1,70 @@
+'use client';
+/** Supported tooltip composition: shared tokens/content over existing Radix and group primitives. */
 import * as React from 'react';
-
 import {
-  TooltipProvider as TooltipProviderPrimitive,
-  Tooltip as TooltipPrimitive,
-  TooltipTrigger as TooltipTriggerPrimitive,
-  TooltipContent as TooltipContentPrimitive,
-  TooltipArrow as TooltipArrowPrimitive,
-  TooltipPortal as TooltipPortalPrimitive,
-  type TooltipProviderProps as TooltipProviderPrimitiveProps,
-  type TooltipProps as TooltipPrimitiveProps,
-  type TooltipTriggerProps as TooltipTriggerPrimitiveProps,
-  type TooltipContentProps as TooltipContentPrimitiveProps,
+  TooltipProvider as RadixProvider, Tooltip as RadixTooltip, TooltipTrigger as RadixTrigger,
+  TooltipContent as RadixContent, TooltipArrow as RadixArrow, TooltipPortal as RadixPortal, useTooltip, useTooltipProviderSettings,
+  type TooltipProviderProps, type TooltipProps, type TooltipTriggerProps,
+  type TooltipContentProps as RadixContentProps,
 } from '#zero/components/animate-ui/primitives/radix/tooltip';
+import {
+  TooltipGroup as SharedGroup, useTooltipGroup, GroupTooltip, GroupTooltipTrigger, GroupTooltipContent,
+  type TooltipGroupProps,
+  type GroupTooltipProps, type GroupTooltipTriggerProps, type GroupTooltipContentProps,
+} from '../../../tooltip/tooltip-group';
+import { useTooltip as useSharedTooltip, useGlobalTooltip } from '#zero/components/animate-ui/primitives/animate/tooltip';
+import { resolveTooltipMotion } from '../../../tooltip/tooltip-motion';
+import { TooltipBody, tooltipText } from '../../../tooltip/tooltip-body';
 import { cn } from '#zero/lib/utils';
 
-type TooltipProviderProps = TooltipProviderPrimitiveProps;
+function TooltipProvider(props: TooltipProviderProps) { return <RadixProvider {...props} />; }
 
-function TooltipProvider({
-  delayDuration = 0,
-  ...props
-}: TooltipProviderProps) {
-  return <TooltipProviderPrimitive delayDuration={delayDuration} {...props} />;
+/** An explicit group inherits an outer provider unless its own props override it. */
+function TooltipGroup(props: TooltipGroupProps) {
+  const inherited = useTooltipProviderSettings();
+  return <SharedGroup {...inherited} {...props} />;
 }
 
-type TooltipProps = TooltipPrimitiveProps & {
-  delayDuration?: TooltipPrimitiveProps['delayDuration'];
+/** An explicit group opts into one sliding surface; ordinary controls keep Radix semantics. */
+function Tooltip(props: TooltipProps) {
+  const group = useTooltipGroup();
+  return group ? <GroupTooltip {...props as GroupTooltipProps} /> : <RadixTooltip {...props} />;
+}
+function TooltipTrigger(props: TooltipTriggerProps) {
+  const group = useTooltipGroup();
+  return group ? <GroupTooltipTrigger {...props as GroupTooltipTriggerProps} /> : <RadixTrigger {...props} />;
+}
+type TooltipContentProps = Omit<RadixContentProps, 'title'> & {
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  shortcut?: string | readonly string[] | React.ReactNode;
+  /** Same-document portal destination; ownership and theme still follow the trigger. */
+  container?: HTMLElement | null;
 };
-
-function Tooltip({ delayDuration = 0, ...props }: TooltipProps) {
-  return (
-    <TooltipProvider delayDuration={delayDuration}>
-      <TooltipPrimitive {...props} />
-    </TooltipProvider>
-  );
+function TooltipContent(props: TooltipContentProps) {
+  const group = useTooltipGroup();
+  return group ? <SharedContent {...props} /> : <StandaloneContent {...props} />;
 }
-
-type TooltipTriggerProps = TooltipTriggerPrimitiveProps;
-
-function TooltipTrigger({ ...props }: TooltipTriggerProps) {
-  return <TooltipTriggerPrimitive {...props} />;
+function StandaloneContent({ className, children, title, description, shortcut, container, arrow, ...props }: TooltipContentProps) {
+  const { options, trigger, overflowOnly } = useTooltip();
+  const showArrow = resolveTooltipMotion(trigger, { ...options, ...(arrow === undefined ? {} : { arrow }) }).arrow;
+  const fallback = children ?? (title == null && description == null ? trigger?.textContent?.trim() : undefined);
+  const accessible = props['aria-label'] ?? (tooltipText([title ?? fallback, description, shortcut]) || undefined);
+  return <RadixPortal container={container}><RadixContent {...props} arrow={showArrow} aria-label={accessible}
+    className={cn('zero-tooltip', overflowOnly && 'zero-tooltip-mono', className)}>
+    <TooltipBody title={title} description={description} shortcut={shortcut}>{fallback}</TooltipBody>
+    {showArrow && <RadixArrow className="zero-tooltip-arrow" width={9} height={5} />}
+  </RadixContent></RadixPortal>;
 }
-
-type TooltipContentProps = TooltipContentPrimitiveProps;
-
-function TooltipContent({
-  className,
-  sideOffset,
-  collisionPadding = 8,
-  children,
-  ...props
-}: TooltipContentProps) {
-  return (
-    <TooltipPortalPrimitive>
-      <TooltipContentPrimitive
-        sideOffset={sideOffset}
-        collisionPadding={collisionPadding}
-        aria-label={props['aria-label'] ?? (typeof children === 'string' ? children : undefined)}
-        className={cn(
-          'bg-primary text-primary-foreground z-50 w-fit min-w-0 max-w-[min(20rem,var(--radix-tooltip-content-available-width,calc(100vw-1rem)))] origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance whitespace-normal [overflow-wrap:anywhere]',
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        <TooltipArrowPrimitive className="bg-primary fill-primary z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" />
-      </TooltipContentPrimitive>
-    </TooltipPortalPrimitive>
-  );
+function SharedContent({ className, children, title, description, shortcut, container, ...props }: TooltipContentProps) {
+  const local = useSharedTooltip();
+  const global = useGlobalTooltip();
+  const fallback = children ?? (title == null && description == null && global.currentTooltip?.id === local.id
+    ? global.currentTooltip.reference.textContent?.trim() : undefined);
+  return <GroupTooltipContent {...props as GroupTooltipContentProps} container={container}
+    className={cn(local.overflowOnly && 'zero-tooltip-mono', className)}>
+    <TooltipBody title={title} description={description} shortcut={shortcut}>{fallback}</TooltipBody>
+  </GroupTooltipContent>;
 }
-
-export {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-  type TooltipProps,
-  type TooltipTriggerProps,
-  type TooltipContentProps,
-};
+export { TooltipProvider, TooltipGroup, Tooltip, TooltipTrigger, TooltipContent,
+  type TooltipProviderProps, type TooltipProps, type TooltipTriggerProps, type TooltipContentProps };

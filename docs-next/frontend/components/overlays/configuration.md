@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: configuration
 maturity: supported
-applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; publication qualification pending"]
+applies_to: ["2.6.0 source; Tooltip Motion Kit upgrade unreleased"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.4.3"
-  commit: "8327e4498f52b12b43759bbc4618973601191039"
+  version: "2.6.0"
+  commit: "59cb76dc12d18a9428a616b08509cae1eecdf74d"
   snapshot: dirty
-  date: "2026-10-06"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
@@ -33,7 +33,7 @@ React props and local provider state resolve at render/interaction time.
 | DropdownMenu* | root/react or /components/dropdown-menu | named matching Props exports |
 | ContextMenu* | root/react or /components/context-menu | 2.4.0 addition; named matching Props exports and [native root/portal/choice contracts](./context-menu.md#public-parts-and-configuration) |
 | Popover/Trigger/Content/Close | root/react or /components/popover | named matching Props exports |
-| Tooltip/Trigger/Content | /components/tooltip | TooltipProps/TriggerProps/ContentProps; **not root/react** |
+| TooltipProvider/Group/Tooltip/Trigger/Content | /components/tooltip | Matching Props exports; **not root/react**; [standalone/shared composition](./tooltip.md) |
 | Collapsible/Trigger/Content/useCollapsible | root/react or /components/collapsible | Props and CollapsibleContextType |
 | Sidebar* / useSidebar | root/react or /components/sidebar | infer React ComponentProps; no named sidebar Props barrel promised |
 | RadialMenu | root/react or /components/radial-menu | RadialMenuProps/RadialMenuItem |
@@ -52,8 +52,9 @@ ItemIndicator; this does not change the existing DropdownMenu export contract.
 | Dropdown label/subtrigger | inset optional |
 | Dropdown submenu content | duration0.2s; controlled/default-open subroot and positioning options |
 | PopoverContent | align center; sideOffset4; width72 utility; spring300/damping25; className/position/collision/focus callbacks |
-| Tooltip | delayDuration0; followCursor false or true/x/y; follow spring200/damping17 |
-| TooltipContent | inherited positioning/collision/Motion props; spring300/damping25; collisionPadding8; max width min(20rem, available width), viewport-minus-1rem fallback and word wrapping; wrapper supplies arrow/portal |
+| TooltipProvider/TooltipGroup | delayDuration450, skipDelayDuration450, closeDelay70; motion grow, durationMultiplier1, arrow true, variant neutral; group additionally shares one morphing bubble |
+| Tooltip | Local/controlled visibility; provider presentation overrides; followCursor false or true/x/y; overflowOnly false |
+| TooltipContent | Optional title/description/shortcut or children/full-trigger fallback; local presentation overrides, positioning/collision, optional container; collisionPadding8, viewport-constrained260px max and wrapping; optional arrow/owned portal |
 | CollapsibleContent | keepRendered false; transition duration0.35s/easeInOut |
 | SidebarProvider | defaultOpen true; optional open/onOpenChange; desktop widths16rem/icon3rem |
 | Sidebar | side left, variant sidebar, collapsible offcanvas, animateOnHover true; spring350/damping35 |

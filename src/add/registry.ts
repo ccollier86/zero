@@ -17,6 +17,11 @@ export interface AddableTarget {
 
 const STATIC_TARGETS: AddableTarget[] = [
   {
+    id: 'components/tooltip',
+    sourceRel: 'components/tooltip',
+    description: 'Tokenized tooltips, rich descriptions and shared toolbar handoff.',
+  },
+  {
     id: 'components/auth',
     sourceRel: 'components/auth',
     description: 'Auth forms, password flows, and auth visibility gates.',

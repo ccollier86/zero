@@ -1,8 +1,11 @@
 'use client';
 
+/** Forward DOM/motion composition through the existing cleanup-aware overlay ref primitive. */
+
 import * as React from 'react';
 import { motion, isMotionComponent, type HTMLMotionProps } from 'motion/react';
 import { cn } from '#zero/lib/utils';
+import { composeOverlayRefs } from '../../../overlays/overlay-scope';
 
 type AnyProps = Record<string, unknown>;
 
@@ -20,19 +23,10 @@ type SlotProps<T extends HTMLElement = HTMLElement> = {
   children?: any;
 } & DOMMotionProps<T>;
 
-function mergeRefs<T>(
+function mergeRefs<T extends Element>(
   ...refs: (React.Ref<T> | undefined)[]
 ): React.RefCallback<T> {
-  return (node) => {
-    refs.forEach((ref) => {
-      if (!ref) return;
-      if (typeof ref === 'function') {
-        ref(node);
-      } else {
-        (ref as React.RefObject<T | null>).current = node;
-      }
-    });
-  };
+  return composeOverlayRefs(...refs);
 }
 
 function mergeProps<T extends HTMLElement>(

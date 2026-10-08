@@ -238,6 +238,7 @@ function toPublicFrameworkImport(sourcePath: string, sourceRoot: string): string
   if (rel === 'sync/types.ts') return '@zero/framework/sync/types';
   if (rel === 'frontend/client/query-params.ts') return '@zero/framework/react/query-params';
   if (rel === 'frontend/client/authorization-scope-hooks.ts') return '@zero/framework/react/authorization-scope';
+  if (rel === 'frontend/client/authorization-scope-readiness.ts') return '@zero/framework/react/authorization-scope';
   if (rel.startsWith('frontend/client/')) return '@zero/framework/react';
   if (rel === 'observability/codes.ts') return '@zero/framework/observability/codes';
   if (rel === 'workflows/types.ts') return '@zero/framework/workflows';
@@ -259,6 +260,7 @@ function isAppOwnedSource(sourcePath: string, sourceRoot: string): boolean {
 function isCopyableSourceFile(sourcePath: string, sourceRoot: string): boolean {
   if (!/\.(ts|tsx)$/.test(sourcePath)) return false;
   if (/\.test\.(ts|tsx)$/.test(sourcePath)) return false;
+  if (/\.(?:browser-fixture|test-fixture|package-fixture)\.(ts|tsx)$/.test(sourcePath)) return false;
   if (sourcePath.endsWith('.d.ts')) return false;
   return isInsideSourceRoot(sourcePath, sourceRoot);
 }
