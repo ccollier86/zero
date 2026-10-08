@@ -24,7 +24,7 @@ export function DataTableSkeletonReveal({ active, body, frame, types }: {
   if (!active || !geometry) return null;
   return <div aria-hidden="true" data-slot="data-table-skeleton-crossfade" className="pointer-events-none absolute"
     style={{ top: geometry.top, left: geometry.left, width: geometry.width }}>
-    <Table aria-hidden="true" data-slot="data-table-skeleton-copy" className="table-fixed" containerClassName="overflow-visible">
+    <Table aria-hidden="true" data-slot="data-table-skeleton-copy" className="table-fixed" containerClassName="overflow-clip">
       <colgroup>{geometry.rows[0]?.widths.map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
       <TableBody>{geometry.rows.map((row, index) => <TableRow key={index} style={{ height: row.height }}>
         {row.widths.map((_, column) => <TableCell key={column} className="relative"><DataTableSkeletonCell

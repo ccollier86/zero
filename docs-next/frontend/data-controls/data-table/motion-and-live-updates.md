@@ -13,9 +13,9 @@ modes: [browser, SSR, array, collection, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  commit: "6f6820d1addf17469f465663a884b836e82640a3"
   snapshot: dirty
-  date: "2026-10-07"
+  date: "2026-10-08"
   evidence_level: source-observed
 ---
 
@@ -138,6 +138,16 @@ contains no record identities. In the normal initial reveal, the skeleton pulse
 remains 1400ms with 70ms row offsets; real rows enter over 525ms from four pixels
 above their final position.
 
+The first accepted result begins its row reveal as soon as the actual data is
+ready; it does not inherit the later refetch loader's 400ms minimum. If there was
+no real skeleton height baseline (for example, a custom first-load presentation),
+the table allocates the incoming rows' layout before their opacity/transform
+reveal rather than animating a blank frame from header-only height. Replacing a
+real skeleton with fewer rows still eases the frame height over 580ms.
+Caller-owned data must declare its initial pending state through the data source's
+`isLoading`; a genuinely settled empty result followed by a live INSERT is not
+treated as a new initial load.
+
 During later queries the
 existing presentation remains while the new request starts; a longer request
 can switch to skeletons after 300ms. Once a later skeleton is visible, its
@@ -221,6 +231,15 @@ For server sources `source.live: false` separately disables automatic change
 invalidation/subscription, and `source.prefetch: false` disables speculation.
 Manual refresh and accepted mutation acknowledgment remain separate operations.
 
+DataTable uses its outer ScrollArea as the sole owner of genuine horizontal
+overflow. Row/page entrances and the decorative skeleton copy stay inside the
+table's paint bounds; their transforms must not create a temporary scroll range.
+Horizontal scrollbar chrome is hidden by default, while wide tables remain
+scrollable with a trackpad, horizontal wheel or touch gesture. Set
+`showHorizontalScrollbar={true}` on DataTable/DataTableView to expose the existing
+scrollbar when content genuinely overflows. This does not change other ScrollArea
+or semantic Table components' scrolling policy.
+
 `prefers-reduced-motion` removes perceptible row/page/digit travel, disables
 decorative pulse/transitions and skips the presentation-only skeleton minimum
 wait. Loading, network and accepted-result authority remain unchanged. Footer status/group labels expose complete readable sentences rather
@@ -229,8 +248,20 @@ editors, menus, comboboxes, composition and modified keys retain their normal
 behavior. Exiting/presentation-only rows cannot receive actions or selection.
 
 A bottom progress track is shown only when a real navigable page count exists.
-It grows from the first to last page; it is not a timer or fake request completion
-percentage. Unknown-total and opaque-cursor results do not fabricate the track.
+Its muted track stays visible while the primary-colored fill grows from the first
+to last page over the existing 700ms transform transition. The scoped tokens
+`--zero-data-table-progress-height` (2px),
+`--zero-data-table-progress-background` (the muted surface) and
+`--zero-data-table-progress-foreground` (the primary color) control its appearance.
+Reduced motion removes the transition, not the progress indicator.
+
+This is navigation progress, not a timer or request-completion percentage.
+Unknown-total and opaque-cursor results do not fabricate the track. The built-in
+`/api/data` paged response currently supplies a page-local `count`, `hasMore` and
+`nextOffset`, not an exact filtered `total`. A server adapter must supply that
+authoritative total in its accepted page metadata before an offset table can
+render a true percentage. A separate summary request must not be treated as the
+same query's total without a matching authorization/filter/response contract.
 
 ## Verification And Related Guides
 

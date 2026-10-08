@@ -21,7 +21,7 @@ interface Presentation<T> {
   rows: DataTableMotionRow<T>[]; frameKey: number; showSkeleton: boolean; initialReveal: boolean;
   kind: DataTableMotionKind; direction: number; factor: number; enterDelay: number;
 }
-interface Operation { id: number; kind: 'page' | 'query'; exited: boolean; startedAt: number; loaderScheduled?: boolean; loaderVisibleAt?: number }
+interface Operation { id: number; kind: 'page' | 'query'; initial: boolean; exited: boolean; startedAt: number; loaderScheduled?: boolean; loaderVisibleAt?: number }
 
 /** One latest-target queue; changes of criteria preempt navigation and every asynchronous continuation is retired on unmount. */
 export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
@@ -41,6 +41,9 @@ export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
   const attemptRef = React.useRef<() => void>(() => {});
   const lifetime = React.useRef(0);
   const committedSkeleton = React.useRef(false);
+  // Initial loading is explicit source ownership, not an inference from an
+  // empty result. A later INSERT into an acknowledged empty view is a reflow.
+  const awaitingInitialResult = React.useRef(options.loading);
 
   function publish(next: Presentation<T>) { current.current = next; if (live.current) setView(next); }
   function notifyBusy(value: boolean) {
@@ -77,17 +80,20 @@ export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
     }
     if (!pending.exited) return;
     if (current.current.showSkeleton && pending.loaderVisibleAt === undefined) return;
-    const minimumRemaining = reducedRef.current || pending.loaderVisibleAt === undefined ? 0 : M.loaderMinimum - (performance.now() - pending.loaderVisibleAt);
+    // The anti-flicker minimum belongs to the delayed refetch loader. First
+    // results reveal as soon as they exist; a skeleton never adds fake latency.
+    const minimumRemaining = reducedRef.current || pending.initial || pending.loaderVisibleAt === undefined ? 0 : M.loaderMinimum - (performance.now() - pending.loaderVisibleAt);
     if (minimumRemaining > 0) {
       if (!readyTimer.current) readyTimer.current = schedule(() => { readyTimer.current = null; attemptRef.current(); }, minimumRemaining);
       return;
     }
     const previous = current.current, target = accepted.current;
     const change = dataTableMotionTargetChange(target, input);
-    const kind: DataTableMotionKind = reducedRef.current ? 'none' : pending.kind === 'page' ? 'page' : previous.showSkeleton ? 'initial' : 'reflow';
+    const kind: DataTableMotionKind = reducedRef.current ? 'none' : pending.initial ? 'initial' : pending.kind === 'page' ? 'page' : previous.showSkeleton ? 'initial' : 'reflow';
     const direction = Math.sign(input.pageIndex - target.pageIndex);
     const factor = input.navigationOrigin === 'keyboard' ? M.keyboardFactor : 1;
     accepted.current = { queryKey: input.queryKey, pageIndex: input.pageIndex, pageSize: input.pageSize };
+    awaitingInitialResult.current = false;
     operation.current = null; clearTimers();
     publish({ rows: reconcileDataTableMotionRows(input.rows, previous.rows, kind === 'reflow'), frameKey: previous.frameKey + 1,
       showSkeleton: false, initialReveal: kind === 'initial', kind, direction, factor, enterDelay: change === 'query' ? M.enterDelay : 0 });
@@ -98,7 +104,7 @@ export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
     // A replacement page captures the current faded opacity inside pageOut
     // before retiring the previous page animation; query priority restores it.
     retireOperation(kind !== 'page' || reducedRef.current);
-    const pending: Operation = { id: ++serial.current, kind, exited: kind !== 'page' || reducedRef.current, startedAt: performance.now(),
+    const pending: Operation = { id: ++serial.current, kind, initial: awaitingInitialResult.current, exited: kind !== 'page' || reducedRef.current, startedAt: performance.now(),
       ...(current.current.showSkeleton && visibleAt !== undefined ? { loaderVisibleAt: visibleAt } : {}) };
     operation.current = pending; notifyBusy(true);
     armLoader(pending);
@@ -142,6 +148,7 @@ export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
     }
     if (options.enabled === false) {
       retireOperation(); player.dispose(); player.activate(); notifyBusy(false);
+      if (!options.loading) awaitingInitialResult.current = false;
       const previous = current.current;
       if (previous.showSkeleton || previous.rows.some(item => item.leaving) || dataTableMotionTargetChange(accepted.current, options) || !dataTableMotionRowsMatch(previous.rows, options.rows)) {
         accepted.current = options;
@@ -190,7 +197,7 @@ export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
     const snapshot = player.snapshot(new Set(view.rows.filter(item => !item.leaving).map(item => item.row.id)));
     // The real tbody stays mounted while an independent skeleton covers it.
     // Its covered geometry is not the visual starting position of a reveal.
-    if (committedSkeleton.current) snapshot?.rows.clear();
+    if (committedSkeleton.current && snapshot) { snapshot.rows.clear(); snapshot.skeletonVisible = true; }
     return snapshot;
   }, [player, view.frameKey]);
   const commitSnapshot = React.useCallback((snapshot: DataTableMotionSnapshot | null) => {

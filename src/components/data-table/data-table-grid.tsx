@@ -21,6 +21,8 @@ import { Button } from '#zero/components/ui/button';
 export interface DataTableGridProps<T extends Row> {
   controls: UseDataTableReturn<T>; selectable: boolean; sortable: boolean;
   tableLayout?: 'auto' | 'fixed'; actions?: RowAction<T>[]; mutationRunner: DataTableMutationRunner;
+  /** Horizontal scrolling remains enabled; its scrollbar chrome is hidden unless requested. */
+  showHorizontalScrollbar?: boolean;
   highlightedRowId?: string; emptyState?: React.ReactNode; loadingState?: React.ReactNode;
   loading?: boolean; error?: boolean; previousData?: boolean; motionEnabled?: boolean; queryKey?: string; query?: string;
   cellMotion?: 'typewriter' | 'highlight' | false;
@@ -35,7 +37,8 @@ export interface DataTableGridProps<T extends Row> {
 
 export function DataTableGrid<T extends Row>(props: DataTableGridProps<T>) {
   const { controls, selectable, sortable, tableLayout = 'auto', actions, loading = false,
-    motionEnabled = true, query = '', queryKey = '', emptyState, loadingState } = props;
+    motionEnabled = true, query = '', queryKey = '', emptyState, loadingState,
+    showHorizontalScrollbar = false } = props;
   const { table } = controls, columns = table.getVisibleLeafColumns(), pagination = table.getState().pagination;
   const motion = useDataTableMotion({ rows: table.getRowModel().rows, queryKey, ...pagination, loading,
     error: props.error, enabled: motionEnabled, navigationOrigin: props.navigationOrigin,
@@ -46,7 +49,7 @@ export function DataTableGrid<T extends Row>(props: DataTableGridProps<T>) {
   return <ScrollArea data-slot="data-table-grid" data-motion={animated ? 'true' : 'false'}
     className="w-full min-w-0 max-w-full rounded-md border" aria-busy={loading || motion.pending || undefined}>
     <div ref={motion.containerRef} data-slot="data-table-height-frame" className="relative">
-      <Table className={tableLayout === 'fixed' ? 'table-fixed' : undefined}>
+      <Table className={tableLayout === 'fixed' ? 'table-fixed' : undefined} containerClassName="overflow-clip">
         {tableLayout === 'fixed' && <colgroup>
           {selectable && <col style={{ width: 40 }} />}
           {columns.map(column => <col key={column.id} style={columnStyle(column.getSize(), column.columnDef.meta as ColumnPresentation)} />)}
@@ -89,7 +92,8 @@ export function DataTableGrid<T extends Row>(props: DataTableGridProps<T>) {
       <DataTableSkeletonReveal active={motion.initialReveal && animated} body={motion.bodyRef} frame={motion.containerRef}
         types={[...(selectable ? ['boolean'] : []), ...columns.map(column => (column.columnDef.meta as ColumnPresentation)?.fieldMeta?.type), ...(hasActions ? ['boolean'] : [])]} />
     </div>
-    <ScrollBar orientation="horizontal" />
+    {/* Keep Radix's horizontal viewport admission mounted even when its chrome is hidden. */}
+    <ScrollBar orientation="horizontal" data-table-scrollbar="horizontal" className={showHorizontalScrollbar ? undefined : 'hidden'} />
   </ScrollArea>;
 }
 

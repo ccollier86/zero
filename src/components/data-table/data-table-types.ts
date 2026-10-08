@@ -28,6 +28,8 @@ export interface DataTableProps<T extends Row = Row> {
   columnOverrides?: DataTableColumnOverrides<T>;
   /** Fixed layout keeps flexible, truncated cells from resizing neighboring columns. */
   tableLayout?: 'auto' | 'fixed';
+  /** Show horizontal scrollbar chrome for genuine overflow. Default false; scrolling remains enabled. */
+  showHorizontalScrollbar?: boolean;
   actions?: RowAction<T>[];
   /** Targets explicit selection on the current page, never every server match implicitly. */
   bulkActions?: DataTableBulkAction<T>[];

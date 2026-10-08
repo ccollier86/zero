@@ -3,7 +3,11 @@ import type { DataTableMotionRow } from './data-table-motion-model';
 import { DATA_TABLE_MOTION as M, dataTableMoveDuration } from './data-table-motion-tokens';
 
 interface RowGeometry { top: number; left: number; width: number; height: number; opacity: number; cells: number[] }
-export interface DataTableMotionSnapshot { rows: Map<string, RowGeometry>; containerHeight: number }
+export interface DataTableMotionSnapshot {
+  rows: Map<string, RowGeometry>; containerHeight: number;
+  /** A committed full skeleton is real prior allocation, even though its covered rows are not starting poses. */
+  skeletonVisible?: boolean;
+}
 export type DataTableMotionKind = 'none' | 'reflow' | 'initial' | 'page' | 'skeleton';
 interface Handles { node: HTMLTableRowElement; move?: Animation; enter?: Animation; exit?: Animation }
 interface Pinned { row: Record<string, string>; cells: { cell: HTMLTableCellElement; width: string }[] }
@@ -124,7 +128,11 @@ export class DataTableMotionPlayer {
       this.page = animation; wait(animation);
     }
     const container = this.container(), afterHeight = container?.getBoundingClientRect().height ?? 0;
-    if (!options.reduced && snapshot && container && typeof container.animate === 'function' && Math.abs(snapshot.containerHeight - afterHeight) >= .5) {
+    // With no prior records or full skeleton there is no table body to resize.
+    // Allocate the first data frame before paint; only its rows reveal. Growing
+    // a clipped blank shell hides the top-down motion behind layout allocation.
+    const firstAllocation = options.kind === 'initial' && snapshot?.rows.size === 0 && !snapshot.skeletonVisible;
+    if (!options.reduced && !firstAllocation && snapshot && container && typeof container.animate === 'function' && Math.abs(snapshot.containerHeight - afterHeight) >= .5) {
       this.overflow ??= container.style.overflow; container.style.overflow = 'hidden';
       const animation = container.animate([{ height: `${snapshot.containerHeight}px` }, { height: `${afterHeight}px` }], { duration: M.height, easing: M.ease });
       this.height = animation; wait(animation);

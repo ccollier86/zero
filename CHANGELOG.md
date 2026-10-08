@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Removed DataTable's nested native scroll owner and contained row/page/skeleton
+  motion so animation cannot manufacture a temporary horizontal scroll range.
+  Horizontal scrollbar chrome is hidden by default with a
+  `showHorizontalScrollbar` opt-in; real wide-table scrolling remains available.
+  Footer navigation progress now has tokenized track and fill colors and height.
+- Corrected initial DataTable receipt sequencing so ready first-load rows do not
+  wait behind the refetch loader's minimum interval or a blank height-allocation
+  animation. Initial data reveals retain the tuned top-down row/skeleton crossfade.
 - Upgraded Zero tooltips with exact Grow/Spring/Blur/Swing motion, default arrows,
   inherited theme tokens, rich descriptions/shared keyboard hints and overflow-only
   activation. Explicit groups reuse one sliding surface with interrupted

@@ -1,5 +1,8 @@
 /* Scoped rules intentionally outrank Skeleton’s generic pulse utility; the theme still owns every visual color. */
 [data-slot="data-table-grid"] { isolation: isolate; }
+/* The existing outer ScrollArea alone owns real overflow. Transforming a page,
+   pinned leaver or placeholder must never enlarge that viewport's scroll range. */
+[data-slot="data-table-height-frame"] { contain: paint; }
 [data-slot="data-table-grid"] [data-slot="table-row"] {
   transition-duration: var(--zero-table-motion-ui);
   transition-timing-function: var(--zero-table-motion-ease);

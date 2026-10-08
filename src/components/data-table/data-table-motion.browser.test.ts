@@ -50,15 +50,16 @@ browserTest('frame zero populated rows receive exact initial stagger after Stric
   } finally { await close(page); }
 }, 30_000);
 
-browserTest('first load shows skeleton immediately and its actual reveal respects the 400ms minimum', async () => {
+browserTest('first load shows skeleton immediately and reveals ready data without the refetch-loader minimum', async () => {
   const page = await open(true);
   try {
     expect(await page.locator('[data-skeleton-row]').count()).toBe(3);
-    const start = await page.evaluate(() => performance.now());
-    await page.evaluate(() => window.__motionEngine.change({ loading: false, rows: [{ id: 'ready', name: 'Ready' }] }));
-    expect(await page.locator('[data-skeleton-row]').count()).toBe(3);
+    await page.evaluate(async () => {
+      window.__motionEngine.change({ loading: false, rows: [{ id: 'ready', name: 'Ready' }] });
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+    });
+    expect(await page.locator('[data-skeleton-row]').count()).toBe(0);
     await page.locator('[data-row-id="ready"]').waitFor();
-    expect(await page.evaluate(start => performance.now() - start, start)).toBeGreaterThan(330);
     expect(await page.locator('[data-frame]').getAttribute('data-reveal')).toBe('true');
     await settled(page);
   } finally { await close(page); }

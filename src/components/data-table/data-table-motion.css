@@ -26,9 +26,10 @@
 [data-slot='data-table-page-track'] {
   position: absolute; inset-inline: 0; bottom: 0;
   height: var(--zero-data-table-progress-height, 2px); overflow: hidden; pointer-events: none;
+  background: var(--zero-data-table-progress-background, var(--muted));
 }
 [data-slot='data-table-page-progress'] {
-  height: 100%; background: var(--primary); transform-origin: left;
+  height: 100%; background: var(--zero-data-table-progress-foreground, var(--primary)); transform-origin: left;
   transition: transform var(--zero-table-motion-move, 700ms) var(--zero-table-motion-ease, cubic-bezier(.2, 0, 0, 1));
 }
 [data-slot='data-table-sort-indicator'] {

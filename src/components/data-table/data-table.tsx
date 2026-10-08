@@ -36,6 +36,7 @@ export function DataTableContent<T extends Row = Row>({
   schema,
   source,
   tableLayout = 'auto',
+  showHorizontalScrollbar = false,
   actions,
   bulkActions,
   searchable = false,
@@ -169,6 +170,7 @@ export function DataTableContent<T extends Row = Row>({
       <DataTableGrid
         key={`grid:${partition}`}
         controls={dt} selectable={selectable} sortable={sortable} tableLayout={tableLayout}
+        showHorizontalScrollbar={showHorizontalScrollbar}
         actions={actions} mutationRunner={mutationRunner} highlightedRowId={highlightedRowId}
         emptyState={emptyState} loadingState={loadingState} loading={resolved.isLoading}
         error={Boolean(resolved.error)} motionEnabled={motion && live.stableIdentity} queryKey={queryKey}

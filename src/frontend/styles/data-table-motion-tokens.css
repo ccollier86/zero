@@ -15,6 +15,9 @@
   --zero-table-motion-skeleton-pulse: 1400ms;
   --zero-table-motion-skeleton-offset: 70ms;
   --zero-table-motion-search-debounce: 90ms;
+  --zero-data-table-progress-height: 2px;
+  --zero-data-table-progress-background: var(--muted);
+  --zero-data-table-progress-foreground: var(--primary);
 }
 
 @media (prefers-reduced-motion: reduce) {

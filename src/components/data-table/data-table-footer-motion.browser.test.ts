@@ -136,6 +136,7 @@ browserTest('known-page progress grows along the footer bottom with transform-on
   const page = await open(520);
   try {
     const progress = page.locator('[data-slot="data-table-page-progress"]');
+    expect(await progress.isVisible()).toBe(true);
     expect(await progress.evaluate(element => (element as HTMLElement).style.transform)).toMatch(/^scaleX\([0-9.]+\)$/);
     expect(await progress.evaluate(element => Number((element as HTMLElement).style.transform.slice(7, -1)))).toBeCloseTo(1 / 3, 6);
     expect(await progress.evaluate(element => getComputedStyle(element).transitionProperty)).toBe('transform');
@@ -145,15 +146,39 @@ browserTest('known-page progress grows along the footer bottom with transform-on
       const track = document.querySelector('[data-slot="data-table-page-track"]')!.getBoundingClientRect();
       const pill = document.querySelector('[data-slot="data-table-new-records"]')!.getBoundingClientRect();
       const controls = document.querySelector('[data-slot="data-table-page-controls"]')!.getBoundingClientRect();
-      return { footerBottom: footer.bottom, trackBottom: track.bottom, pillTop: pill.top, controlsBottom: controls.bottom };
+      const fill = document.querySelector('[data-slot="data-table-page-progress"]')!.getBoundingClientRect();
+      return { footerBottom: footer.bottom, trackBottom: track.bottom, trackWidth: track.width, trackHeight: track.height,
+        fillWidth: fill.width, pillTop: pill.top, controlsBottom: controls.bottom };
     });
     expect(geometry.trackBottom).toBe(geometry.footerBottom); expect(geometry.pillTop).toBeGreaterThanOrEqual(geometry.controlsBottom);
+    expect(geometry.trackHeight).toBe(2); expect(geometry.trackWidth).toBeGreaterThan(0);
+    expect(geometry.fillWidth / geometry.trackWidth).toBeCloseTo(1 / 3, 6);
     await page.getByLabel('Next page', { exact: true }).click();
     await page.waitForFunction(() => window.__tableFooterMotion.page() === 1);
     expect(await progress.evaluate(element => Number((element as HTMLElement).style.transform.slice(7, -1)))).toBeCloseTo(2 / 3, 6);
     await page.getByLabel('Last page', { exact: true }).click();
     await page.waitForFunction(() => window.__tableFooterMotion.page() === 2);
     expect(await progress.evaluate(element => (element as HTMLElement).style.transform)).toBe('scaleX(1)');
+  } finally { await close(page); }
+}, 30_000);
+for (const dark of [false, true]) browserTest(`progress track paints in ${dark ? 'dark' : 'light'} theme and scoped tokens control its height and colors`, async () => {
+  const page = await open(1100, dark, true);
+  try {
+    const track = page.locator('[data-slot="data-table-page-track"]'), progress = page.locator('[data-slot="data-table-page-progress"]');
+    const background = await track.evaluate(element => getComputedStyle(element).backgroundColor);
+    const foreground = await progress.evaluate(element => getComputedStyle(element).backgroundColor);
+    expect(background).not.toBe('rgba(0, 0, 0, 0)'); expect(foreground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(background).not.toBe(foreground);
+    await page.locator('[data-slot="data-table-pagination"]').evaluate(element => {
+      const footer = element as HTMLElement;
+      footer.style.setProperty('--zero-data-table-progress-height', '4px');
+      footer.style.setProperty('--zero-data-table-progress-background', 'rgb(30, 40, 50)');
+      footer.style.setProperty('--zero-data-table-progress-foreground', 'rgb(60, 70, 80)');
+    });
+    expect((await track.boundingBox())!.height).toBe(4);
+    expect(await track.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(30, 40, 50)');
+    expect(await progress.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(60, 70, 80)');
+    expect(await progress.evaluate(element => getComputedStyle(element).transitionDuration)).toBe('0s');
   } finally { await close(page); }
 }, 30_000);
 browserTest('same-frame relative clicks retain TanStack functional pagination instead of collapsing to a captured target', async () => {
