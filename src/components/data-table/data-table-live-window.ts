@@ -7,10 +7,13 @@ export interface DataTableLiveWindowState<T extends Row> {
   input: readonly T[];
   seen: ReadonlySet<string>;
   held: ReadonlySet<string>;
+  /** Unacknowledged matching arrivals, including records sorted somewhere other than the start. */
+  incoming: ReadonlySet<string>;
   fresh: ReadonlySet<string>;
   baselineReady: boolean;
   evidence?: readonly string[];
   confirmedEvidence?: readonly string[];
+  leadingRowId?: string | null;
   observedInserts: ReadonlySet<string>;
   releasedInserts: ReadonlySet<string>;
 }
@@ -31,6 +34,8 @@ export interface DataTableLiveWindowInput<T extends Row> {
   insertedRowIds?: readonly string[];
   /** Separately query-confirmed genuine INSERTs, including identities outside the supplied page. */
   confirmedInsertedRowIds?: readonly string[];
+  /** Actual first matching identity under the active sort; undefined means position is not known. */
+  leadingRowId?: string | null;
 }
 
 /** A missing/duplicate identity preserves legacy rendering but disables entity retention. */
@@ -51,16 +56,19 @@ export function reconcileDataTableLiveWindow<T extends Row>(previous: DataTableL
   const confirmed = new Set(input.confirmedInsertedRowIds);
   if (!previous || previous.boundary !== input.boundary || !ids || !input.enabled) {
     return { boundary: input.boundary, criteria: input.criteria, input: input.data,
-      seen: ids ?? new Set(), held: new Set(), fresh: new Set(), baselineReady: !input.loading,
+      seen: ids ?? new Set(), held: new Set(), incoming: new Set(), fresh: new Set(), baselineReady: !input.loading,
       evidence: input.insertedRowIds, confirmedEvidence: input.confirmedInsertedRowIds,
+      leadingRowId: input.leadingRowId,
       observedInserts: new Set(), releasedInserts: new Set() };
   }
   const queryChanged = previous.criteria !== input.criteria;
   const held = new Set([...previous.held].filter(id => ids.has(id) || confirmed.has(id)));
+  const matching = new Set([...input.orderedMatchingIds, ...confirmed]);
+  const incoming = new Set([...previous.incoming].filter(id => matching.has(id)));
   const fresh = new Set([...previous.fresh].filter(id => ids.has(id) || confirmed.has(id)));
   const observedInserts = new Set(previous.observedInserts);
   const releasedInserts = new Set(previous.releasedInserts);
-  if (queryChanged) { held.clear(); fresh.clear(); observedInserts.clear(); releasedInserts.clear(); }
+  if (queryChanged) { held.clear(); incoming.clear(); fresh.clear(); observedInserts.clear(); releasedInserts.clear(); }
   if (!queryChanged && previous.baselineReady && (input.data !== previous.input || input.insertedRowIds !== previous.evidence
     || input.confirmedInsertedRowIds !== previous.confirmedEvidence)) {
     const positions = new Map(input.orderedMatchingIds.map((id, index) => [id, index]));
@@ -73,19 +81,34 @@ export function reconcileDataTableLiveWindow<T extends Row>(previous: DataTableL
       const position = positions.get(id);
       if (position === undefined && !confirmed.has(id)) continue;
       fresh.add(id);
+      incoming.add(id);
       if (explicitEvidence) observedInserts.add(id);
       if (input.busy || input.scrolledAway || position !== undefined && position < start
         || explicitEvidence && input.pageIndex > 0) held.add(id);
     }
   }
-  if (input.pageIndex === 0 && !input.scrolledAway && !input.busy) {
-    for (const id of held) releasedInserts.add(id);
-    for (const id of confirmed) releasedInserts.add(id);
+  if (input.pageIndex === 0 && !input.scrolledAway && !input.busy && !input.loading) {
+    // Releasing a visual hold is not acknowledgement of records sorted elsewhere.
     held.clear();
+    // Already reading the beginning: acknowledge only the new leading block.
+    // Arrivals sorted elsewhere remain a passive count, never a false jump action.
+    if (input.leadingRowId !== undefined && input.leadingRowId === input.orderedMatchingIds[0]) {
+      for (const id of input.orderedMatchingIds) {
+        if (!incoming.has(id)) break;
+        incoming.delete(id);
+        releasedInserts.add(id);
+      }
+    }
   }
   while (observedInserts.size > 1_000) observedInserts.delete(observedInserts.values().next().value!);
   while (releasedInserts.size > 1_000) releasedInserts.delete(releasedInserts.values().next().value!);
   return { boundary: input.boundary, criteria: input.criteria, input: input.data,
-    seen: ids, held, fresh, baselineReady: previous.baselineReady || !input.loading,
-    evidence: input.insertedRowIds, confirmedEvidence: input.confirmedInsertedRowIds, observedInserts, releasedInserts };
+    seen: ids, held, incoming, fresh, baselineReady: previous.baselineReady || !input.loading,
+    evidence: input.insertedRowIds, confirmedEvidence: input.confirmedInsertedRowIds,
+    leadingRowId: input.leadingRowId, observedInserts, releasedInserts };
+}
+
+/** Offer a return-to-start action only when a tracked arrival is actually the first sorted result. */
+export function dataTableCanRevealNewRecords(incoming: ReadonlySet<string>, leadingRowId: string | null | undefined): boolean {
+  return typeof leadingRowId === 'string' && incoming.has(leadingRowId);
 }

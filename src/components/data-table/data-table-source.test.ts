@@ -118,6 +118,27 @@ describe('DataTable server query contract', () => {
     expect((await legacy.query(query, { signal })).page.total).toBeUndefined();
   });
 
+  test('leading-row proof reads exactly one sorted filtered record without requesting a total', async () => {
+    const paths: string[] = [];
+    const client = { fetch: async (path: string) => {
+      paths.push(path);
+      return { rows: [{ id: 'leading', title: 'Match' }], page: {
+        offset: 0, limit: 1, count: 1, hasMore: true, nextOffset: 1,
+      } };
+    } } as unknown as Client;
+    const query: DataTableServerQuery = { search: 'Match', searchFields: ['title'],
+      filters: [{ id: 'category', value: 'a' }], sorting: [{ id: 'priority', desc: true }],
+      pagination: { mode: 'offset', pageIndex: 8, pageSize: 20 } };
+    const adapter = createDataTableApiAdapter(client, 'documents', 'id');
+    expect(await adapter.getLeadingRowId!(query, { signal: new AbortController().signal })).toBe('leading');
+    const params = new URL(paths[0]!, 'http://zero.test').searchParams;
+    expect(params.get('limit')).toBe('1'); expect(params.get('offset')).toBe('0');
+    expect(params.has('includeTotal')).toBe(false);
+    expect(params.get('search')).toBe('Match'); expect(params.getAll('searchField')).toEqual(['title']);
+    expect(params.getAll('filter')).toEqual(['category:a']); expect(params.getAll('sort')).toEqual(['priority:desc']);
+    expect(createDataTableApiAdapter(client, 'documents').getLeadingRowId).toBeUndefined();
+  });
+
   test('requires a custom adapter for cursor pagination', () => {
     expect(() => buildDataTableServerQuery('documents', {
       search: '',

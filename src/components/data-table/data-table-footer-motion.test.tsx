@@ -36,7 +36,10 @@ test('known empty data has zero pages; an optional new-record action uses only i
   expect(empty).toContain('aria-label="Page 0 of 0"'); expect(empty).not.toContain('data-table-page-track');
   const html = renderToStaticMarkup(<Footer newCount={12} onRevealNew={() => {}} />);
   expect(html).toContain('aria-label="Reveal 12 new records"');
-  expect(renderToStaticMarkup(<Footer newCount={12} />)).not.toContain('data-table-new-records');
+  const passive = renderToStaticMarkup(<Footer newCount={12} />);
+  expect(passive).toContain('data-slot="data-table-new-records"');
+  expect(passive).toContain('role="status"'); expect(passive).toContain('aria-label="12 new records"');
+  expect(passive).not.toContain('aria-label="Reveal 12 new records"');
   expect(renderToStaticMarkup(<Footer newCount={-1} onRevealNew={() => {}} />)).not.toContain('data-table-new-records');
 });
 test('same-scope background loading does not disable page-size or valid pager targets', () => {
@@ -75,4 +78,13 @@ test('held-new action can render without a fake pager and preserves native acces
   expect(html).toContain('aria-label="Reveal 5 new records"'); expect(html).toContain('id="held"');
   expect(html).toContain('disabled=""'); expect(html).not.toContain('data-table-pagination');
   expect(renderToStaticMarkup(<DataTableNewRecordsButton count={0} onReveal={() => {}} />)).toBe('');
+});
+test('a passive incoming count uses the same roller without an arrow, button semantics or keyboard target', () => {
+  const html = renderToStaticMarkup(<DataTableNewRecordsButton count={15} disabled tabIndex={0} id="incoming" title="Incoming records" />);
+  expect(html).toContain('role="status"'); expect(html).toContain('aria-label="15 new records"');
+  expect(html).toContain('data-actionable="false"'); expect(html).toContain('data-value="15"');
+  expect(html).toContain('id="incoming"'); expect(html).toContain('title="Incoming records"');
+  expect(html).not.toContain('<button'); expect(html).not.toContain('<svg');
+  expect(html).not.toContain('tabindex'); expect(html).not.toContain('disabled=');
+  expect(renderToStaticMarkup(<DataTableNewRecordsButton count={-1} />)).toBe('');
 });

@@ -84,6 +84,7 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     boundary: partition, criteria: queryShape, state: current, primaryKey, loading: resolved.isLoading,
     insertedRowIds: resolved.sourceType === 'collection' ? collectionInserts : resolved.liveInsertedRowIds,
     confirmedInsertedRowIds: resolved.confirmedLiveInsertedRowIds,
+    liveLeadingRowId: resolved.liveLeadingRowId,
     clearConfirmedInsertions: resolved.clearLiveInsertions });
   const dt = useDataTable<T>({
     schema, data: live.data, columns: options.columns, editable: options.editable,

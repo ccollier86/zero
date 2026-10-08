@@ -97,6 +97,51 @@ browserTest('footer keyboard navigation is focus-scoped, prefetch is intent-only
     await page.getByLabel('Reveal 12 new records').click(); expect(await page.locator('[data-slot="data-table-new-records"]').count()).toBe(0);
   } finally { await close(page); }
 }, 30_000);
+browserTest('incoming counts are passive without an eligible reveal and keep per-digit motion when they become actionable', async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => window.__tableFooterMotion.incoming(11, false));
+    const status = page.getByRole('status', { name: '11 new records', exact: true }); await status.waitFor();
+    expect(await status.getAttribute('data-actionable')).toBe('false');
+    expect(await status.getAttribute('tabindex')).toBeNull();
+    expect(await status.locator('svg').count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Reveal 11 new records', exact: true }).count()).toBe(0);
+    expect(await status.evaluate(element => ({ tag: element.tagName, tabIndex: (element as HTMLElement).tabIndex })))
+      .toEqual({ tag: 'DIV', tabIndex: -1 });
+    const centered = await status.evaluate(element => {
+      const pill = element.getBoundingClientRect(), footer = element.parentElement!.getBoundingClientRect();
+      return Math.abs(pill.left + pill.width / 2 - (footer.left + footer.width / 2));
+    });
+    expect(centered).toBeLessThan(1);
+    await status.click(); expect(await page.evaluate(() => window.__tableFooterMotion.page())).toBe(0);
+    expect(await status.isVisible()).toBe(true);
+    await page.evaluate(() => { window.__tableFooterMotion.clear(); window.__tableFooterMotion.incoming(12, false); });
+    await page.getByRole('status', { name: '12 new records', exact: true }).waitFor();
+    await page.waitForFunction(() => window.__tableFooterMotion.animations().some(record => record.value === '12' && record.options.duration === 525));
+    const changed = await page.evaluate(() => window.__tableFooterMotion.animations().filter(record => record.value === '12'));
+    expect(changed).toHaveLength(2);
+    expect(changed.filter(record => record.options.duration === 525).map(record => record.frames[0]?.transform)).toEqual(['translateY(75%)']);
+    expect(changed.filter(record => record.options.duration === 350).map(record => record.frames[1]?.transform)).toEqual(['translateY(-75%)']);
+    await page.evaluate(() => window.__tableFooterMotion.incoming(12, true));
+    const action = page.getByRole('button', { name: 'Reveal 12 new records', exact: true }); await action.waitFor();
+    expect(await action.getAttribute('data-actionable')).toBe('true'); expect(await action.locator('svg').count()).toBe(1);
+    expect(await page.getByRole('status', { name: '12 new records', exact: true }).count()).toBe(0);
+    await action.click(); expect(await page.locator('[data-slot="data-table-new-records"]').count()).toBe(0);
+  } finally { await close(page); }
+}, 30_000);
+browserTest('passive incoming counts keep the mobile footer row and disappear for zero without leaving a fake control', async () => {
+  const page = await open(320, false, true);
+  try {
+    await page.evaluate(() => window.__tableFooterMotion.incoming(3, false));
+    const status = page.getByRole('status', { name: '3 new records', exact: true }); await status.waitFor();
+    const geometry = await status.evaluate(element => ({ top: element.getBoundingClientRect().top,
+      controlsBottom: document.querySelector('[data-slot="data-table-page-controls"]')!.getBoundingClientRect().bottom,
+      width: document.documentElement.scrollWidth }));
+    expect(geometry.width).toBeLessThanOrEqual(320); expect(geometry.top).toBeGreaterThanOrEqual(geometry.controlsBottom);
+    await page.evaluate(() => window.__tableFooterMotion.incoming(0, false));
+    expect(await page.locator('[data-slot="data-table-new-records"]').count()).toBe(0);
+  } finally { await close(page); }
+}, 30_000);
 browserTest('sort arrows keep the original asc/desc/clear keyboard cycle, rotate180deg over350ms, and show inactive hover0.4', async () => {
   const page = await open();
   try {

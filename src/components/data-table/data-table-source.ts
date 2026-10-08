@@ -106,6 +106,8 @@ export interface DataTableSourceState<T extends Row> {
   liveInsertedRowIds?: readonly string[];
   /** Query-matching INSERT identities confirmed separately from the current page, without merging lookup rows. */
   confirmedLiveInsertedRowIds?: readonly string[];
+  /** Current authorized leading identity used only to qualify live-arrival navigation. */
+  liveLeadingRowId?: string | null;
   /** Retire held server insertion evidence when the reading view reveals it. */
   clearLiveInsertions?: () => void;
 }
@@ -358,6 +360,7 @@ export function useDataTableSource<T extends Row = Row>(
       changeReason: server.changeReason,
       liveInsertedRowIds: server.liveInsertedRowIds,
       confirmedLiveInsertedRowIds: server.confirmedLiveInsertedRowIds,
+      liveLeadingRowId: server.liveLeadingRowId,
       clearLiveInsertions: server.clearLiveInsertions,
     };
   }

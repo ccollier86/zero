@@ -36,8 +36,9 @@ export interface DataTablePaginationProps<TData> {
   /** Absent for local row models; a null value means the server page is not loaded yet. */
   serverPage?: DataTableServerPage | null;
   loading?: boolean;
-  /** Authoritative newly held records; no count is inferred from reactive writes. */
+  /** Authoritative incoming records; no count is inferred from a total or arbitrary reactive write. */
   newCount?: number;
+  /** Provide only when the incoming records have an eligible first-page reveal target; otherwise their count is passive. */
   onRevealNew?: () => void;
   /** Hover/focus intent only; the source owns authorization, admission, caching and cancellation. */
   onPrefetchPage?: (pageIndex: number) => void | Promise<void>;
@@ -159,7 +160,7 @@ export function DataTablePagination<TData>({
         )}
       </div>
 
-      {heldCount > 0 && onRevealNew && <DataTableNewRecordsButton count={heldCount} onReveal={onRevealNew} motionEnabled={animate} />}
+      {heldCount > 0 && <DataTableNewRecordsButton count={heldCount} onReveal={onRevealNew} motionEnabled={animate} />}
 
       <div data-slot="data-table-page-controls" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 sm:justify-end lg:gap-x-6">
         {/* Rows per page */}

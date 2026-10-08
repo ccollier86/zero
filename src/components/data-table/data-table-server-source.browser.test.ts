@@ -406,3 +406,128 @@ browserTest('built-in membership uses captured search and PK filters on a bounde
     expect(await page.locator('body').textContent()).not.toContain('SYNTHETIC_PRIVATE_SOURCE_ERROR');
   } finally { await page.close(); }
 }, 60_000);
+
+browserTest('leading-row proof is demand-driven, live-revision fenced, and clear does not revive reads from old accepted INSERTs', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => { window.__serverSource.prefetchEnabled(false); window.__serverSource.source(4); window.__serverSource.primaryKey('id'); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2); await accept(page, 1, 'first');
+    await page.evaluate(() => window.__serverSource.page(1));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3); await accept(page, 2, 'later');
+    expect(await page.evaluate(() => window.__serverSource.leadingProofs().length)).toBe(0);
+    await page.evaluate(() => window.__serverSource.emit({ op: 'INSERT', rowId: 'arrival' }));
+    await page.waitForFunction(() => window.__serverSource.confirmations().length === 1);
+    await page.evaluate(() => window.__serverSource.confirm(0, ['arrival']));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs().length === 1);
+    expect((await page.evaluate(() => window.__serverSource.leadingProofs()))[0]!.query.pagination).toEqual({ mode: 'offset', pageIndex: 0, pageSize: 1 });
+    await page.evaluate(() => window.__serverSource.emit({ op: 'UPDATE', rowId: 'existing-leader' }));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs().length === 2);
+    expect((await page.evaluate(() => window.__serverSource.leadingProofs()))[0]!.aborted).toBe(true);
+    await page.evaluate(() => window.__serverSource.leading(0, 'arrival'));
+    expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    await page.evaluate(() => window.__serverSource.leading(1, 'existing-leader'));
+    await page.waitForFunction(() => window.__serverSource.state().liveLeadingRowId === 'existing-leader');
+    await page.evaluate(() => window.__serverSource.clearLiveInsertions());
+    expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    await page.evaluate(() => window.__serverSource.emit({ op: 'UPDATE', rowId: 'existing-leader' }));
+    await page.waitForTimeout(25);
+    expect(await page.evaluate(() => window.__serverSource.leadingProofs().length)).toBe(2);
+    expect(await page.evaluate(() => window.__serverSource.state().confirmedLiveInsertedRowIds)).toEqual([]);
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('later-page leading evidence cannot cross changed criteria, deleted arrivals or silent authority transitions', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => { window.__serverSource.prefetchEnabled(false); window.__serverSource.source(4); window.__serverSource.primaryKey('id'); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2); await accept(page, 1, 'first');
+    await page.evaluate(() => window.__serverSource.page(1));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3); await accept(page, 2, 'later');
+    await page.evaluate(() => window.__serverSource.emit({ op: 'INSERT', rowId: 'arrival' }));
+    await page.waitForFunction(() => window.__serverSource.confirmations().length === 1);
+    await page.evaluate(() => window.__serverSource.confirm(0, ['arrival']));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs().length === 1);
+    await page.evaluate(() => { window.__serverSource.emit({ op: 'DELETE', rowId: 'arrival' }); window.__serverSource.leading(0, 'arrival'); });
+    expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    expect((await page.evaluate(() => window.__serverSource.leadingProofs()))[0]!.aborted).toBe(true);
+    await page.evaluate(() => window.__serverSource.emit({ op: 'INSERT', rowId: 'second-arrival' }));
+    await page.waitForFunction(() => window.__serverSource.confirmations().length === 2);
+    await page.evaluate(() => window.__serverSource.confirm(1, ['second-arrival']));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs().length === 2);
+    await page.evaluate(() => window.__serverSource.search('replacement'));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs()[1]!.aborted);
+    await page.evaluate(() => window.__serverSource.leading(1, 'second-arrival'));
+    expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    const latest = (await page.evaluate(() => window.__serverSource.queries())).length - 1;
+    await accept(page, latest, 'replacement');
+    await page.evaluate(() => window.__serverSource.page(1));
+    await page.waitForFunction(previous => window.__serverSource.queries().length > previous, latest + 1);
+    const later = (await page.evaluate(() => window.__serverSource.queries())).length - 1;
+    await accept(page, later, 'replacement-later');
+    await page.evaluate(() => window.__serverSource.emit({ op: 'INSERT', rowId: 'private-arrival' }));
+    await page.waitForFunction(() => window.__serverSource.confirmations().length === 3);
+    await page.evaluate(() => window.__serverSource.confirm(2, ['private-arrival']));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs().length === 3);
+    await page.evaluate(() => { window.__serverSource.scope('organization-b', false); window.__serverSource.leading(2, 'private-arrival'); });
+    await page.evaluate(() => window.__serverSource.notify());
+    expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    expect((await page.evaluate(() => window.__serverSource.leadingProofs()))[2]!.aborted).toBe(true);
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('getLeading-only adapters retain genuine candidate demand across ordinary UPDATE and stop it after DELETE', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => { window.__serverSource.prefetchEnabled(false); window.__serverSource.source(5); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2); await accept(page, 1, 'first');
+    await page.evaluate(() => window.__serverSource.page(1));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3); await accept(page, 2, 'later');
+    await page.evaluate(() => window.__serverSource.emit({ op: 'INSERT', rowId: 'arrival' }));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 4);
+    await page.evaluate(() => window.__serverSource.resolve(3, [{ id: 'arrival', name: 'arrival' }, { id: 'later', name: 'later' }]));
+    await page.waitForFunction(() => window.__serverSource.leadingProofs().length === 1);
+    expect(await page.evaluate(() => window.__serverSource.confirmations().length)).toBe(0);
+    await page.evaluate(() => window.__serverSource.leading(0, 'arrival'));
+    await page.waitForFunction(() => window.__serverSource.state().liveLeadingRowId === 'arrival');
+    await page.evaluate(() => window.__serverSource.emit({ op: 'UPDATE', rowId: 'later' }));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 5 && window.__serverSource.leadingProofs().length === 2);
+    await page.evaluate(() => window.__serverSource.resolve(4, [{ id: 'arrival', name: 'arrival' }, { id: 'later', name: 'later updated' }]));
+    await page.getByText('later updated', { exact: true }).waitFor();
+    expect(await page.evaluate(() => window.__serverSource.state().liveInsertedRowIds)).toEqual([]);
+    expect((await page.evaluate(() => window.__serverSource.leadingProofs()))[1]!.aborted).toBe(false);
+    await page.evaluate(() => window.__serverSource.leading(1, 'arrival'));
+    await page.waitForFunction(() => window.__serverSource.state().liveLeadingRowId === 'arrival');
+    await page.evaluate(() => window.__serverSource.emit({ op: 'DELETE', rowId: 'arrival' }));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 6);
+    await page.evaluate(() => window.__serverSource.resolve(5, [{ id: 'later', name: 'later updated' }]));
+    await page.waitForFunction(() => !window.__serverSource.state().isLoading);
+    expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    expect(await page.evaluate(() => window.__serverSource.leadingProofs().length)).toBe(2);
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('custom requested page zero cannot prove leading identity from a nonzero returned offset or an opaque cursor', async () => {
+  for (const mode of ['offset', 'cursor'] as const) {
+    const page = await mount();
+    try {
+      await page.evaluate(() => window.__serverSource.prefetchEnabled(false));
+      await accept(page, 0, 'baseline');
+      let previous = 1;
+      if (mode === 'cursor') {
+        await page.evaluate(() => window.__serverSource.mode('cursor'));
+        await page.waitForFunction(() => window.__serverSource.queries().length === 2); await accept(page, 1, 'cursor-baseline');
+        await page.evaluate(() => window.__serverSource.page(0, 'opaque-not-first'));
+        await page.waitForFunction(() => window.__serverSource.queries().length === 3); await accept(page, 2, 'opaque-baseline');
+        previous = 3;
+      }
+      await page.evaluate(() => window.__serverSource.emit({ op: 'INSERT', rowId: 'arrival' }));
+      await page.waitForFunction(count => window.__serverSource.queries().length > count, previous);
+      const index = (await page.evaluate(() => window.__serverSource.queries())).length - 1;
+      if (mode === 'offset') await page.evaluate(index => window.__serverSource.resolveOffset(index, [{ id: 'arrival', name: 'arrival' }], 30), index);
+      else await page.evaluate(index => window.__serverSource.resolve(index, [{ id: 'arrival', name: 'arrival' }]), index);
+      await page.waitForFunction(() => !window.__serverSource.state().isLoading);
+      expect(await page.evaluate(() => window.__serverSource.state().liveInsertedRowIds)).toEqual(['arrival']);
+      expect(await page.evaluate(() => window.__serverSource.state().liveLeadingRowId)).toBeUndefined();
+    } finally { await page.close(); }
+  }
+}, 60_000);

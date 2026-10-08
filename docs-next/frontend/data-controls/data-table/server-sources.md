@@ -234,6 +234,7 @@ not replace a successful foreground page with an error.
 | `changeReason` | `query`, `refresh` or `live`; live means invalidation, not a new-record count. |
 | `liveInsertedRowIds` | Genuine INSERT IDs confirmed by the exact accepted current response. |
 | `confirmedLiveInsertedRowIds` | Genuine INSERT IDs confirmed against the current criteria separately from page membership; lookup rows are not merged into the page. |
+| `liveLeadingRowId` | Current authorized first sorted identity (`null` for no result, `undefined` for unknown); qualifies the new-record jump, not the count. |
 | `clearLiveInsertions()` | Retire pending/confirmed insertion evidence on reveal; normal table composition calls this automatically. |
 
 ## Live Insert Evidence And Custom Subscriptions
@@ -306,6 +307,33 @@ not imply snapshot isolation or discover an inserted row's global rank. Use a
 custom cursor/snapshot API when stronger consistency is required.
 [Motion and live updates](./motion-and-live-updates.md) explains how confirmed IDs
 participate in held presentation without being selected/exported as loaded rows.
+
+### Sort-Aware New-Record Navigation
+
+The centered `N new` indicator is clickable only when a counted genuine arrival
+is the first result of the active sort. Otherwise it remains a passive rolling
+count. A membership match or increasing total alone does not prove that page one
+contains the new record at its beginning.
+
+An accepted current first page supplies its first identity directly. Away from
+page one, the built-in adapter performs a bounded, authenticated `limit=1`,
+`offset=0` read with the same search/filter/sort and no count request. Its receipt
+does not populate the visible page, page cache or shared collection. Reads are
+demand-driven only while genuine candidates exist, coalesce invalidations and
+abort/retire across criteria, source, authority, later mutations and reveal.
+Failures use the existing content-free observation; they leave the count passive.
+
+Custom adapters can optionally implement:
+
+`getLeadingRowId(query, { signal }): Promise<string | null>`
+
+Return the first identity under those exact authorized criteria and stable result
+identity, or null for an empty result. The captured query is a first-page,
+one-record request; adapters still enforce their own query/tenant policy and
+cancellation. Without this capability, later-page counts remain passive unless
+position can be established by a current accepted first page. Do not return an
+INSERT ID, the newest timestamp or a cache's first row as a ranking approximation.
+The ordinary authoritative page total and progress fraction remain independent.
 
 ## Errors And Verification
 

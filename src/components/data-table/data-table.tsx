@@ -69,7 +69,10 @@ export function DataTableContent<T extends Row = Row>({
   const { dt, current, resolved, partition, mutationRunner, server, live, queryKey } = controller;
   const [navigationOrigin, setNavigationOrigin] = React.useState<'pointer' | 'keyboard'>('pointer');
   const viewport = useDataTableViewport(partition, live.setScrolledAway);
-  const revealNew = () => { dt.table.setPageIndex(0); live.reveal(); resolved.clearLiveInsertions?.(); viewport.scrollToTop(); };
+  const revealNew = () => {
+    if (!live.canRevealNew) return;
+    dt.table.setPageIndex(0); live.reveal(); resolved.clearLiveInsertions?.(); viewport.scrollToTop();
+  };
   const partitionRef = React.useRef(partition);
   partitionRef.current = partition;
 
@@ -183,12 +186,12 @@ export function DataTableContent<T extends Row = Row>({
         onCellSave={saveCell} onCellAccepted={acceptCell} getNextEditableCell={nextEditableCell}
       />
       {paginated ? <DataTablePagination key={`pagination:${partition}`} table={dt.table} serverPage={server ? resolved.page : undefined} loading={resolved.isLoading}
-        newCount={live.newCount} onRevealNew={revealNew} onPrefetchPage={resolved.prefetchPage}
+        newCount={live.newCount} onRevealNew={live.canRevealNew ? revealNew : undefined} onPrefetchPage={resolved.prefetchPage}
         onPageNavigate={(_, origin) => setNavigationOrigin(origin)} keyboardNavigation motionEnabled={motion}
         unfilteredTotal={live.unfilteredTotal} totalCountOverride={live.totalCount}
         motionDurationFactor={navigationOrigin === 'keyboard' ? DATA_TABLE_MOTION.keyboardFactor : 1} />
         : live.newCount > 0 && <div className="flex justify-center"><DataTableNewRecordsButton count={live.newCount}
-          onReveal={revealNew} motionEnabled={motion} /></div>}
+          onReveal={live.canRevealNew ? revealNew : undefined} motionEnabled={motion} /></div>}
     </div>
   );
 }

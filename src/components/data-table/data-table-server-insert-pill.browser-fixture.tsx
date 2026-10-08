@@ -14,6 +14,7 @@ const schema = defineSchema({ name: field.text(), rank: field.number() });
 const adapter: DataTableServerAdapter<Item> = {
   query(query, { signal }) { return new Promise(resolve => { reads.push({ query, signal, resolve }); }); },
   confirmInsertedRows(query, ids, { signal }) { return new Promise(resolve => { lookups.push({ query, ids, signal, resolve }); }); },
+  getLeadingRowId: async () => 'new',
   subscribeChanges(_query, listener, { signal }) { subscriptions.push({ signal, listener }); return () => {}; },
 };
 let saved: Element[] = [];

@@ -167,10 +167,22 @@ records. See [server requests and scope](./server-sources.md#requests-live-updat
 After an initial baseline, matching new arrivals can be held while the reader is
 on a later page, scrolled away, or an existing transition is busy. The table
 continues updating existing identities, rather than inserting a new row above
-the reader immediately. A centered `N new` action exposes the held count.
-Activating it returns to the first page, reveals held records and scrolls the
-table's actual reading viewport to its top. No pagination footer is required:
-an unpaginated table can still show this action.
+the reader immediately. The centered `N new` indicator counts unacknowledged
+matching arrivals, independently of the exact result total. It has two modes:
+
+- When a genuine new record leads the sorted result on page one, it is an
+  up-arrow button. Activating it returns to page one, reveals pending arrivals
+  and smoothly scrolls the actual reading viewport to its top.
+- When arrivals sort elsewhere, or their position is not yet known, it is a
+  passive count: no arrow, click action or keyboard target. It never sends the
+  reader to an unrelated first page just because a record was inserted.
+
+The same digit roller and entrance motion apply in both modes. No pagination
+footer is required: an unpaginated table can still show the indicator. Already
+reading the top acknowledges its visible new leading block automatically;
+elsewhere arrivals remain counted until explicit reveal, query/source retirement
+or their membership is removed. An UPDATE is never a new arrival, but can change
+whether an already-counted arrival is now the leading result.
 
 Holding, sorting/filtering, selection, actions and exports use the same effective
 row presentation. Held records are not secretly selected or actionable. For
@@ -192,11 +204,18 @@ Evidence depends on the source:
 Server counters count confirmed genuine matching insertions, not differences in
 totals or cache contents. Separate membership reads do not merge lookup rows into
 the displayed page. They allow a matching off-page INSERT to contribute to the
-new-record button while the source retains its normal bounded query model.
+new-record indicator while the source retains its normal bounded query model.
 Unsupported custom transports/row identities or a backend policy that does not
 permit primary-key filtering remain conservative: only accepted-page INSERTs
 are confirmed. This is a bounded arrival ledger, not an all-results count service.
 See the [live adapter contract](./server-sources.md#live-insert-evidence-and-custom-subscriptions).
+
+Count evidence is not ranking evidence. Complete sources use their actual sorted
+row model. Server sources use a current accepted first page or a separate bounded
+authorized first-row query under the same search/filter/sort. The built-in query
+requests only one row and omits aggregates. Pending/unsupported/stale position
+proof remains passive; a custom adapter can supply `getLeadingRowId` rather than
+guessing from field names, timestamp direction or insertion events.
 
 The membership lookup itself never shifts the visible page. Ordinary live
 revalidation of an offset query can still change that page's membership after

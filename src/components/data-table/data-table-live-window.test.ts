@@ -1,13 +1,13 @@
 /** Pure live-buffer qualification; real arrivals, query changes and authority partitions remain source-owned. */
 import { expect, test } from 'bun:test';
-import { dataTableStableIds, reconcileDataTableLiveWindow, type DataTableLiveWindowInput } from './data-table-live-window';
+import { dataTableCanRevealNewRecords, dataTableStableIds, reconcileDataTableLiveWindow, type DataTableLiveWindowInput } from './data-table-live-window';
 
 type RecordRow = { id: string; rank: number };
 const row = (id: string, rank = 0): RecordRow => ({ id, rank });
 function input(data: readonly RecordRow[], overrides: Partial<DataTableLiveWindowInput<RecordRow>> = {}): DataTableLiveWindowInput<RecordRow> {
   return { boundary: 'account-a', criteria: 'rank-desc', data, orderedMatchingIds: data.map(value => value.id),
     getId: value => value.id, enabled: true, loading: false, pageIndex: 0, pageSize: 2,
-    scrolledAway: false, busy: false, ...overrides };
+    scrolledAway: false, busy: false, leadingRowId: data[0]?.id ?? null, ...overrides };
 }
 
 test('missing or duplicate stable identities disable retention without changing supplied records', () => {
@@ -123,9 +123,13 @@ test('page and separate membership evidence deduplicate and cannot replay after 
     pageIndex: 1, insertedRowIds: ['new'], confirmedInsertedRowIds: ['new', 'off-page'],
   }));
   expect([...confirmed.held]).toEqual(['new', 'off-page']);
-  const revealed = reconcileDataTableLiveWindow(confirmed, input(latest, {
+  const atStart = reconcileDataTableLiveWindow(confirmed, input(latest, {
     insertedRowIds: ['new'], confirmedInsertedRowIds: ['new', 'off-page'],
   }));
+  // An explicit reveal acknowledges all currently disclosed arrivals; merely
+  // reading the leading block leaves elsewhere arrivals as a passive count.
+  const revealed = { ...atStart, incoming: new Set<string>(),
+    releasedInserts: new Set([...atStart.releasedInserts, ...atStart.incoming]) };
   expect(revealed.held.size).toBe(0);
   const repeated = reconcileDataTableLiveWindow(revealed, input(latest, {
     pageIndex: 1, insertedRowIds: ['new'], confirmedInsertedRowIds: ['new', 'off-page'],
@@ -147,7 +151,59 @@ test('off-page UPDATE revalidation can restore a held ID until it is explicitly 
   expect(rechecking.held.size).toBe(0);
   const reconfirmed = reconcileDataTableLiveWindow(rechecking, input(data, { ...options, confirmedInsertedRowIds: ['new'] }));
   expect([...reconfirmed.held]).toEqual(['new']);
-  const released = reconcileDataTableLiveWindow(reconfirmed, input(data, { ...options, pageIndex: 0, confirmedInsertedRowIds: ['new'] }));
+  const released = { ...reconfirmed, held: new Set<string>(), incoming: new Set<string>(),
+    releasedInserts: new Set([...reconfirmed.releasedInserts, ...reconfirmed.incoming]) };
   const again = reconcileDataTableLiveWindow(released, input(data, { ...options, confirmedInsertedRowIds: ['new'] }));
   expect(again.held.size).toBe(0);
+});
+
+test('only a genuine leading sorted arrival offers navigation; later additions stay a count', () => {
+  const data = [row('a', 4), row('b', 3), row('c', 2), row('d', 1)];
+  const baseline = reconcileDataTableLiveWindow(null, input(data, { pageIndex: 1 }));
+  const atEnd = [...data, row('last', 0)];
+  const passive = reconcileDataTableLiveWindow(baseline, input(atEnd, { pageIndex: 1 }));
+  expect([...passive.incoming]).toEqual(['last']); expect(passive.held.size).toBe(0);
+  expect(dataTableCanRevealNewRecords(passive.incoming, atEnd[0]!.id)).toBe(false);
+  const both = [row('first', 5), ...atEnd];
+  const navigable = reconcileDataTableLiveWindow(passive, input(both, { pageIndex: 1 }));
+  expect([...navigable.incoming]).toEqual(['last', 'first']);
+  expect([...navigable.held]).toEqual(['first']);
+  expect(dataTableCanRevealNewRecords(navigable.incoming, 'first')).toBe(true);
+  expect(dataTableCanRevealNewRecords(navigable.incoming, undefined)).toBe(false);
+  expect(dataTableCanRevealNewRecords(navigable.incoming, null)).toBe(false);
+});
+
+test('already reading page one acknowledges the leading new block but preserves a passive elsewhere count', () => {
+  const data = [row('a', 3), row('b', 2)];
+  const baseline = reconcileDataTableLiveWindow(null, input(data));
+  const latest = [row('first', 5), row('second', 4), ...data, row('last', 1)];
+  const current = reconcileDataTableLiveWindow(baseline, input(latest));
+  expect(current.held.size).toBe(0); expect([...current.incoming]).toEqual(['last']);
+  expect(dataTableCanRevealNewRecords(current.incoming, 'first')).toBe(false);
+  const deleted = reconcileDataTableLiveWindow(current, input(latest.slice(0, -1)));
+  expect(deleted.incoming.size).toBe(0);
+});
+
+test('a server membership receipt is count evidence, not proof that an arrival leads page one', () => {
+  const data = [row('page-two')], none: string[] = [];
+  const options = { pageIndex: 1, insertedRowIds: none, confirmedInsertedRowIds: none, leadingRowId: undefined };
+  const baseline = reconcileDataTableLiveWindow(null, input(data, options));
+  const confirmed = reconcileDataTableLiveWindow(baseline, input(data, { ...options, confirmedInsertedRowIds: ['new'] }));
+  expect([...confirmed.incoming]).toEqual(['new']);
+  expect(dataTableCanRevealNewRecords(confirmed.incoming, undefined)).toBe(false);
+  expect(dataTableCanRevealNewRecords(confirmed.incoming, 'old-first')).toBe(false);
+  expect(dataTableCanRevealNewRecords(confirmed.incoming, 'new')).toBe(true);
+});
+
+test('passive off-page arrivals on page one survive membership UPDATE revalidation without acknowledgement', () => {
+  const data = [row('old-first')], none: string[] = [];
+  const options = { insertedRowIds: none, confirmedInsertedRowIds: none, leadingRowId: 'old-first' };
+  const baseline = reconcileDataTableLiveWindow(null, input(data, options));
+  const incoming = reconcileDataTableLiveWindow(baseline, input(data, { ...options, confirmedInsertedRowIds: ['new-last'] }));
+  expect([...incoming.incoming]).toEqual(['new-last']); expect(incoming.releasedInserts.has('new-last')).toBe(false);
+  const pending = reconcileDataTableLiveWindow(incoming, input(data, options));
+  expect(pending.incoming.size).toBe(0);
+  const confirmed = reconcileDataTableLiveWindow(pending, input(data, { ...options, confirmedInsertedRowIds: ['new-last'] }));
+  expect([...confirmed.incoming]).toEqual(['new-last']);
+  expect(dataTableCanRevealNewRecords(confirmed.incoming, 'old-first')).toBe(false);
 });

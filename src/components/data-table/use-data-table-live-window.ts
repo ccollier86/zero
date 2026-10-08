@@ -5,7 +5,7 @@ import * as React from 'react';
 import { createTable, getCoreRowModel, getFilteredRowModel, getSortedRowModel } from '@tanstack/react-table';
 import type { Row } from '../../sync/types';
 import { createDataTableColumns } from './data-table-columns';
-import { dataTableStableIds, reconcileDataTableLiveWindow, type DataTableLiveWindowState } from './data-table-live-window';
+import { dataTableCanRevealNewRecords, dataTableStableIds, reconcileDataTableLiveWindow, type DataTableLiveWindowState } from './data-table-live-window';
 import type { DataTableProps } from './data-table-types';
 import type { DataTableState } from './data-table-state';
 import { DATA_TABLE_MOTION } from './data-table-motion-tokens';
@@ -18,6 +18,7 @@ export function useDataTableLiveWindow<T extends Row>(options: {
   insertedRowIds?: readonly string[];
   confirmedInsertedRowIds?: readonly string[];
   clearConfirmedInsertions?: () => void;
+  liveLeadingRowId?: string | null;
 }) {
   const { props, data, boundary, criteria, state: interaction, primaryKey, loading } = options;
   const complete = options.sourceType === 'data' || options.sourceType === 'collection';
@@ -42,18 +43,22 @@ export function useDataTableLiveWindow<T extends Row>(options: {
     return table.getSortedRowModel().rows;
   }, [enabled, stable, server, data, props.schema, props.columns, props.columnOverrides, props.sortable,
     props.searchable, interaction.globalFilter, interaction.columnFilters, interaction.sorting, getId]);
+  const leadingRowId = server ? options.liveLeadingRowId : allMatching?.[0]?.id ?? null;
   const [window, setWindow] = React.useState<DataTableLiveWindowState<T> | null>(null);
   const inputChanged = window?.boundary !== boundary || window.criteria !== criteria || window.input !== data
     || window.evidence !== (options.sourceType === 'data' ? undefined : options.insertedRowIds)
     || window.confirmedEvidence !== options.confirmedInsertedRowIds
+    || window.leadingRowId !== leadingRowId
     || window.baselineReady !== !loading && !window.baselineReady
-    || window.held.size > 0 && interaction.pagination.pageIndex === 0 && !scrolledAway && !busy;
+    || interaction.pagination.pageIndex === 0 && !scrolledAway && !busy && !loading
+      && (window.held.size > 0 || leadingRowId === allMatching?.[0]?.id
+        && typeof leadingRowId === 'string' && window.incoming.has(leadingRowId));
   let current = window;
-  if (inputChanged || !enabled && window?.held.size) {
+  if (inputChanged || !enabled && (window?.held.size || window?.incoming.size)) {
     current = reconcileDataTableLiveWindow(window, { boundary, criteria, data,
       orderedMatchingIds: allMatching?.map(row => row.id) ?? [], getId, enabled: enabled && stable, loading,
       insertedRowIds: options.sourceType === 'data' ? undefined : options.insertedRowIds,
-      confirmedInsertedRowIds: server ? options.confirmedInsertedRowIds : undefined,
+      confirmedInsertedRowIds: server ? options.confirmedInsertedRowIds : undefined, leadingRowId,
       pageIndex: interaction.pagination.pageIndex, pageSize: interaction.pagination.pageSize, scrolledAway, busy });
     setWindow(current);
   }
@@ -67,15 +72,19 @@ export function useDataTableLiveWindow<T extends Row>(options: {
   }, [freshRowIds, held, boundary]);
   const visibleData = React.useMemo(() => held.size ? data.filter(row => !held.has(getId(row)!)) : data, [data, held, getId]);
   const reveal = React.useCallback(() => setWindow(value => value?.boundary === boundary
-    ? { ...value, held: new Set(), releasedInserts: new Set([...value.releasedInserts, ...value.held].slice(-1_000)) } : value), [boundary]);
+    ? { ...value, held: new Set(), incoming: new Set(),
+      releasedInserts: new Set([...value.releasedInserts, ...value.incoming, ...value.held].slice(-1_000)) } : value), [boundary]);
   const matchingIds = new Set([...(allMatching?.map(row => row.id) ?? []), ...(server ? options.confirmedInsertedRowIds ?? [] : [])]);
-  const newCount = [...held].reduce((count, id) => count + Number(matchingIds.has(id)), 0);
+  const incoming = new Set([...(current?.incoming ?? [])].filter(id => matchingIds.has(id)));
+  const newCount = enabled ? incoming.size : 0;
+  const canRevealNew = enabled && dataTableCanRevealNewRecords(incoming, leadingRowId);
   React.useEffect(() => {
-    if (server && (props.liveUpdates === false || interaction.pagination.pageIndex === 0 && !scrolledAway && !busy && !loading)
+    if (server && (props.liveUpdates === false || interaction.pagination.pageIndex === 0 && !scrolledAway && !busy && !loading
+      && !incoming.size && options.liveLeadingRowId !== undefined)
       && options.confirmedInsertedRowIds?.length) options.clearConfirmedInsertions?.();
   }, [server, props.liveUpdates, interaction.pagination.pageIndex, scrolledAway, busy, loading,
-    options.confirmedInsertedRowIds, options.clearConfirmedInsertions]);
-  return { data: visibleData, freshRowIds, newCount, reveal, setBusy, setScrolledAway,
+    options.confirmedInsertedRowIds, options.clearConfirmedInsertions, newCount, options.liveLeadingRowId]);
+  return { data: visibleData, freshRowIds, newCount, canRevealNew, reveal, setBusy, setScrolledAway,
     stableIdentity: stable, totalCount: complete && held.size ? allMatching?.length : undefined,
     unfilteredTotal: complete ? data.length : undefined };
 }

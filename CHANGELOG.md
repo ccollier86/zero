@@ -4,6 +4,13 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Made the DataTable new-record indicator sort-aware: it offers a page-one/top
+  reveal only when a genuine matching arrival leads the active sorted results.
+  Elsewhere arrivals use a passive animated count without an arrow or click
+  target. Complete sources use their actual row model; server sources use a
+  fenced accepted-first-page or bounded authorized first-row proof. Added the
+  optional custom-adapter `getLeadingRowId` contract; lookups are count-free,
+  demand-driven and retired on query/authority changes or reveal.
 - Built-in offset DataTables now request exact authorized filtered totals through
   `/api/data?includeTotal=true`, with an explicit `source.includeTotal: false`
   opt-out. Rows and total share one ReactiveDB transaction or Fabric actor read.

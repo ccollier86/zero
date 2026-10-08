@@ -73,6 +73,11 @@ export interface DataTableServerAdapter<T extends Row> {
     rowIds: readonly string[],
     context: DataTableServerAdapterContext,
   ): Promise<readonly string[]>;
+  /** Return the first identity under these exact authorized filters and sort, independently of the current page. Null means no match; unsupported sources omit this capability. */
+  getLeadingRowId?(
+    query: DataTableServerQuery,
+    context: DataTableServerAdapterContext,
+  ): Promise<string | null>;
   /** Subscribe to genuine server changes for this captured query. Membership is confirmed by subsequent query results, not guessed locally. */
   subscribeChanges?(
     query: DataTableServerQuery,

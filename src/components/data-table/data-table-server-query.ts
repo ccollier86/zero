@@ -173,6 +173,18 @@ export function createDataTableApiAdapter<T extends Row>(
     },
   };
   if (primaryKey && IDENTIFIER.test(primaryKey) && primaryKey.length <= 128) {
+    adapter.getLeadingRowId = async (query, { signal }) => {
+      const normalized = normalizeDataTableServerQuery(query);
+      const first = await read({ ...normalized,
+        pagination: { mode: 'offset', pageIndex: 0, pageSize: 1 },
+      }, signal, false);
+      if (signal.aborted) return null;
+      if (first.rows.length === 0) return null;
+      const value = first.rows[0]![primaryKey];
+      if ((typeof value !== 'string' || !value.length || value.length > 1_024)
+        && (typeof value !== 'number' || !Number.isFinite(value))) throw invalidResponse();
+      return String(value);
+    };
     adapter.confirmInsertedRows = async (query, rowIds, { signal }) => {
       const confirmed = new Set<string>();
       for (const lookup of dataTableServerMembershipQueries(normalizeDataTableServerQuery(query), primaryKey, rowIds)) {

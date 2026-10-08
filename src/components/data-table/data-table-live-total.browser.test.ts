@@ -56,6 +56,16 @@ async function pending(page: Page, start: number, offset: number) {
   return page.evaluate(({ start, offset }) => window.__liveTotal.reads().findIndex((read, index) =>
     index >= start && !read.aborted && read.includeTotal === 'true' && read.offset === offset), { start, offset });
 }
+async function proveLeading(page: Page, start: number, id: string) {
+  const matches = (read: { aborted: boolean; includeTotal: string | null; offset: number; limit: number; filters: string[] }) =>
+    !read.aborted && read.includeTotal === null && read.offset === 0 && read.limit === 1
+      && !read.filters.some(filter => filter.startsWith('id:in:'));
+  await page.waitForFunction(start => window.__liveTotal.reads().some((read, index) => index >= start
+    && !read.aborted && read.includeTotal === null && read.offset === 0 && read.limit === 1
+    && !read.filters.some(filter => filter.startsWith('id:in:'))), start);
+  const proof = (await page.evaluate(() => window.__liveTotal.reads())).findIndex((read, index) => index >= start && matches(read));
+  await accept(page, proof, [row(id, 5)]);
+}
 
 browserTest('built-in live totals add and remove pages while held insertions stay separate from count and progress', async () => {
   const { page, errors } = await mount();
@@ -75,6 +85,9 @@ browserTest('built-in live totals add and remove pages while held insertions sta
     await page.waitForFunction(() => window.__liveTotal.reads().some(read => read.includeTotal === null && read.filters.includes('id:in:new')));
     const member = await page.evaluate(() => window.__liveTotal.reads().findIndex(read => read.includeTotal === null && read.filters.includes('id:in:new')));
     await accept(page, member, [row('new', 5)]);
+    await page.getByRole('status', { name: '1 new records', exact: true }).waitFor();
+    expect(await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).count()).toBe(0);
+    await proveLeading(page, second + 1, 'new');
     await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).waitFor();
     // Membership alone cannot inflate the total or invent another page.
     expect((await progress(page)).transform).toBe('scaleX(1)');
@@ -97,6 +110,7 @@ browserTest('built-in live totals add and remove pages while held insertions sta
     await page.evaluate(() => window.__liveTotal.emit({ op: 'UPDATE', rowId: 'r4' }));
     const update = await pending(page, beforeUpdate, 2);
     await accept(page, update, [row('r3', 2), row('r4', 1, 'Alpha updated')], 6);
+    await proveLeading(page, beforeUpdate, 'new');
     await page.getByRole('status', { name: 'Showing 3-4 of 6', exact: true }).waitFor();
     expect((await progress(page)).ratio).toBeCloseTo(2 / 3, 5);
     expect(await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).count()).toBe(1);

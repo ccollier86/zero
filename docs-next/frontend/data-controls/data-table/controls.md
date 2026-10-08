@@ -152,8 +152,12 @@ The organism supplies them from its single live/source owner. Hover/focus intent
 passes a target page to that owner; it does not invent cursors or send a second
 independent request. Rejected intent uses the normal frontend data-page event.
 
-A centered `N new` button appears only for a positive admitted held count.
-`DataTableNewRecordsButton` is separately exported with `count`, `onReveal` and
+A centered `N new` indicator appears only for a positive admitted incoming count.
+It is a button only when a genuine arrival leads the active sorted results;
+elsewhere or unknown-position arrivals use a passive status with no arrow or
+keyboard/click target. Counts roll in either mode and do not come from aggregate
+total differences.
+`DataTableNewRecordsButton` is separately exported with `count`, optional `onReveal` and
 optional `motionEnabled`, plus normal Zero Button props. It renders nothing for
 zero/invalid counts and does not fetch, navigate or authorize on its own.
 

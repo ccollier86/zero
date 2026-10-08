@@ -25,6 +25,8 @@ const auth = {
 const calls: Receipt[] = [], events: FrontendObservabilityEvent[] = [];
 const confirmations: { query: DataTableServerQuery; rowIds: readonly string[]; signal: AbortSignal;
   resolve(ids: readonly string[]): void; reject(cause: Error): void }[] = [];
+const leadingProofs: { query: DataTableServerQuery; signal: AbortSignal;
+  resolve(id: string | null): void; reject(cause: Error): void }[] = [];
 const subscriptions: { query: DataTableServerQuery; signal: AbortSignal; listener: (change: DataTableServerChange) => void }[] = [];
 const syncListeners = new Set<(message: { type: string; [key: string]: unknown }) => void>();
 configureFrontendObservability({ sink: { emit(event) { events.push(event); } } });
@@ -38,7 +40,15 @@ const membershipAdapter = adapter('records', 4);
 membershipAdapter.confirmInsertedRows = (query, rowIds, { signal }) => new Promise((resolve, reject) => {
   confirmations.push({ query, rowIds, signal, resolve, reject });
 });
+membershipAdapter.getLeadingRowId = (query, { signal }) => new Promise((resolve, reject) => {
+  leadingProofs.push({ query, signal, resolve, reject });
+});
 adapters[4] = membershipAdapter;
+const leadingOnlyAdapter = adapter('records', 5);
+leadingOnlyAdapter.getLeadingRowId = (query, { signal }) => new Promise((resolve, reject) => {
+  leadingProofs.push({ query, signal, resolve, reject });
+});
+adapters[5] = leadingOnlyAdapter;
 const client = { auth, _authorizationDataBoundary: dataBoundary, _syncClient: {
   onMessage(listener: (message: { type: string; [key: string]: unknown }) => void) { syncListeners.add(listener); return () => { syncListeners.delete(listener); }; },
 }, fetch(path: string, { signal }: { signal: AbortSignal }) {
@@ -59,12 +69,17 @@ const harness = {
       ? { mode: 'cursor', hasMore, ...(cursor === undefined ? {} : { nextCursor: cursor }), ...(total === undefined ? {} : { total }) }
       : { mode: 'offset', hasMore, offset: query.pagination.pageIndex * query.pagination.pageSize, ...(total === undefined ? {} : { total }) } });
   },
+  resolveOffset(index: number, rows: Item[], offset: number) {
+    calls[index]!.resolve({ rows, page: { mode: 'offset', offset, hasMore: false } });
+  },
   reject(index: number) { calls[index]!.reject(new Error('SYNTHETIC_PRIVATE_SOURCE_ERROR')); },
-  state() { const { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, error } = latest;
-    return { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, error: error?.message ?? null }; },
+  state() { const { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, liveLeadingRowId, error } = latest;
+    return { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, liveLeadingRowId, error: error?.message ?? null }; },
   confirmations() { return confirmations.map(({ query, rowIds, signal }) => ({ query, rowIds, aborted: signal.aborted })); },
   confirm(index: number, ids: readonly string[]) { confirmations[index]!.resolve(ids); },
   rejectConfirmation(index: number) { confirmations[index]!.reject(new Error('PRIVATE_MEMBERSHIP_ERROR')); },
+  leadingProofs() { return leadingProofs.map(({ query, signal }) => ({ query, aborted: signal.aborted })); },
+  leading(index: number, id: string | null) { leadingProofs[index]!.resolve(id); },
   clearLiveInsertions() { latest.clearLiveInsertions(); },
   search: (_search: string) => {}, page: (_page: number, _cursor?: string | null) => {},
   mode: (_mode: 'offset' | 'cursor') => {}, source: (_adapter: number) => {}, prefetchEnabled: (_value: boolean) => {},

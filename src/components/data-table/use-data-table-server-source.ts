@@ -12,8 +12,9 @@ import type { Row } from '../../sync/types';
 import { createDataTableApiAdapter, dataTableServerQueryKey, normalizeDataTableServerResult } from './data-table-server-query';
 import { DataTableServerRequestCoordinator } from './data-table-server-request-coordinator';
 import { DataTableServerPageCache } from './data-table-server-page-cache';
-import { DataTableServerInsertEvidence, subscribeDataTableServerChanges } from './data-table-server-changes';
+import { DATA_TABLE_SERVER_MAX_INSERT_EVIDENCE, DataTableServerInsertEvidence, subscribeDataTableServerChanges } from './data-table-server-changes';
 import { DataTableServerInsertMembership } from './data-table-server-insert-membership';
+import { DataTableServerLeadingRow } from './data-table-server-leading-row';
 import { dataTableServerSourceIdentity } from './data-table-server-source-identity';
 import { dataTableServerPartitionMatches, dataTableServerStateMatches, normalizeDataTableServerFailure, projectDataTableServerRows, resolveDataTableServerQuery } from './data-table-server-source-state';
 import { DataTableServerSourceError, type DataTableServerPage, type DataTableServerQuery, type DataTableServerSource } from './data-table-server-types';
@@ -54,6 +55,8 @@ export interface DataTableServerSourceState<T extends Row> {
   liveInsertedRowIds: readonly string[];
   /** Genuine INSERTs authoritatively confirmed against these criteria, including off-page identities; lookup rows never enter data. */
   confirmedLiveInsertedRowIds: readonly string[];
+  /** Authorized first-row proof for the current sort/filter: undefined unknown, null empty. */
+  liveLeadingRowId: string | null | undefined;
   /** Reveal/retirement clears pending and confirmed live evidence and aborts its owned lookups. */
   clearLiveInsertions: () => void;
 }
@@ -75,20 +78,25 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   const cacheRef = useRef<DataTableServerPageCache<T> | null>(null);
   const insertEvidenceRef = useRef<DataTableServerInsertEvidence | null>(null);
   const membershipRef = useRef<DataTableServerInsertMembership | null>(null);
+  const leadingRef = useRef<DataTableServerLeadingRow | null>(null);
   if (!coordinatorRef.current) coordinatorRef.current = new DataTableServerRequestCoordinator();
   if (!cacheRef.current) cacheRef.current = new DataTableServerPageCache<T>();
   if (!insertEvidenceRef.current) insertEvidenceRef.current = new DataTableServerInsertEvidence();
   if (!membershipRef.current) membershipRef.current = new DataTableServerInsertMembership();
+  if (!leadingRef.current) leadingRef.current = new DataTableServerLeadingRow();
   const coordinator = coordinatorRef.current, cache = cacheRef.current;
   const insertEvidence = insertEvidenceRef.current;
   const membership = membershipRef.current;
+  const leading = leadingRef.current;
   const configuredMembershipKey = useRef<string | null>(null);
   const [, publishMembership] = useState(0);
+  const [, publishLeading] = useState(0);
   insertEvidence.reconcile(signature);
   const mounted = useRef(false), revision = useRef(0);
   const current = useRef({ client, options, resolution, partition, signature, membershipKey, boundaryKey: authorization.key });
   current.current = { client, options, resolution, partition, signature, membershipKey, boundaryKey: authorization.key };
   const acceptedRef = useRef<Accepted<T> | null>(null);
+  const leadingCandidates = useRef<{ key: string | null; ids: ReadonlySet<string> }>({ key: null, ids: new Set() });
   const [accepted, setAccepted] = useState<Accepted<T> | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
@@ -124,7 +132,12 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     metadata: { table: source.table, paginationMode: source.pagination ?? 'offset',
       errorCode: error instanceof DataTableServerSourceError ? error.code : 'DATA_TABLE_SERVER_QUERY_FAILED' },
   });
-  const clearLiveInsertions = useCallback(() => { insertEvidence.clear(); membership.clear(); }, [insertEvidence, membership]);
+  const needsLeading = () => membership.confirmedIds().length > 0
+    || leadingCandidates.current.key === current.current.membershipKey && leadingCandidates.current.ids.size > 0;
+  const clearLiveInsertions = useCallback(() => {
+    leadingCandidates.current = { key: current.current.membershipKey, ids: new Set() };
+    insertEvidence.clear(); membership.clear(); leading.require(false); leading.clear();
+  }, [insertEvidence, membership, leading]);
   const prefetchPage = useCallback(async (pageIndex: number): Promise<void> => {
     const captured = current.current, previous = acceptedRef.current, source = captured.options.source;
     if (!source || source.prefetch === false || !previous || previous.partition !== captured.partition
@@ -138,7 +151,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     const captured = current.current, source = captured.options.source, query = captured.resolution.query;
     const boundary = readBoundary();
     cache.reconcile(captured.partition, boundary.ready && boundary.key === captured.boundaryKey);
-    if (invalidate) cache.invalidate();
+    if (invalidate) { cache.invalidate(); leading.invalidate(); }
     coordinator.cancel();
     if (!source || !query || !admitted(captured)) {
       setLoadingKey(null);
@@ -147,6 +160,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     }
     cache.retireSpeculationExcept(query);
     const ticket = coordinator.begin(captured.boundaryKey, captured.signature);
+    const leadingRevision = leading.captureRevision();
     const isCurrent = () => admitted(captured) && current.current.signature === captured.signature
       && coordinator.isCurrent(ticket, readBoundary().key, readBoundary().ready);
     setFailure(null); setLoadingKey(captured.signature);
@@ -159,6 +173,23 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
         liveInsertedRowIds: insertEvidence.accept(captured.signature,
           projectDataTableServerRows(result.rows, captured.options.primaryKey, source.getRowId).orderedIds) };
       acceptedRef.current = next; setAccepted(next);
+      const rowIds = projectDataTableServerRows(result.rows, captured.options.primaryKey, source.getRowId).orderedIds;
+      const currentIds = new Set(rowIds);
+      const retained = leadingCandidates.current.key === captured.membershipKey
+        ? [...leadingCandidates.current.ids].filter(id => currentIds.has(id)) : [];
+      // A genuine matching arrival remains pending across ordinary UPDATE /
+      // refresh receipts until reveal or authoritative membership removal.
+      // This source ledger never counts rows, guesses order, or grows beyond
+      // the same bounded INSERT-evidence allowance used by this source.
+      leadingCandidates.current = { key: captured.membershipKey,
+        ids: new Set([...retained, ...next.liveInsertedRowIds].slice(-DATA_TABLE_SERVER_MAX_INSERT_EVIDENCE)) };
+      const actualFirstPage = query.pagination.pageIndex === 0 && (result.page.mode === 'offset'
+        ? result.page.offset === 0 : query.pagination.cursor == null);
+      if (actualFirstPage) leading.acceptFirstPage(
+        rowIds[0] ?? null,
+        leadingRevision,
+      );
+      leading.require(captured.options.confirmLiveInsertions !== false && source.live !== false && needsLeading());
       if (source.prefetch !== false) {
         void prefetchPage(query.pagination.pageIndex - 1);
         if (result.page.hasMore) void prefetchPage(query.pagination.pageIndex + 1);
@@ -171,9 +202,9 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
       const active = isCurrent(); coordinator.finish(ticket);
       if (active) setLoadingKey(null);
     }
-  }, [cache, coordinator, prefetchPage, insertEvidence]);
+  }, [cache, coordinator, prefetchPage, insertEvidence, leading]);
   const refresh = useCallback(() => load('refresh', true), [load]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; cache.invalidate(); coordinator.cancel(); insertEvidence.clear(); membership.cancel(); }; }, [cache, coordinator, insertEvidence, membership]);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; cache.invalidate(); coordinator.cancel(); insertEvidence.clear(); membership.cancel(); leading.clear(); }; }, [cache, coordinator, insertEvidence, membership, leading]);
   useLayout(() => {
     const captured = current.current, source = captured.options.source, query = captured.resolution.query;
     const adapter = source?.adapter ?? (captured.client && source && !source.getRowId
@@ -181,8 +212,22 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
         { includeTotal: source.includeTotal }) : null);
     const supported = source && query && source.live !== false && captured.options.confirmLiveInsertions !== false
       && adapter?.confirmInsertedRows && authorization.ready;
+    const leadingSupported = source && query && source.live !== false && captured.options.confirmLiveInsertions !== false
+      && adapter?.getLeadingRowId && authorization.ready;
     const isCurrent = () => admitted(captured) && current.current.membershipKey === captured.membershipKey
       && current.current.options.confirmLiveInsertions !== false && current.current.options.source?.live !== false;
+    leading.configure({ key: captured.membershipKey,
+      read: leadingSupported ? async signal => {
+        if (!isCurrent() || signal.aborted) return null;
+        const firstQuery = { ...query!, pagination: { mode: query!.pagination.mode, pageIndex: 0, pageSize: 1,
+          ...(query!.pagination.mode === 'cursor' ? { cursor: null } : {}) } };
+        const id = await adapter!.getLeadingRowId!(firstQuery, { signal });
+        return isCurrent() && !signal.aborted ? id : null;
+      } : null,
+      isCurrent,
+      onChange: () => { if (mounted.current) publishLeading(value => value + 1); },
+      onError: cause => { if (source && isCurrent()) report(source, normalizeDataTableServerFailure(cause)); },
+    });
     configuredMembershipKey.current = captured.membershipKey;
     membership.configure({ key: captured.membershipKey,
       confirm: supported ? async (ids, signal) => {
@@ -191,11 +236,15 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
         return isCurrent() && !signal.aborted ? confirmed : [];
       } : null,
       isCurrent,
-      onChange: () => { if (mounted.current) publishMembership(value => value + 1); },
+      onChange: () => {
+        leading.require(needsLeading());
+        if (mounted.current) publishMembership(value => value + 1);
+      },
       onError: cause => { if (source && isCurrent()) report(source, normalizeDataTableServerFailure(cause)); },
     });
+    leading.require(!!source && source.live !== false && captured.options.confirmLiveInsertions !== false && needsLeading());
   }, [signature, membershipKey, options.source?.live, options.source?.adapter?.confirmInsertedRows,
-    options.confirmLiveInsertions, authorization.ready, membership]);
+    options.source?.adapter?.getLeadingRowId, options.confirmLiveInsertions, authorization.ready, membership, leading]);
   useEffect(() => { void load('query', false); return () => coordinator.cancel(); }, [signature, authorization.ready, load, coordinator]);
   useEffect(() => { if (options.source?.prefetch === false) cache.retireSpeculationExcept(); }, [options.source?.prefetch, cache]);
   useEffect(() => {
@@ -205,12 +254,17 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     try {
       unsubscribe = subscribeDataTableServerChanges(source, query, captured.client as InternalClient | null, change => {
         if (!admitted(captured) || current.current.signature !== captured.signature) return;
+        if (change.op === 'DELETE' && leadingCandidates.current.key === captured.membershipKey) {
+          const ids = new Set(leadingCandidates.current.ids); ids.delete(change.rowId);
+          leadingCandidates.current = { key: captured.membershipKey, ids };
+        }
         const baseline = acceptedRef.current;
         if (baseline?.signature === captured.signature) insertEvidence.observe(change,
           projectDataTableServerRows(baseline.data, captured.options.primaryKey, source.getRowId).orderedIds);
         if (baseline?.membershipKey === captured.membershipKey) membership.observe(change,
           projectDataTableServerRows(baseline.data, captured.options.primaryKey, source.getRowId).orderedIds);
         else if (change.op !== 'INSERT') membership.observe(change, EMPTY_ROWS);
+        leading.require(needsLeading());
         void load('live', true);
       }, controller.signal);
     } catch (cause) { if (admitted(captured)) report(source, normalizeDataTableServerFailure(cause)); }
@@ -218,7 +272,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
       controller.abort(); insertEvidence.clear();
       try { unsubscribe?.(); } catch (cause) { if (mounted.current) report(source, normalizeDataTableServerFailure(cause)); }
     };
-  }, [signature, authorization.ready, options.source?.live, options.source?.adapter?.subscribeChanges, insertEvidence, membership, load]);
+  }, [signature, authorization.ready, options.source?.live, options.source?.adapter?.subscribeChanges, insertEvidence, membership, leading, load]);
   const liveRef = useRef({ table: options.source?.table, boundaryKey: authorization.key, value: options.liveRevision });
   useEffect(() => {
     const previous = liveRef.current;
@@ -237,5 +291,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     liveInsertedRowIds: exact ? accepted.liveInsertedRowIds : EMPTY_ROWS,
     confirmedLiveInsertedRowIds: configuredMembershipKey.current === membershipKey && authorization.ready
       && options.confirmLiveInsertions !== false && options.source?.live !== false ? membership.confirmedIds() : EMPTY_ROWS,
+    liveLeadingRowId: configuredMembershipKey.current === membershipKey && authorization.ready
+      && options.confirmLiveInsertions !== false && options.source?.live !== false ? leading.value() : undefined,
     clearLiveInsertions };
 }

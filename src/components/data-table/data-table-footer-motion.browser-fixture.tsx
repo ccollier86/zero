@@ -13,7 +13,7 @@ const observed: { code: string; metadata?: Record<string, unknown> }[] = [];
 configureFrontendObservability({ sink: { emit: event => { observed.push({ code: event.code, metadata: event.metadata }); } } });
 let holdPrefetch = false, rejectPrefetch: ((cause: unknown) => void) | undefined;
 let updateValue: (value: number) => void, updateMode: (mode: Mode) => void, updateMotion: (enabled: boolean) => void,
-  updateLoading: (loading: boolean) => void, latestPage = 0;
+  updateLoading: (loading: boolean) => void, updateIncoming: (count: number, actionable: boolean) => void, latestPage = 0;
 const nativeAnimate = Element.prototype.animate;
 Element.prototype.animate = function (frames, options) {
   if (this.parentElement?.getAttribute('data-slot') === 'data-table-digit') animations.push({
@@ -25,10 +25,12 @@ Element.prototype.animate = function (frames, options) {
 function Fixture() {
   const [value, setValue] = React.useState(99), [mode, setMode] = React.useState<Mode>('local');
   const [motion, setMotion] = React.useState(true), [loading, setLoading] = React.useState(false), [held, setHeld] = React.useState(12);
+  const [actionable, setActionable] = React.useState(true);
   const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
   const [sorting, setSorting] = React.useState<SortingState>([]);
   updateValue = setValue; updateMode = next => { setMode(next); setPagination({ pageIndex: 0, pageSize: 10 }); };
   updateMotion = setMotion; updateLoading = setLoading; latestPage = pagination.pageIndex;
+  updateIncoming = (count, reveal) => { setHeld(count); setActionable(reveal); };
   const data = React.useMemo(() => Array.from({ length: mode === 'local' ? 25 : 7 }, (_, index) => ({ id: String(index), name: `Record ${index}` })), [mode]);
   const table = useReactTable({ data, columns: [{ accessorKey: 'name' }], state: { pagination, sorting },
     onPaginationChange: setPagination, onSortingChange: setSorting, manualPagination: mode !== 'local',
@@ -40,7 +42,7 @@ function Fixture() {
     <DataTablePagination table={table} motionEnabled={motion} keyboardNavigation loading={loading}
       serverPage={mode === 'local' ? undefined : mode === 'offset' ? { mode: 'offset', offset: 40, hasMore: true }
         : { mode: 'cursor', total: 35, hasMore: true, nextCursor: 'opaque' }}
-      newCount={held} onRevealNew={() => setHeld(0)} onPrefetchPage={page => {
+      newCount={held} onRevealNew={actionable ? () => setHeld(0) : undefined} onPrefetchPage={page => {
         prefetched.push(page); if (holdPrefetch) return new Promise<void>((_, reject) => { rejectPrefetch = reject; });
       }}
       onPageNavigate={(page, origin) => navigations.push({ page, origin })} />
@@ -48,11 +50,13 @@ function Fixture() {
 }
 declare global { interface Window { __tableFooterMotion: {
   value(value: number): void; mode(mode: Mode): void; motion(enabled: boolean): void; loading(enabled: boolean): void;
+  incoming(count: number, actionable: boolean): void;
   animations(): MotionRecord[]; clear(): void; page(): number; prefetch(): number[]; navigation(): { page: number; origin: string }[];
   holdPrefetch(): void; rejectPrefetch(): void; observed(): typeof observed;
 } } }
 window.__tableFooterMotion = { value: value => updateValue(value), mode: mode => updateMode(mode), motion: value => updateMotion(value),
   loading: value => updateLoading(value), animations: () => animations, clear: () => { animations.length = 0; },
+  incoming: (count, actionable) => updateIncoming(count, actionable),
   page: () => latestPage, prefetch: () => prefetched, navigation: () => navigations,
   holdPrefetch: () => { holdPrefetch = true; }, rejectPrefetch: () => rejectPrefetch?.(new Error('PRIVATE_PREFETCH_CAUSE')),
   observed: () => observed };
