@@ -399,6 +399,42 @@
       "types": "./src/components/dense-list/index.ts",
       "import": "./src/components/dense-list/index.ts"
     },
+    "./components/vector-visualization": {
+      "types": "./src/components/vector-visualization/index.ts",
+      "import": "./src/components/vector-visualization/index.ts"
+    },
+    "./components/charts": {
+      "types": "./src/components/charts/index.ts",
+      "import": "./src/components/charts/index.ts"
+    },
+    "./components/charts/arc": {
+      "types": "./src/components/charts/arc/index.ts",
+      "import": "./src/components/charts/arc/index.ts"
+    },
+    "./components/charts/native": {
+      "types": "./src/components/charts/native/index.ts",
+      "import": "./src/components/charts/native/index.ts"
+    },
+    "./charts/native": {
+      "types": "./src/charts/native.ts",
+      "import": "./src/charts/native.ts"
+    },
+    "./charts/arc": {
+      "types": "./src/charts/arc.ts",
+      "import": "./src/charts/arc.ts"
+    },
+    "./charts": {
+      "types": "./src/charts/index.ts",
+      "import": "./src/charts/index.ts"
+    },
+    "./charts/react": {
+      "types": "./src/frontend/client/chart-query.ts",
+      "import": "./src/frontend/client/chart-query.ts"
+    },
+    "./vector/visualization": {
+      "types": "./src/vector/visualization.ts",
+      "import": "./src/vector/visualization.ts"
+    },
     "./components/data-studio": {
       "types": "./src/components/data-studio/index.ts",
       "import": "./src/components/data-studio/index.ts"
@@ -418,6 +454,10 @@
     "./components/button-group": {
       "types": "./src/components/button-group/index.ts",
       "import": "./src/components/button-group/index.ts"
+    },
+    "./components/floating-button-group": {
+      "types": "./src/components/controls/floating-button-group/index.ts",
+      "import": "./src/components/controls/floating-button-group/index.ts"
     },
     "./components/popover": {
       "types": "./src/components/popover/index.ts",
@@ -523,6 +563,10 @@
       "types": "./src/components/tooltip/index.ts",
       "import": "./src/components/tooltip/index.ts"
     },
+    "./components/typography": {
+      "types": "./src/components/typography/index.ts",
+      "import": "./src/components/typography/index.ts"
+    },
     "./components/storage": {
       "types": "./src/components/storage/index.ts",
       "import": "./src/components/storage/index.ts"
@@ -534,7 +578,13 @@
       "types": "./src/components/ui/*.tsx",
       "import": "./src/components/ui/*.tsx"
     },
-    "./styles.css": "./src/frontend/styles/globals.css"
+    "./design-system": {
+      "types": "./src/design-system/index.ts",
+      "import": "./src/design-system/index.ts"
+    },
+    "./styles-next.css": "./src/frontend/styles/theme-next.css",
+    "./styles.css": "./src/frontend/styles/application.css",
+    "./styles-legacy.css": "./src/frontend/styles/globals.css"
   },
   "scripts": {
     "test": "bun --no-env-file src/testing/run-test-suite.ts",
@@ -571,8 +621,7 @@
     "remark-gfm": "4.0.1",
     "remark-parse": "11.0.0",
     "remark-stringify": "11.0.0",
-    "unified": "11.0.5",
-    "yaml": "2.9.1"
+    "unified": "11.0.5"
   },
   "peerDependencies": {
     "react": ">=19.2.0 <20",
@@ -702,9 +751,11 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.3.3",
+    "toml-eslint-parser": "1.0.3",
     "typescript": "^5.7.0",
     "use-stick-to-bottom": "^1.1.6",
     "valibot": "^1.5.0",
+    "yaml": "2.9.1",
     "zod": "4.2.1"
   }
 }

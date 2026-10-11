@@ -24,7 +24,7 @@ beforeAll(async () => {
   evidence = await mkdtemp(join(ARTIFACTS, 'acceptance-'));
   const result = await Bun.build({
     entrypoints: [join(import.meta.dir, 'cascader.browser-fixture.tsx')],
-    outdir: directory, naming: 'bundle.js', target: 'browser', format: 'iife',
+    outdir: directory, naming: 'bundle.[ext]', target: 'browser', format: 'iife',
   });
   if (!result.success) throw new Error(result.logs.map((log) => log.message).join('\n'));
   script = await Bun.file(join(directory, 'bundle.js')).text();

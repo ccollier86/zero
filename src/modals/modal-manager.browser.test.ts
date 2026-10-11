@@ -10,11 +10,15 @@ beforeAll(async () => {
   try {
     const output = `${directory}/fixture.js`;
     const build = Bun.spawn([process.execPath,'--no-env-file','build',`${import.meta.dir}/modal-manager.browser-fixture.tsx`,
-      '--target=browser','--format=iife','--outfile',output], { stdout:'pipe',stderr:'pipe',timeout:40_000 });
+      '--target=browser','--format=iife',`--outdir=${directory}`,'--entry-naming=fixture.[ext]'], { stdout:'pipe',stderr:'pipe',timeout:40_000 });
     const [code,stdout,stderr] = await Promise.all([build.exited,new Response(build.stdout).text(),new Response(build.stderr).text()]);
     if (code) throw new Error(`Modal fixture build failed: ${stderr || stdout}`);
     bundle = await Bun.file(output).text();
     css = await Bun.file((await buildPlatformStyles(directory,`${directory}/absent-app`)).cssPath).text();
+    // Additive component skins are emitted beside fixture.js, not installed in
+    // the retained global stylesheet. Qualify the actual imported CSS closure.
+    const fixtureStyles = Bun.file(`${directory}/fixture.css`);
+    if (await fixtureStyles.exists()) css += '\n' + await fixtureStyles.text();
   } finally { await rm(directory,{recursive:true,force:true}); }
   lease = await acquirePlaywrightTestBrowser();
 },60_000);

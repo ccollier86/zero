@@ -259,6 +259,42 @@ browserTest('group content changed mid-entry settles current text and a controll
   } finally { await close(page); }
 }, 30_000);
 
+browserTest('closer source typography wins over the modal owner and explicit content style wins over both', async () => {
+  const page = await mount(1100, true);
+  try {
+    await page.getByRole('button', { name: 'Open tooltip modal', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Tooltip ownership', exact: true }); await dialog.waitFor();
+    await dialog.evaluate(element => {
+      (element as HTMLElement).style.setProperty('--zero-tooltip-font-size', '13px');
+      (element as HTMLElement).style.setProperty('--zero-tooltip-neutral-foreground', '#ffffff');
+    });
+    for (const name of ['Local standalone hint', 'Local grouped hint']) {
+      const tooltip = await show(page, name); await settled(tooltip);
+      expect(await tooltip.evaluate(element => ({ size: getComputedStyle(element).fontSize, color: getComputedStyle(element).color })))
+        .toEqual({ size: '19px', color: 'rgb(17, 34, 51)' });
+      if (name === 'Local standalone hint') {
+        expect(await tooltip.evaluate(element => getComputedStyle(element.parentElement!).getPropertyValue('--zero-tooltip-font-size').trim())).toBe('19px');
+        expect(await tooltip.evaluate(element => getComputedStyle(element.parentElement!).getPropertyValue('--zero-tooltip-neutral-foreground').trim())).toBe('#112233');
+        const bubble = await tooltip.elementHandle();
+        await page.getByTestId('local-tooltip-theme').evaluate(element => (element as HTMLElement).style.setProperty('--zero-tooltip-font-size', '23px'));
+        await page.waitForFunction(() => {
+          const element = document.querySelector('[data-zero-tooltip]:not([data-state="closed"])');
+          return element && getComputedStyle(element).fontSize === '23px';
+        });
+        expect(await bubble!.evaluate(element => element.isConnected && element === document.querySelector('[data-zero-tooltip]:not([data-state="closed"])'))).toBe(true);
+        await page.getByTestId('local-tooltip-theme').evaluate(element => (element as HTMLElement).style.setProperty('--zero-tooltip-font-size', '19px'));
+      }
+      await page.keyboard.press('Escape'); await visual(page).waitFor({ state: 'hidden' });
+      expect(await dialog.isVisible()).toBe(true);
+    }
+    const tooltip = await show(page, 'Explicit standalone hint'); await settled(tooltip);
+    expect(await tooltip.evaluate(element => ({ size: getComputedStyle(element).fontSize, color: getComputedStyle(element).color })))
+      .toEqual({ size: '21px', color: 'rgb(68, 85, 102)' });
+    await page.keyboard.press('Escape'); await visual(page).waitFor({ state: 'hidden' });
+    expect(await dialog.isVisible()).toBe(true);
+  } finally { await close(page); }
+}, 30_000);
+
 browserTest('standalone and shared hints inherit live modal theme/layers and Escape closes only the active tooltip first', async () => {
   const page = await mount(1100, true);
   try {

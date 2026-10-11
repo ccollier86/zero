@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
-import { AnimatePresence, motion, type HTMLMotionProps } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion, type HTMLMotionProps } from 'motion/react';
 
 import {
   Highlight,
@@ -13,17 +13,23 @@ import {
 import { getStrictContext } from '#zero/lib/get-strict-context';
 import { useControlledState } from '#zero/hooks/use-controlled-state';
 import { useDataState } from '#zero/hooks/use-data-state';
+import { composeOverlayRefs } from '../../../overlays/overlay-scope';
+import { anchoredSurfacePresence, hasAnchoredSurfaceMotionOverride, useAnchoredSurfaceReady } from '../../../overlays/anchored-surface-motion';
 
 type DropdownMenuContextType = {
   isOpen: boolean;
   setIsOpen: (o: boolean) => void;
   highlightedValue: string | null;
   setHighlightedValue: (value: string | null) => void;
+  trigger: HTMLButtonElement | null;
+  setTrigger: React.Dispatch<React.SetStateAction<HTMLButtonElement | null>>;
 };
 
 type DropdownMenuSubContextType = {
   isOpen: boolean;
   setIsOpen: (o: boolean) => void;
+  trigger: HTMLDivElement | null;
+  setTrigger: React.Dispatch<React.SetStateAction<HTMLDivElement | null>>;
 };
 
 const [DropdownMenuProvider, useDropdownMenu] =
@@ -45,10 +51,11 @@ function DropdownMenu(props: DropdownMenuProps) {
   const [highlightedValue, setHighlightedValue] = React.useState<string | null>(
     null,
   );
+  const [trigger, setTrigger] = React.useState<HTMLButtonElement | null>(null);
 
   return (
     <DropdownMenuProvider
-      value={{ isOpen, setIsOpen, highlightedValue, setHighlightedValue }}
+      value={{ isOpen, setIsOpen, highlightedValue, setHighlightedValue, trigger, setTrigger }}
     >
       <DropdownMenuPrimitive.Root
         data-slot="dropdown-menu"
@@ -63,11 +70,14 @@ type DropdownMenuTriggerProps = React.ComponentProps<
   typeof DropdownMenuPrimitive.Trigger
 >;
 
-function DropdownMenuTrigger(props: DropdownMenuTriggerProps) {
+function DropdownMenuTrigger({ ref, ...props }: DropdownMenuTriggerProps) {
+  const { setTrigger } = useDropdownMenu();
+  const triggerRef = React.useMemo(() => composeOverlayRefs<HTMLButtonElement>(setTrigger, ref), [setTrigger, ref]);
   return (
     <DropdownMenuPrimitive.Trigger
       data-slot="dropdown-menu-trigger"
       {...props}
+      ref={triggerRef}
     />
   );
 }
@@ -102,9 +112,10 @@ function DropdownMenuSub(props: DropdownMenuSubProps) {
     defaultValue: props?.defaultOpen,
     onChange: props?.onOpenChange,
   });
+  const [trigger, setTrigger] = React.useState<HTMLDivElement | null>(null);
 
   return (
-    <DropdownMenuSubProvider value={{ isOpen, setIsOpen }}>
+    <DropdownMenuSubProvider value={{ isOpen, setIsOpen, trigger, setTrigger }}>
       <DropdownMenuPrimitive.Sub
         data-slot="dropdown-menu-sub"
         {...props}
@@ -136,9 +147,11 @@ type DropdownMenuSubTriggerProps = Omit<
 function DropdownMenuSubTrigger({
   disabled,
   textValue,
+  ref,
   ...props
 }: DropdownMenuSubTriggerProps) {
   const { setHighlightedValue } = useDropdownMenu();
+  const { setTrigger } = useDropdownMenuSub();
   const [, highlightedRef] = useDataState<HTMLDivElement>(
     'highlighted',
     undefined,
@@ -150,10 +163,11 @@ function DropdownMenuSubTrigger({
       }
     },
   );
+  const triggerRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(highlightedRef, setTrigger, ref), [highlightedRef, setTrigger, ref]);
 
   return (
     <DropdownMenuPrimitive.SubTrigger
-      ref={highlightedRef}
+      ref={triggerRef}
       disabled={disabled}
       textValue={textValue}
       asChild
@@ -191,12 +205,21 @@ function DropdownMenuSubContent({
   arrowPadding,
   sticky,
   hideWhenDetached,
-  transition = { duration: 0.2 },
+  transition,
   style,
   container,
+  ref,
   ...props
 }: DropdownMenuSubContentProps) {
   const { isOpen } = useDropdownMenuSub();
+  const reduced = Boolean(useReducedMotion());
+  const customMotion = hasAnchoredSurfaceMotionOverride({ ...props, transition });
+  const placement = useAnchoredSurfaceReady(!customMotion);
+  const contentRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(placement.ref, ref), [placement.ref, ref]);
+  const presentation = customMotion ? {
+    initial: { opacity: 0, scale: .95 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: .95 },
+    transition: transition ?? { duration: .2 },
+  } : anchoredSurfacePresence(style, reduced);
 
   return (
     <AnimatePresence>
@@ -222,12 +245,12 @@ function DropdownMenuSubContent({
             <motion.div
               key="dropdown-menu-sub-content"
               data-slot="dropdown-menu-sub-content"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={transition}
+              data-zero-anchored-motion={customMotion ? undefined : ''}
+              data-zero-anchored-ready={!customMotion && placement.ready ? '' : undefined}
+              {...presentation}
               style={{ willChange: 'opacity, transform', ...style }}
               {...props}
+              ref={contentRef}
             />
           </DropdownMenuPrimitive.SubContent>
         </DropdownMenuPortal>
@@ -288,12 +311,21 @@ function DropdownMenuContent({
   arrowPadding,
   sticky,
   hideWhenDetached,
-  transition = { duration: 0.2 },
+  transition,
   style,
   container,
+  ref,
   ...props
 }: DropdownMenuContentProps) {
   const { isOpen } = useDropdownMenu();
+  const reduced = Boolean(useReducedMotion());
+  const customMotion = hasAnchoredSurfaceMotionOverride({ ...props, transition });
+  const placement = useAnchoredSurfaceReady(!customMotion);
+  const contentRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(placement.ref, ref), [placement.ref, ref]);
+  const presentation = customMotion ? {
+    initial: { opacity: 0, scale: .95 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: .95 },
+    transition: transition ?? { duration: .2 },
+  } : anchoredSurfacePresence(style, reduced);
 
   return (
     <AnimatePresence>
@@ -301,6 +333,7 @@ function DropdownMenuContent({
         <DropdownMenuPortal forceMount container={container}>
           <DropdownMenuPrimitive.Content
             asChild
+            forceMount
             loop={loop}
             onCloseAutoFocus={onCloseAutoFocus}
             onEscapeKeyDown={onEscapeKeyDown}
@@ -321,12 +354,12 @@ function DropdownMenuContent({
             <motion.div
               key="dropdown-menu-content"
               data-slot="dropdown-menu-content"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={transition}
+              data-zero-anchored-motion={customMotion ? undefined : ''}
+              data-zero-anchored-ready={!customMotion && placement.ready ? '' : undefined}
+              {...presentation}
               style={{ willChange: 'opacity, transform', ...style }}
               {...props}
+              ref={contentRef}
             />
           </DropdownMenuPrimitive.Content>
         </DropdownMenuPortal>

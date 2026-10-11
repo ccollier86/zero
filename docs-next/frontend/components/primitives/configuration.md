@@ -54,5 +54,6 @@ error/disabled state, labels and contrast; a className is not a security option.
 ## Related Guides And Next Steps
 
 - [Input props](./inputs.md) supplies native control/default behavior.
-- [Choice props](./choices.md) supplies headless value/selection contracts.
+- [Select](../controls/select.md) owns its complete native Morph/rich-option
+  contract; [other choices](./choices.md) retains Combobox/Checkbox/Radio/Switch.
 - [Design conventions](../../design-system/component-conventions.md) owns customization.

@@ -8,14 +8,14 @@ visibility: internal
 system: doctor
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; publication qualification pending"]
 modes: ["configuration values", "trusted CLI modules", "explicit infrastructure snapshots"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -65,6 +65,11 @@ the unreleased recursive-glob correction.
 `--no-usage-audit`, `--max-file-lines <positive integer>`,
 repeatable `--usage-include <path>` / `--usage-exclude <pattern>`,
 and `--help/-h`. Invocation options select diagnostics, not backend access.
+The backing-theme opt-in `--theme-foundation` requires `--source-only` and the
+explicit project root; see [theme diagnostics](./source-audit.md#backing-theme-diagnostics).
+The upgrade opt-in `--upgrade` has the same source-only/root requirement.
+`--upgrade-target-root <directory>` additionally requires `--upgrade` and selects
+that exact framework package directory, not an application containing one.
 
 The **unreleased structured-modal upgrade** additionally accepts
 `--source-only --project-root <directory>`. This is an independent, config-free
@@ -87,11 +92,22 @@ describe the exact reads and limits.
 | `rules` | Code → info/warning/error/off; omitted codes retain their defined severity |
 | `allow` | Matching `{code,path}` exemptions after inspection; path line suffix ignored |
 | `strict` | false; warnings additionally make `ok` false when true |
+| `themeFoundation` | false/omitted; boolean opt-in to bundled parity/alias and admitted canonical-reference checks, without executing config or rewriting styles |
+| `upgrade` | false/omitted; true or `{targetRoot?: string}`. Inspect installed contracts by default, or that explicitly admitted framework directory before upgrading. Never executes migrations or rewrites source. |
 
 The report adds `mode: "source-only"`, `scannedFiles` and `installedFramework`
-(`status`, `version`, `publicExports`, `modalShow`) to `findings`/`ok`. Unknown
+(`status`, `version`, `publicExports`, `modalShow`) to `findings`/`ok`, plus a
+`themeFoundation` summary when explicitly requested. Unknown
 installed capabilities do not turn into recommendations for unavailable APIs.
 This API does not accept executable config or synthetic-env/database inputs.
+When upgrade inspection is requested, `upgrade` adds catalog version, target
+version/capabilities, a bounded-public-source SHA-256 fingerprint, applicable
+migration IDs, import/asset inspection counts, categorized findings and explicit
+coverage limits. The fingerprint is **not a whole-archive hash**. Same-version
+local builds may differ; capability evidence gates advice instead of assuming
+every artifact with a version label has identical contracts. Report review
+counts reflect severity/allow policies, not an unfiltered list of app defects.
+See [upgrade auditing](./source-audit.md#upgrade-auditing) for exact coverage.
 There is no CLI synthetic-env option; process/env-file behavior remains Bun's
 execution environment. Use the programmatic API for explicit synthetic env.
 

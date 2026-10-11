@@ -1,0 +1,13 @@
+/* Card-family ContentCard feedback only: legacy Card and ExpandableCards remain separate compositions.
+   Native markup owns semantics; hover WAAPI and the existing modal manager own their respective motion. */
+.zero-content-card { position: relative; min-width: 0; overflow: hidden; isolation: isolate;
+  transition: border-color var(--zero-theme-duration-fast, 160ms) var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1)),
+    box-shadow var(--zero-theme-duration-standard, 240ms) var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1)); }
+.zero-content-card[data-zero-card-hovered] { border-color: var(--border-strong, var(--border));
+  box-shadow: var(--zero-theme-shadow-raised, 0 6px 18px rgb(0 0 0 / .065)); }
+.zero-content-card:has(.zero-content-card-trigger:focus-visible) { border-color: var(--border-strong, var(--border)); }
+.zero-content-card-trigger { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: inherit; cursor: pointer; }
+.zero-content-card-trigger:focus-visible { outline: 2px solid var(--ring, currentColor); outline-offset: 3px; border-radius: 3px; }
+.zero-content-card-media { display: grid; width: 100%; min-height: inherit; place-items: center; }
+.zero-content-card-media > img { display: block; width: 100%; height: auto; object-fit: cover; }
+@media (prefers-reduced-motion: reduce) { .zero-content-card { transition: none; } }

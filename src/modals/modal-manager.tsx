@@ -10,7 +10,7 @@ import { OverlayScopeProvider, hasOwnedFloatingOverlay, useOverlayTheme } from '
 import { useMediaQuery } from '../hooks/use-media-query';
 import { modalStore } from './modal-store';
 import { modals } from './modal-events';
-import { ModalShell } from './modal-shell';
+import { ModalScrollShell as ModalShell } from './modal-scroll-shell';
 import { resolveModalMotion } from './modal-motion';
 import { animateModalIn, animateModalOut, animateModalNudge, cancelModalAnimations, finishModalAnimations, playModalAnimation } from './modal-motion-animation';
 import { createModalSceneMotion, modalStackTransform } from './modal-scene-motion';
@@ -53,10 +53,12 @@ function reduceProfile(profile: ResolvedModalMotion, reduced: boolean): Resolved
     timings: Object.fromEntries(Object.keys(profile.timings).map(key => [key, 1])) as unknown as ResolvedModalMotion['timings'] } : profile;
 }
 
-function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalContainer, onMotion, onReturnFocus }: {
+function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalContainer, onMotion, onBackdropTheme, onReturnFocus }: {
   modal: ModalInstance; depth: number; active: boolean; closing: boolean; layer: number; defaults?: ModalMotionOptions;
   portalContainer?: HTMLElement | null;
-  onMotion(id: string, motion: ResolvedModalMotion): void; onReturnFocus(restore: () => void): void;
+  onMotion(id: string, motion: ResolvedModalMotion): void;
+  onBackdropTheme(id: string, theme: React.CSSProperties): void;
+  onReturnFocus(restore: () => void): void;
 }) {
   const shell = React.useRef<HTMLDivElement>(null), inner = React.useRef<HTMLDivElement>(null);
   const viewport = useModalViewport();
@@ -109,6 +111,9 @@ function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalC
     return () => { cancelModalAnimations(shellElement); if (content) cancelModalAnimations(content); };
   }, [shellElement]);
   React.useLayoutEffect(() => { onMotion(modal.id, motion); }, [modal.id, motion, onMotion]);
+  // Reuse this renderer's exact trigger/programmatic opener subscription. The
+  // host projects paint only; it must not infer a different theme source.
+  React.useLayoutEffect(() => { onBackdropTheme(modal.id, theme); }, [modal.id, theme, onBackdropTheme]);
   React.useLayoutEffect(() => {
     if (!closing) return;
     if (!shell.current) { modals.completeExit(modal.id, generation); return; }
@@ -222,6 +227,7 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
   const [mounted, setMounted] = React.useState(false), [reserved, setReserved] = React.useState(false);
   const [layerBase, setLayerBase] = React.useState(1000);
   const profiles = React.useRef(new Map<string, ResolvedModalMotion>());
+  const backdropThemes = React.useRef(new Map<string, string>());
   const controller = React.useRef<ReturnType<typeof createModalSceneMotion> | null>(null);
   const lease = React.useRef<object | null>(null), sceneEpoch = React.useRef(0), returnFocus = React.useRef<(() => void) | null>(null);
   const ids = React.useRef<string[]>([]); ids.current = state.modals.map(modal => modal.id);
@@ -234,12 +240,26 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
     if (profiles.current.get(id) === profile) return;
     profiles.current.set(id, profile); setProfileVersion(value => value + 1);
   }, []);
+  const [themeVersion, setThemeVersion] = React.useState(0);
+  const [retainedBackdrop, setRetainedBackdrop] = React.useState('');
+  const onBackdropTheme = React.useCallback((id: string, theme: React.CSSProperties) => {
+    const color = String((theme as Record<string, unknown>)['--zero-modal-backdrop-color'] ?? '').trim();
+    if (backdropThemes.current.get(id) === color) return;
+    backdropThemes.current.set(id, color); setThemeVersion(value => value + 1);
+  }, []);
   const [focusVersion, setFocusVersion] = React.useState(0);
   const onReturnFocus = React.useCallback((restore: () => void) => {
     returnFocus.current = restore; setFocusVersion(value => value + 1);
   }, []);
   const activeModals = state.modals.filter(modal => !state.closingIds.includes(modal.id));
   const top = activeModals.at(-1), visible = activeModals.length > 0, present = state.modals.length > 0;
+  const activeBackdrop = top ? backdropThemes.current.get(top.id) : undefined;
+  const backdropColor = activeBackdrop ?? retainedBackdrop;
+  React.useLayoutEffect(() => {
+    // Retirement may remove the last shell before the shared scene fade ends.
+    // Keep its admitted paint until the existing scene epoch releases the lease.
+    if (activeBackdrop !== undefined) setRetainedBackdrop(activeBackdrop);
+  }, [top?.id, themeVersion, activeBackdrop]);
   React.useLayoutEffect(() => {
     if (!mounted) return;
     const source = top?.descriptor?.trigger ?? surface.current ?? portalContainer ?? document.documentElement;
@@ -265,7 +285,9 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
     if (visible) setReserved(true);
     void controller.current.update({ visible, recedes: activeModals.some(modal =>
       (profiles.current.get(modal.id) ?? profile).pageRecedes), motion: profile }).then(() => {
-      if (epoch === sceneEpoch.current && !visible) { setReserved(false); profiles.current.clear(); }
+      if (epoch === sceneEpoch.current && !visible) {
+        setReserved(false); profiles.current.clear(); backdropThemes.current.clear(); setRetainedBackdrop('');
+      }
     });
   }, [ownsHost, mounted, visible, top?.id, state.closingIds.join(','), profileVersion, defaults, recedeSurface]);
   React.useLayoutEffect(() => {
@@ -286,11 +308,12 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
   }, [present, reserved, focusVersion]);
   const scene = mounted && ownsHost && <>
     <div ref={backdrop} className="zero-modal-backdrop" hidden={!visible && !reserved} aria-hidden="true"
-      style={{ zIndex: top ? layerBase + state.modals.findIndex(item => item.id === top.id) * 10 : layerBase }} />
+      style={{ ...(backdropColor ? { '--zero-modal-backdrop-color': backdropColor } : {}),
+        zIndex: top ? layerBase + state.modals.findIndex(item => item.id === top.id) * 10 : layerBase } as React.CSSProperties} />
     {state.modals.map((modal, index) => <ModalRenderer key={modal.id} modal={modal} layer={layerBase + 1 + index * 10}
       depth={Math.max(0, activeModals.length - 1 - activeModals.findIndex(item => item.id === modal.id))}
       active={top?.id === modal.id} closing={state.closingIds.includes(modal.id)} defaults={defaults}
-      portalContainer={portalContainer} onMotion={onMotion} onReturnFocus={onReturnFocus} />)}
+      portalContainer={portalContainer} onMotion={onMotion} onBackdropTheme={onBackdropTheme} onReturnFocus={onReturnFocus} />)}
   </>;
   return <ModalHostContext.Provider value={true}>
     {recedeSurface ? <div ref={surface} data-zero-modal-surface inert={present || reserved || undefined}>{children}</div> : children}

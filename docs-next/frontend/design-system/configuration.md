@@ -8,14 +8,14 @@ visibility: internal
 system: design-system
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; next application default with legacy rollback"]
 modes: ["React browser UI", "SSR markup", "managed frontend styling"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -26,6 +26,19 @@ reviewed_against:
 Presentation configuration resolves in React/CSS, not an env/Doctor settings
 store. Import the public stylesheet in an app-owned pipeline or use managed
 server styling; [style build](./style-build.md) owns that distinction.
+
+The managed build-only exception is `AppConfig.themeFoundation`: omitted or
+`'next'` compiles globals.css plus the scoped supplement; explicit `'legacy'`
+keeps the original globals.css alone.
+It does not activate markup, choose a browser mode/density or download fonts.
+The build manifest records the selection and must match runtime configuration.
+See [managed foundation selection](./style-build.md#select-the-managed-foundation).
+
+`AppShell.themeFoundation` independently defaults to `'next'` and activates the
+boundary on its existing application frame. Explicit `'legacy'` removes that
+top-level marker. The public stylesheet entry includes the supplement; the
+separate `styles-legacy.css` entry keeps rollback available. Global document and
+ordinary public-page roots are not automatically marked or restyled.
 
 ## ThemeProvider
 

@@ -7,15 +7,33 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { getComponentCompatibilityCompanions } from './component-compatibility';
 
 /** Describes one supported source-copy target for `zero add`. */
 export interface AddableTarget {
   id: string;
   sourceRel: string;
+  /** Explicit companion assets copied without editing the application's imports/configuration. */
+  additionalSourceRels?: readonly string[];
   description: string;
 }
 
 const STATIC_TARGETS: AddableTarget[] = [
+  { id: 'components/json-editor', sourceRel: 'components/json-editor',
+    description: 'Retained structured JSON editor plus additive Tree/Code document editing, local history and application-owned accepted saves.' },
+  { id: 'components/floating-button-group', sourceRel: 'components/controls/floating-button-group',
+    description: 'Scoped floating action tray with magnetic material, reserved labels and existing Tooltip composition.' },
+  { id: 'components/popover', sourceRel: 'components/popover', description: 'Owned anchored panels with source-theme projection and trigger-facing motion.' },
+  { id: 'components/dropdown-menu', sourceRel: 'components/dropdown-menu', description: 'Owned anchored action menus with magnetic rows and shared surface motion.' },
+  { id: 'components/context-menu', sourceRel: 'components/context-menu', description: 'Pointer-anchored action menus with native compatibility and explicit bounded scroll composition.' },
+  { id: 'theme-foundation', sourceRel: 'design-system', additionalSourceRels: ['frontend/styles/theme-next.css'],
+    description: 'Opt-in next theme API and supplemental CSS; does not activate or replace legacy styles.' },
+  { id: 'components/typography', sourceRel: 'components/typography', additionalSourceRels: ['frontend/styles/theme-next.css'],
+    description: 'Optional native Text/Heading consumers and CSS-first text recipes; no automatic theme activation or font downloads.' },
+  { id: 'components/charts', sourceRel: 'components/charts', description: 'Zero Charts with shared tokens, composable math, inspectors and the separate Arc family.' },
+  { id: 'components/charts/arc', sourceRel: 'components/charts/arc', description: 'Twelve Arc-derived charts with Zero tokens, typed data models and shared overlay integration.' },
+  { id: 'components/charts/native', sourceRel: 'components/charts/native', description: 'Original Zero Cartesian, statistical, polar and observed-time charts, with pure math and shared inspectors.' },
+  { id: 'components/vector-visualization', sourceRel: 'components/vector-visualization', description: 'Real ingestion/search visualization organisms and composable inspection panels.' },
   {
     id: 'components/tooltip',
     sourceRel: 'components/tooltip',
@@ -150,10 +168,12 @@ export function resolveAddableTarget(item: string, sourceRoot: string): AddableT
 
     const sourceRel = `components/ui/${name}.tsx`;
     if (!existsSync(join(sourceRoot, sourceRel))) throw unknownAddable(item);
+    const companions = getComponentCompatibilityCompanions(sourceRel);
 
     return {
       id: normalized,
       sourceRel,
+      ...(companions.length ? { additionalSourceRels: companions } : {}),
       description: `UI primitive: ${name}.`,
     };
   }

@@ -3,7 +3,7 @@
  * It never resolves executable imports, loads plugins or evaluates package code.
  */
 import { realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import type { SourceOnlyFrameworkInspection } from './source-only-types';
 
@@ -15,6 +15,15 @@ export interface SourceOnlyPackageInfo extends SourceOnlyFrameworkInspection {
 
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 
+const blockedSourceDirectories = new Set(['.git', '.zero', '.build', '.storage', '.cache', '.next', '.turbo', 'coverage', 'dist', 'node_modules']);
+
+function ambientEnvironmentPath(path: string): boolean { return path.replaceAll('\\', '/').split('/').some(segment => /^\.env(?:\..+)?$/u.test(segment)); }
+
+/** Source admission excludes runtime/build/private directories and ambient env files, including aliases. */
+export function sourceOnlyBlockedPath(path: string): boolean {
+  return ambientEnvironmentPath(path) || path.replaceAll('\\', '/').split('/').some(segment => blockedSourceDirectories.has(segment));
+}
+
 /** Canonicalization is filesystem-only; Bun has no realpath API equivalent. */
 export function sourceOnlyRealpath(path: string): string { return realpathSync.native(path); }
 
@@ -24,9 +33,12 @@ export function sourceOnlyInside(root: string, path: string): boolean {
   return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`));
 }
 
-async function jsonFile(path: string): Promise<Record<string, unknown> | null> {
+async function jsonFile(path: string, ownRoot?: string): Promise<Record<string, unknown> | null> {
   try {
-    const file = Bun.file(path);
+    const canonical = sourceOnlyRealpath(path);
+    if (basename(canonical) !== 'package.json' || ambientEnvironmentPath(canonical)
+      || ownRoot && (!sourceOnlyInside(ownRoot, canonical) || sourceOnlyBlockedPath(relative(ownRoot, canonical)))) return null;
+    const file = Bun.file(canonical);
     if (!await file.exists() || file.size > 2_000_000) return null;
     const value: unknown = await file.json(); return object(value) ? value : null;
   } catch { return null; }
@@ -41,7 +53,7 @@ function targets(value: unknown): string[] {
 
 /** Inspect only the selected app's installed package, or the explicitly selected framework workspace. */
 export async function inspectSourceOnlyPackage(projectRoot: string): Promise<SourceOnlyPackageInfo> {
-  const own = await jsonFile(join(projectRoot, 'package.json'));
+  const own = await jsonFile(join(projectRoot, 'package.json'), projectRoot);
   const ownImports = object(own?.imports) ? own.imports : {};
   const installedManifest = join(projectRoot, 'node_modules/@zero/framework/package.json');
   let manifest = await jsonFile(installedManifest);
@@ -66,7 +78,9 @@ async function resolveSource(root: string, from: string, target: string): Promis
   for (const path of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.d.ts`, join(base, 'index.ts'), join(base, 'index.tsx'), join(base, 'index.js'), join(base, 'index.d.ts')]) {
     try {
       if (!await Bun.file(path).exists()) continue;
-      const canonical = sourceOnlyRealpath(path); if (sourceOnlyInside(root, canonical)) return canonical;
+      const canonical = sourceOnlyRealpath(path);
+      if (/\.(?:ts|tsx|js|jsx|mts|cts|mjs|cjs)$/iu.test(canonical) && sourceOnlyInside(root, canonical)
+        && !sourceOnlyBlockedPath(relative(root, canonical))) return canonical;
     } catch { /* Missing/unreadable targets make capability unknown, never available. */ }
   }
   return null;

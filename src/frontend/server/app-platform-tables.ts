@@ -7,12 +7,14 @@ import { STORAGE_TABLES } from '../../storage/types';
 import { DATA_STUDIO_TENANT_TABLES } from '../../data-studio/data-studio-tenant-schema';
 import type { ClientTableDef } from '../../sync/types';
 import { PRESENCE_CLIENT_TABLES } from '../../presence/presence-client-tables';
+import { VECTOR_VISUALIZATION_CLIENT_TABLES, VECTOR_VISUALIZATION_MAPS_TABLE, VECTOR_VISUALIZATION_OPERATIONS_TABLE, VECTOR_VISUALIZATION_FEED_TABLE } from '../../vector/visualization-schema';
 import {
   WORKFLOW_SERVER_TABLE_NAMES,
   WORKFLOW_TABLES,
 } from '../../workflows/types';
 
 export const PLATFORM_SYNC_WRITE_PROTECTED_TABLES = new Set([
+  VECTOR_VISUALIZATION_OPERATIONS_TABLE, VECTOR_VISUALIZATION_MAPS_TABLE, VECTOR_VISUALIZATION_FEED_TABLE,
   ...IDENTITY_PROJECTION_TARGET_TABLES,
   ...Object.keys(NOTIFICATION_TABLES),
   ...Object.keys(ROOM_TABLES),
@@ -45,13 +47,14 @@ const WORKFLOW_CLIENT_TABLE_NAMES = new Set(Object.keys(WORKFLOW_TABLES));
 export function resolvePlatformClientTables(
   workflowsEnabled = true,
   presenceEnabled = false,
+  vectorVisualizationEnabled = false,
 ): Readonly<Record<string, ClientTableDef>> {
   const tables = workflowsEnabled ? PLATFORM_CLIENT_TABLES : Object.fromEntries(
     Object.entries(PLATFORM_CLIENT_TABLES).filter(
       ([table]) => !WORKFLOW_CLIENT_TABLE_NAMES.has(table),
     ),
   );
-  return presenceEnabled ? { ...tables, ...PRESENCE_CLIENT_TABLES } : tables;
+  return { ...tables, ...(presenceEnabled ? PRESENCE_CLIENT_TABLES : {}), ...(vectorVisualizationEnabled ? VECTOR_VISUALIZATION_CLIENT_TABLES : {}) };
 }
 
 /** Include framework-owned full-sync tables in the websocket snapshot allow-list. */
@@ -59,9 +62,10 @@ export function addPlatformSnapshotTables(
   snapshotTables: Set<string>,
   workflowsEnabled = true,
   presenceEnabled = false,
+  vectorVisualizationEnabled = false,
 ): void {
   for (const [table, definition] of Object.entries(
-    resolvePlatformClientTables(workflowsEnabled, presenceEnabled),
+    resolvePlatformClientTables(workflowsEnabled, presenceEnabled, vectorVisualizationEnabled),
   )) {
     if (definition._sync !== 'lazy') snapshotTables.add(table);
   }
@@ -77,6 +81,7 @@ export function resolveGenericDataQueryableTables(
   lazyTables: ReadonlySet<string>,
 ): Set<string> {
   const queryable = new Set(lazyTables);
+  queryable.delete(VECTOR_VISUALIZATION_OPERATIONS_TABLE); queryable.delete(VECTOR_VISUALIZATION_MAPS_TABLE); queryable.delete(VECTOR_VISUALIZATION_FEED_TABLE);
   for (const table of WORKFLOW_SERVER_TABLE_NAMES) queryable.delete(table);
   for (const table of Object.keys(PRESENCE_CLIENT_TABLES)) queryable.delete(table);
   return queryable;

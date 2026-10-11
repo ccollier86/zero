@@ -8,15 +8,15 @@ visibility: internal
 system: frontend-components
 feature: date-time-inputs
 maturity: supported
-applies_to: ["2.6.0 source/local archive with shared picker modernization"]
+applies_to: ["2.6.0 working source; magnetic picker modernization unreleased"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
-  snapshot: clean
-  date: "2026-10-07"
-  evidence_level: implementation-verified
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  snapshot: dirty
+  date: "2026-10-11"
+  evidence_level: source-observed
 ---
 
 # Dates, Ranges And Time
@@ -27,6 +27,14 @@ The UI modules `/date-picker`, `/date-range-picker`, `/time-picker` and
 `/calendar` are exported below `@zero/framework/components/ui`.
 UI values are Date/DateRange or HH:mm strings, not automatically SQLite codecs.
 Use [schema codecs](../../../backend/schema/index.md) at the persistence boundary.
+
+Implementations and shared parsing/presentation helpers now live under
+`components/controls/date-time`. Existing UI imports forward to the same controls
+and Calendar contexts; the structural move itself changes no selection or popup
+policy. A separate additive DatePicker facade now decorates its existing
+days/months viewport without replacing that retained selection engine.
+[Source organization](../source-organization.md) explains the retained paths and
+bounded copy closure.
 
 ## DatePicker
 
@@ -47,6 +55,7 @@ trigger with an animated formatted date. Both use the same shared Calendar.
 | `inputProps`, `triggerClassName`, `className` | Native input/ARIA attributes and shared composition styling. |
 | `calendarProps` | DayPicker policy/presentation, excluding picker-owned mode, selection, autofocus and drill-down view. |
 | `transition` | Optional popover motion override. |
+| `scrollTreatment` | `arc`; shared edge fades/overlay rails on the existing days/months viewport. `native` selects the unchanged original picker. |
 
 Typed numeric dates accept M/D/YYYY or M-D-YYYY, require matching separators,
 a four-digit year at least 1000, and reject invalid calendar days. The long
@@ -58,6 +67,22 @@ An empty value clears to undefined. Invalid or calendarProps.disabled-matching
 input remains marked invalid without committing. Escape restores the formatted
 parent value. Calendar selection emits a Date and closes the popover. Required,
 range, timezone and business rules remain server/form validation duties.
+
+At constrained heights, the existing days/months calendar viewport owns both
+native axes; the popover frame and footer stay outside its mask. Fitting content
+has no decoration. Switching to years disables that outer treatment: the
+Calendar year grid and its virtualizer retain their own viewport, without a
+second scroller. This does not automatically adopt DateRangePicker or arbitrary
+custom calendar overflow containers.
+
+`calendarProps.components.Root` remains supported. A custom Root must forward
+DayPicker's `rootRef` to its actual host to receive this treatment. An opaque
+custom Root that does not forward it retains its own presentation; the facade
+does not guess another owner or wrap its content. Default and custom Roots keep
+the same native props, caller ref and Calendar presentation context.
+Changing `scrollTreatment` on a mounted picker retains the original engine's
+uncontrolled popup, unfinished draft and current drill-down view. It changes
+presentation, not date selection or the owner's state machine.
 
 Month/year captions open their corresponding grids. Escape returns from those
 grids to days first; another Escape closes. Close, another trigger click or
@@ -124,13 +149,20 @@ existing specialized consumers to retain their rendering policy.
 Selection mode, required selection, disabled matchers, bounds and locale are
 caller-supplied DayPicker policy. It is not the planned full scheduling plugin.
 
+Default day, month and year surfaces now add magnetic hover/focus paint without
+selecting a date. Selected/range/today/outside markers and native focus remain
+authoritative; the paint layer is outside the day table and has no ARIA role.
+Custom DayPicker presentation overrides remain caller-owned. The virtual year
+grid decorates its existing viewport with shared fades/rails, keeping the
+caption fixed and the virtualizer in charge of which years are mounted.
+
 ```tsx
 import { useState } from 'react';
 import { DatePicker } from '@zero/framework/components/ui/date-picker';
 
 export function Birthday() {
   const [value, setValue] = useState<Date>();
-  return <DatePicker value={value} onChange={setValue} />;
+  return <DatePicker value={value} onChange={setValue} scrollTreatment="arc" />;
 }
 ```
 
@@ -138,6 +170,9 @@ Use `calendarProps={{ startMonth: new Date(1900, 0), endMonth: new Date() }}`
 to bound a birthday calendar, or `appearance="button"` for the compact animated
 trigger. Those bounds affect calendar navigation; domain validation must still
 admit any typed/persisted value independently.
+Use `scrollTreatment="native"` for a retained-original comparison. The
+[adoption ledger](../../../_work/arc-scroll-surface-plan.md) records the bounded
+browser/type/copy checks; no original picker or theme is deleted by this switch.
 
 ## TimePicker
 
@@ -171,6 +206,11 @@ Long option lists use Zero's existing TanStack virtualizer, retaining the active
 option in the DOM for `aria-activedescendant`. The list, not the popup footer or
 surrounding page, owns vertical scrolling.
 
+The list now uses one magnetic active-row layer and the shared Arc native-viewport
+fades/rails. DOM focus stays on the listbox; the native `aria-activedescendant`
+and selected check remain authoritative. Neither hover nor animated handoff
+commits a time. Virtualization, footer placement and canonical form values are unchanged.
+
 ```tsx
 import { useState } from 'react';
 import { DatePicker } from '@zero/framework/components/ui/date-picker';
@@ -193,6 +233,13 @@ minute intervals. It does not persist anything, infer a timezone or combine a
 date/time into an instant; the consuming form/domain controller owns that work.
 
 ## Theme-Controlled Picker Motion
+
+Ordinary DatePicker, DateRangePicker and TimePicker popups now use the
+[shared anchored Popover recipe](../overlays/popover.md#anchored-motion): a
+small trigger-facing grow/shrink based on the collision-resolved side, not the
+modal's full trigger rectangle morph. Explicit transition overrides retain
+their existing caller-owned recipe. Calendar view changes and formatted-value
+rolls keep the separate tokens below; no duplicate entrance runs on top.
 
 The shared CSS loaded through Zero's normal frontend stylesheet provides these
 overridable tokens. WAAPI view/value animations resolve them from the active

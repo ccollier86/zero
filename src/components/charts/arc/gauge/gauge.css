@@ -1,0 +1,23 @@
+/* Arc UI Free derivation, MIT. Copyright (c) 2026 Elia Kuratli. Scoped Zero chart presentation; local overrides resolve at paint sites. */
+.zero-arc-gauge__figure { font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); display: grid; justify-items: center; min-width: 0; gap: 10px; margin: 0; text-align: center; }.zero-arc-gauge__figure figcaption { display: grid; gap: 3px; min-width: 0; }.zero-arc-gauge__figure strong { font-size: var(--zero-arc-text-sm); font-weight: 500; }.zero-arc-gauge__detail { color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); font-variant-numeric: tabular-nums; }
+.zero-arc-gauge__accent { --zero-arc-gauge-color: var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))); --zero-arc-gauge-text: var(--zero-arc-accent-strong, var(--zero-chart-foreground, var(--foreground))); }.zero-arc-gauge__success { --zero-arc-gauge-color: var(--zero-arc-success, var(--zero-chart-green)); --zero-arc-gauge-text: var(--zero-arc-success, var(--zero-chart-green)); }.zero-arc-gauge__warning { --zero-arc-gauge-color: var(--zero-arc-warning, var(--zero-chart-amber)); --zero-arc-gauge-text: var(--zero-arc-warning, var(--zero-chart-amber)); }.zero-arc-gauge__danger { --zero-arc-gauge-color: var(--zero-arc-danger, var(--zero-chart-rose)); --zero-arc-gauge-text: var(--zero-arc-danger, var(--zero-chart-rose)); }
+
+/* An activity style ring: a thick stroke with round caps over a faint tint of its own color. The stroke scales with the ring. */
+.zero-arc-gauge__visual { position: relative; width: min(100%, 176px); aspect-ratio: 100 / 90; }
+.zero-arc-gauge__visual svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.zero-arc-gauge__track, .zero-arc-gauge__arc { fill: none; stroke-width: 9; stroke-linecap: round; transition: stroke var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-gauge__track { stroke: color-mix(in oklab, var(--zero-arc-gauge-color) 13%, transparent); }
+.zero-arc-gauge__arc { stroke: var(--zero-arc-gauge-color); }
+
+/* The readout sits on the ring's true centre, which is the middle of a square as wide as the ring. */
+.zero-arc-gauge__readout { position: absolute; top: 0; left: 0; display: grid; width: 100%; aspect-ratio: 1; place-content: center; justify-items: center; gap: 4px; pointer-events: none; }
+.zero-arc-gauge__number { position: relative; display: inline-flex; align-items: baseline; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-display, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); font-size: var(--zero-arc-text-3xl); font-weight: 500; letter-spacing: var(--zero-arc-tracking-display); line-height: 1; font-variant-numeric: tabular-nums; }
+.zero-arc-gauge__digits { display: inline-flex; justify-content: flex-end; white-space: nowrap; }
+.zero-arc-gauge__unit { margin-left: 1px; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); font-size: .5em; letter-spacing: 0; }
+.zero-arc-gauge__sizer { position: absolute; top: 0; left: 0; visibility: hidden; white-space: nowrap; pointer-events: none; }
+.zero-arc-gauge__status { min-width: 100px; min-height: 1.4em; color: var(--zero-arc-gauge-text); font-size: var(--zero-arc-text-xs); font-weight: 500; line-height: 1.4; transition: color var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+
+/* Label, status and detail copy swap in place: the outgoing line is popped out of flow while the new one rises in. */
+.zero-arc-gauge__swap { position: relative; display: block; }
+.zero-arc-gauge__swap > .zero-arc-gauge__text { display: inline-block; }
+@media (prefers-reduced-motion: reduce) { .zero-arc-gauge__track, .zero-arc-gauge__arc, .zero-arc-gauge__status { transition: none; } }

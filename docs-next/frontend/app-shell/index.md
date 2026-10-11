@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: app-shell
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; next application theme default; publication qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -27,6 +27,10 @@ AppShell composes a token-based application frame: navigation, optional workspac
 switching, user menu, breadcrumbs, header actions and content. It does not log in,
 select a Guardian tenant, grant permissions or fetch navigation items itself.
 Those responsibilities belong to the app's scoped hooks and server services.
+
+The shell uses the [new application theme](../design-system/foundation-next.md)
+by default on its existing outer frame. Original tokens remain available through
+explicit legacy rollback; public/landing pages outside that frame are unchanged.
 
 ## Choose A Guide
 

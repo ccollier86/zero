@@ -1,11 +1,14 @@
 'use client';
 
+/** Command composition with optional menu/input type roles; cmdk retains filtering/selection and overlays retain portal ownership. */
 import * as React from 'react';
 import { Command as CommandPrimitive } from 'cmdk';
 import { SearchIcon } from 'lucide-react';
 
 import { cn } from '#zero/lib/utils';
-import { useOwnedFloatingOverlay } from '../overlays/overlay-scope';
+import { composeOverlayRefs, useOwnedFloatingOverlay } from '../overlays/overlay-scope';
+import { ScrollViewportDecoration, type ScrollViewportDecorationProps } from '../overlays/scroll-viewport-decoration';
+import { MenuActiveHighlight } from '../overlays/menu-active-highlight';
 import {
   Dialog,
   DialogContent,
@@ -23,7 +26,7 @@ function Command({
     <CommandPrimitive
       data-slot="command"
       className={cn(
-        'bg-popover text-popover-foreground flex h-full w-full flex-col overflow-hidden rounded-md',
+        'relative bg-popover text-popover-foreground flex h-full w-full flex-col overflow-hidden rounded-md font-[family-name:var(--zero-theme-font-body,inherit)]',
         className,
       )}
       {...props}
@@ -80,7 +83,7 @@ function CommandInput({
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
-          'placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50',
+          'placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-[length:var(--zero-type-navigation-size,var(--text-sm,.875rem))] leading-[var(--zero-type-navigation-leading,var(--text-sm--line-height,1.4285714286))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-navigation-weight,inherit)] tracking-[var(--zero-type-navigation-tracking,inherit)] outline-none disabled:cursor-not-allowed disabled:opacity-50',
           className,
         )}
         {...props}
@@ -93,10 +96,19 @@ function CommandInput({
 
 function CommandList({
   className,
+  ref,
+  fadeEdges = true,
+  scrollbars = 'hover',
   ...props
-}: React.ComponentProps<typeof CommandPrimitive.List>) {
-  return (
+}: React.ComponentProps<typeof CommandPrimitive.List> & {
+  fadeEdges?: boolean;
+  scrollbars?: ScrollViewportDecorationProps['scrollbars'];
+}) {
+  const [viewport, setViewport] = React.useState<HTMLDivElement | null>(null);
+  const viewportRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(setViewport, ref), [ref]);
+  return <>
     <CommandPrimitive.List
+      ref={viewportRef}
       data-slot="command-list"
       className={cn(
         'max-h-[300px] overflow-y-auto overflow-x-hidden',
@@ -104,7 +116,9 @@ function CommandList({
       )}
       {...props}
     />
-  );
+    <ScrollViewportDecoration viewport={viewport} fadeEdges={fadeEdges} scrollbars={scrollbars} />
+    <MenuActiveHighlight container={viewport} activeSelector='[cmdk-item][data-selected="true"]' preserveSelectionFill={false} />
+  </>;
 }
 
 // ─── Command Empty ───────────────────────────────────────────────────────
@@ -115,7 +129,7 @@ function CommandEmpty(
   return (
     <CommandPrimitive.Empty
       data-slot="command-empty"
-      className="py-6 text-center text-sm"
+      className="py-6 text-center text-[length:var(--zero-type-body-size,var(--text-sm,.875rem))] leading-[var(--zero-type-body-leading,var(--text-sm--line-height,1.4285714286))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-body-weight,inherit)] tracking-[var(--zero-type-body-tracking,inherit)]"
       {...props}
     />
   );
@@ -131,7 +145,7 @@ function CommandGroup({
     <CommandPrimitive.Group
       data-slot="command-group"
       className={cn(
-        'text-foreground [&_[cmdk-group-heading]]:text-muted-foreground overflow-hidden p-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium',
+        'text-foreground [&_[cmdk-group-heading]]:text-muted-foreground overflow-hidden p-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[length:var(--zero-type-caption-size,var(--text-xs,.75rem))] [&_[cmdk-group-heading]]:leading-[var(--zero-type-caption-leading,var(--text-xs--line-height,1.3333333333))] [&_[cmdk-group-heading]]:font-[number:var(--zero-type-label-weight,var(--font-weight-medium,500))]',
         className,
       )}
       {...props}
@@ -164,7 +178,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-[length:var(--zero-type-navigation-size,var(--text-sm,.875rem))] leading-[var(--zero-type-navigation-leading,var(--text-sm--line-height,1.4285714286))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-navigation-weight,inherit)] tracking-[var(--zero-type-navigation-tracking,inherit)] outline-none select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -182,7 +196,7 @@ function CommandShortcut({
     <span
       data-slot="command-shortcut"
       className={cn(
-        'text-muted-foreground ml-auto text-xs tracking-widest',
+        'text-muted-foreground ml-auto text-[length:var(--zero-type-caption-size,var(--text-xs,.75rem))] leading-[var(--zero-type-caption-leading,var(--text-xs--line-height,1.3333333333))] font-[family-name:var(--zero-theme-font-body,inherit)] tracking-widest',
         className,
       )}
       {...props}

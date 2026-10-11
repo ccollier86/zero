@@ -46,6 +46,13 @@ load environment files, run Doctor, open databases or call providers.
   ensure every catalogued component/hook/support/SDK record has a real reader
   home, not only a planned path or a source link. This measures placement, not
   prop/method accuracy. Run `bun --no-env-file docs-next/_work/checks/catalog-homes.ts`.
+- [Chart catalog supplement regression](./chart-catalog-supplement.test.ts):
+  matches 53 direct renderer/part exports, one chart hook and four bridge helpers
+  to their additive inventory rows, exact public routes, declaration owners and
+  canonical manuals. Reads TypeScript syntax and package metadata without a
+  TypeScript program or application import; preserves the historical metadata/counts
+  and pinned export JSON. This is not exhaustive headless/helper/type coverage.
+  Run `bun --no-env-file test docs-next/_work/checks/chart-catalog-supplement.test.ts`.
 - [Parser regression tests](./markdown.test.ts): synthetic in-memory cases;
   run `bun --no-env-file test docs-next/_work/checks/markdown.test.ts`.
 - [AI example typecheck](./ai-examples.test.ts): reads the actual complete
@@ -83,13 +90,26 @@ load environment files, run Doctor, open databases or call providers.
   `bun --no-env-file test docs-next/_work/checks/tooling-design-examples.test.ts`.
 
 - [Frontend UI example typecheck](./frontend-ui-examples.test.ts): actual AppShell,
-  primitive, text, sensitive-display and public-page code fences checked in memory
+  upgrade-handoff, primitive, ContextMenu custom viewport, DatePicker Arc choice, text,
+  sensitive-display and public-page code fences checked in memory
   through the public source import routes. No client/provider, app, browser,
   transport or persistence operation runs. Execute alone in a coordinated compiler
   window: `bun --no-env-file test docs-next/_work/checks/frontend-ui-examples.test.ts`.
 
+- [UI upgrade handoff routing](./ui-upgrade-handoff.test.ts): checks the migration
+  guide's system manuals, source locations, installed public entry names,
+  agent handoff and explicit planned-work boundaries. Reads documentation and
+  package metadata only; does not update an app or publish a branch. Run
+  `bun --no-env-file test docs-next/_work/checks/ui-upgrade-handoff.test.ts`.
+
+- [Ordinary scroll manual routing](./ordinary-scroll-manual.test.ts): checks the
+  additive ContextMenu viewport/types against exact public routes, catalog homes,
+  actual compiled-example selection and DatePicker/native/year-owner guidance.
+  Source syntax only; no compiler program or app runs. Execute with
+  `bun --no-env-file test docs-next/_work/checks/ordinary-scroll-manual.test.ts`.
+
 - [Structured modal example typecheck](./modal-examples.test.ts): actual complete
-  modal, motion, form, workflow-progress, prompt, DenseList, reactive-record and
+  modal, Arc/native scroll configuration, motion, form, workflow-progress, prompt, DenseList, reactive-record and
   confirmation snippets compile against current public source exports in memory.
   This does not mount UI, execute app configuration or run any writer.
   Run `bun --no-env-file test docs-next/_work/checks/modal-examples.test.ts`.
@@ -100,6 +120,47 @@ load environment files, run Doctor, open databases or call providers.
   facades using an in-memory host. It does not execute an example, configuration,
   provider, database, file storage or browser. Run
   `bun --no-env-file test docs-next/_work/checks/storage-service-examples.test.ts`.
+
+- [Vector visualization example typecheck](./vector-visualization-examples.test.ts):
+  complete configuration, Torrent registration and component inspection examples
+  compile against public source facades in memory. No provider, app configuration,
+  browser or persistence operation executes. Run
+  `bun --no-env-file test docs-next/_work/checks/vector-visualization-examples.test.ts`.
+
+- [Zero chart example typecheck](./charts-examples.test.ts): the actual complete
+  Sankey, Race Bar, Funnel, Arc and handmade-chart controlled state, reactive aggregate collection and headless math
+  examples compile against public source entries in memory. No chart runtime,
+  app configuration, provider or database executes. Run
+  `bun --no-env-file test docs-next/_work/checks/charts-examples.test.ts`.
+- [Chart documentation route regression](./chart-documentation-routes.test.ts):
+  preserves the five manual IDs and 45 former heading routes after moving full
+  manuals under `frontend/charts/`; confirms all 25 examples remain canonical,
+  compatibility pages do not duplicate them and subsystem/parent navigation is
+  intact. Run `bun --no-env-file test docs-next/_work/checks/chart-documentation-routes.test.ts`.
+- [Component manual extraction regression](./component-manual-routes.test.ts):
+  preserves mixed choice/surface IDs and six sibling-section bodies while full Select/Card
+  manuals use distinct IDs in focused indexes. Checks four exact moved examples,
+  old section forwarding, canonical example/routing/catalog homes and seven
+  additional Card values against current public syntax. Reads files/TypeScript
+  syntax only; no compiler program, application or browser executes. Run
+  `bun --no-env-file test docs-next/_work/checks/component-manual-routes.test.ts`.
+- [Floating-tray adoption evidence regression](./floating-button-group-plan.test.ts):
+  checks all 35 captured token and eight motion dispositions, source identities,
+  complete reference options, current manual/API boundaries and discovery links without executing
+  upstream code, fetching the network or importing the application. This is not
+  runtime or visual qualification; those use the family tests and isolated package/copy consumers linked in the plan. Run
+  `bun --no-env-file test docs-next/_work/checks/floating-button-group-plan.test.ts`.
+
+- [Next-foundation example check](./theme-foundation-examples.test.ts) compiles
+  the [opt-in theme boundary](../../frontend/design-system/foundation-next.md)
+  and [managed-build configuration](../../frontend/design-system/style-build.md#select-the-managed-foundation)
+  against the public pure/server facades in memory and checks the explicit CSS
+  import order. No configuration example is executed. Run
+  `bun --no-env-file test docs-next/_work/checks/theme-foundation-examples.test.ts`.
+- [Typography example check](./typography-examples.test.ts) compiles the actual
+  native Text/Heading, local role override and existing Button example against
+  public source exports, without executing configuration or loading fonts.
+  Run `bun --no-env-file test docs-next/_work/checks/typography-examples.test.ts`.
 
 The checker establishes structural validity only. It cannot prove source
 accuracy, reciprocal link usefulness, licensing, support status, example

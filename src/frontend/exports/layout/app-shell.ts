@@ -1,0 +1,53 @@
+/** Application frame and sidebar composition. Curated client-safe re-exports only; implementation/context ownership stays with the existing modules. */
+
+// ─── App Shell ─────────────────────────────────────────────────────────
+export {
+  AppShell,
+  AppShellHeader,
+  AppShellBreadcrumbs,
+  AppShellSidebar,
+} from '../../../components/app-shell';
+export type {
+  AppShellProps,
+  AppShellHeaderProps,
+  AppShellBreadcrumbsProps,
+  AppShellSidebarProps,
+  AppShellPreset,
+  AppShellIcon,
+  AppShellBrand,
+  AppShellBreadcrumb,
+  AppShellWorkspace,
+  AppShellWorkspaceConfig,
+  AppShellMenuItem,
+  AppShellNavItem,
+  AppShellNavGroup,
+  AppShellUser,
+  AppShellHeaderConfig,
+  AppShellThemeToggleConfig,
+} from '../../../components/app-shell';
+export {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInput,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+  useSidebar,
+} from '../../../components/sidebar';

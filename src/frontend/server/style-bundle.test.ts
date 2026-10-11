@@ -1,12 +1,13 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { buildPlatformStyles, scanTailwindCandidates } from './style-bundle';
 
 describe('platform style bundle', () => {
   test('scans platform/app sources and emits a hashed stylesheet', async () => {
-    const outDir = await mkdtemp(join(tmpdir(), 'zero-styles-'));
+    const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform';
+    await mkdir(scratch, { recursive: true });
+    const outDir = await mkdtemp(join(scratch, 'zero-styles-'));
 
     try {
       const result = await buildPlatformStyles(outDir, './app');
@@ -17,6 +18,7 @@ describe('platform style bundle', () => {
       expect(css).toContain('.bg-background');
       expect(css).toContain('.text-foreground');
       expect(css).toContain('.dark\\:bg-bg-inset\\/45');
+      expect(css).toContain('[data-zero-theme="next"]');
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }

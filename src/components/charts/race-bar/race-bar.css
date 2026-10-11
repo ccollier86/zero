@@ -1,0 +1,75 @@
+/* Race Bar ranking geometry and motion. Shared analytical roles live in chart-tokens.css; local aliases remain explicit overrides. */
+:root, .light, [data-theme="light"] {
+  --zero-race-bar-tint: 38%; --zero-race-bar-tint-hot: 72%;
+  --zero-race-bar-period-enter: 420ms; --zero-race-bar-period-exit: 300ms;
+  --zero-race-bar-inspector-min-width: 168px;
+  --zero-race-bar-period-size: 30px;
+}
+.dark, [data-theme="dark"] { --zero-race-bar-tint: 42%; --zero-race-bar-tint-hot: 80%; }
+@media (prefers-color-scheme: dark) { :root:not(.light):not([data-theme="light"]) { --zero-race-bar-tint: 42%; --zero-race-bar-tint-hot: 80%; } }
+.zero-race-bar { --zero-tooltip-motion-blur-enter: var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)); --zero-tooltip-motion-blur-exit: var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms));
+  --zero-tooltip-blur: 0px; --zero-tooltip-blur-exit: 0px; --zero-tooltip-blur-shift: 0px; --zero-tooltip-blur-scale: 1;
+  position: relative; min-width: 0; margin: 0; color: var(--zero-chart-foreground, var(--foreground)); font-family: var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); }
+.zero-race-bar__title { font-size: var(--zero-chart-title-size, 14px); font-weight: 500; }
+.zero-race-bar__subtitle { font-size: var(--zero-chart-label-size, 12.5px); color: var(--zero-chart-muted, var(--muted-foreground)); }
+.zero-race-bar__top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 14px 0 10px; }
+.zero-race-bar__period { position: relative; height: 38px; flex: 1; min-width: 0; overflow: hidden; }
+.zero-race-bar__period span { position: absolute; left: 0; bottom: 0; font: 600 var(--zero-race-bar-period-size)/38px var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); letter-spacing: -.025em; white-space: nowrap; will-change: transform, filter, opacity; }
+.zero-race-bar__total { flex: none; max-width: 50%; overflow-wrap: anywhere; padding-bottom: 5px; font-size: var(--zero-chart-row-value-size, 12.5px); color: var(--zero-chart-muted, var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.zero-race-bar__total b { font-weight: 500; color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-race-bar__plot { position: relative; isolation: isolate; min-width: 0; outline: none; border-radius: var(--zero-chart-plot-radius, 10px); touch-action: pan-y; }
+.zero-race-bar__plot:focus-visible { box-shadow: 0 0 0 var(--zero-chart-focus-offset, 2px) var(--zero-chart-surface, var(--card)), 0 0 0 calc(var(--zero-chart-focus-offset, 2px) + var(--zero-chart-focus-width, 2px)) var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground))); }
+.zero-race-bar__rows, .zero-race-bar__axis, .zero-race-bar__grid { position: absolute; inset: 0; overflow: hidden; }
+.zero-race-bar__grid, .zero-race-bar__axis { pointer-events: none; }
+.zero-race-bar__tick { position: absolute; top: 0; font-size: var(--zero-chart-metadata-size, 11.5px); color: var(--zero-chart-muted, var(--muted-foreground)); font-variant-numeric: tabular-nums; white-space: nowrap; transform: translateX(-50%); }
+.zero-race-bar__grid-line { position: absolute; width: 1px; background: var(--zero-race-bar-grid, var(--zero-chart-grid, color-mix(in srgb, var(--zero-chart-border, var(--border)) 45%, var(--zero-chart-surface, var(--card))))); }
+.zero-race-bar__row { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+.zero-race-bar__name { position: absolute; left: 0; top: 0; font-size: var(--zero-race-bar-name-size, var(--zero-chart-label-size, 12.5px)); color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); text-align: right;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; transition: color var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)) ease; }
+.zero-race-bar__row.hi .zero-race-bar__name, .zero-race-bar__row.on .zero-race-bar__name { font-weight: 600; color: var(--zero-chart-foreground, var(--foreground)); }
+.zero-race-bar__bar { position: absolute; top: 0; border-radius: 2px 4px 4px 2px; background: color-mix(in srgb, var(--c) var(--zero-race-bar-tint), var(--zero-chart-surface, var(--card)));
+  transition: background var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)) ease, opacity var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)) ease; }
+.zero-race-bar__bar::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--c); }
+.zero-race-bar__row.on .zero-race-bar__bar { background: color-mix(in srgb, var(--c) var(--zero-race-bar-tint-hot), var(--zero-chart-surface, var(--card))); }
+.zero-race-bar.dim .zero-race-bar__row:not(.on) .zero-race-bar__bar { opacity: .42; }
+.zero-race-bar.dim .zero-race-bar__row:not(.on) .zero-race-bar__name, .zero-race-bar.dim .zero-race-bar__row:not(.on) .zero-race-bar__value { opacity: .55; }
+.zero-race-bar__value { position: absolute; top: 0; font-size: var(--zero-race-bar-value-size, var(--zero-chart-row-value-size, 12.5px)); font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.zero-race-bar.inside .zero-race-bar__name { text-align: left; padding: 0 0 0 8px; z-index: 1; }
+.zero-race-bar__legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 12px; font-size: var(--zero-chart-metadata-size, 11.5px); color: var(--zero-chart-muted, var(--muted-foreground)); }
+.zero-race-bar__legend span { display: inline-flex; align-items: center; gap: 6px; }
+.zero-race-bar__legend i { width: 9px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--c) var(--zero-race-bar-tint), var(--zero-chart-surface, var(--card))); box-shadow: inset -2px 0 0 var(--c); }
+.zero-race-bar__controls { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.zero-race-bar__button[data-slot="button"] { flex: none; width: 30px; height: 30px; min-height: 30px; padding: 0; border-radius: 50%; color: var(--zero-chart-foreground, var(--foreground));
+  border: 1px solid var(--zero-chart-border-strong, var(--border-strong, var(--border))); background: var(--zero-chart-surface, var(--card)); box-shadow: none; transition: border-color var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)) ease, transform var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)) ease; }
+.zero-race-bar__button[data-slot="button"]:hover { border-color: var(--zero-chart-faint, var(--text-muted, var(--muted-foreground))); background: var(--zero-chart-surface, var(--card)); }
+.zero-race-bar__button[data-slot="button"]:active { transform: scale(.94); }
+.zero-race-bar__button[data-slot="button"]:focus-visible { outline: var(--zero-chart-focus-width, 2px) solid var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground))); outline-offset: var(--zero-chart-focus-offset, 2px); box-shadow: none; }
+.zero-race-bar__button[data-slot="button"] svg { width: 12px; height: 12px; }
+.zero-race-bar__timeline { position: relative; flex: 1; min-width: 0; height: 36px; touch-action: none; }
+.zero-race-bar__track { position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--zero-chart-border-strong, var(--border-strong, var(--border))); }
+.zero-race-bar__fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--zero-chart-foreground, var(--foreground)); }
+.zero-race-bar__mark { position: absolute; top: -2px; width: 1px; height: 7px; background: var(--zero-chart-surface, var(--card)); opacity: .9; }
+.zero-race-bar__mark.ahead { background: var(--zero-chart-faint, var(--text-muted, var(--muted-foreground))); opacity: .7; }
+.zero-race-bar__thumb { position: absolute; top: 50%; left: 0; width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; border-radius: 50%; background: var(--zero-chart-surface, var(--card)); border: 1.5px solid var(--zero-chart-foreground, var(--foreground));
+  box-shadow: 0 1px 3px rgb(0 0 0 / .15); transition: transform var(--zero-race-bar-feedback, var(--zero-chart-feedback, 120ms)) ease; }
+.zero-race-bar__range { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; touch-action: none; }
+.zero-race-bar__timeline:has(.zero-race-bar__range:focus-visible) .zero-race-bar__thumb { box-shadow: 0 0 0 calc(var(--zero-chart-focus-offset, 2px) + 1px) var(--zero-chart-surface, var(--card)), 0 0 0 calc(var(--zero-chart-focus-offset, 2px) + var(--zero-chart-focus-width, 2px) + 1px) var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground))); }
+.zero-race-bar__timeline:active .zero-race-bar__thumb { transform: scale(1.12); }
+.zero-race-bar__ends { display: flex; justify-content: space-between; margin: -4px 0 0 44px; font-size: var(--zero-chart-metadata-size, 11.5px); color: var(--zero-chart-muted, var(--muted-foreground)); }
+.zero-race-bar__inspection-anchor { position: absolute; width: 1px; height: 1px; pointer-events: none; }
+.zero-tooltip.zero-race-bar__tooltip { --zero-tooltip-background: var(--zero-chart-surface, var(--card)); --zero-tooltip-foreground: var(--zero-chart-muted, var(--muted-foreground));
+  --zero-tooltip-border: var(--zero-chart-border-strong, var(--border)); --zero-tooltip-radius: var(--zero-race-bar-inspector-radius, var(--zero-chart-inspector-radius, 10px)); --zero-tooltip-padding-inline: 0px; --zero-tooltip-padding-block: 0px;
+  --zero-tooltip-shadow: var(--zero-race-bar-inspector-shadow, var(--zero-chart-inspector-shadow)); --zero-tooltip-font-family: var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); --zero-tooltip-font-weight: 400;
+  --zero-tooltip-max-width: var(--zero-chart-inspector-max-width, 260px);
+  min-width: min(var(--zero-race-bar-inspector-min-width), calc(100vw - 16px)); border-radius: var(--zero-race-bar-inspector-radius, var(--zero-chart-inspector-radius, 10px)); background: var(--zero-chart-surface, var(--card));
+  max-width: min(var(--zero-chart-inspector-max-width, 260px), calc(100vw - 2 * var(--zero-tooltip-viewport-padding, 8px)), max(0px, var(--radix-tooltip-content-available-width, 100vw)));
+  color: var(--zero-chart-muted, var(--muted-foreground)); border-color: var(--zero-chart-border-strong, var(--border-strong, var(--border))); box-shadow: var(--zero-race-bar-inspector-shadow, var(--zero-chart-inspector-shadow)); pointer-events: none; }
+.zero-race-bar__tooltip > .zero-tooltip-body { padding: 0; }
+.zero-race-bar__inspection { padding: var(--zero-race-bar-inspector-padding, var(--zero-chart-inspector-padding, 9px 12px)); font-size: var(--zero-chart-inspector-font-size, 12px); line-height: var(--zero-chart-inspector-line-height, 1.45); overflow-wrap: anywhere; }
+.zero-race-bar__inspection-name { color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-race-bar__inspection-value { font: 500 var(--zero-race-bar-inspector-value-size, var(--zero-chart-inspector-value-size, 17px))/var(--zero-chart-inspector-value-line-height, 1.3) var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); color: var(--zero-chart-foreground, var(--foreground)); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.zero-race-bar__inspection-delta { font-variant-numeric: tabular-nums; }
+.zero-race-bar__empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--zero-chart-muted, var(--muted-foreground)); }
+.zero-race-bar__sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.zero-race-bar [hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .zero-race-bar__name, .zero-race-bar__bar, .zero-race-bar__button, .zero-race-bar__thumb { transition: none; } }

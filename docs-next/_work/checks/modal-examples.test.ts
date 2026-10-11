@@ -4,6 +4,7 @@ import ts from 'typescript';
 
 const selected: Record<string, readonly number[]> = {
   'frontend/modals/index.md': [0],
+  'frontend/modals/configuration.md': [0],
   'frontend/modals/content.md': [0],
   'frontend/modals/motion.md': [0],
   'frontend/modals/forms.md': [0],

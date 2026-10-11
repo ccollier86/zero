@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: ui-primitives
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working-source routing; each family retains its own review evidence"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -30,16 +30,22 @@ complete control plane.
 
 ## Feature Guides
 
+- [Main UI reference](../../ui-reference.md): shared design tokens, motion/action
+  mapping and system overviews; the focused guides below own exact APIs.
 - [Buttons and text inputs](./inputs.md): native props, slots and form behavior.
 - [Button groups](./button-group.md): joined actions, addons, split controls and separate single/multiple selection.
-- [Choice controls](./choices.md): Select, Combobox, Checkbox and RadioGroup.
+- [Select](../controls/select.md): native Morph Select, rich slots and actual viewport.
+- [Other choice controls](./choices.md): Combobox, Checkbox, RadioGroup and Switch;
+  retained Select section routes link to its canonical manual.
 - [Tab panels](./tabs.md): controlled local selection through the public animated
   facade; use managed layouts for modal tabs (unreleased facade addition).
 - [Tags, progress and validation](./tags-and-validation.md): controlled lists,
   range-correct progress and caller-computed rule feedback.
 - [Dates and time](./dates-and-time.md): Date/DateRange/HH:mm values and calendar policy.
 - [Inline text editing](./inline-editing.md): revision-aware geometry-preserving editing.
-- [Surfaces and identity](./surfaces.md): cards, badges, avatars, separators and skeletons.
+- [Card and ContentCard](../surfaces/card.md): composable parts and managed quick looks.
+- [Identity primitives](./surfaces.md): badges, avatars, separators and skeletons;
+  retained Card section routes link to its canonical manual.
 - [List/detail control planes](./list-detail.md): layout, detail region and compact bottom actions.
 - [Resizable panels](./resizable.md): established library sizing with Zero tokens and keyboard support.
 - [Tables and page links](./tables-and-pagination.md): semantic markup without an implied query engine.

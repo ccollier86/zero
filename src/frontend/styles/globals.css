@@ -7,6 +7,13 @@
 @import "../../components/profile-settings/profile-settings.styles.css";
 @import "../../components/kbd/kbd.styles.css";
 @import "../../components/dense-list/dense-list.css";
+@import "../../components/vector-visualization/vector-visualization.css";
+@import "../../components/charts/chart-tokens.css";
+@import "../../components/charts/sankey/sankey.css";
+@import "../../components/charts/race-bar/race-bar.css";
+@import "../../components/charts/funnel/funnel.css";
+@import "../../components/charts/arc/arc-charts.css";
+@import "../../components/charts/native/native-charts.css";
 @import "../../modals/modal-shell.css";
 @import "../../components/data-table/data-table-motion.css";
 @import "../../components/data-table/data-table-row-motion.css";
@@ -14,6 +21,12 @@
 @import "./calendar-motion-tokens.css";
 @import "./modal-tokens.css";
 @import "./tooltip-tokens.css";
+@import "../../components/_internal/anchored-surface/anchored-surface.css";
+@import "../../components/_internal/scroll-viewport/scroll-viewport.css";
+@import "../../components/_internal/magnetic-highlight/menu-active-highlight.css";
+@import "../../components/controls/select/select-morph.css";
+@import "../../components/surfaces/card/content-card.css";
+@import "../../components/controls/floating-button-group/floating-button-group.css";
 @import "react-easy-crop/react-easy-crop.css";
 @import "../../components/avatar-editor/avatar-editor.styles.css";
 

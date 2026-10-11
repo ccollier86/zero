@@ -45,6 +45,8 @@ function Hint({ label, text = label, ...props }: { label: string; text?: string 
 }
 
 function ModalHints() {
+  const localTheme = { '--zero-tooltip-font-size': '19px', '--zero-tooltip-neutral-foreground': '#112233' } as React.CSSProperties;
+  const explicitTheme = { '--zero-tooltip-font-size': '21px', '--zero-tooltip-neutral-foreground': '#445566' } as React.CSSProperties;
   return <div style={{ display: 'grid', gap: 16 }}>
     <Hint label="Owned standalone hint" text="Standalone hint inside the managed modal" delayDuration={0} />
     <TooltipGroup delayDuration={0}>
@@ -53,6 +55,14 @@ function ModalHints() {
         <Hint label="Owned grouped neighbor" text="Second grouped hint inside the managed modal" />
       </div>
     </TooltipGroup>
+    <div data-testid="local-tooltip-theme" style={localTheme}>
+      <Hint label="Local standalone hint" text="Local standalone theme inside the managed modal" delayDuration={0} />
+      <Tooltip delayDuration={0}><TooltipTrigger asChild><Button variant="outline">Explicit standalone hint</Button></TooltipTrigger>
+        <TooltipContent style={explicitTheme}>Explicit standalone theme inside the managed modal</TooltipContent></Tooltip>
+      <TooltipGroup delayDuration={0}>
+        <Hint label="Local grouped hint" text="Local grouped theme inside the managed modal" />
+      </TooltipGroup>
+    </div>
   </div>;
 }
 

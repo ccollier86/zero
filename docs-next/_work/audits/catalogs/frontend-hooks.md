@@ -217,6 +217,21 @@ New source contracts, separate from the historical pinned count:
 | `useFormSave` | `@zero/framework`, `@zero/framework/react` | [Save hook](../../../../src/hooks/use-form-save.ts) | `frontend/forms/save-and-leave.md` |
 | `useNavigationGuard` | `@zero/framework`, `@zero/framework/react` | [Router guard](../../../../src/frontend/client/router-context.tsx) | `frontend/forms/save-and-leave.md` |
 
+## Chart Query Working Source
+
+This additive hook is observed in dirty framework **2.6.0** source against
+`335b27372b0b8ef57a1e92cf93cec378923fe50b`, on **2026-10-10**. It is separate
+from the historical 131-hook count and does not establish released support.
+The hook projects an already authorized, bounded full-sync collection through
+the existing client lifecycle; it does not create a server aggregate query,
+infer baseline completion or authorize its predicate. Its options/result types
+belong to the [current bridge contract](../../../frontend/charts/index.md#the-current-reactive-bridge).
+Generic `/hooks` and `/react/hooks` do not export this hook.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `useChartQuery` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/charts/react` | [Chart query hook](../../../../src/frontend/client/chart-query.ts) | [Current reactive bridge](../../../frontend/charts/index.md#the-current-reactive-bridge) |
+
 ## Reconciliation And Review
 
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

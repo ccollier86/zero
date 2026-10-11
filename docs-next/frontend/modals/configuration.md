@@ -8,14 +8,14 @@ visibility: internal
 system: modals
 feature: configuration
 maturity: supported
-applies_to: ["2.6.0 source; structured-modal upgrade unreleased"]
+applies_to: ["2.6.0 working source; structured-modal and additive Arc-scroll upgrade unreleased"]
 modes: [browser, standalone, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-11"
   evidence_level: source-observed
 ---
 
@@ -61,8 +61,9 @@ optionally accepts `initialSection` identifying a supplied panel.
 | `customSize` | Optional width/maxWidth/height/maxHeight CSS values; viewport bounds remain |
 | `placement` | center; center/left/right/bottom |
 | `height` | auto for content, fixed for tabs/nav; auto/fixed |
-| `scrollbar` | auto; auto/thin/hidden for content body |
-| `navScrollbar` | auto; independent auto/thin/hidden for navigation |
+| `scrollTreatment` | arc; arc/native. Arc decorates exact native body/panel/tab/navigation viewports; native retains the original shell recipe. |
+| `scrollbar` | auto; auto/thin/hidden for content body/panels, mapped by scrollTreatment as described below |
+| `navScrollbar` | auto; independent auto/thin/hidden for grouped navigation and the header tab strip |
 | `dismissible` | true; false hides X and blocks advisory dismissal |
 | `closeOnClickOutside`, `closeOnEscape` | true; individual dismissal paths can be disabled |
 | `allowEditingWhilePending` | false; true deliberately permits newer drafts while actions remain locked |
@@ -87,8 +88,46 @@ body pad 20px and nav 212px. Theme overrides are centralized in
 `--zero-modal-*` tokens. Legacy MODAL_SIZE_CLASSES remains a compatibility helper;
 it is not the new shell's sizing authority.
 
-`scrollbar:"hidden"` hides only the scrollbar. Body scroll, wheel/touch/keyboard
-and focus visibility remain available; do not emulate it with overflow:hidden.
+With the default `scrollTreatment:"arc"`, `auto` shows overlay rails on hover
+and scroll activity, `thin` keeps thin overlay rails visible while an axis
+overflows, and `hidden` omits rails. All three preserve hidden-distance edge
+fades and native body scrolling; fitting content has no fade or rail. Body
+panels admit both axes, header tabs are horizontal, and grouped navigation
+switches from vertical desktop to horizontal phone treatment. Chrome and
+fixed-frame borders/shadows are not masked.
+
+`scrollTreatment:"native"` selects the retained original shell markup/styles
+and native `auto`/`thin`/`hidden` scrollbar policy. `scrollbar:"hidden"` hides
+only the bar in either recipe. Body scroll, wheel/touch/keyboard and focus
+visibility remain available; do not emulate it with `overflow:hidden`.
+The modal options do not change public ScrollArea's Radix `type` mapping or
+expose the private next-adapter options as application imports. See
+[layouts](./layouts.md#placement-sizing-and-scrollbars) for the composition and
+[scroll adoption plan](../../_work/arc-scroll-surface-plan.md) for the remaining
+coverage and acceptance gates.
+
+~~~tsx
+import { modals } from '@zero/framework/modals';
+
+export function openScrollPreview(scrollTreatment: 'arc' | 'native' = 'arc') {
+  return modals.show<boolean>({
+    title: 'Workspace details',
+    size: 'md',
+    height: 'fixed',
+    scrollTreatment,
+    scrollbar: 'thin',
+    body: <section aria-label="Workspace details">
+      <p>Use the existing body viewport for ordinary long content.</p>
+    </section>,
+    actions: [{ id: 'done', label: 'Done', variant: 'primary', value: true }],
+  });
+}
+~~~
+
+Pass `"native"` to compare with the retained original recipe. This is a
+presentation option on the same manager: actions, guards, typed results,
+stacking and opener restoration keep their existing owners. No additional
+ScrollArea wrapper or service configuration is needed.
 
 ## Sections And Actions
 

@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: surfaces-identity
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; composable Card/ContentCard upgrade unreleased"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -23,33 +23,39 @@ reviewed_against:
 
 [Primitive index](./index.md) · [Frontend index](../../index.md) · [Documentation index](../../../index.md)
 
-Import the corresponding `@zero/framework/components/ui/card`, `/badge`,
-`/avatar`, `/separator` and `/skeleton` modules. These primitives do not fetch
-records, determine identity or produce loading state themselves.
+Import the corresponding `@zero/framework/components/ui/badge`, `/avatar`,
+`/separator` and `/skeleton` modules. These primitives do not fetch records,
+determine identity or produce loading state themselves.
 
-Card, CardHeader, CardDescription, CardContent and CardFooter accept native div
-props. CardTitle also accepts asChild=false; use a heading child when semantic
-heading structure is needed, because its default is a div. Source padding is
-header/content/footer 20px, with content/footer top padding removed. className
-can customize spacing while keeping [tokens](../../design-system/tokens.md).
+[Card and ContentCard](../surfaces/card.md) now has the complete composition,
+props, examples and managed quick-look contract. The
+[Surfaces index](../surfaces/index.md) routes cards and identity surfaces without
+changing their public imports.
 
-```tsx
-import { Card, CardHeader, CardTitle, CardContent } from '@zero/framework/components/ui/card';
+## Standard Card Parts
 
-export function Summary() {
-  return <Card><CardHeader><CardTitle asChild><h2>Summary</h2></CardTitle></CardHeader>
-    <CardContent>Application-owned content.</CardContent></Card>;
-}
-```
+Use [Standard Card Parts](../surfaces/card.md#standard-card-parts) for the full
+native composition, density, semantic heading and independently usable parts.
+
+## ContentCard And Managed Quick Look
+
+Use [ContentCard And Managed Quick Look](../surfaces/card.md#contentcard-and-managed-quick-look)
+for its full props, example, managed modal lifecycle and caller-owned boundaries.
+
+## Badge
 
 Badge accepts div props and variant default|secondary|destructive|warning|outline
 (default default). badgeVariants is the module's style helper. A badge is visual
 metadata: it does not grant the role or status written inside it.
 
+## Avatar
+
 Avatar, AvatarImage and AvatarFallback retain their Radix root/image/fallback
 props. Source default size is 32px and rounded; provide image src/alt and fallback
 content. The component does not compute user initials automatically (AppShell
 and domain components do so themselves).
+
+## Separator And Skeleton
 
 Separator follows Radix with orientation='horizontal', decorative=true. Choose
 vertical explicitly and give its parent a useful height. decorative separators

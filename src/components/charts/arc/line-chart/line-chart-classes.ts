@@ -1,0 +1,33 @@
+/** Scoped class names; plain CSS keeps Zero source-copy independent of CSS modules. */
+export const styles = {
+  "figure": "zero-arc-line-chart__figure",
+  "legend": "zero-arc-line-chart__legend",
+  "toggle": "zero-arc-line-chart__toggle",
+  "toggleLabel": "zero-arc-line-chart__toggleLabel",
+  "swatch": "zero-arc-line-chart__swatch",
+  "chart": "zero-arc-line-chart__chart",
+  "plot": "zero-arc-line-chart__plot",
+  "svg": "zero-arc-line-chart__svg",
+  "grid": "zero-arc-line-chart__grid",
+  "baseline": "zero-arc-line-chart__baseline",
+  "crosshair": "zero-arc-line-chart__crosshair",
+  "series": "zero-arc-line-chart__series",
+  "line": "zero-arc-line-chart__line",
+  "area": "zero-arc-line-chart__area",
+  "dot": "zero-arc-line-chart__dot",
+  "tooltip": "zero-arc-line-chart__tooltip",
+  "tipTitle": "zero-arc-line-chart__tipTitle",
+  "tipRow": "zero-arc-line-chart__tipRow",
+  "tipSwatch": "zero-arc-line-chart__tipSwatch",
+  "tipName": "zero-arc-line-chart__tipName",
+  "tipValue": "zero-arc-line-chart__tipValue",
+  "message": "zero-arc-line-chart__message",
+  "skeleton": "zero-arc-line-chart__skeleton",
+  "gutter": "zero-arc-line-chart__gutter",
+  "tick": "zero-arc-line-chart__tick",
+  "tickText": "zero-arc-line-chart__tickText",
+  "axis": "zero-arc-line-chart__axis",
+  "axisLabel": "zero-arc-line-chart__axisLabel",
+  "srOnly": "zero-arc-line-chart__srOnly"
+} as const;
+export default styles;

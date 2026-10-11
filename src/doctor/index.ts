@@ -7,7 +7,11 @@ export {
 } from './platform-doctor';
 export { loadDoctorConfig, resolveDoctorConfigPath } from './config-loader';
 export { runSourceOnlyDoctor } from './source-only-doctor';
-export type { SourceOnlyDoctorOptions, SourceOnlyDoctorReport, SourceOnlyFrameworkInspection } from './source-only-types';
+export type { SourceOnlyDoctorOptions, SourceOnlyDoctorReport, SourceOnlyFrameworkInspection, SourceOnlyUpgradeSummary } from './source-only-types';
+export { getSourceOnlyUpgradeCatalog, SOURCE_ONLY_UPGRADE_CATALOG_VERSION } from './source-only-upgrade-catalog';
+export type * from './source-only-upgrade-types';
+export { checkSourceOnlyThemeFoundation } from './source-only-theme-checks';
+export type { SourceOnlyThemeCheckInput, SourceOnlyThemeCheckResult, SourceOnlyThemeSummary } from './source-only-theme-checks';
 export {
   checkDatabaseAutomations,
   type DatabaseAutomationDoctorInput,

@@ -1,0 +1,33 @@
+/** Scoped class names; plain CSS keeps Zero source-copy independent of CSS modules. */
+export const styles = {
+  "figure": "zero-arc-bar-chart__figure",
+  "header": "zero-arc-bar-chart__header",
+  "kind": "zero-arc-bar-chart__kind",
+  "when": "zero-arc-bar-chart__when",
+  "value": "zero-arc-bar-chart__value",
+  "unit": "zero-arc-bar-chart__unit",
+  "swap": "zero-arc-bar-chart__swap",
+  "swapText": "zero-arc-bar-chart__swapText",
+  "roll": "zero-arc-bar-chart__roll",
+  "digits": "zero-arc-bar-chart__digits",
+  "digit": "zero-arc-bar-chart__digit",
+  "sizer": "zero-arc-bar-chart__sizer",
+  "chart": "zero-arc-bar-chart__chart",
+  "plot": "zero-arc-bar-chart__plot",
+  "svg": "zero-arc-bar-chart__svg",
+  "grid": "zero-arc-bar-chart__grid",
+  "baseline": "zero-arc-bar-chart__baseline",
+  "cursor": "zero-arc-bar-chart__cursor",
+  "mean": "zero-arc-bar-chart__mean",
+  "bar": "zero-arc-bar-chart__bar",
+  "gutter": "zero-arc-bar-chart__gutter",
+  "tick": "zero-arc-bar-chart__tick",
+  "meanLabel": "zero-arc-bar-chart__meanLabel",
+  "tickText": "zero-arc-bar-chart__tickText",
+  "axis": "zero-arc-bar-chart__axis",
+  "axisLabel": "zero-arc-bar-chart__axisLabel",
+  "scrubber": "zero-arc-bar-chart__scrubber",
+  "srOnly": "zero-arc-bar-chart__srOnly",
+  "measure": "zero-arc-bar-chart__measure"
+} as const;
+export default styles;

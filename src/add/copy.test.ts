@@ -5,7 +5,7 @@
  * generated file layout, import rewriting, and package-mode buildability.
  */
 
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
@@ -13,7 +13,7 @@ import { addZeroSource } from './copy';
 import { buildSourceCopyBrowserFixture } from './test-support/build-source-copy-fixture';
 
 async function createTempApp(): Promise<string> {
-  const baseDir = join(process.cwd(), '.zero');
+  const baseDir = '/Volumes/code-bank/tmp/scratch/zero-platform';
   await mkdir(baseDir, { recursive: true });
   const targetDir = await mkdtemp(join(baseDir, 'test-zero-add-'));
   await writeTestTsConfig(targetDir);
@@ -406,7 +406,13 @@ async function writeTestTsConfig(targetDir: string): Promise<void> {
 }
 
 async function linkFrameworkPackage(targetDir: string): Promise<void> {
-  const scopeDir = join(targetDir, 'node_modules/@zero');
+  const installed = join(process.cwd(), 'node_modules');
+  const modules = join(targetDir, 'node_modules');
+  const scopeDir = join(modules, '@zero');
   await mkdir(scopeDir, { recursive: true });
+  // External scratch consumers cannot inherit dependencies from the checkout's
+  // ancestors. Give this allocated fixture explicit read-only dependency links.
+  await Promise.all((await readdir(installed)).filter(name => name !== '@zero')
+    .map(name => symlink(join(installed, name), join(modules, name))));
   await symlink(process.cwd(), join(scopeDir, 'framework'), 'dir');
 }

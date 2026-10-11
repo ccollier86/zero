@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: dropdown-menu
 maturity: supported
-applies_to: ["2.1.1 source with audited interaction/token corrections; publication qualification pending"]
+applies_to: ["2.6.0 working source; anchored menu upgrade unreleased"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -75,6 +75,23 @@ Sub/SubTrigger/SubContent compose a submenu with independent controlled/default
 open state. Subtrigger adds a chevron and supports inset/disabled. Content owns
 Motion element, position/collision/focus callbacks and submenu portal.
 Use explicit textValue where a custom icon-rich label requires text matching.
+
+Root and submenu surfaces now use the same restrained
+[anchored entrance/exit](./popover.md#anchored-motion). Each keeps its own
+350/35 magnetic highlight under stationary labels and controls; submenu layout
+identity is not shared with the parent. Headers/dividers are not hover targets.
+Live trigger/subtrigger tokens follow the portal, while a managed modal retains
+its portal container, layer and inactive-state fences. ArrowLeft returns from
+a submenu; Radix Escape closes the menu tree without dismissing the parent modal.
+Explicit Motion props preserve caller-specific recipes.
+
+Long root/submenu menus use one bounded inner native viewport. The outer Radix
+Content remains the public ref, positioned surface and keyboard/dismissal owner;
+its border and shadow stay outside the mask. Thumb dragging stays inside that
+same dismissal branch, so reading the menu does not close or select it.
+`viewportRef` reaches the inner scroller; `fadeEdges=true`,
+`scrollbars="hover" | "scroll" | "always" | "hidden"`, `viewportClassName` and
+`viewportStyle` customize presentation. Do not wrap the menu in another ScrollArea.
 
 ## Verification And Related Guides
 

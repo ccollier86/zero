@@ -256,7 +256,7 @@ function TooltipContent({ 'aria-label': ariaLabel, dir, onEscapeKeyDown, onPoint
     align={align} alignOffset={alignOffset} avoidCollisions={avoidCollisions} collisionBoundary={collisionBoundary}
     collisionPadding={collisionPadding ?? resolved.geometry.viewportPadding} arrowPadding={arrowPadding}
     sticky={sticky} hideWhenDetached={hideWhenDetached} updatePositionStrategy={updatePositionStrategy}
-    style={{ ...inheritedTheme, ...owner?.themeStyle, zIndex: layer, pointerEvents: isOpen ? undefined : 'none',
+    style={{ ...owner?.themeStyle, ...inheritedTheme, zIndex: layer, pointerEvents: isOpen ? undefined : 'none',
       width: 'max-content', maxWidth: 'var(--radix-tooltip-content-available-width, calc(100vw - 16px))' }}
     onEscapeKeyDown={event => { onEscapeKeyDown?.(event); if (!event.defaultPrevented) dismiss(); }}
     onPointerDownOutside={onPointerDownOutside} inert={!isOpen || (owner && !owner.active) || undefined}>
@@ -267,7 +267,7 @@ function TooltipContent({ 'aria-label': ariaLabel, dir, onEscapeKeyDown, onPoint
       dir={dir} {...props} style={{
         ...(followCursor === true || followCursor === 'x' ? { x: resolved.reducedMotion ? 0 : translateX } : {}),
         ...(followCursor === true || followCursor === 'y' ? { y: resolved.reducedMotion ? 0 : translateY } : {}),
-        position: 'relative', ...inheritedTheme, ...owner?.themeStyle, ...style, zIndex: layer,
+        position: 'relative', ...owner?.themeStyle, ...inheritedTheme, ...style, zIndex: layer,
         ...(!boundaryReady ? { visibility: 'hidden' } : {}),
       }} data-zero-overlay-owner={owner?.id} />
   </RadixTooltip.Content>;

@@ -20,9 +20,11 @@ test('complete Doctor and design-system Markdown examples compile against public
   const fixtures = new Map<string, string>();
   for (const page of pages) {
     const source = await Bun.file(new URL(page, root)).text();
-    const examples = [...source.matchAll(/^```tsx?\n([\s\S]*?)^```/gm)];
-    expect(examples.length, page).toBe(1);
-    fixtures.set(new URL(page.replace('.md', '.example.tsx'), root).pathname, examples[0]![1]!);
+    const examples = [...source.matchAll(/^(```|~~~)tsx?\n([\s\S]*?)^\1/gm)];
+    expect(examples.length, page).toBeGreaterThan(0);
+    for (const [index, example] of examples.entries()) {
+      fixtures.set(new URL(page.replace('.md', `_${index}.example.tsx`), root).pathname, example[2]!);
+    }
   }
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022,

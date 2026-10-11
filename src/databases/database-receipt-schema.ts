@@ -10,6 +10,7 @@ import {
   DATABASE_WRITER_RECEIPT_SCHEMA_VERSION,
 } from './database-receipt-contract';
 import type { DatabaseRuntime } from './database-runtime';
+import type { ReactiveDB } from '../sync/reactive-db';
 
 export const DATABASE_RECEIPT_TABLE = '_zero_database_operation_receipts';
 export const DATABASE_RECEIPT_STATS_TABLE = '_zero_database_receipt_stats_v1';
@@ -156,6 +157,22 @@ const RECEIPT_TRIGGER_SQL = Object.freeze({
   [RECEIPT_UPDATE_STATS_TRIGGER]: RECEIPT_UPDATE_STATS_SQL,
   [RECEIPT_DELETE_GUARD_TRIGGER]: RECEIPT_DELETE_GUARD_SQL,
 });
+
+/** Read-only admission check for optional pinned services with migrations disabled. */
+export function databaseReceiptSchemaReady(db: Pick<ReactiveDB, 'prepare'>): boolean {
+  const objects = [
+    [DATABASE_RECEIPT_TABLE, 'table', RECEIPT_STORED_SQL],
+    [DATABASE_RECEIPT_STATS_TABLE, 'table', RECEIPT_STATS_STORED_SQL],
+    [RECEIPT_RETENTION_INDEX, 'index', RECEIPT_RETENTION_INDEX_SQL],
+    ...Object.entries(RECEIPT_TRIGGER_SQL).map(([name, sql]) => [name, 'trigger', sql]),
+  ];
+  return objects.every(([name, type, sql]) => {
+    const statement = db.prepare('SELECT type,sql FROM sqlite_master WHERE name=?');
+    try { const actual = statement.get(name!) as { type: string; sql: string | null } | null;
+      return actual?.type === type && typeof actual.sql === 'string' && normalizeSqlShape(actual.sql) === normalizeSqlShape(sql!);
+    } finally { statement.finalize(); }
+  });
+}
 
 export interface DatabaseReceiptRow {
   receipt_key: string;

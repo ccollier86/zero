@@ -1,0 +1,81 @@
+/** Arc Free (MIT), copyright 2026 Elia Kuratli. Scoped chart skin; consumes Zero Arc token aliases. */
+.zero-arc-streamgraph__figure { display: grid; min-width: 0; gap: var(--zero-arc-space-4); margin: 0; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); letter-spacing: var(--zero-arc-tracking-body); }
+
+/* Categorical series inherit Zero chart-family colors, with scoped private overrides. */
+
+/* Layer toggles: a rect swatch mirrors the area it names. Hover or focus previews that layer in the plot. */
+.zero-arc-streamgraph__legend { display: flex; flex-wrap: wrap; gap: 2px 4px; min-width: 0; margin-inline: -8px; }
+.zero-arc-streamgraph__toggle { display: inline-flex; min-height: 32px; align-items: center; gap: 8px; padding: 0 10px 0 8px; border: 0; border-radius: var(--zero-arc-radius-pill); background: transparent; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); cursor: pointer; font: inherit; font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); -webkit-tap-highlight-color: transparent; transition: color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), background-color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), transform var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-streamgraph__toggle:active { transform: scale(.97); }
+.zero-arc-streamgraph__toggle[data-active] { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); background: color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 5%, transparent); }
+.zero-arc-streamgraph__toggle[data-dim] { opacity: .56; }
+.zero-arc-streamgraph__toggle[aria-pressed="false"] { color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); }
+.zero-arc-streamgraph__toggleLabel { white-space: nowrap; }
+.zero-arc-streamgraph__toggle[aria-pressed="false"] .zero-arc-streamgraph__toggleLabel { opacity: .72; text-decoration: line-through; text-decoration-color: color-mix(in oklab, currentColor 55%, transparent); }
+.zero-arc-streamgraph__swatch { width: 10px; height: 10px; flex: none; border-radius: 3px; background-color: var(--series); transition: transform var(--zero-arc-duration-standard) var(--zero-arc-ease-spring, var(--ease-spring, cubic-bezier(.22,1,.36,1))), opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-streamgraph__toggle[aria-pressed="false"] .zero-arc-streamgraph__swatch { opacity: .35; transform: scale(.6); }
+@media (hover: hover) and (pointer: fine) { .zero-arc-streamgraph__toggle:hover { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); } }
+
+.zero-arc-streamgraph__chart { position: relative; display: grid; grid-template-rows: auto 26px; min-width: 0; }
+.zero-arc-streamgraph__plot { position: relative; min-width: 0; outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; cursor: crosshair; }
+.zero-arc-streamgraph__svg { display: block; overflow: visible; }
+
+/* A 2px surface stroke is the gap between neighbouring layers. */
+.zero-arc-streamgraph__layer { fill: color-mix(in oklab, var(--series) 82%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); stroke: var(--zero-arc-surface, var(--zero-chart-surface, var(--card))); stroke-width: 2; stroke-linejoin: round; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), fill var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-streamgraph__chart[data-layer] .zero-arc-streamgraph__layer:not([data-active]) { opacity: .34; }
+.zero-arc-streamgraph__layer[data-active] { fill: var(--series); }
+
+.zero-arc-streamgraph__crosshair { stroke: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); stroke-opacity: .5; stroke-width: 1; shape-rendering: crispEdges; opacity: 0; transition: opacity var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); pointer-events: none; }
+.zero-arc-streamgraph__chart[data-active] .zero-arc-streamgraph__crosshair { opacity: 1; }
+
+.zero-arc-streamgraph__label { fill: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-xs); font-weight: 500; paint-order: stroke; stroke: var(--zero-arc-surface, var(--zero-chart-surface, var(--card))); stroke-width: 3px; stroke-opacity: .85; stroke-linejoin: round; pointer-events: none; transition: opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard), fill var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-streamgraph__label[data-hidden] { opacity: 0 !important; }
+.zero-arc-streamgraph__chart[data-layer] .zero-arc-streamgraph__label[data-dim] { opacity: 0 !important; }
+
+.zero-arc-streamgraph__tooltip { position: absolute; top: 0; left: 0; z-index: 1; display: grid; min-width: 156px; max-width: min(256px, 100%); gap: 4px; padding: 10px 12px; border: 1px solid var(--zero-arc-border, var(--zero-chart-border, var(--border))); border-radius: 14px; background: var(--zero-arc-surface-raised, var(--card)); box-shadow: var(--zero-arc-shadow-floating, var(--zero-chart-inspector-shadow)); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), scale var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-streamgraph__chart[data-active] .zero-arc-streamgraph__tooltip { opacity: 1; scale: 1; }
+.zero-arc-streamgraph__tipTitle { margin: 0 0 2px; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.zero-arc-streamgraph__tipRow { display: flex; min-width: 0; align-items: center; gap: 8px; margin: 0; font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-streamgraph__tipRow[data-dim] { opacity: .5; }
+.zero-arc-streamgraph__tipSwatch { width: 10px; height: 2.5px; flex: none; border-radius: 2px; background-color: var(--series); }
+.zero-arc-streamgraph__tipName { min-width: 0; flex: 1; overflow: hidden; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); text-overflow: ellipsis; white-space: nowrap; }
+.zero-arc-streamgraph__tipRow[data-active] .zero-arc-streamgraph__tipName { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }
+.zero-arc-streamgraph__tipValue { flex: none; margin-left: 8px; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.zero-arc-streamgraph__message { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); pointer-events: none; }
+
+.zero-arc-streamgraph__axis { position: relative; min-width: 0; }
+.zero-arc-streamgraph__axisLabel { position: absolute; top: 8px; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; transition: opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+/* New labels fade in while the stream morphs to a new range instead of popping in a single frame. */
+@starting-style { .zero-arc-streamgraph__axisLabel { opacity: 0; } }
+
+.zero-arc-streamgraph__srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zero-arc-streamgraph__toggle, .zero-arc-streamgraph__swatch, .zero-arc-streamgraph__layer, .zero-arc-streamgraph__crosshair, .zero-arc-streamgraph__label, .zero-arc-streamgraph__tooltip, .zero-arc-streamgraph__tipRow, .zero-arc-streamgraph__axisLabel { transition: none; }
+}
+
+/* Zero owns the inspector portal; preserve analytical rows while normalizing its shared card surface. */
+.zero-tooltip.zero-arc-streamgraph__tooltip {
+ --zero-tooltip-background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ --zero-tooltip-foreground:var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground)));
+ --zero-tooltip-border:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ --zero-tooltip-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius, 10px));
+ --zero-tooltip-padding-inline:0px; --zero-tooltip-padding-block:0px;
+ --zero-tooltip-shadow:var(--zero-arc-inspector-shadow, var(--zero-chart-inspector-shadow));
+ position:relative;top:auto;left:auto;opacity:1;scale:1;z-index:auto;
+ max-width:min(var(--zero-arc-inspector-max-width, var(--zero-chart-inspector-max-width, 260px)),calc(100vw - 16px),max(0px,var(--radix-tooltip-content-available-width,100vw)));
+ min-width:min(160px,calc(100vw - 16px));padding:var(--zero-arc-inspector-padding, var(--zero-chart-inspector-padding,9px 12px));
+ border-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius,10px));
+ background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ border-color:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ box-shadow:var(--zero-arc-inspector-shadow,var(--zero-chart-inspector-shadow));
+ pointer-events:none;
+}
+.zero-arc-streamgraph__tooltip > .zero-tooltip-body {padding:0;}
+.zero-arc-streamgraph__tooltip > .zero-tooltip-body > div {display:grid;gap:3px;}
+.zero-arc-streamgraph__plot:focus-visible,.zero-arc-streamgraph__stage:focus-visible {
+ outline:var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--foreground));
+ outline-offset:var(--zero-chart-focus-offset,2px);
+}
+.zero-arc-streamgraph__plot,.zero-arc-streamgraph__stage {isolation:isolate;}

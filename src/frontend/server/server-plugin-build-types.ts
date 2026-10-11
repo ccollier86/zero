@@ -80,6 +80,8 @@ export interface ResolvedZeroPluginFrontendAssets {
 export interface ResolvedAppFrontendAssets {
   readonly clientEntry?: string;
   readonly cssPath?: string;
+  /** Managed CSS selection captured at build time; absent older artifacts mean legacy. */
+  readonly themeFoundation?: import('./style-foundation').AppThemeFoundation;
   /** Normal server builds bind bundled plugin components to their bundled React SSR identity. */
   readonly pluginSsrRuntime?: 'app' | 'bundled';
   readonly plugins: Readonly<Record<string, ResolvedZeroPluginFrontendAssets>>;

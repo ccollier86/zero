@@ -68,6 +68,8 @@ export interface VectorIndexConfig {
   vectorField?: string;
   /** Scalar field used for human-readable chunk text. Default: `text`. */
   textField?: string;
+  /** Opt in to a native full-corpus full-text index on textField. Default: false. */
+  lexical?: boolean;
   /** Scalar field used for JSON metadata backup. Default: `_metadata`. */
   metadataField?: string;
   /** Metadata keys promoted to zvec scalar fields for filtering. */
@@ -105,6 +107,8 @@ export interface ResolvedVectorIndexConfig {
   path: string;
   vectorField: string;
   textField: string;
+  /** Missing on legacy hand-built resolved configs means dense-only. */
+  lexical?: boolean;
   metadataField: string;
   metadata: Record<string, ResolvedVectorMetadataFieldConfig>;
   metric: VectorMetric;
@@ -177,6 +181,14 @@ export type VectorFilter = {
 /** Options for vector similarity or scalar-only queries. */
 export interface VectorQueryOptions {
   vector?: VectorValue;
+  /** Literal full-text search, never an engine query-language expression. */
+  text?: string;
+  /** Inferred from supplied vector/text when omitted. Scalar-only reads remain supported. */
+  retrieval?: 'vector' | 'lexical' | 'hybrid';
+  /** Per-leg bounded candidate count for native reciprocal-rank fusion. */
+  candidateCount?: number;
+  /** Native RRF rank constant. Default: 60. Only meaningful for hybrid search. */
+  rankConstant?: number;
   topK?: number;
   filter?: VectorFilter;
   minScore?: number;

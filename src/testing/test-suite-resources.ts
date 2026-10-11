@@ -15,6 +15,12 @@ export const FRAMEWORK_INSTALLED_CONSUMER_FILES = [
   'src/frontend/server/database-automation-torrent.package.test.ts',
   'src/frontend/server/fabric-sync-metadata.package.test.ts',
   'src/frontend/server/resource-array-policy.package.test.ts',
+  'src/components/controls/floating-button-group/floating-button-group.package.test.ts',
+  'src/modals/modal-scroll.package.test.ts',
+  'src/components/_internal/scroll-viewport/ordinary-scroll.package.test.ts',
+  'src/modals/modal-system.package.test.ts',
+  'src/components/tooltip/tooltip-system.package.test.ts',
+  'src/frontend/server/style-foundation.package.test.ts',
 ] as const;
 
 /** Match only the reviewed full-framework installed consumers, not arbitrary package tests. */

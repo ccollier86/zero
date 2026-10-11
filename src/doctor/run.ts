@@ -16,6 +16,9 @@ const args = process.argv.slice(2);
 const strict = args.includes('--strict');
 const json = args.includes('--json');
 const noUsageAudit = args.includes('--no-usage-audit');
+const themeFoundation = args.includes('--theme-foundation');
+const upgrade = args.includes('--upgrade');
+let upgradeTargetRoot: string | null = null;
 const usageInclude = getArgs('--usage-include');
 const usageExclude = getArgs('--usage-exclude');
 let maxFileLines: number | undefined;
@@ -27,15 +30,34 @@ try {
   }
 
   maxFileLines = parsePositiveIntArg('--max-file-lines');
+  if (args.includes('--upgrade-target-root')) {
+    upgradeTargetRoot = getArg('--upgrade-target-root');
+    if (!upgrade || !upgradeTargetRoot || upgradeTargetRoot.startsWith('--')) {
+      throw new Error('[doctor] --upgrade-target-root requires --upgrade and an explicit framework directory.');
+    }
+  }
+  if (themeFoundation && !args.includes('--source-only')) throw new Error('[doctor] --theme-foundation requires --source-only and an explicit --project-root.');
+  if (upgrade && !args.includes('--source-only')) throw new Error('[doctor] --upgrade requires --source-only and an explicit --project-root.');
 
   if (args.includes('--source-only')) {
     if (args.includes('--config') || noUsageAudit) throw new Error('[doctor] --source-only cannot be combined with --config or --no-usage-audit.');
     const projectRoot = getArg('--project-root');
     if (!projectRoot || projectRoot.startsWith('--')) throw new Error('[doctor] --source-only requires --project-root <application-directory>.');
     const { runSourceOnlyDoctor } = await import('./source-only-doctor');
-    const report = await runSourceOnlyDoctor({ projectRoot, strict, ...buildUsageAuditOptions() });
+    const report = await runSourceOnlyDoctor({ projectRoot, strict, ...buildUsageAuditOptions(),
+      ...(themeFoundation ? { themeFoundation: true } : {}),
+      ...(upgrade ? { upgrade: upgradeTargetRoot ? { targetRoot: upgradeTargetRoot } : true } : {}) });
     if (json) console.log(JSON.stringify(report, null, 2));
-    else { printReport(`Source-only root: ${projectRoot}`, report.findings, report.ok); console.log('Source-only checks do not verify runtime behavior or visual layout.'); }
+    else {
+      printReport(`Source-only root: ${projectRoot}`, report.findings, report.ok);
+      if (report.upgrade) {
+        const evidence = report.upgrade;
+        console.log(`Upgrade target: ${evidence.target.version ?? 'unknown version'} (${evidence.target.status}); catalog ${evidence.catalogVersion}`);
+        console.log(`Upgrade evidence: ${evidence.checkedImports} named imports, ${evidence.checkedAssets} assets; bounded static coverage.`);
+        console.log(`Migration review: ${evidence.reviewCounts.required} required, ${evidence.reviewCounts.recommended} recommended, ${evidence.reviewCounts.manualReview} manual.`);
+      }
+      console.log('Source-only checks do not verify runtime behavior or visual layout.');
+    }
     if (!report.ok) process.exitCode = 1;
   } else {
     // Deliberately branch before even config discovery: static mode must not
@@ -179,6 +201,9 @@ function printUsage(): void {
   console.log('  --strict                    Treat warnings as failures');
   console.log('  --json                      Print JSON report');
   console.log('  --source-only              Read source/package metadata without loading application config');
+  console.log('  --theme-foundation         Opt-in backing-theme parity/alias/source checks (requires --source-only)');
+  console.log('  --upgrade                  Inspect installed framework contracts and source migration catalog (source-only)');
+  console.log('  --upgrade-target-root <dir> Inspect this exact framework directory instead; requires --upgrade');
   console.log('  --project-root <directory> Explicit root for --source-only; no config-derived roots');
   console.log('  --no-usage-audit            Disable app source usage scanning');
   console.log('  --max-file-lines <count>    Large-file warning threshold (default: 400)');

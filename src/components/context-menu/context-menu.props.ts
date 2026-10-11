@@ -8,11 +8,29 @@ export type ContextMenuProps = React.ComponentProps<typeof Primitive.Root>;
 export type ContextMenuTriggerProps = React.ComponentProps<typeof Primitive.Trigger>;
 /** Explicit portal for composition; Content/SubContent use portal={false} inside it. */
 export type ContextMenuPortalProps = React.ComponentProps<typeof Primitive.Portal>;
+/** One native menu viewport; styling and event/ref props address the viewport, never the semantic menu surface. */
+export type ContextMenuViewportProps = React.ComponentProps<'div'> & {
+  /** Both native axes by default; single-axis modes retain native scrolling on that axis. */
+  orientation?: 'vertical' | 'horizontal' | 'both';
+  fadeEdges?: boolean;
+  scrollbars?: 'hover' | 'scroll' | 'always' | 'hidden';
+};
+/** Arc viewport options shared by root and submenu content; the original native skin remains selectable. */
+export interface ContextMenuScrollOptions {
+  /** Arc is the standard default; opaque asChild hosts stay native until they compose ContextMenuViewport. */
+  scrollTreatment?: 'arc' | 'native';
+  viewportRef?: React.Ref<HTMLDivElement>;
+  viewportClassName?: string;
+  viewportStyle?: React.CSSProperties;
+  orientation?: ContextMenuViewportProps['orientation'];
+  fadeEdges?: boolean;
+  scrollbars?: ContextMenuViewportProps['scrollbars'];
+}
 /** Automatically portal content, or opt out to own its portal; forceMount reaches both layers. */
 export type ContextMenuContentProps = React.ComponentProps<typeof Primitive.Content> & {
   portal?: boolean;
   container?: ContextMenuPortalProps['container'];
-};
+} & ContextMenuScrollOptions;
 /** Semantic group of related actions. */
 export type ContextMenuGroupProps = React.ComponentProps<typeof Primitive.Group>;
 /** Noninteractive section heading; inset aligns with items reserving an icon gutter. */
@@ -54,4 +72,4 @@ export type ContextMenuSubTriggerProps = React.ComponentProps<typeof Primitive.S
 export type ContextMenuSubContentProps = React.ComponentProps<typeof Primitive.SubContent> & {
   portal?: boolean;
   container?: ContextMenuPortalProps['container'];
-};
+} & ContextMenuScrollOptions;

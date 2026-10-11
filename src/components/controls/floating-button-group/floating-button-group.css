@@ -1,0 +1,112 @@
+/* Scoped command-tray skin. Inherited canonical roles win; fallbacks support source-copy/legacy themes without another root palette. */
+.zero-floating-button-group {
+  --_fbg-height: var(--zero-floating-button-group-md-height, 2.25rem);
+  --_fbg-pad: var(--zero-floating-button-group-md-padding, .25rem);
+  --_fbg-gap: var(--zero-floating-button-group-md-gap, .25rem);
+  --_fbg-inline-pad: var(--zero-floating-button-group-md-inline-padding, .75rem);
+  --_fbg-radius: var(--zero-floating-button-group-md-radius, 1.125rem);
+  --_fbg-item-radius: var(--zero-floating-button-group-md-item-radius, .8125rem);
+  --_fbg-font-size: var(--zero-floating-button-group-md-font-size, var(--zero-type-control-size, .8125rem));
+  --_fbg-hit: max(var(--_fbg-height), var(--zero-floating-button-group-hit-target-min, 0px), var(--zero-theme-hit-target-min, 2rem));
+  --_fbg-ink: var(--zero-floating-button-group-foreground, var(--foreground));
+  --_fbg-background: var(--zero-floating-button-group-background, color-mix(in oklab, var(--_fbg-ink) 4.5%, transparent));
+  --_fbg-edge: var(--zero-floating-button-group-tray-edge, color-mix(in oklab, var(--_fbg-ink) 3%, transparent));
+  --_fbg-highlight: var(--zero-floating-button-group-highlight, color-mix(in oklab, var(--_fbg-ink) 7%, transparent));
+  --_fbg-press: var(--zero-floating-button-group-highlight-press, color-mix(in oklab, var(--_fbg-ink) 12%, transparent));
+  --_fbg-on: var(--zero-floating-button-group-mode-tint, color-mix(in oklab, var(--zero-theme-selection-fill, var(--foreground)) 12%, transparent));
+  position: relative; isolation: isolate; display: inline-flex; flex: none; flex-wrap: nowrap;
+  align-items: center; width: max-content; gap: var(--_fbg-gap); padding: var(--_fbg-pad);
+  border: 1px solid var(--_fbg-edge); border-radius: var(--_fbg-radius); background: var(--_fbg-background);
+  color: var(--zero-floating-button-group-secondary, var(--muted-foreground));
+  font-family: var(--zero-floating-button-group-font-family, var(--font-platform-sans, inherit));
+  letter-spacing: var(--zero-floating-button-group-tracking, var(--zero-type-control-tracking, normal));
+  -webkit-tap-highlight-color: transparent;
+}
+.zero-floating-button-group[data-size="sm"] {
+  --_fbg-height: var(--zero-floating-button-group-sm-height, 1.875rem);
+  --_fbg-pad: var(--zero-floating-button-group-sm-padding, .1875rem);
+  --_fbg-gap: var(--zero-floating-button-group-sm-gap, .1875rem);
+  --_fbg-inline-pad: var(--zero-floating-button-group-sm-inline-padding, .625rem);
+  --_fbg-radius: var(--zero-floating-button-group-sm-radius, .9375rem);
+  --_fbg-item-radius: var(--zero-floating-button-group-sm-item-radius, .6875rem);
+  --_fbg-font-size: var(--zero-floating-button-group-sm-font-size, var(--zero-type-caption-size, .75rem));
+}
+.dark .zero-floating-button-group {
+  --_fbg-background: var(--zero-floating-button-group-background, color-mix(in oklab, var(--_fbg-ink) 6%, transparent));
+  --_fbg-edge: var(--zero-floating-button-group-tray-edge, color-mix(in oklab, var(--_fbg-ink) 5%, transparent));
+  --_fbg-highlight: var(--zero-floating-button-group-highlight, color-mix(in oklab, var(--_fbg-ink) 9%, transparent));
+  --_fbg-press: var(--zero-floating-button-group-highlight-press, color-mix(in oklab, var(--_fbg-ink) 15%, transparent));
+  --_fbg-on: var(--zero-floating-button-group-mode-tint, color-mix(in oklab, var(--zero-theme-selection-fill, var(--foreground)) 16%, transparent));
+}
+.zero-floating-button-group[data-variant="floating"] {
+  border-color: var(--zero-floating-button-group-floating-border, var(--border));
+  background: var(--zero-floating-button-group-floating-background, var(--surface-raised, var(--card)));
+  box-shadow: var(--zero-floating-button-group-floating-shadow, var(--zero-theme-shadow-floating, var(--public-shadow-floating, none)));
+}
+.zero-floating-button-group[data-orientation="vertical"] { flex-direction: column; align-items: stretch; }
+.zero-floating-button-group-highlight {
+  position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; border-radius: var(--_fbg-item-radius);
+  background: var(--_fbg-highlight);
+  transition: background-color var(--zero-floating-button-group-show-duration, 160ms) var(--zero-floating-button-group-feedback-easing, cubic-bezier(.22,1,.36,1));
+}
+.zero-floating-button-group-highlight[data-pressing] {
+  background: var(--_fbg-press); transition-duration: var(--zero-floating-button-group-press-paint-duration, 120ms);
+}
+.zero-floating-button-group-action {
+  display: inline-flex; flex: none; align-items: center; justify-content: center;
+  min-width: var(--_fbg-hit); height: var(--_fbg-hit); margin: 0; padding: 0 var(--_fbg-inline-pad);
+  border: 0; border-radius: var(--_fbg-item-radius); background: transparent; color: inherit;
+  box-shadow: none; font-family: inherit; font-size: var(--_fbg-font-size);
+  font-weight: var(--zero-floating-button-group-font-weight, var(--zero-type-control-weight, 500));
+  line-height: var(--zero-floating-button-group-line-height, 1.4); letter-spacing: inherit;
+  white-space: nowrap; cursor: pointer; user-select: none; touch-action: manipulation;
+  outline: none; -webkit-tap-highlight-color: transparent;
+  transition: color var(--zero-floating-button-group-show-duration, 160ms) var(--zero-floating-button-group-feedback-easing, cubic-bezier(.22,1,.36,1));
+}
+.zero-floating-button-group-action:hover { background: transparent; color: inherit; }
+.zero-floating-button-group-action[data-active="true"], .zero-floating-button-group-action[aria-pressed="true"] { color: var(--_fbg-ink); }
+.zero-floating-button-group-action[aria-pressed="true"] { background: var(--_fbg-on); }
+.zero-floating-button-group-action[aria-disabled="true"] {
+  color: var(--zero-floating-button-group-muted, var(--subtle-foreground, var(--muted-foreground)));
+  opacity: var(--zero-floating-button-group-disabled-opacity, .5); cursor: not-allowed;
+}
+.zero-floating-button-group-action[data-icon-only="true"] { width: var(--_fbg-hit); padding: 0; }
+.zero-floating-button-group-action[data-has-icon="true"]:not([data-icon-only="true"]) { padding-inline-start: max(0px, calc(var(--_fbg-inline-pad) - .125rem)); }
+.zero-floating-button-group[data-orientation="vertical"] .zero-floating-button-group-action:not([data-icon-only="true"]) { justify-content: flex-start; }
+.zero-floating-button-group[data-orientation="vertical"] .zero-floating-button-group-action[data-icon-only="true"] { align-self: center; }
+.zero-floating-button-group-action:focus-visible, .zero-floating-button-group:focus-visible {
+  outline: var(--zero-floating-button-group-focus-width, 2px) solid var(--zero-floating-button-group-focus, var(--ring));
+  outline-offset: var(--zero-floating-button-group-focus-offset, 2px); box-shadow: none;
+}
+.zero-floating-button-group-body { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: var(--zero-floating-button-group-icon-gap, .375rem); }
+.zero-floating-button-group-label { display: inline-grid; align-items: center; justify-items: center; }
+.zero-floating-button-group-label > * { grid-area: 1 / 1; }
+.zero-floating-button-group[data-orientation="vertical"] .zero-floating-button-group-label { justify-items: start; }
+.zero-floating-button-group-ghost, .zero-floating-button-group-phase {
+  display: inline-flex; align-items: center; gap: var(--zero-floating-button-group-icon-gap, .375rem); white-space: nowrap;
+}
+.zero-floating-button-group-ghost { visibility: hidden; pointer-events: none; }
+.zero-floating-button-group-icon-space, .zero-floating-button-group-icon { display: inline-flex; flex: none; width: var(--zero-floating-button-group-icon-size, 1rem); height: var(--zero-floating-button-group-icon-size, 1rem); }
+.zero-floating-button-group-icon svg { width: 100%; height: 100%; stroke-width: 1.75; }
+.zero-floating-button-group-separator {
+  flex: none; align-self: center; width: var(--zero-floating-button-group-separator-thickness, 1px);
+  height: calc(var(--_fbg-height) * var(--zero-floating-button-group-separator-length-share, .5));
+  margin-inline: var(--zero-floating-button-group-separator-margin, .125rem); border-radius: 1px;
+  background: var(--zero-floating-button-group-rule, color-mix(in oklab, var(--_fbg-ink) 12%, transparent));
+}
+.zero-floating-button-group[data-orientation="vertical"] .zero-floating-button-group-separator {
+  width: calc(var(--_fbg-height) * var(--zero-floating-button-group-separator-length-share, .5));
+  height: var(--zero-floating-button-group-separator-thickness, 1px); margin: var(--zero-floating-button-group-separator-margin, .125rem) 0;
+}
+@media (pointer: coarse) {
+  .zero-floating-button-group { --_fbg-hit: max(var(--_fbg-height), var(--zero-floating-button-group-hit-target-min, 2.75rem), 2.75rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zero-floating-button-group-highlight, .zero-floating-button-group-action { transition: none; }
+}
+@media (forced-colors: active) {
+  .zero-floating-button-group { border-color: ButtonText; }
+  .zero-floating-button-group-highlight { background: Highlight; opacity: .3; }
+  .zero-floating-button-group-action:focus-visible, .zero-floating-button-group:focus-visible { outline-color: Highlight; }
+  .zero-floating-button-group-action[aria-pressed="true"] { outline: 1px solid ButtonText; }
+}

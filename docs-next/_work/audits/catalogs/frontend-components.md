@@ -419,12 +419,12 @@ addition against framework 2.6.0 baseline
 | `BreadcrumbSeparator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/breadcrumb` | [src/components/ui/breadcrumb.tsx:75](../../../../src/components/ui/breadcrumb.tsx) | `frontend/components/primitives/breadcrumbs.md` |
 | `Button` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/button` | [src/components/ui/button.tsx:57](../../../../src/components/ui/button.tsx) | `frontend/components/primitives/inputs.md` |
 | `Calendar` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/calendar` | [src/components/ui/calendar.tsx:14](../../../../src/components/ui/calendar.tsx) | `frontend/components/primitives/dates-and-time.md` |
-| `Card` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:6](../../../../src/components/ui/card.tsx) | `frontend/components/primitives/surfaces.md` |
-| `CardContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:55](../../../../src/components/ui/card.tsx) | `frontend/components/primitives/surfaces.md` |
-| `CardDescription` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:45](../../../../src/components/ui/card.tsx) | `frontend/components/primitives/surfaces.md` |
-| `CardFooter` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:65](../../../../src/components/ui/card.tsx) | `frontend/components/primitives/surfaces.md` |
-| `CardHeader` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:19](../../../../src/components/ui/card.tsx) | `frontend/components/primitives/surfaces.md` |
-| `CardTitle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:29](../../../../src/components/ui/card.tsx) | `frontend/components/primitives/surfaces.md` |
+| `Card` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:6](../../../../src/components/ui/card.tsx) | `frontend/components/surfaces/card.md` |
+| `CardContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:55](../../../../src/components/ui/card.tsx) | `frontend/components/surfaces/card.md` |
+| `CardDescription` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:45](../../../../src/components/ui/card.tsx) | `frontend/components/surfaces/card.md` |
+| `CardFooter` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:65](../../../../src/components/ui/card.tsx) | `frontend/components/surfaces/card.md` |
+| `CardHeader` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:19](../../../../src/components/ui/card.tsx) | `frontend/components/surfaces/card.md` |
+| `CardTitle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [src/components/ui/card.tsx:29](../../../../src/components/ui/card.tsx) | `frontend/components/surfaces/card.md` |
 | `ChartContainer` | `@zero/framework/components/ui/chart` | [src/components/ui/chart.tsx:41](../../../../src/components/ui/chart.tsx) | `frontend/components/primitives/charts.md` |
 | `ChartLegend` | `@zero/framework/components/ui/chart` | [src/components/ui/chart.tsx:204](../../../../src/components/ui/chart.tsx) | `frontend/components/primitives/charts.md` |
 | `ChartLegendContent` | `@zero/framework/components/ui/chart` | [src/components/ui/chart.tsx:212](../../../../src/components/ui/chart.tsx) | `frontend/components/primitives/charts.md` |
@@ -468,16 +468,16 @@ addition against framework 2.6.0 baseline
 | `RecordNavigationBar` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/record-navigation-bar` | [src/components/ui/record-navigation-bar.tsx:51](../../../../src/components/ui/record-navigation-bar.tsx) | `frontend/components/primitives/list-detail.md` |
 | `ScrollArea` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/scroll-area` | [src/components/ui/scroll-area.tsx:6](../../../../src/components/ui/scroll-area.tsx) | `frontend/components/primitives/scroll-area.md` |
 | `ScrollBar` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/scroll-area` | [src/components/ui/scroll-area.tsx:26](../../../../src/components/ui/scroll-area.tsx) | `frontend/components/primitives/scroll-area.md` |
-| `Select` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:7](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:63](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:8](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:114](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectLabel` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:101](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectScrollDownButton` | `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:49](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectScrollUpButton` | `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:35](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectSeparator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:141](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:11](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
-| `SelectValue` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:9](../../../../src/components/ui/select.tsx) | `frontend/components/primitives/choices.md` |
+| `Select` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:7](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectContent` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:63](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:8](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:114](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectLabel` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:101](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectScrollDownButton` | `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:49](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectScrollUpButton` | `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:35](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectSeparator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:141](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectTrigger` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:11](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
+| `SelectValue` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/select` | [src/components/ui/select.tsx:9](../../../../src/components/ui/select.tsx) | `frontend/components/controls/select.md` |
 | `Separator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/separator` | [src/components/ui/separator.tsx:6](../../../../src/components/ui/separator.tsx) | `frontend/components/primitives/surfaces.md` |
 | `Skeleton` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/skeleton` | [src/components/ui/skeleton.tsx:3](../../../../src/components/ui/skeleton.tsx) | `frontend/components/primitives/surfaces.md` |
 | `Toaster` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/sonner` | [src/components/ui/sonner.tsx:20](../../../../src/components/ui/sonner.tsx) | `frontend/components/primitives/toasts.md` |
@@ -638,7 +638,162 @@ part of the historical count or a published-package qualification.
 | `FormSaveBar` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/form-save` | [Save entry](../../../../src/components/form-save/index.ts) | `frontend/forms/save-and-leave.md` |
 | `UnsavedChangesDialog` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/form-save` | [Save entry](../../../../src/components/form-save/index.ts) | `frontend/forms/save-and-leave.md` |
 
+## Chart Renderer and Part Working Source
+
+This additive supplement observes dirty framework **2.6.0** source against
+`335b27372b0b8ef57a1e92cf93cec378923fe50b`, on **2026-10-10**. Its **53 direct
+named renderer and part exports** comprise 18 facade/Sankey/Race Bar/Funnel
+values, twelve Arc organisms and 23 native organisms/parts. They supplement the
+historical 414-component count; they do not establish a released archive.
+The [Charts overview](../../../frontend/charts/index.md) separates rendering,
+browser-independent models and the authorized collection bridge.
+
+The root/React and native component routes retain the same implementations;
+Arc's named organisms stay in their separate entry. Prop, context, data and
+handle types remain with the linked parent manuals rather than being counted
+as additional components. Reconciliation of all public headless math and
+default helpers remains planned; this supplement does not claim complete
+working-source export coverage.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `ZeroChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/zero-chart.tsx) | [Zero Charts facade](../../../frontend/charts/index.md#public-api-layers) |
+| `SankeyChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/sankey/sankey-chart.tsx) | [Sankey composition](../../../frontend/charts/sankey.md#custom-inspectors) |
+| `SankeyFlowTable` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/sankey/sankey-chart.tsx) | [Sankey composition](../../../frontend/charts/sankey.md#custom-inspectors) |
+| `SankeyInspection` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/sankey/sankey-inspection.tsx) | [Sankey composition](../../../frontend/charts/sankey.md#custom-inspectors) |
+| `SankeyNodeTooltip` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/sankey/sankey-inspection.tsx) | [Sankey composition](../../../frontend/charts/sankey.md#custom-inspectors) |
+| `SankeyLinkTooltip` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/sankey/sankey-inspection.tsx) | [Sankey composition](../../../frontend/charts/sankey.md#custom-inspectors) |
+| `RaceBarChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-chart.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `RaceBarHistoryTable` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-chart.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `RaceBarLegend` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-chart.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `RaceBarInspector` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-inspection.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `RaceBarItemTooltip` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-inspection.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `RaceBarPlaybackButton` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-controls.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `RaceBarTimeline` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/race-bar/race-bar-controls.tsx) | [Race Bar composition](../../../frontend/charts/race-bar.md#commands-and-inspector-composition) |
+| `FunnelChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/funnel/funnel-chart.tsx) | [Funnel composition](../../../frontend/charts/funnel.md#inspector-and-accessible-data) |
+| `FunnelDataTable` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/funnel/funnel-chart.tsx) | [Funnel composition](../../../frontend/charts/funnel.md#inspector-and-accessible-data) |
+| `FunnelInspector` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/funnel/funnel-inspection.tsx) | [Funnel composition](../../../frontend/charts/funnel.md#inspector-and-accessible-data) |
+| `FunnelStageTooltip` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/funnel/funnel-inspection.tsx) | [Funnel composition](../../../frontend/charts/funnel.md#inspector-and-accessible-data) |
+| `FunnelControls` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts` | [Implementation](../../../../src/components/charts/funnel/funnel-controls.tsx) | [Funnel composition](../../../frontend/charts/funnel.md#inspector-and-accessible-data) |
+| `LineChart` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/line-chart/line-chart.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `BarChart` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/bar-chart/bar-chart.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `DonutChart` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/donut-chart/donut-chart.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `Streamgraph` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/streamgraph/streamgraph.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `BrushChart` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/brush-chart/brush-chart.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `WaffleChart` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/waffle-chart/waffle-chart.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `SlopeChart` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/slope-chart/slope-chart.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `Sparkline` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/sparkline/sparkline.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `Gauge` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/gauge/gauge.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `ActivityHeatmap` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/activity-heatmap/activity-heatmap.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `Ridgeline` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/ridgeline/ridgeline.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `Treemap` | `@zero/framework/components/charts/arc` | [Implementation](../../../../src/components/charts/arc/treemap/treemap.tsx) | [Arc chart family](../../../frontend/charts/arc.md#choosing-a-chart) |
+| `CartesianChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `XYLineChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `AreaChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `GroupedBarChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `StackedBarChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `HorizontalBarChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `ComposedChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `ScatterChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `BubbleChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/cartesian/cartesian-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `HistogramChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/statistical/histogram-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `MatrixHeatmap` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/statistical/matrix-heatmap.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `BoxPlotChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/statistical/box-plot-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `WaterfallChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/statistical/waterfall-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `CandlestickChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/statistical/candlestick-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `RadarChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/polar/radar-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `RadialBarChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/polar/radial-bar-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `PieChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/polar/pie-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `SunburstChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/polar/sunburst-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `RealtimeChart` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/realtime/realtime-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `NativeChartFrame` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/shared/native-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `NativeChartInspector` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/shared/native-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `NativeChartDataTable` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/shared/native-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+| `NativeChartLegend` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/charts`, `@zero/framework/components/charts/native` | [Implementation](../../../../src/components/charts/native/shared/native-chart.tsx) | [Native chart family](../../../frontend/charts/native.md#public-entries) |
+
 ## Reconciliation And Review
+
+### Card Family Working Source — 2026-10-10
+
+Seven additional Card/ContentCard values are observed in dirty 2.6.0 source at
+`335b27372b0b8ef57a1e92cf93cec378923fe50b`. They supplement, not replace, the
+414-symbol historical baseline. Existing Card/Select records now route to their
+focused manuals; unrelated choice and identity components keep their own homes.
+This bounded reconciliation does not establish exhaustive current type/helper
+coverage or a published-package claim.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `CardAction` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [Native part](../../../../src/components/surfaces/card/card.tsx) | [Card parts](../../../frontend/components/surfaces/card.md#standard-card-parts) |
+| `CardMedia` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [Native part](../../../../src/components/surfaces/card/card.tsx) | [Card parts](../../../frontend/components/surfaces/card.md#standard-card-parts) |
+| `CardByline` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [Native part](../../../../src/components/surfaces/card/card.tsx) | [Card parts](../../../frontend/components/surfaces/card.md#standard-card-parts) |
+| `CardMeta` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [Native part](../../../../src/components/surfaces/card/card.tsx) | [Card parts](../../../frontend/components/surfaces/card.md#standard-card-parts) |
+| `CardStatus` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card`, `@zero/framework/components/ui/card-status` | [Status part](../../../../src/components/surfaces/card/card-status.tsx) | [Card parts](../../../frontend/components/surfaces/card.md#standard-card-parts) |
+| `CardSection` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/card` | [Native part](../../../../src/components/surfaces/card/card.tsx) | [Card parts](../../../frontend/components/surfaces/card.md#standard-card-parts) |
+| `ContentCard` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/ui/content-card` | [Managed article](../../../../src/components/surfaces/card/content-card.tsx) | [Managed quick look](../../../frontend/components/surfaces/card.md#contentcard-and-managed-quick-look) |
+
+### Floating Action Tray Working Source — 2026-10-11
+
+One new component and seven public types supplement the historical baseline in
+dirty 2.6.0 source at `335b27372b0b8ef57a1e92cf93cec378923fe50b`.
+The joined ButtonGroup/Toggle APIs and their existing homes remain unchanged.
+These exact root, React and focused entries share one canonical family; internal
+label phases and highlight/model/geometry helpers are not additional public parts.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `FloatingButtonGroup` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Action tray](../../../../src/components/controls/floating-button-group/floating-button-group.tsx) | [Floating Button Group](../../../frontend/components/controls/floating-button-group.md#imports-and-public-types) |
+| `FloatingButtonGroupProps` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Tray configuration](../../../frontend/components/controls/floating-button-group.md#tray-configuration) |
+| `FloatingButtonGroupAction` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Actions](../../../frontend/components/controls/floating-button-group.md#actions-and-separators) |
+| `FloatingButtonGroupSeparator` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Separators](../../../frontend/components/controls/floating-button-group.md#actions-and-separators) |
+| `FloatingButtonGroupItem` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Ordered items](../../../frontend/components/controls/floating-button-group.md#actions-and-separators) |
+| `FloatingButtonGroupVariant` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Material](../../../frontend/components/controls/floating-button-group.md#tray-configuration) |
+| `FloatingButtonGroupSize` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Density](../../../frontend/components/controls/floating-button-group.md#tray-configuration) |
+| `FloatingButtonGroupOrientation` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/floating-button-group` | [Types](../../../../src/components/controls/floating-button-group/floating-button-group.types.ts) | [Orientation](../../../frontend/components/controls/floating-button-group.md#tray-configuration) |
+
+### Ordinary Scroll Adoption Working Source — 2026-10-11
+
+One explicit viewport and two public types supplement the pinned baseline in
+dirty 2.6.0 source. Existing Content/SubContent remain their public parts with
+additive options; DatePicker retains its established names and import routes.
+No private attachment, controller or floating-owner helper becomes a public API.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `ContextMenuViewport` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Viewport part](../../../../src/components/context-menu/context-menu-viewport.tsx) | [Context Menu scrolling](../../../frontend/components/overlays/context-menu.md#scroll-treatment-and-custom-content) |
+| `ContextMenuViewportProps` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Native-div types](../../../../src/components/context-menu/context-menu.props.ts) | [Context Menu scrolling](../../../frontend/components/overlays/context-menu.md#scroll-treatment-and-custom-content) |
+| `ContextMenuScrollOptions` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/context-menu` | [Content options](../../../../src/components/context-menu/context-menu.props.ts) | [Context Menu scrolling](../../../frontend/components/overlays/context-menu.md#scroll-treatment-and-custom-content) |
+
+### JSON Document Editor Working Source
+
+Nineteen additive values/types supplement the pinned baseline in dirty 2.6.0
+source. The original `JsonEditor` and its local-admission contracts remain.
+The session, row/source parts and geometry/motion helpers are private to the
+assembled editor, not additional supported component exports.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `JsonDocumentEditor` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Editor](../../../../src/components/json-editor/json-document-editor.tsx) | [Document editor](../../../frontend/components/json-editor.md#json-document-editor) |
+| `parseJsonDocument` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Parser](../../../../src/components/json-editor/json-document-source.ts) | [JSON admission](../../../frontend/components/json-editor.md#json-document-editor) |
+| `diffJsonDocument` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Pure diff](../../../../src/components/json-editor/json-document-model.ts) | [Accepted saves](../../../frontend/components/json-editor.md#accepted-saves-and-reactive-replacements) |
+| `JsonDocumentEditorProps` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Configuration](../../../frontend/components/json-editor.md#document-configuration) |
+| `JsonDocumentEditorHandle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Control](../../../frontend/components/json-editor.md#local-control-and-limits) |
+| `JsonDocumentValue` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [JSON admission](../../../frontend/components/json-editor.md#json-document-editor) |
+| `JsonDocumentPath` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Control](../../../frontend/components/json-editor.md#local-control-and-limits) |
+| `JsonDocumentMode` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Configuration](../../../frontend/components/json-editor.md#document-configuration) |
+| `JsonDocumentPatch` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Accepted saves](../../../frontend/components/json-editor.md#accepted-saves-and-reactive-replacements) |
+| `JsonDocumentEdit` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Configuration](../../../frontend/components/json-editor.md#document-configuration) |
+| `JsonDocumentSaveContext` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Contracts](../../../../src/components/json-editor/json-document.types.ts) | [Accepted saves](../../../frontend/components/json-editor.md#accepted-saves-and-reactive-replacements) |
+| `JsonDocumentParseResult` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Parser types](../../../../src/components/json-editor/json-document-source.ts) | [JSON admission](../../../frontend/components/json-editor.md#json-document-editor) |
+| `DocumentEditor` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Shared editor](../../../../src/components/json-editor/json-document-editor.tsx) | [Multi-format files](../../../frontend/components/json-editor.md#multi-format-source-files) |
+| `parseDocumentSource` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [Codec facade](../../../../src/components/json-editor/document-source.ts) | [Multi-format files](../../../frontend/components/json-editor.md#multi-format-source-files) |
+| `DocumentEditorProps` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [File contracts](../../../../src/components/json-editor/document.types.ts) | [Multi-format files](../../../frontend/components/json-editor.md#multi-format-source-files) |
+| `DocumentEditorHandle` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [File contracts](../../../../src/components/json-editor/document.types.ts) | [Local control](../../../frontend/components/json-editor.md#local-control-and-limits) |
+| `DocumentFormat` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [File contracts](../../../../src/components/json-editor/document.types.ts) | [Format controls](../../../frontend/components/json-editor.md#format-controls-comments-and-diagnostics) |
+| `DocumentSourceChange` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [File contracts](../../../../src/components/json-editor/document.types.ts) | [Accepted file writer](../../../frontend/components/json-editor.md#accepted-file-writer-example) |
+| `DocumentParseResult` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/components/json-editor` | [File contracts](../../../../src/components/json-editor/document.types.ts) | [Multi-format files](../../../frontend/components/json-editor.md#multi-format-source-files) |
+
+### Review Boundaries
 
 Packaging disposition: the original UI wildcard also resolves card.test, record-navigation-bar.test and list-detail-layout.test modules. They are test files, not supported components, and therefore are not rows or planned teaching targets here. The package export inventory records them as a finding; the user subsequently authorized a working-tree packaging correction. Export topology/counts here remain the pinned source baseline, not a claim that test-module exposure is supported.
 

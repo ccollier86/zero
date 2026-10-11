@@ -138,6 +138,8 @@ export interface AppShellHeaderConfig {
 
 export interface AppShellProps {
   preset?: AppShellPreset;
+  /** Application theme boundary. Defaults to next; legacy retains the original top-level shell tokens. */
+  themeFoundation?: 'next' | 'legacy';
   brand?: AppShellBrand;
   nav?: AppShellNavGroup[];
   secondaryNav?: AppShellNavGroup[];

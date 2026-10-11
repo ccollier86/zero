@@ -1,3 +1,4 @@
+/** Native textarea presentation with optional type-role tokens; callers retain attributes, refs, sizing and validation. */
 import * as React from "react"
 
 import { cn } from "#zero/lib/utils"
@@ -10,7 +11,7 @@ function Textarea({
     <textarea
       data-slot="textarea"
       className={cn(
-        "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-base shadow-xs transition-[border-color,box-shadow,color] outline-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground hover:border-border-strong disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-bg-inset/45",
+        "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-[length:var(--zero-type-input-size,var(--text-base,1rem))] leading-[var(--zero-type-input-leading,var(--text-base--line-height,1.5))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-input-weight,inherit)] tracking-[var(--zero-type-input-tracking,inherit)] shadow-xs transition-[border-color,box-shadow,color] outline-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground hover:border-border-strong disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-[length:var(--zero-type-input-small-size,var(--text-sm,.875rem))] md:leading-[var(--zero-type-input-small-leading,var(--text-sm--line-height,1.4285714286))] dark:bg-bg-inset/45",
         "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
         "aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
         className

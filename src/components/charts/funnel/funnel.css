@@ -1,0 +1,72 @@
+/* Funnel owns band/column geometry and tint only; typography, palette, inspector and semantic surfaces use the shared Zero chart language. */
+:root, .light, [data-theme="light"] { --zero-funnel-tint: .28; }
+.dark, [data-theme="dark"] { --zero-funnel-tint: .34; }
+@media (prefers-color-scheme: dark) { :root:not(.light):not([data-theme="light"]) { --zero-funnel-tint: .34; } }
+.zero-funnel { --zero-tooltip-motion-blur-enter: var(--zero-chart-feedback, 120ms); --zero-tooltip-motion-blur-exit: var(--zero-chart-feedback, 120ms);
+  --zero-tooltip-blur: 0px; --zero-tooltip-blur-exit: 0px; --zero-tooltip-blur-shift: 0px; --zero-tooltip-blur-scale: 1;
+  position: relative; min-width: 0; margin: 0; color: var(--zero-chart-foreground, var(--foreground)); font-family: var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); }
+.zero-funnel__head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; margin-bottom: 18px; }
+.zero-funnel__heading { min-width: 0; }
+.zero-funnel__title { font-size: var(--zero-chart-title-size, 14px); font-weight: 500; overflow-wrap: anywhere; }
+.zero-funnel__subtitle { font-size: var(--zero-chart-label-size, 12.5px); color: var(--zero-chart-muted, var(--muted-foreground)); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.zero-funnel__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; max-width: 100%; }
+.zero-funnel__segments { position: relative; display: inline-flex; flex-wrap: wrap; max-width: 100%; padding: 3px; border-radius: 10px;
+  background: var(--zero-chart-wash, color-mix(in srgb, var(--zero-chart-border, var(--border)) 45%, var(--zero-chart-surface, var(--card)))); }
+.zero-funnel__segments [data-slot="button"] { position: relative; z-index: 1; cursor: pointer; min-height: 0; height: auto; padding: 4px 10px; border: 0; border-radius: 7px;
+  font-size: var(--zero-chart-label-size, 12.5px); font-weight: 400; color: var(--zero-chart-muted, var(--muted-foreground)); background: transparent; box-shadow: none;
+  transition: color var(--zero-chart-feedback, 120ms) ease; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.zero-funnel__segments [data-slot="button"] { transform: none; scale: 1; }
+.zero-funnel__segments [data-slot="button"][aria-pressed="true"] { color: var(--zero-chart-foreground, var(--foreground)); }
+.zero-funnel__segments [data-slot="button"]:focus-visible { outline: var(--zero-chart-focus-width, 2px) solid var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground))); outline-offset: 1px; }
+.zero-funnel__pill { position: absolute; top: 0; left: 0; border-radius: 7px; background: var(--zero-chart-surface, var(--card)); pointer-events: none;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 0 0 1px var(--zero-chart-border, var(--border)); transition: transform 320ms cubic-bezier(.2,0,0,1), width 320ms cubic-bezier(.2,0,0,1), height 320ms cubic-bezier(.2,0,0,1); }
+.zero-funnel__switch-label { cursor: pointer; display: inline-flex; align-items: center; gap: 8px; font-size: var(--zero-chart-label-size, 12.5px); color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-funnel__switch[data-slot="switch"] { width: 30px; height: 18px; min-height: 18px; padding: 1px; border-radius: 9px; border: 1px solid transparent; box-shadow: none;
+  background: var(--zero-chart-border-strong, var(--border-strong, var(--border))); transition: background var(--zero-chart-feedback, 120ms) ease; }
+.zero-funnel__switch[data-slot="switch"][data-state="checked"] { background: var(--zero-chart-foreground, var(--foreground)); }
+.zero-funnel__switch [data-slot="switch-thumb"] { width: 14px; height: 14px; background: var(--zero-chart-surface, var(--card)); box-shadow: 0 1px 2px rgb(0 0 0 / .18); }
+.zero-funnel__switch[data-slot="switch"]:focus-visible { outline: var(--zero-chart-focus-width, 2px) solid var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground))); outline-offset: var(--zero-chart-focus-offset, 2px); box-shadow: none; }
+.zero-funnel__plot { position: relative; isolation: isolate; min-width: 0; outline: none; border-radius: var(--zero-chart-plot-radius, 10px); touch-action: pan-y; }
+.zero-funnel__plot:focus-visible { box-shadow: 0 0 0 var(--zero-chart-focus-offset, 2px) var(--zero-chart-surface, var(--card)), 0 0 0 calc(var(--zero-chart-focus-offset, 2px) + var(--zero-chart-focus-width, 2px)) var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground))); }
+.zero-funnel__column { position: absolute; left: 0; top: 0; border-radius: 9px;
+  background: var(--zero-chart-wash, color-mix(in srgb, var(--zero-chart-border, var(--border)) 45%, var(--zero-chart-surface, var(--card)))); opacity: 0; pointer-events: none; will-change: transform; }
+.zero-funnel__steps { position: absolute; left: 0; right: 0; top: 0; }
+.zero-funnel__step { position: absolute; top: 0; padding: 0 6px 0 0; min-width: 0; transition: opacity 140ms ease; }
+.zero-funnel.reading .zero-funnel__step:not(.on) { opacity: .42; }
+.zero-funnel__label-wrap { height: 30px; display: flex; align-items: flex-end; }
+.zero-funnel.vertical .zero-funnel__label-wrap { height: auto; }
+.zero-funnel__label { font-size: var(--zero-chart-label-size, 12.5px); line-height: 1.25; color: var(--zero-chart-muted, var(--muted-foreground));
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.zero-funnel__value { margin-top: 2px; font: 500 var(--zero-chart-inspector-value-size, 17px)/var(--zero-chart-inspector-value-line-height, 1.3) var(--zero-chart-font-family, var(--font-platform-sans, system-ui));
+  letter-spacing: -.01em; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zero-funnel__rate { font-size: var(--zero-chart-metadata-size, 11.5px); color: var(--zero-chart-muted, var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.zero-funnel__step.on .zero-funnel__label { color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-funnel__svg, .zero-funnel__canvas { position: absolute; left: 0; top: 0; display: block; overflow: visible; pointer-events: none; }
+.zero-funnel__canvas { clip-path: inset(0); }
+.zero-funnel__drop { position: absolute; top: 0; font-size: var(--zero-chart-metadata-size, 11.5px); color: var(--zero-chart-muted, var(--muted-foreground));
+  white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.zero-funnel__inspection-anchor { position: absolute; width: 1px; height: 1px; pointer-events: none; }
+.zero-tooltip.zero-funnel__tooltip { --zero-tooltip-background: var(--zero-chart-surface, var(--card)); --zero-tooltip-foreground: var(--zero-chart-muted, var(--muted-foreground));
+  --zero-tooltip-max-width: var(--zero-chart-inspector-max-width, 260px);
+  --zero-tooltip-border: var(--zero-chart-border-strong, var(--border-strong, var(--border))); --zero-tooltip-radius: var(--zero-chart-inspector-radius, 10px);
+  --zero-tooltip-padding-inline: 0px; --zero-tooltip-padding-block: 0px; --zero-tooltip-shadow: var(--zero-chart-inspector-shadow, 0 1px 2px rgb(0 0 0 / .05), 0 10px 28px -6px rgb(0 0 0 / .16));
+  --zero-tooltip-font-family: var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); --zero-tooltip-font-weight: 400;
+  max-width: min(var(--zero-chart-inspector-max-width, 260px), calc(100vw - 2 * var(--zero-tooltip-viewport-padding, 8px)), max(0px, var(--radix-tooltip-content-available-width, 100vw)));
+  min-width: min(150px, calc(100vw - 16px)); border-radius: var(--zero-chart-inspector-radius, 10px); background: var(--zero-chart-surface, var(--card));
+  color: var(--zero-chart-muted, var(--muted-foreground)); border-color: var(--zero-chart-border-strong, var(--border-strong, var(--border)));
+  box-shadow: var(--zero-chart-inspector-shadow, 0 1px 2px rgb(0 0 0 / .05), 0 10px 28px -6px rgb(0 0 0 / .16)); pointer-events: none; }
+.zero-funnel__tooltip > .zero-tooltip-body { padding: 0; }
+.zero-funnel__inspection { padding: var(--zero-chart-inspector-padding, 9px 12px); font-size: var(--zero-chart-inspector-font-size, 12px); line-height: var(--zero-chart-inspector-line-height, 1.45); overflow-wrap: anywhere; }
+.zero-funnel__inspection-title { margin-bottom: 4px; color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-funnel__inspection-row { display: flex; justify-content: space-between; gap: 22px; font-size: var(--zero-chart-row-value-size, 12.5px); color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-funnel__inspection-row b { font-weight: 500; color: var(--zero-chart-foreground, var(--foreground)); font-variant-numeric: tabular-nums; }
+.zero-funnel__inspection-row i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 2px; vertical-align: 1px; }
+.zero-funnel__inspection-sub { margin-top: 4px; }
+.zero-funnel__empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--zero-chart-muted, var(--muted-foreground)); pointer-events: none; }
+.zero-funnel__probe { position: absolute; width: 0; height: 0; overflow: hidden; }
+.zero-funnel__sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.zero-funnel [hidden] { display: none !important; }
+.zero-funnel[data-motion="static"] { --zero-tooltip-motion-blur-enter: 1ms; --zero-tooltip-motion-blur-exit: 1ms; }
+.zero-funnel[data-motion="static"] .zero-funnel__pill, .zero-funnel[data-motion="static"] .zero-funnel__step,
+.zero-funnel[data-motion="static"] .zero-funnel__segments [data-slot="button"], .zero-funnel[data-motion="static"] .zero-funnel__switch { transition: none; }
+@media (prefers-reduced-motion: reduce) { .zero-funnel__pill, .zero-funnel__step, .zero-funnel__segments [data-slot="button"], .zero-funnel__switch { transition: none; } }

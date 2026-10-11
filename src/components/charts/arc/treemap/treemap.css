@@ -1,0 +1,85 @@
+/** Arc Free (MIT), copyright 2026 Elia Kuratli. Scoped chart skin; consumes Zero Arc token aliases. */
+.zero-arc-treemap__figure { display: grid; min-width: 0; gap: var(--zero-arc-space-3); margin: 0; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); letter-spacing: var(--zero-arc-tracking-body); }
+
+/* Categorical series inherit Zero chart-family colors, with scoped private overrides. */
+
+/* Breadcrumb on the left, the total of what fills the view on the right. */
+.zero-arc-treemap__bar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--zero-arc-space-3); }
+/* Pull the trail back by the crumb padding, so the first label lines up with the tiles and the title. */
+.zero-arc-treemap__crumbs { min-width: 0; margin-left: -4px; }
+.zero-arc-treemap__crumbList { position: relative; display: flex; min-width: 0; min-height: 32px; flex-wrap: wrap; align-items: center; margin: 0; padding: 0; list-style: none; }
+.zero-arc-treemap__crumb { display: inline-flex; align-items: center; min-width: 0; }
+.zero-arc-treemap__crumbSep { padding: 0 4px; color: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); font-size: var(--zero-arc-text-sm); }
+.zero-arc-treemap__crumbButton { min-height: 32px; padding: 0 6px; margin: 0 -2px; border: 0; border-radius: 10px; background: transparent; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); cursor: pointer; font: inherit; font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); white-space: nowrap; -webkit-tap-highlight-color: transparent; transition: color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), background-color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), transform var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-treemap__crumbButton:active { transform: scale(.97); }
+.zero-arc-treemap__crumbCurrent { padding: 0 4px; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-sm); font-weight: 500; line-height: var(--zero-arc-leading-body); white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { .zero-arc-treemap__crumbButton:hover { background: color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 5%, transparent); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); } }
+.zero-arc-treemap__total { position: relative; display: inline-grid; flex: none; justify-items: end; overflow: hidden; margin: 0; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-sm); font-weight: 500; line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; }
+.zero-arc-treemap__totalValue { display: block; }
+
+/* Tiles are absolutely placed and sized each frame, so text never scales while a tile grows or shrinks. */
+.zero-arc-treemap__stage { position: relative; min-width: 0; overflow: hidden; border-radius: 12px; outline: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.zero-arc-treemap__tile { position: absolute; top: 0; left: 0; display: flex; flex-direction: column; gap: 1px; overflow: hidden; padding: 6px 8px; border-radius: 6px; background: var(--fill); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); cursor: pointer; visibility: hidden; will-change: transform, width, height; transition: background-color var(--zero-arc-duration-considered) var(--zero-arc-ease-standard), color var(--zero-arc-duration-considered) var(--zero-arc-ease-standard), filter var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), box-shadow var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-treemap__tile[data-branch][data-level="1"] { padding: 3px 8px; border-radius: 8px; background: color-mix(in oklab, var(--hue) 9%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); cursor: zoom-in; }
+.zero-arc-treemap__tileLabel, .zero-arc-treemap__tileValue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--zero-arc-text-xs); line-height: 16px; opacity: 0; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-treemap__tileLabel { font-weight: 500; }
+.zero-arc-treemap__tileValue { opacity: 0; font-variant-numeric: tabular-nums; }
+.zero-arc-treemap__tile[data-room="name"] .zero-arc-treemap__tileLabel, .zero-arc-treemap__tile[data-room="full"] .zero-arc-treemap__tileLabel, .zero-arc-treemap__tile[data-room="full"] .zero-arc-treemap__tileValue { opacity: 1; }
+.zero-arc-treemap__tile[data-room="full"] .zero-arc-treemap__tileValue { opacity: .72; }
+/* A branch on the top level prints its name and total on one header line. */
+.zero-arc-treemap__tile[data-branch][data-level="1"] { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 8px; }
+.zero-arc-treemap__tile[data-branch][data-level="1"] .zero-arc-treemap__tileValue { flex: none; opacity: .6; }
+.zero-arc-treemap__tile[data-branch][data-level="1"][data-room="none"] .zero-arc-treemap__tileLabel, .zero-arc-treemap__tile[data-branch][data-level="1"][data-room="none"] .zero-arc-treemap__tileValue { opacity: 0; }
+.zero-arc-treemap__tile[data-branch][data-level="1"][data-room="name"] .zero-arc-treemap__tileValue { opacity: .6; }
+.zero-arc-treemap__tile[data-level="2"] { padding: 5px 7px; }
+
+.zero-arc-treemap__tile[data-active] { box-shadow: inset 0 0 0 2px var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }
+.zero-arc-treemap__tile[data-lineage] { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 70%, transparent); }
+.zero-arc-treemap__stage[data-active] .zero-arc-treemap__tile[data-dim] { filter: opacity(.5); }
+
+.zero-arc-treemap__message { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); pointer-events: none; }
+
+.zero-arc-treemap__tooltip { position: absolute; top: 0; left: 0; z-index: 50; display: grid; min-width: 160px; max-width: min(240px, 100%); grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 10px 12px; border: 1px solid var(--zero-arc-border, var(--zero-chart-border, var(--border))); border-radius: 14px; background: var(--zero-arc-surface-raised, var(--card)); box-shadow: var(--zero-arc-shadow-floating, var(--zero-chart-inspector-shadow)); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), scale var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-treemap__stage[data-active] .zero-arc-treemap__tooltip { opacity: 1; scale: 1; }
+.zero-arc-treemap__tipTitle { margin: 0; overflow: hidden; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); text-overflow: ellipsis; white-space: nowrap; }
+.zero-arc-treemap__tipValue { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0; font-size: var(--zero-arc-text-sm); line-height: 1.35; }
+.zero-arc-treemap__tipName { min-width: 0; overflow: hidden; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); text-overflow: ellipsis; white-space: nowrap; }
+.zero-arc-treemap__tipAmount { flex: none; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-weight: 500; font-variant-numeric: tabular-nums; }
+.zero-arc-treemap__tipNote { margin: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; }
+
+/* The color scale: stepped swatches from light to dark, never a gradient. */
+.zero-arc-treemap__scale { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; }
+.zero-arc-treemap__scaleLabel { margin-right: 4px; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); }
+.zero-arc-treemap__steps { display: inline-flex; gap: 2px; }
+.zero-arc-treemap__step { width: 18px; height: 10px; border-radius: 3px; background: var(--fill); }
+
+.zero-arc-treemap__srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zero-arc-treemap__tile, .zero-arc-treemap__tileLabel, .zero-arc-treemap__tileValue, .zero-arc-treemap__tooltip, .zero-arc-treemap__crumbButton { transition: none; }
+}
+
+/* Zero owns the inspector portal; preserve analytical rows while normalizing its shared card surface. */
+.zero-tooltip.zero-arc-treemap__tooltip {
+ --zero-tooltip-background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ --zero-tooltip-foreground:var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground)));
+ --zero-tooltip-border:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ --zero-tooltip-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius, 10px));
+ --zero-tooltip-padding-inline:0px; --zero-tooltip-padding-block:0px;
+ --zero-tooltip-shadow:var(--zero-arc-inspector-shadow, var(--zero-chart-inspector-shadow));
+ position:relative;top:auto;left:auto;opacity:1;scale:1;z-index:auto;
+ max-width:min(var(--zero-arc-inspector-max-width, var(--zero-chart-inspector-max-width, 260px)),calc(100vw - 16px),max(0px,var(--radix-tooltip-content-available-width,100vw)));
+ min-width:min(160px,calc(100vw - 16px));padding:var(--zero-arc-inspector-padding, var(--zero-chart-inspector-padding,9px 12px));
+ border-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius,10px));
+ background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ border-color:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ box-shadow:var(--zero-arc-inspector-shadow,var(--zero-chart-inspector-shadow));
+ pointer-events:none;
+}
+.zero-arc-treemap__tooltip > .zero-tooltip-body {padding:0;}
+.zero-arc-treemap__tooltip > .zero-tooltip-body > div {display:grid;gap:3px;}
+.zero-arc-treemap__plot:focus-visible,.zero-arc-treemap__stage:focus-visible {
+ outline:var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--foreground));
+ outline-offset:var(--zero-chart-focus-offset,2px);
+}
+.zero-arc-treemap__plot,.zero-arc-treemap__stage {isolation:isolate;}

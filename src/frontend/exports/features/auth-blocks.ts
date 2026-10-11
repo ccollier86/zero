@@ -1,0 +1,42 @@
+/** Authentication and administration visibility composition. Curated client-safe re-exports only; implementation/context ownership stays with the existing modules. */
+
+// ─── Auth Blocks ────────────────────────────────────────────────────────
+export {
+  LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
+  PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
+  AuthFlowContinuation, ProfileCompletionForm, TenantCreationForm, TenantSelectionForm,
+  DataRealmReadinessNotice, DataRealmReadyGate,
+  ApiKeyManagement, SelfApiKeyManagement, ApplicationUserApiKeyManagement,
+  TenantMemberApiKeyManagement, PlatformApiKeyManagement,
+  PlatformWorkspaceManagement,
+  TenantSwitcher, TenantMemberManagement, TenantOnboardingManagement,
+  TenantDomainManagement, DomainOnboarding, ControlPlaneAuditViewer,
+  TenantInvitationForm, TenantJoinRequestForm,
+  PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
+  AuthLayout, AuthHeader,
+  AdminGate, AdministrationScopeGate, Gate, HasFlag, HasProperty,
+  PermissionGate, PlatformAdminGate,
+  PropertyGate, SignedIn, SignedOut, TenantGate,
+  useGate, useNativeAuthContinuation, useNativeAuthRoute, useNativeLoginHint,
+  usePropertyGate, useTenantInvitationAction,
+} from '../../../components/auth';
+export type {
+  LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
+  PasswordActionFormProps, EmailVerificationFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
+  AuthFlowContinuationProps, AuthFlowContinuationResult, ProfileCompletionFormProps, TenantCreationFormProps,
+  TenantSelectionFormProps,
+  DataRealmReadinessNoticeProps, DataRealmReadyGateProps,
+  ApiKeyManagementCommonProps, ApiKeyManagementProps,
+  SelfApiKeyManagementProps, ApplicationUserApiKeyManagementProps,
+  TenantMemberApiKeyManagementProps, PlatformApiKeyManagementProps,
+  PlatformWorkspaceManagementProps,
+  TenantSwitcherProps, TenantMemberManagementProps, TenantOnboardingManagementProps,
+  UseTenantInvitationActionOptions, UseTenantInvitationActionResult,
+  TenantDomainManagementProps, DomainOnboardingProps,
+  ControlPlaneAuditViewerProps,
+  TenantInvitationFormProps, TenantJoinRequestFormProps,
+  OTPVerificationProps, SocialProvider,
+  AdministrationScopeGateProps, AuthVisibilityGateProps, GateProps,
+  HasFlagProps, PermissionGateProps,
+  PlatformAdminGateProps, PropertyGateProps, PropertyGateValue, TenantGateProps,
+} from '../../../components/auth';

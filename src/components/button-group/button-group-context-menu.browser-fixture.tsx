@@ -107,7 +107,7 @@ function Menus() {
       }}><Button variant="outline" data-testid="prevented-target">Prevented menu target</Button></ContextMenuTrigger>
         <ContextMenuContent><ContextMenuItem>Should not open prevented</ContextMenuItem></ContextMenuContent></ContextMenu>
       <ContextMenu><ContextMenuTrigger asChild><Button variant="outline" data-testid="long-target">Long list menu</Button></ContextMenuTrigger>
-        <ContextMenuContent data-testid="long-menu" className="w-56">{Array.from({ length: 48 }, (_, index) =>
+        <ContextMenuContent data-testid="long-menu" className="w-56" scrollTreatment="native">{Array.from({ length: 48 }, (_, index) =>
           <ContextMenuItem key={index} onSelect={() => record(`long-${index}`)}>Action {String(index + 1).padStart(2, '0')}</ContextMenuItem>)}</ContextMenuContent>
       </ContextMenu>
     </div>

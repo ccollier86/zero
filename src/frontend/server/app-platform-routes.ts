@@ -206,6 +206,7 @@ export async function mountPlatformRoutes({
       email: emailRuntime.enabled,
       stateSync: config.stateSync,
       presence: config.auth !== false && config.auth.presence?.enabled === true,
+      vectorVisualization: config.vectorVisualization !== false,
       tableSyncModes: config.resolvedSyncModes,
       tableSyncPlanes: resolveBrowserSyncTablePlanes(
         Object.keys(config.tables),

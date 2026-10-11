@@ -30,9 +30,16 @@ reviewed_against:
 - [ ] Evaluate optional GraphQL/vector integration.
 - [ ] Consider provider-batched embedding orchestration and explicit reindexing.
 - [ ] Evaluate a permission-adaptive vector management UI and client surface.
+- [x] Add the safe ingestion/search coordination, snapshots and progress contracts
+  in the [visualization plan](../../_work/vector-visualization-plan.md), using current
+  AI, vector, Torrent and ReactiveDB services. Keep true hybrid retrieval distinct
+  from optional reranking, and native trace capabilities distinct from illustrative
+  map playback.
 
-These are requested investigations/ideas, not current exported endpoints,
-Fabric-backed vector realms or automatic Guardian scope guarantees.
+Unchecked entries remain requested investigations/ideas. The implemented optional
+[visualization surface](./visualizations.md) has its own explicit authority and
+SYSTEM progress placement; it does not turn native indexes into Fabric vector
+realms or grant automatic Guardian scope to unrelated vector calls.
 
 ## Guardrails
 

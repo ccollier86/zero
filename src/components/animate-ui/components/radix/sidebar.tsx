@@ -1,5 +1,7 @@
 'use client';
 
+/** Sidebar layout/magnetic interactions; Radix retains mobile-sheet portal and focus ownership. */
+
 import * as React from 'react';
 import { Slot } from 'radix-ui';
 import { cva, VariantProps } from 'class-variance-authority';
@@ -31,6 +33,7 @@ import {
   HighlightItem,
 } from '#zero/components/animate-ui/primitives/effects/highlight';
 import { getStrictContext } from '#zero/lib/get-strict-context';
+import { composeOverlayRefs, useOverlayTheme } from '../../../overlays/overlay-scope';
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state';
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -47,6 +50,8 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
+  /** Existing wrapper source for the mobile sheet's inherited presentation. */
+  themeSource: HTMLDivElement | null;
 };
 
 const [LocalSidebarProvider, useSidebar] =
@@ -64,11 +69,14 @@ function SidebarProvider({
   onOpenChange: setOpenProp,
   className,
   style,
+  ref,
   children,
   ...props
 }: SidebarProviderProps) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
+  const [themeSource, setThemeSource] = React.useState<HTMLDivElement | null>(null);
+  const wrapperRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(setThemeSource, ref), [setThemeSource, ref]);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -123,14 +131,16 @@ function SidebarProvider({
       openMobile,
       setOpenMobile,
       toggleSidebar,
+      themeSource,
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar],
+    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar, themeSource],
   );
 
   return (
     <LocalSidebarProvider value={contextValue}>
       <TooltipProvider openDelay={0}>
         <div
+          ref={wrapperRef}
           data-slot="sidebar-wrapper"
           style={
             {
@@ -180,7 +190,10 @@ function Sidebar({
   onMobileCloseAutoFocus,
   ...props
 }: SidebarProps) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const { isMobile, state, openMobile, setOpenMobile, themeSource } = useSidebar();
+  // The existing Radix Sheet portal is outside this DOM scope. Project live
+  // source tokens without introducing another portal, animation or focus owner.
+  const mobileTheme = useOverlayTheme(isMobile && collapsible !== 'none' ? themeSource : null);
 
   if (collapsible === 'none') {
     return (
@@ -217,6 +230,10 @@ function Sidebar({
           className={cn('bg-sidebar text-sidebar-foreground w-(--sidebar-width) p-0 [&>button]:hidden', className)}
           style={
             {
+              ...mobileTheme,
+              fontFamily: 'var(--zero-theme-font-body, var(--font-platform-sans, inherit))',
+              fontSize: 'var(--zero-type-body-size, inherit)',
+              lineHeight: 'var(--zero-type-body-leading, inherit)',
               '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
               ...style,
             } as React.CSSProperties

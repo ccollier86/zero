@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: choice-controls
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; Morph Select upgrade unreleased"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -23,39 +23,25 @@ reviewed_against:
 
 [Primitive index](./index.md) · [Frontend index](../../index.md) · [Documentation index](../../../index.md)
 
-Use the explicit UI subpaths for Select/Combobox. Checkbox and RadioGroup are
+Use the [canonical Select manual](../controls/select.md) and the explicit UI
+subpaths for Select/Combobox. Checkbox and RadioGroup are
 animated headless wrappers exported from the root/React barrels and
 `@zero/framework/components/checkbox` and `/radio-group`.
 They own choices, not permission grants or server validation.
 
 ## Select Family
 
-```tsx
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@zero/framework/components/ui/select';
+The complete [Select manual](../controls/select.md#select-family) now lives
+with the [Controls overview](../controls/index.md). It owns the public facade,
+Radix value/form contract and standard composition; this old anchor remains a
+route for existing links, not a second copy of the API or examples.
 
-export function StatusChoice() {
-  return (
-    <Select defaultValue="active">
-      <SelectTrigger aria-label="Status"><SelectValue /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="active">Active</SelectItem>
-        <SelectItem value="archived">Archived</SelectItem>
-      </SelectContent>
-    </Select>
-  );
-}
-```
+### Morph Presentation And Rich Options
 
-Select is Radix Root; value/onValueChange controls it, defaultValue initializes
-uncontrolled state. open/onOpenChange/defaultOpen/disabled/name/required follow
-that root contract. SelectGroup, SelectLabel, SelectSeparator, SelectValue,
-SelectScrollUpButton and SelectScrollDownButton complete the public family.
-SelectContent portals its viewport and defaults position='popper'; its children
-provide items. SelectItem requires a nonempty value and accepts disabled.
-SelectTrigger is the focus/activation element. Do not place arbitrary option
-labels into an API payload without validating the actual value on the server.
+See [Select's morph and rich-option contract](../controls/select.md#morph-presentation-and-rich-options)
+for slots, native viewport scrolling, magnetic highlighting, motion and inert
+close-paint retirement. These presentation features do not replace Radix's
+selection, focus, typeahead or form controller.
 
 ## Combobox
 
@@ -67,6 +53,11 @@ Selection is parent-owned: omitting value is not an internal selected-value stor
 Single selection toggles the same item to an empty string and closes the popover.
 Multiple selection emits an updated array and keeps it open. Search filters the
 provided command items; it is not a remote query/loading contract.
+
+Its existing Popover now uses the shared restrained anchored entrance/exit.
+Its CommandList supplies magnetic handoff and shared overflow treatment;
+filtering, toggling and selection behavior above are unchanged. The same list
+integration reaches Cascader without replacing its tree controller.
 
 ## Checkbox And RadioGroup
 

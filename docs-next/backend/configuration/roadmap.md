@@ -27,6 +27,11 @@ These are known user proposals and design directions, not current
 settings or an implementation commitment. Existing contracts remain in the
 [configuration reference](./configuration.md).
 
+The [internal configuration evolution plan](../../_work/declarative-configuration-plan.md)
+records the 2026-10-07 discussion, source-observed current behavior and proposed
+domain organization, database-backed settings, delegation and reconciliation.
+It is a design record, not a newly supported configuration API.
+
 ## Known Directions
 
 - [ ] Organize app declarations into focused configuration modules with a compact central entrance.
@@ -34,6 +39,10 @@ settings or an implementation commitment. Existing contracts remain in the
 - [ ] Offer deliberate server-only bootstrap/scaffolding without pretending every app needs a React shell.
 - [ ] Explore environment and database-backed AI/provider settings as independently reviewed modes.
 - [ ] Improve mode-aware upgrade diagnostics and clearer migration planning.
+- [ ] Define shared Doctor/startup checks against installed application state;
+  reject incompatible topology or authorization-mode changes before mutations.
+- [ ] Support explicitly admitted organization/user settings and role customization
+  without weakening application policy or overwriting database-managed choices.
 
 Ordinary TypeScript module organization already works; a future helper should
 improve it without introducing an opaque merge order or exposing secrets to the

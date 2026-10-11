@@ -8,14 +8,14 @@ visibility: internal
 system: modals
 feature: layouts
 maturity: supported
-applies_to: ["2.6.0 source; structured-modal upgrade unreleased"]
+applies_to: ["2.6.0 working source; structured-modal and additive Arc-scroll upgrade unreleased"]
 modes: [browser, standalone, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-11"
   evidence_level: source-observed
 ---
 
@@ -26,6 +26,10 @@ reviewed_against:
 The unreleased structured shell separates title/description/actions from feature
 content. Its header and footer do not scroll; the content body does. Feature code
 does not construct an extra frame, close button, header or footer.
+The default Arc scroll treatment decorates those actual native viewports; it
+does not insert a second ScrollArea, duplicate content or move focus ownership.
+The original shell and native scrollbar recipe remain available for comparison
+through `scrollTreatment:"native"`.
 
 ## Content And Decisions
 
@@ -99,10 +103,35 @@ Phone layouts use a bottom-sheet frame except full-screen size; do not add
 absolute positioning to content to imitate the shell.
 
 `height:"fixed"` holds a stable frame; `auto` grows only until the viewport cap.
-`scrollbar:"hidden"` removes scrollbar chrome, not scrollability. Independent
-`navScrollbar` configuration applies to navigation. Use explicit labeled forms
-and deliberate wrapped content at narrow widths; min-width constraints prevent
-titles/trailing controls from pushing the frame offscreen.
+The default `scrollTreatment:"arc"` adds hidden-distance edge fades and sibling
+overlay rails to the existing body/panel viewport. Fitting content has neither;
+both-axis overflow gets separate physical-edge affordances. Header/footer and
+close button remain outside those masks. Retained panels keep their own native
+scroll positions.
+
+The header tab strip is separately decorated horizontally. Grouped navigation
+has its own vertical desktop viewport and horizontal phone viewport; its
+`navScrollbar` policy is independent of the body `scrollbar` policy.
+
+| Policy | Arc treatment |
+| --- | --- |
+| `auto` (default) | Overlay rails appear on hover and scroll activity, only while their axis overflows. |
+| `thin` | Thin overlay rails remain visible while their axis overflows. |
+| `hidden` | Rails are absent; edge fades and native scrolling still communicate and reach hidden content. |
+
+`scrollTreatment:"native"` retains the original markup/styles and original
+native `auto`/`thin`/`hidden` scrollbar behavior. In either recipe, hiding bars
+does not mean `overflow:hidden`: wheel, touch, keyboard and focus scrolling
+remain available. The next Arc rails page 90% of the viewport smoothly, use
+immediate paging under reduced motion and restore an owner's authored snap
+policy after thumb dragging. Horizontal tab/navigation strips convert dominant
+vertical wheel input only when they can consume it, retaining modifier/native
+gestures and nested-control behavior.
+
+Use explicit labeled forms and deliberate wrapped content at narrow widths;
+min-width constraints prevent titles/trailing controls from pushing the frame
+offscreen. Custom specialized body scrollers remain with their own controllers;
+the shell does not rewrite a table, editor or chart viewport.
 
 For dense members/notifications/integration rows, use
 [DenseList](../components/dense-list.md). A fully actionable picker uses
@@ -114,3 +143,7 @@ remain separate native interactions.
 [Configuration](./configuration.md) lists all options; [motion](./motion.md)
 defines panel transitions; [forms](./forms.md) coordinates retained editors;
 [migration](./migration.md) removes copied frames safely.
+The [scroll adoption plan](../../_work/arc-scroll-surface-plan.md) records the
+bounded wrapper, remaining ordinary-surface coverage and qualification gates.
+Original implementations and theme files remain until replacement testing and
+the user's explicit retirement approval are both complete.

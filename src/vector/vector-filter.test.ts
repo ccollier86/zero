@@ -62,4 +62,11 @@ describe('vector-filter', () => {
       metadata: { bucket: 'other', year: 2025 },
     }, { bucket: 'docs' })).toBe(false);
   });
+  it('distinguishes a configured native body field from metadata named text in nested filters', () => {
+    const row = { id: 'doc', text: 'Actual body', metadata: { text: 'metadata label', tenantId: 'mine' } };
+    expect(recordMatchesVectorFilter(row, { $and: [{ body: { like: 'Actual%' } },
+      { $or: [{ text: 'metadata label' }, { text: 'other' }] }, { tenantId: 'mine' }] }, 'body')).toBe(true);
+    expect(recordMatchesVectorFilter(row, { body: 'metadata label' }, 'body')).toBe(false);
+    expect(recordMatchesVectorFilter(row, { text: 'Actual body' }, 'body')).toBe(false);
+  });
 });

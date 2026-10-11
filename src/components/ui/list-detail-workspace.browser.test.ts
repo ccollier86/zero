@@ -208,6 +208,15 @@ browserTest('desktop-hidden detail still opens on mobile, and narrow action/stat
     expect(await page.getByRole('status').textContent()).toBe('80 records');
     const lastAction = page.getByRole('button', { name: 'Action 7', exact: true });
     await lastAction.focus();
+    // Focus starts the existing label spring; its completion scrolls the action
+    // into view. Wait for actual disclosure/containment, not just focus dispatch.
+    await page.waitForFunction(() => {
+      const element = document.querySelector<HTMLButtonElement>('[data-slot="record-navigation-action"][aria-label="Action 7"]');
+      const label = element?.querySelector<HTMLElement>('[data-slot="record-navigation-action-label"]');
+      if (!element || !label || element.dataset.expanded !== 'true' || document.activeElement !== element) return false;
+      const box = element.getBoundingClientRect(), parent = element.parentElement!.getBoundingClientRect();
+      return label.scrollWidth <= label.clientWidth + 1 && box.left >= parent.left - 1 && box.right <= parent.right + 1;
+    }, undefined, { timeout: 5_000 });
     const within = await lastAction.evaluate(element => {
       const box = element.getBoundingClientRect();
       const parent = element.parentElement!.getBoundingClientRect();

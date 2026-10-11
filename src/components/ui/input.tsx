@@ -76,7 +76,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           data-slot="input"
           data-readonly={readOnly ? 'true' : undefined}
           className={cn(
-            "h-9 w-full min-w-0 rounded-md border-none bg-background px-3 py-1 text-base shadow-xs transition-[border-color,box-shadow,color] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-bg-inset/90",
+            "h-9 w-full min-w-0 rounded-md border-none bg-background px-3 py-1 text-[length:var(--zero-type-input-size,var(--text-base,1rem))] leading-[var(--zero-type-input-leading,var(--text-base--line-height,1.5))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-input-weight,inherit)] tracking-[var(--zero-type-input-tracking,inherit)] shadow-xs transition-[border-color,box-shadow,color] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-[length:var(--zero-type-input-small-size,var(--text-sm,.875rem))] md:leading-[var(--zero-type-input-small-leading,var(--text-sm--line-height,1.4285714286))] dark:bg-bg-inset/90",
             readOnly ? 'cursor-default' : 'group-hover/input:shadow-none',
             "focus-visible:ring-0",
             "aria-invalid:ring-[1px] aria-invalid:ring-destructive/25",

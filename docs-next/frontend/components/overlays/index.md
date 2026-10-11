@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: index
 maturity: supported
-applies_to: ["2.1.1 source with audited interaction/token corrections; publication qualification pending"]
+applies_to: ["2.6.0 working source; organized Popover/shared mechanisms with retained compatibility paths"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -32,8 +32,8 @@ panels, tooltips add nonessential descriptions, and collapsibles disclose conten
 
 - [Dropdown menus](./dropdown-menu.md): ordinary/check/radio items, groups and submenus.
 - [Context menus](./context-menu.md): conventional right-click/keyboard/touch actions, nested commands, icons and trailing choice indicators.
-- [Popovers](./popover.md): controlled inline panels with dismissal/focus callbacks.
-- [Tooltips](./tooltip.md): the public Radix family, separate from internal shared sidebar tooltips.
+- [Popovers](./popover.md): trigger-origin anchored panels with native placement/focus and decorated native viewports.
+- [Tooltips](./tooltip.md): public/provider composition, Grow motion, arrow and placement options, and shared grouped-trigger behavior.
 - [Collapsibles](./collapsible.md): disclosure and optional retained content.
 - [Sidebar](./sidebar.md): navigation structure and responsive presentation.
 - [Sidebar state](./sidebar-state.md): provider/control/mobile/cookie/shortcut contract.
@@ -45,6 +45,10 @@ panels, tooltips add nonessential descriptions, and collapsibles disclose conten
 [AppShell](../../app-shell/index.md) is the high-level layout alternative;
 [modals](../../modals/index.md) own deliberate confirmations.
 [Design tokens](../../design-system/index.md) supply presentation vocabulary.
+[Source organization](../source-organization.md) distinguishes canonical Popover
+and shared overlay mechanisms from their retained public/import paths. Dropdown,
+Tooltip and Highlight keep their existing runtime owners; ContextMenu retains
+its separate pointer-anchored presence behavior.
 
 ## Authority And Lifecycle
 
@@ -57,5 +61,6 @@ refresh. Their callbacks remain app-owned.
 Portalled content inherits the relevant React context but is not necessarily
 inside the trigger's DOM parent. Use provided className/props and intended
 tokens; verify focus, dismissal and responsive behavior in the actual app.
-These source-observed drafts do not claim comprehensive screen-reader/mobile or
-browser animation qualification.
+Focused synthetic browser tests qualify branch ownership, theme projection,
+scroll decoration and existing magnetic behavior. They do not replace
+representative-app visual, contrast, screen-reader or mobile qualification.

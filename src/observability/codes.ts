@@ -438,6 +438,7 @@ export const OBS_CODES = {
   FRONTEND_WORKFLOW_TOPOLOGY_FAILED: code('frontend', 'workflow.topology_failed', 'error', 'Workflow topology query failed.'),
   FRONTEND_WORKFLOW_OBSERVATION_FAILED: code('frontend', 'workflow.observation_failed', 'error', 'Workflow status reconciliation failed.'),
   FRONTEND_WORKFLOW_PROGRESS_ACTION_FAILED: code('frontend', 'workflow.progress_action_failed', 'error', 'Workflow progress action could not be confirmed.'),
+  FRONTEND_VECTOR_VISUALIZATION_FAILED: code('frontend', 'vector_visualization.failed', 'error', 'Vector visualization could not be read or updated.'),
   FRONTEND_DATA_STUDIO_OPERATION_FAILED: code('frontend', 'data_studio.operation_failed', 'error', 'Frontend Data Studio operation failed.'),
   FRONTEND_COPY_FAILED: code('frontend', 'copy.failed', 'error', 'Clipboard copy action failed.'),
   FRONTEND_CODE_HIGHLIGHT_FAILED: code('frontend', 'code_highlight.failed', 'warn', 'Frontend code block highlighting failed.'),

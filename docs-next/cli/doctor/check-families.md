@@ -8,14 +8,14 @@ visibility: internal
 system: doctor
 feature: check-families
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; publication qualification pending"]
 modes: ["configuration values", "trusted CLI modules", "explicit infrastructure snapshots"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -38,6 +38,8 @@ silence a finding.
 | AI/vector | configured provider/model aliases, supported capabilities, index dimensions/paths and scope-field indexing | [AI](../../backend/ai/index.md); vector source manual pending root completion |
 | PDF | browser executable/installation policy | [CLI browser operations](../tooling/dispatch.md#operational-subcommands) |
 | Source usage | public import/component/service use and responsibility heuristics | [Source audit](./source-audit.md) |
+| Backing theme, opt-in source-only | owned generated CSS/legacy alias integrity and mandatory canonical source references; no config execution or automatic repair | [Theme diagnostics](./source-audit.md#backing-theme-diagnostics), [next foundation](../../frontend/design-system/foundation-next.md) |
+| Upgrade, opt-in source-only | target public contracts/capabilities, catalogued component behavior changes and admitted literal helper/CSS references; confirmed requirements versus manual review | [Upgrade audit](./source-audit.md#upgrade-auditing) |
 
 ## Public Paths And TTLs
 

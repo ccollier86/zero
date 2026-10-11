@@ -1,3 +1,4 @@
+/** Form-field identity and accessible help/error composition with optional type roles; domain validation stays with callers. */
 import * as React from "react"
 
 import { cn } from "#zero/lib/utils"
@@ -85,7 +86,7 @@ function FormDescription({
     <p
       data-slot="form-description"
       id={`${id}-description`}
-      className={cn("text-[0.8rem] text-muted-foreground", className)}
+      className={cn("text-[length:var(--zero-type-support-size,.8rem)] leading-[var(--zero-type-support-leading,inherit)] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-support-weight,inherit)] tracking-[var(--zero-type-support-tracking,inherit)] text-muted-foreground", className)}
       {...props}
     />
   )
@@ -107,7 +108,7 @@ function FormMessage({
       data-slot="form-message"
       id={`${id}-error`}
       role="alert"
-      className={cn("text-[0.8rem] font-medium text-destructive", className)}
+      className={cn("text-[length:var(--zero-type-support-size,.8rem)] leading-[var(--zero-type-support-leading,inherit)] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-label-weight,var(--font-weight-medium,500))] tracking-[var(--zero-type-support-tracking,inherit)] text-destructive", className)}
       {...props}
     >
       {body}

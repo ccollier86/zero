@@ -58,7 +58,10 @@ switch (command) {
 
 async function runBunScript(relativeScript: string, scriptArgs: string[]): Promise<number> {
   const scriptPath = fileURLToPath(new URL(relativeScript, import.meta.url));
-  const staticDoctor = relativeScript === '../doctor/run.ts' && scriptArgs.includes('--source-only');
+  // Static-only options also suppress child .env loading when malformed input
+  // is about to be rejected by Doctor, before its source-only branch is entered.
+  const staticDoctor = relativeScript === '../doctor/run.ts'
+    && ['--source-only', '--theme-foundation', '--upgrade', '--upgrade-target-root'].some(flag => scriptArgs.includes(flag));
   const child = Bun.spawn([process.execPath, ...(staticDoctor ? ['--no-env-file'] : []), scriptPath, ...scriptArgs], {
     stdin: 'inherit',
     stdout: 'inherit',

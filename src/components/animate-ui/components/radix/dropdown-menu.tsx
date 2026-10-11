@@ -18,6 +18,8 @@ import {
   DropdownMenuSubContent as DropdownMenuSubContentPrimitive,
   DropdownMenuSubTrigger as DropdownMenuSubTriggerPrimitive,
   DropdownMenuTrigger as DropdownMenuTriggerPrimitive,
+  useDropdownMenu,
+  useDropdownMenuSub,
   type DropdownMenuProps as DropdownMenuPrimitiveProps,
   type DropdownMenuContentProps as DropdownMenuContentPrimitiveProps,
   type DropdownMenuGroupProps as DropdownMenuGroupPrimitiveProps,
@@ -35,7 +37,18 @@ import {
 } from '#zero/components/animate-ui/primitives/radix/dropdown-menu';
 import { cn } from '#zero/lib/utils';
 import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
-import { useOwnedFloatingOverlay, composeOverlayRefs } from '../../../overlays/overlay-scope';
+import { useOwnedFloatingOverlay, useOverlayTheme, composeOverlayRefs } from '../../../overlays/overlay-scope';
+import { projectAnchoredSurfaceTheme } from '../../../overlays/anchored-surface-motion';
+import { ScrollViewportDecoration } from '../../../overlays/scroll-viewport-decoration';
+
+/** The menu's one native inner viewport; Content refs continue to address Radix's semantic surface. */
+type DropdownMenuViewportOptions = {
+  viewportRef?: React.Ref<HTMLDivElement>;
+  fadeEdges?: boolean;
+  scrollbars?: 'hover' | 'scroll' | 'always' | 'hidden';
+  viewportClassName?: string;
+  viewportStyle?: React.CSSProperties;
+};
 
 type DropdownMenuProps = DropdownMenuPrimitiveProps;
 
@@ -49,7 +62,7 @@ function DropdownMenuTrigger(props: DropdownMenuTriggerProps) {
   return <DropdownMenuTriggerPrimitive {...props} />;
 }
 
-type DropdownMenuContentProps = DropdownMenuContentPrimitiveProps;
+type DropdownMenuContentProps = DropdownMenuContentPrimitiveProps & DropdownMenuViewportOptions;
 
 function DropdownMenuContent({
   sideOffset = 4,
@@ -57,24 +70,43 @@ function DropdownMenuContent({
   children,
   ref,
   style,
+  container,
+  viewportRef,
+  fadeEdges = true,
+  scrollbars = 'hover',
+  viewportClassName,
+  viewportStyle,
   ...props
 }: DropdownMenuContentProps) {
   const floating = useOwnedFloatingOverlay();
+  const { trigger } = useDropdownMenu();
+  const sourceTheme = useOverlayTheme(trigger);
+  const contentRef = React.useMemo(() => composeOverlayRefs(floating.ref, ref), [floating.ref, ref]);
+  const [viewport, setViewport] = React.useState<HTMLDivElement | null>(null);
+  const nativeViewportRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(setViewport, viewportRef), [viewportRef]);
   return (
     <DropdownMenuContentPrimitive
       {...floating.contentProps}
-      ref={composeOverlayRefs(floating.ref, ref)}
+      ref={contentRef}
+      container={container ?? floating.owner?.container}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border border-border/85 bg-popover p-1 text-popover-foreground shadow-lg outline-none dark:shadow-none',
+        'relative z-50 flex max-h-(--radix-dropdown-menu-content-available-height) min-h-0 min-w-[8rem] flex-col origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-md border border-border/85 bg-popover p-1 text-popover-foreground font-[family-name:var(--zero-theme-font-body,inherit)] shadow-lg outline-none dark:shadow-none',
         className,
       )}
       {...props}
-      style={{ ...floating.contentProps.style, ...style }}
+      inert={floating.owner && !floating.owner.active ? true : props.inert}
+      style={{ ...projectAnchoredSurfaceTheme(floating.contentProps.style),
+        ...(trigger?.isConnected ? projectAnchoredSurfaceTheme(sourceTheme) : {}), ...style,
+        ...(floating.owner ? { zIndex: floating.owner.zIndex + 2,
+          ...(!floating.owner.active ? { pointerEvents: 'none' as const } : {}) } : {}) }}
     >
-      <DropdownMenuHighlightPrimitive className="absolute inset-0 bg-accent z-0 rounded-sm">
-        {children}
-      </DropdownMenuHighlightPrimitive>
+      <div ref={nativeViewportRef} data-slot="dropdown-menu-viewport" className={cn('min-h-0 flex-1 overflow-x-hidden overflow-y-auto', viewportClassName)} style={viewportStyle}>
+        <DropdownMenuHighlightPrimitive className="absolute inset-0 bg-accent z-0 rounded-sm">
+          {children}
+        </DropdownMenuHighlightPrimitive>
+      </div>
+      <ScrollViewportDecoration viewport={viewport} fadeEdges={fadeEdges} scrollbars={scrollbars} />
     </DropdownMenuContentPrimitive>
   );
 }
@@ -277,26 +309,46 @@ function DropdownMenuSubTrigger({
   );
 }
 
-type DropdownMenuSubContentProps = DropdownMenuSubContentPrimitiveProps;
+type DropdownMenuSubContentProps = DropdownMenuSubContentPrimitiveProps & DropdownMenuViewportOptions;
 
 function DropdownMenuSubContent({
   className,
   ref,
   style,
+  container,
+  children,
+  viewportRef,
+  fadeEdges = true,
+  scrollbars = 'hover',
+  viewportClassName,
+  viewportStyle,
   ...props
 }: DropdownMenuSubContentProps) {
   const floating = useOwnedFloatingOverlay();
+  const { trigger } = useDropdownMenuSub();
+  const sourceTheme = useOverlayTheme(trigger);
+  const contentRef = React.useMemo(() => composeOverlayRefs(floating.ref, ref), [floating.ref, ref]);
+  const [viewport, setViewport] = React.useState<HTMLDivElement | null>(null);
+  const nativeViewportRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(setViewport, viewportRef), [viewportRef]);
   return (
     <DropdownMenuSubContentPrimitive
       {...floating.contentProps}
-      ref={composeOverlayRefs(floating.ref, ref)}
+      ref={contentRef}
+      container={container ?? floating.owner?.container}
       className={cn(
-        'z-50 min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-md border border-border/85 bg-popover p-1 text-popover-foreground shadow-lg outline-none dark:shadow-none',
+        'relative z-50 flex max-h-(--radix-dropdown-menu-content-available-height) min-h-0 min-w-[8rem] flex-col origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-md border border-border/85 bg-popover p-1 text-popover-foreground font-[family-name:var(--zero-theme-font-body,inherit)] shadow-lg outline-none dark:shadow-none',
         className,
       )}
       {...props}
-      style={{ ...floating.contentProps.style, ...style }}
-    />
+      inert={floating.owner && !floating.owner.active ? true : props.inert}
+      style={{ ...projectAnchoredSurfaceTheme(floating.contentProps.style),
+        ...(trigger?.isConnected ? projectAnchoredSurfaceTheme(sourceTheme) : {}), ...style,
+        ...(floating.owner ? { zIndex: floating.owner.zIndex + 2,
+          ...(!floating.owner.active ? { pointerEvents: 'none' as const } : {}) } : {}) }}
+    >
+      <div ref={nativeViewportRef} data-slot="dropdown-menu-viewport" className={cn('min-h-0 flex-1 overflow-x-hidden overflow-y-auto', viewportClassName)} style={viewportStyle}>{children}</div>
+      <ScrollViewportDecoration viewport={viewport} fadeEdges={fadeEdges} scrollbars={scrollbars} />
+    </DropdownMenuSubContentPrimitive>
   );
 }
 

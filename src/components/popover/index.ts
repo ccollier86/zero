@@ -5,10 +5,12 @@ export {
   PopoverClose,
   PopoverContent,
   PopoverTrigger,
-} from '../animate-ui/components/radix/popover';
+  PopoverViewport,
+} from '../surfaces/popover';
 export type {
   PopoverCloseProps,
   PopoverContentProps,
   PopoverProps,
   PopoverTriggerProps,
-} from '../animate-ui/components/radix/popover';
+  PopoverViewportProps,
+} from '../surfaces/popover';

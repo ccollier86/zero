@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: configuration
 maturity: supported
-applies_to: ["2.6.0 source; Tooltip Motion Kit upgrade unreleased"]
+applies_to: ["2.6.0 working source; anchored/menu/tooltip upgrades unreleased"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "59cb76dc12d18a9428a616b08509cae1eecdf74d"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -32,7 +32,7 @@ React props and local provider state resolve at render/interaction time.
 | --- | --- | --- |
 | DropdownMenu* | root/react or /components/dropdown-menu | named matching Props exports |
 | ContextMenu* | root/react or /components/context-menu | 2.4.0 addition; named matching Props exports and [native root/portal/choice contracts](./context-menu.md#public-parts-and-configuration) |
-| Popover/Trigger/Content/Close | root/react or /components/popover | named matching Props exports |
+| Popover/Trigger/Content/Viewport/Close | root/react or /components/popover | named matching Props exports |
 | TooltipProvider/Group/Tooltip/Trigger/Content | /components/tooltip | Matching Props exports; **not root/react**; [standalone/shared composition](./tooltip.md) |
 | Collapsible/Trigger/Content/useCollapsible | root/react or /components/collapsible | Props and CollapsibleContextType |
 | Sidebar* / useSidebar | root/react or /components/sidebar | infer React ComponentProps; no named sidebar Props barrel promised |
@@ -47,11 +47,12 @@ ItemIndicator; this does not change the existing DropdownMenu export contract.
 
 | Control | Default / specific options |
 | --- | --- |
-| Dropdown content | sideOffset4; spring300/damping25 in primitive; item variant default or destructive, inset optional |
+| Dropdown content | sideOffset4; shared anchored 580ms settle/160ms fade/140ms exit; existing 350/35 magnetic item spring; item variant default or destructive, inset optional |
 | Dropdown checkbox | checked supported; inset optional; indicator wrapper supplies check icon |
 | Dropdown label/subtrigger | inset optional |
-| Dropdown submenu content | duration0.2s; controlled/default-open subroot and positioning options |
-| PopoverContent | align center; sideOffset4; width72 utility; spring300/damping25; className/position/collision/focus callbacks |
+| Dropdown submenu content | Same anchored surface recipe; independent existing magnetic boundary; controlled/default-open subroot and positioning options |
+| PopoverContent | align center; sideOffset4; width72 utility; shared .97/5px anchored entrance, .98/half-offset exit; explicit Motion props opt out; className/position/collision/focus callbacks |
+| PopoverViewport | Optional plain native-div scroll body, fadeEdges true, scrollbars hover/scroll/always/hidden, orientation vertical/horizontal/both; ref reaches the viewport, not frame |
 | TooltipProvider/TooltipGroup | delayDuration450, skipDelayDuration450, closeDelay70; motion grow, durationMultiplier1, arrow true, variant neutral; group additionally shares one morphing bubble |
 | Tooltip | Local/controlled visibility; provider presentation overrides; followCursor false or true/x/y; overflowOnly false |
 | TooltipContent | Optional title/description/shortcut or children/full-trigger fallback; local presentation overrides, positioning/collision, optional container; collisionPadding8, viewport-constrained260px max and wrapping; optional arrow/owned portal |
@@ -76,6 +77,21 @@ content does not expose unsupported side/align settings. See the dedicated
 Styled animated content intentionally owns its rendered Motion element;
 unsupported forceMount/asChild props are not escape hatches. Native dependency
 defaults not overridden by Zero remain the installed dependency's contract.
+
+Dropdown root/submenu Content add `viewportRef`, `fadeEdges`, `scrollbars`,
+`viewportClassName` and `viewportStyle` for their single inner native scroller.
+The native Content ref still reaches the outer positioned/dismissable element.
+Headers, dividers, icons, checks and shortcuts retain their existing semantic
+parts; arbitrary Popover forms do not become menus automatically.
+
+Working-source ContextMenu Content/SubContent now have the same explicit
+viewport options plus `orientation` and `scrollTreatment="arc"|"native"`.
+The standard default uses one inner viewport; opaque `asChild` content retains
+native scrolling unless it composes `ContextMenuViewport` directly inside its
+semantic host. Arc content inherits managed-overlay ownership; the native
+branch preserves the old manual contract. These additions are not retroactive
+2.4.0 package features. See [Context Menu scrolling](./context-menu.md#scroll-treatment-and-custom-content)
+for native refs, custom-host forwarding and retained-original comparison.
 
 [Feature guides](./index.md) explain state/authority/lifecycle. The
 [design-system configuration](../../design-system/configuration.md) owns tokens,

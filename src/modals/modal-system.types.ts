@@ -85,6 +85,8 @@ export interface ModalDescriptorBase<T = unknown> {
   readonly customSize?: ModalCustomSize;
   readonly placement?: 'center' | 'left' | 'right' | 'bottom';
   readonly height?: 'auto' | 'fixed';
+  /** Shared edge fades/overlay rails by default; native retains the original shell's scroll skin. */
+  readonly scrollTreatment?: 'arc' | 'native';
   readonly scrollbar?: 'auto' | 'thin' | 'hidden';
   readonly navScrollbar?: 'auto' | 'thin' | 'hidden';
   readonly dismissible?: boolean;

@@ -159,12 +159,18 @@ the linked documentation.
 - [ ] **Focused declarative configuration** — **Core**. Evolve the mature typed
   `zero.config.ts` model so large applications can organize settings without
   making small applications verbose.
+  - Follow the [internal configuration evolution plan](../docs-next/_work/declarative-configuration-plan.md):
+    domain/feature-organized files with detailed inline examples, explicit
+    database-backed settings, and controlled organization/user delegation.
   - Evaluate focused configuration modules and the previously discussed
     Hydra-like organization while preserving ordinary typed TypeScript.
   - Define predictable precedence among defaults, project configuration,
     environment values, plugin namespaces, and deliberate runtime overrides.
   - Expose effective configuration, validation, and actionable Doctor findings.
   - Keep security-sensitive settings explicit and server-only.
+  - Reconcile optional features after bootstrap only when safe. Doctor and
+    startup must reject incompatible installed-state changes such as switching
+    a multi-tenant Fabric/RBAC app to single-tenant/simple permissions.
 
 - [ ] **Full-stack plugin authoring contract** — **Core**. Make official and
   third-party plugins easy to build, install, configure, document, and remove.
@@ -228,6 +234,52 @@ the linked documentation.
     production guidance.
 
 ## User interface and application building
+
+- [ ] **Default theme and design token evolution** — **Core**. Refine Zero's
+  visual language using the complete ingestion/vector-search components as early
+  references, then additional approved component and screen designs.
+  - Follow the [internal design-token plan](../docs-next/_work/design-token-theme-evolution-plan.md).
+    Stage strips, query/dimension/vector readouts, small dividers, source/title/score
+    rows and rank-change indicators matter alongside the animated maps.
+  - Build and qualify the visualization organisms with current semantic tokens
+    first; begin the wider theme redesign after that work is finished and polished.
+  - Keep shared defaults, component aliases, application customization, light/dark
+    appearance and existing hand-tuned motion coherent across the platform.
+  - Include the supplied Sankey's six-series palette, ribbon/source tracing,
+    compact numeric hierarchy and aligned inspector as additional chart-language
+    foundations before changing shared defaults.
+  - Include the Race Bar's separate four-series palette, tinted bodies/crisp caps,
+    tabular rankings, rolling period and compact playback timeline in that ledger.
+  - Include Funnel's centered/split cohort bands, quiet stage columns and compact
+    count/retention hierarchy. Chart-family inspectors, semantic type roles and
+    named colors now begin that convergence without replacing the global theme.
+
+- [x] **First Zero-owned chart** — **Component pack**. The compositional
+  [Sankey chart](../docs-next/frontend/charts/sankey.md), headless flow math
+  and bounded existing-query bridge are implemented in the unreleased working
+  tree. Current Recharts remain supported; no global theme replacement is implied.
+- [x] **Race Bar ranking chart** — **Component pack**. The compositional
+  [Race Bar organism](../docs-next/frontend/charts/race-bar.md) adds
+  bounded history admission, spring-driven ranking and playback, seek/scrub
+  controls, shared inspection and authorized collection projection qualification.
+  It is working-source implementation, not a new server analytics service.
+- [x] **Funnel conversion chart** — **Component pack**. The
+  [Funnel organism](../docs-next/frontend/charts/funnel.md) adds bounded
+  monotone cohort admission, total/split/isolated views, responsive bands,
+  illustrative retention flow and exact stage inspection through the same chart
+  facade. Shared chart-family tokens unify minor prototype styling differences.
+- [x] **Arc chart family** — **Component pack**. Twelve free chart organisms,
+  separate component/headless public entries, shared Zero token/overlay handling,
+  bounded reactive projection and source-copy integration are in working source.
+  The [Arc guide](../docs-next/frontend/charts/arc.md) documents the API;
+  the [theme ledger](../docs-next/_work/design-token-theme-evolution-plan.md#arc-chart-extension)
+  preserves exact upstream token inputs without installing a second global theme.
+- [ ] **Realtime Stream chart** — **Component pack**. Await the supplied reference
+  before selecting its visual/event contracts; no speculative renderer is installed.
+- [ ] **Zero chart aggregate services** — **Core**. Extend that facade through
+  existing authorized database queries, Fabric, Sync and transaction
+  triggers/functions, with explicit metric/window/freshness semantics. Follow the
+  [chart implementation plan](../docs-next/_work/charts-system-plan.md).
 
 - [ ] **Modal manager redesign** — **Core**. Harden the existing modal manager
   rather than creating a competing system.
@@ -423,12 +475,30 @@ the linked documentation.
 
 ## AI interfaces and intelligent data
 
+- [x] **Live ingestion and vector-search visualization** — **Component pack**.
+  Compose smaller reusable pieces into two Zero organisms backed by real
+  ingestion/search operations and a complete public facade.
+  - Follow the [implementation plan](../docs-next/_work/vector-visualization-plan.md).
+    Reuse AI, Vector, Torrent, Guardian, ReactiveDB/Fabric, SDK transport and
+    observability; separate operation completion from visual playback.
+  - Support vector or true hybrid retrieval with independent optional reranking,
+    authorized real map samples and live state, and explicit trace provenance.
+  - Attach to existing chat/tool/agent operations without launching duplicate
+    work; offer compact, full and inspector presentations.
+  - Support external-engine adapters and explicit landing-page/story graphics
+    through the same presentational pieces, with no implicit provider calls.
+  - Implemented in the unreleased working tree; see the
+    [backend guide](../docs-next/backend/vector/visualizations.md) and
+    [component guide](../docs-next/frontend/components/vector-visualization.md).
+
 - [ ] **AI model catalog and configuration control plane** — **Research**.
   Explore provider/Gateway model discovery, effective-dated capability and
   pricing metadata, and a deliberate trusted env-versus-database provider
   configuration model. This is not a current Zero API. Keep provider secrets
   server-only, preserve explicit readiness and alias semantics, and define
   refresh/failure behavior before introducing mutable database settings.
+  Coordinate database-backed providers, organization BYOK and delegation with
+  the [internal configuration evolution plan](../docs-next/_work/declarative-configuration-plan.md#ai-settings-byok-models-and-costs).
 
 - [ ] **Vector Studio** — **Core or official plugin**. Add organization-owned
   vector-index provisioning, generation-safe reindex work, quotas, recovery,

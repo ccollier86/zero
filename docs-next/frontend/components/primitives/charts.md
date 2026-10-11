@@ -28,6 +28,12 @@ ChartStyle, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent,
 useChart and ChartConfig. It styles Recharts composition; it is not a metric
 collector, query engine or provider cost catalog.
 
+For the handmade library, start with [Zero Charts API and chart families](../../charts/index.md).
+That subsystem overview routes the shared facade, reactive bridge, runtime and
+five full family manuals. Recharts supplies mathematical reference behavior for
+the native work, not its rendering dependency. This guide remains the supported
+Recharts composition reference; adopting a handmade chart does not replace this API.
+
 ChartConfig maps series keys to optional label, icon, color and theme. Use stable
 keys matching dataKey/name. ChartContainer requires config and a compatible
 Recharts child, plus native div props. It supplies context, responsive sizing,

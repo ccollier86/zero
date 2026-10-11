@@ -106,6 +106,7 @@ function resolveIndexes(
       path: normalizePath(config.path ?? path.join(defaults.dataDir, sanitizePathSegment(name))),
       vectorField,
       textField,
+      lexical: normalizeBoolean(config.lexical ?? false, `${name}.lexical`),
       metadataField,
       metadata,
       metric: normalizeChoice(config.metric ?? 'cosine', ['cosine', 'ip', 'l2'], `${name}.metric`),
@@ -201,6 +202,13 @@ function normalizeFieldName(value: string, label: string): string {
 
 function normalizeDimension(value: number, label: string): number {
   return normalizePositiveInteger(value, label);
+}
+
+function normalizeBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new VectorError('VECTOR_CONFIG_INVALID', `Vector ${label} must be a boolean.`, { field: label });
+  }
+  return value;
 }
 
 function normalizePositiveInteger(value: number, label: string): number {

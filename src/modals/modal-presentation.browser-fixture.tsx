@@ -39,8 +39,9 @@ function Demo() {
         <Button onClick={event => display('Custom right', { placement: 'right', customSize: { width: '360px', height: '520px' } }, event.currentTarget)}>Custom right</Button>
         <Button onClick={event => display('Clamped custom', { customSize: { width: '2000px', maxWidth: '700px', height: '2000px', maxHeight: '520px' } }, event.currentTarget)}>Clamped custom</Button>
         <Button onClick={event => display('Full frame', { size: 'full' }, event.currentTarget)}>Full frame</Button>
-        <Button onClick={event => display('Hidden scroll', { scrollbar: 'hidden' }, event.currentTarget)}>Hidden scroll</Button>
-        <Button onClick={event => display('Thin scroll', { scrollbar: 'thin' }, event.currentTarget)}>Thin scroll</Button>
+        {/* Retained native-skin qualification; default Arc rails have their own dedicated browser contracts. */}
+        <Button onClick={event => display('Hidden scroll', { scrollbar: 'hidden', scrollTreatment: 'native' }, event.currentTarget)}>Hidden scroll</Button>
+        <Button onClick={event => display('Thin scroll', { scrollbar: 'thin', scrollTreatment: 'native' }, event.currentTarget)}>Thin scroll</Button>
         <Button onClick={event => display('Theme detail', { body: <Popover><PopoverTrigger asChild><Button>Theme popup</Button></PopoverTrigger>
           <PopoverContent><p>Owned popup</p></PopoverContent></Popover> }, event.currentTarget)}>Theme detail</Button>
         {(['rise', 'grow', 'origin', 'spring', 'focus', 'drop'] as const).map((entrance: ModalMotionEntrance) =>

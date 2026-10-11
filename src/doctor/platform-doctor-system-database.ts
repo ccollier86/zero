@@ -11,6 +11,7 @@ import {
 } from './platform-doctor-system-database-config';
 import { inspectSystemDatabaseState } from './platform-doctor-system-database-state';
 import { checkGuardianProfileFeatureConfiguration } from './platform-doctor-guardian-features';
+import { checkVectorVisualizationState } from './platform-doctor-vector-visualization';
 
 /** Emit a stable targeted finding before general config resolution fails. */
 export function checkPreResolutionSystemDatabase(
@@ -31,5 +32,6 @@ export function checkSystemDatabase(
   const features = checkGuardianProfileFeatureConfiguration(resolved, findings);
   const projection = checkIdentityProjectionConfiguration(resolved, findings);
   if (!projectRoot) return;
+  checkVectorVisualizationState(resolved, findings, projectRoot);
   inspectSystemDatabaseState(resolved, findings, projectRoot, projection, features);
 }

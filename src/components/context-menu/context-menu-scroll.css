@@ -1,0 +1,24 @@
+/* Arc menu frames are not masked: border, shadow and any fixed siblings remain outside the exact viewport. */
+.zero-context-menu-scroll-surface,
+[data-slot="context-menu-content"]:has(> [data-slot="context-menu-viewport"]),
+[data-slot="context-menu-sub-content"]:has(> [data-slot="context-menu-viewport"]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.zero-context-menu-scroll-viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.zero-context-menu-scroll-viewport[data-orientation="vertical"] { overflow-x: hidden; }
+.zero-context-menu-scroll-viewport[data-orientation="horizontal"] { overflow-y: hidden; }
+
+/* Retained closed content stays caller-mounted; its new viewport and rails cannot receive input. */
+[data-slot="context-menu-content"][data-state="closed"] > .zero-scroll-decoration,
+[data-slot="context-menu-sub-content"][data-state="closed"] > .zero-scroll-decoration { pointer-events: none; }

@@ -64,6 +64,9 @@ export async function resolveAppFrontendBuild(config: ResolvedConfig, extensions
   assertPluginBuildRouteOwnership(config.appDir, contributors);
   if (config.frontendBuild) {
     const manifest = admitAppFrontendBuildManifest(config.frontendBuild);
+    if ((manifest.frontend.themeFoundation ?? 'legacy') !== config.themeFoundation) {
+      throw new AppPluginBuildError('APP_PLUGIN_BUILD_CONFIG_INVALID', 'Compiled theme foundation differs from application configuration. Rebuild the frontend artifact.');
+    }
     assertPluginBuildManifestMatches(contributors, manifest);
     await assertFrontendAssetsExist(config, manifest.frontend);
     return manifest.frontend;

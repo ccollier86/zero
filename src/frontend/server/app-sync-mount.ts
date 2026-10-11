@@ -74,7 +74,7 @@ export function mountAppSyncEngine({
       ? {
           systemDataPlane: {
             db: systemDB,
-            tables: resolvePlatformClientTables(config.workflows !== false, authConfig.presence.enabled),
+            tables: resolvePlatformClientTables(config.workflows !== false, authConfig.presence.enabled, config.vectorVisualization !== false),
           },
         }
       : {}),

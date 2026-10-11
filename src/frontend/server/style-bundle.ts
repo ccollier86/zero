@@ -7,12 +7,14 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, statSync, renameSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve } from 'node:path';
+import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foundation';
 
 const PLATFORM_SOURCE_DIR = resolve(import.meta.dir, '../..');
 const PLATFORM_CSS_ENTRYPOINT = resolve(import.meta.dir, '../styles/globals.css');
+const NEXT_CSS_SUPPLEMENT = resolve(import.meta.dir, '../styles/theme-next.css');
 const STYLE_FILE_PREFIX = 'platform.';
 const STYLE_FILE_SUFFIX = '.css';
 const runtimeRequire = createRequire(import.meta.url);
@@ -61,14 +63,14 @@ export async function buildPlatformStyles(
   outDir: string,
   appDir: string = './app',
   extraSources: readonly string[] = [],
+  options: { readonly themeFoundation?: AppThemeFoundation } = {},
 ): Promise<StyleBundleResult> {
+  const foundation = resolveAppThemeFoundation(options.themeFoundation);
   const absOut = resolve(outDir);
-  if (!existsSync(absOut)) mkdirSync(absOut, { recursive: true });
-
-  removeStaleStyleBundles(absOut);
 
   const entrypoint = PLATFORM_CSS_ENTRYPOINT;
-  const css = readFileSync(entrypoint, 'utf8');
+  const css = readFileSync(entrypoint, 'utf8')
+    + (foundation === 'next' ? `\n${readFileSync(NEXT_CSS_SUPPLEMENT, 'utf8')}` : '');
   const { compile } = loadTailwindCompiler();
   const compiler = await compile(css, {
     base: dirname(entrypoint),
@@ -81,7 +83,18 @@ export async function buildPlatformStyles(
   const fileName = `${STYLE_FILE_PREFIX}${hash}${STYLE_FILE_SUFFIX}`;
   const cssPath = join(absOut, fileName);
 
-  writeFileSync(cssPath, output);
+  // Publish first so failed admission/compilation cannot retire the last usable
+  // stylesheet. A temporary sibling keeps readers from seeing a partial write.
+  if (!existsSync(absOut)) mkdirSync(absOut, { recursive: true });
+  const temporaryPath = join(absOut, `.platform.${crypto.randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporaryPath, output, { flag: 'wx' });
+    renameSync(temporaryPath, cssPath);
+  } finally {
+    if (existsSync(temporaryPath)) rmSync(temporaryPath);
+  }
+  // Content-addressed URLs can still belong to an in-flight page or deployed
+  // manifest. Retention belongs to the deployment/output lifecycle, not a build.
 
   return {
     cssPath,
@@ -114,15 +127,6 @@ export function scanTailwindCandidates(appDir: string = './app', extraSources: r
   }
 
   return new Scanner({ sources }).scan();
-}
-
-/** Remove old hashed platform styles while preserving unrelated build assets. */
-function removeStaleStyleBundles(outDir: string): void {
-  for (const entry of readdirSync(outDir)) {
-    if (entry.startsWith(STYLE_FILE_PREFIX) && entry.endsWith(STYLE_FILE_SUFFIX)) {
-      rmSync(join(outDir, entry));
-    }
-  }
 }
 
 /**

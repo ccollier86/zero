@@ -99,13 +99,16 @@ class DefaultAIVectorBridge implements AIVectorBridge {
   }
 
   async embedAndQuery(index: string, query: AIVectorTextQuery): Promise<StoredVectorRecord[]> {
+    // Bridge text is the embedding input. It has historically meant a dense
+    // query, not an implicit opt-in to newly available native full-text search.
+    if (query.retrieval === 'lexical') return this.vectors.query(index, retrievalOptions(query));
     const vector = await this.embedText(query.text, {
       model: query.model,
       providerOptions: query.providerOptions,
       metadata: { index, operation: 'vector_query' },
     });
     return this.vectors.query(index, {
-      ...query,
+      ...retrievalOptions(query),
       vector,
     });
   }
@@ -143,14 +146,21 @@ class DefaultScopedAIVectorBridge implements ScopedAIVectorBridge {
   }
 
   async embedAndQuery(query: AIVectorTextQuery): Promise<StoredVectorRecord[]> {
+    if (query.retrieval === 'lexical') return this.scope.query(retrievalOptions(query));
     const vector = await this.bridge.embedText(query.text, {
       model: query.model,
       providerOptions: query.providerOptions,
       metadata: { operation: 'vector_scope_query' },
     });
     return this.scope.query({
-      ...query,
+      ...retrievalOptions(query),
       vector,
     });
   }
+}
+
+function retrievalOptions(query: AIVectorTextQuery): VectorQueryOptions {
+  const { text, model: _model, providerOptions: _providerOptions, ...options } = query;
+  const retrieval = query.retrieval ?? 'vector';
+  return { ...options, retrieval, ...(retrieval === 'hybrid' || retrieval === 'lexical' ? { text } : {}) };
 }

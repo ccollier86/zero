@@ -81,6 +81,7 @@ interface BrowserPlatformConfig {
   email?: boolean;
   stateSync?: boolean;
   presence?: boolean;
+  vectorVisualization?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
   /** Server-owned Sync-visible application table routing catalog. */
   tableSyncPlanes?: Record<string, SyncDataPlaneName>;
@@ -282,6 +283,7 @@ export function AppProvider({
       auth: authEnabled,
       stateSync: stateSyncEnabled,
       presence: presenceEnabled,
+      vectorVisualization: platformConfig.vectorVisualization ?? false,
       autoConnect: true,
     });
   }

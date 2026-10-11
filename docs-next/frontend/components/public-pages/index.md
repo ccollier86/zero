@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: public-page-components
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; public lane retained; individual family reviews remain distinct"]
 modes: [browser, SSR, public pages]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -26,6 +26,11 @@ reviewed_against:
 Zero's public lane provides reusable hero, navigation, feature/content and code
 presentation components. It is expressive styling, not a public-access permission
 setting. The [router](../../router/authentication.md) still owns route access.
+
+Follow [Public UI development](../../../guides/public-ui-development.md) for the
+agent-oriented assembly workflow and the [UI reference](../../ui-reference.md)
+for canonical token, motion and component/API choices. Operational dashboards
+use [Application UI development](../../../guides/application-ui-development.md).
 
 - [Navigation](./navigation.md) composes the floating ResizableNavbar.
 - [Hero](./hero.md) declares titles/actions and background slots.

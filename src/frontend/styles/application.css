@@ -1,0 +1,3 @@
+/* Default application entrypoint. Keep the original token files and legacy entrypoint available for rollback. */
+@import "./globals.css";
+@import "./theme-next.css";

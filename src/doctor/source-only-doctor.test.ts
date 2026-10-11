@@ -65,6 +65,51 @@ test('explicit symlink aliases retain root ownership and intentional external ro
   expect(report.findings[0]?.path).toBe('../shared/ui.tsx:1');
 }));
 
+test('own package manifest aliases cannot read ambient/data files or leave the explicit project', async () => {
+  for (const targetName of ['.env', 'fake-data.db', '../outside/package.json']) await fixture(async base => {
+    const root = join(base, 'project'); await mkdir(root);
+    const target = join(root, targetName);
+    await Bun.write(target, JSON.stringify({ name: '@zero/framework', version: 'FAKE_PRIVATE_VERSION', exports: { './modals': './modals.ts' } }));
+    await symlink(target, join(root, 'package.json'));
+    const report = await runSourceOnlyDoctor({ projectRoot: root });
+    expect(report.installedFramework).toMatchObject({ status: 'missing', version: null, modalShow: null });
+    expect(JSON.stringify(report)).not.toContain('FAKE_PRIVATE_VERSION');
+  });
+});
+
+test('installed manifest aliases cannot read ambient files instead of package metadata', async () => fixture(async root => {
+  await write(root, '.env', JSON.stringify({ name: '@zero/framework', version: 'FAKE_PRIVATE_VERSION', exports: { './modals': './modals.ts' } }));
+  await mkdir(join(root, 'node_modules/@zero/framework'), { recursive: true });
+  await symlink(join(root, '.env'), join(root, 'node_modules/@zero/framework/package.json'));
+  const report = await runSourceOnlyDoctor({ projectRoot: root });
+  expect(report.installedFramework).toMatchObject({ status: 'unavailable', version: null, modalShow: null });
+  expect(JSON.stringify(report)).not.toContain('FAKE_PRIVATE_VERSION');
+}));
+
+test('public package source aliases cannot read ambient/data/private files', async () => {
+  for (const targetName of ['.env', '.env.fixture.ts', 'fake-data.db', '.zero/private.ts']) await fixture(async root => {
+    const packageRoot = join(root, 'node_modules/@zero/framework');
+    await write(root, 'node_modules/@zero/framework/package.json', JSON.stringify({ name: '@zero/framework', version: '2.6.0', exports: { './modals': './src/alias.ts' } }));
+    await Bun.write(join(packageRoot, targetName), 'export const modals={show}; throw new Error("FAKE_PRIVATE_MODULE_MUST_NOT_EXECUTE");');
+    await mkdir(join(packageRoot, 'src'), { recursive: true });
+    await symlink(join(packageRoot, targetName), join(packageRoot, 'src/alias.ts'));
+    const report = await runSourceOnlyDoctor({ projectRoot: root });
+    expect(report.installedFramework).toMatchObject({ status: 'installed', version: '2.6.0', modalShow: null });
+    expect(JSON.stringify(report)).not.toContain('FAKE_PRIVATE_MODULE_MUST_NOT_EXECUTE');
+  });
+});
+
+test('installed package directory symlinks retain legitimate canonical manifest/source inspection', async () => fixture(async base => {
+  const root = join(base, 'project'), packageRoot = join(base, 'external-package'); await mkdir(root);
+  await Bun.write(join(packageRoot, 'package.json'), JSON.stringify({ name: '@zero/framework', version: '2.6.0', exports: { './modals': './src/modals.ts' } }));
+  await Bun.write(join(packageRoot, 'src/modals.ts'), 'export const modals={show}; throw new Error("MUST_NOT_EXECUTE_PACKAGE");');
+  await mkdir(join(root, 'node_modules/@zero'), { recursive: true });
+  await symlink(packageRoot, join(root, 'node_modules/@zero/framework'), 'dir');
+  const report = await runSourceOnlyDoctor({ projectRoot: root });
+  expect(report.installedFramework).toMatchObject({ status: 'installed', version: '2.6.0', modalShow: true });
+  expect(JSON.stringify(report)).not.toContain('MUST_NOT_EXECUTE_PACKAGE');
+}));
+
 test('invalid roots are unsuppressable and never fall back to process cwd', async () => {
   const report = await runSourceOnlyDoctor({ projectRoot: '/nonexistent-zero-source-fixture', rules: { 'usage.source.root_invalid': 'off' },
     allow: [{ code: 'usage.source.root_invalid', path: 'projectRoot' }] });

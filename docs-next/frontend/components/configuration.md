@@ -33,6 +33,9 @@ does not create a package import; use each guide's actual public entrance.
 | Configuration responsibility | Canonical reference |
 | --- | --- |
 | Native/button/choice/date/layout/chart/command/toast props | [Primitive configuration](./primitives/configuration.md). |
+| Zero-owned flow/ranking/cohort data, playback, inspection and theme props | [Sankey](../charts/sankey.md), [Race Bar](../charts/race-bar.md#settings-and-defaults) and [Funnel](../charts/funnel.md#settings-and-defaults). |
+| Arc-derived trend, proportion, calendar, distribution and hierarchy props | [Arc chart controls/defaults](../charts/arc.md#controls-and-defaults). |
+| Handmade Cartesian, statistical, polar and observed-stream props | [Handmade chart settings](../charts/native.md#cartesian-settings) and [observed-time controls](../charts/native.md#observed-time-streams-and-inspection). |
 | Joined/separated control layout and single/multiple selection | [Button Group](./primitives/button-group.md#public-parts-and-configuration). |
 | Right-click/keyboard opening, leading/trailing rows and focus/portal policy | [Context Menu](./overlays/context-menu.md#public-parts-and-configuration). |
 | Menu/popover/tooltip/sidebar/collapsible/radial providers and state | [Overlay configuration](./overlays/configuration.md). |

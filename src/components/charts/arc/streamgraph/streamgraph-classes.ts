@@ -1,0 +1,25 @@
+/** Scoped class identities keep the Arc family copyable without a CSS-module loader. */
+export default {
+  "figure": "zero-arc-streamgraph__figure",
+  "css": "zero-arc-streamgraph__css",
+  "legend": "zero-arc-streamgraph__legend",
+  "toggle": "zero-arc-streamgraph__toggle",
+  "toggleLabel": "zero-arc-streamgraph__toggleLabel",
+  "swatch": "zero-arc-streamgraph__swatch",
+  "chart": "zero-arc-streamgraph__chart",
+  "plot": "zero-arc-streamgraph__plot",
+  "svg": "zero-arc-streamgraph__svg",
+  "layer": "zero-arc-streamgraph__layer",
+  "crosshair": "zero-arc-streamgraph__crosshair",
+  "label": "zero-arc-streamgraph__label",
+  "tooltip": "zero-arc-streamgraph__tooltip",
+  "tipTitle": "zero-arc-streamgraph__tipTitle",
+  "tipRow": "zero-arc-streamgraph__tipRow",
+  "tipSwatch": "zero-arc-streamgraph__tipSwatch",
+  "tipName": "zero-arc-streamgraph__tipName",
+  "tipValue": "zero-arc-streamgraph__tipValue",
+  "message": "zero-arc-streamgraph__message",
+  "axis": "zero-arc-streamgraph__axis",
+  "axisLabel": "zero-arc-streamgraph__axisLabel",
+  "srOnly": "zero-arc-streamgraph__srOnly"
+} as const;

@@ -1,0 +1,10 @@
+/* Additive scroll treatment only. Original modal-shell.css remains the native compatibility recipe. */
+.zero-modal__inner[data-zero-scroll-treatment="arc"],
+.zero-modal__inner[data-zero-scroll-treatment="arc"] .zero-modal__panels,
+.zero-modal__inner[data-zero-scroll-treatment="arc"] .zero-modal__bodywrap,
+.zero-modal__inner[data-zero-scroll-treatment="arc"] .zero-modal__top { position: relative; }
+.zero-modal__inner[data-zero-scroll-treatment="arc"] .zero-modal__body.zero-scroll-viewport {
+  overflow: auto; scrollbar-width: none;
+}
+.zero-modal__inner[data-zero-scroll-treatment="arc"] .zero-scroll-viewport[data-scrollbar] { scrollbar-width: none; }
+.zero-modal__inner[data-zero-scroll-treatment="arc"] .zero-scroll-viewport[data-scrollbar]::-webkit-scrollbar { display: none; }

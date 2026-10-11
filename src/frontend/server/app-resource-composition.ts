@@ -66,7 +66,7 @@ export async function composeAppResources({
   observability,
   getSystemDB,
 }: ComposeAppResourcesInput): Promise<AppResourceComposition> {
-  addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false, config.auth !== false && authConfig.presence.enabled);
+  addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false, config.auth !== false && authConfig.presence.enabled, config.vectorVisualization !== false);
   const loadedResources = await loadResourceDefinitions({
     resourcesDir: config.serverResourcesDir,
     observability,
@@ -153,6 +153,11 @@ export async function composeAppResources({
         tenancyMode: authConfig.tenancy.mode,
         privateTables,
         isPresenceReady: scope => runtime.get(ZERO_GUARDIAN_PRESENCE)?.capabilities(scope).state === 'ready',
+        canReadVectorVisualization: (index, access, kind) => {
+          const policy = config.vectorVisualization !== false ? config.vectorVisualization.indexes[index] : undefined;
+          const permission = kind === 'ingestion' ? policy?.ingestPermission : policy?.searchPermission;
+          return Boolean(permission && access.hasPermission(permission) && (kind !== 'ingestion' || policy && access.hasPermission(policy.searchPermission)));
+        },
       });
 
   return Object.freeze({

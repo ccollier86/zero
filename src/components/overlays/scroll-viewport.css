@@ -1,0 +1,2 @@
+/* Retained compatibility stylesheet; shared presentation has one canonical owner. */
+@import "../_internal/scroll-viewport/scroll-viewport.css";

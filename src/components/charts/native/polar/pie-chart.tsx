@@ -1,0 +1,23 @@
+'use client';
+/** Genuine solid native pie. No donut alias, chart-library render tree, or client data transport. */
+import * as React from 'react';
+import { NativeChartFrame,NativeChartDataTable,NativeChartLegend,NativeChartInspector,nativeColor,useNativeChartSelection } from '../shared/native-chart';
+import { buildPieModel } from './polar-model';
+import { computePieLayout } from './polar-layout';
+import { AnimatedPolarSector,PolarEmpty,PolarReadout,defaultPolarFormat,polarPercent,sectorAnchor,usePolarFrame,usePolarHidden,usePolarPoint,usePolarPreview } from './polar-rendering';
+import type { PieChartProps } from './polar-types';
+
+export function PieChart(props:PieChartProps){
+ const readoutId=React.useId();
+ const all=React.useMemo(()=>buildPieModel(props.data),[props.data]);const[hidden,toggle]=usePolarHidden(all.data.map(slice=>slice.id),props.hiddenIds,props.defaultHiddenIds,props.onHiddenIdsChange);const model=React.useMemo(()=>buildPieModel(props.data,hidden),[props.data,JSON.stringify(hidden)]);const layout=React.useMemo(()=>computePieLayout(model,props.width,props.height,props.startAngle),[model,props.width,props.height,props.startAngle]);
+ const[active,request]=useNativeChartSelection(model.slices.map(slice=>slice.id),props.activeId,props.defaultActiveId,props.onActiveChange);const interaction=usePolarPreview(model.slices.map(slice=>slice.id),active,request),svg=React.useRef<SVGSVGElement>(null),{ref,environment}=usePolarFrame(props.ref,props.motion);const inspected=layout.sectors.find(sector=>sector.id===interaction.inspected),point=usePolarPoint(svg,layout.width,layout.height,inspected?sectorAnchor(inspected,layout.cx,layout.cy):undefined),format=props.formatValue??defaultPolarFormat;
+ const custom=inspected&&props.renderTooltip?.({...inspected.slice,total:model.total,fullTotal:model.fullTotal});const content=custom===undefined&&inspected?<><div>{inspected.slice.label}</div><div className="value">{format(inspected.slice.value)}{props.unit?` ${props.unit}`:''}</div><div className="muted">{polarPercent(inspected.slice.share)} of visible total</div><div className="rows"><div><span>Total</span><b>{format(model.total)}</b></div>{hidden.length>0&&<div><span>Including hidden</span><b>{format(model.fullTotal)}</b></div>}</div></>:custom;
+ return<NativeChartFrame ref={ref} label={props.label} title={props.title} subtitle={props.subtitle} className={`zero-native-pie${props.className?` ${props.className}`:''}`} motion={!environment.reduced}>
+  <div className="zero-native-chart__plot zero-native-polar__plot" tabIndex={model.slices.length?0:undefined} role="group" aria-label={`${props.label}. Arrow keys inspect slices; Enter selects; Escape clears.`} aria-describedby={readoutId} onKeyDown={interaction.keyDown} onFocus={interaction.onFocus} onBlur={interaction.onBlur} onPointerLeave={()=>interaction.setPreview(null)}>
+   <svg ref={svg} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true" data-polar-kind="pie">{layout.sectors.map(sector=><AnimatedPolarSector key={sector.id} sector={sector} cx={layout.cx} cy={layout.cy} reduced={environment.reduced} revealed={environment.inView} fill={sector.slice.color??nativeColor(sector.slice.index)} className="zero-native-polar__sector" data-id={sector.id} data-selected={active===sector.id||undefined} data-dimmed={interaction.inspected!==null&&interaction.inspected!==sector.id||undefined} onPointerEnter={()=>interaction.setPreview(sector.id)} onPointerDown={event=>{if(event.pointerType!=='mouse')interaction.setPreview(sector.id);}} onClick={()=>request(active===sector.id?null:sector.id)} />)}</svg>
+   {!model.slices.length&&<PolarEmpty message={model.fullTotal>0?'No visible values':'No data'}/>}<NativeChartInspector open={environment.visible&&interaction.preview!==null&&!!inspected} content={content} point={point} onDismiss={()=>{interaction.setPreview(null);request(null);}}/>
+  </div><PolarReadout id={readoutId}>{inspected?`${inspected.slice.label}: ${inspected.slice.value}${props.unit?` ${props.unit}`:''}. ${polarPercent(inspected.slice.share)} of visible total ${model.total}.${hidden.length?` Including hidden: ${model.fullTotal}.`:''}${active===inspected.id?' Selected.':''}`:model.slices.length?'No measurement inspected.':'No visible values.'}</PolarReadout>
+  {props.legend!==false&&<NativeChartLegend items={model.data} hiddenIds={model.hiddenIds} onToggle={toggle}/>}
+  <NativeChartDataTable label={`${props.label}: exact values`} columns={['Slice','Value','Visible share','Visibility']} rows={model.data.map(slice=>[slice.label,slice.value,polarPercent(slice.share),slice.hidden?'Hidden':'Visible'])}/>
+ </NativeChartFrame>;
+}

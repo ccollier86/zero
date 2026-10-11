@@ -1,0 +1,57 @@
+/* Arc UI, MIT. Copyright (c) 2026 Elia Kuratli. Scoped Zero presentation adapter. */
+.zero-arc-bar-chart__figure { display: grid; min-width: var(--zero-arc-bar-chart-figure-min-width,0); gap: var(--zero-arc-space-5); margin: var(--zero-arc-bar-chart-figure-margin,0); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }
+
+/* The headline is the readout: the average at rest, the scrubbed bar while exploring. Each line keeps its height, so swaps never move the plot. */
+.zero-arc-bar-chart__header { display: grid; min-width: var(--zero-arc-bar-chart-header-min-width,0); gap: var(--zero-arc-bar-chart-header-gap,2px); }
+.zero-arc-bar-chart__kind, .zero-arc-bar-chart__when { display: block; min-height: calc(1em * var(--zero-arc-leading-body)); font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); }
+.zero-arc-bar-chart__kind { color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); }
+.zero-arc-bar-chart__when { color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); }
+.zero-arc-bar-chart__value { display: flex; min-width: var(--zero-arc-bar-chart-value-min-width,0); align-items: baseline; gap: var(--zero-arc-bar-chart-value-gap,6px); font-family: var(--zero-arc-font-display, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); font-size: var(--zero-arc-text-3xl); font-weight: var(--zero-arc-bar-chart-value-font-weight,500); letter-spacing: var(--zero-arc-tracking-display); line-height: var(--zero-arc-leading-display); font-variant-numeric: tabular-nums; }
+.zero-arc-bar-chart__unit { color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); font-size: var(--zero-arc-text-base); font-weight: var(--zero-arc-bar-chart-unit-font-weight,400); letter-spacing: var(--zero-arc-tracking-body); }
+.zero-arc-bar-chart__swap { position: relative; display: block; min-width: var(--zero-arc-bar-chart-swap-min-width,0); }
+.zero-arc-bar-chart__swapText { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A rolling number: outgoing digits are popped out of flow and anchored right, and the clip hides a digit still rising into a new place. */
+.zero-arc-bar-chart__roll { position: relative; display: inline-flex; justify-content: flex-end; overflow-x: clip; overflow-y: visible; white-space: pre; }
+.zero-arc-bar-chart__digits { position: relative; display: inline-flex; flex: none; }
+.zero-arc-bar-chart__digit { position: relative; display: inline-block; white-space: pre; }
+.zero-arc-bar-chart__sizer { position: absolute; top: var(--zero-arc-bar-chart-sizer-top,0); left: var(--zero-arc-bar-chart-sizer-left,0); visibility: hidden; white-space: pre; pointer-events: none; }
+
+/* Plot, right-hand value axis, and the date axis beneath. */
+.zero-arc-bar-chart__chart { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--zero-arc-axis-gutter, var(--zero-chart-axis-gutter, 52px)); grid-template-rows: auto var(--zero-arc-axis-height, var(--zero-chart-axis-height, 28px)); min-width: var(--zero-arc-bar-chart-chart-min-width,0); }
+.zero-arc-bar-chart__plot { position: relative; grid-area: var(--zero-arc-bar-chart-plot-grid-area,1 / 1); min-width: var(--zero-arc-bar-chart-plot-min-width,0); }
+.zero-arc-bar-chart__svg { display: block; overflow: hidden; }
+.zero-arc-bar-chart__grid { stroke: var(--zero-arc-border, var(--zero-chart-border, var(--border))); stroke-width: var(--zero-arc-bar-chart-grid-stroke-width,1); shape-rendering: crispEdges; }
+.zero-arc-bar-chart__baseline { stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); stroke-width: var(--zero-arc-bar-chart-baseline-stroke-width,1); shape-rendering: crispEdges; }
+.zero-arc-bar-chart__cursor { stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); stroke-width: var(--zero-arc-bar-chart-cursor-stroke-width,1); shape-rendering: crispEdges; }
+.zero-arc-bar-chart__mean { stroke: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); stroke-width: var(--zero-arc-bar-chart-mean-stroke-width,1); stroke-dasharray: var(--zero-arc-bar-chart-mean-stroke-dasharray,3 3); shape-rendering: crispEdges; }
+/* The series is drawn in a soft step of the accent; the scrubbed bar takes the full accent while its neighbours step back. */
+.zero-arc-bar-chart__bar { fill: color-mix(in oklab, var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))) var(--zero-arc-bar-chart-tint,62%), var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); transition: fill var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-bar-chart__chart[data-scrubbing] .zero-arc-bar-chart__bar { fill: color-mix(in oklab, var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))) var(--zero-arc-bar-chart-tint-dim,24%), var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); }
+/* On a dark surface a lighter mix keeps the hue clear instead of turning muddy. */
+[data-theme="dark"] .zero-arc-bar-chart__bar { fill: color-mix(in oklab, var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))) var(--zero-arc-bar-chart-tint-dark,76%), var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); }
+[data-theme="dark"] .zero-arc-bar-chart__chart[data-scrubbing] .zero-arc-bar-chart__bar { fill: color-mix(in oklab, var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))) var(--zero-arc-bar-chart-tint-dim-dark,34%), var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); }
+[data-theme="dark"] .zero-arc-bar-chart__chart .zero-arc-bar-chart__bar[data-active] { fill: var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))); }
+.zero-arc-bar-chart__chart .zero-arc-bar-chart__bar[data-active] { fill: var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))); }
+
+.zero-arc-bar-chart__gutter { position: relative; grid-area: var(--zero-arc-bar-chart-gutter-grid-area,1 / 2); min-width: var(--zero-arc-bar-chart-gutter-min-width,0); }
+.zero-arc-bar-chart__tick, .zero-arc-bar-chart__meanLabel { position: absolute; top: var(--zero-arc-bar-chart-tick-top,0); left: var(--zero-arc-bar-chart-tick-left,10px); display: block; height: var(--zero-arc-bar-chart-tick-height,0); white-space: nowrap; pointer-events: none; }
+.zero-arc-bar-chart__tickText { display: block; transform: translateY(-50%); color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-bar-chart-tickText-line-height,1); font-variant-numeric: tabular-nums; }
+.zero-arc-bar-chart__meanLabel .zero-arc-bar-chart__tickText { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-weight: var(--zero-arc-bar-chart-meanLabel-font-weight,500); }
+
+.zero-arc-bar-chart__axis { position: relative; grid-area: var(--zero-arc-bar-chart-axis-grid-area,2 / 1); min-width: var(--zero-arc-bar-chart-axis-min-width,0); overflow: hidden; }
+.zero-arc-bar-chart__axisLabel { position: absolute; top: var(--zero-arc-axis-label-offset, 8px); left: var(--zero-arc-bar-chart-axisLabel-left,0); color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-bar-chart-axisLabel-line-height,1); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* The scrubber covers the plot and its axes. Horizontal drags scrub, vertical swipes still scroll the page. */
+.zero-arc-bar-chart__scrubber { position: absolute; inset: var(--zero-arc-bar-chart-scrubber-inset,0); border-radius: calc(var(--zero-arc-radius-control) / 2); outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+
+.zero-arc-bar-chart__srOnly { position: absolute; width: var(--zero-arc-bar-chart-srOnly-width,1px); height: var(--zero-arc-bar-chart-srOnly-height,1px); overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .zero-arc-bar-chart__bar { transition: none; } }
+.zero-arc-bar-chart__measure { position: absolute; top: var(--zero-arc-bar-chart-measure-top,0); left: var(--zero-arc-bar-chart-measure-left,0); display: flex; visibility: hidden; pointer-events: none; }
+.zero-arc-bar-chart__measure > span { flex: none; font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-bar-chart-measure-line-height,1); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+
+[data-zero-arc-chart="bar-chart"][data-motion="off"] *, [data-zero-arc-chart="bar-chart"][data-motion="off"] *::before, [data-zero-arc-chart="bar-chart"][data-motion="off"] *::after { animation:none!important;transition:none!important; }
+/* Zero owns keyboard focus rather than relying on a global Arc reset. */
+.zero-arc-bar-chart__plot:focus-visible, .zero-arc-bar-chart__scrubber:focus-visible, .zero-arc-bar-chart__window:focus-visible, .zero-arc-bar-chart__handle:focus-visible {
+ outline: var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--zero-chart-focus-color,var(--foreground))); outline-offset: var(--zero-chart-focus-offset,2px);
+}

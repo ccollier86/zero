@@ -52,6 +52,10 @@ import { composeManagedUserAvatars } from './app-user-avatars';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import { ZERO_DATABASE_MANAGER } from '../../runtime/service-keys';
 import { createAuthPlatformCodeEmitter } from '../../auth/auth-observability';
+import { ManagedVectorVisualization, ZERO_VECTOR_VISUALIZATION } from '../../vector/visualization-managed';
+import { createVectorVisualizationPlugin } from '../../vector/visualization.plugin';
+import { ZERO_VECTOR_SERVICE } from '../../runtime/service-keys';
+import { emitPlatformCodeTo } from '../../observability/sink';
 
 interface MountPlatformServicesInput {
   readonly app: Elysia;
@@ -157,6 +161,21 @@ export async function mountPlatformServices({
   }
   if (config.vector !== false) {
     app.use(createVectorPlugin({ config: config.vector, runtime }));
+  }
+  if (config.vectorVisualization !== false && config.vector !== false) {
+    let visualization: ManagedVectorVisualization | null = null;
+    app.use(createVectorVisualizationPlugin({ config: config.vectorVisualization, getService: () => visualization, getTokenService, authorization }));
+    const visualizationConfig = config.vectorVisualization, vectorConfig = config.vector;
+    managedInitializers.push(async () => {
+      await managedStartup.auth!.start();
+      const manager = runtime.require(ZERO_DATABASE_MANAGER);
+      visualization = new ManagedVectorVisualization({ runtime: manager.systemRuntime, installAllowed: config.migrate || manager.systemRuntime.sqlite.mode === 'ephemeral',
+        config: visualizationConfig, vectorConfig, ai: runtime.require(ZERO_AI_SERVICE), vectors: runtime.require(ZERO_VECTOR_SERVICE),
+        emitCode: (definition, event) => emitPlatformCodeTo(observabilityRuntime, definition, event) });
+      runtime.set(ZERO_VECTOR_VISUALIZATION, visualization);
+      runtime.addCleanup(async () => { await visualization?.close(); runtime.clear(ZERO_VECTOR_VISUALIZATION, visualization ?? undefined); });
+      await visualization.recoverInterrupted();
+    });
   }
   if (config.pdf !== false) {
     app.use(createPdfPlugin({ config: config.pdf, runtime }));

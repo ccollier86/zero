@@ -1,0 +1,201 @@
+{
+  "component": "floating-button-group",
+  "observedAt": "2026-10-11",
+  "scope": "Pinned reference calibration and original token dispositions remain historical. A separate implementation record describes the additive unreleased working-source facade and canonical roles; it does not claim publication, installed-archive qualification or representative-app visual approval.",
+  "plan": "./floating-button-group-plan.md",
+  "existingInventory": "./arc-design-token-inventory.json",
+  "source": {
+    "manual": "https://uiarc.dev/components/floating-button-group/markdown",
+    "registry": "https://uiarc.dev/r/floating-button-group.json",
+    "motionRegistry": "https://uiarc.dev/r/arc-motion-tokens.json",
+    "repositoryRevision": "86330cc9270c4acc55b7204c9583fcbaa378192c",
+    "files": [
+      {
+        "path": "registry/components/floating-button-group/floating-button-group.tsx",
+        "repositorySha256": "2f73f9ca4dd96a57f5230b5ad86053b9aa71a508e37955c8141ae832994011f9",
+        "registrySha256": "2de3b52da32ed257e749b07971f7c3888dae127f7c1bafcbfdd7488a7b453d11",
+        "lines": 305,
+        "difference": "Only the motion-token and Tooltip import paths change during registry installation."
+      },
+      {
+        "path": "registry/components/floating-button-group/floating-button-group.module.css",
+        "repositorySha256": "a79a1fa8cb57d963f66d61678c2ba76becd41bb169e7ded0b3054f125a4f9f6e",
+        "registrySha256": "a79a1fa8cb57d963f66d61678c2ba76becd41bb169e7ded0b3054f125a4f9f6e",
+        "lines": 75,
+        "difference": "Byte-identical."
+      }
+    ],
+    "motionSha256": "13af43b57ed38e5b72cfc06ff0ccc39b0593721f04840e73532893593cc61491",
+    "dependencies": ["@radix-ui/react-tooltip", "motion"],
+    "registryDependencies": ["arc-motion-tokens", "tooltip"]
+  },
+  "referenceContract": {
+    "groupProps": ["items", "label", "variant", "size", "orientation", "iconOnly", "tooltipSide", "onAction", "className", "style"],
+    "actionProps": ["type", "id", "label", "icon", "iconOnly", "onSelect", "disabled", "pressed", "shortcut", "reserveLabels"],
+    "separatorProps": ["type", "id"],
+    "defaults": {"variant": "muted", "size": "md", "orientation": "horizontal", "iconOnly": false, "rowTooltipSide": "top", "columnTooltipSide": "right"},
+    "variants": ["muted", "floating"],
+    "sizes": ["sm", "md"],
+    "orientations": ["horizontal", "vertical"],
+    "tooltipSides": ["top", "bottom", "left", "right"],
+    "shortcutBindsKeys": false,
+    "positionsOrPortalsTray": false,
+    "callbacksAwaitAcceptedWrites": false
+  },
+  "referenceCalibration": {
+    "geometryPx": {
+      "sm": {"buttonHeight": 30, "trayPad": 3, "gap": 3, "inlinePad": 10, "outerRadiusOffset": -3},
+      "md": {"buttonHeight": 36, "trayPad": 4, "gap": 4, "inlinePad": 12, "outerRadiusOffset": 0},
+      "innerRadius": "outer minus trayPad minus 1px border",
+      "icon": 16, "iconStrokeWidth": 1.75, "iconTextGap": 6,
+      "separatorThickness": 1, "separatorLengthAsHeightShare": 0.5, "separatorMargin": 2
+    },
+    "foregroundMixPercent": {
+      "light": {"highlight": 7, "press": 12, "modeTintFromSelectionFill": 12, "rule": 12, "tray": 4.5, "trayEdge": 3},
+      "dark": {"highlight": 9, "press": 15, "modeTintFromSelectionFill": 16, "rule": 12, "tray": 6, "trayEdge": 5},
+      "colorSpace": "oklab",
+      "remainder": "transparent"
+    },
+    "motion": {
+      "highlightMove": {"visualDurationMs": 420, "bounce": 0.16},
+      "firstEntryAndPress": {"visualDurationMs": 260, "bounce": 0.12},
+      "firstEntryScale": 0.94, "pressScale": 0.965,
+      "highlightVisibleOpacityThreshold": 0.15,
+      "showMs": 160, "hideMs": 240, "pressPaintMs": 120,
+      "labelEnterMs": 240, "labelExitMs": 160, "labelEnterYpx": 4, "labelExitYpx": -3, "labelBlurPx": 4,
+      "reducedLabelFadeMs": 120,
+      "privateSideTooltipNotAdopted": {"offsetPx": 10, "collisionPadPx": 12, "zIndex": 90, "exitMs": 110, "reducedFadeMs": 90}
+    }
+  },
+  "counts": {"cssReferences": 35, "cssDeclarations": 26, "motionReferences": 8},
+  "tokenDispositions": {
+    "--background": {"kind": "existing-role", "zeroRole": "--zero-theme-canvas"},
+    "--border": {"kind": "existing-role", "zeroRole": "--zero-theme-border-default"},
+    "--control-on": {"kind": "existing-role", "zeroRole": "--zero-theme-selection-fill"},
+    "--duration-fast": {"kind": "existing-recipe", "zeroRole": "feedbackFast"},
+    "--duration-instant": {"kind": "existing-recipe", "zeroRole": "feedbackInstant"},
+    "--ease-enter": {"kind": "existing-recipe", "zeroRole": "arrival easing; label handoff"},
+    "--ease-standard": {"kind": "existing-recipe", "zeroRole": "existing visible-state feedback easing"},
+    "--fbg-gap": {"kind": "candidate-local-role", "purpose": "tray item spacing"},
+    "--fbg-h": {"kind": "candidate-local-role", "purpose": "stationary action height"},
+    "--fbg-highlight": {"kind": "candidate-local-role", "purpose": "transient hover and focus material"},
+    "--fbg-highlight-press": {"kind": "candidate-local-role", "purpose": "transient press material"},
+    "--fbg-on": {"kind": "candidate-local-role", "purpose": "caller-owned persistent mode tint"},
+    "--fbg-outer": {"kind": "candidate-local-role", "purpose": "density-adjusted tray radius"},
+    "--fbg-pad": {"kind": "candidate-local-role", "purpose": "tray inset"},
+    "--fbg-pad-x": {"kind": "candidate-local-role", "purpose": "action inline padding"},
+    "--fbg-radius": {"kind": "candidate-local-role", "purpose": "concentric action and highlight radius", "note": "Freeze a bounded density recipe: Zero compact control radius is 6px, not Arc's 18px; direct small-size subtraction is invalid."},
+    "--fbg-rule": {"kind": "candidate-local-role", "purpose": "separator paint"},
+    "--fbg-tray": {"kind": "candidate-local-role", "purpose": "quiet translucent tray fill"},
+    "--fbg-tray-edge": {"kind": "candidate-local-role", "purpose": "quiet translucent tray edge"},
+    "--font-body": {"kind": "existing-role", "zeroRole": "--zero-theme-font-body"},
+    "--foreground": {"kind": "existing-role", "zeroRole": "--zero-theme-text-primary"},
+    "--leading-body": {"kind": "owned-by-existing-tooltip", "purpose": "reference used only by private SideTip; keep Zero Tooltip typography"},
+    "--radius-control": {"kind": "existing-role", "zeroRole": "--zero-theme-radius-control"},
+    "--radix-tooltip-content-transform-origin": {"kind": "owned-by-existing-tooltip", "purpose": "collision-resolved Tooltip origin; no new alias"},
+    "--shadow-floating": {"kind": "existing-role", "zeroRole": "--zero-theme-shadow-floating"},
+    "--shadow-raised": {"kind": "owned-by-existing-tooltip", "purpose": "retain Zero Tooltip elevation rather than private side-tooltip skin"},
+    "--space-3": {"kind": "owned-by-existing-tooltip", "purpose": "retain rich-tooltip spacing"},
+    "--space-4": {"kind": "owned-by-existing-tooltip", "purpose": "retain existing tooltip padding"},
+    "--surface-raised": {"kind": "existing-role", "zeroRole": "--zero-theme-raised"},
+    "--text-muted": {"kind": "existing-role", "zeroRole": "--zero-theme-text-muted"},
+    "--text-secondary": {"kind": "existing-role", "zeroRole": "--zero-theme-text-secondary"},
+    "--text-sm": {"kind": "existing-role", "zeroRole": "--zero-type-control-size", "note": "reference 14px; qualify approved compact Zero density"},
+    "--text-xs": {"kind": "existing-role", "zeroRole": "--zero-type-caption-size", "note": "reference 12px; freeze small-action typography separately"},
+    "--tip-x": {"kind": "not-promoted", "purpose": "Arc private side-tooltip travel; use Zero Grow policy instead"},
+    "--tracking-body": {"kind": "existing-role", "zeroRole": "--zero-type-control-tracking"}
+  },
+  "declarationOnlyDispositions": {
+    "--side-tip-exit": {"kind": "not-promoted", "purpose": "private CSS retirement keyframe sentinel, value 1; not a shared design role"}
+  },
+  "motionDispositions": {
+    "blur.soft": "candidate label-handoff blur; not global body-text blur",
+    "duration.fast": "existing feedbackFast",
+    "duration.instant": "existing feedbackInstant; visible state remains immediate",
+    "duration.standard": "existing feedbackStandard",
+    "ease.enter": "existing arrival vocabulary; bind to the label recipe",
+    "ease.standard": "existing feedback vocabulary",
+    "spring.morph": "candidate named tray movement; preserve Sidebar/Navbar springs",
+    "spring.snappy": "candidate named first-entry and press recipe"
+  },
+  "implementation": {
+    "status": "implemented-working-source-unreleased",
+    "observedAt": "2026-10-11",
+    "package": "@zero/framework",
+    "version": "2.6.0",
+    "baseCommit": "335b27372b0b8ef57a1e92cf93cec378923fe50b",
+    "snapshot": "dirty",
+    "canonicalOwner": "src/components/controls/floating-button-group",
+    "manual": "frontend/components/controls/floating-button-group.md",
+    "routes": ["@zero/framework", "@zero/framework/react", "@zero/framework/components/floating-button-group"],
+    "focusedEntry": "src/components/controls/floating-button-group/index.ts",
+    "sourceCopyTarget": "components/floating-button-group",
+    "publicValues": ["FloatingButtonGroup"],
+    "publicTypes": ["FloatingButtonGroupProps", "FloatingButtonGroupAction", "FloatingButtonGroupSeparator", "FloatingButtonGroupItem", "FloatingButtonGroupVariant", "FloatingButtonGroupSize", "FloatingButtonGroupOrientation"],
+    "additiveProps": {"group": ["dir", "ref", "inert", "native div props"], "action": ["ref"]},
+    "disabledPolicy": "aria-disabled; skipped by roving focus and blocked from highlight, press and command activation; existing pointer tooltip remains discoverable where present",
+    "emptyFocusPolicy": "active empty/all-disabled tray has one native toolbar-root tab stop",
+    "callbackPolicy": "synchronous onSelect then onAction; synchronous item exception prevents group callback; promises not awaited, caught, deduplicated or interpreted as accepted writes",
+    "nativeControlPolicy": "native button type=button; icon remains mounted/stationary outside departing text phases; no implicit form value or submission",
+    "placementPolicy": "floating is raised material only; existing Popover or another admitted owner supplies any positioning, portal, collision and dismissal",
+    "tooltipPolicy": {"owner": "existing Zero TooltipGroup/Tooltip", "motion": "grow", "enterMs": 400, "arrow": true, "allFourSides": true, "newPrivateProvider": false},
+    "density": {"referenceVisualPx": {"sm": 30, "md": 36}, "minimumTargetPx": {"compact": 32, "comfortable": 36, "touch": 44, "coarsePointer": 44}, "globalControlRadiusPxUnchanged": 6},
+    "geometryPolicy": "owner-document border/scroll coordinates with positive independent axis scale and screen-space DPR snapping; fail closed for rotation, skew, reflection and perspective on target/composed ancestors including assigned slots, shadow hosts and individual rotate/scale properties",
+    "tokens": {
+      "canonicalOwner": "src/design-system/theme-floating-button-group.ts",
+      "canonicalPrefix": "--zero-theme-floating-button-group-",
+      "consumerPrefix": "--zero-floating-button-group-",
+      "roleCount": 57,
+      "completeCatalogRoleCount": 462,
+      "suffixes": [
+        "font-family", "foreground", "secondary", "muted", "floating-background", "floating-border", "floating-shadow", "focus", "focus-width", "focus-offset", "hit-target-min", "disabled-opacity",
+        "md-height", "md-padding", "md-gap", "md-inline-padding", "md-radius", "md-item-radius", "md-font-size",
+        "sm-height", "sm-padding", "sm-gap", "sm-inline-padding", "sm-radius", "sm-item-radius", "sm-font-size",
+        "font-weight", "line-height", "tracking", "icon-size", "icon-gap", "separator-thickness", "separator-margin", "separator-length-share",
+        "background", "tray-edge", "highlight", "highlight-press", "mode-tint", "rule",
+        "move-duration", "move-bounce", "press-duration", "press-bounce", "show-duration", "hide-duration", "press-paint-duration", "first-entry-scale", "press-scale", "highlight-opacity-threshold", "label-enter-duration", "label-exit-duration", "label-enter-y", "label-exit-y", "label-blur", "label-enter-easing", "feedback-easing"
+      ]
+    },
+    "checks": {
+      "model": "src/components/controls/floating-button-group/floating-button-group-model.test.ts",
+      "geometry": "src/components/controls/floating-button-group/floating-button-group-geometry.test.ts",
+      "ssr": "src/components/controls/floating-button-group/floating-button-group.ssr.test.tsx",
+      "browser": "src/components/controls/floating-button-group/floating-button-group.browser.test.ts",
+      "theme": "src/design-system/theme-floating-button-group.test.ts",
+      "sourceCopy": "src/add/floating-button-group-copy.test.ts",
+      "package": "src/components/controls/floating-button-group/floating-button-group.package.test.ts",
+      "documentation": "docs-next/_work/checks/floating-button-group-plan.test.ts"
+    },
+    "qualification": {
+      "pureModelGeometry": "qualified",
+      "theme": "qualified",
+      "finalBrowserSsr": "qualified-isolated-family",
+      "familyRun": {"tests": 27, "assertions": 276, "failures": 0, "skips": 0, "browserTests": 13, "ssrTests": 2, "pureModelGeometryTests": 12, "screenshotsInspected": true},
+      "sourceCopy": "qualified-isolated-consumer",
+      "sourceCopyRun": {"tests": 3, "failures": 0, "isolatedBrowserBuild": true, "customizedCopiesPreserved": true, "doctorExportResolution": true},
+      "installedArchive": "qualified-bounded-dirty-archive",
+      "archiveRun": {
+        "tests": 1, "assertions": 78, "failures": 0,
+        "sha256": "81cc3c2608100cf273fed91b01183cc8ff57fdd4a80c27dc1db9dc5b46786c19",
+        "snapshot": "dirty",
+        "verifiedAt": "2026-10-11T13:13:13.819Z",
+        "evidencePath": "/Volumes/code-bank/artifacts/zero-platform/diagnostics/floating-button-group/package-consumer-evidence.json",
+        "qualifiedProductionFiles": 39, "browserBytes": 3143898,
+        "publicValueAndSevenTypeIdentity": true, "strictConsumerTypes": true,
+        "browserCss": true, "originalOwnersRetained": true,
+        "configurationNotExecuted": true, "environmentNotLoaded": true, "databaseFiles": 0,
+        "published": false,
+        "scope": "selected action-tray, theme, facade, stylesheet, source-copy and protected-owner source only; not whole-workspace or representative-application certification"
+      },
+      "documentationExamples": "qualified-actual-manual-fences",
+      "documentationExampleRun": {"tests": 1, "assertions": 87, "newManualFences": 3, "failures": 0, "scope": "actual selected UI-documentation examples including all three new FloatingButtonGroup examples"},
+      "distributionManualRun": {"tests": 6, "assertions": 132, "files": 3, "sourceCopyTests": 3, "curatedPublicContractTests": 2, "actualUiExampleTests": 1, "failures": 0, "oldPublicDigestPreserved": true, "additivePublicSymbols": 8},
+      "documentationGraph": {"pages": 784, "uniqueIds": 784, "reachable": 784, "problems": 0},
+      "catalogPlacement": {"records": 1092, "homes": 182, "problems": 0},
+      "tokenAudit": {"canonicalRoles": 462, "legacyAliases": 60, "sourceFiles": 947, "compiledDependencies": 49, "generatedParity": true, "unresolvedReferences": 0, "problems": 0, "existingLegacyCandidates": 908, "existingLiteralColorCandidates": 99, "remainingCandidatesAreRetirementProof": false},
+      "representativeApplications": "pending",
+      "release": "not-requested",
+      "originalTheme": "retained"
+    }
+  }
+}

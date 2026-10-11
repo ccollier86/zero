@@ -15,8 +15,9 @@ import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { VECTOR_ZVEC_ID_FIELD } from './vector-constants';
 import { VectorError } from './vector-error';
-import { buildZvecFilter } from './vector-filter';
+import { buildZvecFilter, recordMatchesVectorFilter } from './vector-filter';
 import { emitVectorIndexReady } from './vector-observability';
+import { boundedQueryInteger, validateLexicalText } from './visualization-lexical';
 import type {
   ResolvedVectorIndexConfig,
   ResolvedVectorMetadataFieldConfig,
@@ -38,6 +39,8 @@ import type {
   ZVecDoc,
   ZVecDocInput,
   ZVecFieldSchema,
+  ZVecFtsIndexParams,
+  ZVecMultiQuery,
   ZVecFlatIndexParams,
   ZVecHnswQueryParams,
   ZVecHnswIndexParams,
@@ -103,34 +106,96 @@ export class ZvecAdapter implements VectorIndexStore {
     return writeResult(statuses, records.map((record) => record.id));
   }
 
-  /** Query the zvec collection using vector similarity, scalar filters, or both. */
+  /** Full-corpus native vector/lexical/RRF retrieval, with one pre-filter for every leg. */
   async query(options: VectorQueryOptions): Promise<StoredVectorRecord[]> {
-    const collection = await this.getCollection();
-    if (!options.vector && !options.filter) {
+    const text = validateLexicalText(options.text);
+    const mode = options.retrieval ?? (text ? (options.vector ? 'hybrid' : 'lexical') : 'vector');
+    if (!['vector', 'lexical', 'hybrid'].includes(mode)
+      || (mode === 'hybrid' && (!text || !options.vector))
+      || (mode === 'lexical' && (!text || options.vector))
+      || (mode === 'vector' && text)) {
+      throw new VectorError('VECTOR_FILTER_INVALID', 'Vector retrieval mode does not match the query inputs.');
+    }
+    if (text && !this.config.lexical) {
+      throw new VectorError('VECTOR_CONFIG_INVALID', 'Full-text search must be explicitly enabled for this vector index.', { index: this.config.name });
+    }
+    if (!options.vector && !text && !options.filter) {
       throw new VectorError('VECTOR_FILTER_INVALID', 'Vector query requires a vector, a filter, or both.', {
         index: this.config.name,
       });
     }
 
+    const topK = boundedQueryInteger(options.topK ?? 10, 'topK', 1, 1_000);
+    const candidateCount = boundedQueryInteger(options.candidateCount ?? Math.max(topK, 10), 'candidateCount', topK, 1_000);
+    const rankConstant = boundedQueryInteger(options.rankConstant ?? 60, 'rankConstant', 1, 10_000);
+    const vector = options.vector ? this.validateVector(options.vector) : undefined;
     const zvecFilter = buildZvecFilter(options.filter, this.filterableFields(), this.zvecFieldAliases());
+    const outputFields = this.outputFields(options.outputFields);
+    const collection = await this.getCollection();
     const queryParams: Record<string, unknown> = {
       ...(options.vector
         ? {
             fieldName: this.config.vectorField,
-            vector: this.validateVector(options.vector),
+            vector,
           }
         : {}),
-      topk: options.topK ?? 10,
-      includeVector: options.includeVector ?? false,
+      topk: topK,
+      // Native FTS batches contain no dense-vector column; requesting it
+      // directly is unsupported. Hydrate the bounded matching IDs below.
+      includeVector: mode !== 'vector' ? false : options.includeVector ?? false,
     };
-    const outputFields = this.outputFields(options.outputFields);
     const params = options.vector ? this.queryParams(options.query) : undefined;
     if (zvecFilter) queryParams.filter = zvecFilter;
     if (outputFields) queryParams.outputFields = outputFields;
     if (params) queryParams.params = params;
+    if (mode === 'lexical') {
+      queryParams.fieldName = this.config.textField;
+      queryParams.fts = { matchString: text };
+      queryParams.params = { indexType: this.module!.ZVecIndexType.FTS };
+      delete queryParams.vector;
+    }
+    let results: ZVecDoc[];
+    try {
+      results = mode === 'hybrid'
+      ? await collection.multiQuery({
+          queries: [
+            { fieldName: this.config.vectorField, vector, numCandidates: candidateCount, ...(params ? { params } : {}) },
+            { fieldName: this.config.textField, fts: { matchString: text }, numCandidates: candidateCount,
+              params: { indexType: this.module!.ZVecIndexType.FTS } },
+          ],
+          topk: topK,
+          ...(zvecFilter ? { filter: zvecFilter } : {}),
+          // The native union also projects its FTS leg, so dense vectors
+          // are fetched by matching ID only after rank fusion finishes.
+          includeVector: false,
+          ...(outputFields ? { outputFields } : {}),
+          rerank: { type: 'rrf', rankConstant },
+        } satisfies ZVecMultiQuery)
+      : await collection.query(queryParams as Parameters<ZVecCollection['query']>[0]);
+    } catch {
+      // Native parser/engine messages may contain the caller's private query.
+      // Keep this newly exposed text-search path inside Zero's safe error shape.
+      throw new VectorError('VECTOR_OPERATION_FAILED', 'Vector retrieval failed.', { index: this.config.name });
+    }
 
-    const results = await collection.query(queryParams as Parameters<ZVecCollection['query']>[0]);
-
+    if (mode !== 'vector' && options.includeVector) {
+      // Fetch current records, not vectors grafted onto stale query metadata.
+      // A deleted or concurrently re-scoped record must disappear even though
+      // its old ID/rank was accepted by the earlier filtered FTS read.
+      try {
+        const current = new Map((await this.fetch([...new Set(results.map(row => row.id))], {
+          includeVector: true, ...(options.outputFields ? { outputFields: options.outputFields } : {}),
+        })).map(row => [row.id, row]));
+        return results.flatMap(result => {
+          const row = current.get(result.id);
+          if (!row || !recordMatchesVectorFilter(row, options.filter, this.config.textField)
+            || (options.minScore !== undefined && (result.score ?? Number.NEGATIVE_INFINITY) < options.minScore)) return [];
+          return [{ ...row, score: result.score }];
+        });
+      } catch {
+        throw new VectorError('VECTOR_OPERATION_FAILED', 'Vector retrieval failed.', { index: this.config.name });
+      }
+    }
     return results
       .map((doc) => this.fromZvecDoc(doc, options.includeVector ?? false))
       .filter((doc) => options.minScore === undefined || (doc.score ?? Number.NEGATIVE_INFINITY) >= options.minScore);
@@ -227,9 +292,16 @@ export class ZvecAdapter implements VectorIndexStore {
         enableMMAP: this.config.enableMMAP,
       };
       const mode = await resolveCollectionOpenMode(this.config.path);
-      this.collection = mode === 'open'
+      const collection = mode === 'open'
         ? this.module.ZVecOpen(this.config.path, options)
         : this.module.ZVecCreateAndOpen(this.config.path, schema, options);
+      try {
+        if (mode === 'open' && this.config.lexical) this.ensureLexicalIndex(collection, this.module);
+      } catch (error) {
+        collection.closeSync();
+        throw error;
+      }
+      this.collection = collection;
       emitVectorIndexReady({
         index: this.config.name,
         documents: this.collection.stats.docCount,
@@ -261,6 +333,7 @@ export class ZvecAdapter implements VectorIndexStore {
         name: this.config.textField,
         dataType: zvec.ZVecDataType.STRING,
         nullable: true,
+        ...(this.config.lexical ? { indexParams: this.lexicalIndexParams(zvec) } : {}),
       },
       {
         name: this.config.metadataField,
@@ -300,6 +373,24 @@ export class ZvecAdapter implements VectorIndexStore {
           }
         : undefined,
     };
+  }
+
+  private lexicalIndexParams(zvec: ZvecModule): ZVecFtsIndexParams {
+    return { indexType: zvec.ZVecIndexType.FTS, tokenizerName: 'standard', filters: ['lowercase'] };
+  }
+
+  private ensureLexicalIndex(collection: ZVecCollection, zvec: ZvecModule): void {
+    const field = collection.schema.field(this.config.textField);
+    if (field.dataType !== zvec.ZVecDataType.STRING) {
+      throw new VectorError('VECTOR_CONFIG_INVALID', 'Full-text search requires an existing string text field.', { index: this.config.name });
+    }
+    if (field.indexParams?.indexType === zvec.ZVecIndexType.FTS) return;
+    if (field.indexParams || this.config.readOnly) {
+      throw new VectorError('VECTOR_CONFIG_INVALID', 'Full-text index migration requires a writable, unindexed text field.', { index: this.config.name });
+    }
+    // Explicit lexical opt-in is the only trigger for this additive native migration.
+    // Never drop or replace an existing index to reconcile a setting change.
+    collection.createIndexSync({ fieldName: this.config.textField, indexParams: this.lexicalIndexParams(zvec) });
   }
 
   private vectorIndexParams(zvec: ZvecModule): ZvecVectorIndexParams {
@@ -427,7 +518,9 @@ export class ZvecAdapter implements VectorIndexStore {
   private filterableFields(): ReadonlySet<string> {
     return new Set([
       'id',
-      this.config.textField,
+      // Installed zvec FTS fields are not valid scalar filter columns. Fail
+      // before engine dispatch instead of exposing a native parser failure.
+      ...(!this.config.lexical ? [this.config.textField] : []),
       ...Object.keys(this.config.metadata),
     ]);
   }

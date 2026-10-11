@@ -9,6 +9,7 @@
 
 import { SidebarInset, SidebarProvider } from '#zero/components/sidebar';
 import { cn } from '#zero/lib/utils';
+import { createThemeAttributes } from '../../design-system/theme-tokens';
 import { AppShellHeader } from './app-shell-header';
 import { AppShellSidebar } from './app-shell-sidebar';
 import type { AppShellHeaderConfig, AppShellProps } from './app-shell.types';
@@ -16,6 +17,7 @@ import type { AppShellHeaderConfig, AppShellProps } from './app-shell.types';
 /** Zero's default dashboard shell with optional simpler layout presets. */
 export function AppShell({
   preset = 'dashboard',
+  themeFoundation = 'next',
   brand,
   nav,
   secondaryNav,
@@ -36,6 +38,10 @@ export function AppShell({
   sidebarOpen,
   onSidebarOpenChange,
 }: AppShellProps) {
+  if (themeFoundation !== 'next' && themeFoundation !== 'legacy') throw new TypeError('AppShell themeFoundation must be next or legacy.');
+  // Activate on the existing application frame, never on document/public roots.
+  // Omitted mode leaves the current ThemeProvider's .dark selection authoritative.
+  const themeAttributes = themeFoundation === 'next' ? createThemeAttributes() : {};
   const headerConfig = resolveHeaderConfig(header, breadcrumbs, actions);
   const hideHeader = header === false || headerConfig.hide;
   const workspace = (contentMode ?? (preset === 'minimal' || preset === 'topbar' ? 'document' : 'workspace')) === 'workspace';
@@ -44,7 +50,7 @@ export function AppShell({
 
   if (preset === 'minimal') {
     return (
-      <main data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
+      <main {...themeAttributes} data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
         <div data-slot="app-shell-content" className={cn(workspace ? content : 'min-h-screen', contentClassName)}>{children}</div>
       </main>
     );
@@ -52,7 +58,7 @@ export function AppShell({
 
   if (preset === 'topbar') {
     return (
-      <main data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
+      <main {...themeAttributes} data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
         {!hideHeader ? (
           <AppShellHeader {...headerConfig} showSidebarTrigger={false} />
         ) : null}
@@ -63,7 +69,7 @@ export function AppShell({
 
   if (preset === 'simple-sidebar') {
     return (
-      <main data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
+      <main {...themeAttributes} data-slot="app-shell" data-content-mode={workspace ? 'workspace' : 'document'} className={cn(frame, 'bg-background text-foreground', className)}>
         <div className={cn('flex min-w-0 flex-col lg:flex-row', workspace ? 'min-h-0 flex-1 overflow-hidden' : 'min-h-screen')}>
           {sidebar ? (
             <aside className={cn('w-full shrink-0 border-b border-border bg-muted/25 lg:w-72 lg:border-b-0 lg:border-r', workspace ? 'min-h-0 max-h-[25svh] overflow-auto lg:max-h-none lg:h-full' : 'lg:min-h-screen')}>
@@ -85,6 +91,7 @@ export function AppShell({
 
   return (
     <SidebarProvider
+      {...themeAttributes}
       defaultOpen={defaultSidebarOpen}
       open={sidebarOpen}
       onOpenChange={onSidebarOpenChange}

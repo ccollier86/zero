@@ -13,9 +13,9 @@ modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
-  date: "2026-10-07"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  snapshot: dirty
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -35,6 +35,15 @@ CommandShortcut is a display-only span. The app registers any opening shortcut
 explicitly, not by writing 'Cmd+K' inside that span.
 Use the [shared keyboard hints](../kbd.md) for compact individual keys or
 combinations; `CommandShortcut` remains a compatible trailing alignment span.
+
+In the working source, CommandList now owns one paint-only magnetic highlight
+that follows cmdk's selected item. Native filtering, disabled-item traversal,
+typeahead, `onSelect` and `aria-activedescendant` remain cmdk-owned. The shared
+highlight never commits a value or moves labels/hit targets.
+`fadeEdges=true` and `scrollbars="hover" | "scroll" | "always" | "hidden"` decorate the
+existing list viewport with [shared overflow treatment](./scroll-area.md).
+Input and footer siblings remain outside the mask; do not nest another scroller
+around the list. This integration also applies to Combobox and Cascader.
 
 ```tsx
 import { Command, CommandInput, CommandList, CommandItem, CommandEmpty }

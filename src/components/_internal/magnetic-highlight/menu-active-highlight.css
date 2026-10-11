@@ -1,0 +1,19 @@
+/* One spring material behind stationary options. Selected date/range fills are retained by the paint adapter. */
+[data-zero-menu-magnetic] { isolation: isolate; }
+.zero-menu-active-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+  border-radius: var(--zero-menu-highlight-radius, var(--zero-theme-radius-control, .5rem));
+  background: var(--accent, oklch(.96 0 0));
+}
+[data-zero-menu-choice] { z-index: 1; isolation: isolate; }
+[data-zero-menu-static] { position: relative; }
+[data-zero-menu-material] { background-color: transparent !important; }
+@media (forced-colors: active) {
+  .zero-menu-active-highlight { background: Highlight; }
+  [data-zero-menu-material] { color: HighlightText; }
+}

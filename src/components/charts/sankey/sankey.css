@@ -1,0 +1,86 @@
+/* Sankey flow geometry and motion. Shared analytical roles live in chart-tokens.css; local aliases remain explicit overrides. */
+:root, .light, [data-theme="light"] {
+  --zero-sankey-node: #a1a1aa;
+  --zero-sankey-ink-role: secondary;
+  --zero-sankey-ribbon-opacity: .2;
+  --zero-sankey-trace-opacity: .46;
+  --zero-sankey-particle-radius: 1.2;
+  --zero-sankey-inspector-min-width: 184px;
+  --zero-sankey-motion-enter: 1000ms; --zero-sankey-motion-stagger: 130ms; --zero-sankey-motion-morph: 700ms;
+  --zero-sankey-motion-trace-step: 140ms; --zero-sankey-motion-pour: 440ms; --zero-sankey-motion-fade: 260ms;
+}
+.zero-sankey {
+  /* Reuse Zero's blur preset with zero blur/shift/scale for the reference's restrained inspector fade. */
+  --zero-tooltip-motion-blur-enter: var(--zero-sankey-motion-inspector, var(--zero-chart-feedback, 120ms));
+  --zero-tooltip-motion-blur-exit: var(--zero-sankey-motion-inspector, var(--zero-chart-feedback, 120ms));
+  --zero-tooltip-blur: 0px; --zero-tooltip-blur-exit: 0px; --zero-tooltip-blur-shift: 0px; --zero-tooltip-blur-scale: 1;
+  position: relative; margin: 0; min-width: 0; color: var(--zero-chart-foreground, var(--foreground));
+  font-family: var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif));
+}
+.dark, [data-theme="dark"] {
+  --zero-sankey-node: #5d6576; --zero-sankey-ink-role: foreground;
+  --zero-sankey-trace-opacity: .5; --zero-sankey-particle-radius: 1.3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not([data-theme="light"]) {
+    --zero-sankey-node: #5d6576; --zero-sankey-ink-role: foreground;
+    --zero-sankey-trace-opacity: .5; --zero-sankey-particle-radius: 1.3;
+  }
+}
+.zero-sankey__plot { position: relative; min-width: 0; outline: none; border-radius: var(--zero-chart-plot-radius, 10px); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.zero-sankey__plot:focus-visible { box-shadow: 0 0 0 var(--zero-chart-focus-offset, 2px) var(--zero-chart-surface, var(--card)), 0 0 0 calc(var(--zero-chart-focus-offset, 2px) + var(--zero-chart-focus-width, 2px)) var(--zero-sankey-accent, var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground)))); }
+.zero-sankey__plot > svg, .zero-sankey__plot > canvas { position: absolute; inset: 0 auto auto 0; display: block; overflow: visible; }
+.zero-sankey__back, .zero-sankey__canvas { pointer-events: none; }
+.zero-sankey__label { font: 400 var(--zero-sankey-label-size, var(--zero-chart-label-size, 12.5px)) var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); fill: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground)));
+  paint-order: stroke; stroke: var(--zero-chart-surface, var(--card)); stroke-opacity: .7; stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.zero-sankey__value { font: 500 var(--zero-sankey-value-size, var(--zero-chart-readout-size, 14px)) var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); fill: var(--zero-chart-foreground, var(--foreground)); font-variant-numeric: tabular-nums; }
+.zero-sankey__column { font: 500 var(--zero-sankey-column-size, var(--zero-chart-metadata-size, 11.5px)) var(--zero-chart-font-family, var(--font-platform-sans, system-ui)); fill: var(--zero-chart-muted, var(--muted-foreground));
+  paint-order: stroke; stroke: var(--zero-chart-surface, var(--card)); stroke-width: 4px; pointer-events: none; }
+.zero-sankey__hit { fill: transparent; cursor: pointer; }
+.zero-sankey__inspection-anchor { position: absolute; width: 1px; height: 1px; pointer-events: none; }
+.zero-tooltip.zero-sankey__tooltip {
+  --zero-tooltip-background: var(--zero-chart-surface, var(--card));
+  --zero-tooltip-foreground: var(--zero-chart-muted, var(--muted-foreground));
+  --zero-tooltip-border: var(--zero-chart-border-strong, var(--border));
+  --zero-tooltip-radius: var(--zero-sankey-inspector-radius, var(--zero-chart-inspector-radius, 10px));
+  --zero-tooltip-padding-inline: 0px; --zero-tooltip-padding-block: 0px;
+  --zero-tooltip-shadow: var(--zero-sankey-inspector-shadow, var(--zero-chart-inspector-shadow));
+  --zero-tooltip-max-width: var(--zero-sankey-inspector-max-width, var(--zero-chart-inspector-max-width, 260px));
+  --zero-tooltip-font-family: var(--zero-chart-font-family, var(--font-platform-sans, system-ui));
+  --zero-tooltip-font-weight: 400;
+  min-width: min(var(--zero-sankey-inspector-min-width, 184px), calc(100vw - 16px));
+  max-width: min(var(--zero-sankey-inspector-max-width, var(--zero-chart-inspector-max-width, 260px)), calc(100vw - 2 * var(--zero-tooltip-viewport-padding, 8px)), max(0px, var(--radix-tooltip-content-available-width, 100vw)));
+  border-radius: var(--zero-sankey-inspector-radius, var(--zero-chart-inspector-radius, 10px));
+  background: var(--zero-chart-surface, var(--card));
+  color: var(--zero-chart-muted, var(--muted-foreground));
+  border-color: var(--zero-chart-border-strong, var(--border-strong, var(--border)));
+  box-shadow: var(--zero-sankey-inspector-shadow, var(--zero-chart-inspector-shadow));
+  font-family: var(--zero-chart-font-family, var(--font-platform-sans, system-ui));
+  font-weight: 400;
+  pointer-events: none;
+}
+.zero-sankey__tooltip > .zero-tooltip-body { padding: 0; }
+.zero-sankey__inspection { padding: var(--zero-sankey-inspector-padding, var(--zero-chart-inspector-padding, 9px 12px)); font-size: var(--zero-chart-inspector-font-size, 12px); line-height: var(--zero-chart-inspector-line-height, 1.45); overflow-wrap: anywhere; }
+.zero-sankey__inspection-title { margin-bottom: 2px; color: var(--zero-chart-secondary, var(--text-secondary, var(--muted-foreground))); }
+.zero-sankey__inspection-value { font: 500 var(--zero-sankey-inspector-value-size, var(--zero-chart-inspector-value-size, 17px))/var(--zero-chart-inspector-value-line-height, 1.3) var(--zero-chart-font-family, var(--font-platform-sans, system-ui));
+  color: var(--zero-chart-foreground, var(--foreground)); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.zero-sankey__inspection-sub { color: var(--zero-chart-muted, var(--muted-foreground)); }
+.zero-sankey__inspection-rows { display: grid; gap: 3px; margin-top: 9px; }
+.zero-sankey__inspection-rows > div { display: flex; justify-content: space-between; gap: 24px; }
+.zero-sankey__inspection-rows span { min-width: 0; color: var(--zero-chart-muted, var(--muted-foreground)); }
+.zero-sankey__inspection-rows b { flex: none; font-weight: 500; color: var(--zero-chart-foreground, var(--foreground)); font-variant-numeric: tabular-nums; }
+.zero-sankey__footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; min-height: 26px; }
+.zero-sankey__hint { font-size: var(--zero-chart-metadata-size, 11.5px); color: var(--zero-chart-faint, var(--text-muted, var(--muted-foreground))); }
+.zero-sankey__flow[data-slot="button"] { min-height: 24px; height: auto; gap: 7px; padding: 3px 10px 3px 8px; border-radius: 999px;
+  border: 1px solid var(--zero-chart-border-strong, var(--border-strong, var(--border))); background: transparent; font: 500 var(--zero-chart-label-size, 12.5px) var(--zero-chart-font-family, var(--font-platform-sans, system-ui));
+  color: var(--zero-chart-muted, var(--muted-foreground)); box-shadow: none; transition: border-color var(--zero-chart-feedback, 120ms) ease, color var(--zero-chart-feedback, 120ms) ease; }
+.zero-sankey__flow[data-slot="button"]:hover { border-color: var(--zero-chart-faint, var(--text-muted, var(--muted-foreground))); background: transparent; }
+.zero-sankey__flow[data-slot="button"]:focus-visible { outline: var(--zero-chart-focus-width, 2px) solid var(--zero-sankey-accent, var(--zero-chart-focus-color, var(--zero-chart-foreground, var(--foreground)))); outline-offset: var(--zero-chart-focus-offset, 2px); }
+.zero-sankey__flow i { position: relative; width: 22px; height: 12px; border-radius: 6px; background: var(--zero-chart-border-strong, var(--border-strong, var(--border))); transition: background var(--zero-chart-feedback, 120ms) ease; }
+.zero-sankey__flow i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; border-radius: 50%; background: var(--zero-chart-surface, var(--card)); transition: transform var(--zero-chart-feedback, 120ms) ease; }
+.zero-sankey__flow[aria-pressed="true"] { color: var(--zero-chart-foreground, var(--foreground)); }
+.zero-sankey__flow[aria-pressed="true"] i { background: var(--zero-sankey-accent, var(--zero-chart-series-1, var(--zero-chart-blue))); }
+.zero-sankey__flow[aria-pressed="true"] i::after { transform: translateX(10px); }
+.zero-sankey__empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--zero-chart-muted, var(--muted-foreground)); font-size: 13px; }
+.zero-sankey__sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) { .zero-sankey__flow, .zero-sankey__flow i, .zero-sankey__flow i::after { transition: none; } }

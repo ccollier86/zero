@@ -3,18 +3,27 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectPrivateImportSpecifiers, privateImportMapsMatch } from './private-import-specifiers';
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDir = join(rootDir, 'src');
 const packagePath = join(rootDir, 'package.json');
 const checkOnly = process.argv.includes('--check');
-const specifierPattern = /['"](#zero\/[^'"]+)['"]/g;
+// Preserve these valid existing private paths while family organization
+// moves keep app/source compatibility. Retained entries use the same exact
+// resolution and map comparison as actual imports; other extras remain stale.
+const RETAINED_COMPATIBILITY_SPECIFIERS = [
+  '#zero/components/animate-ui/primitives/radix/popover',
+  '#zero/components/ui/calendar',
+  '#zero/components/ui/date-picker-value',
+  '#zero/components/ui/time-picker-value',
+] as const;
 
 const sourceFiles = await collectSourceFiles(sourceDir);
-const specifiers = new Set<string>();
+const specifiers = new Set<string>(RETAINED_COMPATIBILITY_SPECIFIERS);
 for (const sourceFile of sourceFiles) {
   const source = await readFile(sourceFile, 'utf8');
-  for (const match of source.matchAll(specifierPattern)) specifiers.add(match[1]!);
+  for (const specifier of collectPrivateImportSpecifiers(sourceFile, source)) specifiers.add(specifier);
 }
 
 const imports: Record<string, string> = {};
@@ -29,7 +38,9 @@ const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as {
   [key: string]: unknown;
 };
 if (checkOnly) {
-  if (JSON.stringify(packageJson.imports ?? {}) !== JSON.stringify(imports)) {
+  // Object-key ordering is presentation, not a module-resolution difference.
+  // Compare every declared key/target without rewriting the existing map.
+  if (!privateImportMapsMatch(packageJson.imports ?? {}, imports)) {
     throw new Error('package.json private imports are stale; run bun run private-imports:sync');
   }
 } else {

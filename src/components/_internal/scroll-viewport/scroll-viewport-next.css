@@ -1,0 +1,8 @@
+/* Next-only accessibility corrections; the original scroll presentation remains retained unchanged. */
+@media (prefers-reduced-motion: reduce) {
+  .zero-scroll-decoration[data-zero-scroll-decoration="next"] .zero-scroll-track,
+  .zero-scroll-decoration[data-zero-scroll-decoration="next"][data-visible] .zero-scroll-track,
+  .zero-scroll-decoration[data-zero-scroll-decoration="next"] .zero-scroll-thumb::after {
+    transition: none;
+  }
+}

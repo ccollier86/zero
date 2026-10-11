@@ -6,6 +6,19 @@
  */
 
 export { resolveVectorConfig } from './vector-config';
+export { VectorVisualizationService } from './visualization-service';
+export type { VectorVisualizationServiceOptions, VectorVisualizationExecutionOptions, VectorVisualizationStartedOperation } from './visualization-service-context';
+export { AsyncVectorVisualizationStore } from './visualization-store';
+export type { VectorVisualizationStore, VectorVisualizationClaim } from './visualization-store';
+export { AsyncVectorVisualizationMapStore } from './visualization-store-map';
+export type { VectorVisualizationMapStore, VectorVisualizationMapState } from './visualization-store-map';
+export type * from './visualization-types';
+export { resolveVectorVisualizationConfig } from './visualization-config';
+export type { VectorVisualizationConfig, VectorVisualizationIndexConfig, ResolvedVectorVisualizationConfig } from './visualization-config';
+export { vectorVisualizationMigration } from './visualization-migration';
+export { vectorVisualizationSchemaReady, admitVectorVisualizationSchema } from './visualization-admission';
+export { registerVectorVisualizationActivities } from './visualization-workflow';
+export type { VectorVisualizationWorkflowInput, VectorVisualizationWorkflowOptions, VectorVisualizationWorkflowResult } from './visualization-workflow';
 export { VectorError } from './vector-error';
 export { createAIVectorBridge } from './vector-ai-bridge';
 export { createVectorPlugin, getVectorStore } from './vector.plugin';

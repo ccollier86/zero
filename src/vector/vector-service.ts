@@ -35,6 +35,7 @@ import type {
 
 type ScopedVectorWrite = (index: string, records: VectorRecord | readonly VectorRecord[], filter: VectorFilter) => Promise<VectorWriteResult>;
 const scopedVectorWrites = new WeakMap<VectorService, ScopedVectorWrite>();
+const scopedTextFields = new WeakMap<VectorService, (index: string) => string>();
 
 /** Optional construction dependencies; prebuilt services keep their emitter ownership. */
 export interface VectorServiceOptions {
@@ -50,6 +51,7 @@ export class VectorService {
   constructor(private readonly registry: VectorRegistry, options: VectorServiceOptions = {}) {
     this.emitCode = options.emitCode ?? emitPlatformCode;
     scopedVectorWrites.set(this, (index, records, filter) => this.writeRecords(index, records, filter));
+    scopedTextFields.set(this, index => this.registry.getIndex(index).config.textField);
   }
 
   /** List configured index names without opening collections. */
@@ -77,13 +79,14 @@ export class VectorService {
     // No yield between this cheap capacity check and snapshotting. The actual
     // queue admission below checks again, including reentrant caller getters.
     this.operations.assertWriteAdmission(index);
+    const textField = this.registry.getIndex(index).config.textField;
     const records = filter
-      ? prepareScopedVectorRecords(filter, arrayOf(input))
+      ? prepareScopedVectorRecords(filter, arrayOf(input), textField)
       : snapshotVectorRecords(arrayOf(input));
     return this.runOperation('upsert', index, records.length, filter, () => this.operations.write(index, async () => {
       const store = this.registry.getIndex(index);
       if (filter && records.length > 0) {
-        assertStoredVectorsInScope(await store.fetch(records.map(record => record.id)), filter);
+        assertStoredVectorsInScope(await store.fetch(records.map(record => record.id)), filter, textField);
       }
       const result = await store.upsert(records);
       if (!result.ok) {
@@ -98,7 +101,7 @@ export class VectorService {
     }));
   }
 
-  /** Search an index using vector similarity, scalar filters, or both. */
+  /** Search an index using scoped native dense/lexical/hybrid retrieval or scalar filters. */
   async query(options: VectorQueryOptions): Promise<StoredVectorRecord[]>;
   async query(index: string, options: VectorQueryOptions): Promise<StoredVectorRecord[]>;
   async query(
@@ -106,7 +109,9 @@ export class VectorService {
     maybeOptions?: VectorQueryOptions
   ): Promise<StoredVectorRecord[]> {
     const { index, value: options } = parseIndexAndValue(indexOrOptions, maybeOptions);
-    const admitted = { ...options, ...(options.filter ? { filter: snapshotVectorFilter(options.filter) } : {}) };
+    const admitted = { ...options,
+      ...(options.vector ? { vector: Array.from(options.vector) } : {}),
+      ...(options.filter ? { filter: snapshotVectorFilter(options.filter) } : {}) };
     return this.runOperation('query', index, undefined, admitted.filter,
       () => this.operations.read(() => this.registry.getIndex(index).query(admitted)));
   }
@@ -298,7 +303,8 @@ export class VectorScope {
   /** Fetch records by id, then apply the scope filter in memory to prevent leaks. */
   async fetch(ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]> {
     const records = await this.service.fetch(this.index, ids, options);
-    return records.filter((record) => recordMatchesVectorFilter(record, this.filter));
+    const textField = scopedTextFields.get(this.service)!(this.index);
+    return records.filter((record) => recordMatchesVectorFilter(record, this.filter, textField));
   }
 
   /** Canonical get alias for scoped fetch(). */

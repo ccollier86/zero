@@ -29,6 +29,11 @@ they are not claims of already-published archive support.
   typed data, design tokens and appropriate aggregate/permission semantics.
 - [ ] Continue app-driven layout/interaction polish using existing slots/column
   overrides before introducing new framework props or hidden query behavior.
+- [ ] Integrate the proposed [NumberField and reusable digit display](../../../_work/number-field-rolling-number-plan.md)
+  through table column/helper/editor boundaries. Preserve optional clear/null,
+  required rejection, raw invalid drafts, accepted saves and refresh-only Retry.
+  Keep existing pager/new-record digit timing and count/query ownership; these
+  numeric additions are planned, not current helper options.
 - [ ] Evaluate stronger cursor/snapshot/pinned-record consistency for concurrent
   writes. The current bounded membership lookup confirms genuine off-page
   arrivals, but it does not give ordinary offset pagination snapshot isolation

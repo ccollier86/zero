@@ -8,14 +8,14 @@ visibility: internal
 system: cross-system
 feature: tasks
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; earlier guide contracts retain their own review metadata"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -38,6 +38,12 @@ needs them. They do not replace each system's exact reference.
   multi-file wiring recipe joining Guardian, Fabric, resources and both Studios.
 - [Reactive control plane](./reactive-control-plane.md): compose table/forms/
   master-detail with accepted operations and scope-safe state.
+- [UI reference](../frontend/ui-reference.md): canonical tokens, typography,
+  action-to-animation rules and component facades/parts with full manual routes.
+- [Application UI development](./application-ui-development.md): agent-oriented
+  dashboard assembly, component facades/parts, theme/type roles and reactive data.
+- [Public UI development](./public-ui-development.md): agent-oriented public-page
+  assembly, reading hierarchy, access boundaries, effects and chart demos.
 - [Automation](./automation.md): choose Scheduler, Torrent and database actions
   for the right durability/authority contract.
 - [Correlated workflow replies](./correlated-workflow.md): compose a private
@@ -49,6 +55,9 @@ needs them. They do not replace each system's exact reference.
 - [Present code examples](../frontend/components/public-pages/code-block.md): reuse
   the shared CodeBlock family for files, copy controls and prepared highlights.
 - [Upgrade safely](./upgrade.md): dependency updates versus real data/model changes.
+- [UI upgrade handoff](./ui-upgrade.md): framework branch and artifact provenance,
+  new component/manual locations, Doctor triage and staged app adoption with
+  original implementations retained.
 - [Verification](./verification.md): proportionate source, fixture and deployment checks.
 
 For a short orientation read [Start Here](../start-here.md).

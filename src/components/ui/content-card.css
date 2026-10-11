@@ -1,0 +1,2 @@
+/* Compatibility CSS path; the canonical Card family remains the sole selector owner. */
+@import "../surfaces/card/content-card.css";

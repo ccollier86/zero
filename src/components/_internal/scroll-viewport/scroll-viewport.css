@@ -1,0 +1,52 @@
+/* Shared native viewport affordances. Apply only to decorated controls; chart/table/global scrollbar policy stays independent. */
+.zero-scroll-viewport { min-width: 0; min-height: 0; scrollbar-width: none; overscroll-behavior: contain; }
+.zero-scroll-viewport::-webkit-scrollbar { display: none; }
+.zero-scroll-viewport[data-zero-scroll-fade="vertical"] {
+  mask-image: linear-gradient(to bottom, transparent, black var(--zero-scroll-edge-top, 0px), black calc(100% - var(--zero-scroll-edge-bottom, 0px)), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--zero-scroll-edge-top, 0px), black calc(100% - var(--zero-scroll-edge-bottom, 0px)), transparent);
+}
+.zero-scroll-viewport[data-zero-scroll-fade="horizontal"] {
+  mask-image: linear-gradient(to right, transparent, black var(--zero-scroll-edge-left, 0px), black calc(100% - var(--zero-scroll-edge-right, 0px)), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black var(--zero-scroll-edge-left, 0px), black calc(100% - var(--zero-scroll-edge-right, 0px)), transparent);
+}
+.zero-scroll-viewport[data-zero-scroll-fade="both"] {
+  mask-image: linear-gradient(to bottom, transparent, black var(--zero-scroll-edge-top, 0px), black calc(100% - var(--zero-scroll-edge-bottom, 0px)), transparent), linear-gradient(to right, transparent, black var(--zero-scroll-edge-left, 0px), black calc(100% - var(--zero-scroll-edge-right, 0px)), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--zero-scroll-edge-top, 0px), black calc(100% - var(--zero-scroll-edge-bottom, 0px)), transparent), linear-gradient(to right, transparent, black var(--zero-scroll-edge-left, 0px), black calc(100% - var(--zero-scroll-edge-right, 0px)), transparent);
+  mask-composite: intersect; -webkit-mask-composite: source-in;
+}
+.zero-scroll-decoration { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.zero-scroll-track { position: absolute; opacity: 0; pointer-events: none; touch-action: none;
+  transition: opacity var(--zero-scroll-hide-duration, var(--zero-theme-scroll-hide-duration, 480ms)) var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1)); }
+.zero-scroll-track[data-axis="y"] { top: 3px; right: 1px; bottom: 3px; width: var(--zero-theme-scroll-track-hit-size, 11px); }
+.zero-scroll-track[data-axis="x"] { left: 3px; right: 3px; bottom: 1px; height: var(--zero-theme-scroll-track-hit-size, 11px); }
+.zero-scroll-decoration[data-both] .zero-scroll-track[data-axis="y"] { bottom: 13px; }
+.zero-scroll-decoration[data-both] .zero-scroll-track[data-axis="x"] { right: 13px; }
+.zero-scroll-decoration[data-visible] .zero-scroll-track { opacity: 1; pointer-events: auto;
+  transition-duration: var(--zero-scroll-show-duration, var(--zero-theme-scroll-show-duration, 160ms)); }
+.zero-scroll-thumb { position: absolute; top: 0; left: 0; }
+.zero-scroll-track[data-axis="y"] .zero-scroll-thumb { width: 100%; }
+.zero-scroll-track[data-axis="x"] .zero-scroll-thumb { height: 100%; }
+.zero-scroll-thumb::after { content: ""; position: absolute; border-radius: 9999px;
+  background: color-mix(in oklab, var(--foreground) var(--zero-theme-scroll-thumb-foreground-share, 30%), transparent);
+  transition: width var(--zero-theme-scroll-show-duration, 160ms) var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1)), height var(--zero-theme-scroll-show-duration, 160ms) var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1)), background-color var(--zero-theme-scroll-show-duration, 160ms) var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1)); }
+.zero-scroll-track[data-axis="y"] .zero-scroll-thumb::after { top: 0; right: 3px; bottom: 0; width: var(--zero-theme-scroll-thumb-size, 5px); }
+.zero-scroll-track[data-axis="x"] .zero-scroll-thumb::after { left: 0; right: 0; bottom: 3px; height: var(--zero-theme-scroll-thumb-size, 5px); }
+@media (hover: hover) and (pointer: fine) {
+  .zero-scroll-track:hover .zero-scroll-thumb::after, .zero-scroll-decoration[data-dragging] .zero-scroll-thumb::after { background: color-mix(in oklab, var(--foreground) var(--zero-theme-scroll-active-thumb-foreground-share, 46%), transparent); }
+  .zero-scroll-track[data-axis="y"]:hover .zero-scroll-thumb::after, .zero-scroll-decoration[data-dragging="y"] .zero-scroll-thumb::after { right: 2px; width: var(--zero-theme-scroll-active-thumb-size, 7px); }
+  .zero-scroll-track[data-axis="x"]:hover .zero-scroll-thumb::after, .zero-scroll-decoration[data-dragging="x"] .zero-scroll-thumb::after { bottom: 2px; height: var(--zero-theme-scroll-active-thumb-size, 7px); }
+}
+/* Existing Radix ScrollArea rails remain the drag/keyboard owner; only their skin uses this shared language. */
+.zero-scroll-radix-bar { border: 0; padding: 3px; touch-action: none; }
+.zero-scroll-radix-bar[data-orientation="vertical"] { width: var(--zero-theme-scroll-track-hit-size, 11px); }
+.zero-scroll-radix-bar[data-orientation="horizontal"] { height: var(--zero-theme-scroll-track-hit-size, 11px); }
+.zero-scroll-radix-thumb { background: color-mix(in oklab, var(--foreground) var(--zero-theme-scroll-thumb-foreground-share, 30%), transparent); border-radius: 9999px; }
+@media (hover: hover) and (pointer: fine) {
+  .zero-scroll-radix-bar:hover { padding: 2px; }
+  .zero-scroll-radix-bar:hover .zero-scroll-radix-thumb { background: color-mix(in oklab, var(--foreground) var(--zero-theme-scroll-active-thumb-foreground-share, 46%), transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .zero-scroll-track, .zero-scroll-thumb::after { transition: none; } }
+@media (forced-colors: active) {
+  .zero-scroll-viewport[data-zero-scroll-fade] { mask-image: none; -webkit-mask-image: none; }
+  .zero-scroll-thumb::after, .zero-scroll-radix-thumb { background: CanvasText; }
+}

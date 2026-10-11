@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: app-shell-configuration
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; next application theme default; publication qualification pending"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -32,6 +32,7 @@ configuration. Public types are exported by
 | --- | --- |
 | children | Required ReactNode; application content. |
 | preset | AppShellPreset; dashboard default; [preset differences](./presets.md). |
+| themeFoundation | next or legacy; next default. Marks the existing application frame, not document/public roots. |
 | brand | AppShellBrand: name required; subtitle/icon/logo/href optional. |
 | nav / secondaryNav | AppShellNavGroup arrays; empty generated navigation by default. |
 | workspaces | AppShellWorkspaceConfig; omitted shows brand instead. |
@@ -58,6 +59,18 @@ userMenu, footer, currentPath and customSidebar. It requires SidebarProvider.
 A truthy customSidebar replaces its generated internal content. Direct
 AppShellBreadcrumbsProps exposes items/className. Direct AppShellHeaderProps
 omits hide and otherwise follows the header configuration.
+
+## Application Theme And Rollback
+
+AppShell activates the [next foundation](../design-system/foundation-next.md)
+on its existing outer element with compact density. Omitted mode follows the
+existing ThemeProvider's `.dark` class and saved/system preference. There is no
+additional wrapper, animation controller or auth authority.
+
+For top-level rollback, set `themeFoundation="legacy"` and select legacy managed
+styles or import `@zero/framework/styles-legacy.css`. This preserves the original
+token files. It does not isolate a legacy shell nested inside a deliberately
+next-themed ancestor; inherited custom properties still apply there.
 
 ## Workspace Height And Document Flow
 

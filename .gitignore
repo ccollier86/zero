@@ -7,6 +7,9 @@ dist/
 !.env.example
 !examples/**/.env.example
 data/
+# Curated frontend re-exports are source, not a runtime data directory.
+!/src/frontend/exports/data/
+!/src/frontend/exports/data/*.ts
 .storage/
 *.db
 *.db-wal

@@ -26,6 +26,7 @@ export function snapshotVectorRecords(records: readonly VectorRecord[]): VectorR
 export function prepareScopedVectorRecords(
   filter: VectorFilter,
   records: readonly VectorRecord[],
+  textField = 'text',
 ): VectorRecord[] {
   const required = extractSimpleEqualityMetadata(filter);
   return snapshotVectorRecords(records).map(record => {
@@ -37,7 +38,7 @@ export function prepareScopedVectorRecords(
       metadata[field] = value;
     }
     const prepared = { ...record, metadata };
-    if (!recordMatchesVectorFilter({ id: prepared.id, text: prepared.text, metadata }, filter)) {
+    if (!recordMatchesVectorFilter({ id: prepared.id, text: prepared.text, metadata }, filter, textField)) {
       throw scopeConflict();
     }
     return prepared;
@@ -45,8 +46,8 @@ export function prepareScopedVectorRecords(
 }
 
 /** Must run inside the same write boundary as the adapter upsert. */
-export function assertStoredVectorsInScope(records: readonly StoredVectorRecord[], filter: VectorFilter): void {
-  if (records.some(record => !recordMatchesVectorFilter(record, filter))) throw scopeConflict();
+export function assertStoredVectorsInScope(records: readonly StoredVectorRecord[], filter: VectorFilter, textField = 'text'): void {
+  if (records.some(record => !recordMatchesVectorFilter(record, filter, textField))) throw scopeConflict();
 }
 
 function scopeConflict(): VectorError {

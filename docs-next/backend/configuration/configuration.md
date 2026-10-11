@@ -8,14 +8,14 @@ visibility: internal
 system: platform-configuration
 feature: reference
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased Schema corrections"]
+applies_to: ["2.6.0 working source; managed composition"]
 modes: [managed-server]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -75,6 +75,7 @@ No universal null-disable convention exists.
 | --- | --- | --- |
 | `appDir` | string; `./app` | file-router source |
 | `outDir` | string; `./.build` | generated build assets |
+| `themeFoundation` | `'legacy'` / `'next'`; next | [managed CSS selection](../../frontend/design-system/style-build.md#select-the-managed-foundation); next appends scoped CSS; AppShell separately activates its application boundary; no font loading; compiled selection must match config |
 | `generatedDir` | string; `./.zero/generated` | framework glue |
 | `serverPluginsDir` | string/false; `./server/plugins` | trusted discovery |
 | `serverMiddlewareDir` | string/false; `./server/middleware` | trusted discovery |

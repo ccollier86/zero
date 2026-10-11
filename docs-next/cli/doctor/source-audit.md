@@ -8,14 +8,14 @@ visibility: internal
 system: doctor
 feature: source-audit
 maturity: supported
-applies_to: ["2.6.0 source; structured-modal/source-only upgrade unreleased"]
+applies_to: ["2.6.0 working source; modal, backing-theme and versioned upgrade/chart source inspection"]
 modes: ["AST source-only inspection", "configuration-backed usage heuristics"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-11"
   evidence_level: source-observed
 ---
 
@@ -65,6 +65,7 @@ const report = await runSourceOnlyDoctor({
   include: ["app", "components"],
   exclude: ["components/vendor/**"],
   strict: true,
+  upgrade: true,
   allow: [{ code: "usage.modal.direct_primitive", path: "components/managed-special/**" }],
 });
 ```
@@ -124,10 +125,134 @@ accepts content; the latter returns an owned result handle and a structured
 descriptor. Review save acknowledgment, close guards, nested ownership and scopes
 using the [modal migration guide](../../frontend/modals/migration.md).
 
+## Upgrade Auditing
+
+The unreleased opt-in audit applies a versioned migration catalog to admitted
+source. After installing an upgrade, inspect the installed framework:
+
+```sh
+bun --no-env-file ./node_modules/@zero/framework/src/cli/run.ts doctor \
+  --source-only --project-root . --upgrade --json
+```
+
+To review before changing the app dependency, also pass
+`--upgrade-target-root /explicit/framework-directory`. That directory must
+contain the actual `@zero/framework` package. An application directory with a
+nested installation is not substituted. No registry download, dependency
+update, config import, app resolver, database inspection or source rewrite is
+performed. `zero update` retains its existing separate authorization boundaries.
+
+The report keeps installed metadata separate from target evidence. Target
+capabilities and a deterministic **bounded public-source fingerprint** distinguish
+local builds with the same version number. This fingerprint describes inspected
+contract sources, not every file in an archive. Missing/unreadable, private,
+ambiguous or unsupported export graphs remain unknown; the tool does not call
+uncertainty a removed API.
+
+Catalog version 2 distinguishes:
+
+- Confirmed missing target named exports through inspected public bindings, and
+  missing admitted literal helper/CSS references: required corrections.
+- Recognizable Dropdown content scrolling assumptions: manual review. The
+  semantic content ref remains compatible for focus/dimensions, while scrolling
+  uses the inner `viewportRef`.
+- Explicit outer-scrolling Popover bodies: review the optional `PopoverViewport`
+  composition. Already-owned picker, Calendar, Command and Cascader viewports
+  must not be wrapped again.
+- Supported Recharts and legacy Zero chart dependencies, and proven rendered
+  Recharts families: informational migration candidates, not removed APIs.
+
+The chart checks emit `upgrade.chart.legacy_dependency` once per source module
+with a proven dependency and `upgrade.chart.legacy_usage` once per rendered
+Recharts family per module. Named aliases, namespaces, immutable aliases and
+admitted local re-exports retain their origin; unrelated/type-only/shadowed
+components do not become rendered migration findings. Component names alone do
+not prove library ownership.
+
+Replacement suggestions appear only when the exact handmade export is available
+in the inspected target. For example, a rendered Recharts `LineChart` can point
+to native `XYLineChart`; a `BarChart` needs deliberate grouped/stacked/horizontal
+selection. Missing/unknown target evidence never claims a replacement exists.
+The [Zero Charts manual](../../frontend/charts/index.md) owns the actual data,
+query projection, dimensions and interaction contracts. Doctor does not rewrite
+imports or migrate a chart's data model automatically.
+
+Both chart findings are `info`/`manual-review` by default, so supported legacy
+charts do not fail `--strict`. `upgrade.chartReviews` counts chart findings after
+policy/allow filtering; `checkedImports` still counts inspected Zero public
+named bindings, not Recharts imports or proposed replacement lookups. The common
+`reviewCounts.manualReview` includes these chart candidates. Use existing rule
+overrides/allow entries for an intentional legacy consumer without hiding real
+missing-export or modal findings.
+
+Named imports, aliases, namespaces and bounded local re-export chains are
+recognized; shadowed/non-Zero lookalikes are not treated as framework components.
+Admitted source aliases resolve relative bindings at their canonical source
+location while diagnostics retain the caller's filename. Parser/depth limits
+report incomplete inspection and do not prevent independent files being audited.
+Dynamic wrappers, aliases needing application resolution and uncertain source
+shapes remain bounded review evidence. Compatible old Card parts, native props,
+Select positioning and deliberate custom motion are not errors merely because
+new optional parts exist.
+
+The audit preserves customized source copies. Without a recorded copy baseline,
+it cannot infer their age from a filename or prove which local edits came from
+an earlier version. Literal missing dependencies are actionable; speculative
+copy replacement is not. Catalog entries must be extended alongside future
+breaking contracts. A clean result is **not proof that every future upgrade,
+custom layout, runtime service or persisted-data migration is covered**. Keep
+type/build, focused interaction and visual qualification as separate gates.
+
+Existing `rules`, `allow`, exclusions and strict/JSON behavior apply. Invalid
+target/root admission cannot be suppressed into a trustworthy scan. The report
+includes applicable catalog entries, inspection counts and explicit coverage
+limits so agents can distinguish completed checks from review work.
+
 Static inspection cannot prove header placement, clipping, scroll behavior,
 animation quality, focus trapping, portal layering or accessibility. It performs
 no automatic rewrites and does not certify migration completion; follow it with
 focused component/runtime tests and visual checks where those are affected.
+
+## Backing Theme Diagnostics
+
+Opt into the foundation check without executing app configuration:
+
+```sh
+bun --no-env-file ./node_modules/@zero/framework/src/cli/run.ts doctor \
+  --source-only --theme-foundation --project-root . --json
+```
+
+The programmatic equivalent adds `themeFoundation: true` to
+`runSourceOnlyDoctor`. The flag is false/omitted by default. Its report adds
+`themeFoundation` with catalog/version, bundled-style parity, legacy-alias
+coverage and static review counts. It checks the Doctor package's own versioned
+generator and assets; it does not claim an app uses the same version merely
+because the running Doctor does.
+
+| Finding | Meaning and default disposition |
+| --- | --- |
+| `theme.foundation.option_invalid` | The programmatic opt-in is not a boolean; rejected before project-source inspection. |
+| `theme.foundation.generated_stale`, `styles_unavailable`, `legacy_root_unavailable`, `alias_missing` | Owned package parity or compatibility cannot be established; error. Repair the framework asset/mapping, not app customization. |
+| `theme.foundation.unresolved_reference` | Mandatory `--zero-theme-*` or `--zero-type-*` reference lacks a declaration in the inspected source/catalog; manual-review warning with file/line. |
+| `theme.foundation.copied_styles_modified` | A conventional app-owned copied supplement differs from the Doctor baseline; warning, possibly intentional customization or version difference. No replacement is performed. |
+| `theme.foundation.source_unavailable`, `import_limit` | Bounded declaration coverage is incomplete; review warning. |
+
+CSS joins the admitted source scan only for this opt-in. Literal relative CSS
+imports are followed through a bounded closure with canonical root fences,
+lexical and target exclusions, a 2 MB file cap and 512-import limit. Actual
+targets must remain admitted source/CSS types; a `.css` or source alias does not
+authorize reading environment files, database files or blocked runtime/build
+directories. Remote/package/font imports, application modules and Tailwind
+configuration are not executed. Copied stylesheets use the same read-only
+admission; their real custom declarations can satisfy local references without
+adding generated palette values to app review counts. Old aliases and literal colors remain aggregate
+review counts rather than automatic migration findings; strict mode still fails
+on warnings. Declaration coverage is not proof of computed scopes or visuals.
+
+The local maintenance helper `scripts/check-theme-foundation.ts` additionally
+compiles the framework's known Tailwind import closure in memory for its own
+source inventory. That development helper and config-free Doctor have different
+read/execution boundaries; Doctor does not invoke it or execute app Tailwind.
 
 ## Existing Configuration-Backed Usage Heuristics
 

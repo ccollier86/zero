@@ -1,0 +1,288 @@
+{
+  "observedAt": "2026-10-09",
+  "scope": "Original handmade chart coverage extension. No Recharts, D3 or chart-engine rendering dependency. Values are component evidence, not a global theme migration.",
+  "mapping": "Local native overrides → shared zero-chart analytical roles → active Zero semantic theme; named palette resolved at paint sites.",
+  "mathReference": {
+    "package": "recharts",
+    "version": "3.7.0",
+    "sourceOnly": true,
+    "paths": [
+      "es6/util/ChartUtils.js",
+      "es6/cartesian/Area.js",
+      "es6/cartesian/Bar.js",
+      "es6/cartesian/Scatter.js",
+      "es6/cartesian/ErrorBar.js",
+      "es6/polar/Pie.js",
+      "es6/polar/Radar.js",
+      "es6/polar/RadialBar.js",
+      "es6/chart/SunburstChart.js"
+    ]
+  },
+  "motion": {
+    "source": "src/components/charts/arc/shared/motion-tokens.ts",
+    "revealSeconds": 0.84,
+    "morphVisualDurationSeconds": 0.42,
+    "morphBounce": 0.16,
+    "inspectorFeedbackMilliseconds": 120
+  },
+  "dynamicPalette": [
+    "--zero-chart-blue",
+    "--zero-chart-purple",
+    "--zero-chart-amber",
+    "--zero-chart-teal",
+    "--zero-chart-orange",
+    "--zero-chart-green",
+    "--zero-chart-rose",
+    "--zero-chart-olive"
+  ],
+  "files": [
+    {
+      "path": "src/components/charts/native/cartesian/cartesian-chart.css",
+      "references": [
+        "--border",
+        "--card",
+        "--foreground",
+        "--muted-foreground",
+        "--primary",
+        "--zero-chart-blue",
+        "--zero-chart-border",
+        "--zero-chart-feedback",
+        "--zero-chart-focus-color",
+        "--zero-chart-foreground",
+        "--zero-chart-muted",
+        "--zero-chart-surface",
+        "--zero-native-cartesian-active-opacity",
+        "--zero-native-cartesian-area-opacity",
+        "--zero-native-cartesian-band-opacity",
+        "--zero-native-cartesian-bar-opacity",
+        "--zero-native-cartesian-line-width",
+        "--zero-native-cartesian-series"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/cartesian/cartesian-chart.tsx",
+      "references": [
+        "--foreground",
+        "--zero-chart-foreground",
+        "--zero-native-cartesian-series"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/polar/polar-chart.css",
+      "references": [
+        "--border",
+        "--card",
+        "--foreground",
+        "--muted-foreground",
+        "--primary",
+        "--zero-chart-focus-color",
+        "--zero-chart-foreground",
+        "--zero-chart-grid",
+        "--zero-chart-label-size",
+        "--zero-chart-metadata-size",
+        "--zero-chart-muted",
+        "--zero-chart-secondary",
+        "--zero-chart-surface",
+        "--zero-native-polar-font-scale",
+        "--zero-native-polar-separator-width"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/polar/polar-rendering.tsx",
+      "references": [
+        "--zero-native-polar-font-scale"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/polar/sunburst-chart.tsx",
+      "references": [
+        "--border",
+        "--zero-chart-grid"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/realtime/realtime-chart.tsx",
+      "references": [
+        "--card",
+        "--destructive",
+        "--zero-chart-amber"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/realtime/realtime.css",
+      "references": [
+        "--border",
+        "--card",
+        "--foreground",
+        "--muted-foreground",
+        "--primary",
+        "--zero-chart-feedback"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/shared/native-chart.css",
+      "references": [
+        "--border",
+        "--card",
+        "--font-platform-sans",
+        "--foreground",
+        "--muted-foreground",
+        "--primary",
+        "--zero-chart-blue",
+        "--zero-chart-feedback",
+        "--zero-chart-focus-color",
+        "--zero-chart-focus-offset",
+        "--zero-chart-focus-width",
+        "--zero-chart-font-family",
+        "--zero-chart-foreground",
+        "--zero-chart-grid",
+        "--zero-chart-inspector-border",
+        "--zero-chart-inspector-font-size",
+        "--zero-chart-inspector-line-height",
+        "--zero-chart-inspector-max-width",
+        "--zero-chart-inspector-muted",
+        "--zero-chart-inspector-padding",
+        "--zero-chart-inspector-radius",
+        "--zero-chart-inspector-shadow",
+        "--zero-chart-inspector-surface",
+        "--zero-chart-inspector-text",
+        "--zero-chart-inspector-value-line-height",
+        "--zero-chart-inspector-value-size",
+        "--zero-chart-label-size",
+        "--zero-chart-metadata-size",
+        "--zero-chart-muted",
+        "--zero-chart-plot-radius",
+        "--zero-chart-surface",
+        "--zero-chart-title-size",
+        "--zero-native-fg",
+        "--zero-native-font",
+        "--zero-native-grid",
+        "--zero-native-muted",
+        "--zero-native-series-1",
+        "--zero-tooltip-blur",
+        "--zero-tooltip-blur-exit",
+        "--zero-tooltip-blur-scale",
+        "--zero-tooltip-blur-shift",
+        "--zero-tooltip-motion-blur-enter",
+        "--zero-tooltip-motion-blur-exit"
+      ],
+      "declarations": [
+        {
+          "token": "--zero-native-series-1",
+          "value": "var(--zero-chart-blue)"
+        },
+        {
+          "token": "--zero-tooltip-motion-blur-enter",
+          "value": "var(--zero-chart-feedback, 120ms)"
+        },
+        {
+          "token": "--zero-tooltip-motion-blur-exit",
+          "value": "var(--zero-chart-feedback, 120ms)"
+        },
+        {
+          "token": "--zero-tooltip-blur",
+          "value": "0px"
+        },
+        {
+          "token": "--zero-tooltip-blur-exit",
+          "value": "0px"
+        },
+        {
+          "token": "--zero-tooltip-blur-shift",
+          "value": "0px"
+        },
+        {
+          "token": "--zero-tooltip-blur-scale",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "path": "src/components/charts/native/shared/native-chart.tsx",
+      "references": [
+        "--zero-chart-",
+        "--zero-tooltip-motion-blur-enter",
+        "--zero-tooltip-motion-blur-exit"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/statistical/candlestick-chart.tsx",
+      "references": [
+        "--destructive",
+        "--success",
+        "--zero-chart-negative",
+        "--zero-chart-positive"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/statistical/matrix-heatmap.tsx",
+      "references": [
+        "--statistical-color",
+        "--statistical-tint"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/statistical/statistical-plot.tsx",
+      "references": [
+        "--statistical-color"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/statistical/statistical.css",
+      "references": [
+        "--background",
+        "--border",
+        "--font-platform-sans",
+        "--foreground",
+        "--muted-foreground",
+        "--primary",
+        "--statistical-color",
+        "--statistical-tint",
+        "--zero-chart-bar-hot-tint",
+        "--zero-chart-bar-tint",
+        "--zero-chart-blue",
+        "--zero-chart-font-family",
+        "--zero-chart-foreground",
+        "--zero-chart-grid",
+        "--zero-chart-inspector-font-size",
+        "--zero-chart-inspector-line-height",
+        "--zero-chart-inspector-value-line-height",
+        "--zero-chart-inspector-value-size",
+        "--zero-chart-label-size",
+        "--zero-chart-line",
+        "--zero-chart-line-strong",
+        "--zero-chart-metadata-size",
+        "--zero-chart-muted",
+        "--zero-chart-plot-radius",
+        "--zero-chart-surface",
+        "--zero-native-statistical-grid",
+        "--zero-native-statistical-hot-tint",
+        "--zero-native-statistical-muted",
+        "--zero-native-statistical-radius",
+        "--zero-native-statistical-tint"
+      ],
+      "declarations": []
+    },
+    {
+      "path": "src/components/charts/native/statistical/waterfall-chart.tsx",
+      "references": [
+        "--destructive",
+        "--success",
+        "--zero-chart-negative",
+        "--zero-chart-positive"
+      ],
+      "declarations": []
+    }
+  ]
+}

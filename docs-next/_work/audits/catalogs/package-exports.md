@@ -114,7 +114,7 @@ independent duplicate contracts.
 | `./components/ui/notification-list` | [src/components/ui/notification-list.tsx](../../../../src/components/ui/notification-list.tsx) | 3 | [frontend-components](../systems/frontend-components.md) |
 | `./components/ui/detail-panel` | [src/components/ui/detail-panel.tsx](../../../../src/components/ui/detail-panel.tsx) | 2 | [frontend-components](../systems/frontend-components.md) |
 | `./components/ui/notification-dropdown` | [src/components/ui/notification-dropdown.tsx](../../../../src/components/ui/notification-dropdown.tsx) | 2 | [frontend-components](../systems/frontend-components.md) |
-| `./components/ui/card.test` | [src/components/ui/card.test.tsx](../../../../src/components/ui/card.test.tsx) | 0 | [frontend-components](../systems/frontend-components.md) |
+| `./components/ui/card.test` | [src/components/surfaces/card/card.test.tsx](../../../../src/components/surfaces/card/card.test.tsx) | 0 | [frontend-components](../systems/frontend-components.md) |
 | `./components/ui/scroll-area` | [src/components/ui/scroll-area.tsx](../../../../src/components/ui/scroll-area.tsx) | 2 | [frontend-components](../systems/frontend-components.md) |
 | `./components/ui/label` | [src/components/ui/label.tsx](../../../../src/components/ui/label.tsx) | 1 | [frontend-components](../systems/frontend-components.md) |
 | `./components/ui/sonner` | [src/components/ui/sonner.tsx](../../../../src/components/ui/sonner.tsx) | 2 | [frontend-components](../systems/frontend-components.md) |
@@ -235,6 +235,19 @@ not a new SQL type or Guardian property API. Shared `InputProps` adds
 records do not assert that the published 2.5.0 archive contains these changes.
 
 ## Review Gates
+
+### Floating Action Tray Working-Source Path
+
+Dirty 2.6.0 source at `335b27372b0b8ef57a1e92cf93cec378923fe50b` adds the explicit
+`@zero/framework/components/floating-button-group` entry, also forwarded through
+root/React. It exposes one value and seven types from the [canonical family](../../../../src/components/controls/floating-button-group/index.ts),
+covered in the [full manual](../../../frontend/components/controls/floating-button-group.md#imports-and-public-types).
+The source-copy request is `components/floating-button-group`. This addition
+does not broaden a wildcard, replace ButtonGroup/Toggle or update an older
+installed package automatically; exact archive qualification is separate from
+publication and the historical 2.1.1 topology/counts above.
+
+### Existing Adaptive Settings Working Paths
 
 Supplemental adaptive-settings source adds three explicit component paths:
 

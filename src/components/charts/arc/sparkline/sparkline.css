@@ -1,0 +1,35 @@
+/* Arc UI, MIT. Copyright (c) 2026 Elia Kuratli. Scoped Zero presentation adapter. */
+.zero-arc-sparkline__figure { display: grid; min-width: var(--zero-arc-sparkline-figure-min-width,0); gap: var(--zero-arc-space-3); margin: var(--zero-arc-sparkline-figure-margin,0); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }.zero-arc-sparkline__caption { display: flex; align-items: baseline; gap: var(--zero-arc-space-2); min-width: var(--zero-arc-sparkline-caption-min-width,0); color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); }.zero-arc-sparkline__label { min-width: var(--zero-arc-sparkline-label-min-width,0); overflow: hidden; white-space: nowrap; }.zero-arc-sparkline__caption strong { margin-left: auto; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-lg); font-weight: var(--zero-arc-sparkline-caption-font-weight,500); letter-spacing: var(--zero-arc-tracking-body); font-variant-numeric: tabular-nums; }.zero-arc-sparkline__caption small { flex: none; font-size: var(--zero-arc-text-xs); font-weight: var(--zero-arc-sparkline-caption-font-weight,500); font-variant-numeric: tabular-nums; transition: color var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-sparkline__accent { color: var(--zero-arc-accent-strong, var(--zero-chart-foreground, var(--foreground))); stroke: var(--zero-arc-accent, var(--zero-chart-foreground, var(--foreground))); }.zero-arc-sparkline__success { color: var(--zero-arc-success, var(--zero-chart-green)); stroke: var(--zero-arc-success, var(--zero-chart-green)); }.zero-arc-sparkline__warning { color: var(--zero-arc-warning, var(--zero-chart-amber)); stroke: var(--zero-arc-warning, var(--zero-chart-amber)); }.zero-arc-sparkline__danger { color: var(--zero-arc-danger, var(--zero-chart-rose)); stroke: var(--zero-arc-danger, var(--zero-chart-rose)); }
+/* The scrubbed date is context, not a change, so it stays neutral whatever the tone. */
+.zero-arc-sparkline__point { color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); }
+
+/* Changing text rolls in place. Outgoing pieces are popped out of flow, so the wrapper never holds both widths; numbers stay anchored to their right edge. */
+.zero-arc-sparkline__roll { position: relative; display: inline-flex; max-width: var(--zero-arc-sparkline-roll-max-width,100%); overflow-x: clip; white-space: pre; vertical-align: top; }
+.zero-arc-sparkline__roll[data-end] { justify-content: flex-end; }
+.zero-arc-sparkline__track, .zero-arc-sparkline__slot, .zero-arc-sparkline__glyph { position: relative; display: inline-block; white-space: pre; }
+.zero-arc-sparkline__roll[data-whole] .zero-arc-sparkline__track, .zero-arc-sparkline__roll[data-whole] .zero-arc-sparkline__slot, .zero-arc-sparkline__roll[data-whole] .zero-arc-sparkline__glyph { max-width: var(--zero-arc-sparkline-roll-max-width,100%); overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.zero-arc-sparkline__sizer { position: absolute; top: var(--zero-arc-sparkline-sizer-top,0); left: var(--zero-arc-sparkline-sizer-left,0); visibility: hidden; white-space: pre; pointer-events: none; }
+
+/* The plot is the scrubber: hover or drag across it, or focus it and use the arrow keys. Vertical swipes still scroll the page. */
+.zero-arc-sparkline__plot { position: relative; min-width: var(--zero-arc-sparkline-plot-min-width,0); border-radius: calc(var(--zero-arc-radius-control) / 2); outline: none; -webkit-tap-highlight-color: transparent; }
+.zero-arc-sparkline__plot[data-interactive] { touch-action: pan-y; cursor: default; user-select: none; }
+.zero-arc-sparkline__plot:focus-visible { --zero-arc-focus-outline-offset: 8px; }
+.zero-arc-sparkline__chart { display: block; width: var(--zero-arc-sparkline-chart-width,100%); height: auto; overflow: visible; }
+.zero-arc-sparkline__baseline { stroke: var(--zero-arc-border, var(--zero-chart-border, var(--border))); stroke-width: var(--zero-arc-sparkline-baseline-stroke-width,1); }
+/* The area under the line carries a faint wash of the line tone. */
+.zero-arc-sparkline__area.zero-arc-sparkline__area { fill: var(--zero-arc-sparkline-area-fill,color-mix(in oklab, currentColor var(--zero-arc-sparkline-area-tint,9%), transparent)); stroke: none; }
+.zero-arc-sparkline__line, .zero-arc-sparkline__trail { fill: none; stroke-width: var(--zero-arc-sparkline-line-stroke-width,2.5); stroke-linecap: round; stroke-linejoin: round; }
+.zero-arc-sparkline__line { transition: stroke var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-sparkline__trail { stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); }
+.zero-arc-sparkline__cursor { stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); stroke-width: var(--zero-arc-sparkline-cursor-stroke-width,1); }
+.zero-arc-sparkline__end { transition: stroke var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+@media (prefers-reduced-motion: reduce) { .zero-arc-sparkline__line, .zero-arc-sparkline__end, .zero-arc-sparkline__caption small { transition: none; } }
+
+
+[data-zero-arc-chart="sparkline"][data-motion="off"] *, [data-zero-arc-chart="sparkline"][data-motion="off"] *::before, [data-zero-arc-chart="sparkline"][data-motion="off"] *::after { animation:none!important;transition:none!important; }
+/* Zero owns keyboard focus rather than relying on a global Arc reset. */
+.zero-arc-sparkline__srOnly { position:absolute;width: var(--zero-arc-sparkline-srOnly-width,1px);height: var(--zero-arc-sparkline-srOnly-height,1px);overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+.zero-arc-sparkline__plot:focus-visible, .zero-arc-sparkline__scrubber:focus-visible, .zero-arc-sparkline__window:focus-visible, .zero-arc-sparkline__handle:focus-visible {
+ outline: var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--zero-chart-focus-color,var(--foreground))); outline-offset: var(--zero-chart-focus-offset,2px);
+}

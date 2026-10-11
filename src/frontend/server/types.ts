@@ -11,6 +11,7 @@ import type { SyncPolicy } from '../../sync/sync-policy';
 import type { AppFrontendBuildManifest } from './server-plugin-build-types';
 import type { ZeroServerExtensionMountable } from './server-extensions';
 import { resolveAppOwnedPath, resolveAppProjectRoot } from './app-project-root';
+import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foundation';
 import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
@@ -26,6 +27,7 @@ import type { AIService } from '../../ai/ai-service';
 import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
 import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
+import { resolveVectorVisualizationConfig, type VectorVisualizationConfig, type ResolvedVectorVisualizationConfig } from '../../vector/visualization-config';
 import type {
   ResourceCrudRoutesConfig,
   ResourceDefinition,
@@ -76,6 +78,7 @@ import {
 } from '../../storage/storage-config';
 
 export type { SystemDatabaseConfig } from './system-database-config';
+export type { AppThemeFoundation } from './style-foundation';
 export type {
   AppStorageConfig,
   ResolvedAppStorageConfig,
@@ -353,6 +356,8 @@ export interface AppConfig {
    * Default: false.
    */
   vector?: boolean | VectorConfig;
+  /** Opt-in authorized ingestion/search visualization; disabled by default. */
+  vectorVisualization?: false | VectorVisualizationConfig;
 
   /**
    * Platform KV/cache configuration.
@@ -439,6 +444,9 @@ export interface AppConfig {
 
   /** Client bundle output directory. Default: './.build' */
   outDir?: string;
+
+  /** Managed CSS defaults to next (the scoped supplement); select legacy explicitly to retain the old build. Does not load fonts. */
+  themeFoundation?: AppThemeFoundation;
 
   /** Generated framework/app glue directory. Default: './.zero/generated' */
   generatedDir?: string;
@@ -581,6 +589,7 @@ export interface ResolvedConfig {
   email: false | EmailConfig;
   ai: false | ResolvedAIConfig;
   vector: false | ResolvedVectorConfig;
+  vectorVisualization: false | ResolvedVectorVisualizationConfig;
   kv: false | KvServiceConfig;
   pdf: false | ResolvedPdfConfig;
   stateSync: boolean;
@@ -595,6 +604,7 @@ export interface ResolvedConfig {
   storage: ResolvedAppStorageConfig;
   appDir: string;
   outDir: string;
+  themeFoundation: AppThemeFoundation;
   generatedDir: string;
   serverPluginsDir: string | false;
   serverMiddlewareDir: string | false;
@@ -629,6 +639,7 @@ export function resolveConfig(
   config: AppConfig,
   env?: Record<string, string | undefined>
 ): ResolvedConfig {
+  const themeFoundation = resolveAppThemeFoundation(config.themeFoundation);
   const projectRoot = resolveAppProjectRoot(config);
   const auth = config.auth === true
     ? {}
@@ -646,6 +657,12 @@ export function resolveConfig(
       : config.email;
   const ai = resolveAIConfig(config.ai, env);
   const vector = resolveVectorConfig(config.vector, env);
+  const vectorVisualization = resolveVectorVisualizationConfig(config.vectorVisualization, vector, auth !== false, ai !== false);
+  if (vectorVisualization !== false) for (const policy of Object.values(vectorVisualization.indexes)) {
+    for (const permission of [policy.searchPermission, policy.ingestPermission]) if (permission !== undefined && !Object.hasOwn(authBehavior!.authorization.permissions, permission)) {
+      throw new Error('[app] vectorVisualization permissions must be declared in Guardian authorization.permissions.');
+    }
+  }
   const kv = resolveKvConfig(config.kv);
   const pdf = resolvePdfConfig(config.pdf, env);
   const storage = resolveAppStorageConfig(config.storage, env);
@@ -795,6 +812,7 @@ export function resolveConfig(
     email,
     ai,
     vector,
+    vectorVisualization,
     kv,
     pdf,
     stateSync,
@@ -813,6 +831,7 @@ export function resolveConfig(
     storage,
     appDir: resolveAppOwnedPath(projectRoot, config.appDir ?? './app'),
     outDir: resolveAppOwnedPath(projectRoot, outDir),
+    themeFoundation,
     generatedDir: resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated'),
     serverPluginsDir: config.serverPluginsDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverPluginsDir ?? './server/plugins'),
     serverMiddlewareDir: config.serverMiddlewareDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverMiddlewareDir ?? './server/middleware'),

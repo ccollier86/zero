@@ -8,14 +8,14 @@ visibility: internal
 system: frontend
 feature: overview
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 working source; individual system guides retain their own review metadata"]
 modes: [browser, SSR, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -27,6 +27,12 @@ Zero's frontend composes the authenticated client, realtime data projection,
 file router and reusable design-system components. Application code chooses its
 schema, data source, actions and page layout; server services and policies retain
 the final authority over operations.
+
+Start with the [UI reference](./ui-reference.md) for tokens, typography, motion
+and component APIs. Use [Application UI development](../guides/application-ui-development.md)
+for dashboards, settings and workspaces, or [Public UI development](../guides/public-ui-development.md)
+for landing/content assembly. The guides route facade/part selection to full
+manuals and distinguish working-source additions from older installed packages.
 
 ## Start With The Runtime
 
@@ -50,6 +56,8 @@ the final authority over operations.
   icon contracts and reusable component styling.
 - [Reusable components](./components/index.md) covers focused primitive and
   presentation families alongside the domain control planes.
+- [Zero Charts](./charts/index.md) explains the shared rendering/model/query API,
+  chart-family selection, tokens and inspection, with links to full family manuals.
 - [Guardian interfaces](./guardian/index.md) covers auth/account hooks, scope-aware
   gates, user/organization control planes and API-key management companions.
 - [Data controls](./data-controls/index.md) covers source-aware tables, shared query

@@ -12,6 +12,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveAddableTarget } from './registry';
+import { getComponentCompatibilityCompanions } from './component-compatibility';
 
 /** Options accepted by the source-copy engine behind `zero add`. */
 export interface AddZeroSourceOptions {
@@ -46,7 +47,7 @@ interface PlannedFile {
 }
 
 const DEFAULT_SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
-const APP_OWNED_ROOTS = ['components', 'hooks', 'lib', 'modals'];
+const APP_OWNED_ROOTS = ['components', 'hooks', 'lib', 'modals', 'design-system'];
 const IMPORT_SPECIFIER_PATTERN = /\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s*)?['"]([^'"]+)['"]/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 
@@ -68,6 +69,7 @@ export async function addZeroSource(options: AddZeroSourceOptions): Promise<AddZ
   for (const item of requested) {
     const target = resolveAddableTarget(item, sourceRoot);
     await enqueueSource(join(sourceRoot, target.sourceRel));
+    for (const companion of target.additionalSourceRels ?? []) await enqueueSource(join(sourceRoot, companion));
   }
 
   const filesPlanned = [...planned.keys()].sort();
@@ -136,6 +138,11 @@ export async function addZeroSource(options: AddZeroSourceOptions): Promise<AddZ
       targetRel,
       content,
     });
+    // A moved facade can arrive through another family's import, not just the
+    // user's registry request. Preserve exact former app-owned dependencies too.
+    for (const companion of getComponentCompatibilityCompanions(sourceRel)) {
+      await enqueueFile(join(sourceRoot, companion));
+    }
   }
 }
 
@@ -242,6 +249,7 @@ function toPublicFrameworkImport(sourcePath: string, sourceRoot: string): string
   if (rel.startsWith('frontend/client/')) return '@zero/framework/react';
   if (rel === 'observability/codes.ts') return '@zero/framework/observability/codes';
   if (rel === 'workflows/types.ts') return '@zero/framework/workflows';
+  if (rel === 'vector/visualization-types.ts') return '@zero/framework/vector/visualization';
   if (rel.startsWith('storage/storage-hooks.') || rel.startsWith('storage/upload-dropzone-hooks.')) {
     return '@zero/framework/react';
   }
@@ -258,9 +266,10 @@ function isAppOwnedSource(sourcePath: string, sourceRoot: string): boolean {
 }
 
 function isCopyableSourceFile(sourcePath: string, sourceRoot: string): boolean {
-  if (!/\.(ts|tsx)$/.test(sourcePath)) return false;
+  if (!/\.(ts|tsx|css)$/.test(sourcePath)) return false;
   if (/\.test\.(ts|tsx)$/.test(sourcePath)) return false;
   if (/\.(?:browser-fixture|test-fixture|package-fixture)\.(ts|tsx)$/.test(sourcePath)) return false;
+  if (/\.(?:test-data|test-support)\.(ts|tsx|css)$/.test(sourcePath)) return false;
   if (sourcePath.endsWith('.d.ts')) return false;
   return isInsideSourceRoot(sourcePath, sourceRoot);
 }

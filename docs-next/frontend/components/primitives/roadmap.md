@@ -32,6 +32,14 @@ Current source APIs live in the feature guides; future ideas are separate:
 - [ ] Expand reusable admin blocks when a real app establishes a shared interaction.
 - [ ] Improve richer editor/document-reading plugins with their own persistence
   boundaries and autosave acceptance semantics.
+- [ ] Implement the [NumberField and RollingNumber plan](../../../_work/number-field-rolling-number-plan.md),
+  preserving numeric drafts, table-helper/accepted-save ownership and changed-place
+  presentation. Generic digit display is separate from a query subscription.
+- [ ] Implement the [Tag/Phone/Mention/InlineEdit plan](../../../_work/arc-input-modernization-plan.md)
+  with documented old/new behavior, native forms and authorized candidate/presence
+  adapters. The latest phase documents these requirements without new feature code.
+- [ ] Complete [Arc scroll coverage](../../../_work/arc-scroll-surface-plan.md)
+  across ordinary bounded bodies on their actual native viewport.
 
 These are not implemented exports in this pass. Confirmed contract defects are
 corrected with focused regressions, not put on this roadmap as tolerated limits.

@@ -8,14 +8,14 @@ visibility: internal
 system: design-system
 feature: tokens
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; publication qualification pending"]
 modes: ["React browser UI", "SSR markup", "managed frontend styling"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  snapshot: dirty
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -23,10 +23,28 @@ reviewed_against:
 
 [Design-system index](./index.md) · [Documentation index](../../index.md)
 
-`@zero/framework/styles.css` exports the source stylesheet. Managed styling
-compiles it with Tailwind; standalone apps may import it through their own
-supported CSS pipeline. Values below come from the inspected root/.dark blocks,
-not a contrast-certification result.
+`@zero/framework/styles-legacy.css` retains the original source stylesheet.
+The application-default `styles.css` loads it plus the scoped next supplement;
+managed styling compiles those through Tailwind. Values below record the retained
+legacy root/.dark blocks, not the new application palette or a
+contrast-certification result.
+
+The [next theme foundation](./foundation-next.md) has its own pure API and is
+activated by default on AppShell's application boundary. It does not delete the
+original entrypoint or change the legacy values recorded below. Unmarked
+public-page surfaces retain those original tokens.
+
+Do not delete `globals.css` as a token-only cleanup: it still owns shared
+Tailwind/base/component imports used by next builds. The
+[retirement gates](./foundation-next.md#retire-the-original-theme-safely)
+separate infrastructure extraction, palette adoption and legacy-option removal.
+
+The additive [FloatingButtonGroup recipe](../components/controls/floating-button-group.md#tokens-motion-and-measurement)
+uses 57 validated `--zero-theme-floating-button-group-*` properties, projected
+through the corresponding component aliases. Its geometry/material and four
+named motion recipes live in the existing pure catalog; no Arc root palette,
+private side-tooltip engine or alternate font loader is installed. The retained
+legacy values below remain unchanged.
 
 ## Tailwind Aliases
 

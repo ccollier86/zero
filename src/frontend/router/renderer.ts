@@ -105,6 +105,7 @@ export async function loadSsrReactRuntime(appDir = './app', selection: 'app' | '
 // ─── Renderer ──────────────────────────────────────────────────────────────
 
 export interface PlatformConfig {
+  vectorVisualization?: boolean;
   url: string;
   auth?: boolean;
   email?: boolean;

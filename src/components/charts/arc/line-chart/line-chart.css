@@ -1,0 +1,83 @@
+/* Arc UI, MIT. Copyright (c) 2026 Elia Kuratli. Scoped Zero presentation adapter. */
+.zero-arc-line-chart__figure { display: grid; min-width: var(--zero-arc-line-chart-figure-min-width,0); gap: var(--zero-arc-space-4); margin: var(--zero-arc-line-chart-figure-margin,0); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); letter-spacing: var(--zero-arc-tracking-body); }
+
+/* Series toggles: a plain line swatch beside each name. A hidden series keeps its place, its swatch empties and its name steps back. */
+.zero-arc-line-chart__legend { display: flex; flex-wrap: wrap; gap: var(--zero-arc-line-chart-legend-gap,2px 4px); min-width: var(--zero-arc-line-chart-legend-min-width,0); margin-inline: var(--zero-arc-line-chart-legend-margin-inline,-8px); }
+.zero-arc-line-chart__toggle { display: inline-flex; min-height: var(--zero-arc-line-chart-toggle-min-height,32px); align-items: center; gap: var(--zero-arc-line-chart-toggle-gap,8px); padding: var(--zero-arc-line-chart-toggle-padding,0 10px 0 8px); border: var(--zero-arc-line-chart-toggle-border,0); border-radius: var(--zero-arc-radius-pill); background: transparent; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); cursor: pointer; font: inherit; font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); -webkit-tap-highlight-color: transparent; transition: color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), background-color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), transform var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__toggle:active { transform: scale(.97); }
+.zero-arc-line-chart__toggle[aria-pressed="false"] { color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); }
+.zero-arc-line-chart__toggleLabel { white-space: nowrap; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__toggle[aria-pressed="false"] .zero-arc-line-chart__toggleLabel { opacity: var(--zero-arc-line-chart-toggle-opacity,.72); text-decoration: line-through; text-decoration-color: var(--zero-arc-line-chart-toggle-text-decoration-color,color-mix(in oklab, currentColor 55%, transparent)); }
+.zero-arc-line-chart__swatch { position: relative; width: var(--zero-arc-line-chart-swatch-width,14px); height: var(--zero-arc-line-chart-swatch-height,10px); flex: none; }
+.zero-arc-line-chart__swatch::before { position: absolute; top: var(--zero-arc-line-chart-swatch-top,50%); left: var(--zero-arc-line-chart-swatch-left,0); width: var(--zero-arc-line-chart-swatch-width,100%); height: var(--zero-arc-line-chart-swatch-height,2.5px); border-radius: var(--zero-arc-line-chart-swatch-border-radius,2px); background-color: var(--zero-arc-series); content: ""; transform: translateY(-50%) scaleX(1); transform-origin: left; transition: transform var(--zero-arc-duration-standard) var(--zero-arc-ease-spring, cubic-bezier(.22,1,.36,1)), opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__swatch[data-dashed]::before { background: repeating-linear-gradient(to right, var(--zero-arc-series) 0 4px, transparent 4px 7px); }
+.zero-arc-line-chart__toggle[aria-pressed="false"] .zero-arc-line-chart__swatch::before { opacity: var(--zero-arc-line-chart-toggle-opacity,.45); transform: translateY(-50%) scaleX(.35); }
+@media (hover: hover) and (pointer: fine) { .zero-arc-line-chart__toggle:hover { background: color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 5%, transparent); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); } }
+
+/* Plot, right-hand value axis, and the date axis beneath. */
+.zero-arc-line-chart__chart { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--zero-arc-axis-gutter, var(--zero-chart-axis-gutter, 52px)); grid-template-rows: auto var(--zero-arc-axis-height, var(--zero-chart-axis-height, 28px)); min-width: var(--zero-arc-line-chart-chart-min-width,0); }
+.zero-arc-line-chart__plot { position: relative; grid-area: var(--zero-arc-line-chart-plot-grid-area,1 / 1); min-width: var(--zero-arc-line-chart-plot-min-width,0); outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.zero-arc-line-chart__svg { display: block; overflow: visible; }
+.zero-arc-line-chart__grid { stroke: var(--zero-arc-border, var(--zero-chart-border, var(--border))); stroke-width: var(--zero-arc-line-chart-grid-stroke-width,1); shape-rendering: crispEdges; }
+.zero-arc-line-chart__baseline { stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); stroke-width: var(--zero-arc-line-chart-baseline-stroke-width,1); shape-rendering: crispEdges; }
+.zero-arc-line-chart__crosshair { stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); stroke-width: var(--zero-arc-line-chart-crosshair-stroke-width,1); shape-rendering: crispEdges; opacity: var(--zero-arc-line-chart-crosshair-opacity,0); transition: opacity var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__chart[data-scrubbing] .zero-arc-line-chart__crosshair { opacity: var(--zero-arc-line-chart-chart-opacity,1); }
+
+.zero-arc-line-chart__series { transition: opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__chart[data-loading] .zero-arc-line-chart__series { opacity: var(--zero-arc-line-chart-chart-opacity,.32); animation: zero-arc-line-breathe 1.4s var(--zero-arc-ease-in-out) infinite alternate; }
+.zero-arc-line-chart__line { fill: none; stroke: var(--zero-arc-series); stroke-width: var(--zero-arc-line-chart-line-stroke-width,2); stroke-linecap: round; stroke-linejoin: round; transition: stroke var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__line[data-dashed] { stroke-dasharray: var(--zero-arc-line-chart-line-stroke-dasharray,4 5); stroke-width: var(--zero-arc-line-chart-line-stroke-width,1.75); }
+.zero-arc-line-chart__area { fill: color-mix(in oklab, var(--zero-arc-series) var(--zero-arc-line-chart-area-tint,9%), transparent); stroke: none; }
+.zero-arc-line-chart__dot { fill: var(--zero-arc-series); stroke: var(--zero-arc-surface, var(--zero-chart-surface, var(--card))); stroke-width: var(--zero-arc-line-chart-dot-stroke-width,2); opacity: var(--zero-arc-line-chart-dot-opacity,0); transition: opacity var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__chart[data-scrubbing] .zero-arc-line-chart__dot:not([data-hidden]) { opacity: var(--zero-arc-line-chart-chart-opacity,1); }
+
+/* The tooltip floats over the plot, so it is the one layer here with a shadow. Springs carry its position; opacity and a small scale bring it in. */
+.zero-arc-line-chart__tooltip { position: absolute; top: var(--zero-arc-line-chart-tooltip-top,0); left: var(--zero-arc-line-chart-tooltip-left,0); z-index: var(--zero-arc-line-chart-tooltip-z-index,1); display: grid; min-width: var(--zero-arc-line-chart-tooltip-min-width,140px); max-width: var(--zero-arc-line-chart-tooltip-max-width,min(220px, 100%)); gap: var(--zero-arc-line-chart-tooltip-gap,4px); padding: var(--zero-arc-line-chart-tooltip-padding,10px 12px); border: 1px solid var(--zero-arc-border, var(--zero-chart-border, var(--border))); border-radius: var(--zero-arc-line-chart-tooltip-border-radius,14px); background: var(--zero-arc-surface-raised, var(--zero-chart-inspector-surface, var(--zero-chart-surface, var(--card)))); box-shadow: var(--zero-arc-shadow-floating, var(--zero-chart-inspector-shadow)); opacity: var(--zero-arc-line-chart-tooltip-opacity,0); pointer-events: none; scale: var(--zero-arc-line-chart-tooltip-scale,.96); transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), scale var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-line-chart__chart[data-scrubbing] .zero-arc-line-chart__tooltip { opacity: var(--zero-arc-line-chart-chart-opacity,1); scale: var(--zero-arc-line-chart-chart-scale,1); }
+.zero-arc-line-chart__tipTitle { margin: var(--zero-arc-line-chart-tipTitle-margin,0 0 2px); color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.zero-arc-line-chart__tipRow { display: flex; min-width: var(--zero-arc-line-chart-tipRow-min-width,0); align-items: center; gap: var(--zero-arc-line-chart-tipRow-gap,8px); margin: var(--zero-arc-line-chart-tipRow-margin,0); font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); }
+.zero-arc-line-chart__tipSwatch { width: var(--zero-arc-line-chart-tipSwatch-width,10px); height: var(--zero-arc-line-chart-tipSwatch-height,2.5px); flex: none; border-radius: var(--zero-arc-line-chart-tipSwatch-border-radius,2px); background-color: var(--zero-arc-series); }
+.zero-arc-line-chart__tipSwatch[data-dashed] { background: repeating-linear-gradient(to right, var(--zero-arc-series) 0 3px, transparent 3px 5px); }
+.zero-arc-line-chart__tipName { min-width: var(--zero-arc-line-chart-tipName-min-width,0); flex: var(--zero-arc-line-chart-tipName-flex,1); overflow: hidden; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); text-overflow: ellipsis; white-space: nowrap; }
+.zero-arc-line-chart__tipValue { flex: none; margin-left: var(--zero-arc-line-chart-tipValue-margin-left,8px); color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-weight: var(--zero-arc-line-chart-tipValue-font-weight,500); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.zero-arc-line-chart__message { position: absolute; inset: var(--zero-arc-line-chart-message-inset,0); display: grid; place-items: center; margin: var(--zero-arc-line-chart-message-margin,0); color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); pointer-events: none; }
+/* First load with nothing to keep on screen: a calm band that breathes where the lines will be. */
+.zero-arc-line-chart__skeleton { position: absolute; inset: var(--zero-arc-line-chart-skeleton-inset,30% 0 25%); border-radius: var(--zero-arc-line-chart-skeleton-border-radius,12px); background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 5%, transparent)); animation: zero-arc-line-breathe 1.4s var(--zero-arc-ease-in-out) infinite alternate; }
+
+.zero-arc-line-chart__gutter { position: relative; grid-area: var(--zero-arc-line-chart-gutter-grid-area,1 / 2); min-width: var(--zero-arc-line-chart-gutter-min-width,0); }
+.zero-arc-line-chart__tick { position: absolute; top: var(--zero-arc-line-chart-tick-top,0); left: var(--zero-arc-line-chart-tick-left,10px); display: block; height: var(--zero-arc-line-chart-tick-height,0); white-space: nowrap; pointer-events: none; }
+.zero-arc-line-chart__tickText { display: block; transform: translateY(-50%); color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-line-chart-tickText-line-height,1); font-variant-numeric: tabular-nums; }
+
+.zero-arc-line-chart__axis { position: relative; grid-area: var(--zero-arc-line-chart-axis-grid-area,2 / 1); min-width: var(--zero-arc-line-chart-axis-min-width,0); }
+.zero-arc-line-chart__axisLabel { position: absolute; top: var(--zero-arc-axis-label-offset, 8px); color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-line-chart-axisLabel-line-height,1); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.zero-arc-line-chart__srOnly { position: absolute; width: var(--zero-arc-line-chart-srOnly-width,1px); height: var(--zero-arc-line-chart-srOnly-height,1px); overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@keyframes zero-arc-line-breathe { from { opacity: var(--zero-arc-line-loading-opacity-from,.22); } to { opacity: var(--zero-arc-line-loading-opacity-to,.45); } }
+@media (prefers-reduced-motion: reduce) {
+  .zero-arc-line-chart__toggle, .zero-arc-line-chart__swatch::before, .zero-arc-line-chart__line, .zero-arc-line-chart__tooltip, .zero-arc-line-chart__crosshair, .zero-arc-line-chart__dot, .zero-arc-line-chart__series { transition: none; }
+  .zero-arc-line-chart__chart[data-loading] .zero-arc-line-chart__series, .zero-arc-line-chart__skeleton { animation: none; }
+}
+
+
+/* Shared card inspection preserves Arc's rows and uses Zero's analytical elevation. */
+.zero-arc-line-chart__tooltip {
+ position: relative; top: auto; left: auto; z-index: auto; opacity: var(--zero-arc-line-chart-tooltip-opacity,1); scale: var(--zero-arc-line-chart-tooltip-scale,1);
+ border-color: var(--zero-arc-border-strong,var(--zero-chart-border-strong,var(--border)));
+ border-radius: var(--zero-arc-inspector-radius,var(--zero-chart-inspector-radius,10px));
+ padding: var(--zero-arc-inspector-padding,var(--zero-chart-inspector-padding,9px 12px));
+ background: var(--zero-arc-surface-raised,var(--zero-chart-inspector-surface,var(--zero-chart-surface,var(--card))));
+ box-shadow: var(--zero-arc-shadow-floating,var(--zero-chart-inspector-shadow));
+ max-width: min(var(--zero-chart-inspector-max-width,260px),calc(100vw - 16px));
+ font-size: var(--zero-chart-inspector-font-size,12px);line-height: var(--zero-chart-inspector-line-height,1.45);
+}
+[data-zero-arc-chart="line-chart"][data-motion="off"] *, [data-zero-arc-chart="line-chart"][data-motion="off"] *::before, [data-zero-arc-chart="line-chart"][data-motion="off"] *::after { animation:none!important;transition:none!important; }
+/* Zero owns keyboard focus rather than relying on a global Arc reset. */
+.zero-arc-line-chart__plot:focus-visible, .zero-arc-line-chart__scrubber:focus-visible, .zero-arc-line-chart__window:focus-visible, .zero-arc-line-chart__handle:focus-visible {
+ outline: var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--zero-chart-focus-color,var(--foreground))); outline-offset: var(--zero-chart-focus-offset,2px);
+}
+
+
+.zero-arc-line-chart__tipRow { font-size:var(--zero-arc-inspector-row-size,var(--zero-chart-label-size,12.5px));line-height:var(--zero-chart-inspector-line-height,1.45); }
+.zero-arc-line-chart__dot { r:var(--zero-arc-line-chart-dot-radius,4px); }

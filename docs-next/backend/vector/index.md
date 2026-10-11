@@ -28,10 +28,10 @@ app-owned metadata. It separates embedding generation from persistence:
 AI supplies vectors, VectorService performs operations, and an index adapter
 owns its native collection.
 
-This is a server-only service. It does not currently install a browser API,
-organization self-service provisioning, Guardian authorization, Fabric SQL
-realms or realtime result hooks. See the [roadmap](./roadmap.md) for those
-separately proposed capabilities.
+The base store is server-only. The optional [visualization service](./visualizations.md)
+adds Guardian-scoped ingestion/search commands and reactive progress observation;
+it does not turn native collections into Fabric SQL realms or add organization
+self-service index provisioning. See the [roadmap](./roadmap.md) for further plans.
 
 ## Feature Guides
 
@@ -47,6 +47,7 @@ separately proposed capabilities.
 - [Tuning](./tuning.md): family-specific query parameters.
 - [Operations](./operations.md): status, optimization, capacity and disposal.
 - [AI integration](./ai-integration.md): text embeddings and multi-record composition.
+- [Visualizations](./visualizations.md): authorized search/ingestion, progress placement, stable maps and recovery.
 - [Errors](./errors.md): domain codes, observability and safe public presentation.
 - [Roadmap](./roadmap.md): future organization-owned stores and related ideas.
 

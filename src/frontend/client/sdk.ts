@@ -115,6 +115,13 @@ import { WORKFLOW_TABLES } from '../../workflows/types';
 import { STORAGE_TABLES } from '../../storage/types';
 import { PRESENCE_CLIENT_TABLES } from '../../presence/presence-client-tables';
 import { createSdkPresence } from './sdk-presence';
+import { VECTOR_VISUALIZATION_CLIENT_TABLES, VECTOR_VISUALIZATION_FEED_TABLE, VECTOR_VISUALIZATION_OPERATIONS_TABLE,
+  VECTOR_VISUALIZATION_MAPS_TABLE } from '../../vector/visualization-schema';
+import { createVectorVisualizationClient } from './vector-visualization-client';
+import { OBS_CODES } from '../../observability/codes';
+import { emitFrontendCode } from './observability';
+import type { VectorVisualizationAdapter } from '../../vector/visualization-types';
+import { isAuthorizationScopeReady, isAuthorizationDataReady } from './authorization-scope-readiness';
 import type { GuardianPresenceClient } from './guardian-presence-client';
 import { createCollection, type Collection } from './collection';
 import {
@@ -144,7 +151,7 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
   ...WORKFLOW_TABLES,
   ...STORAGE_TABLES,
 };
-const RESERVED_PLATFORM_TABLES = { ...PLATFORM_TABLES, ...PRESENCE_CLIENT_TABLES };
+const RESERVED_PLATFORM_TABLES = { ...PLATFORM_TABLES, ...PRESENCE_CLIENT_TABLES, ...VECTOR_VISUALIZATION_CLIENT_TABLES };
 
 export type { SyncClient };
 export type { SyncMutationRejection } from '../../sync/types';
@@ -390,6 +397,8 @@ export interface ClientConfig {
 
   /** Opt-in Guardian presence; AppProvider reads the server's feature manifest automatically. */
   presence?: boolean;
+  /** Existing Sync-backed operation feed, enabled automatically by AppProvider's manifest. */
+  vectorVisualization?: boolean;
 
   /** Revalidate observed authorization hints in milliseconds. Default: 30000; 0 disables polling. */
   authorizationRevalidationIntervalMs?: number;
@@ -445,6 +454,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Scoped presence feed and own availability intent; one tracker per SDK, not per component. */
   readonly presence: GuardianPresenceClient;
+  readonly vectorVisualization: VectorVisualizationAdapter;
+  /** Create a facade bound to a specifically enabled index. */
+  vectorVisualizationFor(index: string): VectorVisualizationAdapter;
 
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
@@ -871,6 +883,7 @@ export function createClient(config: ClientConfig): Client {
     tableSyncPlanes,
     auth: authEnabled = false,
     presence: presenceEnabled = false,
+    vectorVisualization: vectorVisualizationEnabled = false,
     authorizationRevalidationIntervalMs,
     stateSync = false,
     autoConnect = true,
@@ -885,12 +898,15 @@ export function createClient(config: ClientConfig): Client {
     throw new Error('[client] stateSync requires auth: true because server state is keyed by authenticated user.');
   }
   if (presenceEnabled && !authEnabled) throw new Error('[client] presence requires auth: true.');
+  if (vectorVisualizationEnabled && !authEnabled) throw new Error('[client] vectorVisualization requires auth: true.');
 
   // Normalize app tables — accept raw ClientTableDef or defineTable() output.
   // defineTable() returns { clientTable: ClientTableDef, ... } — extract .clientTable.
   const appTables: Record<string, ClientTableDef> = {};
   for (const [name, def] of Object.entries(rawTables ?? {})) {
     if (Object.hasOwn(PRESENCE_CLIENT_TABLES, name)) throw new Error(`[client] application tables cannot replace reserved presence table: ${name}`);
+    if (Object.hasOwn(VECTOR_VISUALIZATION_CLIENT_TABLES, name) || name === VECTOR_VISUALIZATION_OPERATIONS_TABLE
+      || name === VECTOR_VISUALIZATION_MAPS_TABLE) throw new Error(`[client] application tables cannot replace reserved visualization table: ${name}`);
     appTables[name] = 'clientTable' in def ? (def as { clientTable: ClientTableDef }).clientTable : def as ClientTableDef;
   }
 
@@ -901,6 +917,7 @@ export function createClient(config: ClientConfig): Client {
   const tables: Record<string, ClientTableDef> = {
     ...(authEnabled ? PLATFORM_TABLES : {}),
     ...(presenceEnabled ? PRESENCE_CLIENT_TABLES : {}),
+    ...(vectorVisualizationEnabled ? VECTOR_VISUALIZATION_CLIENT_TABLES : {}),
     ...appTables,
   };
   const resolvedTableSyncPlanes = resolveSdkTableSyncPlanes(
@@ -908,6 +925,7 @@ export function createClient(config: ClientConfig): Client {
     tableSyncPlanes,
     authEnabled,
     presenceEnabled,
+    vectorVisualizationEnabled,
   );
 
   // ─── Auth ─────────────────────────────────────────────────────────
@@ -1279,6 +1297,20 @@ export function createClient(config: ClientConfig): Client {
   }
 
   const dataRealm = createDataRealmReadinessSdkSurface(clientFetch);
+  const vectorVisualizationFor = (index?: string) => createVectorVisualizationClient({
+    enabled: vectorVisualizationEnabled, fetch: clientFetch,
+    boundary: () => ({ key: JSON.stringify([authClient?.authorizationScopeKey, authClient?.user?.userId, authClient?.sessionTransition.phase, authClient?.sessionTransition.revision, authorizationDataBoundary.revision]),
+      ready: Boolean(authClient?.isAuthenticated && isAuthorizationScopeReady(authClient.sessionTransition, authClient.isRestoring)
+        && isAuthorizationDataReady(authorizationDataBoundary.revision, authClient.authorizationState.status, authClient.isAuthenticated)), connected: syncClient.connected }),
+    subscribeBoundary(callback) {
+      const auth = authClient?.subscribe(callback), authority = authClient?.subscribeAuthorization(callback), data = authorizationDataBoundary.subscribe(callback), sync = syncClient.store.subscribe(callback);
+      return () => { auth?.(); authority?.(); data(); sync.unsubscribe(); };
+    },
+    feed: () => (syncClient.store.getSnapshot().context[VECTOR_VISUALIZATION_FEED_TABLE] ?? {}) as Record<string, Row>,
+    subscribeRows(callback) { const subscription = syncClient.store.subscribe(callback); return () => subscription.unsubscribe(); },
+    reportFailure(action) { emitFrontendCode(OBS_CODES.FRONTEND_VECTOR_VISUALIZATION_FAILED, { metadata: { action } }); },
+  }, index);
+  const vectorVisualization = vectorVisualizationFor();
 
   // ─── Eden Treaty API ────────────────────────────────────────────
   const api = createApi(url, authClient);
@@ -1314,6 +1346,8 @@ export function createClient(config: ClientConfig): Client {
     get dataStudio() { return dataStudio; },
     get storageStudio() { return storageStudio; },
     get presence() { return presenceClient; },
+    vectorVisualization,
+    vectorVisualizationFor,
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },
@@ -1573,6 +1607,7 @@ function resolveSdkTableSyncPlanes(
   configured: Readonly<Record<string, SyncDataPlaneName>> | undefined,
   authEnabled: boolean,
   presenceEnabled: boolean,
+  vectorVisualizationEnabled: boolean,
 ): Readonly<Record<string, SyncDataPlaneName>> {
   const appPlanes = configured ?? Object.fromEntries(
     Object.keys(appTables).map((table) => [table, 'default' as const]),
@@ -1608,6 +1643,7 @@ function resolveSdkTableSyncPlanes(
       : [],
   ) as Record<string, SyncDataPlaneName>;
   if (presenceEnabled) for (const table of Object.keys(PRESENCE_CLIENT_TABLES)) resolved[table] = 'system';
+  if (vectorVisualizationEnabled) for (const table of Object.keys(VECTOR_VISUALIZATION_CLIENT_TABLES)) resolved[table] = 'system';
   for (const [table, plane] of Object.entries(appPlanes)) {
     resolved[table] = plane;
   }

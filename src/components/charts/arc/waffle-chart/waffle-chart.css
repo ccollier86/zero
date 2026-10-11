@@ -1,0 +1,57 @@
+/* Arc UI Free derivation, MIT. Copyright (c) 2026 Elia Kuratli. Scoped Zero chart presentation; local overrides resolve at paint sites. */
+.zero-arc-waffle-chart__figure { position: relative; min-width: 0; margin: 0; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); letter-spacing: var(--zero-arc-tracking-body); container-type: inline-size; }
+
+/* Categorical series inherit Zero chart-family colors, with scoped private overrides. */
+.zero-arc-waffle-chart__body { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: center; gap: var(--zero-arc-space-6); }
+@container (min-width: 420px) {
+  .zero-arc-waffle-chart__figure[data-legend] .zero-arc-waffle-chart__body { grid-template-columns: minmax(0, 232px) minmax(0, 1fr); gap: var(--zero-arc-space-6); }
+}
+
+.zero-arc-waffle-chart__board { min-width: 0; }
+.zero-arc-waffle-chart__grid { position: relative; width: 100%; max-width: 300px; margin-inline: auto; outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; cursor: default; }
+
+/* Each cell is one unit. Its colour changes mid-flight with the same stagger as its travel. */
+.zero-arc-waffle-chart__cell { --zero-arc-inner: 0 0 0 0 transparent; --zero-arc-outer: 0 0 0 0 transparent; position: absolute; top: 0; left: 0; border-radius: 22%; background-color: var(--zero-arc-cell); box-shadow: var(--zero-arc-inner), var(--zero-arc-outer); will-change: transform; transition: background-color var(--zero-arc-duration-considered) var(--zero-arc-ease-standard) var(--zero-arc-delay, 0s), border-radius var(--zero-arc-duration-considered) var(--zero-arc-ease-standard) var(--zero-arc-delay, 0s), box-shadow var(--zero-arc-duration-considered) var(--zero-arc-ease-standard) var(--zero-arc-delay, 0s), opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-waffle-chart__grid[data-active] .zero-arc-waffle-chart__cell:not([data-on]) { opacity: .26 !important; transition: background-color var(--zero-arc-duration-considered) var(--zero-arc-ease-standard) var(--zero-arc-delay, 0s), border-radius var(--zero-arc-duration-considered) var(--zero-arc-ease-standard) var(--zero-arc-delay, 0s), opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-waffle-chart__cell[data-cursor] { --zero-arc-outer: 0 0 0 2px var(--zero-arc-surface, var(--zero-chart-surface, var(--card))), 0 0 0 3.5px color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 55%, transparent); }
+
+/* Shape is the colour-free second channel: a cell morphs between these as it changes category. */
+.zero-arc-waffle-chart__cell[data-shape="round"], .zero-arc-waffle-chart__swatch[data-shape="round"], .zero-arc-waffle-chart__tipSwatch[data-shape="round"] { border-radius: 50%; }
+.zero-arc-waffle-chart__cell[data-shape="framed"] { --zero-arc-inner: inset 0 0 0 2.5px var(--zero-arc-cell), inset 0 0 0 3.25px var(--zero-arc-surface, var(--zero-chart-surface, var(--card))); }
+.zero-arc-waffle-chart__swatch[data-shape="framed"], .zero-arc-waffle-chart__tipSwatch[data-shape="framed"] { box-shadow: inset 0 0 0 2px var(--zero-arc-cell), inset 0 0 0 3px var(--zero-arc-surface, var(--zero-chart-surface, var(--card))); }
+
+.zero-arc-waffle-chart__tooltip { position: absolute; top: 0; left: 0; z-index: 2; display: grid; min-width: 150px; max-width: min(240px, 100%); gap: 2px; padding: 8px 12px; border: 1px solid var(--zero-arc-border, var(--zero-chart-border, var(--border))); border-radius: 14px; background: var(--zero-arc-surface-raised, var(--zero-chart-surface-raised, var(--card))); box-shadow: var(--zero-arc-shadow-floating, var(--zero-chart-inspector-shadow)); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), scale var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-waffle-chart__tooltip[data-shown] { opacity: 1; scale: 1; }
+.zero-arc-waffle-chart__tipRow { display: flex; min-width: 0; align-items: center; gap: 8px; margin: 0; font-size: var(--zero-arc-text-sm); line-height: 1.3; }
+.zero-arc-waffle-chart__tipSwatch { width: 10px; height: 10px; flex: none; border-radius: 3px; background-color: var(--zero-arc-cell); transition: background-color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-waffle-chart__tipName { min-width: 0; flex: 1; overflow: hidden; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); text-overflow: ellipsis; white-space: nowrap; }
+.zero-arc-waffle-chart__tipValue { flex: none; margin-left: 8px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.zero-arc-waffle-chart__tipMeta { margin: 0 0 0 18px; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.zero-arc-waffle-chart__message { display: grid; min-height: 160px; place-items: center; margin: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); }
+
+/* The legend doubles as the reading: each share rolls to its new value. */
+.zero-arc-waffle-chart__legend { display: grid; min-width: 0; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 2px var(--zero-arc-space-2); margin: 0; padding: 0; list-style: none; }
+@container (min-width: 420px) { .zero-arc-waffle-chart__figure[data-legend] .zero-arc-waffle-chart__legend { grid-template-columns: minmax(0, 1fr); } }
+/* Below the side-by-side layout two columns would clip names like "Wind and solar", so the legend reads as one list. */
+/* Stacked, the legend shares the grid's measure and its row padding hangs outside, so swatches and shares line up with the cell edges. */
+@container (max-width: 419px) { .zero-arc-waffle-chart__legend { grid-template-columns: minmax(0, 1fr); margin-inline: max(-10px, calc((100% - 320px) / 2)); } }
+.zero-arc-waffle-chart__item { display: grid; width: 100%; min-height: 36px; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 4px 10px; border: 0; border-radius: 12px; background: transparent; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); cursor: pointer; font: inherit; font-size: var(--zero-arc-text-sm); line-height: var(--zero-arc-leading-body); text-align: left; -webkit-tap-highlight-color: transparent; transition: color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), background-color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), transform var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-waffle-chart__item:active { transform: scale(.98); }
+.zero-arc-waffle-chart__item[data-on] { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); background: color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 5%, transparent); }
+.zero-arc-waffle-chart__item[data-dim] { opacity: .5; }
+.zero-arc-waffle-chart__item[aria-pressed="true"] { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }
+@media (hover: hover) and (pointer: fine) { .zero-arc-waffle-chart__item:hover { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); } }
+.zero-arc-waffle-chart__swatch { width: 10px; height: 10px; border-radius: 3px; background-color: var(--zero-arc-cell); }
+.zero-arc-waffle-chart__itemLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zero-arc-waffle-chart__itemShare { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-base); font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; min-width: 3.2em; }
+
+.zero-arc-waffle-chart__srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.zero-arc-waffle-chart__inspectionAnchor { position: absolute; left: 0; top: 0; pointer-events: none; }
+.zero-arc-waffle-chart__tooltip.zero-tooltip { font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); position: relative; top: auto; left: auto; z-index: auto; opacity: 1; scale: 1; max-width: min(240px, calc(100vw - 16px)); border-radius: var(--zero-chart-inspector-radius, 10px); padding: var(--zero-chart-inspector-padding, 9px 12px); font-size: var(--zero-chart-inspector-font-size, 12px); line-height: var(--zero-chart-inspector-line-height, 1.45); }
+.zero-arc-waffle-chart__tooltip .zero-arc-waffle-chart__tipRow { font-size: var(--zero-chart-inspector-font-size, 12px); line-height: var(--zero-chart-inspector-line-height, 1.45); }
+.zero-arc-waffle-chart__tooltip .zero-arc-waffle-chart__tipValue { font-size: var(--zero-chart-inspector-value-size, 17px); line-height: var(--zero-chart-inspector-value-line-height, 1.3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .zero-arc-waffle-chart__cell, .zero-arc-waffle-chart__grid[data-active] .zero-arc-waffle-chart__cell:not([data-on]), .zero-arc-waffle-chart__tooltip, .zero-arc-waffle-chart__tipSwatch, .zero-arc-waffle-chart__item { transition: none; }
+}

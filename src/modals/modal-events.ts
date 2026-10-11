@@ -139,7 +139,7 @@ function validateDescriptor(descriptor: ModalDescriptor<unknown>): void {
   } else if (descriptor.sections !== undefined) throw new TypeError('Content modals cannot supply sections.');
   for (const [key, choices] of Object.entries({ size: ['xs', 'sm', 'md', 'lg', 'xl', 'full'],
     tone: ['default', 'info', 'success', 'danger'], placement: ['center', 'left', 'right', 'bottom'],
-    height: ['auto', 'fixed'], scrollbar: ['auto', 'thin', 'hidden'], navScrollbar: ['auto', 'thin', 'hidden'] })) {
+    height: ['auto', 'fixed'], scrollTreatment: ['arc', 'native'], scrollbar: ['auto', 'thin', 'hidden'], navScrollbar: ['auto', 'thin', 'hidden'] })) {
     const value = (descriptor as unknown as Record<string, unknown>)[key];
     if (value !== undefined && (typeof value !== 'string' || !choices.includes(value))) throw new TypeError(`Unsupported modal ${key}.`);
   }
@@ -485,7 +485,7 @@ function projectPresentation<T = unknown>(id: string, signal: AbortSignal, updat
   if (!modal?.descriptor || !session || session.lifetime.signal !== signal || !currentSession(id, session)) return;
   const allowed = new Set(['title', 'meta', 'description', 'icon', 'tone', 'footer', 'actions', 'headerActions']);
   if (!updates || typeof updates !== 'object' || Array.isArray(updates)
-    || Object.keys(updates).some(key => !allowed.has(key))) throw new TypeError('Only modal presentation may be projected.');
+    || Reflect.ownKeys(updates).some(key => typeof key !== 'string' || !allowed.has(key))) throw new TypeError('Only modal presentation may be projected.');
   const merged = { ...modal.descriptor, ...updates } as unknown as ModalDescriptor<unknown>;
   validateDescriptor(merged);
   const descriptor = snapshotDescriptor(merged);

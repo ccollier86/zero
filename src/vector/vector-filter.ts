@@ -70,19 +70,19 @@ export function extractSimpleEqualityMetadata(filter: VectorFilter | undefined):
   return metadata;
 }
 
-/** Evaluate a structured filter against a returned record for scoped fetches. */
-export function recordMatchesVectorFilter(record: StoredVectorRecord, filter: VectorFilter | undefined): boolean {
+/** Evaluate a structured filter against a canonical record using the index's native text-field name. */
+export function recordMatchesVectorFilter(record: StoredVectorRecord, filter: VectorFilter | undefined, textField = 'text'): boolean {
   if (!filter) return true;
 
   const andFilters = filter.$and;
-  if (andFilters?.length && !andFilters.every((item) => recordMatchesVectorFilter(record, item))) return false;
+  if (andFilters?.length && !andFilters.every((item) => recordMatchesVectorFilter(record, item, textField))) return false;
 
   const orFilters = filter.$or;
-  if (orFilters?.length && !orFilters.some((item) => recordMatchesVectorFilter(record, item))) return false;
+  if (orFilters?.length && !orFilters.some((item) => recordMatchesVectorFilter(record, item, textField))) return false;
 
   for (const [field, value] of Object.entries(filter)) {
     if (field === '$and' || field === '$or' || value === undefined) continue;
-    if (!recordFieldMatches(record, field, value as VectorFilterValue)) return false;
+    if (!recordFieldMatches(record, field, value as VectorFilterValue, textField)) return false;
   }
 
   return true;
@@ -207,8 +207,8 @@ function isVectorScalar(value: unknown): value is VectorScalar {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
-function recordFieldMatches(record: StoredVectorRecord, field: string, filter: VectorFilterValue): boolean {
-  const actual = recordFieldValue(record, field);
+function recordFieldMatches(record: StoredVectorRecord, field: string, filter: VectorFilterValue, textField: string): boolean {
+  const actual = recordFieldValue(record, field, textField);
   if (filter === null) return actual == null;
   if (isVectorScalar(filter)) return actual === filter;
   if (Array.isArray(filter)) return filter.includes(actual as VectorScalar);
@@ -229,9 +229,9 @@ function recordFieldMatches(record: StoredVectorRecord, field: string, filter: V
   return true;
 }
 
-function recordFieldValue(record: StoredVectorRecord, field: string): unknown {
+function recordFieldValue(record: StoredVectorRecord, field: string, textField: string): unknown {
   if (field === 'id') return record.id;
-  if (field === 'text') return record.text;
+  if (field === textField) return record.text;
   return record.metadata[field];
 }
 

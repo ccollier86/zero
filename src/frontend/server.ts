@@ -14,6 +14,7 @@
 
 // ─── App Factory ────────────────────────────────────────────────────────
 export { createApp } from './server/app-factory';
+export type { VectorVisualizationConfig, VectorVisualizationIndexConfig, ResolvedVectorVisualizationConfig } from '../vector/visualization-config';
 export { prepareAppBuild } from './server/app-build';
 export type { PreparedAppBuild } from './server/app-build';
 export { renderServerPage } from './server/server-page-renderer';
@@ -37,6 +38,7 @@ export type {
   AppMultipleDatabaseTopologyConfig,
   AppSingleDatabaseTopologyConfig,
   AppConfig,
+  AppThemeFoundation,
   AppDoctorConfig,
   AppStorageConfig,
   AppWorkflowRegistrationContext,

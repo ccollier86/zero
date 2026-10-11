@@ -8,14 +8,14 @@ visibility: internal
 system: design-system
 feature: component-conventions
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; publication qualification pending"]
 modes: ["React browser UI", "SSR markup", "managed frontend styling"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  snapshot: dirty
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -27,6 +27,30 @@ Use the platform component's public props/slots before replacing its UI.
 Controls already share semantic tokens, sizing, focus states and relevant
 interaction behavior. Source-local Animate UI exports do not automatically
 become public component paths.
+
+## Family Ownership And Public Facades
+
+Keep a component's composition, specific types/model, motion/presentation,
+styles and tests under an identifiable family owner. Share mechanism only where
+multiple families actually consume it; rendering must not absorb SDK transport,
+query authority or persistence. A family can expose small composable parts and
+a standardized assembled component through the same curated facade.
+
+The [source organization guide](../components/source-organization.md) locates
+the implemented Card/Select, date/time, Popover and shared mechanism owners;
+the [roadmap](../../_work/frontend-component-organization-plan.md) stages larger
+engines and client families. This is not a new supported import scheme. Physical
+moves must preserve public exports, context/provider identity, source-copy IDs
+and destinations, CSS/helper closure and consumer prop/ref semantics. Existing
+forwarding modules are compatibility boundaries, not duplicate implementations
+to remove by filename.
+
+Use supported package facades in application code; `#zero` imports remain
+private. Do not expose internal helpers/tests merely by adding a wildcard.
+Theme tokens remain with the design-system owner. Follow the
+[theme retirement checklist](./foundation-next.md#retire-the-original-theme-safely)
+before removing original files; folder organization does not retire their values
+or shared stylesheet infrastructure.
 
 ## Buttons And Actions
 

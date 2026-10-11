@@ -31,11 +31,16 @@ beforeAll(async () => {
   directory = await mkdtemp(join(SCRATCH, 'grouped-controls-')); evidence = await mkdtemp(join(ARTIFACTS, 'acceptance-'));
   const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', 'build',
     join(import.meta.dir, 'button-group-context-menu.browser-fixture.tsx'), '--target=browser', '--format=iife',
-    `--outfile=${join(directory, 'fixture.js')}`], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+    `--outdir=${directory}`, '--entry-naming=fixture.[ext]'], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, status] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
   if (status !== 0) throw new Error(`Grouped controls fixture compilation failed.\n${stdout}\n${stderr}`);
   const css = await buildPlatformStyles(directory, join(directory, 'missing-app'));
-  app = serveFixture(join(directory, 'fixture.js'), css.cssPath);
+  // Private Arc adapters ship CSS with their source bundle; qualify those
+  // styles alongside the managed theme without altering its retained file.
+  const emitted = Bun.file(join(directory, 'fixture.css'));
+  const qualifiedCss = join(directory, 'qualified-platform.css');
+  await Bun.write(qualifiedCss, await Bun.file(css.cssPath).text() + (await emitted.exists() ? '\n' + await emitted.text() : ''));
+  app = serveFixture(join(directory, 'fixture.js'), qualifiedCss);
   baseUrl = `http://127.0.0.1:${app.server!.port}`;
 }, TIMEOUT);
 afterAll(async () => {

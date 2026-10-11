@@ -38,12 +38,33 @@ describe('createAIVectorBridge', () => {
     expect(vectors.lastQuery).toEqual({
       index: 'docs',
       options: {
-        text: 'find me',
+        retrieval: 'vector',
         filter: { bucket: 'docs' },
         topK: 3,
         vector: [7, 8, 9],
       },
     });
+  });
+  it('retains dense defaults for scoped bridge queries after native lexical support is added', async () => {
+    const vectors = fakeVectors();
+    const bridge = createAIVectorBridge({ ai: fakeAI(), vectors });
+    await bridge.scope('docs', { tenantId: 'mine' }).embedAndQuery({ text: 'private query', topK: 2 });
+    expect(vectors.lastQuery?.options).toEqual({ retrieval: 'vector', topK: 2, vector: [13, 14, 15], filter: { tenantId: 'mine' } });
+  });
+  it('only forwards literal text to native retrieval for an explicit hybrid request', async () => {
+    const vectors = fakeVectors();
+    const bridge = createAIVectorBridge({ ai: fakeAI(), vectors });
+    await bridge.embedAndQuery('docs', { text: 'query', retrieval: 'hybrid', candidateCount: 20 });
+    expect(vectors.lastQuery?.options).toEqual({ text: 'query', retrieval: 'hybrid', candidateCount: 20, vector: [5, 6, 7] });
+  });
+  it('explicit lexical queries do not start a needless provider embedding', async () => {
+    const vectors = fakeVectors(); let calls = 0;
+    const bridge = createAIVectorBridge({ ai: { embed: () => { calls++; throw new Error('Must not embed lexical-only queries'); } } as unknown as AIService, vectors });
+    await bridge.embedAndQuery('docs', { text: 'literal', retrieval: 'lexical', model: 'unused' });
+    expect(vectors.lastQuery?.options).toEqual({ text: 'literal', retrieval: 'lexical' });
+    await bridge.scope('docs', { tenantId: 'mine' }).embedAndQuery({ text: 'literal', retrieval: 'lexical' });
+    expect(vectors.lastQuery?.options).toEqual({ text: 'literal', retrieval: 'lexical', filter: { tenantId: 'mine' } });
+    expect(calls).toBe(0);
   });
 });
 

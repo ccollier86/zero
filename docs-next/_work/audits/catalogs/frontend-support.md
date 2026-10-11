@@ -217,6 +217,25 @@ No phone ownership, delivery or provider support is inferred from admission.
 | `isPhoneNumber` | `@zero/framework/schema`, root/React | [Canonical validation](../../../../src/lib/phone-number.ts) | `frontend/components/phone-input.md` |
 | `isPhoneCountry` | `@zero/framework/schema`, root/React | [Country validation](../../../../src/lib/phone-number.ts) | `frontend/components/phone-input.md` |
 
+## Chart Query Helpers Working Source
+
+These **four public bridge helpers** are observed in dirty framework **2.6.0**
+source against `335b27372b0b8ef57a1e92cf93cec378923fe50b`, on **2026-10-10**.
+They supplement the historical 94-support-record count without changing its
+clean baseline. The projection helper admits caller-held rows but does not
+fetch or authorize them. The error and row budgets belong to that same bounded
+contract, not a universal query or server streaming service.
+Options, result and error-code types remain documented with the parent bridge.
+Exhaustive reconciliation of the public chart model, geometry, math and
+default helpers is still planned.
+
+| Named symbol | Exact public imports | Declaration evidence | Canonical guide |
+| --- | --- | --- | --- |
+| `projectChartQueryRows` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/charts/react` | [Bounded projection](../../../../src/frontend/client/chart-query-projection.ts) | [Current reactive bridge](../../../frontend/charts/index.md#the-current-reactive-bridge) |
+| `ChartQueryError` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/charts/react` | [Projection error](../../../../src/frontend/client/chart-query-projection.ts) | [Current reactive bridge](../../../frontend/charts/index.md#the-current-reactive-bridge) |
+| `CHART_QUERY_DEFAULT_MAX_ROWS` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/charts/react` | [Default row budget](../../../../src/frontend/client/chart-query-projection.ts) | [Current reactive bridge](../../../frontend/charts/index.md#the-current-reactive-bridge) |
+| `CHART_QUERY_MAX_ROWS` | `@zero/framework`, `@zero/framework/react`, `@zero/framework/charts/react` | [Hard row budget](../../../../src/frontend/client/chart-query-projection.ts) | [Current reactive bridge](../../../frontend/charts/index.md#the-current-reactive-bridge) |
+
 ## Reconciliation And Review
 
 Every row has a planned home, but this catalog alone does not verify props, SSR safety, authority, cancellation, accessibility, or released behavior. Reconcile import routes against the [package export catalog](./package-exports.md). Cross-system contract owners remain Guardian, Resources/Sync/Fabric, Storage, Data Studio, Torrent, and Notifications/Rooms; frontend guides explain their UI/transport integration without duplicating backend policy. See the [system inventories](../systems/index.md) for dependencies, settings, tests present, examples, and unresolved findings. Independent reconciliation and exact-package checks remain open.

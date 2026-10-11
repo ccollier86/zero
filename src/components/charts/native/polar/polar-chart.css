@@ -1,0 +1,19 @@
+/* Polar organisms consume existing Zero analytical roles at each paint site. */
+.zero-native-polar__plot { min-width:0; }
+.zero-native-polar__sector { cursor:pointer; stroke:var(--zero-chart-surface,var(--card)); stroke-width:var(--zero-native-polar-separator-width,1.5px); transition:opacity 120ms ease,filter 120ms ease; }
+.zero-native-polar__sector[data-selected="true"],.zero-native-polar__ring[data-selected="true"] { filter:brightness(1.1); stroke:var(--zero-chart-foreground,var(--foreground)); stroke-width:2px; }
+.zero-native-polar__sector[data-dimmed="true"],.zero-native-polar__ring[data-dimmed="true"],.zero-native-polar__radar[data-dimmed="true"] { opacity:.35; }
+.zero-native-polar__ring { cursor:pointer; transition:opacity 120ms ease; }
+.zero-native-polar__track { fill:var(--zero-chart-grid,var(--border)); opacity:.4; cursor:pointer; }
+.zero-native-polar__grid { fill:none; stroke:var(--zero-chart-grid,var(--border)); stroke-width:1; }
+.zero-native-polar__radar { stroke-width:2; fill-opacity:.13; transition:opacity 120ms ease; }
+.zero-native-polar__radar[data-selected="true"] { fill-opacity:.23; stroke-width:2.5; }
+.zero-native-polar__point { stroke:var(--zero-chart-surface,var(--card)); stroke-width:2; cursor:pointer; }
+.zero-native-polar__axis-label { font:inherit; font-size:calc(var(--zero-chart-metadata-size,11.5px) * var(--zero-native-polar-font-scale,1)); fill:var(--zero-chart-secondary,var(--muted-foreground)); text-anchor:middle; dominant-baseline:middle; }
+.zero-native-polar__empty { position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; color:var(--zero-chart-muted,var(--muted-foreground)); font-size:var(--zero-chart-label-size,12.5px); }
+.zero-native-polar__breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-bottom:8px; font-size:var(--zero-chart-metadata-size,11.5px); }
+.zero-native-polar__breadcrumb button { all:unset; padding:3px 6px; border-radius:5px; cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--zero-chart-secondary,var(--muted-foreground)); }
+.zero-native-polar__breadcrumb button:hover { background:var(--zero-chart-grid,var(--border)); }
+.zero-native-polar__breadcrumb button:focus-visible { outline:2px solid var(--zero-chart-focus-color,var(--primary)); outline-offset:2px; }
+.zero-native-polar__breadcrumb span { color:var(--zero-chart-muted,var(--muted-foreground)); }
+.zero-native-polar__center-label { fill:var(--zero-chart-foreground,var(--foreground)); text-anchor:middle; dominant-baseline:middle; font-size:calc(var(--zero-chart-label-size,12.5px) * var(--zero-native-polar-font-scale,1)); pointer-events:none; }

@@ -225,6 +225,10 @@ are not rewritten or automatically converted by this additive component.
 
 ## Related Guides And Next Steps
 
+- [Floating Button Group](../controls/floating-button-group.md) documents the
+  additive working-source magnetic action tray. Its stationary native commands
+  do not replace this joined composition or Toggle selection contract; older
+  installed packages do not gain the new export automatically.
 - [Context menus](../overlays/context-menu.md) add right-click commands using the same tokens.
 - [Primitive configuration](./configuration.md) explains native/headless ownership and public paths.
 - [Table controls](../../data-controls/data-table/controls.md) owns query state and composition slots.

@@ -1,0 +1,20 @@
+/** Browser-independent handmade chart facade: admitted measurements, geometry and statistics; never rendering or transport. */
+export { NATIVE_CHART_LIMITS } from '../components/charts/native/shared/admission';
+export { NATIVE_CHART_MOTION } from '../components/charts/native/shared/native-motion';
+export { formatNativeChartNumber } from '../components/charts/native/shared/native-format';
+export type * from '../components/charts/native/cartesian/cartesian-types';
+export { CARTESIAN_NATIVE_LIMITS } from '../components/charts/native/cartesian/cartesian-admission';
+export { buildCartesianModel, fitCartesianWindow, admitCartesianHidden } from '../components/charts/native/cartesian/cartesian-model';
+export { computeCartesianLayout, cartesianLinePath, cartesianSegments, cartesianBubbleRadius } from '../components/charts/native/cartesian/cartesian-layout';
+export { expandCartesianDomain, cartesianTicks, cartesianScale } from '../components/charts/native/cartesian/cartesian-scales';
+export { STATISTICAL_LIMITS } from '../components/charts/native/statistical/statistical-admission';
+export * from '../components/charts/native/statistical/histogram-model';
+export * from '../components/charts/native/statistical/matrix-heatmap-model';
+export * from '../components/charts/native/statistical/box-plot-model';
+export * from '../components/charts/native/statistical/waterfall-model';
+export * from '../components/charts/native/statistical/candlestick-model';
+export { statisticalPlotBounds, statisticalTicks, statisticalBar } from '../components/charts/native/statistical/statistical-geometry';
+export type * from '../components/charts/native/polar/polar-types';
+export { POLAR_CHART_LIMITS, buildRadarModel, buildRadialBarModel, buildPieModel, buildSunburstModel } from '../components/charts/native/polar/polar-model';
+export { polarDimensions, polarPoint, polarSectorPath, computeRadarLayout, computeRadialBarLayout, computePieLayout, computeSunburstLayout } from '../components/charts/native/polar/polar-layout';
+export * from '../components/charts/native/realtime/realtime-model';

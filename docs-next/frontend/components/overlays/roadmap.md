@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: roadmap
 maturity: supported
-applies_to: ["2.1.1 source; publication qualification pending"]
+applies_to: ["2.6.0 working source; later overlay expansion planned"]
 modes: ["React browser UI", "SSR composition", "controlled or local interaction state"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  snapshot: dirty
+  date: "2026-10-10"
   evidence_level: source-observed
 ---
 
@@ -26,12 +26,20 @@ reviewed_against:
 Current public menu/popover/tooltip/collapsible/sidebar/radial controls are real
 implemented components; standard app layout is already supplied by AppShell.
 
-Future ideas, not shipped interfaces:
+Checked entries describe working-source capabilities; unchecked entries remain
+planned work, not shipped interfaces:
 
 - [ ] Continue coherent token/palette polish and component composition.
 - [ ] Broader keyboard, screen-reader, touch/mobile and reduced-motion qualification.
 - [ ] Evaluate richer permission-aware control-plane blocks without duplicating backend authority.
-- [ ] Modern modal/header/content/action layout refinement.
+- [x] Standard managed modal/header/content/action layout is implemented in
+  working source under the [modal roadmap](../../modals/roadmap.md).
+- [ ] Complete [ordinary surface scroll adoption](../../../_work/arc-scroll-surface-plan.md)
+  using existing viewports and Arc edge/rail presentation; preserve specialized
+  table/editor owners and fixed chrome.
+- [ ] Add [managed drawers and BottomSheet](../../../_work/drawer-bottom-sheet-system-plan.md)
+  with coordinated mixed stacks, detents, gestures, guards and controlled/custom
+  composition. This is a proposed facade, not a current replacement for Sheet.
 - [ ] Package/version-verified component discovery for coding agents.
 
 These plans do not excuse confirmed defects. Fix those with focused tests and

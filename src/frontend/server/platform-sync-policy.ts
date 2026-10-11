@@ -9,6 +9,7 @@
 import type { ReactiveDB } from '../../sync/reactive-db';
 import { PRESENCE_TABLE, PRESENCE_OWNER_TABLE } from '../../presence/presence-client-tables';
 import { PresenceDirectory } from '../../presence/presence-directory';
+import { VECTOR_VISUALIZATION_MAPS_TABLE, VECTOR_VISUALIZATION_OPERATIONS_TABLE, VECTOR_VISUALIZATION_FEED_TABLE } from '../../vector/visualization-schema';
 import {
   createRequestAuthorizationAccess,
   type AuthorizationRoleAssignmentResolver,
@@ -62,6 +63,8 @@ const WORKFLOW_PRIVATE_TABLES = [...WORKFLOW_SERVER_TABLE_NAMES].filter(
 
 /** Framework tables that must never be exposed through generic Sync reads. */
 export const PLATFORM_SYNC_PRIVATE_TABLES = new Set([
+  VECTOR_VISUALIZATION_MAPS_TABLE,
+  VECTOR_VISUALIZATION_OPERATIONS_TABLE,
   ...IDENTITY_PROJECTION_TARGET_TABLES,
   ...WORKFLOW_PRIVATE_TABLES,
   'storage_drives',
@@ -86,6 +89,7 @@ export function resolvePlatformSyncPrivateTables(
 }
 
 const PLATFORM_SYNC_SCOPED_TABLES = new Set([
+  VECTOR_VISUALIZATION_FEED_TABLE,
   'notifications',
   'notification_receipts',
   'rooms',
@@ -112,6 +116,8 @@ export interface PlatformSyncPolicyOptions {
   privateTables?: ReadonlySet<string>;
   /** Reserved presence tables fail closed until the actual managed owner admits this scope. */
   isPresenceReady?: (scope: ServiceDataScope) => boolean;
+  /** Disabled/unconfigured indexes and revoked permissions fail closed. */
+  canReadVectorVisualization?: (index: string, access: RequestAuthorizationAccess, kind: 'search' | 'ingestion') => boolean;
 }
 
 interface PlatformFilterCache {
@@ -247,7 +253,7 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
       const delegateFilter = delegated.rowFilters.get(table);
       const delegateProjector = delegated.rowProjectors?.get(table);
 
-      if ((this.options.privateTables ?? PLATFORM_SYNC_PRIVATE_TABLES).has(table)) {
+      if (PLATFORM_SYNC_PRIVATE_TABLES.has(table) || this.options.privateTables?.has(table)) {
         platformFingerprint.push([table, 'denied']);
         continue;
       }
@@ -377,6 +383,9 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
   authorizeMutation(
     context: SyncResourceMutationContext,
   ): Promise<SyncResourceMutationDecision> {
+    if ([VECTOR_VISUALIZATION_FEED_TABLE, VECTOR_VISUALIZATION_OPERATIONS_TABLE, VECTOR_VISUALIZATION_MAPS_TABLE].includes(context.table)) {
+      return Promise.resolve({ ok: false, reason: 'Vector visualization tables are read-only over Sync.' });
+    }
     return this.options.delegate.authorizeMutation(context);
   }
 
@@ -417,6 +426,17 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
     cache: PlatformFilterCache,
   ): { filter: SyncRowFilter; fingerprint: string } | null {
     switch (table) {
+      case VECTOR_VISUALIZATION_FEED_TABLE: {
+        if (auth.sessionKind === 'native') return null;
+        return {
+          filter: rowFilter(row => row.owner_user_id === auth.userId
+            && row.scope_id === serviceDataScopeKey(dataScope)
+            && serviceDataScopeMatchesTenant(dataScope, row.tenant_id)
+            && typeof row.index_name === 'string' && (row.kind === 'search' || row.kind === 'ingestion')
+            && Boolean(this.options.canReadVectorVisualization?.(row.index_name, access, row.kind))),
+          fingerprint: JSON.stringify(['vector-visualization', serviceDataScopeKey(dataScope), auth.userId, access.authorization?.revision ?? null]),
+        };
+      }
       case PRESENCE_TABLE:
       case PRESENCE_OWNER_TABLE: {
         const directory = new PresenceDirectory(db, this.options.tenancyMode ?? 'single');

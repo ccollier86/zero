@@ -1,0 +1,26 @@
+/* Independent native statistical marks: shared Zero surfaces/type, pale measures with precise strong edges. */
+.zero-native-statistical-plot{position:relative;min-width:0;outline:none;border-radius:var(--zero-native-statistical-radius,var(--zero-chart-plot-radius,10px));touch-action:pan-y}
+.zero-native-statistical-plot>svg{display:block;max-width:100%;overflow:hidden}
+.zero-native-statistical-plot:focus-visible{box-shadow:0 0 0 2px var(--zero-chart-surface,var(--background)),0 0 0 4px var(--zero-chart-blue,var(--primary))}
+.zero-native-statistical-grid line{stroke:var(--zero-native-statistical-grid,var(--zero-chart-grid,var(--border)));stroke-width:1;vector-effect:non-scaling-stroke}
+.zero-native-statistical-grid text,.zero-native-statistical-label{font:400 var(--zero-chart-metadata-size,11.5px) var(--zero-chart-font-family,var(--font-platform-sans,ui-sans-serif,system-ui,sans-serif));fill:var(--zero-native-statistical-muted,var(--zero-chart-muted,var(--muted-foreground)));font-variant-numeric:tabular-nums;pointer-events:none}
+.zero-native-statistical-bar{fill:color-mix(in srgb,var(--statistical-color) var(--zero-native-statistical-tint,var(--zero-chart-bar-tint,38%)),var(--zero-chart-surface,var(--background)));stroke:color-mix(in srgb,var(--statistical-color) 35%,transparent);stroke-width:1;vector-effect:non-scaling-stroke}
+.zero-native-statistical-bar[data-active]{fill:color-mix(in srgb,var(--statistical-color) var(--zero-native-statistical-hot-tint,var(--zero-chart-bar-hot-tint,72%)),var(--zero-chart-surface,var(--background)));stroke:var(--statistical-color)}
+.zero-native-statistical-edge{stroke-width:1.5;vector-effect:non-scaling-stroke;pointer-events:none}
+.zero-native-statistical-connector{stroke:var(--zero-chart-line-strong,var(--border));stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke;pointer-events:none}
+.zero-native-statistical-hit{fill:transparent;cursor:crosshair}
+.zero-native-statistical-cell{fill:color-mix(in srgb,var(--statistical-color) var(--statistical-tint),var(--zero-chart-surface,var(--background)));stroke:var(--zero-chart-line,var(--border));stroke-width:1;vector-effect:non-scaling-stroke;cursor:crosshair}
+[data-missing]>.zero-native-statistical-cell{fill:var(--zero-chart-surface,var(--background));stroke-dasharray:2 2}
+.zero-native-statistical-cell[data-active]{stroke:var(--statistical-color);stroke-width:2}
+.zero-native-statistical-cell-value{font:500 var(--zero-chart-metadata-size,11.5px) var(--zero-chart-font-family,var(--font-platform-sans,ui-sans-serif,system-ui,sans-serif));fill:var(--zero-chart-foreground,var(--foreground));font-variant-numeric:tabular-nums;pointer-events:none}
+.zero-native-statistical-outlier{fill:var(--zero-chart-surface,var(--background));stroke-width:1.5;vector-effect:non-scaling-stroke;pointer-events:none}
+.zero-native-statistical-volume{opacity:.28;pointer-events:none}
+.zero-native-statistical-empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--zero-chart-muted,var(--muted-foreground));font:400 var(--zero-chart-label-size,12.5px) var(--zero-chart-font-family,var(--font-platform-sans,ui-sans-serif,system-ui,sans-serif));pointer-events:none}
+.zero-native-statistical-tip-title{font:400 var(--zero-chart-inspector-font-size,12px) var(--zero-chart-font-family,var(--font-platform-sans,ui-sans-serif,system-ui,sans-serif));color:var(--zero-chart-muted,var(--muted-foreground))}
+.zero-native-statistical-tip-value{font:500 var(--zero-chart-inspector-value-size,17px)/var(--zero-chart-inspector-value-line-height,1.3) var(--zero-chart-font-family,var(--font-platform-sans,ui-sans-serif,system-ui,sans-serif));letter-spacing:-.01em;color:var(--zero-chart-foreground,var(--foreground));font-variant-numeric:tabular-nums;margin-top:2px}
+.zero-native-statistical-tip-rows{display:grid;gap:3px;margin-top:8px;font:400 var(--zero-chart-inspector-font-size,12px)/var(--zero-chart-inspector-line-height,1.45) var(--zero-chart-font-family,var(--font-platform-sans,ui-sans-serif,system-ui,sans-serif))}
+.zero-native-statistical-tip-rows>div{display:flex;justify-content:space-between;gap:24px}
+.zero-native-statistical-tip-rows span{color:var(--zero-chart-muted,var(--muted-foreground))}
+.zero-native-statistical-tip-rows b{color:var(--zero-chart-foreground,var(--foreground));font-weight:500;font-variant-numeric:tabular-nums}
+.zero-native-statistical-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(prefers-reduced-motion:reduce){.zero-native-statistical-plot *{animation:none!important;transition:none!important}}

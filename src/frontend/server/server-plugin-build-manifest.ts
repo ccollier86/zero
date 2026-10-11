@@ -30,6 +30,8 @@ export function admitAppFrontendBuildManifest(value: unknown): AppFrontendBuildM
   if (manifest.version !== 1 || !manifest.frontend || !isRecord(manifest.frontend.plugins) || !isRecord(manifest.pluginIdentities)) throw invalid('The compiled frontend artifact has an unsupported shape/version.');
   if (manifest.frontend.clientEntry !== undefined && !isBuildUrl(manifest.frontend.clientEntry)) throw invalid('Compiled client entry URL is invalid.');
   if (manifest.frontend.cssPath !== undefined && !isBuildUrl(manifest.frontend.cssPath)) throw invalid('Compiled platform stylesheet URL is invalid.');
+  if (manifest.frontend.themeFoundation !== undefined && !['legacy', 'next'].includes(manifest.frontend.themeFoundation)) throw invalid('Compiled theme foundation selection is invalid.');
+  if (manifest.frontend.themeFoundation === 'next' && manifest.frontend.cssPath === undefined) throw invalid('The next theme foundation requires a compiled platform stylesheet.');
   if (manifest.frontend.pluginSsrRuntime !== undefined && !['app', 'bundled'].includes(manifest.frontend.pluginSsrRuntime)) throw invalid('Compiled plugin SSR runtime selection is invalid.');
   for (const [name, plugin] of Object.entries(manifest.frontend.plugins)) {
     const publicBasePath = `/_build/plugins/${pluginBuildNamespace(name)}`;

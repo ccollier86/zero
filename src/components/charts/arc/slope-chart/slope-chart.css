@@ -1,0 +1,77 @@
+/** Arc Free (MIT), copyright 2026 Elia Kuratli. Scoped chart skin; consumes Zero Arc token aliases. */
+.zero-arc-slope-chart__figure { position: relative; display: grid; min-width: 0; margin: 0; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); letter-spacing: var(--zero-arc-tracking-body); }
+
+/* Categorical series inherit Zero chart-family colors, with scoped private overrides. */
+
+.zero-arc-slope-chart__stage { position: relative; min-width: 0; outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.zero-arc-slope-chart__columns { position: relative; height: 28px; }
+.zero-arc-slope-chart__column { position: absolute; top: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); line-height: 20px; white-space: nowrap; }
+
+.zero-arc-slope-chart__plot { position: relative; }
+.zero-arc-slope-chart__svg { display: block; overflow: visible; }
+.zero-arc-slope-chart__axis { stroke: var(--zero-arc-border, var(--zero-chart-border, var(--border))); stroke-width: 1; shape-rendering: crispEdges; }
+
+/* Every line is one neutral ink; the story item takes the first series (derived from the accent) and the item in focus comes forward. */
+.zero-arc-slope-chart__item { --ink: color-mix(in oklab, var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))) 36%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); transition: opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-slope-chart__item[data-accent] { --ink: var(--zero-arc-series-1, var(--zero-chart-blue)); }
+.zero-arc-slope-chart__item[data-on]:not([data-accent]) { --ink: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }
+.zero-arc-slope-chart__item[data-dim] { opacity: .14; }
+.zero-arc-slope-chart__line { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; fill: none; transition: stroke var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-slope-chart__dot { fill: var(--ink); stroke: var(--zero-arc-surface, var(--zero-chart-surface, var(--card))); stroke-width: 2; transform-box: fill-box; transform-origin: center; transition: fill var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-slope-chart__leader { fill: none; stroke: var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border))); stroke-width: 1; }
+
+.zero-arc-slope-chart__labels { transition: opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-slope-chart__labels[data-dim] { opacity: .3; }
+.zero-arc-slope-chart__start, .zero-arc-slope-chart__end { position: absolute; top: 0; display: flex; height: 20px; align-items: center; gap: 8px; margin-top: -10px; font-size: var(--zero-arc-text-sm); line-height: 20px; white-space: nowrap; pointer-events: none; }
+.zero-arc-slope-chart__start { justify-content: flex-end; max-width: 100%; }
+/* On a phone the labels step down a size so the longest names fit beside the first column instead of running off the edge. */
+.zero-arc-slope-chart__stage[data-narrow] .zero-arc-slope-chart__start, .zero-arc-slope-chart__stage[data-narrow] .zero-arc-slope-chart__end { gap: 6px; font-size: var(--zero-arc-text-xs); }
+.zero-arc-slope-chart__name { min-width: 0; overflow: hidden; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); text-overflow: ellipsis; }
+.zero-arc-slope-chart__value { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-variant-numeric: tabular-nums; }
+.zero-arc-slope-chart__labels[data-on] .zero-arc-slope-chart__name, .zero-arc-slope-chart__labels[data-accent] .zero-arc-slope-chart__name { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); }
+/* Only the story item is medium; the item in focus changes color, not weight, so its label never shifts sideways. */
+.zero-arc-slope-chart__labels[data-accent] .zero-arc-slope-chart__value { font-weight: 500; }
+
+.zero-arc-slope-chart__rank { display: inline-flex; min-width: 30px; align-items: center; gap: 2px; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); font-variant-numeric: tabular-nums; }
+.zero-arc-slope-chart__rank[data-move="up"] { color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); }
+.zero-arc-slope-chart__rankSwap { position: relative; display: inline-flex; overflow: hidden; }
+
+.zero-arc-slope-chart__tooltip { position: absolute; top: 0; left: 0; z-index: 2; display: grid; min-width: 168px; max-width: min(240px, 100%); gap: 3px; padding: 10px 12px; border: 1px solid var(--zero-arc-border, var(--zero-chart-border, var(--border))); border-radius: 14px; background: var(--zero-arc-surface-raised, var(--card)); box-shadow: var(--zero-arc-shadow-floating, var(--zero-chart-inspector-shadow)); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), scale var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-slope-chart__stage[data-active] .zero-arc-slope-chart__tooltip { opacity: 1; scale: 1; }
+.zero-arc-slope-chart__tipTitle { margin: 0 0 2px; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-sm); font-weight: 500; line-height: var(--zero-arc-leading-body); white-space: nowrap; }
+.zero-arc-slope-chart__tipRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; font-size: var(--zero-arc-text-sm); line-height: 1.3; }
+.zero-arc-slope-chart__tipName { color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); }
+.zero-arc-slope-chart__tipValue { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-weight: 500; font-variant-numeric: tabular-nums; }
+.zero-arc-slope-chart__tipMeta { margin: 2px 0 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; }
+
+.zero-arc-slope-chart__message { display: grid; min-height: 160px; place-items: center; margin: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); }
+.zero-arc-slope-chart__srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zero-arc-slope-chart__item, .zero-arc-slope-chart__line, .zero-arc-slope-chart__dot, .zero-arc-slope-chart__labels, .zero-arc-slope-chart__tooltip { transition: none; }
+}
+
+/* Zero owns the inspector portal; preserve analytical rows while normalizing its shared card surface. */
+.zero-tooltip.zero-arc-slope-chart__tooltip {
+ --zero-tooltip-background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ --zero-tooltip-foreground:var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground)));
+ --zero-tooltip-border:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ --zero-tooltip-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius, 10px));
+ --zero-tooltip-padding-inline:0px; --zero-tooltip-padding-block:0px;
+ --zero-tooltip-shadow:var(--zero-arc-inspector-shadow, var(--zero-chart-inspector-shadow));
+ position:relative;top:auto;left:auto;opacity:1;scale:1;z-index:auto;
+ max-width:min(var(--zero-arc-inspector-max-width, var(--zero-chart-inspector-max-width, 260px)),calc(100vw - 16px),max(0px,var(--radix-tooltip-content-available-width,100vw)));
+ min-width:min(160px,calc(100vw - 16px));padding:var(--zero-arc-inspector-padding, var(--zero-chart-inspector-padding,9px 12px));
+ border-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius,10px));
+ background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ border-color:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ box-shadow:var(--zero-arc-inspector-shadow,var(--zero-chart-inspector-shadow));
+ pointer-events:none;
+}
+.zero-arc-slope-chart__tooltip > .zero-tooltip-body {padding:0;}
+.zero-arc-slope-chart__tooltip > .zero-tooltip-body > div {display:grid;gap:3px;}
+.zero-arc-slope-chart__plot:focus-visible,.zero-arc-slope-chart__stage:focus-visible {
+ outline:var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--foreground));
+ outline-offset:var(--zero-chart-focus-offset,2px);
+}
+.zero-arc-slope-chart__plot,.zero-arc-slope-chart__stage {isolation:isolate;}

@@ -110,3 +110,10 @@ records these bounded checks and remaining gates.
 - [Lifecycle](./lifecycle.md) describes corrected close ownership.
 - [Implementation plan](../../_work/modal-system-redesign-plan.md) owns the detailed
   phases, source findings, compatibility decisions and completion checklist.
+- [Shared scroll adoption](../../_work/arc-scroll-surface-plan.md) records the
+  remaining managed body/panel/navigation decoration, with retained positions
+  and header/footer outside masks. This coverage is planned, not already complete.
+- [Managed drawers and BottomSheet](../../_work/drawer-bottom-sheet-system-plan.md)
+  defines the proposed drawer facade and detents over coordinated modality
+  ownership. Existing Sheet and bottom-placed modals are preserved; no second
+  global lifecycle or automatic Sidebar replacement is planned.

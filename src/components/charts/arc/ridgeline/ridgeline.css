@@ -1,0 +1,84 @@
+/** Arc Free (MIT), copyright 2026 Elia Kuratli. Scoped chart skin; consumes Zero Arc token aliases. */
+.zero-arc-ridgeline__figure { display: grid; min-width: 0; margin: 0; color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-family: var(--zero-arc-font-body, var(--zero-chart-font-family, var(--font-platform-sans, ui-sans-serif, system-ui, sans-serif))); letter-spacing: var(--zero-arc-tracking-body); }
+
+/* Categorical series inherit Zero chart-family colors, with scoped private overrides. */
+
+.zero-arc-ridgeline__plot { position: relative; min-width: 0; outline: none; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; cursor: crosshair; }
+.zero-arc-ridgeline__svg { position: absolute; inset: 0; display: block; overflow: visible; }
+
+/* Ridges are opaque, so each one hides the valleys of the row behind it. */
+.zero-arc-ridgeline__ridge { transition: opacity var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__fill { fill: color-mix(in oklab, var(--ridge) 34%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); stroke: none; transition: fill var(--zero-arc-duration-considered) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__line { fill: none; stroke: var(--ridge); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; transition: stroke var(--zero-arc-duration-considered) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__median { stroke: color-mix(in oklab, var(--ridge) 55%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); stroke-width: 1; transition: stroke var(--zero-arc-duration-considered) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__plot[data-active] .zero-arc-ridgeline__ridge[data-dim] { opacity: .38; }
+.zero-arc-ridgeline__ridge[data-lifted] { opacity: 0; transition-duration: var(--zero-arc-duration-instant); }
+
+/* The lifted ridge is a copy drawn above the rest, so it can rise over its neighbours. */
+.zero-arc-ridgeline__lens { opacity: 0; pointer-events: none; transform: translateY(0); transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), transform var(--zero-arc-duration-spring) var(--zero-arc-ease-spring, var(--ease-spring, cubic-bezier(.22,1,.36,1))); }
+.zero-arc-ridgeline__lens[data-on] { opacity: 1; transform: translateY(-6px); }
+.zero-arc-ridgeline__lensFill { fill: color-mix(in oklab, var(--ridge) 18%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); stroke: none; }
+.zero-arc-ridgeline__lensBand { fill: color-mix(in oklab, var(--ridge) 48%, var(--zero-arc-surface, var(--zero-chart-surface, var(--card)))); stroke: none; }
+.zero-arc-ridgeline__lensMedian { stroke: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); stroke-width: 1.5; stroke-linecap: round; }
+.zero-arc-ridgeline__lensLine { fill: none; stroke: var(--ridge); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; }
+
+.zero-arc-ridgeline__ticks { position: absolute; top: 0; right: 0; left: 0; pointer-events: none; }
+.zero-arc-ridgeline__tick { position: absolute; bottom: 0; left: 0; width: 1px; background: var(--zero-arc-border-subtle, var(--zero-chart-grid, var(--border))); will-change: transform; animation: zero-arc-ridgeline-tickIn var(--zero-arc-duration-standard) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__tickLabel { position: absolute; bottom: 0; left: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; translate: -50% 0; }
+@keyframes zero-arc-ridgeline-tickIn { from { opacity: 0; } }
+
+.zero-arc-ridgeline__crosshair { position: absolute; left: 0; width: 1px; background: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); opacity: 0; pointer-events: none; transition: opacity var(--zero-arc-duration-instant) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__plot[data-cursor] .zero-arc-ridgeline__crosshair { opacity: .35; }
+
+.zero-arc-ridgeline__labels { position: absolute; inset: 0; pointer-events: none; }
+.zero-arc-ridgeline__rowLabel { position: absolute; left: 0; overflow: hidden; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: 18px; text-overflow: ellipsis; white-space: nowrap; transition: color var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__rowLabel[data-active] { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-weight: 500; }
+
+.zero-arc-ridgeline__message { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-sm); pointer-events: none; }
+
+.zero-arc-ridgeline__tooltip { position: absolute; top: 0; left: 0; z-index: 2; display: grid; min-width: 170px; max-width: min(240px, 100%); gap: 2px; padding: 10px 12px; border: 1px solid var(--zero-arc-border, var(--zero-chart-border, var(--border))); border-radius: 14px; background: var(--zero-arc-surface-raised, var(--card)); box-shadow: var(--zero-arc-shadow-floating, var(--zero-chart-inspector-shadow)); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--zero-arc-duration-fast) var(--zero-arc-ease-standard), scale var(--zero-arc-duration-fast) var(--zero-arc-ease-standard); }
+.zero-arc-ridgeline__plot[data-active] .zero-arc-ridgeline__tooltip { opacity: 1; scale: 1; }
+.zero-arc-ridgeline__tipTitle { margin: 0 0 2px; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); }
+.zero-arc-ridgeline__tipValue, .zero-arc-ridgeline__tipRow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.zero-arc-ridgeline__tipValue { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-sm); font-weight: 500; line-height: 1.4; }
+.zero-arc-ridgeline__tipRow { color: var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); }
+.zero-arc-ridgeline__tipKey { color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-weight: 400; }
+.zero-arc-ridgeline__tipValue .zero-arc-ridgeline__tipKey { font-size: var(--zero-arc-text-xs); }
+.zero-arc-ridgeline__tipNote { margin: 4px 0 0; color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; }
+
+.zero-arc-ridgeline__scale { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: var(--zero-arc-space-3); color: var(--zero-arc-text-muted, var(--zero-chart-muted, var(--muted-foreground))); font-size: var(--zero-arc-text-xs); line-height: var(--zero-arc-leading-body); font-variant-numeric: tabular-nums; }
+.zero-arc-ridgeline__scaleLabel { margin-right: 4px; color: var(--zero-arc-text-secondary, var(--zero-chart-secondary, var(--muted-foreground))); }
+.zero-arc-ridgeline__steps { display: inline-flex; gap: 2px; }
+.zero-arc-ridgeline__step { width: 18px; height: 10px; border-radius: 3px; background: var(--ridge); }
+
+.zero-arc-ridgeline__srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zero-arc-ridgeline__ridge, .zero-arc-ridgeline__lens, .zero-arc-ridgeline__crosshair, .zero-arc-ridgeline__tooltip, .zero-arc-ridgeline__rowLabel { transition: none; }
+  .zero-arc-ridgeline__tick { animation: none; }
+}
+
+/* Zero owns the inspector portal; preserve analytical rows while normalizing its shared card surface. */
+.zero-tooltip.zero-arc-ridgeline__tooltip {
+ --zero-tooltip-background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ --zero-tooltip-foreground:var(--zero-arc-foreground, var(--zero-chart-foreground, var(--foreground)));
+ --zero-tooltip-border:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ --zero-tooltip-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius, 10px));
+ --zero-tooltip-padding-inline:0px; --zero-tooltip-padding-block:0px;
+ --zero-tooltip-shadow:var(--zero-arc-inspector-shadow, var(--zero-chart-inspector-shadow));
+ position:relative;top:auto;left:auto;opacity:1;scale:1;z-index:auto;
+ max-width:min(var(--zero-arc-inspector-max-width, var(--zero-chart-inspector-max-width, 260px)),calc(100vw - 16px),max(0px,var(--radix-tooltip-content-available-width,100vw)));
+ min-width:min(160px,calc(100vw - 16px));padding:var(--zero-arc-inspector-padding, var(--zero-chart-inspector-padding,9px 12px));
+ border-radius:var(--zero-arc-inspector-radius, var(--zero-chart-inspector-radius,10px));
+ background:var(--zero-arc-surface-raised, var(--zero-chart-surface, var(--card)));
+ border-color:var(--zero-arc-border-strong, var(--zero-chart-border-strong, var(--border)));
+ box-shadow:var(--zero-arc-inspector-shadow,var(--zero-chart-inspector-shadow));
+ pointer-events:none;
+}
+.zero-arc-ridgeline__tooltip > .zero-tooltip-body {padding:0;}
+.zero-arc-ridgeline__tooltip > .zero-tooltip-body > div {display:grid;gap:3px;}
+.zero-arc-ridgeline__plot:focus-visible,.zero-arc-ridgeline__stage:focus-visible {
+ outline:var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--foreground));
+ outline-offset:var(--zero-chart-focus-offset,2px);
+}
+.zero-arc-ridgeline__plot,.zero-arc-ridgeline__stage {isolation:isolate;}

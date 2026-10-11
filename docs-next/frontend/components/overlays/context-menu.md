@@ -8,15 +8,15 @@ visibility: internal
 system: frontend-components
 feature: context-menu
 maturity: supported
-applies_to: ["Zero 2.4.0 Context Menu; not in the older 2.3.0 archive"]
+applies_to: ["2.6.0 working source; Arc viewport adoption unreleased; original family available since 2.4.0"]
 modes: [browser, SSR, pointer, keyboard, touch, RTL]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.4.0"
-  commit: "fdba48af9dcbab96ddeb3aa3b49f070a8c8a81a6"
-  snapshot: clean
-  date: "2026-10-06"
-  evidence_level: implementation-verified
+  version: "2.6.0"
+  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  snapshot: dirty
+  date: "2026-10-11"
+  evidence_level: source-observed
 ---
 
 # Context Menu
@@ -30,8 +30,9 @@ destructive color and restrained entrance animation use Zero's
 [design tokens](../../design-system/index.md).
 
 **Availability:** Context Menu is included in Zero 2.4.0, not the older 2.3.0
-archive. Update before using these public imports. It leaves the existing
-DropdownMenu and RadialMenu families unchanged.
+archive. The additional viewport part and Arc/native choice described below
+belong to unreleased 2.6.0 working source, not the historical 2.4.0 package.
+The existing DropdownMenu and RadialMenu families remain separate.
 
 Use ContextMenu for a row, file, canvas item or another focused target.
 Keep a visible action/overflow alternative for touch users and discoverability;
@@ -169,38 +170,125 @@ All options are React props evaluated locally.
 | --- | --- |
 | `ContextMenu` | Native root `onOpenChange`, `dir`, `modal` (native default true). Its root is uncontrolled; no `open` or `defaultOpen` prop is invented. |
 | `ContextMenuTrigger` | Native trigger handlers/ref, `asChild`, `disabled`; Zero adds keyboard opening and default tabIndex0 for enabled targets. |
-| `ContextMenuContent` | Native content/focus/collision props; automatic `portal=true`, optional `container`, `forceMount`; `collisionPadding=8`. Pointer placement belongs to Radix, not unsupported root `side`/`align` props. |
+| `ContextMenuContent` | Native content/focus/collision props; automatic `portal=true`, optional `container`, `forceMount`; `collisionPadding=8`. Standard content adds one inner Arc viewport by default; outer native ref and lifecycle handlers stay on the menu. Pointer placement belongs to Radix, not unsupported root `side`/`align` props. |
 | `ContextMenuItem` | Native action props/ref including `disabled`, `textValue`, `onSelect`, `asChild`; `variant=default` or destructive; `icon`, `endAdornment`, `inset`. |
 | `ContextMenuCheckboxItem` | Native checked/change/select/ref props; same adornments, `inset`, `indicatorPosition=left`. |
 | `ContextMenuRadioGroup` | Native value/defaultValue/onValueChange/ref props. |
 | `ContextMenuRadioItem` | Native value/disabled/select/ref props; same adornments, `inset`, `indicatorPosition=left`. |
 | `ContextMenuSub` | Native submenu `open/defaultOpen/onOpenChange`; this controlled contract is distinct from the root. |
 | `ContextMenuSubTrigger` | Native handlers/ref, disabled/asChild, adornments/inset and automatic chevron. |
-| `ContextMenuSubContent` | Native offsets/collision props; automatic portal, container/forceMount; `sideOffset=4`, `collisionPadding=8`. Side/direction follow Radix; unsupported side/align overrides are not added. |
+| `ContextMenuSubContent` | Native offsets/collision props; automatic portal, container/forceMount; `sideOffset=4`, `collisionPadding=8`. Own inner Arc viewport, independent from its parent menu. Side/direction follow Radix; unsupported side/align overrides are not added. |
+| `ContextMenuViewport` | Explicit native-div part for custom `asChild` content; ref, scroll and native HTML handlers address this viewport. No added tab stop, focus region or selection controller. |
 | `ContextMenuPortal` | Explicit native portal, container and forceMount; use content `portal={false}` inside it. |
 | `ContextMenuGroup`, `Label`, `Separator` | Native semantic parts/ref; label inset optional; separator color is theme-token/className configurable. |
 | `ContextMenuShortcut` | Native span props/ref, trailing display only. |
 | `ContextMenuItemIndicator` | Native optional/custom checkable-item indicator. |
 | `ContextMenuArrow` | Optional native arrow with popover fill; native size props remain available. |
 
-Content is bounded by the available viewport height and width, scrolls inside
-its own surface, and defaults to a 12rem minimum / 24rem maximum width subject
-to available space. Use `className` to adjust dimensions while keeping overflow,
-focus, contrast and collision behavior. Menus animate their entrance for 120ms;
+Content is bounded by the available viewport height and width and defaults to a
+12rem minimum / 24rem maximum width subject to available space. Standard Arc
+content scrolls its inner viewport, keeping the outer border, shadow and Radix
+placement outside the fade. Use `className` for the frame and
+`viewportClassName`/`viewportStyle` for its body. The standard 4px menu inset now
+belongs to the inner viewport so full-width separators cannot create false
+horizontal overflow. Put body padding overrides on that viewport; custom outer
+padding remains additional frame spacing and is not automatically moved.
+The native branch keeps the original outer padding. Menus animate their entrance for 120ms;
 reduced-motion preference removes that entrance movement. Closing follows the
 native unmount lifecycle immediately rather than delaying focus with an exit
 animation. Portal rendering is SSR-safe; interactive targets must hydrate.
+Existing item highlights remain unchanged; this adoption does not replace them
+with the Select/Dropdown magnetic recipe.
+
+## Scroll Treatment And Custom Content
+
+`ContextMenuContent` and `ContextMenuSubContent` share
+`ContextMenuScrollOptions`. `ContextMenuViewportProps` is the explicit part's
+native-div contract, not another menu surface.
+
+| Option | Default and ownership |
+| --- | --- |
+| `scrollTreatment` | `arc`; `native` selects the unchanged original content engine and outer native scrolling. |
+| `orientation` | `both`; `vertical` or `horizontal` constrains the standard viewport to that axis. |
+| `fadeEdges` | `true`; actual hidden distance controls each edge independently. Fitting content has no fade. |
+| `scrollbars` | `hover`; also `scroll`, `always` or `hidden`. Rails appear only on overflowing axes; hidden rails do not disable fades or native scrolling. |
+| `viewportRef` | Ref to the standard inner native div; content `ref` still reaches the outer menu. |
+| `viewportClassName`, `viewportStyle` | Standard viewport presentation, distinct from frame props. |
+
+The shared treatment uses [Arc edge fades and overlay rails](../primitives/scroll-area.md)
+without nesting another scroller. Paging, snap-safe thumb drag and native RTL
+scrolling use the private shared viewport adapter. It does not fetch items,
+change typeahead, select a clipped row or snap all rows fully into view.
+
+An opaque `asChild` host is not automatically wrapped or searched for a guessed
+scroll owner. It retains native scrolling; compose `ContextMenuViewport` as a
+direct child of the semantic host to opt in explicitly. The child must forward
+native props and its ref as required by Radix. Put frame dimensions on that host
+and viewport dimensions/handlers on the explicit part. Standard content's
+`viewport*` options do not reconfigure a separately authored part.
+The explicit part is intentionally unpadded. For the standard inset and original
+negative-margin separators, give it `className="p-1"` and set the outer content
+to `className="p-0"`; frame/body overrides otherwise remain caller-owned.
+Inside a managed owner, its reserved marker, floating layer and inactive-input
+guards also take precedence over direct-child props. A custom component must
+forward those native props/ref and must not overwrite them internally; other
+child content, handlers, identity and styling remain caller-owned.
+
+```tsx
+import {
+  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuViewport,
+  ContextMenuLabel, ContextMenuItem,
+} from '@zero/framework/components/context-menu';
+
+export function CustomScrollableActions({ actions }: {
+  actions: { id: string; label: string; run: () => void }[];
+}) {
+  return <ContextMenu>
+    <ContextMenuTrigger className="block rounded-md border p-4">
+      Right-click for actions
+    </ContextMenuTrigger>
+    <ContextMenuContent asChild className="p-0">
+      <section className="max-h-64" aria-label="Available actions">
+        <ContextMenuViewport className="p-1" orientation="both" fadeEdges scrollbars="hover">
+          <ContextMenuLabel>Actions</ContextMenuLabel>
+          {actions.map(action => <ContextMenuItem key={action.id}
+            onSelect={action.run}>{action.label}</ContextMenuItem>)}
+        </ContextMenuViewport>
+      </section>
+    </ContextMenuContent>
+  </ContextMenu>;
+}
+```
+
+For comparison or rollback, use `scrollTreatment="native"` without the new
+viewport part. Original source files stay available until replacement testing
+and explicit retirement approval; source-copy preserves customized originals
+unless the user deliberately requests overwrite.
 
 No component automatically fetches options, registers commands, confirms a
 destructive operation or grants [Guardian authority](../../../backend/guardian/index.md).
 
 ## Portals, Dialogs And Focus Handoff
 
-Automatic portals normally mount content in the document body. Supply a
-`container` when the owning dialog/surface requires another portal location.
+Outside an owned overlay, automatic portals normally mount content in the
+document body. Arc content inside a managed modal inherits its owner's portal
+container, live theme and protected floating layer. Only an actually open menu
+registers in Zero's owned-floating-branch registry; closing releases that
+registration. A lower/inactive modal's menu is inert and cannot
+intercept input. Supply an explicit `container` to retain caller positioning;
+`portal={false}` still disables the automatic portal.
+The `native` rollback branch keeps the original manual container/layer contract
+rather than silently adopting this new owner bridge.
 For an explicit `ContextMenuPortal`, set nested content `portal={false}` to
 avoid a second portal. Use `forceMount` only when the application deliberately
-owns retained mounting/visibility; it is not an always-open setting.
+owns retained mounting/visibility; it is not an always-open setting. A closed
+force-mounted native modal menu can retain Radix's `hideOthers`, outside-scroll
+lock and dismissal layer until the caller retires it. A force-mounted submenu
+also retains its native dismissal layer. Visually hiding it or releasing Zero's branch
+registration is not equivalent to native unmount. Retire explicit retention
+after its intended exit before relying on the parent's Escape/accessibility
+handoff. New viewport rails become inactive while closed; the scroll adapter
+does not rewrite those retained native modal semantics.
 
 When a menu command opens another overlay, coordinate that command with
 `ContextMenuContent.onCloseAutoFocus`. Opening an editor while the old menu
@@ -247,6 +335,9 @@ Escape/outside dismissal and focus return, checkbox/radio changes, disabled
 items, nested menus, RTL, collision edges and long-menu scrolling. Test dialog
 handoff in the composition actually used by the app. The isolated regression
 fixture uses synthetic controls and callbacks, not live files or user accounts.
+The [bounded adoption ledger](../../../_work/arc-scroll-surface-plan.md)
+records current original-byte, browser, copied-source and installed-package
+qualification separately from the wider surface queue.
 
 This is an additive public family, not a replacement or behavioral change for
 the existing dropdown/radial menus. There is no database migration or app-wide

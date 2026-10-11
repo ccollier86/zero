@@ -1,0 +1,26 @@
+'use client';
+/** Owned SVG histogram organism. Pure bin memberships power exact tables/inspectors; no chart engine or database calls. */
+import{useMemo,type ReactNode}from"react";
+import{motion}from"motion/react";
+import{NativeChartFrame,NativeChartInspector,NativeChartDataTable,nativeColor}from"../shared/native-chart";
+import{buildHistogramModel,type HistogramObservation,type HistogramBinning,type HistogramMeasure,type HistogramBin,type HistogramModel}from"./histogram-model";
+import{statFraction}from"./statistical-admission";
+import{statisticalY}from"./statistical-geometry";
+import{useStatisticalPlot,StatisticalGrid,StatisticalReveal,StatisticalBar,StatisticalInspectorRows,type StatisticalChartProps}from"./statistical-plot";
+export interface HistogramTooltipContext{bin:HistogramBin;model:HistogramModel}
+export interface HistogramChartProps extends StatisticalChartProps{observations:readonly HistogramObservation[];binning?:HistogramBinning;measure?:HistogramMeasure;renderTooltip?:(context:HistogramTooltipContext)=>ReactNode}
+/** Configurable honest bins; custom tooltip undefined uses the standard inspector and null suppresses it. */
+export function HistogramChart(props:HistogramChartProps){
+ const model=useMemo(()=>buildHistogramModel(props.observations,props.binning,props.measure),[props.observations,props.binning,props.measure]),plot=useStatisticalPlot(model.bins.map(bin=>bin.id),props),{bounds,activeId,format}=plot,maximum=Math.max(...model.bins.map(bin=>bin.value),0),domain=[0,maximum||1]as const;
+ const geometry=(bin:HistogramBin)=>{const x=bounds.left+statFraction(bin.start,model.domain)*bounds.innerWidth,end=bounds.left+statFraction(bin.end,model.domain)*bounds.innerWidth,y=statisticalY(bin.value,domain,bounds);return{x:x+1,y,width:Math.max(0,end-x-2),height:bounds.top+bounds.innerHeight-y};},active=model.bins.find(bin=>bin.id===activeId),rect=active?geometry(active):null,custom=active?props.renderTooltip?.({bin:active,model}):undefined,interval=(bin:HistogramBin)=>(bin.includesStart?"[":"(")+format(bin.start)+", "+format(bin.end)+(bin.includesEnd?"]":")");
+ const content=active?(custom===undefined?<StatisticalInspectorRows title={interval(active)}value={format(active.value)}rows={[["Observations",active.count],["Share of all",model.total?(active.count/model.total*100).toFixed(1)+"%":"—"],["Measure",model.measure]]}/>:custom):null,observationsById=new Map(model.observations.map(observation=>[observation.id,observation.value]));
+ return<NativeChartFrame label={props.label}title={props.title}subtitle={props.subtitle}className={props.className}motion={props.motion}summary={`${model.total} observations; ${model.included} inside bins; ${model.underflow} below; ${model.overflow} above.`}footer={<span>{model.total.toLocaleString()} observations · {model.bins.length} bins{model.underflow+model.overflow>0?` · ${model.underflow} below / ${model.overflow} above`:""}</span>}>
+  <div {...plot.stageProps}className="zero-native-statistical-plot"data-statistical-chart="histogram"data-motion={plot.environment.reduced?"off":"on"}>
+   <svg width="100%"height={bounds.height}viewBox={`0 0 ${bounds.width} ${bounds.height}`}aria-hidden="true"><StatisticalGrid bounds={bounds}domain={domain}format={format}/><StatisticalReveal ready={plot.environment.inView}reduced={plot.environment.reduced}>{model.bins.map((bin,index)=>{const r=geometry(bin);return<g key={bin.id}data-mark-id={bin.id}{...plot.activate(bin.id)}><StatisticalBar rect={r}color={nativeColor(0)}active={activeId===bin.id}transition={plot.transition}/><motion.line className="zero-native-statistical-edge"initial={false}animate={{x1:r.x,x2:r.x+r.width,y1:r.y,y2:r.y}}transition={plot.transition}style={{stroke:nativeColor(0)}}/><rect className="zero-native-statistical-hit"x={r.x}y={bounds.top}width={Math.max(0,r.width)}height={bounds.innerHeight}/>{(index===0||index===model.bins.length-1||index%Math.max(1,Math.ceil(model.bins.length/6))===0)&&<text className="zero-native-statistical-label"x={r.x}y={bounds.height-13}>{format(bin.start)}</text>}</g>;})}</StatisticalReveal></svg>
+   {!model.total&&<div className="zero-native-statistical-empty">No observations yet</div>}
+   <NativeChartInspector open={!!active&&bounds.innerWidth>0&&plot.environment.visible}point={rect?[rect.x+rect.width/2,rect.y]:[0,0]}content={content}onDismiss={()=>plot.select(null)}/>
+   <span className="zero-native-statistical-sr"aria-live="polite">{active?`${interval(active)}, ${active.count} observations, ${format(active.value)} ${model.measure}`:""}</span>
+  </div>
+  {<NativeChartDataTable label={props.label}columns={["Interval","Count",model.measure,"Observation IDs","Observation values"]}rows={[...model.bins.map(bin=>[(bin.includesStart?"[":"(")+bin.start+", "+bin.end+(bin.includesEnd?"]":")"),bin.count,bin.value,bin.observationIds.join(", "),bin.observationIds.map(id=>observationsById.get(id)).join(", ")]),...(["below","above"]as const).flatMap(side=>{const outside=model.observations.filter(observation=>side==="below"?observation.value<model.domain[0]:observation.value>model.domain[1]);return outside.length?[[side==="below"?"Below domain":"Above domain",outside.length,"Not binned",outside.map(observation=>observation.id).join(", "),outside.map(observation=>observation.value).join(", ")]]:[];})]}/>}
+ </NativeChartFrame>;
+}
