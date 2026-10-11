@@ -83,6 +83,7 @@ test('packed theme backing defaults to next CSS and checks sources without impor
     expect(result.browserAppShell).toBe(true);
     expect(result.browserControls).toBe(true);
     expect(result.dateTimeSsr).toBe(true);
+    expect(result.organizedIdentityFailures).toEqual([]);
     expect(result.organizedIdentity).toBe(true);
     expect(result.runtimeSetups).toBe(0);
     expect(result.databaseFiles).toBe(0);
@@ -232,20 +233,22 @@ const dateTimeHtml = renderToString(dateTimeControls);
 const dateTimeSsr = ['data-slot="calendar"','data-slot="date-picker-trigger"','data-slot="date-range-picker-trigger"','name="meeting-time"','value="09:30"'].every(value=>dateTimeHtml.includes(value));
 const identities = [
   ['src/components/ui/calendar.tsx','src/components/controls/date-time/calendar.tsx','Calendar'],
-  ['src/components/ui/date-picker.tsx','src/components/controls/date-time/date-picker.tsx','DatePicker'],
+  ['src/components/ui/date-picker.tsx','src/components/controls/date-time/date-picker-scroll.tsx','DatePicker'],
   ['src/components/ui/date-range-picker.tsx','src/components/controls/date-time/date-range-picker.tsx','DateRangePicker'],
   ['src/components/ui/time-picker.tsx','src/components/controls/date-time/time-picker.tsx','TimePicker'],
   ['src/components/popover/index.ts','src/components/surfaces/popover/index.ts','Popover'],
   ['src/components/overlays/overlay-scope.tsx','src/components/_internal/overlay-scope/overlay-scope.tsx','OverlayScopeProvider'],
 ];
-const organizedIdentity = (await Promise.all(identities.map(async ([oldPath,newPath,name])=>{
+const identityChecks = await Promise.all(identities.map(async ([oldPath,newPath,name])=>{
   const [oldModule,newModule]=await Promise.all([import(join(installed,oldPath)),import(join(installed,newPath))]);
-  return oldModule[name]!==undefined && oldModule[name]===newModule[name];
-}))).every(Boolean);
+  return {oldPath,newPath,name,matches:oldModule[name]!==undefined && oldModule[name]===newModule[name]};
+}));
+const organizedIdentityFailures = identityChecks.filter(check=>!check.matches);
+const organizedIdentity = organizedIdentityFailures.length===0;
 console.log(JSON.stringify({ foundation:prepared.frontend.themeFoundation, cssScoped:css.includes('[data-zero-theme="next"]'),
   managedDefault:prepared.config.themeFoundation, explicitLegacy:resolveConfig({db:{mode:'ephemeral'},tables:{},themeFoundation:'legacy'}).themeFoundation,
   parity:supplement===renderThemeFoundationCss(), roles:getThemeTokenCatalog().length, runtimeSetups, databaseFiles,
-  defaultShellHtml:renderToString(defaultShell), legacyShellHtml:renderToString(legacyShell), stylesApplicationEntry, stylesApplicationImports, stylesLegacyEntry, browserAppShell, browserControls, dateTimeSsr, organizedIdentity,
+  defaultShellHtml:renderToString(defaultShell), legacyShellHtml:renderToString(legacyShell), stylesApplicationEntry, stylesApplicationImports, stylesLegacyEntry, browserAppShell, browserControls, dateTimeSsr, organizedIdentity, organizedIdentityFailures,
   browserBytes:browser.outputs.reduce((sum,item)=>sum+item.size,0), environmentNotLoaded:process.env.THEME_CONFIG_TRIPWIRE===undefined,
   html:renderToString(React.createElement('section',null,React.createElement(Heading,{as:'h1',variant:'page'},'Theme backing'),React.createElement(Text,{variant:'support'},'Scoped presentation'))) }));
 `;
