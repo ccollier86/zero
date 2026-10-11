@@ -61,16 +61,18 @@ export async function checkSourceOnlyCharts(files: readonly SourceOnlyFile[], ta
         const opening = ts.isJsxElement(node) ? node.openingElement : node;
         if (!ts.isJsxNamespacedName(opening.tagName)) {
           const binding = graph.expression(module, opening.tagName);
-          const candidates = binding.kind === 'named' && !binding.typeOnly && binding.specifier === 'recharts' ? replacements[binding.name] : undefined;
-          if (candidates && !reported.has(binding.name)) {
-            reported.add(binding.name);
-            const inspected = await Promise.all(candidates.map(available));
-            const known = candidates.filter((_, index) => inspected[index] === 'available');
-            add(opening.tagName, usageRule.code,
-              `A rendered Recharts ${binding.name} is a chart-migration candidate, not an unsupported API.`,
-              known.length
-                ? `Verified replacement candidates: ${known.join(', ')}. Map the actual data model, dimensions, grouping, null/negative values, interaction and query projection explicitly. Existing custom callbacks and server authority remain app-owned.`
-                : 'No matching replacement was verified in the inspected target. Keep this implementation and review the chart catalog; compatible legacy usage is not a migration error.');
+          if (binding.kind === 'named' && !binding.typeOnly && binding.specifier === 'recharts') {
+            const candidates = replacements[binding.name];
+            if (candidates && !reported.has(binding.name)) {
+              reported.add(binding.name);
+              const inspected = await Promise.all(candidates.map(available));
+              const known = candidates.filter((_, index) => inspected[index] === 'available');
+              add(opening.tagName, usageRule.code,
+                `A rendered Recharts ${binding.name} is a chart-migration candidate, not an unsupported API.`,
+                known.length
+                  ? `Verified replacement candidates: ${known.join(', ')}. Map the actual data model, dimensions, grouping, null/negative values, interaction and query projection explicitly. Existing custom callbacks and server authority remain app-owned.`
+                  : 'No matching replacement was verified in the inspected target. Keep this implementation and review the chart catalog; compatible legacy usage is not a migration error.');
+            }
           }
         }
       }

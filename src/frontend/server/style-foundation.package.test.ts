@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { SOURCE_ONLY_UPGRADE_CATALOG_VERSION } from '../../doctor/source-only-upgrade-catalog';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const DIAGNOSTICS = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/theme-foundation';
@@ -92,7 +93,7 @@ test('packed theme backing defaults to next CSS and checks sources without impor
     expect(report.themeFoundation.bundledStyles).toBe('verified');
     expect(report.themeFoundation.reviewCounts.unresolvedCanonicalReferences).toBe(0);
     expect(report.findings.filter((finding: { severity: string }) => finding.severity === 'error')).toEqual([]);
-    expect(report.upgrade.catalogVersion).toBe(1);
+    expect(report.upgrade.catalogVersion).toBe(SOURCE_ONLY_UPGRADE_CATALOG_VERSION);
     expect(report.upgrade.target.status).toBe('installed');
     expect(report.upgrade.target.capabilities.contentCard).toBe('available');
     expect(report.upgrade.target.capabilities.dropdownInnerViewport).toBe('available');

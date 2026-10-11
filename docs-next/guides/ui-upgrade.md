@@ -162,18 +162,20 @@ From the existing Zero repository, first inspect both worktrees and local change
 git status --short
 git worktree list
 git fetch --no-tags origin feature/ui-next-upgrade
-git rev-parse origin/feature/ui-next-upgrade
-git log --oneline origin/main..origin/feature/ui-next-upgrade
+UI_NEXT_COMMIT="$(git rev-parse origin/feature/ui-next-upgrade)"
+git show --no-patch --format='%H %s' "$UI_NEXT_COMMIT"
+git log --oneline origin/main.."$UI_NEXT_COMMIT"
 ```
 
-Record the full resolved commit. Use a clean isolated checkout rather than
-packing a busy shared worktree. The following example uses a new external-volume
+Record the full resolved commit and keep the same shell for the next command.
+Use a clean isolated checkout rather than packing a busy shared worktree.
+The following example uses a new external-volume
 directory; if it already exists, inspect it and choose another unused path:
 
 ```sh
 git worktree add --detach \
   /Volumes/code-bank/code/ai-servers/zero-platform-ui-next \
-  origin/feature/ui-next-upgrade
+  "$UI_NEXT_COMMIT"
 ```
 
 In that checkout:
