@@ -13,7 +13,7 @@ modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
+  commit: "645295dd1300164d31df52e80509eaff9f6903ee"
   snapshot: dirty
   date: "2026-10-13"
   evidence_level: source-observed
@@ -37,6 +37,22 @@ captures triggers from the toolbar, empty catalog, inspector and action bar.
 Removal from a column menu uses the persistent column-heading button, not a menu
 item that disappears before the modal opens. Opening revisions, scope retirement,
 dirty guards and acknowledged writes remain controller-owned and unchanged.
+
+Table and record sessions close through manager admission/acknowledged actions,
+not by setting owner state false inside the guard or writer. Their guards return
+true for admitted departure and false for a preserved draft. In a dirty-close
+confirmation, the explicit Discard action is the manager's cancel action;
+X/Escape/backdrop continue to preserve that draft. A save returns true only after
+the existing writer acknowledges, and false on invalid, failed, stale or
+confirmation-required work. The adapter reflects owner state on settlement;
+standalone fallback hosts remain mounted until noninteractive reverse-origin
+paint finishes. Scope/target replacement and actual owner unmount still retire
+immediately. A failed synchronous or async close observer is reported safely
+without replaying the accepted write.
+
+The [Doctor lifecycle check](../../cli/doctor/source-audit.md#managed-close-lifecycle)
+detects recognizable controlled owner-state bypasses and distinguishes uncertain
+delegated guards from proven local problems.
 
 ## Table Schema
 

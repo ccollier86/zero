@@ -7,6 +7,7 @@ import ts from 'typescript';
 import type { PlatformDoctorFinding } from './platform-doctor-contracts';
 import { sourceOnlyExported, sourceOnlyOwnAlias, type SourceOnlyPackageInfo } from './source-only-package';
 import type { SourceOnlyFile } from './source-only-types';
+import { checkSourceOnlyModalLifecycle } from './source-only-modal-lifecycle';
 
 const docs = './docs-next/cli/doctor/source-audit.md#structured-modal-migration';
 const modalKeys = new Set(['title', 'meta', 'description', 'icon', 'tone', 'size', 'customSize', 'placement', 'height', 'scrollbar', 'navScrollbar',
@@ -174,6 +175,7 @@ export function checkSourceOnlyModals(input: SourceOnlyFile, installed: SourceOn
     }
   }
   visit(file);
+  findings.push(...checkSourceOnlyModalLifecycle(input, installed));
   return findings;
 }
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Browser, Page } from 'playwright';
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type PlaywrightTestBrowserLease } from '../../test-support/playwright-test-browser';
+import { expectManagedOriginExit } from '../../test-support/managed-modal-exit';
 
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 let browser: Browser, lease: PlaywrightTestBrowserLease, directory: string, script: string, css: string;
@@ -14,7 +15,7 @@ beforeAll(async () => {
   directory = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/table-dialog-browser-');
   const build = Bun.spawn([process.execPath, '--no-env-file', 'build',
     join(import.meta.dir, 'data-studio-table-dialog.browser-fixture.tsx'), '--target=browser', '--format=iife',
-    '--outfile', join(directory, 'bundle.js')], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
+    '--outdir', directory, '--entry-naming', 'bundle.[ext]'], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
   const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
   if (code !== 0) throw new Error('Table dialog fixture build failed: ' + (stderr || stdout));
   script = await Bun.file(join(directory, 'bundle.js')).text();
@@ -31,6 +32,31 @@ async function json(page: Page) {
   await page.getByRole('tab', { name: 'JSON', exact: true }).click();
   await page.getByRole('button', { name: 'Edit as text', exact: true }).waitFor();
 }
+
+for (const departure of ['cancel', 'discard', 'save'] as const) browserTest(`New table ${departure} keeps managed origin exit paint after owner settlement`, async () => {
+  const page = await open();
+  try {
+    await page.locator('[data-slot="data-studio-table-dialog-footer"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('[data-slot="data-studio-table-dialog"]'));
+    await page.evaluate(() => window.__studioDialog.create());
+    await page.getByTestId('table-origin').click();
+    const shell = page.locator('[data-slot="data-studio-table-dialog"]'); await shell.waitFor();
+    await shell.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {}))));
+    if (departure !== 'cancel') await page.getByRole('textbox', { name: 'Table name', exact: true }).fill('Synthetic new table');
+    if (departure === 'discard') {
+      await page.locator('[data-slot="data-studio-table-dialog-footer"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+      await page.getByRole('button', { name: 'Discard changes', exact: true }).waitFor();
+      await page.keyboard.press('Escape');
+      expect(await page.evaluate(() => window.__studioDialog.closes())).toBe(1);
+    }
+    const box = (await shell.boundingBox())!;
+    const label = departure === 'save' ? 'Create table' : departure === 'discard' ? 'Discard changes' : 'Cancel';
+    await page.locator('[data-slot="data-studio-table-dialog-footer"]').getByRole('button', { name: label, exact: true }).click();
+    await expectManagedOriginExit(page, 'data-studio-table-dialog', 'table-origin', box);
+    expect(await page.evaluate(() => window.__studioDialog.closes())).toBe(2);
+    expect(await page.evaluate(() => window.__studioDialog.operations().length)).toBe(departure === 'save' ? 1 : 0);
+  } finally { await page.close(); }
+}, 60_000);
 
 browserTest('opens a wide bounded builder and preserves fields and IDs across Visual/JSON round trips', async () => {
   const page = await open();
@@ -121,12 +147,14 @@ browserTest('accepted close-callback failure is observed safely and cannot resub
   try {
     await page.evaluate(() => window.__studioDialog.failClose());
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByRole('button', { name: 'Saved', exact: true }).waitFor();
-    expect(await page.getByRole('button', { name: 'Saved', exact: true }).isDisabled()).toBe(true);
+    await page.waitForFunction(() => !document.querySelector('[data-slot="data-studio-table-dialog"]'));
+    expect(await page.getByRole('button', { name: 'Save changes', exact: true }).count()).toBe(0);
     expect(await page.evaluate(() => window.__studioDialog.operations())).toHaveLength(1);
     expect(errors).toEqual([]);
     const observations = JSON.stringify(await page.evaluate(() => window.__studioDialog.observed()));
-    expect(observations).toContain('accepted-close'); expect(observations).not.toContain('Synthetic close callback rejection');
+    expect(observations).toContain('controlled-modal'); expect(observations).not.toContain('Synthetic close callback rejection');
+    await page.evaluate(() => window.__studioDialog.reopen());
+    expect(await page.locator('[data-slot="data-studio-table-dialog"]').count()).toBe(0); // still-open notification failure is not a fresh opening
   } finally { await page.close(); }
 }, 60_000);
 

@@ -4,6 +4,7 @@
 import * as React from 'react';
 import { Database, RefreshCw } from 'lucide-react';
 import { ControlledModal } from '../../modals/modal-controlled';
+import { ModalManager } from '../../modals/modal-manager';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { DataStudioRowField } from './data-studio-row-field';
@@ -17,25 +18,26 @@ export function DataStudioRowDialog(props: DataStudioRowDialogProps) {
   const lifetime = React.useRef({ key, epoch: {} });
   if (lifetime.current.key !== key) lifetime.current = { key, epoch: {} };
   const owner = lifetime.current.epoch;
-  return props.open && props.table ? <RowDialogSession key={key} {...props}
-    isOwnerCurrent={() => lifetime.current.epoch === owner} /> : null;
+  return <ModalManager recedeSurface={false}>{props.open && props.table ? <RowDialogSession key={key} {...props}
+    isOwnerCurrent={() => lifetime.current.epoch === owner} /> : null}</ModalManager>;
 }
 
 function RowDialogSession(props: DataStudioRowDialogProps & { isOwnerCurrent(): boolean }) {
   const state = useDataStudioRowDialog(props), id = React.useId(), formId = 'row-' + id;
   const columns = state.opening.schema.columns;
   const required = columns.filter(column => column.required && !Object.hasOwn(column, 'defaultValue')).length;
-  const action = (value: ModalAction): ModalAction => ({ ...value, closes: false });
+  const action = (value: ModalAction): ModalAction => ({ ...value, closes: value.closes ?? false });
   const actions: ModalAction[] = state.confirmation ? [
     action({ id: 'stay', label: 'Keep editing', variant: 'ghost', disabled: state.pending || props.busy, onClick: state.keepEditing }),
-    action({ id: 'discard', label: state.confirmation === 'reload' ? 'Discard and reload' : state.uncertain ? 'Close form' : 'Discard draft',
-      disabled: state.pending || props.busy, onClick: state.discard }),
+    state.confirmation === 'reload' ? action({ id: 'discard', label: 'Discard and reload',
+      disabled: state.pending || props.busy, onClick: state.discard })
+      : { id: 'discard', label: state.uncertain ? 'Close form' : 'Discard draft', role: 'cancel', disabled: state.pending || props.busy },
     ...(state.confirmation === 'discard' && !state.uncertain ? [action({ id: 'create', label: 'Create record', variant: 'primary',
-      submit: true, formId, disabled: state.blocked, onClick: state.save })] : []),
+      closes: true, submit: true, formId, disabled: state.blocked, onClick: state.save })] : []),
   ] : [
     { id: 'cancel', label: state.accepted ? 'Close' : 'Cancel', role: 'cancel', disabled: state.pending || props.busy },
     action({ id: 'create', label: state.pending ? 'Creating…' : state.accepted ? 'Created' : state.uncertain ? 'Retry request' : 'Create record',
-      variant: 'primary', submit: true, formId, disabled: state.blocked, onClick: state.save }),
+      variant: 'primary', closes: true, submit: true, formId, disabled: state.blocked, onClick: state.save }),
   ];
   const note = state.confirmation ? <div role="alert"><h4 className="font-semibold">
     {state.confirmation === 'reload' ? 'Reload the fields?' : state.uncertain ? 'Close without confirming the result?' : 'Discard this record draft?'}</h4>
@@ -51,7 +53,7 @@ function RowDialogSession(props: DataStudioRowDialogProps & { isOwnerCurrent(): 
       customSize: { width: 'var(--zero-data-studio-row-dialog-width,44rem)' }, dataSlot: 'data-studio-row-dialog',
       meta: <><Badge variant="outline">{columns.length} fields</Badge>{required > 0 && <span>{required} required without a default</span>}</>,
       description: 'Enter a value for each required field. Other fields are optional.',
-      beforeClose: () => { state.requestClose(); return false; }, footer: { start: note }, actions,
+      beforeClose: state.requestClose, footer: { start: note }, actions,
       body: <form ref={state.formRef} id={formId} noValidate className="space-y-3">
         {state.schemaChanged && <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
           <div><p className="text-sm font-medium">The table fields changed</p><p className="text-xs text-muted-foreground">Your values are kept. Reload the fields before creating this record.</p></div>

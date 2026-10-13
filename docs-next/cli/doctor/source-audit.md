@@ -13,9 +13,9 @@ modes: ["AST source-only inspection", "configuration-backed usage heuristics"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  commit: "645295dd1300164d31df52e80509eaff9f6903ee"
   snapshot: dirty
-  date: "2026-10-11"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -100,6 +100,9 @@ typechecker or an inter-file data-flow analysis.
 | `usage.modal.dynamic_descriptor`, `dynamic_title`, `dynamic_option` | Unknown descriptor/spread behavior; manual review, informational |
 | `usage.modal.direct_primitive`, `custom_frame` | Direct dialog primitives or manual dialog frames need manager/shell integration review; not proof of broken visuals |
 | `usage.modal.nested_interactive` | Native button/link wrapping another native control; restructure as a semantic row with separate controls |
+| `usage.modal.controlled_close_bypass` | A managed interaction calls its exact controlled open-state callback with literal false; recommended, high-confidence warning |
+| `usage.modal.close_retirement` | An interaction uses public disposal or bulk-close APIs; manual-review, medium-confidence warning, possibly deliberate teardown |
+| `usage.modal.close_flow_review` | A controlled guard delegates to an unresolved controller and then always refuses dismissal; manual-review, low-confidence info, not proof of an incorrect controller |
 | `usage.import.private_zero`, `missing_export` | Recognizable private alias or unavailable installed package subpath; required correction |
 | `usage.source.package_unknown` | Installed capability could not be established; no newer API is assumed available |
 | `usage.source.root_invalid`, `outside_root`, `parse_failed`, `read_failed`, `scan_failed`, `file_too_large` | Root/coverage problems; resolve before claiming complete inspection |
@@ -124,6 +127,54 @@ Do not mechanically rename `open` to `show`: the former returns a string ID and
 accepts content; the latter returns an owned result handle and a structured
 descriptor. Review save acknowledgment, close guards, nested ownership and scopes
 using the [modal migration guide](../../frontend/modals/migration.md).
+
+## Managed Close Lifecycle
+
+The source-only modal pass now checks the distinction between ordinary closing
+and authoritative retirement. These checks do not require `--upgrade`; they run
+when the selected installed facade establishes structured `modals.show` support.
+Missing, older or unknown capability does not produce newer-facade close advice.
+
+`ControlledModal` treats owner-driven `open=false`, identity replacement and
+unmount as retirement. A normal Cancel/X/Escape, deliberate discard or acknowledged
+save must instead use the exact managed opening's close path. Otherwise its
+origin exit can be skipped even though its entrance looked correct. Use native
+`role: 'cancel'` actions, a `beforeClose` predicate that returns its admission
+decision, and acknowledged action results or `context.accept(value)`. Leave
+`onOpenChange` to the adapter's settlement notification; do not call it from the
+guard or save/cancel interaction merely to close the dialog.
+
+The checker recognizes public `ControlledModal` and `modals.show`, named and
+namespace aliases, effective local literal descriptors, immutable local callback
+aliases, React `useCallback`, forwarding open-state callbacks and callback
+arguments such as a local promise continuation. It examines guards, action
+handlers and recognizable body interaction handlers. Analysis is bounded to
+24 alias steps and 64 callbacks per interaction, respects lexical identity and
+overriding spreads, and never executes those callbacks. In an explicitly
+inspected framework workspace it also recognizes the canonical relative
+ControlledModal implementation import; a same-spelling application-private
+relative module is not treated as Zero.
+
+It does not follow external controllers or certify arbitrary helper code, app
+resolvers, computed descriptors or runtime intent. A delegated guard is therefore
+informational review evidence rather than a proven bypass. A correctly refused
+guard, settled-result notification or effect cleanup is not itself misuse.
+`disposeHost`, `discardAll` and `closeAll` inside interaction callbacks require
+review because they affect retirement or more than one opening; intentional
+owner/scope teardown can be documented and narrowly allowed by exact code/path.
+Cleanup outside those interactions is not classified as ordinary dismissal.
+
+Strict mode fails on the proven-bypass and retirement-review warnings, not the
+delegated-review info. Existing `rules` overrides and scoped `allow` entries apply
+after parsing. Reports contain fixed guidance and source locations, not callback
+names, titles, argument values or error payloads. Configuration-backed usage
+heuristics do not become this AST lifecycle check merely by upgrading the CLI.
+
+The corrected first-party Data Studio table and record dialogs provide examples:
+their guards return admission decisions, saves return true only after the
+existing writer acknowledges, and cancel/discard use the manager's own actions.
+Persistent standalone fallback hosts retain closing paint after session
+settlement. Explicit scope/target retirement remains immediate.
 
 ## Upgrade Auditing
 

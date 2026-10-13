@@ -8,10 +8,9 @@
  * stale UI completions and never emits submitted values or callback exceptions.
  */
 import * as React from 'react';
-import { emitFrontendCode } from '../../frontend/client/observability';
-import { OBS_CODES } from '../../observability/codes';
 import { reportDataStudioFrontendFailure } from '../../frontend/client/data-studio-observability';
 import type { DataStudioRowDialogProps } from './data-studio-row-dialog.types';
+import type { ModalCloseReason } from '../../modals/modal-system.types';
 import { buildDataStudioRowDraft, createDataStudioRowOpening, dataStudioRowSchemaKey,
   isDataStudioRowDraftDirty, updateDataStudioRowDraft, type DataStudioRowDraft } from './data-studio-row-draft';
 import { dataStudioRowCreateFailure } from './data-studio-row-dialog-error';
@@ -43,17 +42,6 @@ export function useDataStudioRowDialog(props: DataStudioRowDialogProps & { isOwn
   const matchesSchema = () => ownsSession() && current.current.table?.tableId === openingRef.current.tableId
     && dataStudioRowSchemaKey(current.current.table) === openingRef.current.schemaKey;
 
-  const report = (stage: string) => {
-    if (ownsSession()) emitFrontendCode(OBS_CODES.FRONTEND_DATA_STUDIO_OPERATION_FAILED,
-      { metadata: { surface: 'row-dialog', stage } });
-  };
-  const notifyClose = () => {
-    if (!ownsSession()) return;
-    try {
-      const result: unknown = current.current.onOpenChange(false);
-      if (result && typeof (result as PromiseLike<unknown>).then === 'function') void Promise.resolve(result).catch(() => report('close'));
-    } catch { report('close'); }
-  };
   const focusField = (columnId?: string) => {
     const fields = formRef.current?.querySelectorAll<HTMLElement>('[data-slot="data-studio-row-field"]');
     const field = Array.from(fields ?? []).find(item => !columnId || item.dataset.columnId === columnId);
@@ -69,11 +57,13 @@ export function useDataStudioRowDialog(props: DataStudioRowDialogProps & { isOwn
     setFieldErrors(previous => { const nextErrors = { ...previous }; delete nextErrors[columnId]; return nextErrors; });
     setError(null);
   };
-  const requestClose = () => {
-    if (!ownsSession() || current.current.busy || inFlight.current) return;
+  const requestClose = (close: { readonly reason: ModalCloseReason }) => {
+    if (!ownsSession() || current.current.busy || inFlight.current) return false;
+    if (confirmation === 'discard' && close.reason === 'cancel') return true;
     if (!acceptedRef.current && (isDataStudioRowDraftDirty(openingRef.current, draftRef.current) || uncertainRef.current)) {
-      setConfirmation('discard');
-    } else notifyClose();
+      setConfirmation('discard'); return false;
+    }
+    return true;
   };
   const reload = () => {
     if (!ownsSession() || current.current.busy || inFlight.current || !current.current.table || uncertainRef.current) return;
@@ -87,18 +77,19 @@ export function useDataStudioRowDialog(props: DataStudioRowDialogProps & { isOwn
     if (isDataStudioRowDraftDirty(openingRef.current, draftRef.current)) setConfirmation('reload'); else reload();
   };
   const discard = () => {
-    if (!ownsSession() || current.current.busy || inFlight.current) return;
-    if (confirmation === 'reload') reload(); else notifyClose();
+    if (!ownsSession() || current.current.busy || inFlight.current) return false;
+    if (confirmation === 'reload') { reload(); return false; }
+    return false; // Ordinary discard is the manager's cancel action, not owner retirement.
   };
   const save = async () => {
-    if (!matchesSchema() || current.current.busy || inFlight.current || acceptedRef.current || current.current.table?.status !== 'active') return;
+    if (!matchesSchema() || current.current.busy || inFlight.current || acceptedRef.current || current.current.table?.status !== 'active') return false;
     const admitted = uncertainRef.current && lastInput.current
       ? { values: lastInput.current, errors: {}, error: null }
       : buildDataStudioRowDraft(openingRef.current, draftRef.current);
     setFieldErrors(admitted.errors); setError(admitted.error);
     if (!admitted.values) {
       const first = openingRef.current.schema.columns.find(column => Object.hasOwn(admitted.errors, column.columnId));
-      requestAnimationFrame(() => { if (ownsSession()) focusField(first?.columnId); }); return;
+      requestAnimationFrame(() => { if (ownsSession()) focusField(first?.columnId); }); return false;
     }
     const owner = openingRef.current;
     const stillCurrent = () => matchesSchema() && openingRef.current === owner;
@@ -107,14 +98,15 @@ export function useDataStudioRowDialog(props: DataStudioRowDialogProps & { isOwn
     lastInput.current = values; inFlight.current = true; setPending(true); setConfirmation(null);
     try {
       await onCreate(values);
-      if (!stillCurrent()) return;
+      if (!stillCurrent()) return false;
       acceptedRef.current = true; uncertainRef.current = false; setAccepted(true); setUncertain(false); setError(null);
-      notifyClose();
+      return true;
     } catch (cause) {
-      if (!stillCurrent()) return;
+      if (!stillCurrent()) return false;
       const failure = dataStudioRowCreateFailure(cause);
       uncertainRef.current = failure.uncertain; setUncertain(failure.uncertain); setError(failure.message);
       reportDataStudioFrontendFailure('row.create', 'mutation', cause);
+      return false;
     } finally {
       inFlight.current = false;
       if (ownsSession()) setPending(false);

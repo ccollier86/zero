@@ -21,6 +21,7 @@ let resolve: (() => void) | undefined, reject: (() => void) | undefined;
 let hold = false, failClose = false, throwEditing = false;
 let closes = 0;
 function Fixture() {
+  const [trigger, setTrigger] = React.useState<HTMLButtonElement | null>(null);
   const [table, setTable] = React.useState<DataStudioTable | null>(initial);
   const [open, setOpen] = React.useState(true), [visible, setVisible] = React.useState(true);
   const [add, setAdd] = React.useState(false), [view, setView] = React.useState<'table' | 'json' | 'confirm'>('table');
@@ -49,7 +50,8 @@ function Fixture() {
     limit: setMaxColumns, disable: () => setDisabled(true),
     commit: () => editor.current?.commit(), throwEditing: () => { throwEditing = true; },
   };
-  return visible && (view === 'table' ? <DataStudioTableDialog open={open} table={table} startWithNewColumn={add} maxColumns={maxColumns}
+  return visible && <><button type="button" ref={setTrigger} data-testid="table-origin" onClick={() => setOpen(true)}>Open table editor</button>
+    {view === 'table' ? <DataStudioTableDialog open={open} table={table} trigger={trigger} startWithNewColumn={add} maxColumns={maxColumns}
     onCreate={writer} onUpdate={writer} onOpenChange={next => {
       if (!next) closes++;
       if (failClose) throw new Error('Synthetic close callback rejection');
@@ -60,7 +62,7 @@ function Fixture() {
       onOpenChange={next => { if (!next) closes++; setOpen(next); }} />
       : <JsonEditor value={value} onChange={setValue} editorRef={editor} label="Test JSON" disabled={disabled}
       rawTextDraft={raw} onRawTextDraftChange={setRaw}
-      onEditingChange={() => { if (throwEditing) throw new Error('Synthetic private callback content'); }} />);
+      onEditingChange={() => { if (throwEditing) throw new Error('Synthetic private callback content'); }} />}</>;
 }
 declare global {
   interface Window { __studioDialog: {

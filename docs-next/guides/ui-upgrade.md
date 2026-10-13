@@ -13,7 +13,7 @@ modes: [browser, SSR, application, public-pages, package-imports, source-copy]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
+  commit: "645295dd1300164d31df52e80509eaff9f6903ee"
   snapshot: dirty
   date: "2026-10-13"
   evidence_level: source-observed
@@ -285,6 +285,13 @@ specific scrolling/chart patterns. It does **not** detect every custom wrapper,
 infer an unrecorded source-copy baseline, convert chart data, certify visual
 layout or make a future upgrade universally safe. Do not silence an entire
 family merely to obtain a clean result.
+
+Pay particular attention to [managed close lifecycle findings](../cli/doctor/source-audit.md#managed-close-lifecycle):
+an owner-state shortcut can make a dialog open from its trigger but retire before
+the reverse exit. Direct local bypasses warn; unresolved delegated guards need
+manual review. First-party Data Studio table/record dialogs now use admitted
+manager cancellation and acknowledged save actions, including standalone exit
+paint. These checks are source-only and do not require the opt-in upgrade catalog.
 
 ## Update the Dependency Without Regenerating the App
 

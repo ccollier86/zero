@@ -118,6 +118,14 @@ function reportNotificationFailure(): void {
   emitFrontendCode(OBS_CODES.FRONTEND_MODAL_CALLBACK_FAILED, { metadata: { surface: 'controlled-modal', stage: 'notification' } });
 }
 
+/** Notification failure, including a rejected async observer, cannot reopen an acknowledged action. */
+function notifyControlledObserver(callback: () => unknown, stillOwned: () => boolean): void {
+  if (!stillOwned()) return;
+  const failed = () => { if (stillOwned()) reportNotificationFailure(); };
+  try { void Promise.resolve(callback()).catch(failed); }
+  catch { failed(); }
+}
+
 /**
  * User X/Escape/backdrop/cancel still use manager admission. Setting open=false,
  * changing identityKey, or unmounting is owner-driven retirement, not a leave request.
@@ -177,9 +185,11 @@ export function ControlledModal<T = unknown>(props: ControlledModalProps<T>) {
       opening.binding?.dispose();
       if (result.kind === 'retired') return;
       closed.current = { identityKey: opening.identityKey, parentId: opening.parentId };
+      const notificationOwner = closed.current;
+      const stillOwned = () => mounted.current && closed.current === notificationOwner;
       const current = bridge.read();
-      try { current.onResult?.(result); } catch { reportNotificationFailure(); }
-      try { current.onOpenChange(false); } catch { reportNotificationFailure(); }
+      notifyControlledObserver(() => current.onResult?.(result), stillOwned);
+      notifyControlledObserver(() => current.onOpenChange(false), stillOwned);
     });
   });
   useEffect(() => {

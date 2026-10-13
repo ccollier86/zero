@@ -38,6 +38,36 @@ test('rule severities and exact code/path allow entries are applied after parsin
   expect(report.findings).toEqual([]); expect(report.ok).toBe(true);
 }));
 
+test('modal lifecycle findings reach strict CLI output, while delegated review and scoped exceptions remain advisory', async () => fixture(async root => {
+  await install(root);
+  await write(root, '.env', 'SOURCE_AUDIT_SECRET=PRIVATE_ENV_FIXTURE\n');
+  await write(root, 'zero.config.ts', "throw new Error('CONFIG_MUST_NOT_RUN');");
+  const prefix = `import {ControlledModal} from '@zero/framework/modals'; function Editor(PRIVATE_OWNER){return <ControlledModal
+    open={PRIVATE_OWNER.open} onOpenChange={PRIVATE_OWNER.onOpenChange} descriptor={{title:'PRIVATE_TITLE',`;
+  await write(root, 'app/editor.tsx', prefix + 'beforeClose:()=>{PRIVATE_OWNER.onOpenChange(false);return false;}}}/>;}');
+  const args = { projectRoot: root, strict: true };
+  expect((await runSourceOnlyDoctor(args)).ok).toBe(false);
+  expect((await runSourceOnlyDoctor({ ...args, allow: [{ code: 'usage.modal.controlled_close_bypass', path: 'app/editor.tsx' }] })).ok).toBe(true);
+  expect((await runSourceOnlyDoctor({ ...args, rules: { 'usage.modal.controlled_close_bypass': 'off' } })).ok).toBe(true);
+  const invoke = async () => {
+    const child = Bun.spawn([process.execPath, '--no-env-file', new URL('./run.ts', import.meta.url).pathname,
+      '--source-only', '--project-root', root, '--strict', '--json'],
+    { cwd: root, env: { PATH: Bun.env.PATH ?? '' }, stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, stderr, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    for (const privateText of ['PRIVATE_ENV_FIXTURE', 'PRIVATE_OWNER', 'PRIVATE_TITLE', 'CONFIG_MUST_NOT_RUN', 'MUST_NOT_EXECUTE_PACKAGE'])
+      expect(stdout + stderr).not.toContain(privateText);
+    return { report: JSON.parse(stdout), status };
+  };
+  const direct = await invoke();
+  expect(direct.status).toBe(1);
+  expect(direct.report.findings).toContainEqual(expect.objectContaining({ code: 'usage.modal.controlled_close_bypass',
+    severity: 'warning', path: 'app/editor.tsx:2', line: 2, confidence: 'high' }));
+  await write(root, 'app/editor.tsx', prefix + 'beforeClose:()=>{PRIVATE_OWNER.delegate();return false;}}}/>;}');
+  const delegated = await invoke();
+  expect(delegated.status).toBe(0);
+  expect(delegated.report.findings).toContainEqual(expect.objectContaining({ code: 'usage.modal.close_flow_review', severity: 'info' }));
+}));
+
 test('missing installed package yields unknown capability instead of recommending new APIs', async () => fixture(async root => {
   await write(root, 'app/page.tsx', "import {modals} from '@zero/framework'; modals.open({content:'x'});");
   const report = await runSourceOnlyDoctor({ projectRoot: root });

@@ -4,6 +4,7 @@
 import * as React from 'react';
 import { Database } from 'lucide-react';
 import { ControlledModal } from '../../modals/modal-controlled';
+import { ModalManager } from '../../modals/modal-manager';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
 import { DataStudioDialogField as Field } from './data-studio-dialog-field';
@@ -15,23 +16,25 @@ import type { DataStudioTableDialogProps } from './data-studio-table-dialog.type
 export type { DataStudioTableDialogProps } from './data-studio-table-dialog.types';
 
 export function DataStudioTableDialog(props: DataStudioTableDialogProps) {
-  return props.open ? <TableDialogSession key={props.table?.tableId ?? '__create'} {...props} /> : null;
+  // Keep a standalone fallback host alive through managed closing paint. An
+  // inherited app host remains the only renderer; session retirement is unchanged.
+  return <ModalManager recedeSurface={false}>{props.open ? <TableDialogSession key={props.table?.tableId ?? '__create'} {...props} /> : null}</ModalManager>;
 }
 function TableDialogSession(props: DataStudioTableDialogProps) {
   const state = useDataStudioTableDialog(props), editing = Boolean(state.opening.table), id = React.useId(), formId = 'table-' + id;
   const controlsBlocked = state.blocked || state.accepted || state.impact.length > 0;
-  const action = (value: ModalAction): ModalAction => ({ ...value, closes: false });
+  const action = (value: ModalAction): ModalAction => ({ ...value, closes: value.closes ?? false });
   const actions: ModalAction[] = state.impact.length > 0 ? [
     action({ id: 'stay', label: 'Keep editing', disabled: state.blocked, onClick: () => state.setImpact([]) }),
-    action({ id: 'confirm-save', label: 'Confirm and save', variant: 'primary', disabled: state.blocked, onClick: () => state.save(true) }),
+    action({ id: 'confirm-save', label: 'Confirm and save', variant: 'primary', closes: true, disabled: state.blocked, onClick: () => state.save(true) }),
   ] : state.confirmClose ? [
     action({ id: 'stay', label: 'Keep editing', variant: 'ghost', disabled: state.blocked, onClick: () => state.setConfirmClose(false) }),
-    action({ id: 'discard', label: 'Discard changes', disabled: state.blocked, onClick: state.discard }),
-    action({ id: 'save', label: state.pending ? 'Saving…' : 'Save changes', variant: 'primary', disabled: state.blocked, onClick: () => state.save() }),
+    { id: 'discard', label: 'Discard changes', role: 'cancel', disabled: state.blocked },
+    action({ id: 'save', label: state.pending ? 'Saving…' : 'Save changes', variant: 'primary', closes: true, disabled: state.blocked, onClick: () => state.save() }),
   ] : [
     { id: 'cancel', label: 'Cancel', role: 'cancel', disabled: state.blocked },
     action({ id: 'save', label: state.pending ? 'Saving…' : state.accepted ? 'Saved' : editing ? 'Save changes' : 'Create table',
-      variant: 'primary', submit: true, formId, disabled: state.blocked || state.accepted, onClick: () => state.save() }),
+      variant: 'primary', closes: true, submit: true, formId, disabled: state.blocked || state.accepted, onClick: () => state.save() }),
   ];
   const note = state.impact.length > 0 ? <div role="alert"><h4 className="font-semibold">Review schema changes</h4>
     <p>Existing data and caller compatibility are checked again on the server. This does not migrate or delete stored values.</p>
@@ -43,7 +46,7 @@ function TableDialogSession(props: DataStudioTableDialogProps) {
     descriptor={{ title: editing ? 'Edit table' : 'Create table', trigger: props.trigger, icon: <Database />, size: 'xl',
       customSize: { width: 'var(--zero-data-studio-table-dialog-width,68rem)' }, dataSlot: 'data-studio-table-dialog',
       description: 'Define fields once, then use them from your functions, workflows and APIs.',
-      beforeClose: () => { state.requestClose(); return false; }, footer: { start: note }, actions,
+      beforeClose: state.requestClose, footer: { start: note }, actions,
       body: <form id={formId} className="space-y-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Table name" htmlFor={id + '-name'}><Input id={id + '-name'} data-slot="data-studio-table-name" value={state.name}

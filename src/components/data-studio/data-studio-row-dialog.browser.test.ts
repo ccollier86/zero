@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Page, Locator } from 'playwright';
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type PlaywrightTestBrowserLease } from '../../test-support/playwright-test-browser';
+import { expectManagedOriginExit } from '../../test-support/managed-modal-exit';
 
 const TIMEOUT = 45_000, SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const ARTIFACTS = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/data-studio-record-dialog';
@@ -18,7 +19,7 @@ beforeAll(async () => {
   const builder = join(directory, 'build.ts');
   await Bun.write(builder, `const result=await Bun.build({
     entrypoints:[${JSON.stringify(join(import.meta.dir, 'data-studio-row-dialog.browser-fixture.tsx'))}],
-    target:'browser',format:'iife',outdir:${JSON.stringify(directory)},naming:'bundle.js'});
+    target:'browser',format:'iife',outdir:${JSON.stringify(directory)},naming:'bundle.[ext]'});
     if(!result.success){console.error(result.logs.map(log=>log.message).join('\\n'));process.exit(1);}`);
   const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', builder], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, status] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
@@ -76,6 +77,30 @@ async function waitForSettledDialog(page: Page): Promise<void> {
 }
 
 describe('Data Studio record authoring', () => {
+  for (const departure of ['cancel', 'discard', 'save'] as const) test(`Add record ${departure} keeps managed origin exit paint after owner settlement`, async () => {
+    const page = await open();
+    try {
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector('[data-slot="data-studio-row-dialog"]'));
+      await page.getByTestId('row-origin').click(); await dialog(page).waitFor(); await waitForSettledDialog(page);
+      if (departure === 'save') await required(page);
+      if (departure === 'discard') {
+        await field(page, 'Full name').fill('Synthetic dirty draft');
+        await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.getByRole('button', { name: 'Discard draft', exact: true }).waitFor();
+        await page.keyboard.press('Escape');
+        expect(await page.getByTestId('row-closes').textContent()).toBe('1');
+      }
+      const box = (await dialog(page).boundingBox())!;
+      const label = departure === 'save' ? 'Create record' : departure === 'discard' ? 'Discard draft' : 'Cancel';
+      await page.getByRole('button', { name: label, exact: true }).click();
+      if (departure === 'save') { const id = await request(page); await page.evaluate(id => window.__rowDialog.resolve(id), id); }
+      await expectManagedOriginExit(page, 'data-studio-row-dialog', 'row-origin', box);
+      expect(await page.getByTestId('row-closes').textContent()).toBe('2');
+      expect(await page.evaluate(() => window.__rowDialog.writes().length)).toBe(departure === 'save' ? 1 : 0);
+    } finally { await page.close(); }
+  }, TIMEOUT);
+
   test('captures the actual typed form at its opening position in light/dark desktop and mobile', async () => {
     for (const [width, dark] of [[1280, false], [1280, true], [390, false], [390, true]] as const) {
       const page = await open(width, dark, 900); try {
@@ -224,13 +249,44 @@ describe('Data Studio record authoring', () => {
       await page.evaluate(() => window.__rowDialog.failClose());
       await required(page); await create(page).click(); const id = await request(page);
       await page.evaluate((id) => window.__rowDialog.resolve(id), id);
-      await page.getByRole('button', { name: 'Created', exact: true }).waitFor();
-      expect(await page.getByRole('button', { name: 'Created', exact: true }).isDisabled()).toBe(true);
-      expect(await field(page, 'Full name').isDisabled()).toBe(true);
+      await dialog(page).waitFor({ state: 'detached' });
+      expect(await create(page).count()).toBe(0);
       expect(await page.evaluate(() => window.__rowDialog.writes().length)).toBe(1);
       const events = await page.evaluate(() => window.__rowDialog.events());
-      expect(events).toHaveLength(1); expect(events[0]?.metadata).toEqual({ surface: 'row-dialog', stage: 'close' });
+      expect(events).toHaveLength(1); expect(events[0]?.metadata).toEqual({ surface: 'controlled-modal', stage: 'notification' });
       expect(JSON.stringify(events)).not.toContain('Synthetic private close notification');
+    } finally { await page.close(); }
+  }, TIMEOUT);
+
+  test('a rejected async close observer is isolated after acknowledged creation without an unhandled rejection', async () => {
+    const page = await open(), errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+    try {
+      await page.evaluate(() => window.__rowDialog.failClose(true));
+      await required(page); await create(page).click(); const id = await request(page);
+      await page.evaluate(id => window.__rowDialog.resolve(id), id); await dialog(page).waitFor({ state: 'detached' });
+      expect(await page.evaluate(() => window.__rowDialog.writes().length)).toBe(1);
+      expect(errors).toEqual([]);
+      expect(await page.evaluate(() => window.__rowDialog.events())).toContainEqual(expect.objectContaining({
+        metadata: { surface: 'controlled-modal', stage: 'notification' },
+      }));
+      await page.getByTestId('row-origin').click();
+      expect(await dialog(page).count()).toBe(0);
+    } finally { await page.close(); }
+  }, TIMEOUT);
+
+  test('a late close-observer rejection is dropped after its record-session scope is replaced', async () => {
+    const page = await open(), errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+    try {
+      await page.evaluate(() => window.__rowDialog.holdClose());
+      await required(page); await create(page).click(); const id = await request(page);
+      await page.evaluate(id => window.__rowDialog.resolve(id), id); await dialog(page).waitFor({ state: 'detached' });
+      await page.evaluate(() => window.__rowDialog.source('organization-b'));
+      await dialog(page).waitFor();
+      await page.evaluate(() => window.__rowDialog.rejectHeldClose());
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+      expect(await field(page, 'Full name').inputValue()).toBe('');
+      expect(await page.evaluate(() => window.__rowDialog.events())).toEqual([]);
+      expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, TIMEOUT);
 

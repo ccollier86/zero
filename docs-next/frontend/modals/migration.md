@@ -13,9 +13,9 @@ modes: [browser, standalone, Guardian single, Guardian multi, single-database, F
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "1b5a1fa0281deba69b3809471d2467d596516e4b"
+  commit: "645295dd1300164d31df52e80509eaff9f6903ee"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -72,6 +72,23 @@ callbacks remain live within one owned opening; structural presentation is
 snapshotted. Do not expect changing arbitrary descriptor structure mid-opening
 to behave like updating the handle.
 
+An especially important migration trap is a guard such as
+`beforeClose: () => { owner.onOpenChange(false); return false; }`. It removes the
+controlled opening while refusing the manager's close request, so the normal
+origin exit is retired. A guard must return true when departure is admitted and
+false when the draft must remain. Route Cancel and explicit Discard through
+managed cancel actions; acknowledge saves through the action result or the exact
+`context.accept(value)`, not an owner-state shortcut. Return false from an action
+that has failed validation, needs further confirmation or has no acknowledged
+write. The adapter notifies `onOpenChange(false)` after logical settlement; the
+manager retains noninteractive exit paint until the animation completes.
+
+Keep the inherited or standalone `ModalManager` mounted during that paint. If a
+session component owns a fallback host, do not unmount the host just because its
+controlled session closed. Actual owner unmount, account/scope change and target
+replacement still retire immediately. Notification exceptions or rejected async
+observers are isolated and cannot replay an acknowledged action.
+
 Title/meta/description/icon/tone/footer and action presentation stay live through
 the adapter without retiring its callback generation. Body callbacks also stay
 live. Keep action IDs stable; geometry, panel structure, target and guard changes
@@ -114,6 +131,11 @@ known missing titles, invalid literal options/motion, private imports, manual
 frames and unsafe native nesting. Unknown wrappers/spreads are review items,
 not proof of a broken layout. Scoped exceptions remain available for deliberate
 managed-custom integrations.
+
+The [managed close lifecycle checks](../../cli/doctor/source-audit.md#managed-close-lifecycle)
+flag locally proven controlled-close bypasses and interaction-time retirement,
+and label unresolved always-refusing delegated guards for review. External
+controllers are not proven correct or incorrect by static inspection.
 
 Doctor performs no source rewrites and cannot certify clipping, focus, scrolling
 or visual polish. A clean static report is not migration completion.

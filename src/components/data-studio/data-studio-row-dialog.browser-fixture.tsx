@@ -21,11 +21,13 @@ const INITIAL: DataStudioTable = {
 };
 type Deferred = { id: number; tableId: string; sourceKey: string; values: Readonly<Record<string, unknown>>;
   settled: boolean; resolve: () => void; reject: (error: Error) => void };
-let sequence = 0, rejectClose = false;
+let sequence = 0, rejectClose = false, rejectAsyncClose = false;
+let holdClose = false, rejectHeldClose: (() => void) | undefined;
 const writes: Deferred[] = [], events: { code: string; message: string; metadata?: Record<string, unknown> }[] = [];
 configureFrontendObservability({ sink: { emit(event) { events.push({ code: event.code, message: event.message, metadata: event.metadata }); } } });
 
 function Fixture() {
+  const [trigger, setTrigger] = React.useState<HTMLButtonElement | null>(null);
   const [table, setTable] = React.useState<DataStudioTable | null>(INITIAL);
   const [sourceKey, setSourceKey] = React.useState('organization-a'), [open, setOpen] = React.useState(true);
   const [visible, setVisible] = React.useState(true), [busy, setBusy] = React.useState(false), [closes, setCloses] = React.useState(0);
@@ -58,15 +60,21 @@ function Fixture() {
         schema: { ...previous.schema, columns: [...INITIAL.schema.columns, ...Array.from({ length: 24 }, (_, index) => ({
           columnId: `field_${index}`, key: `field_${index}`, label: `Additional field ${index + 1}`, type: 'text' as const, required: false,
         }))] } } : null); },
-      failClose() { rejectClose = true; },
+      failClose(asynchronous = false) { if (asynchronous) rejectAsyncClose = true; else rejectClose = true; },
+      holdClose() { holdClose = true; }, rejectHeldClose() { rejectHeldClose?.(); },
     };
   }, []);
   return <main className="min-h-screen bg-background p-6 text-foreground">
     <h1 className="text-xl font-semibold">Contacts</h1>
     <p className="text-sm text-muted-foreground">Synthetic isolated record editor.</p>
     <output data-testid="row-closes" className="sr-only">{closes}</output>
-    {visible && <DataStudioRowDialog open={open} table={table} busy={busy} scopeKey={sourceKey} onCreate={writer}
-      onOpenChange={(next) => { if (!next) { setCloses((value) => value + 1); if (rejectClose) throw new Error('Synthetic private close notification'); } setOpen(next); }} />}
+    <button type="button" ref={setTrigger} data-testid="row-origin" onClick={() => setOpen(true)}>Add another record</button>
+    {visible && <DataStudioRowDialog open={open} table={table} trigger={trigger} busy={busy} scopeKey={sourceKey} onCreate={writer}
+      onOpenChange={(next) => { if (!next) { setCloses((value) => value + 1);
+        if (rejectClose) throw new Error('Synthetic private close notification');
+        if (rejectAsyncClose) return Promise.reject(new Error('Synthetic private async close notification'));
+        if (holdClose) return new Promise<void>((_resolve, reject) => { rejectHeldClose = () => reject(new Error('Synthetic private late close notification')); });
+      } setOpen(next); }} />}
   </main>;
 }
 declare global {
@@ -75,7 +83,8 @@ declare global {
     events(): { code: string; message: string; metadata?: Record<string, unknown> }[];
     resolve(id: number): void; reject(id: number): void; rejectAmbiguous(id: number): void;
     switchTable(): void; schemaReplacement(): void; source(value: string): void; busy(value: boolean): void;
-    reopen(): void; unmount(): void; manyFields(): void; failClose(): void;
+    reopen(): void; unmount(): void; manyFields(): void; failClose(asynchronous?: boolean): void;
+    holdClose(): void; rejectHeldClose(): void;
   } }
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);
