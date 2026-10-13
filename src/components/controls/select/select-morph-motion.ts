@@ -2,7 +2,7 @@
 
 /** Visual lifecycle only. Radix owns the live menu; departing paint never registers as an overlay. */
 import * as React from 'react';
-import { selectClipCss, selectMotionTime, selectLocalTriggerClip, selectDepartureTarget, stepSelectSpring, type SelectClip, type SelectSpring } from './select-motion-geometry';
+import { selectClipCss, selectMotionTime, selectLocalTriggerClip, selectDepartureTarget, selectDepartureLanded, stepSelectSpring, type SelectClip, type SelectSpring } from './select-motion-geometry';
 import { selectPaintCopy, restoreSelectPaintScroll } from './select-paint';
 
 export interface SelectPickedPaint { readonly text: string; readonly rect: DOMRect; readonly element: HTMLElement }
@@ -158,6 +158,7 @@ function closePaint(paint: HTMLElement, bounds: DOMRect, from: SelectClip, style
   const states = springs(from, targetClip().clip);
   const translation: SelectSpring[] = [{ value: 0, velocity: 0, target: 0 }, { value: 0, velocity: 0, target: 0 }];
   let frame = 0, last = 0, stopped = false, label: HTMLElement | null = null, labelTarget: HTMLElement | null = null, oldOpacity = '';
+  let surfaceLanded = false;
   let labelStates: SelectSpring[] | null = null;
   const labelDuration = selectMotionTime(style.getPropertyValue('--zero-select-motion-label'), 300);
   const cancel = () => {
@@ -189,14 +190,18 @@ function closePaint(paint: HTMLElement, bounds: DOMRect, from: SelectClip, style
       }
     }
     const dt = last ? (now - last) / 1000 : 1 / 60; last = now;
-    const target = targetClip();
-    let moving = false;
-    states.forEach((state, i) => { state.target = target.clip[i]!; const horizontal = i === 1 || i === 3;
-      moving = stepSelectSpring(state, horizontal ? narrow : close, horizontal ? narrowBounce : bounce, dt) || moving; });
-    translation[0]!.target = target.x; translation[1]!.target = target.y;
-    for (const [i, state] of translation.entries()) moving = stepSelectSpring(state, i === 0 ? narrow : close, i === 0 ? narrowBounce : bounce, dt) || moving;
-    paint.style.clipPath = selectClipCss(asClip(states));
-    paint.style.transform = `translate(${translation[0]!.value.toFixed(3)}px,${translation[1]!.value.toFixed(3)}px)`;
+    if (!surfaceLanded) {
+      const target = targetClip();
+      states.forEach((state, i) => { state.target = target.clip[i]!; const horizontal = i === 1 || i === 3;
+        stepSelectSpring(state, horizontal ? narrow : close, horizontal ? narrowBounce : bounce, dt); });
+      translation[0]!.target = target.x; translation[1]!.target = target.y;
+      for (const [i, state] of translation.entries()) stepSelectSpring(state, i === 0 ? narrow : close, i === 0 ? narrowBounce : bounce, dt);
+      paint.style.clipPath = selectClipCss(asClip(states));
+      paint.style.transform = `translate(${translation[0]!.value.toFixed(3)}px,${translation[1]!.value.toFixed(3)}px)`;
+      // The surface and picked label have independent destinations. Neither
+      // keeps the other alive once its own visible geometry has landed.
+      if (selectDepartureLanded(states, translation, sx, sy)) { surfaceLanded = true; paint.remove(); }
+    }
     if (label && labelStates) {
       if (!labelTarget?.isConnected || labelTarget.textContent?.trim() !== picked!.text) {
         label.remove(); label = null; if (labelTarget?.style.opacity === '0') labelTarget.style.opacity = oldOpacity; labelTarget = null;
@@ -205,13 +210,13 @@ function closePaint(paint: HTMLElement, bounds: DOMRect, from: SelectClip, style
       }
     }
     if (label && labelStates) {
-      let labelMoving = false;
-      for (const state of labelStates) labelMoving = stepSelectSpring(state, labelDuration, labelBounce, dt) || labelMoving;
+      for (const state of labelStates) stepSelectSpring(state, labelDuration, labelBounce, dt);
       label.style.transform = `translate(${(labelStates[1]!.value - picked!.rect.left) / sx}px,${(labelStates[0]!.value - picked!.rect.top) / sy}px)`;
-      if (!labelMoving) { label.remove(); label = null; if (labelTarget?.style.opacity === '0') labelTarget.style.opacity = oldOpacity; labelTarget = null; }
-      moving = labelMoving || moving;
+      if (labelStates.every(state => Math.abs(state.value - state.target) <= .5)) {
+        label.remove(); label = null; if (labelTarget?.style.opacity === '0') labelTarget.style.opacity = oldOpacity; labelTarget = null;
+      }
     }
-    if (moving) frame = view.requestAnimationFrame(tick); else cancel();
+    if (!surfaceLanded || label) frame = view.requestAnimationFrame(tick); else cancel();
   };
   frame = view.requestAnimationFrame(tick);
 }

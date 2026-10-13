@@ -58,6 +58,7 @@ export const THEME_BASE_TOKENS: ThemeTokenMap = Object.freeze({
   '--zero-theme-picker-panel-width': '17rem',
   '--zero-theme-picker-list-max-height': '18.5rem',
   '--zero-theme-picker-mark-size': '1.25rem',
+  '--zero-theme-picker-trigger-radius': '1.125rem',
   '--zero-theme-picker-open-radius': '1.375rem',
   '--zero-theme-picker-highlight-radius': '1rem',
   '--zero-theme-menu-section-gap': '.25rem',

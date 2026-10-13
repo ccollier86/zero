@@ -12,10 +12,10 @@ applies_to: ["2.1.1 source; package qualification pending"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -33,7 +33,7 @@ with the complete official feature bundle from [installation](../../backend/data
 Its [backend configuration](../../backend/data-studio/configuration.md) owns fragment
 composition and hard limits, not UI props.
 
-DataStudioProps extends UseDataStudioOptions: enabled, initialTableId, tableStatus,
+DataStudioProps extends UseDataStudioOptions: enabled, initialTableId, autoSelectFirstTable, tableStatus,
 pageSize, rowLoading, initialSearch and initialFilters. It adds capabilities, title,
 description, className, emptyState, detailsOpen, defaultDetailsOpen,
 onDetailsOpenChange and resizableDetails. enabled defaults true; false leaves the
@@ -42,6 +42,14 @@ filters empty and requested pageSize50 (clamped to server maximum).
 initialSearch/initialFilters/initialTableId initialize query state, not a persisted
 saved view. tableStatus follows later prop changes; pageSize is rederived and
 clamped by server capabilities.
+
+The connected `DataStudio` starts at the table catalog (`autoSelectFirstTable: false`).
+An admitted `initialTableId` opens that table directly. Set `autoSelectFirstTable: true`
+to retain automatic first-table entry. The standalone hook keeps `true` as its
+initial compatibility default, but an explicit `selectTable(null)` always returns
+to the catalog without immediately reselecting a table. Catalog-first mode reads
+summaries, not table details/records, until a table is selected. An unavailable
+initial ID returns to the catalog rather than silently opening a different table.
 
 `DataStudio` defaults rowLoading to `'progressive'`; `useDataStudio` retains
 `'paged'` as its standalone compatibility default. Progressive Studio reads

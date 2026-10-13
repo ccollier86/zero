@@ -4,6 +4,7 @@
 import { modals } from '../../modals';
 
 export interface StorageNameDialogOptions {
+  trigger?: Element | null;
   title: string;
   label: string;
   description?: string;
@@ -16,5 +17,5 @@ export interface StorageNameDialogOptions {
 export function openStorageNameDialog(options: StorageNameDialogOptions): Promise<string | null> {
   return modals.prompt({ title: options.title, label: options.label, description: options.description,
     value: options.initialValue, placeholder: options.placeholder, confirmLabel: options.submitLabel,
-    required: true });
+    required: true, trigger: options.trigger });
 }

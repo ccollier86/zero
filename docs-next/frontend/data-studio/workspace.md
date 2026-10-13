@@ -12,10 +12,10 @@ applies_to: ["2.1.1 source; package qualification pending"]
 modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -37,12 +37,30 @@ Use the workspace directly when a custom parent owns the same controller:
 import { useDataStudio } from '@zero/framework/react';
 import { DataStudioWorkspace } from '@zero/framework/components/data-studio';
 
-const controller = useDataStudio({ rowLoading: 'progressive', pageSize: 25 });
+const controller = useDataStudio({ rowLoading: 'progressive', autoSelectFirstTable: false, pageSize: 25 });
 <DataStudioWorkspace controller={controller} capabilities={{ canManage: false }} />;
 ```
 
 The hook fragment belongs inside React. Narrowing manage permission hides
 management UI without changing server authority.
+
+## Table Catalog And Empty Start
+
+The connected workspace starts with a table catalog rather than opening the first
+table automatically. Each keyboard-accessible card uses shared `Card` tokens and
+shows the table name, stable key, description, lifecycle and the controller's live
+record count. Search matches these catalog summaries locally; it is separate from
+the server-backed **record** search. Active/archived/all filters still belong to
+the scoped controller. Loading and failures are never presented as an empty catalog.
+
+With no tables in the selected filter, a compact empty state explains what comes
+next. Managers can create their first table; read-only users see an administrator
+hint, not a nonfunctional create action. View all tables distinguishes an empty
+active/archived filter from an entirely empty catalog. Both create entry points
+open the same managed schema form. Picking a card opens the existing grid; its
+dropdown remains available for quick switching, while **All tables** returns to
+the catalog. `initialTableId` supports direct entry; `autoSelectFirstTable: true`
+opts back into the former initial auto-selection. See [configuration](./configuration.md).
 
 Workspace composes the shared search-first toolbar, schema-header grid, optional
 inspector and ListDetailLayout. The connected DataStudio defaults to progressive
@@ -109,6 +127,12 @@ Those dialogs await controller promises, keep opening revisions and captured
 record/status targets, and retire on organization/table replacement. Read/mutation errors remain visible
 with explicit reload feedback; supplied error text is not automatic redaction of
 all app failures. Server authority still fences every operation.
+
+The workspace captures each actual clicked button for modal-origin motion and
+focus return. The shared manager owns header/footer/X, blur/recede, stack and portal
+ordering; feature dialogs do not replace that anatomy. Programmatic opens without
+a trigger use Rise. A standalone controlled dialog inherits the existing host or
+uses the manager's single-scene fallback. See [dialogs](./dialogs.md).
 
 ## Verification
 

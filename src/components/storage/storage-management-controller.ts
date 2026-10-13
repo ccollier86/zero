@@ -63,9 +63,9 @@ export interface StorageStudioPagination {
  * network requests directly; absent operations are omitted from its actions.
  */
 export interface StorageStudioOperations {
-  readonly createDrive?: () => void | Promise<void>;
+  readonly createDrive?: (trigger?: Element | null) => void | Promise<void>;
   readonly upload?: () => void | Promise<void>;
-  readonly createFolder?: () => void | Promise<void>;
+  readonly createFolder?: (trigger?: Element | null) => void | Promise<void>;
   readonly download?: (file: FileInfo) => void | Promise<void>;
   readonly renameDrive?: (
     drive: StorageStudioDrive,
@@ -76,8 +76,8 @@ export interface StorageStudioOperations {
     file: FileInfo,
     metadata: Readonly<Record<string, unknown>>,
   ) => void | Promise<void>;
-  readonly move?: (file: FileInfo) => void | Promise<void>;
-  readonly copy?: (file: FileInfo) => void | Promise<void>;
+  readonly move?: (file: FileInfo, trigger?: Element | null) => void | Promise<void>;
+  readonly copy?: (file: FileInfo, trigger?: Element | null) => void | Promise<void>;
   readonly share?: (file: FileInfo) => void | Promise<void>;
   readonly setFileVisibility?: (
     file: FileInfo,
@@ -85,8 +85,8 @@ export interface StorageStudioOperations {
   ) => void | Promise<void>;
   readonly suspend?: (drive: StorageStudioDrive) => void | Promise<void>;
   readonly restore?: (drive: StorageStudioDrive) => void | Promise<void>;
-  readonly deleteDrive?: (drive: StorageStudioDrive) => void | Promise<void>;
-  readonly deleteFile?: (file: FileInfo) => void | Promise<void>;
+  readonly deleteDrive?: (drive: StorageStudioDrive, trigger?: Element | null) => void | Promise<void>;
+  readonly deleteFile?: (file: FileInfo, trigger?: Element | null) => void | Promise<void>;
 }
 
 export interface StorageManagementController {

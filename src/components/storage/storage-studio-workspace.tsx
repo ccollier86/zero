@@ -7,6 +7,8 @@ import { AlertTriangle, DatabaseZap } from 'lucide-react';
 import { Button } from '../ui/button';
 import { ListDetailLayout } from '../ui/list-detail-layout';
 import { cn } from '../../lib/utils';
+import { ModalManager } from '../../modals';
+import { useModalHostPresent } from '../../modals/modal-host-context';
 import { StorageStudioActionBar } from './storage-studio-action-bar';
 import { StorageStudioInspector } from './storage-studio-inspector';
 import { StorageStudioList } from './storage-studio-list';
@@ -23,7 +25,15 @@ export interface StorageStudioWorkspaceProps {
 }
 
 /** Render the complete Storage Studio control plane from controller state. */
-export function StorageStudioWorkspace({
+export function StorageStudioWorkspace(props: StorageStudioWorkspaceProps) {
+  const hosted = useModalHostPresent();
+  // AppProvider owns the normal scene; standalone presentations still render
+  // modal-backed operations. The shared lease prevents sibling duplicate scenes.
+  return hosted ? <StorageStudioWorkspaceBody {...props} />
+    : <ModalManager><StorageStudioWorkspaceBody {...props} /></ModalManager>;
+}
+
+function StorageStudioWorkspaceBody({
   controller,
   inspectorSlots,
   className,

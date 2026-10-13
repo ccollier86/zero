@@ -13,10 +13,10 @@ modes: [browser, SSR, Guardian multi, Fabric tenant-database]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
-  snapshot: clean
-  date: "2026-10-07"
-  evidence_level: implementation-verified
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
+  snapshot: dirty
+  date: "2026-10-13"
+  evidence_level: source-observed
 ---
 
 # Table, Record And Confirmation Dialogs
@@ -27,6 +27,16 @@ DataStudioTableDialog, DataStudioRowDialog and DataStudioConfirmDialog are publi
 from @zero/framework/components/data-studio. Their callbacks are Promise-returning;
 the packaged workspace passes the scoped controller. They author logical schemas/
 values, not physical SQL/DDL or actor paths.
+
+All three are `ControlledModal` adapters to Zero's shared modal manager, not raw
+Radix content. They inherit the host/overlay scope and retain standardized headers,
+compact X buttons, footers, scrolling and stack behavior. Their additive
+`trigger?: Element | null` carries the real opening button for the default origin
+entrance and reverse exit; omit it for programmatic Rise. The packaged workspace
+captures triggers from the toolbar, empty catalog, inspector and action bar.
+Removal from a column menu uses the persistent column-heading button, not a menu
+item that disappears before the modal opens. Opening revisions, scope retirement,
+dirty guards and acknowledged writes remain controller-owned and unchanged.
 
 ## Table Schema
 

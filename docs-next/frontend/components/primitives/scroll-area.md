@@ -13,9 +13,9 @@ modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-10"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -34,6 +34,19 @@ bounded height for useful body scrolling.
 intent remains explicit; the default is vertical. Children remain ordinary
 mounted React content—there is no row virtualization, query pagination or
 automatic selection preservation.
+
+`scrollChaining="contain"` is the default for a bounded floating/control body.
+Use `scrollChaining="auto"` for content embedded in a scrolling page: native
+wheel/touch gestures move this viewport while it can scroll, then pass to the
+nearest scrollable ancestor at an edge. A fitting viewport must not trap page
+scrolling. This is native overscroll policy, not a global wheel interceptor or
+a manual scroll-window implementation.
+
+`scrollbarOrientation` defaults to `orientation` and controls painted overlay
+rails only. For example, `orientation="both" scrollbarOrientation="vertical"`
+keeps two-axis native scrolling and two-axis overflow fades while suppressing
+horizontal chrome. It does not hide or disable a separately supplied low-level
+Radix `ScrollBar`.
 
 ```tsx
 import { ScrollArea } from '@zero/framework/components/ui/scroll-area';
@@ -69,8 +82,12 @@ axes in ordinary compositions rather than adding a duplicate bar.
 Select, CommandList, TimePicker and the virtual year grid decorate their existing
 viewports with the same internal adapter. They must not be wrapped in another
 ScrollArea. Menu headers/footers outside those viewports remain unmasked and
-fixed. Tables, chart progress bars and bottom-following message streams retain
-their separate scroll/data contracts.
+fixed. DataTable uses this same decoration on its sole native table viewport,
+with both-axis fades, page-scroll chaining and default-hidden horizontal rails.
+A content-height table has no vertical fade because it has no hidden rows; a
+height-bounded table fades only the edges behind which rows really continue.
+Chart progress bars and bottom-following message streams retain their separate
+scroll/data contracts.
 
 Keep accessible keyboard/focus targets in the content. For streaming messages
 that follow the bottom, choose the separate scroll-anchoring public surface; a

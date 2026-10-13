@@ -38,6 +38,7 @@ export function useDataStudioCatalog(input: {
   readonly tableStatus: DataStudioTableStatus | 'all';
   readonly selectedTableId: string | null;
   readonly initialTableId?: string | null;
+  readonly autoSelectFirstTable?: boolean;
   readonly setSelectedTableId: React.Dispatch<React.SetStateAction<string | null>>;
   readonly onScopeReset: () => void;
 }) {
@@ -156,6 +157,8 @@ export function useDataStudioCatalog(input: {
   }, [input.surface, loadCatalog, shouldLoad]);
 
   React.useEffect(() => {
+    // Do not erase an explicit initial selection before the admitted catalog arrives.
+    if (!cacheVisible || catalogLoading || !capabilities) return;
     if (tables.length === 0) {
       input.setSelectedTableId(null);
       return;
@@ -164,9 +167,11 @@ export function useDataStudioCatalog(input: {
       const preferred = input.initialTableId
         ? tables.find((table) => table.tableId === input.initialTableId)
         : null;
-      input.setSelectedTableId(preferred?.tableId ?? tables[0]!.tableId);
+      input.setSelectedTableId(input.autoSelectFirstTable !== false
+        ? preferred?.tableId ?? tables[0]!.tableId : null);
     }
-  }, [input.initialTableId, input.selectedTableId, input.setSelectedTableId, tables]);
+  }, [cacheVisible, catalogLoading, capabilities, input.autoSelectFirstTable,
+    input.initialTableId, input.selectedTableId, input.setSelectedTableId, tables]);
 
   const selectedTableSummary = tables.find(
     (table) => table.tableId === input.selectedTableId,

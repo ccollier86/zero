@@ -13,9 +13,9 @@ modes: [browser, SSR, native-form, package-imports, source-copy]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-10"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -69,6 +69,13 @@ labels into an API payload without validating the actual value on the server.
 
 The default surface now morphs from the actual trigger into a bounded list, with
 one magnetic highlight following native pointer, keyboard and typeahead state.
+The resting trigger uses the same popover material and quiet one-pixel border
+as the expanded menu, not the stronger text-input boundary. Its picker-specific
+radius defaults to 18px through `--zero-theme-picker-trigger-radius`; this does
+not round every input or change the compact global control role. Local
+`--zero-select-radius-trigger`, native `className`/`style` overrides, disabled and
+invalid presentation remain available. Keyboard focus retains a distinct ring;
+forced colors use an explicit system outline.
 Radix still owns the value, form field, focus return, placement and collision
 handling. The outer positioned element is not transformed by a second positioner.
 `position="item-aligned"` remains supported; its native layout does not receive
@@ -117,6 +124,11 @@ Radix retires the live Select immediately on close. The visual shrink uses an
 inert, aria-hidden, stripped paint copy, preserving its native scroll position;
 it is not a second menu, form field or registered floating branch. Reopening,
 unmounting, losing the trigger or deactivating its modal owner cancels that paint.
+Closing paint retires when its visible edges have landed within half a viewport
+pixel of the trigger, instead of lingering until imperceptible residual spring
+velocity reaches zero. The picked-label return has its own subpixel handoff and
+does not keep the surface alive. Close/narrow/label spring settings are unchanged;
+there is no extra exit delay or timeout that truncates a still-visible shrink.
 Use Combobox for search/multiple selection and Cascader for hierarchical choices;
 do not add a search input or another selection controller inside Radix Select.
 

@@ -3,6 +3,8 @@ import type { DataStudioSchema, DataStudioTable, DataStudioTableCreate } from '.
 
 export interface DataStudioTableDialogProps {
   readonly open: boolean;
+  /** Actual UI opener, or absent for the standard Rise fallback. */
+  readonly trigger?: Element | null;
   readonly table?: DataStudioTable | null;
   readonly busy?: boolean;
   readonly startWithNewColumn?: boolean;

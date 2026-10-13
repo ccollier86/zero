@@ -2,7 +2,7 @@
 
 /** Compose the packaged schema-first Studio; scoped data and mutations stay in its controller. */
 import * as React from 'react';
-import { AlertTriangle, Database, LoaderCircle, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Database, LoaderCircle, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { resolveDataStudioAccess, type DataStudioAccess, type UseDataStudioResult } from '../../frontend/client/data-studio-controller-types';
 import type { DataStudioColumn, DataStudioRow, DataStudioTableStatus, DataStudioValue } from '../../frontend/client/data-studio-client';
 import { reportDataStudioFrontendFailure } from '../../frontend/client/data-studio-observability';
@@ -15,6 +15,7 @@ import { DataStudioInspector } from './data-studio-inspector';
 import { DataStudioToolbar } from './data-studio-toolbar';
 import { DataStudioWorkspaceActions } from './data-studio-workspace-actions';
 import { DataStudioWorkspaceDialogs } from './data-studio-workspace-dialogs';
+import { DataStudioCatalog } from './data-studio-catalog';
 
 export interface DataStudioWorkspaceProps {
   readonly controller: UseDataStudioResult;
@@ -49,6 +50,9 @@ function DataStudioWorkspaceBody({
   const [mobileDetailOpen, setMobileDetailOpen] = React.useState(false);
   const mobileRecord = React.useRef(false);
   const [createTableOpen, setCreateTableOpen] = React.useState(false);
+  const trigger = React.useRef<Element | null>(null);
+  const captureTrigger = (event?: React.MouseEvent<HTMLButtonElement>) => { trigger.current = event?.currentTarget ?? null; };
+  const openCreateTable = (event?: React.MouseEvent<HTMLButtonElement>) => { captureTrigger(event); setCreateTableOpen(true); };
   const [schemaOpen, setSchemaOpen] = React.useState(false);
   const [startWithNewColumn, setStartWithNewColumn] = React.useState(false);
   const [createRowOpen, setCreateRowOpen] = React.useState(false);
@@ -62,7 +66,7 @@ function DataStudioWorkspaceBody({
     if (mobileRecord.current && !c.selectedRow) setMobileDetailOpen(false);
   }, [c.selectedRow]);
   const inspect = () => { setDetails(true); mobileRecord.current = !!c.selectedRow; setMobileDetailOpen(true); };
-  const openSchema = (add = false) => { setStartWithNewColumn(add); setSchemaOpen(true); };
+  const openSchema = (event?: React.MouseEvent<HTMLButtonElement>, add = false) => { captureTrigger(event); setStartWithNewColumn(add); setSchemaOpen(true); };
   const refresh = React.useCallback(() => {
     void Promise.all([c.reload(), c.reloadRows()]).catch(cause => reportDataStudioFrontendFailure('row-page.load', 'load', cause));
   }, [c.reload, c.reloadRows]);
@@ -101,7 +105,7 @@ function DataStudioWorkspaceBody({
         filterControl={<DataStudioFilterControl columns={table?.schema.columns ?? []} filters={c.filters}
           disabled={c.isMutating} onChange={c.setFilters} />}
         onTableChange={c.selectTable} onStatusChange={c.setTableStatus} onSearchChange={c.setSearch}
-        onCreateTable={() => setCreateTableOpen(true)} onRefresh={refresh} />
+        onCreateTable={openCreateTable} onRefresh={refresh} />
     </div>
     {(c.error || c.mutationError) && <div role="alert"
       className="flex shrink-0 items-center justify-between gap-3 border-b border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -111,7 +115,7 @@ function DataStudioWorkspaceBody({
     <DataStudioGrid queryKey={c.rowWindowKey}
       className="min-h-0 min-w-0 flex-1" table={table} rows={c.rows} selectedRowId={c.selectedRowId}
       editable={access.canWrite && table?.status === 'active' && !c.isMutating}
-      schemaEditable={schemaEditable} onAddColumn={canAddColumn ? () => openSchema(true) : undefined}
+      schemaEditable={schemaEditable} onAddColumn={canAddColumn ? event => openSchema(event, true) : undefined}
       onUpdateColumn={updateColumn} onMoveColumn={moveColumn} onRemoveColumn={removeColumn}
       loading={c.isLoadingRows} sortColumnId={c.sortColumnId} sortDirection={c.sortDirection}
       onSelectRow={c.selectRow}
@@ -122,8 +126,8 @@ function DataStudioWorkspaceBody({
       refreshRequired={c.rowsNeedRefresh} />
   </div>;
   const detail = <DataStudioInspector table={table} row={c.selectedRow} canManage={access.canManage}
-    busy={c.isMutating} onEditSchema={() => openSchema()}
-    onChangeStatus={() => { if (table) setStatusTarget({ status: table.status === 'active' ? 'archived' : 'active', revision: table.revision }); }} />;
+    busy={c.isMutating} onEditSchema={openSchema}
+    onChangeStatus={event => { captureTrigger(event); if (table) setStatusTarget({ status: table.status === 'active' ? 'archived' : 'active', revision: table.revision }); }} />;
   return <section data-slot="data-studio"
     className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden', className)}
     aria-busy={c.isLoading || c.isLoadingRows || c.isMutating}>
@@ -133,13 +137,19 @@ function DataStudioWorkspaceBody({
         <div className="min-w-0"><h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           <p className="text-sm text-muted-foreground">{description}</p></div>
       </div>
+      {c.selectedTableId && <div className="flex items-center gap-2">
+      <Button size="sm" variant="ghost" disabled={c.isMutating} onClick={() => c.selectTable(null)}><ArrowLeft aria-hidden="true" />All tables</Button>
       <Button size="sm" variant="outline" disabled={!table} aria-expanded={showDetails}
         onClick={() => { setDetails(!showDetails); mobileRecord.current = false; setMobileDetailOpen(!showDetails); }}>
         {showDetails ? <PanelRightClose aria-hidden="true" /> : <PanelRightOpen aria-hidden="true" />}
         {showDetails ? 'Hide details' : 'Show details'}
       </Button>
+      </div>}
     </header>
-    <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border bg-background shadow-sm">
+    {c.selectedTableId === null ? <DataStudioCatalog tables={c.tables} tableStatus={c.tableStatus}
+      canManage={access.canManage} loading={c.isLoading} busy={c.isMutating} error={c.mutationError ?? c.error}
+      onSelect={c.selectTable} onStatusChange={c.setTableStatus} onCreate={openCreateTable} onRefresh={refresh} />
+      : <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border bg-background shadow-sm">
       <ListDetailLayout list={list} detail={detail}
         hasSelection={c.selectedRow !== null || mobileDetailOpen} mobileDetailOpen={mobileDetailOpen}
         onMobileBack={() => setMobileDetailOpen(false)} mobileBackLabel="Back to records"
@@ -147,13 +157,13 @@ function DataStudioWorkspaceBody({
         listWidth="minmax(0, 1fr)" detailWidth="minmax(18rem, 22rem)"
         detailVisible={showDetails} resizable={resizableDetails}
         bottomBar={<div className="min-w-0 p-2"><DataStudioWorkspaceActions controller={c} access={access}
-          onAddRecord={() => setCreateRowOpen(true)} onAddColumn={() => openSchema(true)}
-          onEditSchema={() => openSchema()} onInspect={inspect}
-          onDeleteRecord={() => setDeleteTarget(c.selectedRow)}
-          onChangeStatus={() => { if (table) setStatusTarget({ status: table.status === 'active' ? 'archived' : 'active', revision: table.revision }); }}
+          onAddRecord={event => { captureTrigger(event); setCreateRowOpen(true); }} onAddColumn={event => openSchema(event, true)}
+          onEditSchema={openSchema} onInspect={inspect}
+          onDeleteRecord={event => { captureTrigger(event); setDeleteTarget(c.selectedRow); }}
+          onChangeStatus={event => { captureTrigger(event); if (table) setStatusTarget({ status: table.status === 'active' ? 'archived' : 'active', revision: table.revision }); }}
         /></div>} />
-    </div>
-    <DataStudioWorkspaceDialogs controller={c} createTableOpen={createTableOpen} onCreateTableOpen={setCreateTableOpen}
+    </div>}
+    <DataStudioWorkspaceDialogs controller={c} trigger={trigger.current} createTableOpen={createTableOpen} onCreateTableOpen={setCreateTableOpen}
       schemaOpen={schemaOpen} startWithNewColumn={startWithNewColumn} onSchemaOpen={setSchemaOpen}
       createRowOpen={createRowOpen} onCreateRowOpen={setCreateRowOpen}
       deleteTarget={deleteTarget} onDeleteClose={() => setDeleteTarget(null)}

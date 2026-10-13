@@ -26,8 +26,8 @@ export interface DataStudioInspectorProps {
   readonly row: DataStudioRow | null;
   readonly canManage: boolean;
   readonly busy?: boolean;
-  readonly onEditSchema: () => void;
-  readonly onChangeStatus: () => void;
+  readonly onEditSchema: (event?: React.MouseEvent<HTMLButtonElement>) => void;
+  readonly onChangeStatus: (event?: React.MouseEvent<HTMLButtonElement>) => void;
   readonly className?: string;
 }
 

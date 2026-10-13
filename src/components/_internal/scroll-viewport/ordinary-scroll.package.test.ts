@@ -17,16 +17,18 @@ const ORIGINALS = {
   'src/components/context-menu/context-menu-styles.ts': '04ea6734cb8b8fccc0c998d97f5201ec2904cab8c0467f75adbf03bf208bdc6a',
   'src/modals/modal-shell.tsx': '08c87f4fadfdd31eb0b1c8f8554acf2aad1071855ec1c1f736d1497fb87251f9',
   'src/modals/modal-shell.css': 'c11d71c03295ace5a48549fbf98a15114099f261e92358cd5ec8af934ee1ad1f',
-  'src/components/_internal/scroll-viewport/use-scroll-viewport.ts': '2e39074bebfabba791c2eaf813e6694f1c4fbd87eb51efb3d1088e6abc7474b9',
-  'src/components/_internal/scroll-viewport/scroll-viewport-decoration.tsx': '15800e18510ad468509952958ccbef18218f1fb5fee35d5c64fa6c28a98701a1',
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
-  'src/components/_internal/scroll-viewport/scroll-viewport-metrics.ts': 'df7a9cb2897b33e1e40636a9cf621978dd87531f9919c2dfd79f191b936db1dd',
-  'src/components/ui/scroll-area.tsx': 'd9f250e9224b5b2ff6595c36ba003f428eeeb02d6a2e0728151e6d63a396e15b',
   'src/frontend/styles/globals.css': 'af1682801435cc0ceef66a2a472099b7adc25e9e55b626ce56d1815a9e2a282d',
-  'src/frontend/styles/theme-next.css': '6dd2c0e6f22046512bccab3592e30d0f60a93bcc05d1729e925fa4aad39874c8',
 } as const;
+// Shared scroll policy/fade helpers and the next picker supplement have approved
+// Oct 13 fixes. Installed/source identity still includes them; only the original
+// picker/menu/modal owners, skin and legacy theme remain byte-frozen.
 const QUALIFIED_SOURCE = [...new Set([
   ...Object.keys(ORIGINALS),
+  'src/components/_internal/scroll-viewport/use-scroll-viewport.ts',
+  'src/components/_internal/scroll-viewport/scroll-viewport-decoration.tsx',
+  'src/components/_internal/scroll-viewport/scroll-viewport-metrics.ts',
+  'src/components/ui/scroll-area.tsx', 'src/frontend/styles/theme-next.css',
   'src/components/controls/date-time/date-picker-scroll.tsx', 'src/components/controls/date-time/index.ts',
   'src/components/ui/date-picker.tsx', 'src/components/controls/date-time/calendar.tsx',
   'src/components/controls/date-time/calendar-view-context.tsx', 'src/components/controls/date-time/calendar-month-presentation.tsx',

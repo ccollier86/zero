@@ -35,7 +35,7 @@ export interface DataStudioToolbarProps {
   readonly onTableChange: (tableId: string) => void;
   readonly onStatusChange: (status: DataStudioTableStatus | 'all') => void;
   readonly onSearchChange: (value: string) => void;
-  readonly onCreateTable: () => void;
+  readonly onCreateTable: (event?: React.MouseEvent<HTMLButtonElement>) => void;
   readonly onRefresh: () => void;
   readonly className?: string;
 }

@@ -6,7 +6,8 @@ import { observePresentationTheme } from '../../../lib/observe-presentation-them
 import { measureScrollViewport, type ScrollViewportMetrics, type ScrollViewportOrientation } from './scroll-viewport-metrics';
 
 /** Live dimensions and scroll intent for sibling-only overlay affordances. */
-export function useScrollViewport(viewport: HTMLElement | null, orientation: ScrollViewportOrientation, fadeEdges: boolean) {
+export function useScrollViewport(viewport: HTMLElement | null, orientation: ScrollViewportOrientation, fadeEdges: boolean,
+  scrollbarOrientation: ScrollViewportOrientation = orientation) {
   const [metrics, setMetrics] = React.useState<ScrollViewportMetrics | null>(null);
   const [active, setActive] = React.useState(false);
   const [viewportHovered, setViewportHovered] = React.useState(false);
@@ -63,7 +64,7 @@ export function useScrollViewport(viewport: HTMLElement | null, orientation: Scr
         contentWidth: viewport.scrollWidth, contentHeight: viewport.scrollHeight, left: viewport.scrollLeft,
         top: viewport.scrollTop, rtl: style.direction === 'rtl' }, orientation,
       number('--zero-scroll-edge-threshold', '--zero-theme-scroll-edge-threshold', .5),
-      number('--zero-scroll-minimum-thumb-length', '--zero-theme-scroll-minimum-thumb-length', 28));
+      number('--zero-scroll-minimum-thumb-length', '--zero-theme-scroll-minimum-thumb-length', 28), scrollbarOrientation);
       const active = viewport.ownerDocument.activeElement;
       let focused: Element | null = active && viewport.contains(active) ? active : null;
       if ((!focused || focused === viewport) && active) {
@@ -137,6 +138,6 @@ export function useScrollViewport(viewport: HTMLElement | null, orientation: Scr
       attributes.forEach((name, index) => { const previous = previousAttributes[index]; if (previous === null) viewport.removeAttribute(name); else viewport.setAttribute(name, previous!); });
       edgeProperties.forEach((name, index) => { const [value, priority] = previousProperties[index]!; if (value) viewport.style.setProperty(name, value, priority); else viewport.style.removeProperty(name); });
     };
-  }, [viewport, orientation, fadeEdges]);
+  }, [viewport, orientation, fadeEdges, scrollbarOrientation]);
   return { metrics, visible: active || viewportHovered || railHovered || dragging !== null, scrolling: active || dragging !== null, dragging, setDragging, setHovered };
 }

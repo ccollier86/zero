@@ -29,7 +29,7 @@ const clamp = (value: number, max: number) => Math.max(0, Math.min(max, Number.i
 
 /** Uses physical left-to-right offsets, including the native negative RTL scrollLeft convention. */
 export function measureScrollViewport(dimensions: ScrollViewportDimensions, orientation: ScrollViewportOrientation = 'vertical',
-  threshold = .5, minimumThumb = 28): ScrollViewportMetrics {
+  threshold = .5, minimumThumb = 28, scrollbarOrientation: ScrollViewportOrientation = orientation): ScrollViewportMetrics {
   const width = positive(dimensions.width), height = positive(dimensions.height);
   const maxX = positive(dimensions.contentWidth - width), maxY = positive(dimensions.contentHeight - height);
   const x = orientation !== 'vertical' && maxX > positive(threshold);
@@ -39,8 +39,10 @@ export function measureScrollViewport(dimensions: ScrollViewportDimensions, orie
     const thumb = Math.min(track, Math.max(positive(minimumThumb), content > 0 ? track * size / content : track));
     return { overflow, maximum, offset, track, thumb, position: maximum > 0 ? offset / maximum * positive(track - thumb) : 0 };
   }
-  const horizontal = axis(width, positive(dimensions.contentWidth), maxX, dimensions.rtl ? maxX + dimensions.left : dimensions.left, x, x && y);
-  const vertical = axis(height, positive(dimensions.contentHeight), maxY, dimensions.top, y, x && y);
+  // An unpainted horizontal rail must not shorten the vertical rail's travel.
+  const corner = x && y && scrollbarOrientation === 'both';
+  const horizontal = axis(width, positive(dimensions.contentWidth), maxX, dimensions.rtl ? maxX + dimensions.left : dimensions.left, x, corner);
+  const vertical = axis(height, positive(dimensions.contentHeight), maxY, dimensions.top, y, corner);
   return { x: horizontal, y: vertical, edges: {
     top: y ? vertical.offset : 0, bottom: y ? maxY - vertical.offset : 0,
     left: x ? horizontal.offset : 0, right: x ? maxX - horizontal.offset : 0,

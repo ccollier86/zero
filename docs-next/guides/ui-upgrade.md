@@ -13,9 +13,9 @@ modes: [browser, SSR, application, public-pages, package-imports, source-copy]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-11"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -93,6 +93,8 @@ private helpers, the modal store or internal animation controllers.
 | Pure chart models and reactive query bridge | `@zero/framework/charts`, `@zero/framework/charts/arc`, `@zero/framework/charts/native`, `@zero/framework/charts/react`; [pure facade](../../src/charts/index.ts), [query bridge](../../src/frontend/client/chart-query.ts). | [Charts data contract](../frontend/charts/index.md). Use authorized, bounded complete aggregates; one table page or a partial cache is not a complete chart source. Triggers/functions/Fabric retain data and acceptance ownership. |
 | Ingestion and vector search | `@zero/framework/components/vector-visualization`; [organisms](../../src/components/vector-visualization/index.ts). Backend: `@zero/framework/vector/visualization`, [facade](../../src/vector/visualization.ts). | [Component manual](../frontend/components/vector-visualization.md), [backend integration](../backend/vector/visualizations.md). Observe actual operations with explicit configuration/permissions. Do not enable this service just to change the theme, or fabricate completion from an animation. |
 | DataTable live presentation | `@zero/framework/components/data-table`; [family facade](../../src/components/data-table/index.ts). | [DataTable](../frontend/data-controls/data-table/index.md), [footer/progress](../frontend/data-controls/data-table/controls.md), [motion/live updates](../frontend/data-controls/data-table/motion-and-live-updates.md), [server sources](../frontend/data-controls/data-table/server-sources.md). Reactive totals/page counts, initial reveal/overflow fixes and sort-aware new-record navigation are part of this branch's history. |
+| Table management / Data Studio | `@zero/framework/components/data-studio`; [workspace](../../src/components/data-studio/data-studio-workspace.tsx), internal catalog in the same family. Connected `DataStudio` is also at `@zero/framework/react`. | [Workspace/catalog](../frontend/data-studio/workspace.md), [options](../frontend/data-studio/configuration.md), [managed dialogs](../frontend/data-studio/dialogs.md). Catalog-first entry, empty-start create flow, direct initial-table option, and retained in-table dropdown. |
+| Storage management | `@zero/framework/components/storage`; [workspace](../../src/components/storage/storage-studio-workspace.tsx), native and retained legacy adapters in `src/components/storage/`. | [Workspace](../frontend/storage/storage-studio-workspace.md), [controller contract](../frontend/storage/controller-contract.md). Standard manager forms/prompts/hold-confirmations now carry real triggers; standalone workspace gets a single-scene fallback host. No backend storage migration is required for the presentation fix. |
 
 Broader public React imports remain at `@zero/framework/react` and the framework
 root where documented. Prefer focused entries during migration to make family
@@ -127,6 +129,36 @@ Ordinary bounded surfaces use the Arc scroll treatment on their real native
 viewport. Header, footer, borders and stationary actions remain outside its mask.
 Tables, virtual lists, bottom-following streams and chart progress retain their
 specialized contracts. A second scroll wrapper is not a fix for a partial item.
+
+### Live-Test Refinements (October 13)
+
+These fixes belong to the same framework feature branch; include them when
+resolving/pinning the snapshot instead of installing an earlier archive solely
+because it also says `2.6.0`:
+
+- DataTable's existing native viewport now chains to the nearest page/ancestor
+  scroller at its top/bottom, and a fitting table does not trap page gestures.
+  Both axes get overflow-aware fades; horizontal scrollbar chrome stays opt-in.
+  Footer Next/Previous uses directional whole-page motion, including delayed
+  server/cached pages, without replaying initial reveal.
+- Resting Select uses the expanded popover material and a dedicated
+  `--zero-theme-picker-trigger-radius` (18px); the global compact input radius
+  stays 6px. Its shrink calibration is unchanged, but the paint/selected-label
+  handoff completes at visual landing rather than waiting for invisible spring
+  residuals. Table-search focus has a thin cue instead of a thick offset ring;
+  keyboard and forced-colors focus remain available.
+- Connected DataStudio starts at a searchable table catalog. `initialTableId`
+  enters an admitted table directly; `autoSelectFirstTable: true` retains former
+  initial auto-entry. Custom `useDataStudio` workspace owners can set it false.
+  `selectTable(null)` returns to the catalog, and the dropdown stays in the editor.
+- DataStudio/Storage already used the manager. The correction is trigger
+  provenance and standalone host/label wiring, not a new modal API or write path.
+  Keep controller authority, revisions, dirty/receipt ownership and hold-to-delete.
+
+Apps consuming packaged controls receive these changes when their pinned package
+is replaced. Apps with copied controls must review/update the corresponding
+source closures, not wrap an old viewport or duplicate a new modal frame. No
+original theme, shell or retained implementation is deleted by this refinement.
 
 The new-record indicator is actionable only when admitted arrivals belong before
 the current leading row under the table's actual sort contract. Then it can return

@@ -13,9 +13,9 @@ modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-07"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -57,6 +57,10 @@ except defaultValue/onChange/size/type/value. Use disabled normally.
 Focus expands; non-empty text keeps it expanded. Escape first clears populated
 text, then collapses an empty input. Motion respects reduced-motion preference.
 Its tokenized presentation belongs to table/directory controls, not every app input.
+The resting and focused search surface keep the same one-pixel pill boundary;
+focus changes it to the readable ring token without adding an offset outline
+around the expanding shape. Forced colors retain an explicit system outline.
+The expansion spring, controlled callback and focus/clear behavior are unchanged.
 
 ## Organism Toolbar Slots
 

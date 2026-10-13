@@ -48,9 +48,10 @@ export function useLegacyStorageActions({
   clearSelectedDrive,
   showDriveCatalog,
 }: UseLegacyStorageActionsOptions) {
-  const createDrive = React.useCallback(async () => {
+  const createDrive = React.useCallback(async (trigger?: Element | null) => {
     const name = await openStorageNameDialog({
       title: 'New drive',
+      trigger,
       label: 'Drive name',
       placeholder: 'Project files',
       submitLabel: 'Create drive',
@@ -71,9 +72,10 @@ export function useLegacyStorageActions({
     }, { driveId: drive.drive.drive_id });
   }, [actions, refreshDrives, runAction]);
 
-  const deleteDrive = React.useCallback(async (drive: StorageStudioDrive) => {
+  const deleteDrive = React.useCallback(async (drive: StorageStudioDrive, trigger?: Element | null) => {
     const confirmed = await modals.confirm({
       title: 'Delete drive?',
+      trigger,
       description: `${drive.drive.name} and all files inside it will be permanently deleted.`,
       confirmLabel: 'Delete',
       variant: 'destructive',
@@ -98,10 +100,11 @@ export function useLegacyStorageActions({
     showDriveCatalog,
   ]);
 
-  const createFolder = React.useCallback(async () => {
+  const createFolder = React.useCallback(async (trigger?: Element | null) => {
     if (!selectedDriveId) return;
     const name = await openStorageNameDialog({
       title: 'New folder',
+      trigger,
       label: 'Folder name',
       placeholder: 'Invoices',
       submitLabel: 'Create folder',
@@ -124,10 +127,11 @@ export function useLegacyStorageActions({
     }, { driveId: selectedDriveId, path: file.path });
   }, [actions, clearSelectedFile, refreshFolder, runAction, selectedDriveId]);
 
-  const moveOrCopy = React.useCallback(async (kind: 'move' | 'copy', file: FileInfo) => {
+  const moveOrCopy = React.useCallback(async (kind: 'move' | 'copy', file: FileInfo, trigger?: Element | null) => {
     if (!selectedDriveId) return;
     const destination = await openStorageNameDialog({
       title: kind === 'move' ? 'Move item' : 'Copy item',
+      trigger,
       label: 'Destination path',
       initialValue: file.path,
       description: 'Enter the full destination path inside this drive.',
@@ -143,10 +147,11 @@ export function useLegacyStorageActions({
     }, { driveId: selectedDriveId, path: file.path, destination });
   }, [actions, clearSelectedFile, refreshFolder, runAction, selectedDriveId]);
 
-  const deleteFile = React.useCallback(async (file: FileInfo) => {
+  const deleteFile = React.useCallback(async (file: FileInfo, trigger?: Element | null) => {
     if (!selectedDriveId) return;
     const confirmed = await modals.confirm({
       title: file.type === 'folder' ? 'Delete folder?' : 'Delete file?',
+      trigger,
       description: `${file.name} will be permanently deleted.`,
       confirmLabel: 'Delete',
       variant: 'destructive',

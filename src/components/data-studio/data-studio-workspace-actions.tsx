@@ -2,18 +2,19 @@
 
 /** Compose selection/capability-aware Studio operations in Zero's anchored action bar. */
 import { Archive, Columns3, PanelRightOpen, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import type * as React from 'react';
 import type { DataStudioAccess, UseDataStudioResult } from '../../frontend/client/data-studio-hooks';
 import { RecordNavigationBar, type NavigationAction } from '../ui/record-navigation-bar';
 
 export interface DataStudioWorkspaceActionsProps {
   controller: UseDataStudioResult;
   access: DataStudioAccess;
-  onAddRecord: () => void;
-  onAddColumn: () => void;
-  onEditSchema: () => void;
+  onAddRecord: (event?: React.MouseEvent<HTMLButtonElement>) => void;
+  onAddColumn: (event?: React.MouseEvent<HTMLButtonElement>) => void;
+  onEditSchema: (event?: React.MouseEvent<HTMLButtonElement>) => void;
   onInspect: () => void;
-  onDeleteRecord: () => void;
-  onChangeStatus: () => void;
+  onDeleteRecord: (event?: React.MouseEvent<HTMLButtonElement>) => void;
+  onChangeStatus: (event?: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export function DataStudioWorkspaceActions({ controller: c, access, ...actions }: DataStudioWorkspaceActionsProps) {

@@ -47,6 +47,7 @@ export function DataTableGrid<T extends Row>(props: DataTableGridProps<T>) {
   const animated = motionEnabled && !motion.reducedMotion;
   const blocked = Boolean(props.previousData) || motion.pending && !controls.editingCell;
   return <ScrollArea data-slot="data-table-grid" data-motion={animated ? 'true' : 'false'}
+    orientation="both" scrollbarOrientation="vertical" scrollChaining="auto"
     className="w-full min-w-0 max-w-full rounded-md border" aria-busy={loading || motion.pending || undefined}>
     <div ref={motion.containerRef} data-slot="data-table-height-frame" className="relative">
       <Table className={tableLayout === 'fixed' ? 'table-fixed' : undefined} containerClassName="overflow-clip">

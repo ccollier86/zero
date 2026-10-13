@@ -28,6 +28,11 @@ const operations: Operation[] = [];
 function Fixture() {
   const [scope, setScope] = React.useState('one');
   const [table, setTable] = React.useState(initial);
+  const [tableId, selectTable] = React.useState<string | null>(() => document.documentElement.dataset.catalog === 'true' ? null : initial.tableId);
+  const [catalogEmpty, setCatalogEmpty] = React.useState(false);
+  const [catalogLoading, setCatalogLoading] = React.useState(false);
+  const [catalogError, setCatalogError] = React.useState<Error | null>(null);
+  const [tableStatus, setTableStatus] = React.useState<'active' | 'archived' | 'all'>('active');
   const [rows, setRows] = React.useState(() => records('one'));
   const [selected, select] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState('');
@@ -41,23 +46,26 @@ function Fixture() {
     setTable(next); return next;
   };
   const selectedIndex = rows.findIndex(row => row.rowId === selected);
+  const tables = catalogEmpty ? [] : [table, { ...table, tableId: 'tasks', key: 'tasks', name: 'Tasks', description: 'Project work and delivery milestones.', rowCount: 0 }];
+  const activeTable = tables.find(item => item.tableId === tableId) ?? null;
   const controller: UseDataStudioResult = {
     scopeKey: scope, status: 'ready', access: { canRead: true, canWrite: write, canManage: manage },
     capabilities: { enabled: true, scope: 'organization', permissions: { read: true, write, manage },
       limits: { maxTables: 20, maxRowsPerTable: 1000, maxColumns: 50, maxPageSize: 25, maxRowBytes: 262144 } },
-    tables: [table], selectedTableId: table.tableId, selectedTable: table, rows, totalRows: rows.length,
+    tables: tables.filter(item => tableStatus === 'all' || item.status === tableStatus), selectedTableId: tableId, selectedTable: activeTable,
+    rows: activeTable?.tableId === table.tableId ? rows : [], totalRows: activeTable?.rowCount ?? 0,
     selectedRowId: selected, selectedRow: selectedIndex < 0 ? null : rows[selectedIndex]!, selectedRowIndex: selectedIndex,
-    tableStatus: 'active', search, filters: [], sortColumnId, sortDirection,
+    tableStatus, search, filters: [], sortColumnId, sortDirection,
     offset: 0, previousOffset: null, nextOffset: null, pageSize: 25, rowWindowKey: `${scope}:${search}:${sortColumnId}:${sortDirection}`,
-    isLoading: false, isLoadingRows: false, isMutating: false, error: null, mutationError: null,
+    isLoading: catalogLoading, isLoadingRows: false, isMutating: false, error: catalogError, mutationError: null,
     hasMoreRows: false, rowsNeedRefresh: refresh,
-    selectTable() {}, selectRow: select,
+    selectTable: id => { selectTable(id); select(null); }, selectRow: select,
     selectPreviousRow: () => select(rows[Math.max(0, selectedIndex - 1)]?.rowId ?? null),
     selectNextRow: () => select(rows[Math.min(rows.length - 1, selectedIndex + 1)]?.rowId ?? null),
-    setTableStatus() {}, setSearch, setFilters() {}, setSort: (id, direction = 'asc') => { setSortColumnId(id); setSortDirection(direction); },
+    setTableStatus, setSearch, setFilters() {}, setSort: (id, direction = 'asc') => { setSortColumnId(id); setSortDirection(direction); },
     setOffset() {}, goToPreviousPage: () => operations.push({ type: 'page.previous' }), goToNextPage: () => operations.push({ type: 'page.next' }),
     reload: async () => {}, reloadRows: async () => { setRefresh(false); },
-    createTable: async input => ({ ...table, ...input }), updateTable: update,
+    createTable: async input => { const next = { ...table, ...input, tableId: 'created', rowCount: 0 }; setTable(next); setCatalogEmpty(false); setRows([]); selectTable(next.tableId); return next; }, updateTable: update,
     updateSchema: (schema, options) => update({ schema }, options),
     changeTableStatus: async (status, options) => {
       operations.push({ type: 'table.status', revision: options?.expectedRevision });
@@ -76,6 +84,7 @@ function Fixture() {
     revision: () => { setTable(current => ({ ...current, revision: current.revision + 1 })); setRows(current => current.map(row => ({ ...row, revision: row.revision + 1 }))); },
     scope: next => { setScope(next); select(null); setRows(records(next)); },
     permissions: (manager, writer) => { setManage(manager); setWrite(writer); }, refresh: setRefresh,
+    catalog: (empty, loading = false, error = false) => { selectTable(null); setCatalogEmpty(empty); setCatalogLoading(loading); setCatalogError(error ? new Error('Synthetic catalog failure') : null); },
   };
   return <main className="flex h-svh min-h-0 flex-col bg-background p-3 text-foreground sm:p-5">
     <DataStudioWorkspace controller={controller} title="Workspace tables" />
@@ -85,6 +94,7 @@ declare global {
   interface Window { __studioWorkspace: {
     operations(): Operation[]; empty(): void; select(id: string): void; revision(): void; scope(next: string): void;
     permissions(manager: boolean, writer: boolean): void; refresh(required: boolean): void;
+    catalog(empty: boolean, loading?: boolean, error?: boolean): void;
   }; }
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

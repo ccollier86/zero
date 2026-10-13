@@ -40,6 +40,8 @@ export interface UseDataStudioOptions {
   readonly rowLoading?: 'paged' | 'progressive';
   readonly enabled?: boolean;
   readonly initialTableId?: string | null;
+  /** Initial catalog policy. Hook compatibility: true; connected DataStudio: false. */
+  readonly autoSelectFirstTable?: boolean;
   readonly tableStatus?: DataStudioTableStatus | 'all';
   readonly pageSize?: number;
   readonly initialSearch?: string;

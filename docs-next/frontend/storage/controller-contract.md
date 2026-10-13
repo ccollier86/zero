@@ -12,10 +12,10 @@ applies_to: ["2.1.1 development source; not package-qualified"]
 modes: [single-tenant, multi-tenant, guardian-enabled, storage-enabled]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -46,6 +46,15 @@ Arrays are readonly presentation results. `StorageStudioJobPresentation` is the 
 All controllers require search/owner/lifecycle/type/sort setters; `selectDrive`, `openDrive`, `selectFile`, `openFolder`, `openBreadcrumb`, `showDriveCatalog`, and `refresh`. Page-navigation methods are optional. Commands changing selection are synchronous; operation callbacks may return void or Promise<void>.
 
 The optional operation map supports createDrive/upload/createFolder, download, renameDrive/renameFile, updateFileMetadata, move/copy/share/setFileVisibility, suspend/restore/deleteDrive/deleteFile. The UI omits unavailable actions and also checks capabilities. A controller must report its own asynchronous failures: action dispatch observes rejections to prevent browser unhandled promises, not to create a generic mutation success contract.
+
+Modal-backed operations accept additive trigger provenance: `createDrive(trigger?)`,
+`createFolder(trigger?)`, `move(file, trigger?)`, `copy(file, trigger?)`,
+`deleteDrive(drive, trigger?)` and `deleteFile(file, trigger?)`, where
+`trigger` is `Element | null`. Existing callbacks that ignore the extra argument
+remain valid. The action bar forwards its actual button; native and legacy adapters
+pass it to `modals.show/prompt/confirm`, preserving shared origin/reverse motion
+and focus return. Direct programmatic calls can omit it for Rise. The trigger is
+presentation metadata, never an authorization input or replacement for scope fences.
 
 ## Inspector Slots
 

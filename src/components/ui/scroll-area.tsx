@@ -14,6 +14,10 @@ type ScrollAreaProps = React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
   orientation?: ScrollViewportOrientation
   /** Conditional content-only edge fades; rails remain outside the mask. */
   fadeEdges?: boolean
+  /** Painted rail axes, independent of the axes that scroll and receive fades. */
+  scrollbarOrientation?: ScrollViewportOrientation
+  /** Tables/page content may chain at an edge; floating controls stay contained by default. */
+  scrollChaining?: 'auto' | 'contain'
   /** Access the actual native viewport without changing the Root ref contract. */
   viewportRef?: React.Ref<HTMLDivElement>
 }
@@ -23,6 +27,8 @@ function ScrollArea({
   children,
   orientation = 'vertical',
   fadeEdges = true,
+  scrollbarOrientation = orientation,
+  scrollChaining = 'contain',
   viewportRef,
   type = 'hover',
   scrollHideDelay,
@@ -40,7 +46,7 @@ function ScrollArea({
       style={{ ...(scrollHideDelay === undefined ? {} : { '--zero-scroll-hide-delay': `${scrollHideDelay}ms` }), ...style } as React.CSSProperties}
       {...props}
     >
-      <ScrollAreaPrimitive.Viewport ref={ref} className="size-full rounded-[inherit]">
+      <ScrollAreaPrimitive.Viewport ref={ref} className="size-full rounded-[inherit]" style={{ overscrollBehavior: scrollChaining }}>
         {children}
       </ScrollAreaPrimitive.Viewport>
       {/* Registration keeps Radix's Viewport axes enabled. Its 18px native-thumb geometry must not drive a painted 28px Arc thumb. */}
@@ -48,7 +54,7 @@ function ScrollArea({
         aria-hidden="true" style={{ display: 'none', visibility: 'hidden', pointerEvents: 'none' }} />}
       {orientation !== 'vertical' && <ScrollAreaPrimitive.Scrollbar orientation="horizontal" data-zero-scroll-registration=""
         aria-hidden="true" style={{ display: 'none', visibility: 'hidden', pointerEvents: 'none' }} />}
-      <ScrollViewportDecoration viewport={viewport} orientation={orientation} fadeEdges={fadeEdges}
+      <ScrollViewportDecoration viewport={viewport} orientation={orientation} fadeEdges={fadeEdges} scrollbarOrientation={scrollbarOrientation}
         scrollbars={type === 'always' || type === 'auto' ? 'always' : type === 'scroll' ? 'scroll' : 'hover'} />
     </ScrollAreaPrimitive.Root>
   )

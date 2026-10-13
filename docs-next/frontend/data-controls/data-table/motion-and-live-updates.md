@@ -13,9 +13,9 @@ modes: [browser, SSR, array, collection, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "6f6820d1addf17469f465663a884b836e82640a3"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -73,6 +73,13 @@ coalesce to the latest target; canceled animations/results cannot restore an
 obsolete page. A page change uses a short fade out and a directional incoming
 page. Search/filter changes reflow identities rather than presenting unrelated
 records as newly inserted data.
+
+Footer Next/Previous navigation applies a whole-page directional slide (`8px`
+from the next/previous side) with the 525ms incoming timing and no initial stagger.
+It does **not** replay first-load row/skeleton reveal. This holds for array/client
+pagination, cached pages and a server page delivered after a delayed response.
+Loading placeholders still reflect real pending requests; their presence does
+not reclassify a page turn as the initial table load. Reduced motion skips travel.
 
 The table's shared `DATA_TABLE_MOTION` export records the working defaults:
 
@@ -251,7 +258,17 @@ invalidation/subscription, and `source.prefetch: false` disables speculation.
 Manual refresh and accepted mutation acknowledgment remain separate operations.
 
 DataTable uses its outer ScrollArea as the sole owner of genuine horizontal
-overflow. Row/page entrances and the decorative skeleton copy stay inside the
+and, when height-bounded, vertical overflow. It uses native `scrollChaining="auto"`:
+the table scrolls internally while it has room, then hands a wheel/touch gesture
+to the nearest scrollable ancestor at the top or bottom. A content-height table
+passes vertical gestures straight to the page, even when it has horizontal
+overflow. There is no global wheel handler competing with the page.
+
+The same Arc-style content fades watch both real overflow axes. They cover at
+most 28px and diminish with the remaining hidden distance; they do not dim a
+fitting table or invent vertical fades on a table that grows with the page.
+The original native viewport remains the owner—there is no nested ScrollArea.
+Row/page entrances and the decorative skeleton copy stay inside the
 table's paint bounds; their transforms must not create a temporary scroll range.
 Horizontal scrollbar chrome is hidden by default, while wide tables remain
 scrollable with a trackpad, horizontal wheel or touch gesture. Set

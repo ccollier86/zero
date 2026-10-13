@@ -9,25 +9,28 @@ import './scroll-viewport.css';
 export interface ScrollViewportDecorationProps {
   readonly viewport: HTMLElement | null;
   readonly orientation?: ScrollViewportOrientation;
+  /** Hide one axis's rail without disabling its native scrolling or content fades. */
+  readonly scrollbarOrientation?: ScrollViewportOrientation;
   readonly fadeEdges?: boolean;
   readonly scrollbars?: 'hover' | 'scroll' | 'always' | 'hidden';
 }
 
 /** Decorates the exact Radix/cmdk/native viewport supplied by its semantic owner. Parent must establish a positioned box. */
-export function ScrollViewportDecoration({ viewport, orientation = 'vertical', fadeEdges = true, scrollbars = 'hover' }: ScrollViewportDecorationProps) {
-  const state = useScrollViewport(viewport, orientation, fadeEdges);
+export function ScrollViewportDecoration({ viewport, orientation = 'vertical', scrollbarOrientation = orientation, fadeEdges = true, scrollbars = 'hover' }: ScrollViewportDecorationProps) {
+  const state = useScrollViewport(viewport, orientation, fadeEdges, scrollbarOrientation);
   const decoration = React.useRef<HTMLDivElement>(null);
   const drag = React.useRef<{ axis: 'x' | 'y'; pointer: number; coordinate: number; offset: number; maximum: number; travel: number; scale: number; capture: HTMLDivElement } | null>(null);
+  const railEnabled = (axis: 'x' | 'y') => scrollbarOrientation === 'both' || scrollbarOrientation === (axis === 'x' ? 'horizontal' : 'vertical');
   React.useEffect(() => () => {
     const active = drag.current; drag.current = null;
     if (active?.capture.hasPointerCapture(active.pointer)) active.capture.releasePointerCapture(active.pointer);
   }, [viewport]);
   React.useLayoutEffect(() => {
     const active = drag.current;
-    if (!active || scrollbars !== 'hidden' && state.metrics?.[active.axis].overflow) return;
+    if (!active || scrollbars !== 'hidden' && railEnabled(active.axis) && state.metrics?.[active.axis].overflow) return;
     drag.current = null; state.setDragging(null); state.setHovered(false);
     if (active.capture.hasPointerCapture(active.pointer)) active.capture.releasePointerCapture(active.pointer);
-  }, [scrollbars, state.metrics?.x.overflow, state.metrics?.y.overflow]);
+  }, [scrollbars, scrollbarOrientation, state.metrics?.x.overflow, state.metrics?.y.overflow]);
   const scrollTo = (axis: 'x' | 'y', offset: number) => {
     if (!viewport || !state.metrics) return;
     const metric = state.metrics[axis], bounded = Math.max(0, Math.min(metric.maximum, offset));
@@ -64,12 +67,22 @@ export function ScrollViewportDecoration({ viewport, orientation = 'vertical', f
     const element = decoration.current;
     if (!element || !viewport) return;
     const wheel = (event: WheelEvent) => {
-      if (event.ctrlKey || !event.target || !(event.target as Element).closest('.zero-scroll-track')) return;
+      if (event.defaultPrevented || event.ctrlKey || !event.target || !(event.target as Element).closest('.zero-scroll-track')) return;
       const axis = (event.target as Element).closest<HTMLElement>('.zero-scroll-track')?.dataset.axis;
+      if (axis !== 'x' && axis !== 'y') return;
+      const before = axis === 'x' ? viewport.scrollLeft : viewport.scrollTop;
       const mode = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? (axis === 'x' ? viewport.clientWidth : viewport.clientHeight) : 1;
       if (axis === 'x') viewport.scrollLeft += (event.deltaX || event.deltaY) * mode;
       else viewport.scrollTop += event.deltaY * mode;
-      event.preventDefault(); event.stopPropagation();
+      // The rail is a sibling, so inherit its viewport's edge-chaining policy.
+      // Page-flow tables pass through at an edge; contained menus stay contained.
+      const after = axis === 'x' ? viewport.scrollLeft : viewport.scrollTop;
+      const style = viewport.ownerDocument.defaultView?.getComputedStyle(viewport);
+      const policy = axis === 'x' ? style?.overscrollBehaviorX : style?.overscrollBehaviorY;
+      const delta = axis === 'x' ? event.deltaX || event.deltaY : event.deltaY;
+      if (after !== before || delta !== 0 && (policy === 'contain' || policy === 'none')) {
+        event.preventDefault(); event.stopPropagation();
+      }
     };
     element.addEventListener('wheel', wheel, { passive: false });
     return () => element.removeEventListener('wheel', wheel);
@@ -78,10 +91,10 @@ export function ScrollViewportDecoration({ viewport, orientation = 'vertical', f
   return <div ref={decoration} className="zero-scroll-decoration" aria-hidden="true" data-visible={scrollbars === 'always' || (scrollbars === 'scroll' ? state.scrolling : state.visible) || undefined}
     style={viewport ? { left: viewport.offsetLeft + viewport.clientLeft, top: viewport.offsetTop + viewport.clientTop,
       right: 'auto', bottom: 'auto', width: viewport.clientWidth, height: viewport.clientHeight } : undefined}
-    data-dragging={state.dragging ?? undefined} data-both={state.metrics.x.overflow && state.metrics.y.overflow || undefined}>
+    data-dragging={state.dragging ?? undefined} data-both={railEnabled('x') && railEnabled('y') && state.metrics.x.overflow && state.metrics.y.overflow || undefined}>
     {(['x', 'y'] as const).map(axis => {
       const metric = state.metrics![axis];
-      if (!metric.overflow) return null;
+      if (!metric.overflow || !railEnabled(axis)) return null;
       return <div key={axis} className="zero-scroll-track" data-axis={axis} onPointerDown={event => start(axis, event)} onPointerMove={move}
         onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end} onPointerEnter={event => { if (event.pointerType === 'mouse') state.setHovered(true); }}
         onPointerLeave={() => { state.setHovered(false); }}>

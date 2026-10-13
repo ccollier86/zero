@@ -15,6 +15,16 @@ test('thumb follows actual scroll progress and reserves the intersection only fo
   expect(result.edges).toEqual({ left: 100, right: 100, top: 100, bottom: 100 });
   expect(measureScrollViewport({ width: 200, height: 100, contentWidth: 200, contentHeight: 300, left: 0, top: 0 }).y.track).toBe(94);
 });
+test('independent rail orientation preserves both fades without reserving an invisible corner', () => {
+  const dimensions = { width: 200, height: 100, contentWidth: 400, contentHeight: 300, left: 100, top: 100 };
+  const result = measureScrollViewport(dimensions, 'both', .5, 28, 'vertical');
+  expect(result.x.overflow).toBe(true); expect(result.y.overflow).toBe(true);
+  expect(result.edges).toEqual({ left: 100, right: 100, top: 100, bottom: 100 });
+  expect(result.y.track).toBe(94);
+  expect(result.y.position + result.y.thumb).toBeLessThanOrEqual(result.y.track);
+  const end = measureScrollViewport({ ...dimensions, top: 200 }, 'both', .5, 28, 'vertical');
+  expect(end.y.position + end.y.thumb).toBe(end.y.track);
+});
 test('RTL and overscroll clamp to physical hidden edges without reversing fades or drag progress', () => {
   const start = measureScrollViewport({ width: 100, height: 50, contentWidth: 300, contentHeight: 50, left: 0, top: 0, rtl: true }, 'horizontal');
   expect(start.edges).toMatchObject({ left: 200, right: 0 });

@@ -47,7 +47,7 @@ function RowDialogSession(props: DataStudioRowDialogProps & { isOwnerCurrent(): 
     : 'Values are saved only when you create the record.';
   return <ControlledModal open={props.open} identityKey={state.opening.tableId} onOpenChange={props.onOpenChange}
     busy={state.pending || props.busy} dirty={state.dirty} error={state.error}
-    descriptor={{ title: 'Add record to ' + props.table?.name, icon: <Database />, size: 'lg',
+    descriptor={{ title: 'Add record to ' + props.table?.name, trigger: props.trigger, icon: <Database />, size: 'lg',
       customSize: { width: 'var(--zero-data-studio-row-dialog-width,44rem)' }, dataSlot: 'data-studio-row-dialog',
       meta: <><Badge variant="outline">{columns.length} fields</Badge>{required > 0 && <span>{required} required without a default</span>}</>,
       description: 'Enter a value for each required field. Other fields are optional.',

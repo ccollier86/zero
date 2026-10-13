@@ -7,6 +7,7 @@ import { DataStudioConfirmDialog, DataStudioRowDialog, DataStudioTableDialog } f
 
 export interface DataStudioWorkspaceDialogsProps {
   controller: UseDataStudioResult;
+  trigger?: Element | null;
   createTableOpen: boolean;
   onCreateTableOpen: (open: boolean) => void;
   schemaOpen: boolean;
@@ -22,21 +23,21 @@ export interface DataStudioWorkspaceDialogsProps {
 
 export function DataStudioWorkspaceDialogs({ controller: c, ...p }: DataStudioWorkspaceDialogsProps) {
   return <>
-    <DataStudioTableDialog open={p.createTableOpen} busy={c.isMutating}
+    <DataStudioTableDialog open={p.createTableOpen} trigger={p.trigger} busy={c.isMutating}
       maxColumns={c.capabilities?.limits.maxColumns}
       onOpenChange={p.onCreateTableOpen} onCreate={c.createTable} />
-    <DataStudioTableDialog open={p.schemaOpen} table={c.selectedTable} busy={c.isMutating}
+    <DataStudioTableDialog open={p.schemaOpen} trigger={p.trigger} table={c.selectedTable} busy={c.isMutating}
       maxColumns={c.capabilities?.limits.maxColumns}
       startWithNewColumn={p.startWithNewColumn} onOpenChange={p.onSchemaOpen} onUpdate={c.updateTable} />
-    <DataStudioRowDialog open={p.createRowOpen} table={c.selectedTable} scopeKey={c.scopeKey} busy={c.isMutating}
+    <DataStudioRowDialog open={p.createRowOpen} trigger={p.trigger} table={c.selectedTable} scopeKey={c.scopeKey} busy={c.isMutating}
       onOpenChange={p.onCreateRowOpen} onCreate={c.createRow} />
-    <DataStudioConfirmDialog open={p.deleteTarget !== null} title="Delete this record?"
+    <DataStudioConfirmDialog open={p.deleteTarget !== null} trigger={p.trigger} title="Delete this record?"
       operationKey={p.deleteTarget ? `${p.deleteTarget.rowId}:${p.deleteTarget.revision}` : undefined}
       description="This permanently removes the record. This action cannot be undone."
       confirmLabel="Delete record" destructive busy={c.isMutating}
       onOpenChange={open => { if (!open) p.onDeleteClose(); }}
       onConfirm={async () => { if (p.deleteTarget) await c.deleteRow(p.deleteTarget); }} />
-    <DataStudioConfirmDialog open={p.statusTarget !== null}
+    <DataStudioConfirmDialog open={p.statusTarget !== null} trigger={p.trigger}
       operationKey={p.statusTarget ? `${c.selectedTableId}:${p.statusTarget.status}:${p.statusTarget.revision}` : undefined}
       title={p.statusTarget?.status === 'archived' ? 'Archive this table?' : 'Restore this table?'}
       description={p.statusTarget?.status === 'archived'

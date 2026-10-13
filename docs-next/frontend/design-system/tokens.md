@@ -13,9 +13,9 @@ modes: ["React browser UI", "SSR markup", "managed frontend styling"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-10"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -45,6 +45,13 @@ through the corresponding component aliases. Its geometry/material and four
 named motion recipes live in the existing pure catalog; no Arc root palette,
 private side-tooltip engine or alternate font loader is installed. The retained
 legacy values below remain unchanged.
+
+The Select's rounded trigger now has a distinct geometry role:
+`--zero-theme-picker-trigger-radius: 1.125rem` (18px), consumed through
+`--zero-select-radius-trigger`. It uses the popover material/quiet boundary at
+rest, matching the expanded list. `--zero-theme-radius-control` remains
+`.375rem` (6px) for compact inputs; this is not a global pill-shape change.
+See [Select](../components/controls/select.md) for overrides and focus policy.
 
 ## Tailwind Aliases
 

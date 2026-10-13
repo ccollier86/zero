@@ -55,8 +55,8 @@ function SelectTrigger({
       ref={triggerRef}
       data-slot="select-trigger"
       className={cn(
-        "zero-select-trigger flex w-full items-center justify-between gap-2 border border-input bg-background text-[length:var(--zero-type-control-size,var(--text-sm,.875rem))] leading-[var(--zero-type-control-leading,var(--text-sm--line-height,1.4285714286))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-control-weight,inherit)] tracking-[var(--zero-type-control-tracking,inherit)] shadow-xs transition-[border-color,box-shadow,color] outline-none whitespace-nowrap placeholder:text-muted-foreground hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50 dark:bg-bg-inset/45 [&>span]:line-clamp-1",
-        "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "zero-select-trigger flex w-full items-center justify-between gap-2 border border-border/85 bg-popover text-popover-foreground text-[length:var(--zero-type-control-size,var(--text-sm,.875rem))] leading-[var(--zero-type-control-leading,var(--text-sm--line-height,1.4285714286))] font-[family-name:var(--zero-theme-font-body,inherit)] font-[number:var(--zero-type-control-weight,inherit)] tracking-[var(--zero-type-control-tracking,inherit)] shadow-xs transition-[border-color,box-shadow,color] outline-none whitespace-nowrap placeholder:text-muted-foreground hover:border-border disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30",
         "aria-invalid:border-destructive aria-invalid:ring-destructive/20",
         className
       )}

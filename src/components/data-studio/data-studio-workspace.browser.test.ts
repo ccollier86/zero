@@ -9,22 +9,24 @@ import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type Play
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 let lease: PlaywrightTestBrowserLease, directory: string, script: string, css: string;
 let builderRunning = false;
-const evidence = '/Volumes/code-bank/tmp/scratch/zero-platform/data-studio-ui-evidence';
+const evidence = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/data-studio-ui';
 beforeAll(async () => {
   const deadline = performance.now() + 60_000;
   if (!playwrightTestBrowserAvailable) return;
   lease = await acquirePlaywrightTestBrowser();
   await mkdir(evidence, { recursive: true });
-  directory = await mkdtemp(join(evidence, 'build-'));
+  const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform'; await mkdir(scratch, { recursive: true });
+  directory = await mkdtemp(join(scratch, 'data-studio-ui-'));
   const builder = join(directory, 'build.ts');
   await Bun.write(builder, `const result = await Bun.build({
     entrypoints: [${JSON.stringify(join(import.meta.dir, 'data-studio-workspace.browser-fixture.tsx'))}],
-    outdir: ${JSON.stringify(directory)}, naming: 'bundle.js', target: 'browser', format: 'iife',
+    outdir: ${JSON.stringify(directory)}, naming: {entry:'bundle.[ext]'}, target: 'browser', format: 'iife',
   });
   if (!result.success) { await Bun.write(Bun.stderr, result.logs.map(log => log.message).join('\\n')); process.exit(1); }`);
   await runWorkspaceBuilder(builder, deadline);
   script = await Bun.file(join(directory, 'bundle.js')).text();
   css = await Bun.file((await buildPlatformStyles(directory, join(directory, 'missing-app'))).cssPath).text();
+  if (await Bun.file(join(directory, 'bundle.css')).exists()) css += '\n' + await Bun.file(join(directory, 'bundle.css')).text();
 }, 60_000);
 afterAll(async () => { try { if (directory && !builderRunning) await rm(directory, { recursive: true, force: true }); } finally { lease?.release(); } });
 
@@ -81,9 +83,9 @@ async function withinFixtureBudget<T>(operation: Promise<T>, deadline: number): 
   } finally { if (timer !== undefined) clearTimeout(timer); }
 }
 
-async function open(width = 1280, dark = false, controlledFrames = false): Promise<Page> {
+async function open(width = 1280, dark = false, controlledFrames = false, catalog = false): Promise<Page> {
   const page = await lease.browser.newPage({ viewport: { width, height: 800 } });
-  await page.setContent(`<!doctype html><html${dark ? ' class="dark"' : ''}><head></head><body><div id="root"></div></body></html>`);
+  await page.setContent(`<!doctype html><html data-zero-theme="next" data-zero-mode="${dark ? 'dark' : 'light'}" data-catalog="${catalog}"${dark ? ' class="dark"' : ''}><head></head><body><div id="root"></div></body></html>`);
   await page.addStyleTag({ content: css });
   if (controlledFrames) await page.evaluate(() => {
     // Motion captures this scheduler at bundle load.
@@ -111,7 +113,7 @@ async function open(width = 1280, dark = false, controlledFrames = false): Promi
     };
   });
   await page.addScriptTag({ content: script });
-  await page.locator('[data-slot="data-studio-grid"]').waitFor(); return page;
+  await page.locator(catalog ? '[data-slot="data-studio-catalog"]' : '[data-slot="data-studio-grid"]').waitFor(); return page;
 }
 
 browserTest('schema-first workspace fills the width, keeps zero-row headers, and exposes operations without page controls', async () => {
@@ -133,6 +135,65 @@ browserTest('schema-first workspace fills the width, keeps zero-row headers, and
         && ['none', 'blur(0px)'].includes(getComputedStyle(content).filter);
     });
     await page.screenshot({ path: join(evidence, 'schema-dialog-light.png') });
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('catalog-first entry shows summaries, searches tables, and retains the switcher after picking one', async () => {
+  const page = await open(1280, false, false, true);
+  try {
+    expect(await page.getByRole('button', { name: 'Open Contacts table', exact: true }).count()).toBe(1);
+    expect(await page.getByRole('button', { name: 'Open Tasks table', exact: true }).count()).toBe(1);
+    expect(await page.getByText('80 records', { exact: true }).count()).toBe(1);
+    expect(await page.getByRole('combobox', { name: 'Logical table', exact: true }).count()).toBe(0);
+    await page.getByRole('searchbox', { name: 'Search tables', exact: true }).fill('milestones');
+    expect(await page.getByRole('button', { name: 'Open Contacts table', exact: true }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Open Tasks table', exact: true }).count()).toBe(1);
+    await page.getByRole('searchbox', { name: 'Search tables', exact: true }).fill('unmatched');
+    await page.getByRole('heading', { name: 'No matching tables', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+    await page.screenshot({ path: join(evidence, 'table-catalog-light.png') });
+    const table = page.getByRole('button', { name: 'Open Contacts table', exact: true });
+    await table.focus(); await page.keyboard.press('Enter');
+    await page.locator('[data-slot="data-studio-grid"]').waitFor();
+    expect(await page.getByRole('combobox', { name: 'Logical table', exact: true }).count()).toBe(1);
+    await page.getByRole('button', { name: 'All tables', exact: true }).click();
+    await page.locator('[data-slot="data-studio-catalog"]').waitFor();
+    expect(await page.getByRole('button', { name: 'Open Contacts table', exact: true }).count()).toBe(1);
+    expect(await page.getByRole('searchbox', { name: 'Search tables', exact: true }).inputValue()).toBe('');
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('empty catalog distinguishes loading/failure/read-only states and opens one managed create form from its button', async () => {
+  const page = await open(390, true, false, true);
+  try {
+    await page.evaluate(() => window.__studioWorkspace.catalog(true));
+    await page.getByRole('heading', { name: 'No active tables yet', exact: true }).waitFor();
+    const create = page.getByRole('button', { name: 'Create your first table', exact: true });
+    await create.click();
+    const dialog = page.getByRole('dialog'); await dialog.waitFor();
+    expect(await page.locator('[data-slot="dialog-header"]').count()).toBe(1);
+    expect(await dialog.getByRole('button', { name: 'Close', exact: true }).count()).toBe(1);
+    const origin = await dialog.evaluate(element => {
+      const frames = element.getAnimations({ subtree: true }).flatMap(animation => (animation.effect as KeyframeEffect).getKeyframes());
+      return frames.some(frame => typeof frame.transform === 'string' && frame.transform.includes('translate(') && frame.transform.includes('scale('));
+    });
+    expect(origin).toBe(true);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.includes('Create your first table'));
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLElement>('.zero-modal-backdrop')]
+      .every(backdrop => backdrop.hidden || Number(getComputedStyle(backdrop).opacity) <= .001));
+    await page.screenshot({ path: join(evidence, 'table-empty-catalog-dark.png') });
+    await page.evaluate(() => window.__studioWorkspace.permissions(false, false));
+    expect(await create.count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'New table', exact: true }).count()).toBe(0);
+    await page.evaluate(() => window.__studioWorkspace.catalog(true, true));
+    await page.getByRole('heading', { name: 'Loading your tables', exact: true }).waitFor();
+    expect(await page.getByRole('heading', { name: 'No active tables yet', exact: true }).count()).toBe(0);
+    await page.evaluate(() => window.__studioWorkspace.catalog(true, false, true));
+    await page.getByRole('heading', { name: 'Tables are unavailable', exact: true }).waitFor();
+    expect(await page.getByRole('alert').textContent()).toContain('Synthetic catalog failure');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   } finally { await page.close(); }
 }, 60_000);
 
@@ -175,22 +236,22 @@ browserTest('record and lifecycle confirmations preserve opening revisions and r
   try {
     await page.evaluate(() => window.__studioWorkspace.select('row-0'));
     await page.getByRole('button', { name: 'Delete record', exact: true }).click();
-    await page.getByRole('dialog').waitFor();
+    await page.getByRole('alertdialog').waitFor();
     await page.evaluate(() => { window.__studioWorkspace.select('row-1'); window.__studioWorkspace.revision(); });
-    await page.getByRole('dialog').getByRole('button', { name: 'Delete record', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete record', exact: true }).click();
     await page.waitForFunction(() => window.__studioWorkspace.operations().some(operation => operation.type === 'row.delete'));
     const deletion = (await page.evaluate(() => window.__studioWorkspace.operations())).find(operation => operation.type === 'row.delete')!;
     expect(deletion.row?.rowId).toBe('row-0'); expect(deletion.row?.revision).toBe(1);
     await page.getByRole('button', { name: 'Archive table', exact: true }).first().click();
-    await page.getByRole('dialog').waitFor();
+    await page.getByRole('alertdialog').waitFor();
     await page.evaluate(() => window.__studioWorkspace.revision());
-    await page.getByRole('dialog').getByRole('button', { name: 'Archive table', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Archive table', exact: true }).click();
     await page.waitForFunction(() => window.__studioWorkspace.operations().some(operation => operation.type === 'table.status'));
     expect((await page.evaluate(() => window.__studioWorkspace.operations())).find(operation => operation.type === 'table.status')!.revision).toBe(4);
     await page.getByRole('button', { name: 'Restore table', exact: true }).first().click();
-    await page.getByRole('dialog').waitFor();
+    await page.getByRole('alertdialog').waitFor();
     await page.evaluate(() => window.__studioWorkspace.scope('two'));
-    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await page.getByRole('alertdialog').waitFor({ state: 'detached' });
     expect(await page.getByText('one Person 1', { exact: true }).count()).toBe(0);
   } finally { await page.close(); }
 }, 60_000);

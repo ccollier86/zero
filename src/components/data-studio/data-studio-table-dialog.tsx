@@ -40,7 +40,7 @@ function TableDialogSession(props: DataStudioTableDialogProps) {
     : undefined;
   return <ControlledModal open={props.open} onOpenChange={props.onOpenChange} identityKey={props.table?.tableId ?? '__create'}
     busy={state.blocked} dirty={state.dirty} error={state.error}
-    descriptor={{ title: editing ? 'Edit table' : 'Create table', icon: <Database />, size: 'xl',
+    descriptor={{ title: editing ? 'Edit table' : 'Create table', trigger: props.trigger, icon: <Database />, size: 'xl',
       customSize: { width: 'var(--zero-data-studio-table-dialog-width,68rem)' }, dataSlot: 'data-studio-table-dialog',
       description: 'Define fields once, then use them from your functions, workflows and APIs.',
       beforeClose: () => { state.requestClose(); return false; }, footer: { start: note }, actions,

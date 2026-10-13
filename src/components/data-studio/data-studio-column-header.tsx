@@ -18,7 +18,7 @@ import { DataStudioColumnResize } from './data-studio-column-resize';
 
 export interface DataStudioSchemaActions {
   readonly schemaEditable?: boolean;
-  readonly onAddColumn?: () => void;
+  readonly onAddColumn?: (event?: React.MouseEvent<HTMLButtonElement>) => void;
   readonly onUpdateColumn?: (next: DataStudioColumn, expectedRevision?: number) => Promise<unknown>;
   readonly onMoveColumn?: (columnId: string, direction: 'left' | 'right', expectedRevision?: number) => Promise<unknown>;
   readonly onRemoveColumn?: (columnId: string, expectedRevision?: number) => Promise<unknown>;
@@ -36,6 +36,7 @@ export function DataStudioColumnHeader({ column, index, count, resizeHeader, onW
   sortDirection: 'asc' | 'desc'; onSort?: (columnId: string, direction: 'asc' | 'desc') => void;
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const trigger = React.useRef<HTMLButtonElement>(null);
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [removeOpen, setRemoveOpen] = React.useState(false);
   const [draft, setDraft] = React.useState(() => editableDataStudioColumn(column));
@@ -84,7 +85,7 @@ export function DataStudioColumnHeader({ column, index, count, resizeHeader, onW
         if (open) openEditor(); else setEditorOpen(false);
       }}>
         <PopoverTrigger asChild>
-          <button type="button" disabled={!editable || pending}
+          <button ref={trigger} type="button" disabled={!editable || pending}
             aria-label={`Edit ${column.label} column`} title={`${column.label} · ${column.type}${column.required ? ' · required' : ''}`}
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1.5 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -128,7 +129,7 @@ export function DataStudioColumnHeader({ column, index, count, resizeHeader, onW
     <DataStudioColumnResize label={column.label} header={resizeHeader} onChange={onWidthChange} />
     <ControlledModal open={removeOpen} identityKey={column.columnId} busy={pending} error={error}
       onOpenChange={open => { if (!pending) setRemoveOpen(open); }} descriptor={{
-        title: `Remove ${column.label}?`, size: 'sm', role: 'alertdialog', tone: 'danger', initialFocus: 'cancel', guard: false,
+        title: `Remove ${column.label}?`, trigger: trigger.current, size: 'sm', role: 'alertdialog', tone: 'danger', initialFocus: 'cancel', guard: false,
         description: 'This removes the column from the schema. Review dependent functions and saved values before applying this change.',
         actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
           { id: 'remove', label: pending ? 'Removing…' : 'Remove column', variant: 'danger', disabled: pending || !schemaEditable || !onRemoveColumn,

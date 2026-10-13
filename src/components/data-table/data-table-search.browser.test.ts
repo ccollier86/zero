@@ -192,6 +192,27 @@ describe('DataTableSearch browser lifecycle', () => {
       await closePage(page);
     }
   }, BROWSER_TEST_TIMEOUT_MS);
+
+  browserTest('focused morph search keeps a thin visible cue without an offset outline moat', async () => {
+    const page = await openHarness();
+    try {
+      const input = page.getByRole('searchbox', { name: 'Search records' });
+      await input.click(); await waitForOpen(page, true);
+      const focus = await input.locator('..').evaluate(element => {
+        const style = getComputedStyle(element);
+        const spreads = [...style.boxShadow.matchAll(/(?:-?\d+(?:\.\d+)?px\s+){3}(-?\d+(?:\.\d+)?)px/g)].map(match => Number(match[1]));
+        return { offset: style.getPropertyValue('--tw-ring-offset-width').trim() || '0px',
+          shadow: style.boxShadow, spread: Math.max(...spreads), focused: element.contains(document.activeElement) };
+      });
+      expect(focus.focused).toBe(true); expect(focus.shadow).not.toBe('none');
+      expect(focus.offset).toBe('0px'); expect(focus.spread).toBeLessThanOrEqual(1);
+      await input.press('Escape');
+      await page.evaluate(() => { document.body.tabIndex = -1; document.body.focus(); });
+      await page.keyboard.press('Tab');
+      expect(await input.evaluate(element => element === document.activeElement)).toBe(true);
+      expect(await input.locator('..').evaluate(element => getComputedStyle(element).boxShadow)).not.toBe('none');
+    } finally { await closePage(page); }
+  }, BROWSER_TEST_TIMEOUT_MS);
 });
 
 async function openHarness(): Promise<Page> {

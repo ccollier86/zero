@@ -62,7 +62,7 @@ export function StorageStudioActionBar({ controller }: StorageStudioActionBarPro
           ? {
               label: 'New Folder',
               disabled: pending,
-              onClick: () => invokeStorageAction(controller.operations.createFolder),
+              onClick: event => { const trigger = event?.currentTarget; invokeStorageAction(() => controller.operations.createFolder?.(trigger)); },
             }
           : undefined}
         primaryAction={controller.view === 'drives'
@@ -72,7 +72,7 @@ export function StorageStudioActionBar({ controller }: StorageStudioActionBarPro
                 shortcut: 'Cmd+N',
                 ariaHasPopup: 'dialog',
                 disabled: pending,
-                onClick: () => invokeStorageAction(controller.operations.createDrive),
+                onClick: event => { const trigger = event?.currentTarget; invokeStorageAction(() => controller.operations.createDrive?.(trigger)); },
               }
             : undefined
           : canWriteFiles && controller.operations.upload
@@ -146,7 +146,7 @@ function driveActions(controller: StorageManagementController): NavigationAction
       label: 'Delete',
       variant: 'destructive',
       disabled: pending || lifecycleBusy,
-      onClick: () => invokeStorageAction(() => controller.operations.deleteDrive?.(drive)),
+      onClick: event => { const trigger = event?.currentTarget; invokeStorageAction(() => controller.operations.deleteDrive?.(drive, trigger)); },
     });
   }
   return actions;
@@ -188,7 +188,7 @@ function fileActions(controller: StorageManagementController): NavigationAction[
       icon: <Move className="size-4" />,
       label: 'Move',
       disabled: pending,
-      onClick: () => invokeStorageAction(() => controller.operations.move?.(file)),
+      onClick: event => { const trigger = event?.currentTarget; invokeStorageAction(() => controller.operations.move?.(file, trigger)); },
     });
   }
   if (file.type === 'file' && access?.canWrite && controller.operations.copy) {
@@ -196,7 +196,7 @@ function fileActions(controller: StorageManagementController): NavigationAction[
       icon: <Copy className="size-4" />,
       label: 'Copy',
       disabled: pending,
-      onClick: () => invokeStorageAction(() => controller.operations.copy?.(file)),
+      onClick: event => { const trigger = event?.currentTarget; invokeStorageAction(() => controller.operations.copy?.(file, trigger)); },
     });
   }
   if (file.type === 'file' && access?.canRead && controller.operations.share) {
@@ -213,7 +213,7 @@ function fileActions(controller: StorageManagementController): NavigationAction[
       label: 'Delete',
       variant: 'destructive',
       disabled: pending,
-      onClick: () => invokeStorageAction(() => controller.operations.deleteFile?.(file)),
+      onClick: event => { const trigger = event?.currentTarget; invokeStorageAction(() => controller.operations.deleteFile?.(file, trigger)); },
     });
   }
   return actions;

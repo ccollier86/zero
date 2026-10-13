@@ -1277,6 +1277,24 @@ composition and native comparisons are documented in the
 [bounded scroll ledger](./arc-scroll-surface-plan.md); preserving source files
 and passing isolated checks still do not authorize original retirement.
 
+### October 13 Live-Test Refinement
+
+The approved Select rest/expanded mismatch adds exactly one canonical geometry
+role: `--zero-theme-picker-trigger-radius: 1.125rem` (18px). The trigger shares
+the expanded popover material and quiet one-pixel boundary; ordinary compact
+inputs retain the 6px control radius. Search focus has a thin one-pixel cue rather
+than a two-pixel offset moat, with keyboard/forced-colors treatment preserved.
+Select entrance/highlight/closing spring recipes are unchanged; exit paint and
+the selected label retire independently at their visible subpixel destinations.
+
+DataTable keeps its single native viewport and specialized horizontal-chrome
+policy. Its edge fades now observe both overflowing axes while the default rail
+only paints vertically. Native top/bottom gestures chain to a surrounding page;
+ordinary floating controls remain contained. Pagination remains directional
+whole-page motion, not initial reveal. The shared `Card` and `ScrollArea` are also
+used for DataStudio's catalog/empty entry; that organism adds no parallel palette,
+font scale or modal animation engine. See the [upgrade refinements](../guides/ui-upgrade.md#live-test-refinements-october-13).
+
 - [Visualization implementation](./vector-visualization-plan.md) owns both
   organisms and their Zero/service/adapter integration.
 - [Design system roadmap](../frontend/design-system/roadmap.md) owns the wider

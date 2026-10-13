@@ -22,6 +22,7 @@ export interface DataStudioProps extends UseDataStudioOptions, Pick<DataStudioWo
 export function DataStudio({
   enabled,
   initialTableId,
+  autoSelectFirstTable = false,
   tableStatus,
   pageSize,
   rowLoading = 'progressive',
@@ -40,6 +41,7 @@ export function DataStudio({
   const controller = useDataStudio({
     enabled,
     initialTableId,
+    autoSelectFirstTable,
     tableStatus,
     pageSize,
     rowLoading,

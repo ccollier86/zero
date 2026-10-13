@@ -20,6 +20,9 @@ declare global {
       commits: () => string[];
       page: () => number;
       showAccess: () => void;
+      provisions: () => { name: string; owner: string; key: string }[];
+      deletions: () => number;
+      openExtra: () => void;
     };
     __storagePermissionHarness: {
       write(kind:'grant'|'revoke',target:string):Promise<void>;
@@ -71,12 +74,13 @@ beforeAll(async () => {
     dataRevision:0,ready:true,stable:true,phase:'idle'}}
     export function isAuthorizationScopeCallbackCurrent(current,ready,captured){return ready && current===captured}
     export function readAuthorizationScopeBoundaryKey(){return window.__storagePermissionScope}
-    export {isAuthorizationDataReady,isAuthorizationScopeReady} from ${JSON.stringify(join(import.meta.dir, '../../frontend/client/authorization-scope-readiness.ts'))}`;
+    export {isAuthorizationDataReady,isAuthorizationScopeReady} from ${JSON.stringify(join(import.meta.dir, '../../frontend/client/authorization-scope-readiness.ts'))};
+    export {AuthorizationScopeBoundaryFence} from ${JSON.stringify(join(import.meta.dir, '../../frontend/client/authorization-scope-hooks.ts'))}`;
   await Bun.write(builder, `const result = await Bun.build({
     entrypoints: [${JSON.stringify(entrypoint)}],
     root: ${JSON.stringify(join(import.meta.dir, '../../..'))},
     outdir: ${JSON.stringify(buildDir)},
-    naming: 'bundle.js',
+    naming: { entry: 'bundle.[ext]' },
     target: 'browser',
     format: 'iife',
     plugins: [{ name: 'synthetic-storage-permission-data', setup(build) {
@@ -91,7 +95,10 @@ beforeAll(async () => {
   const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', builder], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, status] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
   if (status !== 0) throw new Error(`${stdout}\n${stderr}`);
-  stylesheetPath = (await buildPlatformStyles(buildDir, join(buildDir, 'missing-app'))).cssPath;
+  const styled = (await buildPlatformStyles(buildDir, join(buildDir, 'missing-app'))).cssPath;
+  stylesheetPath = join(buildDir, 'fixture.css');
+  await Bun.write(stylesheetPath, await Bun.file(styled).text() + '\n'
+    + (await Bun.file(join(buildDir, 'bundle.css')).exists() ? await Bun.file(join(buildDir, 'bundle.css')).text() : ''));
   const artifactRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/storage-studio-permissions';
   await mkdir(artifactRoot, { recursive: true }); evidenceDir = await mkdtemp(join(artifactRoot, 'acceptance-'));
 }, TEST_TIMEOUT);
@@ -105,6 +112,57 @@ afterAll(async () => {
 }, TEST_TIMEOUT);
 
 describe('StorageStudioWorkspace browser contract', () => {
+  for (const hosted of [false, true]) browserTest(`native provisioning uses one ${hosted ? 'inherited' : 'fallback'} modal scene and scoped labels across stacked forms`, async () => {
+    const page = await openHarness(hosted);
+    try {
+      const trigger = page.getByRole('button', { name: /^New Drive/ });
+      await trigger.click();
+      const dialog = page.getByRole('dialog'); await dialog.waitFor();
+      expect(await page.locator('.zero-modal-backdrop').count()).toBe(1);
+      expect(await dialog.getByRole('combobox', { name: 'Drive owner', exact: true }).count()).toBe(1);
+      expect(await dialog.getByRole('button', { name: 'Close', exact: true }).count()).toBe(1);
+      expect(await dialog.evaluate(element => element.getAnimations({ subtree: true }).some(animation =>
+        (animation.effect as KeyframeEffect).getKeyframes().some(frame => typeof frame.transform === 'string'
+          && frame.transform.includes('translate(') && frame.transform.includes('scale('))))).toBe(true);
+      await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('New managed files');
+      await page.evaluate(() => window.__storageStudioHarness.openExtra());
+      await page.waitForFunction(() => document.querySelectorAll('.zero-modal__head').length === 2);
+      expect(await page.evaluate(() => {
+        const labels = [...document.querySelectorAll<HTMLLabelElement>('.zero-modal__body label[for]')];
+        const ids = labels.map(label => label.htmlFor);
+        return new Set(ids).size === ids.length && labels.every(label => {
+          const input = document.getElementById(label.htmlFor); return input && input.closest('form') === label.closest('form');
+        });
+      })).toBe(true);
+      await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll('.zero-modal__head').length === 1);
+      expect(await page.getByRole('dialog').getByRole('textbox', { name: 'Name', exact: true }).inputValue()).toBe('New managed files');
+      await page.getByRole('dialog').getByRole('button', { name: 'Create drive', exact: true }).click();
+      await page.waitForFunction(() => window.__storageStudioHarness.provisions().length === 1);
+      expect(await page.evaluate(() => window.__storageStudioHarness.provisions())).toEqual([{ name: 'New managed files', owner: 'organization', key: 'new-managed-files' }]);
+      await page.getByRole('dialog').waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.activeElement?.textContent?.includes('New Drive'));
+      expect(await page.locator('.zero-modal-backdrop').count()).toBe(1);
+    } finally { await page.close(); }
+  }, TEST_TIMEOUT);
+
+  browserTest('native destructive action carries its trigger and preserves hold-to-confirm admission', async () => {
+    const page = await openHarness();
+    try {
+      await page.locator('[data-storage-item-id="drive-1"]').press('Enter');
+      await page.getByRole('button', { name: 'Delete', exact: true }).click();
+      const dialog = page.getByRole('alertdialog'); await dialog.waitFor();
+      const hold = dialog.getByRole('button', { name: 'Delete', exact: true });
+      await hold.focus(); await page.keyboard.down('Space'); await page.keyboard.up('Space');
+      expect(await page.evaluate(() => window.__storageStudioHarness.deletions())).toBe(0);
+      await page.keyboard.down('Space');
+      try { await page.waitForFunction(() => window.__storageStudioHarness.deletions() === 1); }
+      finally { await page.keyboard.up('Space'); }
+      await dialog.waitFor({ state: 'detached' });
+      expect(await page.evaluate(() => window.__storageStudioHarness.deletions())).toBe(1);
+    } finally { await page.close(); }
+  }, TEST_TIMEOUT);
+
   browserTest('keeps inline editing stable and protects stale drafts', async () => {
     const page = await openHarness();
     try {
@@ -315,11 +373,11 @@ async function chooseGrantRole(page:Page):Promise<void>{
   await page.getByRole('option',{name:'Organization member',exact:true}).click();
 }
 
-async function openHarness(): Promise<Page> {
+async function openHarness(hosted = false): Promise<Page> {
   if (!browser || !bundlePath || !stylesheetPath) throw new Error('Browser harness unavailable');
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   page.setDefaultTimeout(4_000);
-  await page.setContent('<body class="bg-background text-foreground"><div id="root" style="height:760px"></div></body>');
+  await page.setContent(`<!doctype html><html data-zero-theme="next" data-zero-mode="light" data-hosted="${hosted}"><body class="bg-background text-foreground"><div id="root" style="height:760px"></div></body></html>`);
   await page.addStyleTag({ path: stylesheetPath });
   await page.addScriptTag({ path: bundlePath });
   await page.waitForFunction(() => typeof window.__storageStudioHarness === 'object');
@@ -331,6 +389,9 @@ function fixtureSource(componentPath: string): string {
 import * as React from ${JSON.stringify(Bun.resolveSync('react', import.meta.dir))};
 import { createRoot } from ${JSON.stringify(Bun.resolveSync('react-dom/client', import.meta.dir))};
 import { StorageStudioWorkspace } from ${JSON.stringify(componentPath)};
+import { useStorageStudioOperations } from ${JSON.stringify(join(import.meta.dir, 'use-storage-studio-operations.tsx'))};
+import { openStorageStudioProvisionDialog } from ${JSON.stringify(join(import.meta.dir, 'storage-studio-provision-dialog.tsx'))};
+import { ModalManager } from ${JSON.stringify(join(import.meta.dir, '../../modals/index.ts'))};
 import { StorageDrivePermissionsPanel } from ${JSON.stringify(join(import.meta.dir, 'storage-drive-permissions-panel.tsx'))};
 import { Toaster } from ${JSON.stringify(join(import.meta.dir, '../ui/sonner.tsx'))};
 import { configureFrontendObservability } from ${JSON.stringify(join(import.meta.dir, '../../frontend/client/observability.ts'))};
@@ -345,6 +406,11 @@ let currentPage = 1;
 let permissionTarget='drive-1',permissionAdmin=true,permissionVisible=true;
 let grantSequence=0,permissionRefreshes=0,permissionChanges=0;
 const permissionWrites=[],permissionEvents=[];
+const provisionDrafts=[]; let deletionCount=0;
+const surface={
+  async provisionDrive(request){provisionDrafts.push({name:request.name,owner:request.owner,key:request.key});return {value:drive(),replayed:false}},
+  async changeDriveLifecycle(){deletionCount+=1;return {value:drive(),replayed:false}},
+};
 window.__storagePermissionScope='organization-a';
 configureFrontendObservability({sink:{emit(event){permissionEvents.push({code:event.code,message:event.message,metadata:event.metadata})}}});
 const root = createRoot(document.getElementById('root'));
@@ -394,6 +460,18 @@ function commitName(next) {
   });
 }
 
+function StorageFixture({controller}) {
+  const native=useStorageStudioOperations({surface,boundary:{key:window.__storagePermissionScope,scopeKey:window.__storagePermissionScope,
+    ready:true,stable:true,phase:'idle',dataRevision:0},capabilities:capabilities(),selectedDriveId:selected,currentPath:null,
+    upsertDrive(){},refreshCatalog(){},refreshFolder(){},refreshSelectedAccess(){},refreshJobs(){},clearSelectedFile(){},updateSelectedFile(){},
+    selectDrive:controller.selectDrive,showDriveCatalog:controller.showDriveCatalog});
+  return React.createElement(React.Fragment,null,React.createElement(StorageStudioWorkspace, { controller:{...controller,busy:native.busy,
+    error:native.error?.message??null,operations:{...native.operations,renameDrive:controller.operations.renameDrive}},
+    inspectorSlots:{driveAccess:()=>React.createElement('div',{'data-testid':'grant-context','data-target':permissionTarget,
+      'data-scope':window.__storagePermissionScope,'data-admin':String(permissionAdmin)},permissionVisible?React.createElement(StorageDrivePermissionsPanel,{driveId:permissionTarget,canAdmin:permissionAdmin,
+      onChanged(){permissionChanges+=1}}):React.createElement('p',null,'Permission editor removed'))} }),React.createElement(Toaster));
+}
+
 function render() {
   const current = drive();
   const controller = {
@@ -411,10 +489,8 @@ function render() {
     nextDrivePage() { currentPage = Math.min(2, currentPage + 1); render(); },
     operations: { createDrive() {}, renameDrive(_drive, name) { return commitName(name); }, deleteDrive() {} },
   };
-  root.render(React.createElement(React.Fragment,null,React.createElement(StorageStudioWorkspace, { controller,
-    inspectorSlots:{driveAccess:()=>React.createElement('div',{'data-testid':'grant-context','data-target':permissionTarget,
-      'data-scope':window.__storagePermissionScope,'data-admin':String(permissionAdmin)},permissionVisible?React.createElement(StorageDrivePermissionsPanel,{driveId:permissionTarget,canAdmin:permissionAdmin,
-      onChanged(){permissionChanges+=1}}):React.createElement('p',null,'Permission editor removed'))} }),React.createElement(Toaster)));
+  const tree=React.createElement(StorageFixture,{controller});
+  root.render(document.documentElement.dataset.hosted==='true'?React.createElement(ModalManager,null,tree):tree);
 }
 
 window.__storagePermissionHarness={
@@ -434,6 +510,7 @@ window.__storageStudioHarness = {
   commits() { return commitValues; },
   page() { return currentPage; },
   showAccess() { selected = 'drive-1'; render(); },
+  provisions(){return provisionDrafts},deletions(){return deletionCount},openExtra(){void openStorageStudioProvisionDialog(capabilities())},
 };
 render();
 `;

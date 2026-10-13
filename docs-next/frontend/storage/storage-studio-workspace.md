@@ -12,10 +12,10 @@ applies_to: ["2.1.1 development source; not package-qualified"]
 modes: [single-tenant, multi-tenant, guardian-enabled, storage-enabled]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-13"
   evidence_level: source-observed
 ---
 
@@ -47,6 +47,20 @@ The list's page controls are separate from bottom record navigation. Previous/Ne
 ## States
 
 Disabled status renders the unavailable state. An error alert shows controller.error and a Retry action calling refresh; it does not erase permission boundaries. Loading, empty and selection states are rendered by the focused children. The controller may retain useful current-scope values during some work, but must not retain prior-organization data.
+
+## Managed Dialogs
+
+Provisioning, naming/move/copy prompts and destructive confirmations use the
+shared modal manager. The workspace reuses AppProvider's host; when rendered
+standalone it supplies a fallback `ModalManager` using the shared single-scene
+lease. It does not mount a second global scene beneath an existing host.
+
+Actions carry the actual opening button to the controller's optional `trigger`
+argument, so defaults morph from/to that button; programmatic operations without
+one use Rise. Built-in drive/file deletes retain **hold to confirm**. The native
+provision form uses modal-scoped field IDs, so stacked forms cannot duplicate label
+targets, and the owner picker has an accessible name. Dialogs collect decisions;
+the controller still owns pending/error state, scope fencing and authorized writes.
 
 Standalone presentation can be tested with an in-memory controller. Such rendering does not qualify the actual SDK, provider, permissions or deployed storage adapter. For a complete integration use [native composition](./storage-studio-management.md).
 

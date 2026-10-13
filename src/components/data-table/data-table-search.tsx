@@ -179,9 +179,10 @@ export const DataTableSearch = React.forwardRef<
       </motion.div>
 
       <motion.div
+        data-slot="data-table-search-surface"
         className={cn(
           'absolute inset-y-0 overflow-hidden rounded-full bg-card text-card-foreground shadow-sm ring-1 ring-border/50',
-          'focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background',
+          'focus-within:ring-1 focus-within:ring-ring forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-[Highlight]',
         )}
         animate={{ left: inputOffset, width: surfaceWidth }}
         initial={false}

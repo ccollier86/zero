@@ -13,7 +13,8 @@ import { RecordNavigationActionButton } from './record-navigation-action';
 export interface NavigationAction {
   icon: React.ReactNode;
   label: string;
-  onClick: () => void;
+  /** The activation event carries the actual trigger for managed dialogs. Zero-argument callbacks still work. */
+  onClick: (event?: React.MouseEvent<HTMLButtonElement>) => void;
   variant?: 'default' | 'destructive' | 'success' | 'warning';
   disabled?: boolean;
   /** Override the bar's default label disclosure for this action. */
@@ -26,7 +27,7 @@ export interface RecordPrimaryAction {
   shortcut?: string;
   disabled?: boolean;
   ariaHasPopup?: React.AriaAttributes['aria-haspopup'];
-  onClick: () => void;
+  onClick: (event?: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export interface RecordNavigationBarProps {

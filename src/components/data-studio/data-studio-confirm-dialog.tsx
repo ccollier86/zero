@@ -8,6 +8,7 @@ import { emitFrontendCode } from '../../frontend/client/observability';
 
 export interface DataStudioConfirmDialogProps {
   readonly open: boolean;
+  readonly trigger?: Element | null;
   readonly title: string;
   readonly description: string;
   readonly confirmLabel: string;
@@ -21,7 +22,7 @@ export interface DataStudioConfirmDialogProps {
 export function DataStudioConfirmDialog(props: DataStudioConfirmDialogProps) {
   return <ControlledModal open={props.open} identityKey={props.operationKey ?? props.title + props.description}
     busy={props.busy} onOpenChange={props.onOpenChange} descriptor={{
-      title: props.title, description: props.description, size: 'sm', role: 'alertdialog',
+      title: props.title, description: props.description, trigger: props.trigger, size: 'sm', role: 'alertdialog',
       tone: props.destructive ? 'danger' : 'default', initialFocus: props.destructive ? 'cancel' : 'primary', guard: false,
       actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel', disabled: props.busy },
         { id: 'confirm', label: props.confirmLabel, variant: props.destructive ? 'danger' : 'primary', disabled: props.busy,

@@ -17,7 +17,7 @@ import {
   normalizeDataTableApiResponse,
   normalizeDataTableServerResult,
 } from './data-table-server-query';
-import { DataTableServerSourceError } from './data-table-server-types';
+import { DataTableServerSourceError, type DataTableServerQuery } from './data-table-server-types';
 import type { Client } from '../../frontend/client/sdk';
 
 describe('buildDataTableLazyQuery', () => {

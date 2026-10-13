@@ -30,6 +30,7 @@ export function useDataStudioQueryState(options: UseDataStudioOptions) {
     options.initialTableId ?? null,
   );
   const [selectedRowId, setSelectedRowId] = React.useState<string | null>(null);
+  const [catalogRequested, setCatalogRequested] = React.useState(false);
   const [search, setSearchState] = React.useState((options.initialSearch ?? '').slice(0, 200));
   const [filters, setFiltersState] = React.useState<readonly DataStudioRowFilter[]>(
     options.initialFilters ?? [],
@@ -74,6 +75,8 @@ export function useDataStudioQueryState(options: UseDataStudioOptions) {
     resetPage();
   }, [resetPage]);
   const selectTable = React.useCallback((tableId: string | null) => {
+    // Explicitly returning to the catalog must not immediately auto-select a table.
+    setCatalogRequested(tableId === null);
     setSelectedTableId(tableId);
     setSelectedRowId(null);
     resetPage();
@@ -87,6 +90,8 @@ export function useDataStudioQueryState(options: UseDataStudioOptions) {
     tableStatus,
     setTableStatusState,
     selectedTableId,
+    catalogRequested,
+    setCatalogRequested,
     setSelectedTableId,
     selectedRowId,
     setSelectedRowId,

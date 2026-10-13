@@ -2,7 +2,7 @@
 @layer components {
   .zero-select-trigger {
     min-height: var(--zero-theme-control-height, 2rem);
-    border-radius: var(--zero-select-radius-trigger, var(--zero-theme-radius-control, .5rem));
+    border-radius: var(--zero-select-radius-trigger, var(--zero-theme-picker-trigger-radius, 1.125rem));
     padding: .25rem var(--zero-theme-control-padding-inline, .625rem);
   }
   .zero-select-trigger [data-slot="select-value"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -59,6 +59,7 @@
   .zero-select-exit-paint, .zero-select-label-paint { pointer-events: none !important; user-select: none; }
   .zero-select-exit-paint *, .zero-select-label-paint * { pointer-events: none !important; }
   @media (forced-colors: active) {
+    .zero-select-trigger:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
     .zero-select-item[data-highlighted] { outline: 1px solid Highlight; }
     .zero-select-highlight { background: Highlight; opacity: .2 !important; }
   }

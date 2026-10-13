@@ -107,9 +107,9 @@ export function useStorageStudioOperations(input: UseStorageStudioOperationsInpu
     showDriveCatalog: input.showDriveCatalog,
   });
 
-  const createDrive = React.useCallback(async () => {
+  const createDrive = React.useCallback(async (trigger?: Element | null) => {
     if (!input.surface || !input.capabilities) return;
-    const request = await openStorageStudioProvisionDialog(input.capabilities);
+    const request = await openStorageStudioProvisionDialog(input.capabilities, trigger);
     if (!request) return;
     await runAction('provisionDrive', async () => {
       const result = await input.surface!.provisionDrive(request);
@@ -155,9 +155,10 @@ export function useStorageStudioOperations(input: UseStorageStudioOperationsInpu
     }, { driveId: drive.drive.drive_id });
   }, [input.surface, input.upsertDrive, input.refreshCatalog, input.refreshJobs, input.showDriveCatalog, runAction]);
 
-  const deleteDrive = React.useCallback(async (drive: StorageStudioDrive) => {
+  const deleteDrive = React.useCallback(async (drive: StorageStudioDrive, trigger?: Element | null) => {
     const confirmed = await modals.confirm({
       title: 'Delete drive?',
+      trigger,
       description: `${drive.drive.name} files and folders will be permanently removed. A later restore recreates the drive settings as an empty drive.`,
       confirmLabel: 'Delete',
       variant: 'destructive',
@@ -207,8 +208,8 @@ export function useStorageStudioOperations(input: UseStorageStudioOperationsInpu
     download: legacy.download,
     renameDrive: (drive, name) => updateDrive(drive, { name }),
     renameFile: legacy.renameFile,
-    move: (file) => legacy.moveOrCopy('move', file),
-    copy: (file) => legacy.moveOrCopy('copy', file),
+    move: (file, trigger) => legacy.moveOrCopy('move', file, trigger),
+    copy: (file, trigger) => legacy.moveOrCopy('copy', file, trigger),
     updateFileMetadata,
     share: legacy.share,
     setFileVisibility,

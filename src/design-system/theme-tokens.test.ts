@@ -18,6 +18,8 @@ test('all concrete mode/density/reduced-motion compositions have immutable compl
       expect(tokens['--zero-theme-control-height']).toBe(THEME_DENSITY_TOKENS[density]['--zero-theme-control-height']);
       expect(declarations['--zero-modal-radius']).toBe('var(--zero-theme-modal-radius)');
       expect(tokens['--zero-theme-modal-radius']).toBe('14px'); expect(tokens['--zero-theme-tooltip-radius']).toBe('8px');
+      expect(tokens['--zero-theme-picker-trigger-radius']).toBe('1.125rem');
+      expect(tokens['--zero-theme-radius-control']).toBe('.375rem'); // picker polish is not a global control reshape
       expect(declarations['--zero-modal-entrance']).toBeUndefined(); expect(declarations['--zero-tooltip-motion']).toBeUndefined();
     }
   expect(Object.keys(createThemeTokens())).toEqual(Object.keys(createThemeTokens({ mode: 'dark' })));
@@ -99,7 +101,7 @@ test('getter-backed options are read once and cannot mix foundation with a diffe
   let modeReads = 0, densityReads = 0, reducedReads = 0;
   const declarations = createThemeDeclarations({
     get mode() { return ++modeReads === 1 ? 'light' : 'dark'; },
-    get density() { return ++densityReads === 1 ? 'compact' : 'touch'; },
+    get density(): 'compact' | 'touch' { return ++densityReads === 1 ? 'compact' : 'touch'; },
     get reducedMotion() { return ++reducedReads === 1 ? false : true; },
   });
   expect([modeReads, densityReads, reducedReads]).toEqual([1, 1, 1]);
@@ -108,7 +110,7 @@ test('getter-backed options are read once and cannot mix foundation with a diffe
   expect(declarations['--zero-theme-control-height']).toBe('2rem');
   expect(declarations['--zero-theme-duration-fast']).toBe('160ms');
   let attributeReads = 0;
-  expect(createThemeAttributes({ get density() { attributeReads++; return 'comfortable'; } }))
+  expect(createThemeAttributes({ get density(): 'comfortable' { attributeReads++; return 'comfortable'; } }))
     .toEqual({ 'data-zero-theme': 'next', 'data-zero-density': 'comfortable' });
   expect(attributeReads).toBe(1);
   expect(createThemeTokens({ mode: undefined })['--zero-theme-canvas']).toBe('#ffffff');

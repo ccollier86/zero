@@ -57,6 +57,20 @@ export function selectDepartureTarget(content: SelectRect, trigger: SelectRect, 
     x: (trigger.left - content.left) / sx - left, y: (trigger.top - content.top) / sy - top };
 }
 
+/**
+ * Close-paint handoff is geometric, not a wait for imperceptible spring velocity.
+ * Compare painted edges in viewport pixels, including collision translation and
+ * scaled portals. Opening/highlight springs keep their precise physics contract.
+ */
+export function selectDepartureLanded(clip: readonly SelectSpring[], translation: readonly SelectSpring[], sx: number, sy: number,
+  tolerance = .5): boolean {
+  const delta = (state: SelectSpring) => state.value - state.target;
+  const x = delta(translation[0]!), y = delta(translation[1]!);
+  return Math.max(Math.abs(x + delta(clip[3]!)) * sx, Math.abs(x - delta(clip[1]!)) * sx,
+    Math.abs(y + delta(clip[0]!)) * sy, Math.abs(y - delta(clip[2]!)) * sy,
+    Math.abs(delta(clip[4]!)) * Math.max(sx, sy)) <= tolerance;
+}
+
 export function selectClipCss(clip: SelectClip): string {
   return `inset(${clip.slice(0, 4).map(value => `${Math.max(0, value).toFixed(3)}px`).join(' ')} round ${Math.max(0, clip[4]).toFixed(3)}px)`;
 }

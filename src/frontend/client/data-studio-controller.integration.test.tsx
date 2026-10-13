@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { ClientProvider } from './client-context';
 import { useDataStudio } from './data-studio-controller';
 import { createDataStudioSdkSurface, type DataStudioRowPage, type DataStudioTable } from './data-studio-client';
-import type { UseDataStudioResult } from './data-studio-controller-types';
+import type { UseDataStudioOptions, UseDataStudioResult } from './data-studio-controller-types';
 import type { InternalClient, FetchInit } from './sdk';
 import type { AuthClient } from './auth-client';
 import type { DataStudioReconciliationEvent } from './data-studio-sync';
@@ -71,6 +71,56 @@ test('real SDK reconciliation rebuilds a progressive prefix instead of appending
   expect(f.current.rows.map(row => row.rowId)).toEqual(['changed', 'b', 'c', 'd']);
 });
 
+test('catalog-first mode does not read table details or records before an explicit selection', async () => {
+  const f = await fixture('progressive', { autoSelectFirstTable: false });
+  expect(f.current.status).toBe('ready');
+  expect(f.current.tables).toHaveLength(1);
+  expect(f.current.selectedTableId).toBeNull();
+  expect(f.requests.some(path => path.endsWith('/tables/table-one'))).toBe(false);
+  expect(f.reads).toHaveLength(0);
+  await act(async () => f.current.selectTable(TABLE.tableId));
+  expect(f.current.selectedTableId).toBe(TABLE.tableId);
+  expect(f.reads).toHaveLength(1);
+  await f.respond(0, page(0, ['a', 'b']));
+  await act(async () => f.current.selectTable(null));
+  expect(f.current.selectedTable).toBeNull();
+  expect(f.current.rows).toEqual([]);
+  await act(async () => f.current.reload());
+  expect(f.current.selectedTableId).toBeNull();
+  expect(f.reads).toHaveLength(1);
+});
+
+test('explicit initial table opens in catalog-first mode, but returning to the catalog stays there', async () => {
+  const f = await fixture('paged', { autoSelectFirstTable: false, initialTableId: TABLE.tableId });
+  expect(f.current.selectedTableId).toBe(TABLE.tableId);
+  expect(f.reads).toHaveLength(1);
+  await f.respond(0, page(0, ['a', 'b']));
+  await act(async () => f.current.selectTable(null));
+  await act(async () => f.current.reload());
+  expect(f.current.selectedTableId).toBeNull();
+});
+
+test('compatibility auto-selection still permits an explicit catalog return; new authority resets catalog-first mode', async () => {
+  const auto = await fixture('paged');
+  expect(auto.current.selectedTableId).toBe(TABLE.tableId);
+  await act(async () => auto.current.selectTable(null));
+  expect(auto.current.selectedTableId).toBeNull();
+  const f = await fixture('progressive', { autoSelectFirstTable: false });
+  await act(async () => f.current.selectTable(TABLE.tableId));
+  await f.scope('family-two');
+  expect(f.current.selectedTableId).toBeNull();
+  expect(f.current.rows).toEqual([]);
+  expect(f.reads[0]!.signal?.aborted).toBe(true);
+  await f.respond(0, page(0, ['old']));
+  expect(f.current.rows).toEqual([]);
+});
+
+test('an unavailable initial table does not fall through to a different table in catalog-first mode', async () => {
+  const f = await fixture('paged', { autoSelectFirstTable: false, initialTableId: 'unavailable' });
+  expect(f.current.selectedTableId).toBeNull();
+  expect(f.reads).toHaveLength(0);
+});
+
 const TABLE: DataStudioTable = { tableId: 'table-one', key: 'contacts', name: 'Contacts', description: null,
   status: 'active', revision: 1, schemaRevision: 1, rowCount: 4, createdAt: 1, updatedAt: 1,
   schema: { version: 1, columns: [{ columnId: 'name', key: 'name', label: 'Name', type: 'text', required: false }] } };
@@ -80,10 +130,11 @@ function page(offset: number, ids: string[], readSequence = 1): DataStudioRowPag
       values: { name: rowId }, createdAt: 1, updatedAt: 1 })) };
 }
 
-async function fixture(rowLoading: 'paged' | 'progressive') {
+async function fixture(rowLoading: 'paged' | 'progressive', options: UseDataStudioOptions = {}) {
   const listeners = new Set<() => void>();
   const reconciliation = new Set<(event: DataStudioReconciliationEvent) => void>();
   const reads: { offset: number; signal?: AbortSignal; resolve: (page: DataStudioRowPage) => void }[] = [];
+  const requests: string[] = [];
   // Synthetic readiness is a fixture precondition, not an authentication verifier.
   const auth = {
     authorizationScopeKey: 'family-one', user: { userId: 'fixture-user' }, activeTenant: { tenantId: 'fixture-tenant' },
@@ -93,6 +144,7 @@ async function fixture(rowLoading: 'paged' | 'progressive') {
     subscribeAuthorization(callback: () => void) { listeners.add(callback); return () => { listeners.delete(callback); }; },
   } as unknown as AuthClient;
   const transport = async <T = unknown>(path: string, options?: FetchInit): Promise<T> => {
+    requests.push(path);
     if (path.endsWith('/capabilities')) return { enabled: true, scope: 'organization',
       permissions: { read: true, write: true, manage: true },
       limits: { maxTables: 10, maxColumns: 10, maxRowsPerTable: 100, maxPageSize: 2, maxRowBytes: 65_536 } } as T;
@@ -109,11 +161,11 @@ async function fixture(rowLoading: 'paged' | 'progressive') {
   });
   const client = { auth, dataStudio, isAuthenticated: true } as unknown as InternalClient;
   let current!: UseDataStudioResult;
-  function Probe() { current = useDataStudio({ rowLoading, pageSize: 2 }); return null; }
+  function Probe() { current = useDataStudio({ rowLoading, pageSize: 2, ...options }); return null; }
   const root = createRoot(createHookContainer()); roots.add(root);
   await act(async () => root.render(createElement(ClientProvider, { client, children: createElement(Probe) })));
   return {
-    reads, get current() { return current; },
+    reads, requests, get current() { return current; },
     respond: async (index: number, value: DataStudioRowPage) => { await act(async () => reads[index]!.resolve(value)); },
     scope: async (key: string) => { await act(async () => { Object.assign(auth, {
       authorizationScopeKey: key, activeTenant: { tenantId: key },

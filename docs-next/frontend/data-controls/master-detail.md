@@ -13,10 +13,10 @@ modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
-  date: "2026-10-07"
-  evidence_level: implementation-verified
+  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
+  snapshot: dirty
+  date: "2026-10-13"
+  evidence_level: source-observed
 ---
 
 # One List, Detail Panel And Action Bar
@@ -138,6 +138,11 @@ Do not turn routine commands into disconnected oversized cards.
 NavigationAction contains icon, label, onClick, optional variant
 (default/destructive/success/warning), disabled and labelMode. RecordPrimaryAction contains
 label/onClick and optional sublabel/shortcut/disabled/ariaHasPopup.
+Both action types receive an optional `React.MouseEvent<HTMLButtonElement>`
+on real activation. Capture `event?.currentTarget` synchronously when opening a
+managed modal; absence means a programmatic open with Rise. Existing no-argument
+callbacks and programmatic `onClick()` calls remain compatible. The first touch
+disclosure does not deliver an activation event or run the action.
 Those button callbacks are caller-owned; they do not automatically acquire the
 table's async operation runner. Compose a runner when tracking app operations,
 and retain server permission/confirmation checks.

@@ -47,9 +47,12 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
     setPendingMutations(0);
     setMutationError(null);
     query.setSelectedRowId(null);
+    query.setCatalogRequested(false);
+    if (options.autoSelectFirstTable === false) query.setSelectedTableId(options.initialTableId ?? null);
     query.setOffsetState(0);
     query.setOffsetHistory([]);
-  }, [query.setOffsetHistory, query.setOffsetState, query.setSelectedRowId]);
+  }, [options.autoSelectFirstTable, options.initialTableId, query.setCatalogRequested,
+    query.setSelectedTableId, query.setOffsetHistory, query.setOffsetState, query.setSelectedRowId]);
   const catalog = useDataStudioCatalog({
     surface,
     boundary,
@@ -58,6 +61,7 @@ export function useDataStudio(options: UseDataStudioOptions = {}): UseDataStudio
     tableStatus: query.tableStatus,
     selectedTableId: query.selectedTableId,
     initialTableId: options.initialTableId,
+    autoSelectFirstTable: options.autoSelectFirstTable !== false && !query.catalogRequested,
     setSelectedTableId: query.setSelectedTableId,
     onScopeReset: resetScopeState,
   });

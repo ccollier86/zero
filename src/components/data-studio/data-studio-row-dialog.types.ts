@@ -3,6 +3,7 @@ import type { DataStudioTable } from '../../frontend/client/data-studio-client';
 
 export interface DataStudioRowDialogProps {
   readonly open: boolean;
+  readonly trigger?: Element | null;
   readonly table: DataStudioTable | null;
   readonly busy?: boolean;
   /** Change with the organization/authority partition to retire drafts and pending completions. */

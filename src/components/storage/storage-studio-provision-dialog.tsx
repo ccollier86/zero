@@ -34,9 +34,11 @@ export type StorageStudioProvisionDraft = Omit<StorageStudioProvisionRequest, 'o
 /** Open the native drive-provisioning form and resolve null on dismissal. */
 export function openStorageStudioProvisionDialog(
   capabilities: StorageStudioCapabilities,
+  trigger?: Element | null,
 ): Promise<StorageStudioProvisionDraft | null> {
   return modals.show<StorageStudioProvisionDraft>({
       title: 'New storage drive',
+      trigger,
       size: 'md',
       description: 'Create a stable, policy-managed drive in the current authorization scope.',
       actions: [{ id: 'cancel', label: 'Cancel', role: 'cancel' },
@@ -101,11 +103,11 @@ function StorageStudioProvisionForm({
       }}
     >
       {allowedOwners.length > 1 && (
-        <ProvisionField label="Owner">
+        <ProvisionField label="Owner" htmlFor={`${context.id}-owner`}>
           <Select value={owner ?? undefined} onValueChange={(value) => setOwner(
             value as 'organization' | 'personal',
           )}>
-            <SelectTrigger><SelectValue placeholder="Choose owner" /></SelectTrigger>
+            <SelectTrigger id={`${context.id}-owner`} aria-label="Drive owner"><SelectValue placeholder="Choose owner" /></SelectTrigger>
             <SelectContent>
               {allowedOwners.includes('organization') && (
                 <SelectItem value="organization">Organization</SelectItem>
@@ -118,9 +120,9 @@ function StorageStudioProvisionForm({
         </ProvisionField>
       )}
 
-      <ProvisionField label="Name" htmlFor="storage-studio-drive-name">
+      <ProvisionField label="Name" htmlFor={`${context.id}-drive-name`}>
         <Input
-          id="storage-studio-drive-name"
+          id={`${context.id}-drive-name`}
           value={name}
           onChange={(event) => updateName(event.target.value)}
           placeholder="Workflow files"
@@ -130,11 +132,11 @@ function StorageStudioProvisionForm({
 
       <ProvisionField
         label="Stable key"
-        htmlFor="storage-studio-drive-key"
+        htmlFor={`${context.id}-drive-key`}
         description="Functions and workflows can resolve this key without storing a drive ID."
       >
         <Input
-          id="storage-studio-drive-key"
+          id={`${context.id}-drive-key`}
           value={key}
           onChange={(event) => {
             setKeyEdited(true);

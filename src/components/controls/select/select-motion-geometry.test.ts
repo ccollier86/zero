@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { selectClipCss, readSelectClip, selectMotionTime, selectTriggerClip, selectLocalTriggerClip, stepSelectSpring } from './select-motion-geometry';
+import { selectClipCss, readSelectClip, selectMotionTime, selectTriggerClip, selectLocalTriggerClip, selectDepartureLanded, stepSelectSpring } from './select-motion-geometry';
 
 test('Select clips stay bounded to the native collision-resolved rectangle on either side', () => {
   const content = { left: 20, top: 30, width: 200, height: 300 };
@@ -25,4 +25,18 @@ test('visual timing admits bounded CSS times and physical springs remain finite 
   for (let i = 0; i < 300; i++) stepSelectSpring(state, 280, .08, 1 / 60);
   expect(state).toEqual({ value: 0, velocity: 0, target: 0 });
   state.target = 12; expect(stepSelectSpring(state, 0, 0, 0)).toBe(false); expect(state.value).toBe(12);
+});
+
+test('departure handoff uses subpixel painted edges, not invisible residual velocity', () => {
+  const clip = [0, 100, 200, 0, 18].map(target => ({ target, value: target + .2, velocity: 4 }));
+  const translation = [0, -200].map(target => ({ target, value: target, velocity: 6 }));
+  expect(selectDepartureLanded(clip, translation, 1, 1)).toBe(true);
+  translation[0]!.value = .4;
+  expect(selectDepartureLanded(clip, translation, 1, 1)).toBe(false); // left edge is .6px away
+  expect(selectDepartureLanded(clip, translation, .8, .8)).toBe(true);
+  expect(selectDepartureLanded(clip, translation, 2, 2)).toBe(false);
+  translation[0]!.value = 0;
+  clip[4]!.value = 18.7;
+  expect(selectDepartureLanded(clip, translation, 1, 1)).toBe(false); // rounded corner still moving
+  expect(clip[0]!.velocity).toBe(4); // no mutation/retuning of the physical spring
 });

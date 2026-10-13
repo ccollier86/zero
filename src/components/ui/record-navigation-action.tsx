@@ -37,7 +37,7 @@ export function RecordNavigationActionButton({ action, labelMode, contextKey, cl
     onBlur={() => { setFocused(false); setTouchContext(null); touchArmed.current = false; revealClick.current = false; }}
     onClick={event => {
       if (revealClick.current && event.detail > 0) { revealClick.current = false; event.preventDefault(); event.stopPropagation(); return; }
-      revealClick.current = false; action.onClick();
+      revealClick.current = false; action.onClick(event);
     }}>
     <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center [&_svg]:size-full">{action.icon}</span>
     <motion.span aria-hidden="true" data-slot="record-navigation-action-label" initial={false}

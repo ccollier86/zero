@@ -36,6 +36,89 @@ async function open(page: Page) {
   await page.waitForFunction(() => document.querySelector('[data-testid="content"]')?.getAttribute('data-zero-select-motion') === 'settled');
 }
 
+for (const mode of ['light', 'dark']) browserTest(`resting Select shares the expanded material in ${mode} mode without a strong input border`, async () => {
+  const page = await mount();
+  try {
+    await page.locator('main').evaluate((element, mode) => element.setAttribute('data-zero-mode', mode), mode);
+    await page.getByTestId('elsewhere').focus();
+    await page.waitForFunction(() => !document.querySelector('[data-testid="trigger"]')!.getAnimations().length);
+    const resting = await page.getByTestId('trigger').evaluate(element => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, foreground: style.color, border: style.borderColor, width: style.borderTopWidth,
+        radius: parseFloat(style.borderTopLeftRadius), height: element.getBoundingClientRect().height };
+    });
+    await open(page);
+    const expanded = await page.getByTestId('content').evaluate(element => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, foreground: style.color, border: style.borderColor };
+    });
+    expect(resting.background).toBe(expanded.background);
+    expect(resting.foreground).toBe(expanded.foreground);
+    expect(resting.border).toBe(expanded.border);
+    expect(resting.width).toBe('1px');
+    expect(resting.radius).toBeGreaterThanOrEqual(resting.height / 2);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('[data-zero-select-paint]'));
+    expect(await page.getByTestId('trigger').evaluate(element => element.matches(':focus-visible'))).toBe(true);
+    expect(await page.getByTestId('trigger').evaluate(element => getComputedStyle(element).boxShadow)).not.toBe('none');
+    // Compact input geometry elsewhere remains a different role, not a global rounding change.
+    expect(await page.locator('main').evaluate(element => getComputedStyle(element).getPropertyValue('--zero-theme-radius-control').trim())).toBe('.375rem');
+  } finally { await page.close(); }
+}, 30_000);
+
+for (const selectItem of [false, true]) browserTest(`${selectItem ? 'picked-value return' : 'dismissal'} removes closing paint as soon as it visually lands, without retuning the shrink`, async () => {
+  const page = await mount();
+  try {
+    await open(page);
+    if (selectItem) await page.keyboard.press('End');
+    await page.evaluate(() => {
+      type Sample = { at: number; surface: boolean; surfaceError: number; label: boolean; labelError: number; nativeOpacity: string };
+      const run = { samples: [] as Sample[], seen: false, after: 0, raf: 0 };
+      Object.assign(window, { __handoff: run });
+      const sample = () => {
+        const ghost = document.querySelector<HTMLElement>('[data-zero-select-paint="exit"]');
+        const label = document.querySelector<HTMLElement>('[data-zero-select-paint="label"]');
+        const trigger = document.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+        const native = trigger.querySelector<HTMLElement>('[data-slot="select-value"]')!;
+        let surfaceError = Infinity, labelError = Infinity;
+        if (ghost) {
+          const clip = ghost.style.clipPath.match(/[-\d.]+(?=px)/g)?.map(Number);
+          if (clip?.length === 5) {
+            const g = ghost.getBoundingClientRect(), t = trigger.getBoundingClientRect(), sx = g.width / ghost.offsetWidth, sy = g.height / ghost.offsetHeight;
+            surfaceError = Math.max(Math.abs(g.left + clip[3]! * sx - t.left), Math.abs(g.right - clip[1]! * sx - t.right),
+              Math.abs(g.top + clip[0]! * sy - t.top), Math.abs(g.bottom - clip[2]! * sy - t.bottom));
+          }
+          run.seen = true;
+        }
+        if (label) {
+          const a = label.getBoundingClientRect(), b = native.getBoundingClientRect();
+          labelError = Math.max(Math.abs(a.left - b.left), Math.abs(a.top - b.top));
+        }
+        run.samples.push({ at: performance.now(), surface: !!ghost, surfaceError, label: !!label, labelError, nativeOpacity: native.style.opacity });
+        if (run.seen && !ghost && !label) run.after++;
+        if (run.after < 3) run.raf = requestAnimationFrame(sample);
+      };
+      run.raf = requestAnimationFrame(sample);
+    });
+    await page.keyboard.press(selectItem ? 'Enter' : 'Escape');
+    await page.waitForFunction(() => (window as any).__handoff.after >= 3);
+    const frames = await page.evaluate(() => (window as any).__handoff.samples as {
+      at: number; surface: boolean; surfaceError: number; label: boolean; labelError: number; nativeOpacity: string;
+    }[]);
+    const landed = frames.find(frame => frame.surface && frame.surfaceError <= .75);
+    const removed = landed && frames.find(frame => frame.at > landed.at && !frame.surface);
+    expect(landed).toBeDefined(); expect(removed).toBeDefined();
+    expect(removed!.at - landed!.at).toBeLessThan(70);
+    if (selectItem) {
+      const labelLanded = frames.find(frame => frame.label && frame.labelError <= .75);
+      const labelRemoved = labelLanded && frames.find(frame => frame.at > labelLanded.at && !frame.label);
+      expect(labelLanded).toBeDefined(); expect(labelRemoved).toBeDefined();
+      expect(labelRemoved!.at - labelLanded!.at).toBeLessThan(70);
+    }
+    expect(frames.at(-1)!.nativeOpacity).toBe('');
+  } finally { await page.close(); }
+}, 30_000);
+
 browserTest('compiled Morph Select owns real shape/timings while keeping native title, refs, typeahead and form semantics', async () => {
   const page = await mount();
   try {

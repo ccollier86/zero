@@ -76,6 +76,27 @@ browserTest('track paging, dragging and wheel scroll the exact native viewport, 
     expect(await page.getByTestId('area').locator('[data-axis="x"] [data-zero-scroll-thumb]').evaluate(element => new DOMMatrixReadOnly(getComputedStyle(element).transform).m41)).toBeGreaterThan(0);
   } finally { await page.close(); }
 }, 15_000);
+browserTest('rail edges inherit viewport containment while page-chaining and Ctrl gestures remain native', async () => {
+  const page = await mount(true);
+  try {
+    await configured(page, { type: 'always' });
+    const viewport = page.getByTestId('area').locator('[data-radix-scroll-area-viewport]');
+    await viewport.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    const track = page.getByTestId('area').locator('[data-axis="y"]');
+    const consumed = () => track.evaluate(element => {
+      const event = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      element.dispatchEvent(event); return event.defaultPrevented;
+    });
+    expect(await consumed()).toBe(true);
+    await viewport.evaluate(element => { (element as HTMLElement).style.overscrollBehavior = 'auto'; });
+    expect(await consumed()).toBe(false);
+    expect(await track.evaluate(element => {
+      const event = new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true });
+      element.dispatchEvent(event); return event.defaultPrevented;
+    })).toBe(false);
+  } finally { await page.close(); }
+}, 15_000);
+
 browserTest('dynamic later children and header offsets update fades/rails without a nested scroller or an observer loop', async () => {
   const page = await mount(true);
   try {

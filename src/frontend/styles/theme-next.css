@@ -470,6 +470,7 @@
   --zero-theme-picker-open-duration: 400ms;
   --zero-theme-picker-open-radius: 1.375rem;
   --zero-theme-picker-panel-width: 17rem;
+  --zero-theme-picker-trigger-radius: 1.125rem;
   --zero-theme-picker-width-bounce: .16;
   --zero-theme-picker-width-duration: 420ms;
   --zero-theme-picker-width-narrow-bounce: 0;
