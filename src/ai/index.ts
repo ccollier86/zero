@@ -18,6 +18,15 @@ export type {
 } from './ai-output';
 export { AIService } from './ai-service';
 export type { AIServiceOptions } from './ai-service';
+export { AIDecision } from './ai-decision-types';
+export { createAIDecisionService } from './ai-decision-service';
+export type { AIDecisionService } from './ai-decision-service';
+export type {
+  AIDecisionJSON, AIDecisionDescription, AIDecisionQuestion, AIDecisionQuestions,
+  AIDecisionChoiceQuestion, AIDecisionScoreQuestion, AIDecisionYesNoQuestion,
+  AIDecisionAnswer, AIDecisionAnswers, AIDecisionAnswerSignals, AIDecisionChoiceAnswer, AIDecisionScoreAnswer, AIDecisionYesNoAnswer,
+  AIDecisionRequest, AIDecisionResult,
+} from './ai-decision-types';
 export {
   createAIModelExecutionPreparer,
   prepareDirectAIModelExecution,

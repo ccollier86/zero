@@ -87,6 +87,11 @@ const openAICapabilities = capabilities({
 
 /** Built-in providers available through env detection or explicit config. */
 const providerCatalog: readonly AIProviderCatalogEntry[] = [
+  {
+    ...entry('jev', 'jev', 'TypeSafe Jev', ['TYPESAFE_API_KEY', 'JEV_API_KEY'], 'api-key', capabilities({ decisions: true })),
+    baseURL: 'https://api.typesafe.ai/v1',
+  },
+  entry('laya', 'laya', 'Self-hosted Laya / System One', ['LAYA_API_KEY'], 'base-url', capabilities({ decisions: true })),
   entry('gateway', 'gateway', 'Vercel AI Gateway', ['AI_GATEWAY_API_KEY'], 'gateway', gatewayCapabilities),
   entry('openai', 'openai', 'OpenAI', ['OPENAI_API_KEY'], 'api-key', openAICapabilities),
   {
@@ -434,6 +439,7 @@ export const AI_PROVIDER_TYPES: readonly AIProviderType[] = Object.freeze([
 
 /** Env variable names that override the built-in friendly model aliases. */
 export const AI_DEFAULT_ALIAS_ENV_KEYS = {
+  decisions: 'ZERO_AI_DECISIONS_MODEL',
   fast: 'ZERO_AI_FAST_MODEL',
   smart: 'ZERO_AI_SMART_MODEL',
   embedding: 'ZERO_AI_EMBEDDING_MODEL',
@@ -446,6 +452,8 @@ export const AI_DEFAULT_ALIAS_ENV_KEYS = {
 
 /** Ordered fallback model candidates used when matching active providers. */
 export const AI_DEFAULT_ALIAS_CANDIDATES: Record<keyof typeof AI_DEFAULT_ALIAS_ENV_KEYS, readonly string[]> = {
+  // Explicit selection is required: never choose a hosted decision provider on behalf of a local deployment.
+  decisions: [],
   fast: [
     'gateway/openai/gpt-4o-mini',
     'groq/llama-3.3-70b-versatile',
@@ -544,6 +552,7 @@ function capabilities(overrides: Partial<AIProviderCapabilities> = {}): Resolved
     realtime: overrides.realtime ?? false,
     evaluation: overrides.evaluation ?? false,
     batch: overrides.batch ?? false,
+    decisions: overrides.decisions ?? false,
   };
 }
 

@@ -23,7 +23,8 @@ reviewed_against:
 
 [Zero AI](./index.md) · [Configuration](./configuration.md) · [Documentation index](../../index.md)
 
-Zero ships 44 built-in adapter catalog entries, plus explicit
+Zero ships 46 built-in provider catalog entries, including native Jev/Laya
+decision transports, plus explicit
 `openai-compatible` and `custom` adapters. This reference describes the inspected
 static Zero catalog, not a remotely refreshed model list or pricing database.
 Credential environment names below are checked in order during auto-detection;
@@ -39,6 +40,8 @@ files/video/agent surfaces. Video is preview.
 
 | Default ID | Adapter type | Credential env names, first nonblank wins | Static maximum capability flags |
 | --- | --- | --- | --- |
+| `jev` | `jev` | `TYPESAFE_API_KEY` → `JEV_API_KEY` | `decisions`; default endpoint `https://api.typesafe.ai/v1` |
+| `laya` | `laya` | Optional `LAYA_API_KEY`; `LAYA_BASE_URL` required | `decisions`; self-hosted Jev-compatible `/v1/systemone` |
 | `gateway` | `gateway` | `AI_GATEWAY_API_KEY` | `text`, `streaming`, `tools`, `vision`, `embeddings`, `images`, `transcription`, `speech`, `reranking`, `video`, `realtime`, `evaluation`, `batch` |
 | `openai` | `openai` | `OPENAI_API_KEY` | `text`, `streaming`, `tools`, `vision`, `embeddings`, `images`, `transcription`, `speech`, `files`, `fileMetadata`, `fileDownload`, `fileDelete`, `skills`, `realtime`, `evaluation`, `batch` |
 | `azure` | `azure` | `AZURE_API_KEY` | `text`, `streaming`, `tools`, `vision`, `embeddings`, `images`, `transcription`, `speech` |
@@ -90,6 +93,13 @@ from `@zero/framework/ai`. `AIProviderCatalogEntry`,
 `AICapability` describe their contracts. The eight legacy required flags are
 text, streaming, tools, vision, embeddings, images, transcription and speech;
 later flags are optional in the compatibility input and normalize to booleans.
+
+`decisions` is a native Zero capability, not an AI SDK modality. Those providers
+live outside the SDK registry and cannot generate text. Use
+[typed decisions](./decisions.md) for their public facade. Custom Laya-compatible
+endpoints use `type: 'laya'` with an app-owned provider ID and `baseURL`; they do
+not need an AI SDK `custom` adapter. Compatibility does not imply identical
+accuracy, calibration, input budgets or local deployment.
 
 For a built-in, explicit capability overrides may reduce this maximum. Trying
 to enable an unsupported operation raises `AI_PROVIDER_CONFIG_INVALID`.

@@ -1020,6 +1020,7 @@ describe('resolveAIConfig', () => {
         realtime: false,
         evaluation: false,
         batch: false,
+        decisions: false,
       },
       reason: 'config_disabled',
     });

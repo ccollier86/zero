@@ -137,7 +137,7 @@ function resolveModel<TModel>(
       400,
     );
   }
-  if (!provider.active || !registry.providerInstances[provider.id]) {
+  if (!provider.active || !(registry.providerInstances[provider.id] || registry.decisionProviders?.[provider.id])) {
     emitAIModelAliasUnresolved({
       providerId: provider.id,
       providerType: provider.type,

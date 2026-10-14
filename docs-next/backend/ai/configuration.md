@@ -102,6 +102,7 @@ Each `ai.providers[id]` object has these options:
 | `settings` | `AIProviderInstanceSettings`; omitted none/env projection | Only settings supported by the selected built-in type are accepted. |
 | `capabilities` | Partial capability flag map; omitted catalog defaults | Built-ins may disable capabilities, not enable operations beyond their maximum. Custom providers define their own surface. |
 | `adapter` | AI SDK ProviderV3/ProviderV4 object or factory | Required for active `custom`; factory receives ID, resolved credentials/endpoints/settings and capabilities. |
+| `decisionLocality` | `local` or `hosted`; native decision providers only | Laya requires explicit `local` designation for local-only requests; omission is conservatively hosted. Jev cannot be designated local. This is trusted deployment configuration, not network attestation. |
 
 A blank string normalizes to omission; it is not the suppression sentinel.
 `autoDetect: false` turns off discovery, **not** environment fallback for an
@@ -164,6 +165,7 @@ Zero defaults, not live provider model discovery.
 | `speech` | `ZERO_AI_SPEECH_MODEL` | Speech generation. |
 | `reranking` | `ZERO_AI_RERANKING_MODEL` | Reranking. |
 | `video` | `ZERO_AI_VIDEO_MODEL` | Preview video. |
+| `decisions` | `ZERO_AI_DECISIONS_MODEL` | Native Jev/Laya decisions. No automatic candidate: configure an alias or pass an explicit provider/model. |
 
 Alias resolution performs one lookup, then parses the first slash. You may use
 application aliases such as `support`, but their values must be qualified

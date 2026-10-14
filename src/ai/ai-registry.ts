@@ -11,7 +11,9 @@ import { createProviderRegistry, type ProviderRegistryProvider } from 'ai';
 import { resolveAIModelReference, type AIModelReference } from './ai-model-aliases';
 import type { AIEmitCode } from './ai-observability';
 import { hasAICapability } from './ai-provider-catalog';
+import { emitAIProviderInitializationFailed } from './ai-observability';
 import { createAIProviderInstance } from './ai-provider-factory';
+import { isNativeDecisionProvider, NativeDecisionProvider } from './ai-decision-provider';
 import type {
   AICapability,
   AIProviderAdapter,
@@ -27,6 +29,8 @@ type ProviderMap = Record<string, AIProviderAdapter>;
 export interface AIRegistry {
   providers: Record<string, ResolvedAIProviderConfig>;
   providerInstances: ProviderMap;
+  /** Native providers are not inserted into the SDK's language-model registry. */
+  decisionProviders?: Record<string, NativeDecisionProvider>;
   registry: ProviderRegistryProvider<any, '/'>;
   emitCode?: AIEmitCode;
 }
@@ -50,15 +54,25 @@ export interface ResolvedAIFilesProvider {
 /** Create an AI SDK provider registry from active resolved providers. */
 export function createAIRegistry(config: ResolvedAIConfig, emitCode?: AIEmitCode): AIRegistry {
   const providerInstances: ProviderMap = {};
+  const decisionProviders: Record<string, NativeDecisionProvider> = Object.create(null);
 
   for (const provider of Object.values(config.providers)) {
     if (!provider.active) continue;
+    if (isNativeDecisionProvider(provider.type)) {
+      try { decisionProviders[provider.id] = new NativeDecisionProvider(provider); }
+      catch (error) {
+        emitAIProviderInitializationFailed({ providerId: provider.id, providerType: provider.type, error }, emitCode);
+        throw error;
+      }
+      continue;
+    }
     providerInstances[provider.id] = createAIProviderInstance(provider, emitCode);
   }
 
   return {
     providers: config.providers,
     providerInstances,
+    decisionProviders,
     registry: createProviderRegistry(providerInstances, { separator: '/' }),
     ...(emitCode === undefined ? {} : { emitCode }),
   };
@@ -72,7 +86,7 @@ export function getAIProviderStatuses(
   return Object.values(config.providers).map((provider) => ({
     id: provider.id,
     type: provider.type,
-    active: Boolean(provider.active && registry.providerInstances[provider.id]),
+    active: Boolean(provider.active && (registry.providerInstances[provider.id] || registry.decisionProviders?.[provider.id])),
     source: provider.source,
     configuredBy: [...provider.configuredBy],
     baseURL: sanitizeProviderBaseURL(provider.baseURL),
@@ -98,7 +112,7 @@ export function isAIModelActive(
         resolved: reference.resolved,
       };
     }
-    if (!provider.active || !registry.providerInstances[provider.id]) {
+    if (!provider.active || !(registry.providerInstances[provider.id] || registry.decisionProviders?.[provider.id])) {
       return {
         active: false,
         reason: provider.reason ?? 'provider_not_active',
@@ -111,6 +125,9 @@ export function isAIModelActive(
         reason: `capability_${capability}_not_supported`,
         resolved: reference.resolved,
       };
+    }
+    if (capability === 'decisions' && !registry.decisionProviders?.[provider.id]) {
+      return { active: false, reason: 'capability_decisions_not_supported', resolved: reference.resolved };
     }
     return { active: true, reason: null, resolved: reference.resolved };
   } catch (error) {

@@ -63,6 +63,8 @@ export type AIProviderType =
   | 'minimax'
   | 'zai'
   | 'topaz'
+  | 'jev'
+  | 'laya'
   | 'openai-compatible'
   | 'meta-llama'
   | 'custom';
@@ -86,7 +88,8 @@ export type AICapability =
   | 'skills'
   | 'realtime'
   | 'evaluation'
-  | 'batch';
+  | 'batch'
+  | 'decisions';
 
 /** Tracks whether a provider came from env auto-detection or explicit config. */
 export type AIProviderSource = 'env' | 'config';
@@ -138,6 +141,8 @@ export interface AIProviderCapabilities {
   evaluation?: boolean;
   /** Preview provider batch surface. */
   batch?: boolean;
+  /** Native typed System One decisions, independent of the AI SDK. */
+  decisions?: boolean;
 }
 
 /** Fully populated capability map used after provider config normalization. */
@@ -261,6 +266,8 @@ export interface AIProviderConfig {
   capabilities?: Partial<AIProviderCapabilities>;
   /** AI SDK provider object or factory. Required when `type` is `custom`. */
   adapter?: AICustomProviderAdapter;
+  /** Explicit deployment designation for a self-hosted Laya endpoint. Not inferred from its hostname. */
+  decisionLocality?: 'local' | 'hosted';
 }
 
 /** Status endpoint access policy accepted by the AI plugin. */

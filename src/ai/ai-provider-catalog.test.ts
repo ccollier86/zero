@@ -41,6 +41,7 @@ const CAPABILITY_KEYS = [
   'realtime',
   'evaluation',
   'batch',
+  'decisions',
 ] as const satisfies readonly AICapability[];
 
 const MODEL_MODALITIES = [
@@ -63,7 +64,7 @@ describe('AI provider catalog invariants', () => {
     expect(new Set(catalogTypes).size).toBe(catalogTypes.length);
     expect(Object.isFrozen(AI_PROVIDER_TYPES)).toBe(true);
     expect(Object.isFrozen(AI_PROVIDER_FACTORIES)).toBe(true);
-    expect(factoryTypes).toEqual([...AI_PROVIDER_TYPES].sort());
+    expect(factoryTypes).toEqual(AI_PROVIDER_TYPES.filter(type => type !== 'jev' && type !== 'laya').sort());
     expect(new Set(Object.values(AI_PROVIDER_FACTORIES)).size).toBe(factoryTypes.length);
   });
 
@@ -106,7 +107,10 @@ describe('AI provider catalog construction and model surfaces', () => {
       expect(provider.reason).toBeNull();
 
       const registry = createAIRegistry(config);
-      expect(registry.providerInstances[entry.id]).toBeDefined();
+      if (provider.capabilities.decisions) {
+        expect(registry.decisionProviders?.[entry.id]).toBeDefined();
+        expect(registry.providerInstances[entry.id]).toBeUndefined();
+      } else expect(registry.providerInstances[entry.id]).toBeDefined();
 
       for (const capability of MODEL_MODALITIES) {
         if (!provider.capabilities[capability]) continue;
@@ -231,6 +235,10 @@ function dummyProviderConfig(
     case 'open-responses':
       config.apiKey = undefined;
       config.baseURL = 'https://open-responses.example.test/v1';
+      break;
+    case 'laya':
+      config.apiKey = undefined;
+      config.baseURL = 'http://127.0.0.1:8000';
       break;
     case 'baseten':
       // Baseten exposes embeddings only when a model URL is configured.

@@ -373,6 +373,7 @@ function videoContext(
     realtime: false,
     evaluation: false,
     batch: false,
+    decisions: false,
   };
   const provider: ResolvedAIProviderConfig = {
     id,

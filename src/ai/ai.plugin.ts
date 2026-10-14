@@ -57,6 +57,7 @@ export function createAIPlugin(options: AIPluginConfig) {
     if (cleanedUp) return;
     cleanedUp = true;
     started = false;
+    service.decisions.dispose();
     options.runtime?.clear(ZERO_AI_SERVICE, service);
     registration.unregister();
   };

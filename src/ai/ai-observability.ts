@@ -279,7 +279,7 @@ function sanitizeMetadataValue(
 function isPrivateAIContentKey(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
   return /(?:token|secret|password|authorization|cookie|credential|apikey|authkey)/.test(normalized)
-    || /(?:prompt|message|content|file|audio|image|toolargs|toolargument|input|output|result|payload|body)/.test(normalized);
+    || /(?:prompt|message|content|file|audio|image|toolargs|toolargument|input|output|result|payload|body|state|questions|criteria|evidence)/.test(normalized);
 }
 
 function classifyProviderInitializationError(error: unknown): string {

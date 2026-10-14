@@ -4,6 +4,15 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added native typed System One decisions under `zero.ai.decisions`, independent
+  of AI SDK support: direct TypeSafe Jev and configurable self-hosted Laya
+  transports, inferred Choice/Score/yes-no answers, explicit decision aliases,
+  preserved probability/abstention/truncation signals and provider provenance.
+  Shared configuration/status and secret-safe telemetry remain app-local.
+  Local-only requests cannot fall back to hosted providers; one bounded deadline
+  spans transport, response reading and opt-in retries. Managed cleanup cancels
+  pending decision requests. No public inference endpoint, model installation,
+  automatic business action, contract registry or billing service is implied.
 - Made the DataTable new-record indicator sort-aware: it offers a page-one/top
   reveal only when a genuine matching arrival leads the active sorted results.
   Elsewhere arrivals use a passive animated count without an arrow or click

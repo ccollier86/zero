@@ -23,7 +23,8 @@ reviewed_against:
 
 [Backend systems](../index.md) · [Documentation index](../../index.md)
 
-Zero AI is the server-side AI layer over AI SDK 7. It centralizes configured
+Zero AI is the server-side AI layer over AI SDK 7, with native adapters for
+operations the SDK does not provide. It centralizes configured
 providers, model aliases, generation, tools, embeddings and media, with bounded
 agents and a Torrent-backed durable-agent runtime. Applications use the same
 service API across providers; provider/model-specific behavior remains explicit.
@@ -66,7 +67,7 @@ actor, validate its inputs and call the app-bound service.
 
 - [Configuration](./configuration.md): enable AI, choose explicit versus detected
   providers, define aliases and protect the optional status route.
-- [Providers](./providers.md): all 44 built-in identities, capabilities, static
+- [Providers](./providers.md): built-in identities, capabilities, static
   model candidates, compatible/custom adapters and Bedrock history handling.
 - [Provider settings](./provider-settings.md): complete construction settings,
   cloud credential modes and independent Bedrock endpoints.
@@ -84,6 +85,9 @@ actor, validate its inputs and call the app-bound service.
   and integrity bounds.
 - [Reranking](./reranking.md): homogeneous document batches, original indices,
   scores and provider-result verification.
+- [Typed decisions](./decisions.md): native Jev/self-hosted Laya, inferred
+  questions, explicit model selection, local-only execution, probability and
+  abstention integrity, lifecycle limits and application-owned policy.
 - [Media](./media.md): image/transcription/speech inputs, outputs, fixed limits
   and authorized retention.
 - [Provider-hosted files](./hosted-files.md): bounded external uploads, durable

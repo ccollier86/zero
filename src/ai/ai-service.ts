@@ -34,6 +34,7 @@ import {
   getAIFilesProviderStatus,
   getAIProviderStatuses,
   isAIModelActive,
+  parseAIModelReference,
   resolveEmbeddingModel,
   resolveImageModel,
   resolveLanguageModel,
@@ -75,6 +76,7 @@ import { createAIModelExecutionPreparer } from './ai-model-execution';
 import { executeAIGenerateImage } from './ai-image-operations';
 import { executeAISpeech, executeAITranscription } from './ai-audio-operations';
 import { executeAIGenerateText, executeAIStreamText } from './ai-text-operations';
+import { createAIDecisionService, type AIDecisionService } from './ai-decision-service';
 
 /** Optional process-local dependencies for a standalone or managed AI service. */
 export interface AIServiceOptions {
@@ -90,11 +92,14 @@ export class AIService {
   readonly files: AIHostedFilesService;
   /** Preview video operations with bounded materialization and durable job locators. */
   readonly video: AIVideoService;
+  /** Native Jev / Laya typed decisions, available independently of AI SDK support. */
+  readonly decisions: AIDecisionService;
 
   /** Create an AI service from fully resolved AI config. */
   constructor(private readonly config: ResolvedAIConfig, options: AIServiceOptions = {}) {
     this.emitCode = options.emitCode;
     this.registry = createAIRegistry(config, options.emitCode);
+    this.decisions = createAIDecisionService(this.registry, config.aliases);
     this.files = createAIHostedFilesService({
       registry: this.registry,
       defaultProvider: config.filesProvider,
@@ -109,7 +114,12 @@ export class AIService {
   status(): AIStatus {
     const aliases: AIStatus['aliases'] = {};
     for (const [alias, model] of Object.entries(this.config.aliases)) {
-      const state = isAIModelActive(this.registry, this.config.aliases, alias, capabilityForAlias(alias));
+      const implied = capabilityForAlias(alias);
+      const reference = parseAIModelReference(model);
+      const provider = reference ? this.config.providers[reference.providerId] : undefined;
+      const capability = implied === 'text' && alias !== 'fast' && alias !== 'smart'
+        && (provider?.type === 'jev' || provider?.type === 'laya') ? 'decisions' : implied;
+      const state = isAIModelActive(this.registry, this.config.aliases, alias, capability);
       aliases[alias] = {
         model,
         active: state.active,

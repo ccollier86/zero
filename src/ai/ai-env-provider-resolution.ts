@@ -321,6 +321,7 @@ function defaultCustomCapabilities() {
     realtime: false,
     evaluation: false,
     batch: false,
+    decisions: false,
   };
 }
 

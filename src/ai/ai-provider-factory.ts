@@ -59,8 +59,8 @@ import {
 } from './providers/media-provider-factories';
 import { normalizeProviderAdapter, type AIProviderFactory } from './providers/provider-factory-types';
 
-/** Exhaustive factory table; adding a provider type without a factory is a type error. */
-export const AI_PROVIDER_FACTORIES: Readonly<Record<AIProviderType, AIProviderFactory>> = Object.freeze({
+/** Exhaustive SDK-only factory table; native decisions have their own transport registry. */
+export const AI_PROVIDER_FACTORIES: Readonly<Record<Exclude<AIProviderType, 'jev' | 'laya'>, AIProviderFactory>> = Object.freeze({
   gateway: createGatewayAdapter,
   openai: createOpenAIAdapter,
   azure: createAzureAdapter,
@@ -116,6 +116,9 @@ export function createAIProviderInstance(
   emitCode?: AIEmitCode,
 ): AIProviderAdapter {
   try {
+    if (provider.type === 'jev' || provider.type === 'laya') {
+      throw new AIError('System One providers use the native decisions interface, not an AI SDK adapter.', 'AI_CAPABILITY_NOT_SUPPORTED', 400);
+    }
     return normalizeProviderAdapter(AI_PROVIDER_FACTORIES[provider.type](provider));
   } catch (error) {
     emitAIProviderInitializationFailed({

@@ -76,6 +76,8 @@ function capabilityForDefaultAlias(
   alias: string
 ): keyof ResolvedAIProviderConfig['capabilities'] {
   switch (alias) {
+    case 'decisions':
+      return 'decisions';
     case 'embedding':
       return 'embeddings';
     case 'image':

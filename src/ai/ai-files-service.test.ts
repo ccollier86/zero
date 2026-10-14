@@ -315,6 +315,7 @@ function filesContext(
     realtime: false,
     evaluation: false,
     batch: false,
+    decisions: false,
     ...options.capabilities,
   };
   const provider: ResolvedAIProviderConfig = {

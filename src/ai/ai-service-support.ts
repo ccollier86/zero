@@ -165,6 +165,7 @@ function assertLanguageCapabilities(
 /** Resolve the capability implied by a conventional model alias. */
 export function capabilityForAlias(alias: string): Parameters<typeof isAIModelActive>[3] {
   switch (alias) {
+    case 'decisions': return 'decisions';
     case 'embedding': return 'embeddings';
     case 'image': return 'images';
     case 'transcription': return 'transcription';
