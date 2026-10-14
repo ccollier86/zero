@@ -682,6 +682,7 @@
     "@elysiajs/cron": "^1.4.2",
     "@elysiajs/eden": "^1.4.9",
     "@floating-ui/react": "^0.27.19",
+    "@huggingface/tokenizers": "0.2.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",

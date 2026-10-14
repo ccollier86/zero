@@ -8,7 +8,7 @@ const selected: Record<string, number[]> = {
   'structured-output.md': [0], 'conversations.md': [0, 1], 'embeddings.md': [0],
   'reranking.md': [0], 'media.md': [0, 1, 2], 'hosted-files.md': [0, 1],
   'tools.md': [0, 1], 'agents.md': [0], 'video.md': [0],
-  'decisions.md': [0, 1, 2],
+  'decisions.md': [0, 1, 2, 3],
 };
 
 test('AI manual service/configuration examples compile against public source exports', async () => {

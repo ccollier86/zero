@@ -51,6 +51,8 @@ export function createAIDecisionService(registry: AIRegistry, aliases: Record<st
         const signal = request.abortSignal ? AbortSignal.any([request.abortSignal, execution.signal]) : execution.signal;
         deadline = createDecisionDeadline(prepared.timeoutMs, signal);
         deadline.assertCurrent();
+        resolved.model.assertInputFits(prepared);
+        deadline.assertCurrent();
         const raw = await resolved.model.evaluate(prepared.body, prepared.maxRetries, deadline);
         const result = parseDecisionResponse(raw, prepared.questions);
         if (resolved.provider.type === 'jev' && result.usage === null) throw invalidDecisionResponse();

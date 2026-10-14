@@ -992,6 +992,7 @@ export {
   AI_PROVIDER_TYPES,
   AIService,
   AIDecision,
+  createLayaTokenCounter,
   createAIDecisionService,
   aiTool,
   createAIHostedFilesService,
@@ -1015,6 +1016,7 @@ export {
 export type {
   AIAnyOutput,
   AIDecisionService,
+  AILayaInputLimits,
   AIDecisionJSON,
   AIDecisionDescription,
   AIDecisionQuestion,

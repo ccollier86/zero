@@ -5,6 +5,7 @@ import { snapshotAIHeaders } from './ai-request-snapshot';
 import type { AIDecisionDeadline } from './ai-decision-deadline';
 import { AI_DECISION_MAX_RESPONSE_BYTES } from './ai-decision-validation';
 import { invalidDecisionResponse } from './ai-decision-response';
+import { createLayaInputAdmission, type PreparedLayaInput } from './ai-decision-input-limits';
 
 export function isNativeDecisionProvider(type: AIProviderType): type is 'jev' | 'laya' {
   return type === 'jev' || type === 'laya';
@@ -16,6 +17,7 @@ export class NativeDecisionProvider {
   private readonly endpoint: string;
   private readonly headers: Headers;
   private readonly fetch: AIFetchFunction;
+  private readonly admitInput: ReturnType<typeof createLayaInputAdmission>;
 
   constructor(provider: ResolvedAIProviderConfig) {
     if (!isNativeDecisionProvider(provider.type)) throw invalidConfiguration();
@@ -23,6 +25,7 @@ export class NativeDecisionProvider {
     if (provider.type === 'jev' && provider.decisionLocality === 'local') throw invalidConfiguration();
     this.locality = provider.type === 'jev' ? 'hosted' : provider.decisionLocality ?? 'hosted';
     this.endpoint = decisionEndpoint(provider.baseURL);
+    this.admitInput = provider.type === 'laya' ? createLayaInputAdmission(provider.layaInputLimits) : undefined;
     try {
       this.headers = new Headers(snapshotAIHeaders(provider.headers));
       if (provider.apiKey) this.headers.set('Authorization', `Bearer ${provider.apiKey}`);
@@ -32,6 +35,9 @@ export class NativeDecisionProvider {
       if (typeof this.fetch !== 'function') throw invalidConfiguration();
     } catch { throw invalidConfiguration(); }
   }
+
+  /** Runs before any HTTP request; caller overrides can lower, never raise, this ceiling. */
+  assertInputFits(input: PreparedLayaInput): void { this.admitInput?.(input); }
 
   async evaluate(body: string, maxRetries: number, deadline: AIDecisionDeadline): Promise<unknown> {
     for (let attempt = 0; ; attempt += 1) {

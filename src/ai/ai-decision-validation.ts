@@ -2,7 +2,7 @@
 import { AIError } from './ai-errors';
 import { snapshotAIJSONValue } from './ai-json-value-snapshot';
 import { utf8ByteLength } from './ai-operation-limits';
-import type { AIDecisionQuestions, AIDecisionRequest } from './ai-decision-types';
+import type { AIDecisionDescription, AIDecisionQuestions, AIDecisionRequest } from './ai-decision-types';
 
 export const AI_DECISION_MAX_INPUT_BYTES = 1024 * 1024;
 export const AI_DECISION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -50,11 +50,14 @@ export function prepareDecisionRequest(request: AIDecisionRequest, model: string
   if (utf8ByteLength(body, AI_DECISION_MAX_INPUT_BYTES) > AI_DECISION_MAX_INPUT_BYTES) {
     throw new AIError('AI decision request exceeds the byte limit.', 'AI_REQUEST_LIMIT_EXCEEDED', 413);
   }
-  return { body, questions: questions as unknown as AIDecisionQuestions, timeoutMs, maxRetries,
+  return { body, state: state as AIDecisionDescription,
+    questions: questions as unknown as AIDecisionQuestions, timeoutMs, maxRetries,
+    inputTokenLimit: laya.max_len as number | undefined,
+    questionTokenLimit: laya.head_max_len as number | undefined,
     locality: request.locality ?? 'any', contract: request.contract };
 }
 
-function prepareLayaControls(controls: AIDecisionRequest['laya'], providerType: 'jev' | 'laya') {
+function prepareLayaControls(controls: AIDecisionRequest['laya'], providerType: 'jev' | 'laya'): Record<string, string | number> {
   if (controls === undefined) return {};
   if (providerType !== 'laya') throw invalidDecisionRequest();
   const values = snapshotAIJSONValue(controls, 'AI Laya controls', 4096);

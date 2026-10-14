@@ -19,6 +19,8 @@ export type {
 export { AIService } from './ai-service';
 export type { AIServiceOptions } from './ai-service';
 export { AIDecision } from './ai-decision-types';
+export { createLayaTokenCounter } from './ai-decision-tokenizer';
+export type { AILayaInputLimits } from './ai-decision-input-limits';
 export { createAIDecisionService } from './ai-decision-service';
 export type { AIDecisionService } from './ai-decision-service';
 export type {

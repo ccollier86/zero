@@ -10,6 +10,7 @@ import type { ProviderV3, ProviderV4 } from '@ai-sdk/provider';
 import type { BasetenProviderSettings } from '@ai-sdk/baseten';
 import type { CartesiaProviderSettings } from '@ai-sdk/cartesia';
 import type { GoogleVertexProviderSettings } from '@ai-sdk/google-vertex';
+import type { AILayaInputLimits } from './ai-decision-input-limits';
 
 /** Portable fetch contract accepted from Bun apps without requiring Bun's static helpers. */
 export type AIFetchFunction = (
@@ -268,6 +269,8 @@ export interface AIProviderConfig {
   adapter?: AICustomProviderAdapter;
   /** Explicit deployment designation for a self-hosted Laya endpoint. Not inferred from its hostname. */
   decisionLocality?: 'local' | 'hosted';
+  /** Laya-only local preflight. Defaults to a conservative 512-token budget; false delegates to the server. */
+  layaInputLimits?: AILayaInputLimits | false;
 }
 
 /** Status endpoint access policy accepted by the AI plugin. */

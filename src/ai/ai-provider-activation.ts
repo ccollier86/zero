@@ -207,6 +207,9 @@ export function resolveAIProviderCapabilities(
   if (provider.capabilities?.decisions === true && provider.type !== 'jev' && provider.type !== 'laya') {
     throw new AIError('Native decision capability requires a Jev or Laya provider.', 'AI_PROVIDER_CONFIG_INVALID', 500);
   }
+  if (provider.layaInputLimits !== undefined && provider.type !== 'laya') {
+    throw new AIError('Local Laya input limits require a Laya provider.', 'AI_PROVIDER_CONFIG_INVALID', 500);
+  }
   if (provider.decisionLocality !== undefined && (provider.type !== 'laya' && provider.type !== 'jev'
     || !['local', 'hosted'].includes(provider.decisionLocality) || provider.type === 'jev' && provider.decisionLocality === 'local')) {
     throw new AIError('AI decision locality is not supported by this provider.', 'AI_PROVIDER_CONFIG_INVALID', 500);

@@ -4,6 +4,12 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added Laya-only local input admission before inference HTTP: configurable
+  per-question complete-prompt limits (including a 2048-token deployment profile),
+  checkpoint question/options and per-option clipping guards, an offline
+  tokenizer helper, conservative no-tokenizer fallback, immutable startup
+  ceilings and secret-safe 413 errors. Oversized input is never silently trimmed
+  or retried. Jev's provider-managed input behavior is unchanged.
 - Added native typed System One decisions under `zero.ai.decisions`, independent
   of AI SDK support: direct TypeSafe Jev and configurable self-hosted Laya
   transports, inferred Choice/Score/yes-no answers, explicit decision aliases,

@@ -13,7 +13,7 @@ modes: [managed-server, standalone-service, native-system-one, self-hosted]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "0d78cedcc200875930e8c90cc91e0c0506b88710"
+  commit: "57ac541e1748757d345d0852f9b177c5d748cc4a"
   snapshot: dirty
   date: "2026-10-13"
   evidence_level: source-observed
@@ -76,6 +76,85 @@ operators must enforce the intended network boundary. Omission is conservatively
 explicitly designated local; Jev cannot be designated local.
 
 Zero does not install weights, launch a Laya server or expose it publicly.
+
+## Reject Oversized Laya Inputs Before Networking
+
+Laya admission runs locally before the inference fetch. The default is a
+512-token complete-prompt limit and a 192-token question/options budget. Configure
+`layaInputLimits.maxInputTokens: 2048` for a deployment configured to handle 2048.
+These are operator-owned startup settings; request-level `laya.maxInputTokens`
+and `maxQuestionTokens` can lower the guard's ceilings, never raise them.
+Jev does not use this guard: its existing provider-managed behavior is unchanged.
+
+For checkpoint-matched token counts, load the matching tokenizer JSON files once
+from local deployment resources. Only tokenizer metadata is needed, not weights:
+
+```ts
+import { createLayaTokenCounter, type AIConfig } from '@zero/framework/ai';
+
+export async function configureHostedLaya(): Promise<AIConfig> {
+  const countTokens = createLayaTokenCounter(
+    await Bun.file('./resources/laya/tokenizer.json').json(),
+    await Bun.file('./resources/laya/tokenizer_config.json').json(),
+  );
+  return {
+    autoDetect: false,
+    providers: {
+      remoteDecisions: {
+        type: 'laya',
+        baseURL: Bun.env.LAYA_BASE_URL,
+        apiKey: Bun.env.LAYA_API_KEY,
+        decisionLocality: 'hosted',
+        layaInputLimits: {
+          runtime: 'llama.cpp',
+          maxInputTokens: 2048,
+          maxQuestionTokens: 192,
+          countTokens,
+        },
+      },
+    },
+    aliases: { decisions: 'remoteDecisions/laya' },
+  };
+}
+```
+
+The helper constructs a local tokenizer from detached JSON, disables added
+framing, and never truncates the count or downloads anything. For the English
+GGUF/HF normalization difference, it takes the larger normalized/unnormalized
+count. A custom synchronous `countTokens(text)` function can also be supplied;
+it must match the deployed checkpoint and must not perform network operations.
+Use `runtime: 'laya'` for Python Laya's whole-serialized-text mask escaping;
+`llama.cpp` escapes string values before serialization, preserving JSON keys.
+Both preserve object order and serialize containers with spaced JSON separators,
+count the question-type prefix and rendered criteria, and reserve CLS/SEP/MASK
+framing. The inference body itself remains unchanged.
+
+The limit is **per independently evaluated question**, not summed across the
+request. Admission includes state, question, choices/levels/yes-no descriptions
+and framing. It also rejects descriptions that exceed the English runtimes'
+48-token per-option cap and question/options allocation that would be clipped.
+No input is silently shortened. A rejection throws
+`AI_REQUEST_LIMIT_EXCEEDED` (HTTP-shaped status 413) without inference HTTP or
+retries. Invalid counters fail closed with a sanitized configuration error.
+
+Without a local counter, Zero uses a conservative UTF-8 token upper bound.
+It can reject valid input; it is not a character-to-token estimate or a promise
+to accept every prompt that fits. Supply the checkpoint tokenizer to use the
+capacity accurately. The built-in layout targets the English Laya protocol;
+qualify different checkpoints, serializers and model revisions separately.
+
+To manually increase the hosted limit, change the server's supported context
+and batch capacity first, then the matching Zero startup budget. With llama.cpp,
+the full Laya prompt must fit both `--ctx-size` and `--ubatch-size`; increasing
+only Zero's number cannot enlarge server capacity. Do not raise the independent
+question/options budget merely because the state context was enlarged. Values
+are bounded to 1–8192. Larger admission is not a quality or latency guarantee.
+
+An operator can explicitly set `layaInputLimits: false` for a deployment whose
+server-side truncation policy and evidence-coverage reporting have been qualified.
+It is never caller-selectable. Admission itself does not fabricate provider
+coverage: unreported `truncated` remains null even after a request passed the
+local guard. Model/server configuration drift still needs operational checks.
 
 ## Enable Jev
 
@@ -257,6 +336,9 @@ Provider contracts were checked against [TypeSafe's API reference](https://docs.
 [confidence semantics](https://docs.typesafe.ai/confidence), and
 [Laya's serving implementation](https://github.com/NandhaKishorM/laya/blob/main/laya/serve.py)
 and [confidence gates](https://github.com/NandhaKishorM/laya/blob/main/laya/confidence.py).
+Local admission also follows [Laya's sequence allocation](https://github.com/NandhaKishorM/laya/blob/main/laya/common.py)
+and [llama.cpp's Laya prompt allocation](https://github.com/ggml-org/llama.cpp/blob/b11608/tools/server/server-decision.cpp),
+using [Hugging Face's local tokenizer implementation](https://github.com/huggingface/tokenizers.js).
 Those upstream pages can change independently of this source snapshot.
 
 See [security](./security.md) and [operations](./operations.md) for the broader
