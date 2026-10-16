@@ -15,9 +15,10 @@ import { NativeTokenError, nativeTokenErrorResponse } from './native-token-error
 import { authAuditRequestFromRequest } from '../auth-audit-service';
 
 export function createNativeTenantPlugin(config: NativeAuthHttpConfig) {
+  // Preserve the raw form (including duplicate fields) for readNativeForm().
   return new Elysia({ name: 'auth-native-tenants' })
-    .post('/oauth/tenants', ({ request }) => listRequest(config, request))
-    .post('/oauth/tenants/switch', ({ request }) => switchRequest(config, request));
+    .post('/oauth/tenants', ({ request }) => listRequest(config, request), { parse: 'none' })
+    .post('/oauth/tenants/switch', ({ request }) => switchRequest(config, request), { parse: 'none' });
 }
 
 async function listRequest(config: NativeAuthHttpConfig, request: Request): Promise<Response> {

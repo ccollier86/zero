@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: native-and-extension-oidc-public-clients
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0 source with unreleased managed OAuth form correction"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
-  date: "2026-10-07"
+  commit: "f1cbc1cd58caa1cb0ee2bfb9d6629b1c1fbdad76"
+  snapshot: dirty
+  date: "2026-10-16"
   evidence_level: source-observed
 ---
 
@@ -102,6 +102,29 @@ grant_type=authorization_code, code, client_id, redirect_uri and code_verifier.
 Refresh fields are grant_type=refresh_token, refresh_token and client_id.
 Client-secret/Basic-auth credentials are rejected.
 
+## Managed Server Form Ownership
+
+The five form-reading POST routes—`/auth/oauth/authorize`,
+`/auth/oauth/token`, `/auth/oauth/revoke`, `/auth/oauth/tenants` and
+`/auth/oauth/tenants/switch`—disable Elysia's automatic body parsing with the
+route-local option `{ parse: 'none' }`. The native provider's `readNativeForm()`
+is the sole body reader. It retains the form-encoding requirement, 16,384-character
+body ceiling and duplicate-field validation before processing OAuth credentials.
+The Content-Length preflight also rejects values above 16,384.
+
+This is necessary even when a minimal standalone auth plugin appears to work.
+Managed application hooks/extensions can enable Elysia's body inference;
+without the route-local override Elysia can consume the form before the native
+handler calls `request.text()`. Browser approval then returns HTTP 500 instead
+of its callback redirect. Token and tenant operations have the same ownership
+requirement. See [Elysia's parser guidance](https://elysiajs.com/essential/life-cycle#skip-body-parsing).
+
+The correction is inside Zero, not a required application workaround. Do not
+disable parsing globally, read/patch the request body in app middleware, or
+replace the strict reader with an object parser that loses duplicate fields.
+Ordinary managed JSON and form endpoints keep their existing body parsing.
+UserInfo does not use this form reader and is not part of this override.
+
 ## Complete The Same Human Ceremonies
 
 Authorization opens the browser's login/registration/recovery path with a
@@ -177,6 +200,51 @@ unexpected failures emit standard native request-failure telemetry.
 
 Never log authorization codes, verifier/refresh values, private signing keys
 or callback URLs containing returned credentials.
+
+### Managed HTTP Regression Coverage
+
+The [managed form integration suite](../../../src/frontend/server/native-auth-form-app.integration.test.ts)
+uses public `createApp()`, disposable databases and a real loopback HTTP/Sync
+listener. An app-level body-inspecting hook enables Elysia's normal inference;
+there is no `Request` monkeypatch or alternate OAuth handler. The approval test
+reproduces HTTP 500 without the five overrides and passes with them.
+
+Coverage includes browser approval/denial, same-origin and browser-owner checks,
+PKCE, one-time codes, refresh rotation, revocation of HTTP/Sync authority,
+tenant listing/session replacement, strict content-type/size/duplicate-field
+errors, public-client secret rejection and unaffected ordinary body parsing.
+Tenant-bound managed coverage replaces the active tenant's family; the
+[tenant provider suite](../../../src/auth/oidc/native-tenant-session.integration.test.ts)
+also exercises switching between tenants and membership/MFA boundaries.
+
+From the framework root, run:
+
+```sh
+bun --no-env-file test \
+  src/frontend/server/native-auth-form-app.integration.test.ts \
+  src/frontend/server/native-auth-app.integration.test.ts \
+  src/auth/oidc src/auth/native src/native
+```
+
+Standalone provider tests remain useful but do not substitute for managed
+composition coverage. This verifies the framework behavior, not an application's
+pairing handoff, installation records, OS callback adapter or deployment.
+
+### Adopt The Form Correction
+
+The package version alone does not identify this fix: it is an unreleased source
+correction after the original 2.6.0 archive. Select a committed package containing
+the correction, inspect its commit and SHA-256, and use the supported
+[saved-package updater](../../cli/tooling/zero-update.md). Record the installed
+archive/commit/hash and lockfile provenance rather than editing `node_modules`.
+An older saved archive is not refreshed merely by fetching source.
+
+No schema migration, auth configuration change, new client secret or SDK API
+change is introduced by this repair. After adopting it, rerun the application's
+real native approval, callback/code exchange, renewal, managed Sync and sign-out
+tests, followed by its typecheck. Pending application migrations and unrelated
+packaging issues still need their own verification; a framework test pass does
+not establish that TV/device pairing is complete.
 
 ## Related Guides And Next Steps
 

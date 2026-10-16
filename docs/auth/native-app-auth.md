@@ -564,6 +564,20 @@ contract. A third-party client must validate every required advertised
 capability and pin a tested compatible Zero framework release; it must not infer
 compatibility from a future server accepting the same URL shape.
 
+### Managed form parsing
+
+Zero's five form-reading OAuth POST routes (authorize, token, revoke, tenants
+and tenant switch) use route-local `{ parse: 'none' }` so the strict native form
+reader owns the request body. Managed app body inference must not consume it
+first. Ordinary application JSON/form parsing is unchanged; do not work around
+an approval HTTP 500 by disabling parsing globally or patching `Request`.
+
+For the correction after the original 2.6.0 archive, managed HTTP/Sync regression
+commands and commit/hash-based upgrade checks, see
+[managed form ownership](../../docs-next/backend/guardian/native-provider.md#managed-server-form-ownership)
+and [adoption guidance](../../docs-next/backend/guardian/native-provider.md#adopt-the-form-correction).
+This repair requires no schema migration or native SDK API change.
+
 ### Authorization request
 
 The initial `GET /auth/oauth/authorize` accepts these protocol parameters:

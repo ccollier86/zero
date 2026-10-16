@@ -19,9 +19,10 @@ import { NativeTokenError, nativeTokenErrorResponse } from './native-token-error
 import { authAuditRequestFromRequest } from '../auth-audit-service';
 
 export function createNativeTokenPlugin(config: NativeAuthHttpConfig) {
+  // Preserve the raw form (including duplicate fields) for readNativeForm().
   return new Elysia({ name: 'auth-native-token' })
-    .post('/oauth/token', ({ request }) => tokenRequest(config, request))
-    .post('/oauth/revoke', ({ request }) => revokeRequest(config, request));
+    .post('/oauth/token', ({ request }) => tokenRequest(config, request), { parse: 'none' })
+    .post('/oauth/revoke', ({ request }) => revokeRequest(config, request), { parse: 'none' });
 }
 
 async function tokenRequest(config: NativeAuthHttpConfig, request: Request): Promise<Response> {

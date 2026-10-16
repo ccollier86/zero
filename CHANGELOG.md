@@ -4,6 +4,12 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Fixed managed native OAuth form ownership on authorization, token, revoke,
+  tenant-list and tenant-switch POST routes. Route-local parser overrides keep
+  Elysia body inference from consuming forms before Zero's strict OAuth reader,
+  without changing ordinary application body parsing or protocol validation.
+  Added real managed HTTP/Sync regression coverage and native-provider upgrade
+  guidance. No database migration or native SDK API change is required.
 - Added Laya-only local input admission before inference HTTP: configurable
   per-question complete-prompt limits (including a 2048-token deployment profile),
   checkpoint question/options and per-option clipping guards, an offline
