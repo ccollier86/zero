@@ -4,6 +4,12 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Fixed native consent HTML's referrer policy so real Chromium approval/denial
+  forms send the issuer Origin instead of `null`. HTML alone uses `same-origin`;
+  code-bearing and other native redirects retain `no-referrer`. Exact Origin
+  validation and all other response hardening remain intact. Added real managed
+  browser form-click, callback/referrer, code-exchange and negative-Origin
+  regressions. No database migration, app configuration or native SDK change.
 - Fixed managed native OAuth form ownership on authorization, token, revoke,
   tenant-list and tenant-switch POST routes. Route-local parser overrides keep
   Elysia body inference from consuming forms before Zero's strict OAuth reader,

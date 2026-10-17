@@ -578,6 +578,21 @@ commands and commit/hash-based upgrade checks, see
 and [adoption guidance](../../docs-next/backend/guardian/native-provider.md#adopt-the-form-correction).
 This repair requires no schema migration or native SDK API change.
 
+### Browser consent Origin
+
+Native HTML uses `Referrer-Policy: same-origin` so Chromium retains the issuer
+Origin when the user submits Continue or Cancel. Using `no-referrer` on that
+page can instead generate `Origin: null` and HTTP 400. Native redirects still
+use `no-referrer`, especially when carrying an authorization code. The exact
+issuer-Origin check remains mandatory; missing, null and hostile Origins must
+not be allowed to bypass it.
+
+The raw-form fix at `581dbd8` does not include this separate browser correction.
+Select a later corrected archive by commit/hash, then test real form clicks as
+well as API requests. See [browser policy](../../docs-next/backend/guardian/native-provider.md#browser-consent-origin-and-referrer-policy)
+and [Chromium qualification](../../docs-next/backend/guardian/native-provider.md#real-browser-consent-coverage).
+No schema migration, auth configuration change or SDK API change is required.
+
 ### Authorization request
 
 The initial `GET /auth/oauth/authorize` accepts these protocol parameters:

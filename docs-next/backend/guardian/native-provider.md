@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: native-and-extension-oidc-public-clients
 maturity: supported
-applies_to: ["2.6.0 source with unreleased managed OAuth form correction"]
+applies_to: ["2.6.0 source with unreleased OAuth form and browser Origin corrections"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "f1cbc1cd58caa1cb0ee2bfb9d6629b1c1fbdad76"
+  commit: "581dbd89095c0dd52e5c0aa929a6efa0018dbf1a"
   snapshot: dirty
-  date: "2026-10-16"
+  date: "2026-10-17"
   evidence_level: source-observed
 ---
 
@@ -125,6 +125,28 @@ replace the strict reader with an object parser that loses duplicate fields.
 Ordinary managed JSON and form endpoints keep their existing body parsing.
 UserInfo does not use this form reader and is not part of this override.
 
+## Browser Consent Origin And Referrer Policy
+
+Native authorization HTML uses `Referrer-Policy: same-origin`. This preserves
+the browser-generated issuer Origin on the consent form's POST while omitting
+referrers on cross-origin requests. With `no-referrer` on the HTML, Chromium
+instead submits a literal `Origin: null` and the otherwise valid consent is
+rejected with HTTP 400. This is distinct from the consumed-body HTTP 500 above.
+See the documented [effect of referrer policy on Origin](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy#effect_on_the_origin_header).
+
+The HTML override belongs in `nativeHtml()`, after its shared security headers.
+`nativeRedirect()` still sends `Referrer-Policy: no-referrer`, including on
+code-bearing callbacks and denial/login redirects. Cache prevention, CSP
+(`form-action 'self'`, frame restrictions and disabled scripts), cookie/owner
+binding, PKCE, state/nonce and redirect validation are unchanged.
+
+The POST handler still requires exact equality with the configured issuer's
+origin. Missing Origin, literal `null` and hostile origins remain rejected;
+none is an allowed fallback for a phone, embedded browser or TV handoff. Do not
+weaken that check, infer authority from Referer, or spoof Origin in the app as
+a workaround. API tests that explicitly send a valid Origin cannot establish
+that a browser-generated form works.
+
 ## Complete The Same Human Ceremonies
 
 Authorization opens the browser's login/registration/recovery path with a
@@ -209,7 +231,7 @@ listener. An app-level body-inspecting hook enables Elysia's normal inference;
 there is no `Request` monkeypatch or alternate OAuth handler. The approval test
 reproduces HTTP 500 without the five overrides and passes with them.
 
-Coverage includes browser approval/denial, same-origin and browser-owner checks,
+Coverage includes authorization approval/denial, same-origin and browser-owner checks,
 PKCE, one-time codes, refresh rotation, revocation of HTTP/Sync authority,
 tenant listing/session replacement, strict content-type/size/duplicate-field
 errors, public-client secret rejection and unaffected ordinary body parsing.
@@ -217,14 +239,33 @@ Tenant-bound managed coverage replaces the active tenant's family; the
 [tenant provider suite](../../../src/auth/oidc/native-tenant-session.integration.test.ts)
 also exercises switching between tenants and membership/MFA boundaries.
 
+### Real Browser Consent Coverage
+
+The [Chromium consent suite](../../../src/frontend/server/native-auth-consent.browser.test.ts)
+loads the actual managed authorization page and clicks Continue and Cancel.
+It covers the signed-out continuation, browser-generated Origin, approval and
+denial callbacks, PKCE code exchange and authenticated HTTP. It also checks that
+callback requests carry no Referer and their 302 responses retain `no-referrer`.
+It does not inject an Origin, rewrite headers, replace the page or mock OAuth.
+
+The [response-header unit suite](../../../src/auth/oidc/native-http.test.ts)
+checks HTML versus redirect policy and the retained hardening headers. Managed
+HTTP tests explicitly reject missing, null and hostile Origins for both approval
+and denial without consuming a valid pending consent.
+
 From the framework root, run:
 
 ```sh
 bun --no-env-file test \
+  ./src/frontend/server/native-auth-consent.browser.test.ts \
   src/frontend/server/native-auth-form-app.integration.test.ts \
   src/frontend/server/native-auth-app.integration.test.ts \
   src/auth/oidc src/auth/native src/native
 ```
+
+The browser suite requires installed Playwright Chromium. A skipped browser
+test is not qualification of this correction. Both real form-click regressions
+fail on `581dbd8` with the browser's Origin set to `null`.
 
 Standalone provider tests remain useful but do not substitute for managed
 composition coverage. This verifies the framework behavior, not an application's
@@ -232,9 +273,10 @@ pairing handoff, installation records, OS callback adapter or deployment.
 
 ### Adopt The Form Correction
 
-The package version alone does not identify this fix: it is an unreleased source
-correction after the original 2.6.0 archive. Select a committed package containing
-the correction, inspect its commit and SHA-256, and use the supported
+The package version alone does not identify these fixes: they are unreleased
+source corrections after the original 2.6.0 archive. Commit `581dbd8` contains
+the raw-form fix but not the browser Origin fix. Select a committed package
+containing both corrections, inspect its commit and SHA-256, and use the supported
 [saved-package updater](../../cli/tooling/zero-update.md). Record the installed
 archive/commit/hash and lockfile provenance rather than editing `node_modules`.
 An older saved archive is not refreshed merely by fetching source.

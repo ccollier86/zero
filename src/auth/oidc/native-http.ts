@@ -20,7 +20,13 @@ export function nativeHtml(body: string, status = 200): Response {
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>Zero authorization</title></head><body>${body}</body></html>`, {
     status,
-    headers: { ...PAGE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' },
+    headers: {
+      ...PAGE_HEADERS,
+      // no-referrer makes Chromium send Origin: null for consent form POSTs.
+      // Keep it on nativeRedirect(), especially when a callback carries a code.
+      'Referrer-Policy': 'same-origin',
+      'Content-Type': 'text/html; charset=utf-8',
+    },
   });
 }
 

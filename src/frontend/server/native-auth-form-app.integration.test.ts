@@ -118,6 +118,32 @@ describe('managed native OAuth form ownership', () => {
     expect(callback(denied).searchParams.get('error')).toBe('access_denied');
     expect(callback(denied).searchParams.get('state')).toBe(STATE);
     expect(callback(denied).searchParams.get('code')).toBeNull();
+    expect(denied.headers.get('referrer-policy')).toBe('no-referrer');
+  }, 30_000);
+
+  test('rejects missing, null and hostile Origins for approval and denial without consuming consent', async () => {
+    const h = await start();
+    const owner = await register(h, 'managed-consent-origin');
+    const requestId = await pendingRequest(h, owner.cookie);
+    for (const decision of ['approve', 'deny']) {
+      for (const origin of [undefined, 'null', 'https://foreign.example']) {
+        const headers = new Headers({ Cookie: owner.cookie, 'Content-Type': 'application/x-www-form-urlencoded' });
+        if (origin !== undefined) headers.set('Origin', origin);
+        const rejected = await fetch(`${h.issuer}/oauth/authorize`, {
+          method: 'POST', redirect: 'manual', headers,
+          body: new URLSearchParams({ request_id: requestId, decision }),
+        });
+        expect(rejected.status).toBe(400);
+        expect(rejected.headers.get('location')).toBeNull();
+        expect(await rejected.text()).toContain('Authorization confirmation was rejected.');
+      }
+    }
+    const approved = await form(h, '/oauth/authorize', {
+      request_id: requestId, decision: 'approve',
+    }, { Cookie: owner.cookie });
+    expect(approved.status).toBe(302);
+    expect(callback(approved).searchParams.has('code')).toBe(true);
+    expect(approved.headers.get('referrer-policy')).toBe('no-referrer');
   }, 30_000);
 
   test('lists and switches a real tenant-bound family using managed form routes', async () => {
@@ -267,6 +293,7 @@ async function approveCode(h: Harness, cookie: string): Promise<string> {
     request_id: await pendingRequest(h, cookie), decision: 'approve',
   }, { Cookie: cookie });
   expect(approved.status).toBe(302);
+  expect(approved.headers.get('referrer-policy')).toBe('no-referrer');
   const target = callback(approved);
   expect(target.searchParams.get('state')).toBe(STATE);
   expect(target.searchParams.get('iss')).toBe(h.issuer);
