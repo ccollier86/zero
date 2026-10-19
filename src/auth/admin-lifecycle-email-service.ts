@@ -7,6 +7,7 @@
  */
 
 import { OBS_CODES } from '../observability/codes';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { emitPlatformCode } from '../observability/sink';
 import type { AccountEmailService } from './account-email-service';
 import { serializeAdminLifecycleDelivery } from './admin-lifecycle-delivery-queue';
@@ -120,7 +121,7 @@ export class AdminLifecycleEmailService {
       user?: UserRecord;
     } = {};
     try {
-      this.store.transaction(() => {
+      await withAuthCommitAdmission(this.store, () => this.store.transaction(() => {
         prepared.actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
         prepared.user = this.requireEligibleTarget(userId, prepared.actorId);
         prepared.created = this.actionTokens.create({
@@ -144,7 +145,7 @@ export class AdminLifecycleEmailService {
           kind,
           auditRequest,
         );
-      });
+      }));
     } catch (error) {
       if (prepared.created) {
         discardUndeliveredActionToken(this.actionTokens, prepared.created.rawToken);
@@ -213,7 +214,7 @@ export class AdminLifecycleEmailService {
         provisioningHooks?.onDeliveryAccepted,
         'delivery-accepted',
       );
-      this.store.transaction(() => {
+      await withAuthCommitAdmission(this.store, () => this.store.transaction(() => {
         actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
         this.requireEligibleTarget(userId, actorId);
         this.invokeProvisioningHook(
@@ -238,7 +239,7 @@ export class AdminLifecycleEmailService {
           provisioningHooks?.onCommitted,
           'state-committed',
         );
-      });
+      }));
     } catch (error) {
       // Delivery cannot be undone, but invalidating the link prevents an
       // unauthorized or unaudited transition from completing through it.

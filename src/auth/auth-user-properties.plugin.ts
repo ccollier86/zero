@@ -7,6 +7,7 @@
  */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { extractAuthContext } from './auth-context';
 import type { TokenService } from './token-service';
 import { AuthError } from './types';
@@ -51,7 +52,13 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
           throw err;
         }
 
-        store.setProperty(authContext.userId, params.key, value);
+        const reference = tokenService.captureAuthContextAuthority(authContext);
+        await withAuthCommitAdmission(store, () => store.transaction(() => {
+          if (!reference || !tokenService.resolveAuthContextAuthority(reference)) {
+            throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+          }
+          store.setProperty(authContext.userId, params.key, value);
+        }), request.signal);
         return { ok: true };
       },
       {
@@ -101,7 +108,13 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
         }
 
         try {
-          propertyService.deleteProperty(authContext.userId, params.key, 'user', store);
+          const reference = tokenService.captureAuthContextAuthority(authContext);
+          await withAuthCommitAdmission(store, () => store.transaction(() => {
+            if (!reference || !tokenService.resolveAuthContextAuthority(reference)) {
+              throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+            }
+            propertyService.deleteProperty(authContext.userId, params.key, 'user', store);
+          }), request.signal);
         } catch (err) {
           emitCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
             error: err,

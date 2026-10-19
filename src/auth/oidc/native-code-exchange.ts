@@ -1,6 +1,7 @@
 /** Authorization-code verification and atomic native session creation. */
 
 import { OBS_CODES } from '../../observability/codes';
+import { withAuthCommitAdmission } from '../auth-commit-admission';
 import { verifyPkceS256 } from '../native';
 import type { NativeCodeExchangeInput, NativeTokenResult } from './native-auth-service-types';
 import type { NativeServiceContext } from './native-service-context';
@@ -44,18 +45,21 @@ export async function exchangeNativeCode(
   const stillCurrent = context.authority.resolve(user.userId, code);
   if (!stillCurrent
     || !sameNativeAuthority(authority.snapshot, stillCurrent.snapshot)) invalidGrant();
-  const committed = context.sessions.consumeCodeAndInsert(
+  const committed = await withAuthCommitAdmission(context.users, () => context.sessions.consumeCodeAndInsert(
     () => context.codes.consume(code.codeId),
     prepared.session,
     () => {
+      tokenClient(context, code.clientId);
       assertNativeProfileCompletion(context.tokens, user.userId);
+      const liveUser = context.users.getUserById(user.userId);
       const live = context.authority.resolve(user.userId, code);
-      return context.users.getAuthGeneration(user.userId) === code.authGeneration
+      return Boolean(liveUser && canReceiveTokens(liveUser))
+        && context.users.getAuthGeneration(user.userId) === code.authGeneration
         && (!context.requiresMfaAssurance(user.userId)
           || code.mfaVerifiedAt !== null)
         && Boolean(live && sameNativeAuthority(authority.snapshot, live.snapshot));
     },
-  );
+  ));
   if (!committed) invalidGrant();
   context.emitCode(OBS_CODES.AUTH_NATIVE_CODE_EXCHANGED, {
     userId: user.userId,

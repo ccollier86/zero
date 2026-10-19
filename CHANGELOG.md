@@ -4,6 +4,21 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Extended fair authority admission to managed account registration, password
+  changes/recovery, administrative user/MFA/property/role/tenant changes,
+  API-key management, membership/onboarding mutations and native session
+  exchange/rotation/revocation. Waiting remains outside SQL, password hashing
+  and provider I/O; live authority and final commit fences still apply. No
+  request replay, database migration or app placement change is required.
+- Removed redundant hot-image I/O for duplicate presence/identity projections
+  and clean periodic timers, including conservative detection of private SQL,
+  DDL and snapshot-header changes. Synchronous periodic fences/automation
+  claims no longer start a duplicate async image first. Real claims retain
+  their mandatory crash-durable publication.
+- Added bounded empty-source automation backoff with managed post-commit
+  wakeups, normal cadence for pending retries/live leases, and periodic
+  recovery when hints are lost. Cold recovery still discovers every source;
+  independent database writers and same-database FIFO behavior are preserved.
 - Fixed hot-mode login/refresh contention by giving asynchronous web-session
   persistence a bounded, fair exclusive authority turn before entering SQLite.
   Later actor work cannot starve queued auth; final eligibility, revocation,

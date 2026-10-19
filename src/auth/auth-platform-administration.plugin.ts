@@ -1,6 +1,7 @@
 /** Protected administration-organization and customer-tenant control plane. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { parseTokenTTL } from '../tokens/token-utils';
 import type { AccountEmailService } from './account-email-service';
 import type { AuthEmailOutbox } from './auth-email-outbox';
@@ -160,13 +161,13 @@ export function createAuthPlatformAdministrationPlugin(
       actor.access.requirePermission('tenant.members:manage');
       const roles = requireAdministrationMemberRoles(body.roles);
       actor.access.requirePermission('tenant.roles:manage');
-      return actor.tenantAdministration.addMember({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.addMember({
         tenantId: actor.tenantScope.tenantId,
         email: body.email,
         roleKeys: roles,
         assertCurrentAuthority: actor.assertTenantAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       body: t.Object({
         email: emailSchema,
@@ -186,7 +187,7 @@ export function createAuthPlatformAdministrationPlugin(
         );
       }
       if (body.roles !== undefined) actor.access.requirePermission('tenant.roles:manage');
-      return actor.tenantAdministration.updateMember({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.updateMember({
         tenantId: actor.tenantScope.tenantId,
         membershipId: params.membershipId,
         status: body.status,
@@ -194,7 +195,7 @@ export function createAuthPlatformAdministrationPlugin(
         expectedRoleRevision: body.expectedRoleRevision,
         assertCurrentAuthority: actor.assertTenantAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ membershipId: idSchema }, { additionalProperties: false }),
       body: t.Object({
@@ -206,24 +207,24 @@ export function createAuthPlatformAdministrationPlugin(
     .delete('/members/:membershipId', async ({ request, params }) => {
       const actor = await requirePlatformActor(config, request);
       actor.access.requirePermission('tenant.members:manage');
-      return actor.tenantAdministration.removeMember({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.removeMember({
         tenantId: actor.tenantScope.tenantId,
         membershipId: params.membershipId,
         assertCurrentAuthority: actor.assertTenantAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ membershipId: idSchema }, { additionalProperties: false }),
     })
     .post('/ownership/transfer', async ({ request, body }) => {
       const actor = await requirePlatformActor(config, request);
       actor.access.requirePermission('tenant.roles:manage');
-      return actor.tenantAdministration.transferOwnership({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.transferOwnership({
         tenantId: actor.tenantScope.tenantId,
         targetMembershipId: body.membershipId,
         assertCurrentAuthority: actor.assertTenantAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       body: t.Object({ membershipId: idSchema }, { additionalProperties: false }),
     })
@@ -285,7 +286,7 @@ export function createAuthPlatformAdministrationPlugin(
         }
         email.assertReady();
       }
-      const created = actor.tenantOnboarding.issueInvitation({
+      const created = await withAuthCommitAdmission(config, () => actor.tenantOnboarding.issueInvitation({
         tenantId: actor.tenantScope.tenantId,
         email: body.email,
         roleKeys: roles,
@@ -310,7 +311,7 @@ export function createAuthPlatformAdministrationPlugin(
             }
           },
         } : {}),
-      });
+      }), request.signal);
       return delivery === 'manual'
         ? {
             invitation: created.invitation,
@@ -337,12 +338,12 @@ export function createAuthPlatformAdministrationPlugin(
       const actor = await requirePlatformActor(config, request);
       actor.access.requirePermission('tenant.invitations:manage');
       return {
-        invitation: actor.tenantOnboarding.revokeInvitation({
+        invitation: await withAuthCommitAdmission(config, () => actor.tenantOnboarding.revokeInvitation({
           tenantId: actor.tenantScope.tenantId,
           invitationId: params.invitationId,
           assertCurrentAuthority: actor.assertTenantAuthority,
           auditRequest: authAuditRequestFromRequest(request),
-        }),
+        }), request.signal),
       };
     }, {
       params: t.Object({ invitationId: idSchema }, { additionalProperties: false }),
@@ -377,14 +378,14 @@ export function createAuthPlatformAdministrationPlugin(
       const actor = await requirePlatformActor(config, request);
       actor.access.requirePermission('application.tenants:manage');
       actor.access.requirePermission('application.users:read');
-      return actor.platformTenants.createTenant({
+      return withAuthCommitAdmission(config, () => actor.platformTenants.createTenant({
         administrationTenantId: actor.tenantScope.tenantId,
         name: body.name,
         slug: body.slug,
         ownerEmail: body.ownerEmail,
         assertCurrentAuthority: actor.assertApplicationAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       body: t.Object({
         name: t.String({ minLength: 1, maxLength: 120 }),
@@ -395,14 +396,14 @@ export function createAuthPlatformAdministrationPlugin(
     .patch('/tenants/:tenantId', async ({ request, params, body }) => {
       const actor = await requirePlatformActor(config, request);
       actor.access.requirePermission('application.tenants:manage');
-      return actor.platformTenants.updateTenant({
+      return withAuthCommitAdmission(config, () => actor.platformTenants.updateTenant({
         administrationTenantId: actor.tenantScope.tenantId,
         tenantId: params.tenantId,
         status: body.status,
         expectedAuthorizationGeneration: body.expectedAuthorizationGeneration,
         assertCurrentAuthority: actor.assertApplicationAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
       body: t.Object({
@@ -433,13 +434,13 @@ export function createAuthPlatformAdministrationPlugin(
     .post('/tenants/:tenantId/members', async ({ request, params, body }) => {
       const actor = await requirePlatformActor(config, request);
       requirePlatformTenantMemberAccess(actor);
-      return actor.tenantAdministration.addMember({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.addMember({
         tenantId: params.tenantId,
         email: body.email,
         roleKeys: body.roles,
         assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
       body: t.Object({
@@ -457,7 +458,7 @@ export function createAuthPlatformAdministrationPlugin(
           422,
         );
       }
-      return actor.tenantAdministration.updateMember({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.updateMember({
         tenantId: params.tenantId,
         membershipId: params.membershipId,
         status: body.status,
@@ -465,7 +466,7 @@ export function createAuthPlatformAdministrationPlugin(
         expectedRoleRevision: body.expectedRoleRevision,
         assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({
         tenantId: idSchema,
@@ -480,12 +481,12 @@ export function createAuthPlatformAdministrationPlugin(
     .delete('/tenants/:tenantId/members/:membershipId', async ({ request, params }) => {
       const actor = await requirePlatformActor(config, request);
       requirePlatformTenantMemberAccess(actor);
-      return actor.tenantAdministration.removeMember({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.removeMember({
         tenantId: params.tenantId,
         membershipId: params.membershipId,
         assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({
         tenantId: idSchema,
@@ -495,12 +496,12 @@ export function createAuthPlatformAdministrationPlugin(
     .post('/tenants/:tenantId/ownership/transfer', async ({ request, params, body }) => {
       const actor = await requirePlatformActor(config, request);
       requirePlatformTenantMemberAccess(actor);
-      return actor.tenantAdministration.transferOwnership({
+      return withAuthCommitAdmission(config, () => actor.tenantAdministration.transferOwnership({
         tenantId: params.tenantId,
         targetMembershipId: body.membershipId,
         assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
       body: t.Object({ membershipId: idSchema }, { additionalProperties: false }),

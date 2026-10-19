@@ -1,6 +1,7 @@
 /** Transport-independent orchestration for self-service registration. */
 
 import { OBS_CODES } from '../observability/codes';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { emitPlatformCode } from '../observability/sink';
 import { buildAuthCompletionResponse } from './auth-mfa-response';
 import { assertBootstrapRequest } from './auth-bootstrap';
@@ -179,7 +180,7 @@ export async function registerUser(
     // External delivery and signing may yield long enough for another process
     // to perform crash recovery. Renew atomically immediately before crossing
     // that boundary; an already-expired owner can never revive its lease.
-    services.store.renewRegistrationProvisioningLease(provisioning);
+    await withAuthCommitAdmission(services.store, () => services.store.renewRegistrationProvisioningLease(provisioning));
     if (policy.requireEmailVerification) {
       await sendRegistrationVerification({
         services, user, nativeContinuation,
@@ -195,16 +196,16 @@ export async function registerUser(
         expectedAuthGeneration: authGeneration,
       });
     }
-    services.store.finalizeRegistrationProvisioning(provisioning, capturedAuditRequest);
+    await withAuthCommitAdmission(services.store, () => services.store.finalizeRegistrationProvisioning(provisioning, capturedAuditRequest));
   } catch (error) {
     let rollback;
     try {
-      rollback = rollbackRegistration({
+      rollback = await withAuthCommitAdmission(services.store, () => rollbackRegistration({
         store: services.store,
         provisioning,
         nativeAuthorization,
         nativeContinuation,
-      });
+      }));
     } catch (rollbackError) {
       if (policy.requireEmailVerification) {
         emitCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED, {

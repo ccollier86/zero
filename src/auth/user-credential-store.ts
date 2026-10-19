@@ -2,6 +2,7 @@
 
 import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
+import { withReactiveDBCommitAdmission } from '../sync/reactive-db-commit-admission';
 import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
 import {
   captureAuthAuditActor,
@@ -79,7 +80,7 @@ export class UserCredentialStore {
   };
 
   constructor(
-    db: ReactiveDB,
+    private readonly db: ReactiveDB,
     private readonly hooks: UserCredentialStoreHooks,
   ) {
     this.stmts = {
@@ -183,7 +184,8 @@ export class UserCredentialStore {
 
     const newHash = await this.hashPassword(newPassword);
     this.hooks.assertCurrentProfile();
-    return this.hooks.mutation(() => {
+    return withReactiveDBCommitAdmission(this.db, () => this.hooks.mutation(() => {
+      this.hooks.assertCurrentProfile();
       if (this.hooks.getAuthGeneration(userId) !== credential.auth_generation) {
         if (capturedAdmission) throw authenticationStateChanged();
         return null;
@@ -229,7 +231,7 @@ export class UserCredentialStore {
         userId,
         authGeneration: this.hooks.getAuthGeneration(userId),
       });
-    });
+    }));
   }
 
   async resetPassword(
@@ -241,7 +243,8 @@ export class UserCredentialStore {
     if (!this.hooks.identityExists(userId)) return false;
 
     const newHash = await this.hashPassword(newPassword);
-    return this.hooks.mutation(() => {
+    return withReactiveDBCommitAdmission(this.db, () => this.hooks.mutation(() => {
+      this.hooks.assertCurrentProfile();
       if (capturedOptions.beforeCommit) {
         invokeSynchronousAuthCallback(capturedOptions.beforeCommit, {
           component: 'credentials',
@@ -282,7 +285,7 @@ export class UserCredentialStore {
         capturedOptions.audit,
       );
       return true;
-    });
+    }));
   }
 
   async completePasswordAction(
@@ -295,7 +298,8 @@ export class UserCredentialStore {
     const capturedAuditContext = captureSecurityAuditContext(auditContext);
     const newHash = await this.hashPassword(newPassword);
 
-    return this.hooks.mutation(() => {
+    return withReactiveDBCommitAdmission(this.db, () => this.hooks.mutation(() => {
+      this.hooks.assertCurrentProfile();
       if (!this.hooks.identityExists(userId)) return false;
       invokeSynchronousAuthCallback(capturedConsumeActionToken, {
         component: 'credentials',
@@ -329,7 +333,7 @@ export class UserCredentialStore {
         { userId, provenance: 'account-recovery' },
       );
       return true;
-    });
+    }));
   }
 
   requirePasswordChange(

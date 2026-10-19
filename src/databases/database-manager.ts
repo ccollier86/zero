@@ -349,6 +349,16 @@ export function assertDatabaseAutomationSourceAuthorityCurrent(
   binding.router.assertAutomationSourceAuthorityCurrent(source);
 }
 
+/** @internal Observe committed source hints; absent from request/public barrels. */
+export function observeDatabaseAutomationSourceCommits(
+  manager: DatabaseManager,
+  listener: (sourceRef: string) => void,
+): () => void {
+  const binding = databaseAutomationRecoveryBindings.get(manager);
+  if (!binding) throw configInvalid('Database automation recovery manager is invalid.');
+  return binding.router.observeAutomationCommits(listener);
+}
+
 function runtimeSummary(
   diagnostics: ReturnType<DatabaseRuntime['diagnostics']>,
 ) {

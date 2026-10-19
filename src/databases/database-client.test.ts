@@ -270,6 +270,7 @@ function createExecutor(
       return operation.type === 'get'
         || operation.type === 'list'
         || operation.type === 'find'
+        || operation.type === 'find-page'
         || operation.type === 'query'
         ? { value: null, sequence: { seq: 0 } }
         : {

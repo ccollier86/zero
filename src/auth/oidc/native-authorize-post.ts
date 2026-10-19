@@ -1,6 +1,7 @@
 /** Browser confirmation POST half of native authorization. */
 
 import { NativeAuthorizationError } from '../native';
+import { withAuthCommitAdmission } from '../auth-commit-admission';
 import { nativeAuthorizationFailure } from './native-authorization-failure';
 import {
   authorizationProblem,
@@ -42,14 +43,14 @@ export async function authorizeNativePost(
     }
 
     if (decision === 'deny') {
-      const denied = service.deny(rawRequestId, auth);
+      const denied = await withAuthCommitAdmission(config, () => service!.deny(rawRequestId!, auth), request.signal);
       if (!denied) fail('invalid_request', 'Authorization request expired.');
       return nativeRedirect(appendAuthorizationResult(denied.redirectUri, {
         error: 'access_denied', state: denied.state, iss: config.issuer,
       }));
     }
     if (decision !== 'approve') fail('invalid_request', 'Invalid authorization decision.');
-    const issued = service.approve(rawRequestId, auth);
+    const issued = await withAuthCommitAdmission(config, () => service!.approve(rawRequestId!, auth), request.signal);
     if (!issued) fail('access_denied', 'This account cannot authorize the application.');
     return nativeRedirect(appendAuthorizationResult(issued.request.redirectUri, {
       code: issued.rawCode, state: issued.request.state, iss: config.issuer,

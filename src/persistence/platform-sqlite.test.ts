@@ -84,6 +84,43 @@ describe('platform SQLite persistence', () => {
     expect(legacyDiagnostics.snapshotEnabled).toBe(false);
   });
 
+  it('skips idle timer images but detects raw writes, DDL and header metadata', async () => {
+    const dir = await createTestDir(), file = path.join(dir, 'idle.snapshot.db');
+    const database = new Database(':memory:');
+    database.run('CREATE TABLE items (value TEXT)');
+    let captures = 0;
+    const manager = new SnapshotManager(database, file, 20, true, {
+      emitTelemetry: false, periodicTimeoutMs: 2_000,
+      onPeriodicFinish: () => captures++,
+    });
+    try {
+      expect(manager.snapshotSync()).toBe(true);
+      manager.start();
+      await Bun.sleep(65);
+      expect(captures).toBe(0);
+      database.run("INSERT INTO items VALUES ('raw SQL')");
+      await waitForCondition(() => captures === 1);
+      database.run('CREATE TABLE schema_only (id INTEGER PRIMARY KEY)');
+      await waitForCondition(() => captures === 2);
+      database.run('PRAGMA user_version = 7');
+      await waitForCondition(() => captures === 3);
+      database.run('PRAGMA application_id = 42');
+      await waitForCondition(() => captures === 4);
+      await Bun.sleep(65);
+      expect(captures).toBe(4);
+      const restored = new Database(file, { readonly: true });
+      try {
+        expect(restored.query('SELECT * FROM items').all()).toEqual([{ value: 'raw SQL' }]);
+        expect(restored.query('SELECT count(*) AS n FROM schema_only').get()).toEqual({ n: 0 });
+        expect(restored.query('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+        expect(restored.query('PRAGMA application_id').get()).toEqual({ application_id: 42 });
+      } finally { restored.close(); }
+      // Explicit durability requests still publish even when logically clean.
+      expect(await manager.snapshot()).toBe(true);
+      expect(manager.snapshotSync()).toBe(true);
+    } finally { manager.stop(); database.close(); }
+  });
+
   it('keeps persistence telemetry app-local, suppressible, and privacy-safe', async () => {
     const dir = await createTestDir();
     const privatePath = path.join(dir, 'private-tenant-name.sqlite');

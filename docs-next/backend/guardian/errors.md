@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
   snapshot: dirty
   date: "2026-10-19"
   evidence_level: source-observed
@@ -57,7 +57,8 @@ Do not automatically retry an operation whose outcome may already have
 committed. A not-committed conflict permits a fresh-authority retry; an
 accepted write with a failed follow-up callback is a different outcome.
 
-Managed asynchronous session commits use bounded, fair Fabric admission before
+Managed asynchronous session/account commits and protected administrative
+mutations use bounded, fair Fabric admission before
 entering SQLite, instead of immediately failing against a busy actor's shared
 authority lease. `AUTH_COMMIT_CONFLICT` remains the safe fallback for admission
 pressure/timeouts or a real unresolved final-fence race. It does not mean that

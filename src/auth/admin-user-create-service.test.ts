@@ -257,6 +257,8 @@ function createSetupHarness(failures: {
   let passwordGateCalls = 0;
   let rollbackCalls = 0;
   const store = {
+    getTransactionDomain: () => store,
+    assertCurrentProfile() {},
     transaction: <T>(operation: () => T) => operation(),
     async createAdminProvisionedUser(
       _input: unknown,

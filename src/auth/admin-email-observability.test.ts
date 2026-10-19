@@ -40,6 +40,8 @@ describe('admin email delivery observability', () => {
     const token = createdToken('email_verification');
     let cleanupCalls = 0;
     const store = {
+      getTransactionDomain: () => store,
+      assertCurrentProfile() {},
       transaction: <T>(operation: () => T) => operation(),
       getUserById: () => TARGET,
     };
@@ -90,6 +92,8 @@ describe('admin email delivery observability', () => {
     const capture = eventCapture();
     let tokenNumber = 0;
     const store = {
+      getTransactionDomain: () => store,
+      assertCurrentProfile() {},
       transaction: <T>(operation: () => T) => operation(),
       getUserById: () => TARGET,
       appendControlPlaneAudit() {},
@@ -155,6 +159,8 @@ describe('admin email delivery observability', () => {
       releaseDelivery = resolve;
     });
     const store = {
+      getTransactionDomain: () => store,
+      assertCurrentProfile() {},
       transaction: <T>(operation: () => T) => operation(),
       getUserById: () => TARGET,
       appendControlPlaneAudit(event: { request?: { requestId?: string } }) {
@@ -198,6 +204,8 @@ describe('admin email delivery observability', () => {
     let passwordGateWritten = false;
     const order: string[] = [];
     const store = {
+      getTransactionDomain: () => store,
+      assertCurrentProfile() {},
       transaction<T>(operation: () => T): T {
         transactionDepth += 1;
         try {

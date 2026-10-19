@@ -1,6 +1,7 @@
 /** Refresh-token rotation and logout routes. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import {
   revokeAndClearPageSessionCookie,
   resolvePageSessionCookie,
@@ -45,10 +46,11 @@ export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
         const tokens = requireSessionTokenService(config);
         await resolvePageSessionCookie(request, tokens);
         if (body.refreshToken) {
-          tokens.revokeRefreshTokenByRaw(
-            body.refreshToken,
+          const refreshToken = body.refreshToken;
+          await withAuthCommitAdmission(config, () => tokens.revokeRefreshTokenByRaw(
+            refreshToken,
             authAuditRequestFromRequest(request),
-          );
+          ), request.signal);
         }
         await revokeAndClearPageSessionCookie(set, request, tokens);
         return { ok: true };

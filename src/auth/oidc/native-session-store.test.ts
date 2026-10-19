@@ -362,6 +362,8 @@ function flowContext(
     },
     sessions, requests: null!, codes: null!,
     users: {
+      getTransactionDomain: () => sessions,
+      assertCurrentProfile() {},
       getUserById: () => state.user,
       getAuthGeneration: () => state.generation,
     } as unknown as UserStore,

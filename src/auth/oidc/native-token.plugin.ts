@@ -1,6 +1,7 @@
 /** OAuth token rotation and revocation endpoints for native public clients. */
 
 import { Elysia } from 'elysia';
+import { withAuthCommitAdmission } from '../auth-commit-admission';
 import { NativeAuthorizationError } from '../native';
 import type { NativeAuthorizationService } from './native-authorization-service';
 import { rejectNativeClientAuthorization } from './native-client-auth';
@@ -60,11 +61,11 @@ async function revokeRequest(config: NativeAuthHttpConfig, request: Request): Pr
     rejectNativeClientAuthorization(request);
     const form = await readNativeForm(request);
     rejectClientSecret(form);
-    requireService(config).revoke(
+    await withAuthCommitAdmission(config, () => requireService(config).revoke(
       requiredFormField(form, 'token'),
       requiredFormField(form, 'client_id'),
       authAuditRequestFromRequest(request),
-    );
+    ), request.signal);
   } catch (error) {
     emitUnexpectedNativeRequestFailure(config, 'token.revoke', error);
     return nativeTokenErrorResponse(asTokenError(error));

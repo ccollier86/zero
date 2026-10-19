@@ -1,6 +1,7 @@
 /** Active-tenant member and role administration routes. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { createRequestAuthorizationAccess } from './authorization-access';
 import type { AuthorizationKernel, AuthorizationScopeSnapshot } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
@@ -117,13 +118,13 @@ export function createAuthTenantAdministrationPlugin(
       if (!isDefaultMemberRole(roles)) {
         actor.access.requirePermission('tenant.roles:manage');
       }
-      return actor.service.addMember({
+      return withAuthCommitAdmission(config, () => actor.service.addMember({
         tenantId: actor.scope.tenantId,
         email: body.email,
         roleKeys: roles,
         assertCurrentAuthority: actor.assertCurrentAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       body: t.Object({
         email: t.String({
@@ -147,7 +148,7 @@ export function createAuthTenantAdministrationPlugin(
       if (body.roles !== undefined) {
         actor.access.requirePermission('tenant.roles:manage');
       }
-      return actor.service.updateMember({
+      return withAuthCommitAdmission(config, () => actor.service.updateMember({
         tenantId: actor.scope.tenantId,
         membershipId: params.membershipId,
         status: body.status,
@@ -155,7 +156,7 @@ export function createAuthTenantAdministrationPlugin(
         expectedRoleRevision: body.expectedRoleRevision,
         assertCurrentAuthority: actor.assertCurrentAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ membershipId: membershipIdSchema }, {
         additionalProperties: false,
@@ -169,12 +170,12 @@ export function createAuthTenantAdministrationPlugin(
     .delete('/members/:membershipId', async ({ request, params }) => {
       const actor = await requireTenantActor(config, request);
       actor.access.requirePermission('tenant.members:manage');
-      return actor.service.removeMember({
+      return withAuthCommitAdmission(config, () => actor.service.removeMember({
         tenantId: actor.scope.tenantId,
         membershipId: params.membershipId,
         assertCurrentAuthority: actor.assertCurrentAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       params: t.Object({ membershipId: membershipIdSchema }, {
         additionalProperties: false,
@@ -185,12 +186,12 @@ export function createAuthTenantAdministrationPlugin(
       // Permission alone cannot manufacture ownership: the domain service also
       // requires the live actor membership itself to carry the owner marker.
       actor.access.requirePermission('tenant.roles:manage');
-      return actor.service.transferOwnership({
+      return withAuthCommitAdmission(config, () => actor.service.transferOwnership({
         tenantId: actor.scope.tenantId,
         targetMembershipId: body.membershipId,
         assertCurrentAuthority: actor.assertCurrentAuthority,
         auditRequest: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
     }, {
       body: t.Object({ membershipId: membershipIdSchema }, {
         additionalProperties: false,

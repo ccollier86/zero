@@ -6,6 +6,7 @@
  */
 
 import { Elysia } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { OBS_CODES } from '../observability/codes';
 import { AdminMfaUserService } from './admin-mfa-user-service';
 import {
@@ -41,10 +42,10 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
         auth,
         assertCurrentAuthority,
       } = await mutationServices(config, request);
-      const user = service.require(params.userId, assertCurrentAuthority, {
+      const user = await withAuthCommitAdmission(config, () => service.require(params.userId, assertCurrentAuthority, {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
       emit(config, OBS_CODES.AUTH_ADMIN_MFA_REQUIRED, actorId, params.userId);
       return { user };
     }, params)
@@ -55,10 +56,10 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
         auth,
         assertCurrentAuthority,
       } = await mutationServices(config, request);
-      const user = service.clearRequirement(params.userId, assertCurrentAuthority, {
+      const user = await withAuthCommitAdmission(config, () => service.clearRequirement(params.userId, assertCurrentAuthority, {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
       emit(config, OBS_CODES.AUTH_ADMIN_MFA_CLEARED, actorId, params.userId);
       return { user };
     }, params)
@@ -69,10 +70,10 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
         auth,
         assertCurrentAuthority,
       } = await mutationServices(config, request);
-      const result = service.reset(params.userId, assertCurrentAuthority, {
+      const result = await withAuthCommitAdmission(config, () => service.reset(params.userId, assertCurrentAuthority, {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
       getAuthAdminEmitter(config)(OBS_CODES.AUTH_ADMIN_MFA_RESET, {
         userId: actorId,
         metadata: { targetUserId: params.userId, ...result },

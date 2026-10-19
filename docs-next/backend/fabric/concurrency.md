@@ -13,7 +13,7 @@ modes: [single, multiple, shared-row, tenant-database, file, hot]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
   snapshot: dirty
   date: "2026-10-19"
   evidence_level: source-observed
@@ -53,11 +53,12 @@ placement-specific routing remains managed by Fabric.
 ## Guardian Authority Coordination
 
 Actor work uses shared authority leases; authority-changing SYSTEM commits need
-exclusive ownership. Managed asynchronous web-session persistence reserves an
+exclusive ownership. Managed asynchronous web/native-session, account and
+administrative authority persistence reserves an
 exclusive turn through the existing bounded fair queue before entering SQLite.
 Once queued, later shared requests cannot barge ahead of it. Active shared work
 is not interrupted, and password hashing/signing does not occupy the exclusive
-turn. Session admission has an internal five-second waiting bound, not a new
+turn. Auth admission has an internal five-second waiting bound, not a new
 application configuration setting.
 
 The permit covers only the synchronous persistence callback. Authority revision,
@@ -73,6 +74,26 @@ compaction and successful claims retain their durability behavior; a real claim
 must be durably published before delivery even under periodic/final policies.
 This reduces avoidable lease occupancy without removing the lease from active
 writer work. See [outbox delivery](../database-automations/delivery.md).
+
+Duplicate presence/identity publications also skip image I/O only when private
+SQL reports no changes. Empty-source polling uses bounded backoff and commit
+hints; delayed retries and active leases retain ordinary recovery cadence.
+None of these optimizations creates parallel writers inside one database or
+removes authorization checks from its commit boundary.
+
+### Storage Cost Is Separate From Writer Scheduling
+
+Hot/on-write durability serializes and fsyncs a complete database image at each
+real write boundary. This scales with image size, unlike a small file/WAL write;
+more workers do not remove that per-database I/O cost. File/WAL remains the
+default and is normally the starting point for write-heavy datasets. Hot mode
+is a bounded placement tradeoff, not a universal faster-write setting.
+
+The operational regression suite covers separate-file overlap, same-file FIFO,
+revocation during admission, shutdown/unknown outcomes, and populated hot
+login/refresh/read/outbox progress. These are correctness checks, not a promise
+of a latency SLA on arbitrary hardware or load. Qualify actual image sizes,
+write rates, worker capacity and storage latency before deployment.
 
 ## Bounded Work
 

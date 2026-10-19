@@ -77,6 +77,7 @@ export class SnapshotManager {
   private inProgress = false;
   private publishedGeneration = 0;
   private publishedCaptureAt: number | null = null;
+  private publishedChangeToken: string | null = null;
   private periodicCommitGeneration = 0;
   private publishedCommitGeneration = 0;
   private periodicDirty = false;
@@ -160,8 +161,11 @@ export class SnapshotManager {
    * The first uncovered commit opens a signal-only durability window and
    * immediately requests an image. A write which lands while that image is
    * publishing remains dirty until a later capture covers its generation.
+   * Internal synchronous-fence callers may suppress the immediate async start
+   * only when they publish a synchronous image on the same stack.
    */
-  recordPeriodicCommit(): void {
+  recordPeriodicCommit(startSnapshot = true): void {
+    if (typeof startSnapshot !== 'boolean') throw new TypeError('Snapshot scheduling policy must be boolean.');
     if (!this.enabled || this.discarded || this.periodicFailureNotified) {
       throw new Error('Periodic snapshot durability is unavailable.');
     }
@@ -174,7 +178,9 @@ export class SnapshotManager {
       this.periodicDirty = true;
       this.notifyPeriodicLifecycle(this.onPeriodicDirty);
     }
-    this.runPeriodicSnapshot();
+    // A caller immediately forcing a synchronous image must not first launch
+    // a second full-image async publication of the very same committed state.
+    if (startSnapshot) this.runPeriodicSnapshot();
   }
 
   /** Start periodic snapshots when enabled. */
@@ -231,6 +237,7 @@ export class SnapshotManager {
     this.inProgress = true;
     const startingGeneration = this.publishedGeneration;
     let capturedCommitGeneration = this.publishedCommitGeneration;
+    let capturedChangeToken: string | null = null;
     const directoryPath = path.dirname(this.canonicalSnapshotPath);
     let captureAt: number | null = null;
     let tempPath: string | null = null;
@@ -242,6 +249,7 @@ export class SnapshotManager {
       tempPath = this.createTempPath(directoryPath);
       captureAt = this.readNow();
       capturedCommitGeneration = this.periodicCommitGeneration;
+      capturedChangeToken = this.readChangeToken();
       const image = this.serializeBounded();
       await mkdir(directoryPath, { recursive: true });
       handle = await open(
@@ -271,7 +279,7 @@ export class SnapshotManager {
         // replace the newer complete image now visible at the canonical path.
         ++this.publishedGeneration;
         syncDirectorySync(directoryPath);
-        this.promotePublishedCapture(captureAt, capturedCommitGeneration);
+        this.promotePublishedCapture(captureAt, capturedCommitGeneration, capturedChangeToken);
         result = SNAPSHOT_WRITTEN;
       }
     } catch (error) {
@@ -329,6 +337,7 @@ export class SnapshotManager {
     const directoryPath = path.dirname(this.canonicalSnapshotPath);
     let captureAt: number | null = null;
     let capturedCommitGeneration = this.publishedCommitGeneration;
+    let capturedChangeToken: string | null = null;
     let tempPath: string | null = null;
     let descriptor: number | null = null;
     let ownsTemp = false;
@@ -338,6 +347,7 @@ export class SnapshotManager {
       tempPath = this.createTempPath(directoryPath);
       captureAt = this.readNow();
       capturedCommitGeneration = this.periodicCommitGeneration;
+      capturedChangeToken = this.readChangeToken();
       const image = this.serializeBounded();
       mkdirSync(directoryPath, { recursive: true });
       descriptor = openSync(
@@ -354,7 +364,7 @@ export class SnapshotManager {
       ownsTemp = false;
       ++this.publishedGeneration;
       syncDirectorySync(directoryPath);
-      this.promotePublishedCapture(captureAt, capturedCommitGeneration);
+      this.promotePublishedCapture(captureAt, capturedCommitGeneration, capturedChangeToken);
       result = SNAPSHOT_WRITTEN;
     } catch (error) {
       result = this.recordFailure(error);
@@ -444,6 +454,11 @@ export class SnapshotManager {
 
   private runPeriodicSnapshot(): void {
     if (this.discarded || this.periodicTask || this.periodicFailureNotified) return;
+    // Only the automatic cadence may skip a known-clean image. Manual/final
+    // snapshots and observed commits retain their exact durability contract.
+    // Tracked sequence alone misses private SQL writes and schema migrations.
+    if (!this.periodicDirty && this.publishedChangeToken !== null
+      && this.readChangeToken() === this.publishedChangeToken) return;
 
     this.notifyPeriodicLifecycle(this.onPeriodicStart);
     const task = this.snapshotDetailed();
@@ -495,8 +510,10 @@ export class SnapshotManager {
   private promotePublishedCapture(
     captureAt: number,
     capturedCommitGeneration: number,
+    capturedChangeToken: string | null,
   ): void {
     this.publishedCaptureAt = captureAt;
+    this.publishedChangeToken = capturedChangeToken;
     this.publishedCommitGeneration = Math.max(
       this.publishedCommitGeneration,
       capturedCommitGeneration,
@@ -530,6 +547,24 @@ export class SnapshotManager {
       throw new RangeError('Hot SQLite image exceeds its configured memory bound.');
     }
     return image;
+  }
+
+  /** Conservative connection-local dirty check, including untracked raw SQL. */
+  private readChangeToken(): string | null {
+    try {
+      const values = [
+        this.db.query('SELECT total_changes()').get(),
+        this.db.query('PRAGMA schema_version').get(),
+        this.db.query('PRAGMA user_version').get(),
+        this.db.query('PRAGMA application_id').get(),
+      ].map(row => Object.values(row as Record<string, unknown>)[0]);
+      // Missing/unrepresentable metadata must cause a real snapshot, never a
+      // false clean result. Rolled-back SQL may cause an extra safe capture.
+      return values.every(value => typeof value === 'number' && Number.isSafeInteger(value))
+        ? values.join(':') : null;
+    } catch {
+      return null;
+    }
   }
 }
 

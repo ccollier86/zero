@@ -7,6 +7,8 @@ import { installAuthAuthorityRevision } from './auth-authority-revision';
 import { defineAuthTables } from './auth-schema';
 import { UserStore } from './user-store';
 import { TokenService } from './token-service';
+import { withAuthCommitAdmission } from './auth-commit-admission';
+import { AuthError } from './types';
 
 async function fixture() {
   const db = createReactiveDB({ mode: 'memory' });
@@ -92,4 +94,58 @@ test('refresh cannot consume a child that expires while waiting for admission', 
     expect(await pending).toBeNull();
     expect(h.db.prepare('SELECT count(*) AS n FROM _refresh_tokens').get()).toEqual({ n: 1 });
   } finally { shared.release(); await h.close(); }
+});
+
+test('opaque UserStore admission shares its database gate and keeps final authority rejection', async () => {
+  const h = await fixture(), pair = await h.tokens.issueTokenPair(h.user);
+  const auth = await h.tokens.resolveAuthContext(pair.accessToken);
+  const reference = h.tokens.captureAuthContextAuthority(auth!);
+  const shared = await h.coordinator.acquireShared();
+  let mutations = 0;
+  const pending = withAuthCommitAdmission(h.users, () => h.users.transaction(() => {
+    if (!reference || !h.tokens.resolveAuthContextAuthority(reference)) {
+      throw new AuthError('Authority changed', 'UNAUTHORIZED', 401);
+    }
+    mutations++;
+    return h.users.updateUser(h.user.userId, { role: 'admin' });
+  }));
+  try {
+    await waitForAdmission(h);
+    expect(mutations).toBe(0);
+    h.db.prepare("UPDATE _auth_sessions SET status = 'revoked', revoked_at = ? WHERE user_id = ?")
+      .run(Date.now(), h.user.userId);
+    shared.release();
+    await expect(pending).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mutations).toBe(0);
+    expect(h.users.getUserById(h.user.userId)!.role).toBe('user');
+  } finally { shared.release(); await h.close(); }
+});
+
+test('password hashing does not occupy authority, and final reset rechecks authority after waiting', async () => {
+  const h = await fixture();
+  const credentials = (h.users as any).credentials;
+  const original = credentials.hashPassword.bind(credentials);
+  const replacementHash = await original('replacement-password');
+  let releaseHash!: () => void;
+  credentials.hashPassword = () => new Promise<string>(resolve => { releaseHash = () => resolve(replacementHash); });
+  const expectedGeneration = h.users.getAuthGeneration(h.user.userId);
+  const pending = h.users.resetPassword(h.user.userId, 'replacement-password', {
+    beforeCommit() {
+      if (h.users.getAuthGeneration(h.user.userId) !== expectedGeneration) {
+        throw new AuthError('Authority changed', 'AUTH_STATE_CHANGED', 409);
+      }
+    },
+  });
+  const shared = await h.coordinator.acquireShared();
+  try {
+    expect(h.coordinator.diagnostics()).toMatchObject({ activeExclusive: false, pendingExclusive: 0 });
+    releaseHash();
+    await waitForAdmission(h);
+    h.db.prepare('INSERT INTO _auth_user_generations (user_id, generation) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET generation = generation + 1')
+      .run(h.user.userId);
+    shared.release();
+    await expect(pending).rejects.toMatchObject({ code: 'AUTH_STATE_CHANGED' });
+    expect(await h.users.verifyPassword(h.user.userId, 'test-password-123')).toBe(true);
+    expect(await h.users.verifyPassword(h.user.userId, 'replacement-password')).toBe(false);
+  } finally { credentials.hashPassword = original; shared.release(); releaseHash?.(); await h.close(); }
 });

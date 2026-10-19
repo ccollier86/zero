@@ -1,6 +1,7 @@
 /** Single/advanced application-role administration routes. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { createRequestAuthorizationAccess } from './authorization-access';
 import type { AuthorizationKernel } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
@@ -83,7 +84,7 @@ export function createAuthApplicationAdministrationPlugin(
       applyAuthPrivateNoStore(set);
       const actor = await requireApplicationActor(config, request);
       actor.access.requirePermission('application.roles:manage');
-      return actor.service.replaceUserRoles({
+      return withAuthCommitAdmission(config, () => actor.service.replaceUserRoles({
         actorUserId: actor.auth.userId,
         assertCurrentAuthority: captureAuthApplicationMutationAuthority({
           auth: actor.auth,
@@ -96,7 +97,7 @@ export function createAuthApplicationAdministrationPlugin(
         userId: params.userId,
         roleKeys: body.roles,
         expectedRevision: body.expectedRevision,
-      });
+      }), request.signal);
     }, {
       params: t.Object({ userId: userIdSchema }, { additionalProperties: false }),
       body: t.Object({
@@ -108,7 +109,7 @@ export function createAuthApplicationAdministrationPlugin(
       applyAuthPrivateNoStore(set);
       const actor = await requireApplicationActor(config, request);
       actor.access.requirePermission('application.roles:manage');
-      return actor.service.transferOwnership({
+      return withAuthCommitAdmission(config, () => actor.service.transferOwnership({
         actorUserId: actor.auth.userId,
         assertCurrentAuthority: captureAuthApplicationMutationAuthority({
           auth: actor.auth,
@@ -119,7 +120,7 @@ export function createAuthApplicationAdministrationPlugin(
         }),
         auditRequest: authAuditRequestFromRequest(request),
         targetUserId: body.userId,
-      });
+      }), request.signal);
     }, {
       body: t.Object({ userId: userIdSchema }, { additionalProperties: false }),
     });

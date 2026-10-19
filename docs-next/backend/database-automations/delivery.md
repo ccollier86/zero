@@ -13,7 +13,7 @@ modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
   snapshot: dirty
   date: "2026-10-19"
   evidence_level: source-observed
@@ -53,6 +53,8 @@ These are inspected implementation defaults, not public AppConfig knobs:
 | Policy | Default |
 | --- | --- |
 | Host source scan interval | 1 second |
+| Known-empty source rescan cooldown | Exponential from 2 seconds, capped at 30 seconds |
+| Maximum remembered idle source entries | 4,096 |
 | Concurrent physical sources | 8 |
 | Worker processing lease | 30 seconds |
 | Lease renewal interval | 10 seconds |
@@ -69,6 +71,20 @@ The managed dispatcher gives each catalogued source one delivery turn per pass,
 then immediately rescans while backlog exists. This preserves source fairness
 instead of letting the first occupied slots monopolize admission. One source
 worker is sequential; different physical sources can execute concurrently.
+
+After a source has no active records, bounded in-memory idle knowledge avoids
+reopening its cold actor on every pass. Cooldown begins after the complete
+catalog pass, so slow tail sources do not immediately expire earlier entries.
+Managed application and actor commits wake their source; a commit arriving
+during an empty check cannot put newly committed work to sleep. Catalog revision
+changes invalidate idle knowledge. Pending future retries/live processing leases
+are not empty and retain the normal scan cadence.
+
+Hints are advisory, never durable authority. Startup still scans every active
+source; lost hints fall back to cooldown expiry and the next available catalog
+turn. This is a bounded cooldown, not a maximum delivery-latency guarantee when
+workers/storage are saturated. Idle memory and subscriptions are retired on
+shutdown, and no new private table or migration is introduced.
 
 The lower-only internal store limits also have hard bounds: 1 MiB payload,
 100,000 active records, 256 MiB active bytes, 1,000,000 stored records,

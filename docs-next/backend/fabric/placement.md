@@ -8,14 +8,14 @@ visibility: internal
 system: fabric
 feature: placement
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased actor environment corrections"]
+applies_to: ["2.6.0 source; identify the installed archive by commit/hash"]
 modes: [single, multiple, shared-row, tenant-database, file, hot]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -32,6 +32,13 @@ It does not change Guardian permissions, realm schema or tenant identity.
 optional read actors.
 `placement: 'hot'` is bounded shorthand for RAM-active execution with
 on-write durability and a 64 MiB per-database image limit.
+
+Hot/on-write saves a complete image for each real write boundary. It can cost
+more than file/WAL as images or write rates grow; workers do not make that
+image publication incremental. File placement is the default for a reason.
+Choose hot for a measured bounded working set, not to enable concurrent writes
+inside one SQLite database. [Concurrency](./concurrency.md) separates worker
+scheduling from storage cost.
 
 For an explicit policy, `default` is required and `hot.maxBytes` is a positive
 safe integer whenever hot is possible. The selector is synchronous; async

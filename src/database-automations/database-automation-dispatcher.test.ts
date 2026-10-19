@@ -16,6 +16,92 @@ import { DatabaseAutomationDispatcher } from './database-automation-dispatcher';
 import { defineDatabaseFunction } from './database-function';
 
 describe('DatabaseAutomationDispatcher', () => {
+  test('backs off empty sources, wakes on commits, and retains bounded recovery without hints', async () => {
+    const durable = defineDatabaseFunction({ name: 'jobs.dispatch', version: 1, mode: 'durable', handler: async () => undefined });
+    const registry = defineDatabaseAutomations({ functions: [durable] });
+    const record = sourceRecord('a', 1);
+    const queue: ClaimedDatabaseAutomationDelivery[] = [];
+    const source = new QueuedDeliverySource(queue);
+    let now = 0, acquisitions = 0, unsubscribed = 0;
+    let notify!: (sourceRef: string) => void;
+    const dispatcher = new DatabaseAutomationDispatcher({
+      catalog: catalog([record]), leaseOwner: 'idle-test', scanIntervalMs: 10, now: () => now,
+      subscribe: listener => { notify = listener; return () => { unsubscribed++; }; },
+      acquire: async () => { acquisitions++; return { delivery: source, registry, services: serviceProvider(), release() {} }; },
+    });
+    try {
+      await dispatcher.drainNow();
+      await dispatcher.drainNow();
+      expect(acquisitions).toBe(1);
+      queue.push(claim('woken', durable.identity, registry.fingerprint));
+      notify(record.sourceRef);
+      await dispatcher.drainNow();
+      await waitUntil(() => source.completed === 1);
+      expect(source.completed).toBe(1);
+      // A missing hint can delay discovery, never make durable work invisible.
+      await dispatcher.drainNow();
+      const before = acquisitions;
+      queue.push(claim('lost-hint', durable.identity, registry.fingerprint));
+      await dispatcher.drainNow();
+      expect(acquisitions).toBe(before);
+      now += 30_001;
+      await dispatcher.drainNow();
+      expect(source.completed).toBe(2);
+    } finally { await dispatcher.close(); }
+    expect(unsubscribed).toBe(1);
+    notify(record.sourceRef);
+    expect(unsubscribed).toBe(1);
+  });
+
+  test('invalidates idle state when catalog authority revision changes', async () => {
+    const durable = defineDatabaseFunction({ name: 'jobs.dispatch', version: 1, mode: 'durable', handler: async () => undefined });
+    const registry = defineDatabaseAutomations({ functions: [durable] });
+    const records = [sourceRecord('a', 1)];
+    let acquisitions = 0;
+    const dispatcher = new DatabaseAutomationDispatcher({
+      catalog: catalog(records), leaseOwner: 'revision-test', now: () => 0,
+      acquire: async () => { acquisitions++; return { delivery: new QueuedDeliverySource([]), registry, services: serviceProvider(), release() {} }; },
+    });
+    try {
+      await dispatcher.drainNow();
+      records[0] = { ...records[0]!, revision: 2 };
+      await dispatcher.drainNow();
+      expect(acquisitions).toBe(2);
+    } finally { await dispatcher.close(); }
+  });
+
+  test('does not back off a future retry or a commit arriving during the empty check', async () => {
+    const durable = defineDatabaseFunction({ name: 'jobs.dispatch', version: 1, mode: 'durable', handler: async () => undefined });
+    const registry = defineDatabaseAutomations({ functions: [durable] });
+    const record = sourceRecord('a', 1), queue: ClaimedDatabaseAutomationDelivery[] = [];
+    const source = new QueuedDeliverySource(queue);
+    let notify!: (sourceRef: string) => void;
+    let acquisitions = 0, countsCalls = 0;
+    const counts = source.counts.bind(source);
+    source.counts = async () => {
+      const result = await counts();
+      if (++countsCalls === 1) { queue.push(claim('racing', durable.identity, registry.fingerprint)); notify(record.sourceRef); }
+      return result;
+    };
+    const dispatcher = new DatabaseAutomationDispatcher({
+      catalog: catalog([record]), leaseOwner: 'race-test', now: () => 0,
+      subscribe: listener => { notify = listener; return () => undefined; },
+      acquire: async () => { acquisitions++; return { delivery: source, registry, services: serviceProvider(), release() {} }; },
+    });
+    try {
+      await dispatcher.drainNow();
+      await waitUntil(() => source.completed === 1);
+      expect(acquisitions).toBeGreaterThanOrEqual(2);
+      await dispatcher.drainNow();
+      notify(record.sourceRef);
+      source.counts = async () => ({ ...await counts(), activeRecords: 1, pendingRecords: 1 });
+      await dispatcher.drainNow();
+      const before = acquisitions;
+      await dispatcher.drainNow();
+      expect(acquisitions).toBe(before + 1);
+    } finally { await dispatcher.close(); }
+  });
+
   test('drains distinct source databases concurrently and shares overlapping scans', async () => {
     let active = 0;
     let maximumActive = 0;

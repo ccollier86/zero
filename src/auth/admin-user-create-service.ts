@@ -6,6 +6,7 @@
  */
 
 import { OBS_CODES } from '../observability/codes';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { AdminLifecycleEmailService } from './admin-lifecycle-email-service';
 import {
   assertMfaRequirementAvailable,
@@ -197,12 +198,12 @@ export class AdminUserCreateService {
           });
       } catch (error) {
         const deliveryFailed = deliveryAttempted && !deliveryAccepted;
-        const cleanupSucceeded = rollbackProvisionedUser(
+        const cleanupSucceeded = await withAuthCommitAdmission(this.store, () => rollbackProvisionedUser(
           this.store,
           provisioning,
           operationAudit,
           deliveryFailed ? 'setup-delivery-failed' : 'provisioning-failed',
-        );
+        )).catch(() => false);
         getAuthAdminEmitter(this.config)(deliveryFailed
           ? OBS_CODES.AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED
           : OBS_CODES.AUTH_ADMIN_USER_PROVISIONING_FAILED, {

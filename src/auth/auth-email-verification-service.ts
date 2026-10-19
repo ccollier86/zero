@@ -1,6 +1,7 @@
 /** Atomic verification-token consumption and auth-flow completion. */
 
 import { OBS_CODES } from '../observability/codes';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import {
   getAuthAccountEmitter,
   requireAccountServices,
@@ -23,7 +24,7 @@ export async function completeEmailVerification(
 
   const verifiedDomainConfig = config.getAuthConfig().tenancy?.onboarding
     ?.verifiedDomains;
-  const receipt = services.store.completeEmailVerificationForAuthentication(
+  const receipt = await withAuthCommitAdmission(services.store, () => services.store.completeEmailVerificationForAuthentication(
     inspection.user.userId,
     () => {
       services.actionTokens.consume(rawToken, ['email_verification']);
@@ -51,7 +52,7 @@ export async function completeEmailVerification(
       },
       request: auditRequest,
     },
-  );
+  ));
   if (!receipt) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
   const { user, authGeneration } = receipt;
   getAuthAccountEmitter(config)(OBS_CODES.AUTH_EMAIL_VERIFIED, { userId: user.userId });

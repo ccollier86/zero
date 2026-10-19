@@ -8,14 +8,14 @@ visibility: internal
 system: persistence
 feature: hot-snapshots
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased transaction/buffer corrections"]
+applies_to: ["2.6.0 source; identify the installed archive by commit/hash"]
 modes: [file, hot, ephemeral, Fabric-actor]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -57,6 +57,27 @@ failure retains the first cause even if later retry succeeds.
 Standalone periodic snapshots are not an automatic on-write acknowledgement
 guarantee. Fabric placement's explicit on-write/periodic policy owns its stronger
 commit/health fencing.
+
+## Idle Work And Performance
+
+The automatic periodic cadence does not rewrite a known-clean published image.
+Its conservative dirty proof includes connection-local SQLite changes, schema
+version, user version and application ID, so untracked private SQL and metadata
+changes are not mistaken for an unchanged tracked Sync sequence. An unknown
+proof forces a real capture. A write arriving during async publication remains
+uncovered until a newer capture; failed/superseded images cannot mark it clean.
+
+Explicit async/sync and graceful-final requests keep their written-result
+contract even when clean. When Fabric immediately forces a synchronous periodic
+boundary or an automation claim, it records dirty state without first launching
+a duplicate async image. Dirty/clean signals, watchdogs and fsync remain intact.
+
+Every real hot/on-write durability boundary still publishes a complete image.
+Image serialization/publication costs grow with database size; this is not an
+incremental WAL or a free concurrent-write acceleration. Start write-heavy
+workloads with [file placement](../fabric/placement.md) and measure the actual
+deployment before choosing hot/periodic tradeoffs. An updater does not silently
+change an application's placement or durability policy.
 
 ## Stop And Discard
 

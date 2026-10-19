@@ -1,5 +1,7 @@
 /** Thin Elysia own-contact routes; writes and proofs remain service-owned. */
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
+import type { UserStore } from './user-store';
 import { extractAuthContext } from './auth-context';
 import { admitAuthRequest } from './auth-request-admission';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
@@ -9,6 +11,7 @@ import type { TokenService } from './token-service';
 import { AuthError } from './types';
 
 interface UserContactPluginConfig {
+  getUserStore(): UserStore | null;
   getTokenService(): TokenService | null;
   getUserContactService(): AuthUserContactService | null;
   getRequestAdmissionService(): AuthRequestAdmissionService | null;
@@ -52,7 +55,7 @@ export function createAuthUserContactPlugin(config: UserContactPluginConfig) {
       currentPassword: t.String({ minLength: 1, maxLength: 1024 }) }, { additionalProperties: false }) })
     .post('/email/complete', ({ request, set, body, server }) => {
       applyAuthPrivateNoStore(set); admit(request, body.token, server?.requestIP(request)?.address);
-      return service().completeEmail(body);
+      return withAuthCommitAdmission(config, () => service().completeEmail(body), request.signal);
     }, { body: t.Object({ token: t.String({ minLength: 1, maxLength: 512 }) }, { additionalProperties: false }) })
     .post('/phone/verify', async ({ request, set, body, server }) => {
       applyAuthPrivateNoStore(set); const auth = await actor(request);

@@ -10,6 +10,12 @@ import * as React from 'react';
 import { composeOverlayRefs, useOwnedFloatingOverlay, type OverlayScope } from '../_internal/overlay-scope/overlay-scope';
 
 type OwnedChildProps = { style?: React.CSSProperties; inert?: boolean; 'data-zero-overlay-owner'?: string };
+type ContextMenuFloatingSurface = {
+  ref: React.RefCallback<HTMLDivElement>;
+  owner: OverlayScope | null;
+  container: OverlayScope['container'];
+  contentProps: OwnedChildProps;
+};
 
 /** Reserve only managed-owner props after Radix Slot's child precedence; host/key/ref/handlers/content remain unchanged. */
 export function protectContextMenuOwnedChild(child: React.ReactNode, owner: OverlayScope | null): React.ReactNode {
@@ -24,7 +30,7 @@ export function protectContextMenuOwnedChild(child: React.ReactNode, owner: Over
 
 /** Compose the original native surface ref with bounded live-branch registration and reserved owner paint. */
 export function useContextMenuFloatingSurface(enabled: boolean, ref: React.Ref<HTMLDivElement> | undefined,
-  style: React.CSSProperties | undefined, inert: boolean | undefined) {
+  style: React.CSSProperties | undefined, inert: boolean | undefined): ContextMenuFloatingSurface {
   const floating = useOwnedFloatingOverlay();
   const [surface, setSurface] = React.useState<HTMLDivElement | null>(null);
   const live = React.useRef({ enabled, active: floating.owner?.active ?? true });

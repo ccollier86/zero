@@ -6,6 +6,7 @@
  */
 
 import { Elysia } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { OBS_CODES } from '../observability/codes';
 import { AdminEmailVerificationService } from './admin-email-verification-service';
 import {
@@ -45,10 +46,10 @@ export function createAuthAdminEmailVerificationPlugin(config: AuthAdminPluginCo
         auth,
         assertCurrentAuthority,
       } = await services(config, request);
-      const user = service.verify(params.userId, assertCurrentAuthority, {
+      const user = await withAuthCommitAdmission(config, () => service.verify(params.userId, assertCurrentAuthority, {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
-      });
+      }), request.signal);
       emitCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFIED, {
         userId: actorId,
         metadata: { targetUserId: params.userId },

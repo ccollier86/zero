@@ -1,6 +1,7 @@
 /** Administrator password replacement and lifecycle-email routes. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { OBS_CODES } from '../observability/codes';
 import { AdminLifecycleEmailService } from './admin-lifecycle-email-service';
 import { AdminPasswordRecoveryService } from './admin-password-recovery-service';
@@ -97,11 +98,11 @@ export function createAuthAdminPasswordPlugin(config: AuthAdminPluginConfig) {
         auth,
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
-      const user = new AdminPasswordRecoveryService(store, emitCode)
+      const user = await withAuthCommitAdmission(store, () => new AdminPasswordRecoveryService(store, emitCode)
         .clearPasswordChangeRequirement(params.userId, assertCurrentAuthority, {
           actor: authAuditActorFromContext(auth),
           request: authAuditRequestFromRequest(request),
-        });
+        }), request.signal);
       emitCode(OBS_CODES.AUTH_ADMIN_PASSWORD_CHANGE_REQUIREMENT_CLEARED, {
         userId: auth.userId,
         metadata: { targetUserId: params.userId },

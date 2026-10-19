@@ -6,6 +6,8 @@ import {
 } from '../../database-automations/database-automation-dispatcher';
 import type { DatabaseAutomationRegistry } from '../../database-automations/database-automations';
 import type { DatabaseManager } from '../../databases/database-manager';
+import { observeDatabaseAutomationSourceCommits } from '../../databases/database-manager';
+import { createDatabaseRef } from '../../databases/database-file';
 import {
   OBS_CODES,
   emitPlatformCodeTo,
@@ -46,6 +48,21 @@ export function installAppDatabaseAutomationDispatcher(
   >({
     catalog,
     leaseOwner: `dba:${crypto.randomUUID()}`,
+    subscribe: notify => {
+      const removeActors = observeDatabaseAutomationSourceCommits(options.manager, notify);
+      let stopped = false, pending = false;
+      const removeApplication = options.automations.applicationRegistry
+        ? options.manager.appRuntime.db.onChange(() => {
+            if (stopped || pending) return;
+            pending = true;
+            queueMicrotask(() => {
+              pending = false;
+              if (!stopped) notify(createDatabaseRef('default'));
+            });
+          })
+        : () => undefined;
+      return () => { stopped = true; removeActors(); removeApplication(); };
+    },
     acquire: createAppDatabaseAutomationSourceAcquirer({
       runtime: options.runtime,
       manager: options.manager,

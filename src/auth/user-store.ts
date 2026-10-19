@@ -8,6 +8,7 @@
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import type {
   AuthActionTokenRecord,
   AuthActionTokenType,
@@ -377,7 +378,7 @@ export class UserStore {
       })
       : undefined;
     const prepared = await this.prepareUserCreate(params);
-    return this.mutation(() => {
+    return withAuthCommitAdmission(this, () => this.mutation(() => {
       this.registrationProvisioning.lockWrites();
       if (beforeInsert) {
         invokeSynchronousAuthCallback(beforeInsert, {
@@ -410,7 +411,7 @@ export class UserStore {
         });
       }
       return user;
-    });
+    }));
   }
 
   /**
@@ -433,7 +434,7 @@ export class UserStore {
     });
     const prepared = await this.prepareUserCreate(params);
     const provisional = prepareAdminUserProvisioning();
-    return this.mutation(() => {
+    return withAuthCommitAdmission(this, () => this.mutation(() => {
       this.registrationProvisioning.lockWrites();
       invokeSynchronousAuthCallback(beforeInsert, {
         component: 'user-store',
@@ -470,7 +471,7 @@ export class UserStore {
         user,
         provisioning: receipt,
       };
-    });
+    }));
   }
 
   /**
@@ -506,7 +507,7 @@ export class UserStore {
     const waitDeadline = Date.now() + REGISTRATION_PROVISIONING_WAIT_MS;
     while (true) {
       try {
-        return this.mutation(() => {
+        return await withAuthCommitAdmission(this, () => this.mutation(() => {
           this.registrationProvisioning.lockWrites();
           this.registrationProvisioning.assertNoPendingBootstrap();
           const isBootstrap = this.isBootstrapRequired();
@@ -591,14 +592,14 @@ export class UserStore {
               leaseToken: provisional!.leaseToken,
             }) : null,
           };
-        });
+        }));
       } catch (error) {
         if (!(error instanceof AuthError)
           || error.code !== 'BOOTSTRAP_PROVISIONING_IN_PROGRESS') throw error;
         // A process which died while holding bootstrap cannot strand the
         // installation forever. Only an expired/unowned receipt is recovered;
         // a live lease owned by another process remains authoritative.
-        if (this.recoverPendingRegistrationProvisioning() > 0) continue;
+        if (await withAuthCommitAdmission(this, () => this.recoverPendingRegistrationProvisioning()) > 0) continue;
         if (Date.now() >= waitDeadline) throw error;
         // The durable marker coordinates other processes; this short async
         // wait lets the winning request finalize or roll back without holding

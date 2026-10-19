@@ -13,9 +13,9 @@ import { validateDatabasePresenceProjectionPayload } from './database-presence-p
 import type { PresenceProjectionReceipt } from '../presence/presence-publication';
 import { createTenantDatabaseRef } from './database-binding-ref';
 import {
-  automationTotalChanges,
   establishHotAutomationClaimDurability,
 } from './database-actor-automation-durability';
+import { databaseActorTotalChanges } from './database-actor-change-counter';
 import {
   databaseActorAutomationOperationKind,
 } from './database-actor-automation-session';
@@ -540,8 +540,12 @@ export class DatabaseActorRuntime implements Disposable {
         throw new DatabaseError('DATABASE_SCHEMA_MISMATCH', 'Guardian presence projection is incompatible.', { outcome: 'not-committed' });
       }
     };
+    const before = databaseActorTotalChanges(binding);
     const result = binding.authorityCommitGuard ? binding.authorityCommitGuard.run(payload.authorityRevision, execute) : execute();
-    this.establishHotWriteDurability(binding, false); return result;
+    if (before === null || databaseActorTotalChanges(binding) !== before) {
+      this.establishHotWriteDurability(binding, false);
+    }
+    return result;
   }
 
   private identityProjection(
@@ -566,10 +570,12 @@ export class DatabaseActorRuntime implements Disposable {
       binding.runtime.db,
       payload,
     );
+    const before = databaseActorTotalChanges(binding);
     const result = binding.authorityCommitGuard
       ? binding.authorityCommitGuard.runAuthorityNeutral(execute)
       : execute();
-    if (payload.action !== 'inspect') {
+    if (payload.action !== 'inspect'
+      && (before === null || databaseActorTotalChanges(binding) !== before)) {
       this.establishHotWriteDurability(binding, false);
     }
     return result;
@@ -596,7 +602,7 @@ export class DatabaseActorRuntime implements Disposable {
     }
 
     const execute = () => binding.automationSession!.execute(payload);
-    const before = operationKind === 'write' ? automationTotalChanges(binding) : null;
+    const before = operationKind === 'write' ? databaseActorTotalChanges(binding) : null;
     let result: DatabaseActorAutomationOutboxResult;
     try {
       result = operationKind === 'write' && binding.authorityCommitGuard
@@ -612,7 +618,7 @@ export class DatabaseActorRuntime implements Disposable {
     if (payload.action === 'claim' && result !== null) {
       this.establishHotAutomationClaimDurability(binding);
     } else if (operationKind === 'write'
-      && (before === null || automationTotalChanges(binding) !== before)) {
+      && (before === null || databaseActorTotalChanges(binding) !== before)) {
       this.establishHotWriteDurability(binding, false);
     }
     return result;

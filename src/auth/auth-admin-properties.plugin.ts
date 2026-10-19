@@ -1,6 +1,7 @@
 /** Administrator user-property routes and configured field validation. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import {
   requireAdminMutationServices,
   requireAdminServices,
@@ -32,7 +33,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         propertyService,
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
-      store.transaction(() => {
+      await withAuthCommitAdmission(store, () => store.transaction(() => {
         const auth = assertCurrentAuthority({ targetUserId: params.userId });
         assertUser(store.getUserById(params.userId));
         const value = propertyService.validateWrite(params.key, body.value, 'admin');
@@ -41,7 +42,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         store.setProperty(params.userId, params.key, value);
         if (invalidatesAuthority) store.revokeAllUserTokens(params.userId);
         recordPropertyMutation(store, auth, request, params.userId, invalidatesAuthority);
-      });
+      }), request.signal);
       return { ok: true };
     }, {
       params: t.Object({
@@ -57,7 +58,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         propertyService,
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
-      store.transaction(() => {
+      await withAuthCommitAdmission(store, () => store.transaction(() => {
         const auth = assertCurrentAuthority({ targetUserId: params.userId });
         assertUser(store.getUserById(params.userId));
         const properties = propertyService.validateWrites(body.properties, 'admin');
@@ -67,7 +68,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         store.setProperties(params.userId, properties);
         if (invalidatesAuthority) store.revokeAllUserTokens(params.userId);
         recordPropertyMutation(store, auth, request, params.userId, invalidatesAuthority);
-      });
+      }), request.signal);
       return { ok: true };
     }, {
       params: userParams,
@@ -80,7 +81,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         propertyService,
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
-      store.transaction(() => {
+      await withAuthCommitAdmission(store, () => store.transaction(() => {
         const auth = assertCurrentAuthority({ targetUserId: params.userId });
         assertUser(store.getUserById(params.userId));
         const invalidatesAuthority = propertyService.isPolicyTrusted(params.key)
@@ -88,7 +89,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         propertyService.deleteProperty(params.userId, params.key, 'admin', store);
         if (invalidatesAuthority) store.revokeAllUserTokens(params.userId);
         recordPropertyMutation(store, auth, request, params.userId, invalidatesAuthority);
-      });
+      }), request.signal);
       return { ok: true };
     }, {
       params: t.Object({

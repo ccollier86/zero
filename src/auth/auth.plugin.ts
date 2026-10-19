@@ -335,7 +335,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       emitCode,
     }))
     .use(createAuthUserProfilePlugin({ getTokenService, getUserProfileService }))
-    .use(createAuthUserContactPlugin({ getTokenService, getUserContactService, getRequestAdmissionService }))
+    .use(createAuthUserContactPlugin({ getUserStore, getTokenService, getUserContactService, getRequestAdmissionService }))
     .use(createAuthUserProfileCompletionPlugin({ getUserProfileCompletionService, getRequestAdmissionService, getTokenService }))
     .use(createAuthApiKeyPlugin({
       getApiKeyService,

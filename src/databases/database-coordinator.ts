@@ -99,6 +99,7 @@ import { DatabaseCoordinatorSyncPublication } from './database-coordinator-sync-
 import { DatabaseCoordinatorEntryLifecycle } from './database-coordinator-entry-lifecycle';
 import { DatabaseCoordinatorEntryFactory } from './database-coordinator-entry-factory';
 import { createDatabaseCoordinatorDiagnostics } from './database-coordinator-diagnostics';
+import { notifyDatabaseCoordinatorCommit } from './database-coordinator-commit-notifications';
 import { DatabaseCoordinatorAdmission } from './database-coordinator-admission';
 import { DatabaseCoordinatorAuthority } from './database-coordinator-authority';
 
@@ -271,9 +272,10 @@ export class DatabaseCoordinator implements AsyncDisposable {
           'runtime-failure',
         )
       ),
-      publishCommit: (entry, operation, result) => (
-        this.syncPublication.publishCommit(entry, operation, result)
-      ),
+      publishCommit: (entry, operation, result) => {
+        this.syncPublication.publishCommit(entry, operation, result);
+        if (!result.replayed) notifyDatabaseCoordinatorCommit(this, entry.databaseRef);
+      },
       holdAuthorityUntilSettlement: (lease, executor) => (
         this.authority.holdUntilSettlement(lease, executor)
       ),

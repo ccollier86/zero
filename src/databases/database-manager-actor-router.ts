@@ -34,6 +34,7 @@ import {
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
 import { DatabaseError } from './database-error';
+import { observeDatabaseCoordinatorCommits } from './database-coordinator-commit-notifications';
 import {
   createDatabaseRef,
   normalizeDatabaseId,
@@ -109,6 +110,13 @@ export class DatabaseManagerActorRouter {
 
   diagnostics(): DatabaseCoordinatorDiagnostics | null {
     return this.#coordinator?.diagnostics() ?? null;
+  }
+
+  /** @internal Advisory source wakeups, never a request or database capability. */
+  observeAutomationCommits(listener: (sourceRef: string) => void): () => void {
+    return this.#coordinator
+      ? observeDatabaseCoordinatorCommits(this.#coordinator, listener)
+      : () => undefined;
   }
 
   /** Privileged setup/operator binding for one explicit named database. */

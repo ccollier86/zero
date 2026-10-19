@@ -1,6 +1,7 @@
 /** Tenant-scoped invitation review plus public/pre-session onboarding routes. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { parseTokenTTL } from '../tokens/token-utils';
 import { canonicalEmailSchema } from './auth-email-schema';
 import {
@@ -135,7 +136,7 @@ export function createAuthTenantOnboardingPlugin(
       } else {
         const identity = await resolveInvitationIdentityProof(config, request, body);
         acceptedMfaVerifiedAt = identity.mfaVerifiedAt;
-        accepted = service.acceptInvitationForUser(
+        accepted = await withAuthCommitAdmission(store, () => service.acceptInvitationForUser(
           body.token,
           identity.userId,
           identity.consume,
@@ -144,7 +145,7 @@ export function createAuthTenantOnboardingPlugin(
             request: authAuditRequestFromRequest(request),
           },
           identity.authGeneration,
-        );
+        ), request.signal);
       }
 
       // Membership acceptance can create application authority. Re-enter the
@@ -291,7 +292,7 @@ export function createAuthTenantOnboardingPlugin(
         // invitation row can exist.
         email.assertReady();
       }
-      const created = actor.service.issueInvitation({
+      const created = await withAuthCommitAdmission(config, () => actor.service.issueInvitation({
         tenantId: actor.scope.tenantId,
         email: body.email,
         roleKeys,
@@ -316,7 +317,7 @@ export function createAuthTenantOnboardingPlugin(
             }
           },
         } : {}),
-      });
+      }), request.signal);
       return delivery === 'manual'
         ? {
             invitation: created.invitation,
@@ -346,12 +347,12 @@ export function createAuthTenantOnboardingPlugin(
       const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.invitations:manage');
       return {
-        invitation: actor.service.revokeInvitation({
+        invitation: await withAuthCommitAdmission(config, () => actor.service.revokeInvitation({
           tenantId: actor.scope.tenantId,
           invitationId: params.invitationId,
           assertCurrentAuthority: actor.assertCurrentAuthority,
           auditRequest: authAuditRequestFromRequest(request),
-        }),
+        }), request.signal),
       };
     }, {
       params: t.Object({ invitationId: idSchema }, { additionalProperties: false }),
@@ -387,7 +388,7 @@ export function createAuthTenantOnboardingPlugin(
       const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.join-requests:review');
       return {
-        request: actor.service.approveJoinRequest({
+        request: await withAuthCommitAdmission(config, () => actor.service.approveJoinRequest({
           tenantId: actor.scope.tenantId,
           joinRequestId: params.joinRequestId,
           expectedRequestRevision: body.expectedRequestRevision,
@@ -395,7 +396,7 @@ export function createAuthTenantOnboardingPlugin(
           reactivateMembership: body.reactivateMembership,
           assertCurrentAuthority: actor.assertCurrentAuthority,
           auditRequest: authAuditRequestFromRequest(request),
-        }),
+        }), request.signal),
       };
     }, {
       params: t.Object({ joinRequestId: idSchema }, { additionalProperties: false }),
@@ -411,13 +412,13 @@ export function createAuthTenantOnboardingPlugin(
       const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.join-requests:review');
       return {
-        request: actor.service.denyJoinRequest({
+        request: await withAuthCommitAdmission(config, () => actor.service.denyJoinRequest({
           tenantId: actor.scope.tenantId,
           joinRequestId: params.joinRequestId,
           expectedRequestRevision: body.expectedRequestRevision,
           assertCurrentAuthority: actor.assertCurrentAuthority,
           auditRequest: authAuditRequestFromRequest(request),
-        }),
+        }), request.signal),
       };
     }, {
       params: t.Object({ joinRequestId: idSchema }, { additionalProperties: false }),

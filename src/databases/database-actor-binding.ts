@@ -425,8 +425,9 @@ export function establishHotWriteDurability(
         if (!snapshot) {
           throw new Error('Periodic hot database is missing its snapshot boundary.');
         }
-        snapshot.recordPeriodicCommit();
-        if (snapshot.requiresPeriodicWriteFence()) {
+        const requiresFence = snapshot.requiresPeriodicWriteFence();
+        snapshot.recordPeriodicCommit(!requiresFence);
+        if (requiresFence) {
           const result = snapshot.snapshotSyncDetailed();
           if (result.status !== 'written') throw result.status === 'failed'
             ? result.error

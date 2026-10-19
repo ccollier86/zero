@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
   snapshot: dirty
   date: "2026-10-19"
   evidence_level: source-observed
@@ -163,9 +163,14 @@ Multi refresh with no longer available active membership fails closed.
 
 In a managed Fabric runtime, asynchronous web-session issuance, refresh rotation,
 tenant-session replacement and page-session revocation reserve a fair exclusive
-authority turn before their narrow synchronous persistence step. Admission waits
+authority turn before their narrow synchronous persistence step. The same entry
+is used by registration, password changes/recovery, managed administrative
+user/MFA/property/role/tenant changes, API-key management and membership grants.
+Native code exchange, refresh-family rotation and managed revocation/consent
+also use it. Admission waits
 at most five seconds; password verification and token signing stay outside that
-turn. No SQLite transaction or write lock is held while waiting. Already admitted
+turn; email/provider I/O does not hold it either. No SQLite transaction or write
+lock is held while waiting. Already admitted
 actor work can finish, but later shared work cannot continually overtake queued
 authentication.
 
@@ -175,6 +180,12 @@ still validated at persistence. Refresh consumption uses the current commit-time
 clock, not the pre-wait timestamp. The final authority-revision and cross-process
 file fences remain in force. Direct synchronous control-plane callers retain
 their nonwaiting, fail-closed commit behavior.
+
+Framework stores join the gate through their existing opaque transaction-domain
+identity; no raw database, new application facade or ambient async permit is
+exposed. Domain services keep their own synchronous transaction/rollback
+semantics. Custom server code must not hold an SQL transaction across an await,
+or wrap hashing/email work inside a commit permit.
 
 An exhausted queue/deadline or a genuine unresolved final-fence conflict can
 still return HTTP 409 `AUTH_COMMIT_CONFLICT` with a not-committed outcome. This

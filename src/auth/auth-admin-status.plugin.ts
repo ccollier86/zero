@@ -1,6 +1,7 @@
 /** Administrator suspension, activation, and session-revocation routes. */
 
 import { Elysia } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { OBS_CODES } from '../observability/codes';
 import { assertAdminUserTransition } from './admin-user-guards';
 import {
@@ -23,7 +24,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
     .post('/users/:userId/suspend', async ({ request, params }) => {
       const { store, assertCurrentAuthority } = await requireAdminMutationServices(config, request);
       let actorUserId = '';
-      const user = store.transaction(() => {
+      const user = await withAuthCommitAdmission(store, () => store.transaction(() => {
         const auth = assertCurrentAuthority({ targetUserId: params.userId });
         actorUserId = auth.userId;
         const existing = store.getUserById(params.userId);
@@ -47,7 +48,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
           metadata: { changed: existing.status !== 'suspended' },
         });
         return updated;
-      });
+      }), request.signal);
       emitCode(OBS_CODES.AUTH_ACCOUNT_SUSPENDED, {
         userId: actorUserId,
         metadata: { targetUserId: params.userId },
@@ -57,7 +58,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
     .post('/users/:userId/activate', async ({ request, params }) => {
       const { store, assertCurrentAuthority } = await requireAdminMutationServices(config, request);
       let actorUserId = '';
-      const user = store.transaction(() => {
+      const user = await withAuthCommitAdmission(store, () => store.transaction(() => {
         const auth = assertCurrentAuthority({ targetUserId: params.userId });
         actorUserId = auth.userId;
         const existing = store.getUserById(params.userId);
@@ -74,7 +75,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
           metadata: { changed: existing.status !== 'active' },
         });
         return updated;
-      });
+      }), request.signal);
       emitCode(OBS_CODES.AUTH_ACCOUNT_REACTIVATED, {
         userId: actorUserId,
         metadata: { targetUserId: params.userId },
@@ -83,7 +84,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
     }, schema)
     .post('/users/:userId/revoke-sessions', async ({ request, params }) => {
       const { store, assertCurrentAuthority } = await requireAdminMutationServices(config, request);
-      store.transaction(() => {
+      await withAuthCommitAdmission(store, () => store.transaction(() => {
         const auth = assertCurrentAuthority({ targetUserId: params.userId });
         if (!store.getUserById(params.userId)) {
           throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
@@ -97,7 +98,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
           request: authAuditRequestFromRequest(request),
           target: { type: 'user', id: params.userId },
         });
-      });
+      }), request.signal);
       return { ok: true };
     }, schema);
 }

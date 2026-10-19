@@ -1,6 +1,7 @@
 /** Administration-organization API-key review and customer-tenant controls. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import {
   captureAuthApiKeyMutationAuthority,
   requireAuthApiKeyRouteActor,
@@ -58,22 +59,24 @@ export function createAuthApiKeyPlatformPlugin(config: AuthApiKeyPluginConfig) {
       async ({ request, params, body, set }) => {
         applyAuthPrivateNoStore(set);
         const actor = await requirePlatformActor(config, request);
-        return actor.service.issueForPlatform(
-          captureAuthApiKeyMutationAuthority(actor, request),
+        const authority = captureAuthApiKeyMutationAuthority(actor, request);
+        return withAuthCommitAdmission(actor.store, () => actor.service.issueForPlatform(
+          authority,
           params,
           body,
-        );
+        ), request.signal);
       },
       { params: targetParamsSchema, body: authApiKeyIssueBodySchema },
     )
     .post('/api-keys/:keyId/rotate', async ({ request, params, body, set }) => {
       applyAuthPrivateNoStore(set);
       const actor = await requirePlatformActor(config, request);
-      return actor.service.rotateForPlatform(
-        captureAuthApiKeyMutationAuthority(actor, request),
+      const authority = captureAuthApiKeyMutationAuthority(actor, request);
+      return withAuthCommitAdmission(actor.store, () => actor.service.rotateForPlatform(
+        authority,
         params.keyId,
         body,
-      );
+      ), request.signal);
     }, {
       params: t.Object({ keyId: authApiKeyIdSchema }, { additionalProperties: false }),
       body: authApiKeyIssueBodySchema,
@@ -81,10 +84,11 @@ export function createAuthApiKeyPlatformPlugin(config: AuthApiKeyPluginConfig) {
     .delete('/api-keys/:keyId', async ({ request, params, set }) => {
       applyAuthPrivateNoStore(set);
       const actor = await requirePlatformActor(config, request);
-      return actor.service.revokeForPlatform(
-        captureAuthApiKeyMutationAuthority(actor, request),
+      const authority = captureAuthApiKeyMutationAuthority(actor, request);
+      return withAuthCommitAdmission(actor.store, () => actor.service.revokeForPlatform(
+        authority,
         params.keyId,
-      );
+      ), request.signal);
     }, {
       params: t.Object({ keyId: authApiKeyIdSchema }, { additionalProperties: false }),
     });

@@ -1,6 +1,7 @@
 /** Single-application administrator API-key management routes. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import {
   captureAuthApiKeyMutationAuthority,
   requireAuthApiKeyRouteActor,
@@ -37,11 +38,12 @@ export function createAuthApiKeyAdminPlugin(config: AuthApiKeyPluginConfig) {
     .post('/users/:userId/api-keys', async ({ request, params, body, set }) => {
       applyAuthPrivateNoStore(set);
       const actor = await requireSingleActor(config, request);
-      return actor.service.issueForAdministrator(
-        captureAuthApiKeyMutationAuthority(actor, request),
+      const authority = captureAuthApiKeyMutationAuthority(actor, request);
+      return withAuthCommitAdmission(actor.store, () => actor.service.issueForAdministrator(
+        authority,
         { userId: params.userId },
         body,
-      );
+      ), request.signal);
     }, {
       params: t.Object({ userId: authApiKeySubjectIdSchema }, {
         additionalProperties: false,
@@ -51,11 +53,12 @@ export function createAuthApiKeyAdminPlugin(config: AuthApiKeyPluginConfig) {
     .post('/api-keys/:keyId/rotate', async ({ request, params, body, set }) => {
       applyAuthPrivateNoStore(set);
       const actor = await requireSingleActor(config, request);
-      return actor.service.rotateForAdministrator(
-        captureAuthApiKeyMutationAuthority(actor, request),
+      const authority = captureAuthApiKeyMutationAuthority(actor, request);
+      return withAuthCommitAdmission(actor.store, () => actor.service.rotateForAdministrator(
+        authority,
         params.keyId,
         body,
-      );
+      ), request.signal);
     }, {
       params: t.Object({ keyId: authApiKeyIdSchema }, { additionalProperties: false }),
       body: authApiKeyIssueBodySchema,
@@ -63,10 +66,11 @@ export function createAuthApiKeyAdminPlugin(config: AuthApiKeyPluginConfig) {
     .delete('/api-keys/:keyId', async ({ request, params, set }) => {
       applyAuthPrivateNoStore(set);
       const actor = await requireSingleActor(config, request);
-      return actor.service.revokeForAdministrator(
-        captureAuthApiKeyMutationAuthority(actor, request),
+      const authority = captureAuthApiKeyMutationAuthority(actor, request);
+      return withAuthCommitAdmission(actor.store, () => actor.service.revokeForAdministrator(
+        authority,
         params.keyId,
-      );
+      ), request.signal);
     }, {
       params: t.Object({ keyId: authApiKeyIdSchema }, { additionalProperties: false }),
     });

@@ -1,6 +1,7 @@
 /** Administrator user update/delete routes and transport validation. */
 
 import { Elysia, t } from 'elysia';
+import { withAuthCommitAdmission } from './auth-commit-admission';
 import { OBS_CODES } from '../observability/codes';
 import { assertAdminMayDeleteUser } from './admin-user-guards';
 import { AdminUserUpdateService } from './admin-user-update-service';
@@ -36,11 +37,11 @@ export function createAuthAdminUserUpdatePlugin(config: AuthAdminPluginConfig) {
         auth,
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
-      const user = new AdminUserUpdateService(store, propertyService, config)
+      const user = await withAuthCommitAdmission(store, () => new AdminUserUpdateService(store, propertyService, config)
         .update(params.userId, body, assertCurrentAuthority, {
           actor: authAuditActorFromContext(auth),
           request: authAuditRequestFromRequest(request),
-        });
+        }), request.signal);
       return { user };
     }, {
       params,
@@ -65,7 +66,7 @@ export function createAuthAdminUserUpdatePlugin(config: AuthAdminPluginConfig) {
       const auditRequest = authAuditRequestFromRequest(request);
       let actorUserId = '';
       try {
-        store.transaction(() => {
+        await withAuthCommitAdmission(store, () => store.transaction(() => {
           const current = assertCurrentAuthority({ targetUserId: params.userId });
           actorUserId = current.userId;
           const user = store.getUserById(params.userId);
@@ -82,7 +83,7 @@ export function createAuthAdminUserUpdatePlugin(config: AuthAdminPluginConfig) {
             request: auditRequest,
             target: { type: 'user', id: params.userId },
           });
-        });
+        }), request.signal);
       } catch (error) {
         if (error instanceof AuthError && error.code === 'USER_HAS_TENANT_HISTORY') {
           store.appendControlPlaneAudit({

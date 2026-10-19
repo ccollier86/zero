@@ -1,6 +1,7 @@
 /** Native refresh-family rotation, replay handling, and revocation. */
 
 import { OBS_CODES } from '../../observability/codes';
+import { withAuthCommitAdmission } from '../auth-commit-admission';
 import type { NativeRefreshInput, NativeTokenResult } from './native-auth-service-types';
 import { tokenResult } from './native-code-exchange';
 import type { NativeServiceContext } from './native-service-context';
@@ -18,30 +19,30 @@ export async function rotateNativeRefresh(
   const current = context.sessions.get(input.refreshToken);
   if (!current || current.clientId !== input.clientId) invalidGrant();
   if (current.consumedAt !== null || current.revokedAt !== null) {
-    context.sessions.revokeFamily(current.familyId);
+    await withAuthCommitAdmission(context.users, () => context.sessions.revokeFamily(current.familyId));
     context.emitCode(OBS_CODES.AUTH_NATIVE_REFRESH_REUSE, {
       userId: current.userId,
       metadata: { clientId: current.clientId, familyId: current.familyId },
     });
     invalidGrant();
   }
-  if (current.expiresAt <= Date.now()) terminalInvalidGrant(context, current.familyId);
+  if (current.expiresAt <= Date.now()) return terminalInvalidGrant(context, current.familyId);
   try {
     tokenClient(context, input.clientId);
   } catch {
-    terminalInvalidGrant(context, current.familyId);
+    return terminalInvalidGrant(context, current.familyId);
   }
   const user = context.users.getUserById(current.userId);
-  if (!user || !canReceiveTokens(user)) terminalInvalidGrant(context, current.familyId);
+  if (!user || !canReceiveTokens(user)) return terminalInvalidGrant(context, current.familyId);
   assertNativeProfileCompletion(context.tokens, user.userId);
   if (context.requiresMfaAssurance(user.userId) && current.mfaVerifiedAt === null) {
-    terminalInvalidGrant(context, current.familyId);
+    return terminalInvalidGrant(context, current.familyId);
   }
   if (context.users.getAuthGeneration(user.userId) !== current.authGeneration) {
-    terminalInvalidGrant(context, current.familyId);
+    return terminalInvalidGrant(context, current.familyId);
   }
   const authority = context.authority.resolve(user.userId, current);
-  if (!authority) terminalInvalidGrant(context, current.familyId);
+  if (!authority) return terminalInvalidGrant(context, current.familyId);
   const readiness = context.sessions.rotationReadiness(current);
   if (readiness === 'throttled') {
     throw new NativeTokenError(
@@ -49,8 +50,7 @@ export async function rotateNativeRefresh(
     );
   }
   if (readiness === 'exhausted') {
-    context.sessions.revokeFamily(current.familyId);
-    invalidGrant();
+    return terminalInvalidGrant(context, current.familyId);
   }
   const prepared = prepareNativeSession({
     userId: current.userId, clientId: current.clientId, scope: current.scope,
@@ -67,21 +67,25 @@ export async function rotateNativeRefresh(
     context.tokens.signNativeIdToken(user, current.clientId, undefined, current.scope),
   ]).catch(error => { throw nativeProfileCompletionError(error); });
   if (context.users.getAuthGeneration(user.userId) !== current.authGeneration) {
-    terminalInvalidGrant(context, current.familyId);
+    return terminalInvalidGrant(context, current.familyId);
   }
   const stillCurrent = context.authority.resolve(user.userId, current);
   if (!stillCurrent
     || !sameNativeAuthority(authority.snapshot, stillCurrent.snapshot)) {
-    terminalInvalidGrant(context, current.familyId);
+    return terminalInvalidGrant(context, current.familyId);
   }
-  const rotated = context.sessions.rotate(current, prepared.session, () => {
+  const rotated = await withAuthCommitAdmission(context.users, () => context.sessions.rotate(current, prepared.session, () => {
+    tokenClient(context, current.clientId);
     assertNativeProfileCompletion(context.tokens, user.userId);
+    const liveUser = context.users.getUserById(user.userId);
     const live = context.authority.resolve(user.userId, current);
-    return context.users.getAuthGeneration(user.userId) === current.authGeneration
+    return Boolean(liveUser && canReceiveTokens(liveUser))
+      && current.expiresAt > Date.now()
+      && context.users.getAuthGeneration(user.userId) === current.authGeneration
       && (!context.requiresMfaAssurance(user.userId)
         || current.mfaVerifiedAt !== null)
       && Boolean(live && sameNativeAuthority(authority.snapshot, live.snapshot));
-  });
+  }));
   if (rotated === 'throttled') {
     throw new NativeTokenError(
       'temporarily_unavailable', 'Refresh was requested too soon. Retry shortly.',
@@ -102,8 +106,8 @@ export async function rotateNativeRefresh(
   );
 }
 
-function terminalInvalidGrant(context: NativeServiceContext, familyId: string): never {
-  context.sessions.revokeFamily(familyId);
+async function terminalInvalidGrant(context: NativeServiceContext, familyId: string): Promise<never> {
+  await withAuthCommitAdmission(context.users, () => context.sessions.revokeFamily(familyId));
   invalidGrant();
 }
 

@@ -685,6 +685,10 @@ describe('DatabaseActorRuntime', () => {
       restoreSnapshot = () => { snapshot.snapshotDetailed = originalSnapshot; };
       snapshot.snapshotDetailed = () => new Promise(() => undefined);
 
+      // A clean idle database no longer starts periodic I/O. Make untracked
+      // private SQL dirty so this still exercises a genuinely stalled image.
+      (actor as any).binding.runtime.sqlite.raw.run('CREATE TABLE watchdog_dirty (id TEXT)');
+
       await waitForActorState(actor, 'failed');
       await Bun.sleep(20);
       expect(events).toEqual([
