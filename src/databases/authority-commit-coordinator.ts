@@ -88,6 +88,8 @@ export class AuthorityCommitCoordinator {
   private state: AuthorityCommitCoordinatorState = 'open';
   private activeShared = 0;
   private activeExclusive = false;
+  private synchronousTurn = false;
+  private readonly ownedLeases = new WeakSet<AuthorityCommitLease>();
   private drainDeferred: DrainDeferred | null = null;
 
   constructor(options: AuthorityCommitCoordinatorOptions = {}) {
@@ -119,7 +121,8 @@ export class AuthorityCommitCoordinator {
 
   /**
    * Acquire the shared side on the current stack, or return null when an
-   * authority mutation owns or is already waiting for the boundary.
+   * authority mutation owns or is already waiting for the boundary, except
+   * for guards completing the currently admitted synchronous turn.
    *
    * SQLite commit guards cannot await while a transaction is open. A null
    * result therefore tells the application transaction to roll back and let
@@ -127,13 +130,14 @@ export class AuthorityCommitCoordinator {
    */
   tryAcquireShared(): AuthorityCommitLease | null {
     if (this.state !== 'open') throw closedError();
-    if (!this.canGrantImmediately('shared')) return null;
+    if (!this.canGrantImmediately('shared', true)) return null;
     return this.grant('shared');
   }
 
   /**
    * Acquire the exclusive side on the current stack, or return null when a
-   * tenant commit or earlier waiter already owns priority.
+   * tenant commit or earlier waiter already owns priority, except for guards
+   * spending the currently admitted synchronous turn.
    *
    * This is used immediately before a synchronous SQLite control-plane
    * transaction commits. It never waits while that transaction holds locks:
@@ -141,8 +145,43 @@ export class AuthorityCommitCoordinator {
    */
   tryAcquireExclusive(): AuthorityCommitLease | null {
     if (this.state !== 'open') throw closedError();
-    if (!this.canGrantImmediately('exclusive')) return null;
+    if (!this.canGrantImmediately('exclusive', true)) return null;
     return this.grant('exclusive');
+  }
+
+  /**
+   * Spend an admitted exclusive queue position on one synchronous operation.
+   *
+   * The queue position is not itself a commit lock. Individual SQLite commit
+   * guards still acquire/release their actual shared or exclusive leases. This
+   * lets a committed Guardian mutation finish synchronous application-plane
+   * projection before the next queued authority turn starts, without retaining
+   * an exclusive commit lock through post-commit callbacks. Awaitable work
+   * queues normally and cannot inherit this turn after the stack returns.
+   *
+   * @internal Used only by the database commit-admission bridge.
+   */
+  runSynchronousExclusiveTurn<T>(lease: AuthorityCommitLease, operation: () => T): T {
+    if (this.state !== 'open') throw closedError();
+    if (!this.ownedLeases.has(lease) || lease.mode !== 'exclusive'
+      || lease.released || !this.activeExclusive || this.synchronousTurn) {
+      throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Authority commit admission lease is invalid.');
+    }
+    this.synchronousTurn = true;
+    try {
+      lease.release();
+      const result = operation();
+      if (result !== null && (typeof result === 'object' || typeof result === 'function')
+        && typeof (result as { then?: unknown }).then === 'function') {
+        void Promise.resolve(result).catch(() => undefined);
+        throw new TypeError('Authority commit admission turns must be synchronous');
+      }
+      return result;
+    } finally {
+      this.synchronousTurn = false;
+      if (this.state === 'open') this.pump();
+      else this.finishDrainIfIdle();
+    }
   }
 
   /**
@@ -264,13 +303,19 @@ export class AuthorityCommitCoordinator {
     });
   }
 
-  private canGrantImmediately(mode: AuthorityCommitLeaseMode): boolean {
-    if (this.pending.length > 0 || this.activeExclusive) return false;
+  private canGrantImmediately(mode: AuthorityCommitLeaseMode, onCurrentStack = false): boolean {
+    if (this.activeExclusive) return false;
+    // Only synchronous commit guards may spend the current admitted turn.
+    // Async callers, including reentrant listeners, retain ordinary FIFO order.
+    if (this.synchronousTurn) {
+      return onCurrentStack && (mode === 'shared' || this.activeShared === 0);
+    }
+    if (this.pending.length > 0) return false;
     return mode === 'shared' || this.activeShared === 0;
   }
 
   private pump(): void {
-    if (this.state !== 'open' || this.activeExclusive) return;
+    if (this.state !== 'open' || this.activeExclusive || this.synchronousTurn) return;
 
     if (this.activeShared > 0) {
       this.grantLeadingShared();
@@ -300,7 +345,7 @@ export class AuthorityCommitCoordinator {
     else this.activeExclusive = true;
 
     let released = false;
-    return Object.freeze({
+    const lease: AuthorityCommitLease = Object.freeze({
       mode,
       get released() {
         return released;
@@ -311,6 +356,8 @@ export class AuthorityCommitCoordinator {
         this.release(mode);
       },
     });
+    this.ownedLeases.add(lease);
+    return lease;
   }
 
   private release(mode: AuthorityCommitLeaseMode): void {
@@ -367,6 +414,7 @@ export class AuthorityCommitCoordinator {
 
   private finishDrainIfIdle(): void {
     if (this.state !== 'draining'
+      || this.synchronousTurn
       || this.activeShared > 0
       || this.activeExclusive) {
       return;

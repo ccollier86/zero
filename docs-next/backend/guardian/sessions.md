@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
+  commit: "b2a65aee5f103826afd484f77471a28d41fe4a86"
   snapshot: dirty
   date: "2026-10-19"
   evidence_level: source-observed
@@ -186,6 +186,16 @@ identity; no raw database, new application facade or ambient async permit is
 exposed. Domain services keep their own synchronous transaction/rollback
 semantics. Custom server code must not hold an SQL transaction across an await,
 or wrap hashing/email work inside a commit permit.
+
+The admitted **queue turn** is distinct from an exclusive **commit lease**.
+Actual shared/exclusive leases remain scoped to each SQLite commit/rollback.
+The synchronous turn also lets a committed Guardian mutation finish its pinned
+identity-projection callbacks before the next queued authority operation starts.
+It does not keep an exclusive commit lease across those application writes,
+and asynchronous work cannot inherit the turn. This distinction prevents
+first-user/admin creation from conflicting with its own anchor delivery while
+preserving FIFO admission and all final revision/file fences. See the
+[regression report](../../../docs/auth/commit-admission-projection-regression.md).
 
 An exhausted queue/deadline or a genuine unresolved final-fence conflict can
 still return HTTP 409 `AUTH_COMMIT_CONFLICT` with a not-committed outcome. This

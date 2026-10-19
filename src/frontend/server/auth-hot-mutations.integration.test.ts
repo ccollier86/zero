@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app-factory';
-import { authenticatedOnly, defineResource, tenantRealm } from '../../resources';
+import { authenticatedOnly, defineResource, globalRealm, ownerPolicy, tenantRealm } from '../../resources';
+import { defineTable, field } from '../../schema';
 import { realm, tables } from './test-fixtures/auth-admission-hot/realm';
 
 test('managed auth mutations wait for a busy hot actor without retrying or weakening authority', async () => {
@@ -12,13 +13,18 @@ test('managed auth mutations wait for a busy hot actor without retrying or weake
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   try {
     await mkdir(join(root, 'app'));
+    const credentialsTable = defineTable('provider_credentials', {
+      owner_user_id: field.guardianUser(),
+      creator_membership_id: field.guardianMembership({ required: false }),
+      label: field.text({ required: true }),
+    }, { pk: 'credential_id' });
     app = await createApp({
       db: { mode: 'file', path: join(root, 'app.db') },
       systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' },
-      tables,
-      resources: Object.keys(tables).map(table => defineResource({
+      tables: { ...tables, provider_credentials: credentialsTable.serverTable },
+      resources: [...Object.keys(tables).map(table => defineResource({
         table, exposure: 'all', realm: tenantRealm(), policy: authenticatedOnly(),
-      })),
+      })), defineResource({ table: 'provider_credentials', exposure: 'all', realm: globalRealm(), policy: ownerPolicy({ userField: 'owner_user_id' }) })],
       auth: { bootstrap: 'public', registration: { mode: 'public' }, tenancy: 'multi', accountEmails: { passwordReset: false } },
       databaseTopology: {
         mode: 'multiple', rootDirectory: join(root, 'fabric'), realm, tenantIsolation: 'tenant-database',
@@ -44,6 +50,10 @@ test('managed auth mutations wait for a busy hot actor without retrying or weake
     const credentials = { username: 'operation-audit-owner', email: 'owner@operation-audit.test', password: 'Only-test-password-123', organizationName: 'Audit owner' };
     const owner = await request('POST', '/auth/register', credentials);
     expect(owner.status).toBe(200);
+    const protectedCreate = await request('POST', '/api/resources/provider_credentials', {
+      credential_id: 'hot-projection-owner', label: 'Synthetic test credential',
+    }, owner.data.accessToken);
+    expect(protectedCreate.status, JSON.stringify(protectedCreate.data)).toBe(201);
     const target = await request('POST', '/auth/admin/users', {
       username: 'operation-audit-target', email: 'target@operation-audit.test',
       password: 'Only-test-password-456',
@@ -91,6 +101,10 @@ test('managed auth mutations wait for a busy hot actor without retrying or weake
       password: 'Only-test-password-789', organizationName: 'Audit new',
     }));
     report('register-busy', registered); expect(registered.status, JSON.stringify(registered.data)).toBe(200);
+    const protectedWrite = await busy(() => request('PATCH', '/api/resources/provider_credentials/hot-projection-owner', {
+      label: 'Updated synthetic credential',
+    }, owner.data.accessToken));
+    report('protected-write-busy', protectedWrite); expect(protectedWrite.status, JSON.stringify(protectedWrite.data)).toBe(200);
     const loggedOut = await busy(() => request('POST', '/auth/logout', { refreshToken: login.data.refreshToken }, login.data.accessToken));
     report('logout-busy', loggedOut); expect(loggedOut.status, JSON.stringify(loggedOut.data)).toBe(200);
     const logoutIdle = await request('POST', '/auth/logout', { refreshToken: login.data.refreshToken }, login.data.accessToken);

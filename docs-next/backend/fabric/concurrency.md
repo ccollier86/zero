@@ -13,7 +13,7 @@ modes: [single, multiple, shared-row, tenant-database, file, hot]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "cb7ffed940232f0889a306d75414e95aeb9e89c7"
+  commit: "b2a65aee5f103826afd484f77471a28d41fe4a86"
   snapshot: dirty
   date: "2026-10-19"
   evidence_level: source-observed
@@ -61,7 +61,13 @@ is not interrupted, and password hashing/signing does not occupy the exclusive
 turn. Auth admission has an internal five-second waiting bound, not a new
 application configuration setting.
 
-The permit covers only the synchronous persistence callback. Authority revision,
+The queue reservation covers only the synchronous persistence callback and its
+synchronous completion work, not an exclusive lock over that whole callback.
+Each commit guard still acquires its own actual lease and releases it when
+SQLite commit/rollback settles. Pinned identity projection can therefore take
+shared authority after the Guardian commit, before the next queued exclusive
+turn. Async work remains in the ordinary bounded FIFO queue and cannot inherit
+the current turn. Authority revision,
 live session/eligibility checks and the nonwaiting cross-process final file fence
 still run. Direct synchronous commits cannot wait under SQLite locks and retain
 their fail-closed conflict path. The local queue is not distributed arbitration:

@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: local-identity-anchors-and-realm-readiness
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0 source; identify the installed archive by commit/hash"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "b2a65aee5f103826afd484f77471a28d41fe4a86"
+  snapshot: dirty
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -91,8 +91,12 @@ Each target has ordered sequences, leases, retry state and receipts.
 
 An application write that needs a new user/membership FK must not run ahead of
 its anchor. Actor-backed Fabric targets use awaited asynchronous reconciliation;
-process-pinned targets can reconcile without yielding past the request/startup
-barrier.
+process-pinned targets reconcile synchronously after the canonical commit and
+before its admitted synchronous operation returns. Auth queue admission must
+not retain an exclusive commit lease during those application-plane writes, or
+grant the next queued authority turn before completion. The narrow final
+revision/file fences still run for both planes; anchors do not gain permissions
+from the queue turn. See [commit admission](./sessions.md#fabric-commit-admission).
 
 Target application is idempotent only for the same event, sequence and anchor
 fingerprint. Conflicting replay or installation/target mismatch is not silently
@@ -138,6 +142,12 @@ In an isolated app, create a canonical user/member, verify its anchor reaches
 only required planes, insert a real owned record through admitted services and
 prove missing/incorrect FKs fail. Hold projection delivery and confirm the
 dependent write cannot report accepted success before the barrier.
+
+Include managed `createApp` with separate SYSTEM/application files and declared
+Guardian references, first-administrator registration, queued account creation,
+and an immediate protected FK-backed application write. A store-only test with
+no projection target does not qualify this composition. Repeat with populated
+hot Fabric work, not just empty/idle databases.
 
 Test restart/replay receipts, wrong target/installation, out-of-order delivery,
 quarantine and revocation. Verify profile changes remain canonical rather

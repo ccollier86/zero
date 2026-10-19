@@ -40,6 +40,7 @@ export function registerApplicationAuthorityCommitGuard(
 
   return registerReactiveDBCommitGuard(applicationDB, {
     capture: () => {
+      assertSystemTransactionSettled(systemDB);
       assertSystemFileCurrent(fileFence, 'not-started');
       return requireAuthorityRevision(
         readAuthAuthorityRevision(systemDB),
@@ -47,6 +48,7 @@ export function registerApplicationAuthorityCommitGuard(
       );
     },
     beforeCommit: (capturedRevision) => {
+      assertSystemTransactionSettled(systemDB);
       const captured = requireAuthorityRevision(
         capturedRevision,
         'not-committed',
@@ -84,6 +86,14 @@ export function registerApplicationAuthorityCommitGuard(
       }
     },
   });
+}
+
+function assertSystemTransactionSettled(systemDB: ReactiveDB): void {
+  // A reentrant application write must not capture/authorize against this
+  // connection's uncommitted Guardian state. Post-commit projection is safe:
+  // SQLite has settled before its callbacks run. Cross-file transactions do
+  // not become atomic merely because they share one synchronous queue turn.
+  if (systemDB.getRawDatabase().inTransaction) throw authorityChanged();
 }
 
 function assertSystemFileCurrent(

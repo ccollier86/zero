@@ -37,9 +37,6 @@ export function registerDatabaseAuthorityCommitGuard(
   fileFence?.assertSystemDatabaseBinding(db);
 
   let active = true;
-  // This ownership exists only on the current synchronous stack, never across
-  // signing, password hashing, network work or an awaited SQL transaction.
-  let admittedLease: AuthorityCommitLease | null = null;
   const removeGuard = registerReactiveDBCommitGuard(db, {
     capture: () => {
       assertSystemFileCurrent(fileFence, 'not-started');
@@ -60,9 +57,8 @@ export function registerDatabaseAuthorityCommitGuard(
       );
       if (captured === currentRevision) return undefined;
 
-      const admitted = admittedLease !== null && !admittedLease.released;
-      const localLease = admitted ? null : coordinator.tryAcquireExclusive();
-      if (!admitted && !localLease) throw authorityConflict();
+      const localLease = coordinator.tryAcquireExclusive();
+      if (!localLease) throw authorityConflict();
       let fileLease: ReturnType<DatabaseAuthorityCommitFileFence['tryAcquireExclusive']> = null;
       try {
         if (fileFence) {
@@ -103,9 +99,7 @@ export function registerDatabaseAuthorityCommitGuard(
       try {
         if (!active) throw new DatabaseError('DATABASE_CLOSED', 'Authority commit admission is closed.');
         if (options.signal?.aborted) throw authorityConflict();
-        admittedLease = lease;
-        try { return operation(); }
-        finally { admittedLease = null; }
+        return coordinator.runSynchronousExclusiveTurn(lease, operation);
       } finally { lease.release(); }
     });
   } catch (error) {
