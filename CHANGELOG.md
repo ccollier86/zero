@@ -4,6 +4,11 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Fixed DataTable live/background refreshes hiding every existing row and
+  replaying the initial loading reveal. Same-query requests now preserve the
+  visible native rows, selection and editor drafts; accepted changes animate
+  only row insertion/removal/reordering. Real first loads and changed-query/page
+  loading remain distinct, including directional pagination and reduced motion.
 - Extended fair authority admission to managed account registration, password
   changes/recovery, administrative user/MFA/property/role/tenant changes,
   API-key management, membership/onboarding mutations and native session

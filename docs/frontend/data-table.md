@@ -239,6 +239,12 @@ membership lookups; custom adapters can opt into `confirmInsertedRows`. Lookup
 rows are not merged into the grid, and ordinary offset revalidation remains
 subject to concurrent page shifts rather than gaining snapshot isolation.
 
+Same-query live or manual refreshes keep accepted rows visible throughout the
+request. They do not show first-load skeletons or replay the initial stagger;
+only the accepted row delta animates. Keep the table mounted with stable row IDs,
+not keyed by a changing result count or revision. Initial loading and changed
+query/page loading remain separate presentation states.
+
 These remain unreleased working-source behavior. The canonical
 [motion and live updates guide](../../docs-next/frontend/data-controls/data-table/motion-and-live-updates.md)
 owns exact timings, keyboard behavior, reading-position preservation, source

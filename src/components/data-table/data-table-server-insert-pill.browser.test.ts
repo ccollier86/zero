@@ -13,13 +13,11 @@ beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   const directory = await mkdtemp(join(tmpdir(), 'table-server-pill-'));
   try {
-    const output = join(directory, 'fixture.js');
-    const child = Bun.spawn([process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'data-table-server-insert-pill.browser-fixture.tsx'),
-      '--target=browser', '--format=iife', '--outfile', output], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
-    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    if (code !== 0) throw new Error(`Server pill fixture build failed (${code}): ${stderr || stdout}`);
-    bundle = await Bun.file(output).text();
+    const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'data-table-server-insert-pill.browser-fixture.tsx')], target: 'browser', format: 'iife' });
+    if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
+    bundle = await build.outputs.find(output => output.path.endsWith('.js'))!.text();
     styles = await Bun.file((await buildPlatformStyles(directory, join(directory, 'absent-app'))).cssPath).text();
+    styles += '\n' + (await Promise.all(build.outputs.filter(output => output.path.endsWith('.css')).map(output => output.text()))).join('\n');
   } finally { await rm(directory, { recursive: true, force: true }); }
   lease = await acquirePlaywrightTestBrowser();
 }, 60_000);
@@ -31,6 +29,57 @@ async function settled(page: Page) {
     && [...document.querySelectorAll('[data-row-id]')].every(row => row.getAnimations().length === 0));
 }
 async function ids(page: Page) { return page.locator('tr[data-row-id]:not([data-table-leaving])').evaluateAll(rows => rows.map(row => row.getAttribute('data-row-id'))); }
+
+for (const reduced of [false, true]) browserTest(`slow live server INSERT keeps retained rows visible throughout in ${reduced ? 'reduced' : 'normal'} motion`, async () => {
+  const page = await lease!.browser.newPage({ viewport: { width: 900, height: 700 }, reducedMotion: reduced ? 'reduce' : 'no-preference' });
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.setContent('<!doctype html><html class="dark"><body style="margin:0;padding:12px"><div id="root"></div></body></html>');
+    await page.addStyleTag({ content: styles }); await page.addScriptTag({ content: bundle });
+    await page.waitForFunction(() => window.__serverInsertPill.reads().length === 1);
+    await page.evaluate(rows => window.__serverInsertPill.accept(0, rows, true, 4), [row('r1', 4), row('r2', 3)]);
+    await page.locator('[data-row-id="r1"]').waitFor(); await settled(page);
+    await page.evaluate(() => window.__serverInsertPill.saveRows());
+    // Observe actual painted frames across a deliberately deferred transport,
+    // acceptance and row reflow, not just before/after DOM membership.
+    const observation = page.evaluate(async () => {
+      const start = performance.now(), retained = document.querySelector('[data-row-id="r1"]')!;
+      const failures = new Set<string>();
+      let acceptedAt: number | undefined;
+      while (performance.now() - start < 4_000) {
+        if (document.querySelector('[data-slot="data-table-skeleton-body"], [data-slot="data-table-skeleton-crossfade"]')) failures.add('whole-table placeholder');
+        const body = retained.closest('tbody')!;
+        if (!retained.isConnected) failures.add('retained row replaced');
+        if (getComputedStyle(body).display === 'none' || Number(getComputedStyle(body).opacity) < .99
+          || Number(getComputedStyle(retained).opacity) < .99 || body.getAttribute('aria-hidden') === 'true') failures.add('retained row hidden');
+        if (document.querySelector('[data-row-id="new"]')) acceptedAt ??= performance.now();
+        if (acceptedAt !== undefined && performance.now() - acceptedAt > 900) return [...failures];
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('Live acceptance observation did not complete');
+    });
+    await page.evaluate(() => window.__serverInsertPill.emit({ op: 'INSERT', rowId: 'new' }));
+    await page.waitForFunction(() => window.__serverInsertPill.reads().length === 2);
+    await page.getByRole('status').filter({ hasText: 'Updating records' }).waitFor();
+    await page.waitForTimeout(800);
+    expect(await page.locator('[data-row-id="r1"]').isVisible()).toBe(true);
+    expect(await page.locator('[data-slot="data-table-skeleton-body"]').count()).toBe(0);
+    await page.evaluate(rows => window.__serverInsertPill.accept(1, rows, true, 5), [row('new', 5), row('r1', 4)]);
+    await page.locator('[data-row-id="new"]').waitFor();
+    expect(await page.evaluate(() => window.__serverInsertPill.sameRow('r1'))).toBe(true);
+    if (!reduced) {
+      const poses = await page.locator('[data-row-id="new"]').evaluate(element => element.getAnimations().map(animation => ({
+        delay: animation.effect!.getTiming().delay, first: (animation.effect as KeyframeEffect).getKeyframes()[0],
+      })));
+      expect(poses.some(pose => pose.delay === 0 && Number(pose.first?.opacity) === 0)).toBe(true);
+    }
+    expect(await observation).toEqual([]);
+    await settled(page);
+    expect(await ids(page)).toEqual(['new', 'r1']);
+    expect(await page.getByRole('group', { name: 'Page 1 of 3', exact: true }).count()).toBe(1);
+    expect(await page.locator('table').count()).toBe(1); expect(errors).toEqual([]);
+  } finally { await page.close(); }
+}, 30_000);
 
 browserTest('actual later-page new-record pill counts authoritative off-page INSERT once and reveals a clean first-page result', async () => {
   const page = await lease!.browser.newPage({ viewport: { width: 900, height: 700 }, reducedMotion: 'no-preference' });

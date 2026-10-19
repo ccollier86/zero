@@ -30,6 +30,8 @@ const harness = {
   saveRows() { saved = [...document.querySelectorAll('tr[data-row-id]:not([data-table-leaving])')]; },
   sameRows() { const current = [...document.querySelectorAll('tr[data-row-id]:not([data-table-leaving])')];
     return current.length === saved.length && current.every((row, index) => row === saved[index]); },
+  sameRow(id: string) { return saved.find(row => row.getAttribute('data-row-id') === id)
+    === [...document.querySelectorAll('tr[data-row-id]')].find(row => row.getAttribute('data-row-id') === id); },
 };
 declare global { interface Window { __serverInsertPill: typeof harness } }
 window.__serverInsertPill = harness;

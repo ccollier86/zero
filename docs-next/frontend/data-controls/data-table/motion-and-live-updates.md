@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-motion-and-live-updates
 maturity: preview
-applies_to: ["2.6.0 working tree; not yet release-qualified"]
+applies_to: ["2.6.0 source; verify installed commit/archive"]
 modes: [browser, SSR, array, collection, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
+  commit: "3910810a11f81707344f098b2ace5bbb7cd32e9a"
   snapshot: dirty
-  date: "2026-10-13"
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -23,11 +23,12 @@ reviewed_against:
 
 [DataTable index](./index.md) · [Documentation index](../../../index.md)
 
-The current development table adds row reflow, page transitions, loading
+The table provides row reflow, page transitions, loading
 placeholders and held live arrivals to the existing Zero table. It retains
 Zero's colors, typography, borders, controls and light/dark tokens; it does not
-replace the theme with a demo stylesheet. These additions are working-tree
-behavior, not a claim that the published 2.6.0 archive already contains them.
+replace the theme with a demo stylesheet. Identify the installed implementation
+by commit/archive hash: the version number alone does not distinguish later
+2.6.0 fixes. This reference does not certify an app's custom source adapter.
 
 ## Ordinary Composition
 
@@ -96,7 +97,7 @@ The table's shared `DATA_TABLE_MOTION` export records the working defaults:
 | Fresh-row/value highlight | 2000ms |
 | Skeleton pulse / row offset | 1400ms / 70ms |
 | Toolbar search publication | 90ms; clearing is immediate |
-| Later request skeleton admission / minimum visible time | 300ms / 400ms |
+| Changed-query/page skeleton admission / minimum visible time | 300ms / 400ms |
 | Counter carry stagger / keyboard navigation factor | 30ms / 0.7 |
 
 Movement duration changes with distance, not the easing curve or displacement.
@@ -155,9 +156,20 @@ Caller-owned data must declare its initial pending state through the data source
 `isLoading`; a genuinely settled empty result followed by a live INSERT is not
 treated as a new initial load.
 
-During later queries the
-existing presentation remains while the new request starts; a longer request
-can switch to skeletons after 300ms. Once a later skeleton is visible, its
+During a same-query background refresh (including live INSERT/UPDATE/DELETE
+invalidation or a manual refresh), existing native rows stay visible and mounted
+for the entire request, regardless of its duration. No skeleton, whole-table fade
+or initial stagger is admitted. The accepted delta uses ordinary row reflow:
+retained rows move from their current positions, newly visible identities enter,
+and removed identities leave. A failed refresh leaves the acknowledged view in
+place with its error/retry UI; it does not replay the table's first load. Existing
+edit drafts and selection survive retained row identities. This behavior requires
+keeping the DataTable mounted and supplying stable row IDs; do not conditionally
+replace the table with a loader or key it by result count/revision in app code.
+
+For a replacement query or page, the existing presentation remains while the new
+request starts; a longer request can switch to skeletons after 300ms.
+Once that replacement skeleton is visible, its
 400ms minimum avoids a distracting blink. Skeletons are not rows, selectable
 entities or mutation targets. Custom `loadingState`/`emptyState` remain normal
 composition options; a pending acknowledged editor is kept mounted rather than
@@ -307,7 +319,8 @@ authorization/filter/response contract.
 
 Verify rapid query/page interruption, same-scope previous rows, authority/source
 replacement, keyboard input/editor precedence, reduced motion, narrow widths,
-stable row nodes, delayed receipts and held genuine INSERTs separately from
+stable row nodes, continuously visible retained rows through slow live refreshes,
+delayed receipts and held genuine INSERTs separately from
 snapshot/page joiners. The focused working-source cache/event/browser checks
 do not establish release/package qualification or custom-endpoint authority.
 

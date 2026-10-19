@@ -169,7 +169,8 @@ describe('DataTableSearch server contract', () => {
     expect(markup).toContain('role="searchbox"');
     expect(markup).toContain('aria-label="Search table"');
     expect(markup).toContain('placeholder="Search…"');
-    expect(markup).toContain('focus-within:ring-2');
+    expect(markup).toContain('focus-within:ring-1');
+    expect(markup).not.toContain('focus-within:ring-2');
     expect(markup).toContain('bg-card');
     expect(markup).toContain('text-card-foreground');
     expect(markup).toContain('placeholder:text-muted-foreground');

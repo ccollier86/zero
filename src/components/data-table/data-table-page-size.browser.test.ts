@@ -15,12 +15,10 @@ beforeAll(async () => {
   const directory = await mkdtemp(join(root, 'table-page-size-'));
   try {
     css = await Bun.file((await buildPlatformStyles(directory, `${directory}/absent-app`)).cssPath).text();
-    const output = join(directory, 'fixture.js');
-    const build = Bun.spawn([process.execPath, 'build', `${import.meta.dir}/data-table-page-size.browser-fixture.tsx`,
-      '--target=browser', '--format=iife', '--outfile', output], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
-    const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
-    if (code !== 0) throw new Error(`Page-size fixture build failed (${code}): ${stderr || stdout}`);
-    bundle = await Bun.file(output).text();
+    const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'data-table-page-size.browser-fixture.tsx')], target: 'browser', format: 'iife' });
+    if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
+    bundle = await build.outputs.find(output => output.path.endsWith('.js'))!.text();
+    css += '\n' + (await Promise.all(build.outputs.filter(output => output.path.endsWith('.css')).map(output => output.text()))).join('\n');
   } finally { await rm(directory, { recursive: true, force: true }); }
   lease = await acquirePlaywrightTestBrowser();
 }, 60_000);

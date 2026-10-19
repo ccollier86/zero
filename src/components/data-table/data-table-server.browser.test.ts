@@ -12,6 +12,7 @@ let lease: PlaywrightTestBrowserLease;
 let scratch: string;
 let bundle: string;
 let styles: string;
+let componentStyles: string;
 
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
@@ -21,10 +22,11 @@ beforeAll(async () => {
   scratch = await mkdtemp(join(root, 'full-table-browser-'));
   const entry = join(scratch, 'entry.tsx');
   await Bun.write(entry, `import ${JSON.stringify(join(import.meta.dir, 'data-table-browser-fixture.tsx'))};`);
-  const result = await Bun.build({ entrypoints: [entry], outdir: scratch, naming: 'bundle.js', target: 'browser', format: 'iife' });
+  const result = await Bun.build({ entrypoints: [entry], outdir: scratch, naming: 'bundle.[ext]', target: 'browser', format: 'iife' });
   if (!result.success) throw new Error(result.logs.map((log) => log.message).join('\n'));
   bundle = join(scratch, 'bundle.js');
   styles = (await buildPlatformStyles(scratch, join(scratch, 'missing-app'))).cssPath;
+  componentStyles = (await Promise.all(result.outputs.filter(output => output.path.endsWith('.css')).map(output => output.text()))).join('\n');
 }, 60_000);
 
 afterAll(async () => {
@@ -36,6 +38,7 @@ async function mount(): Promise<Page> {
   const page = await lease.browser.newPage();
   await page.setContent('<div id="root"></div>');
   await page.addStyleTag({ path: styles });
+  if (componentStyles) await page.addStyleTag({ content: componentStyles });
   await page.addScriptTag({ path: bundle });
   await page.waitForFunction(() => window.__fullTableHarness?.queries().length > 0);
   return page;

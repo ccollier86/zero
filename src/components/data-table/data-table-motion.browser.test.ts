@@ -130,12 +130,12 @@ browserTest('reduced-motion changes retire running leavers/moves and scope unmou
   } finally { await close(page); }
 }, 30_000);
 
-browserTest('refetch loader is delayed and preserves the native row and draft through its minimum visible interval', async () => {
+browserTest('changed-query loader is delayed and preserves the native row and draft through its minimum visible interval', async () => {
   const page = await open();
   try {
     await settled(page); await page.evaluate(() => window.__motionEngine.save('a'));
     await page.getByRole('textbox', { name: 'Name a', exact: true }).fill('Unsubmitted draft');
-    await page.evaluate(() => window.__motionEngine.change({ loading: true }));
+    await page.evaluate(() => window.__motionEngine.change({ loading: true, queryKey: 'replacement' }));
     await page.waitForTimeout(140); expect(await page.locator('[data-skeleton-row]').count()).toBe(0);
     await page.locator('[data-skeleton-row]').first().waitFor();
     expect(await page.evaluate(() => window.__motionEngine.same('a'))).toBe(true);
@@ -148,6 +148,37 @@ browserTest('refetch loader is delayed and preserves the native row and draft th
     expect(await page.evaluate(() => window.__motionEngine.same('a'))).toBe(true);
     expect(await page.getByRole('textbox', { name: 'Name a', exact: true }).inputValue()).toBe('Unsubmitted draft');
     await settled(page);
+  } finally { await close(page); }
+}, 30_000);
+
+browserTest('same-query background loading never hides acknowledged rows or replays initial motion on insertion', async () => {
+  const page = await open();
+  try {
+    await settled(page); await page.evaluate(() => window.__motionEngine.save('a'));
+    await page.getByRole('textbox', { name: 'Name a', exact: true }).fill('Unsubmitted draft');
+    await page.evaluate(() => window.__motionEngine.change({ loading: true }));
+    // Cross both the delayed-loader threshold and its minimum interval. A live
+    // refresh is not a new query, even if the network is slower than either.
+    await page.waitForTimeout(800);
+    expect(await page.locator('[data-skeleton-row]').count()).toBe(0);
+    expect(await page.getByRole('textbox', { name: 'Name a', exact: true }).isVisible()).toBe(true);
+    expect(await page.locator('[data-frame]').getAttribute('data-busy')).toBe('false');
+    await page.evaluate(() => window.__motionEngine.change({ loading: false, rows: [
+      { id: 'new', name: 'New arrival' }, { id: 'a', name: 'Record a' }, { id: 'b', name: 'Record b' }, { id: 'c', name: 'Record c' },
+    ] }));
+    await page.locator('[data-row-id="new"]').waitFor();
+    expect(await page.locator('[data-frame]').getAttribute('data-reveal')).toBe('false');
+    expect(await page.evaluate(() => window.__motionEngine.same('a'))).toBe(true);
+    const poses = await page.evaluate(() => {
+      const frames = (selector: string) => document.querySelector(selector)!.getAnimations()
+        .map(animation => (animation.effect as KeyframeEffect).getKeyframes());
+      return { retained: frames('[data-row-id="a"]'), inserted: frames('[data-row-id="new"]'), body: frames('tbody') };
+    });
+    expect(poses.retained.every(frames => Number(frames[0]!.opacity) === 1)).toBe(true);
+    expect(poses.inserted.some(frames => Number(frames[0]!.opacity) === 0)).toBe(true);
+    expect(poses.body).toEqual([]);
+    expect(await page.getByRole('textbox', { name: 'Name a', exact: true }).inputValue()).toBe('Unsubmitted draft');
+    await settled(page); expect(await ids(page)).toEqual(['new', 'a', 'b', 'c']);
   } finally { await close(page); }
 }, 30_000);
 

@@ -13,13 +13,11 @@ beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   const directory = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/table-initial-reveal-');
   try {
-    const output = join(directory, 'fixture.js');
-    const child = Bun.spawn([process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'data-table-initial-reveal.browser-fixture.tsx'),
-      '--target=browser', '--format=iife', '--outfile', output], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
-    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    if (code !== 0) throw new Error(`Initial reveal fixture build failed (${code}): ${stderr || stdout}`);
-    bundle = await Bun.file(output).text();
+    const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'data-table-initial-reveal.browser-fixture.tsx')], target: 'browser', format: 'iife' });
+    if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
+    bundle = await build.outputs.find(output => output.path.endsWith('.js'))!.text();
     styles = await Bun.file((await buildPlatformStyles(directory, join(directory, 'absent-app'))).cssPath).text();
+    styles += '\n' + (await Promise.all(build.outputs.filter(output => output.path.endsWith('.css')).map(output => output.text()))).join('\n');
   } finally { await rm(directory, { recursive: true, force: true }); }
   lease = await acquirePlaywrightTestBrowser();
 }, 60_000);

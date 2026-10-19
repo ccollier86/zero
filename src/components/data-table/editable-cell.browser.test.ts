@@ -35,7 +35,7 @@ beforeAll(async () => {
     entrypoints: [entrypoint],
     root: repositoryRoot,
     outdir: buildDir,
-    naming: 'bundle.js',
+    naming: 'bundle.[ext]',
     target: 'browser',
     format: 'iife',
     plugins: [{

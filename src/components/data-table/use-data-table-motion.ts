@@ -162,8 +162,11 @@ export function useDataTableMotion<T>(options: UseDataTableMotionOptions<T>) {
       // Query/size changes override an outstanding page, while page targets coalesce in-place.
       if (pending.kind === 'page' && targetChange === 'query') begin('query');
       else attemptAccept();
-    } else if (targetChange || options.loading) begin(targetChange === 'page' ? 'page' : 'query');
-    else if (!options.error && !dataTableMotionRowsMatch(current.current.rows, options.rows)) begin('query');
+    } else if (targetChange || options.loading && awaitingInitialResult.current) begin(targetChange === 'page' ? 'page' : 'query');
+    // A same-target refresh does not replace the acknowledged presentation.
+    // Keep its native rows, editors and opacity intact while the source loads;
+    // only the accepted row delta enters reflow, never the first-load loader.
+    else if (!options.loading && !options.error && !dataTableMotionRowsMatch(current.current.rows, options.rows)) begin('query');
   }, [options.rows, options.queryKey, options.pageIndex, options.pageSize, options.loading, options.error, options.enabled, options.allowSkeleton, options.navigationOrigin, options.onBusyChange]);
 
   const rowRef = React.useCallback((id: string): React.RefCallback<HTMLTableRowElement> => {
