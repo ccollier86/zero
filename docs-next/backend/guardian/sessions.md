@@ -13,10 +13,10 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
-  snapshot: clean
-  date: "2026-10-07"
-  evidence_level: implementation-verified
+  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  snapshot: dirty
+  date: "2026-10-19"
+  evidence_level: source-observed
 ---
 
 # Page, Access And Refresh Sessions
@@ -158,6 +158,34 @@ subscriptions, not merely redirect while retaining rows.
 
 Invalid refresh returns `INVALID_REFRESH_TOKEN` (401), with page-session clearing.
 Multi refresh with no longer available active membership fails closed.
+
+## Fabric Commit Admission
+
+In a managed Fabric runtime, asynchronous web-session issuance, refresh rotation,
+tenant-session replacement and page-session revocation reserve a fair exclusive
+authority turn before their narrow synchronous persistence step. Admission waits
+at most five seconds; password verification and token signing stay outside that
+turn. No SQLite transaction or write lock is held while waiting. Already admitted
+actor work can finish, but later shared work cannot continually overtake queued
+authentication.
+
+Admission is not a permission grant. Account eligibility, security generations,
+session/revocation state, tenant authority and configured completion gates are
+still validated at persistence. Refresh consumption uses the current commit-time
+clock, not the pre-wait timestamp. The final authority-revision and cross-process
+file fences remain in force. Direct synchronous control-plane callers retain
+their nonwaiting, fail-closed commit behavior.
+
+An exhausted queue/deadline or a genuine unresolved final-fence conflict can
+still return HTTP 409 `AUTH_COMMIT_CONFLICT` with a not-committed outcome. This
+is not a bad-password result. Do not bypass final checks or hide persistent
+contention behind unbounded login retries. See [error handling](./errors.md)
+and [Fabric concurrency](../fabric/concurrency.md).
+
+This correction needs no database migration, password reset, data rewrite or
+placement change. Hot placement remains supported. Update the framework archive
+and redeploy; identify same-version `2.6.0` archives by their source commit and
+archive hash, as described in the [upgrade guide](../../guides/upgrade.md).
 
 ## Restore Without Showing A Previous Scope
 

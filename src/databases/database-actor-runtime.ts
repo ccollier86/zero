@@ -13,6 +13,7 @@ import { validateDatabasePresenceProjectionPayload } from './database-presence-p
 import type { PresenceProjectionReceipt } from '../presence/presence-publication';
 import { createTenantDatabaseRef } from './database-binding-ref';
 import {
+  automationTotalChanges,
   establishHotAutomationClaimDurability,
 } from './database-actor-automation-durability';
 import {
@@ -595,6 +596,7 @@ export class DatabaseActorRuntime implements Disposable {
     }
 
     const execute = () => binding.automationSession!.execute(payload);
+    const before = operationKind === 'write' ? automationTotalChanges(binding) : null;
     let result: DatabaseActorAutomationOutboxResult;
     try {
       result = operationKind === 'write' && binding.authorityCommitGuard
@@ -609,7 +611,8 @@ export class DatabaseActorRuntime implements Disposable {
 
     if (payload.action === 'claim' && result !== null) {
       this.establishHotAutomationClaimDurability(binding);
-    } else if (operationKind === 'write') {
+    } else if (operationKind === 'write'
+      && (before === null || automationTotalChanges(binding) !== before)) {
       this.establishHotWriteDurability(binding, false);
     }
     return result;

@@ -334,6 +334,29 @@ describe('database actor automation integration', () => {
     }
   });
 
+  test('idle hot outbox polls do not publish unchanged database images', () => {
+    const actor = new DatabaseActorRuntime({ role: 'writer', realm: automatedRealm });
+    const fixture = bindActor(actor, automatedRealm, 'hot-idle-poll', hotPlacement('on-write'));
+    const snapshot = hotSnapshot(actor);
+    const original = snapshot.snapshotSyncDetailed.bind(snapshot);
+    let snapshots = 0;
+    snapshot.snapshotSyncDetailed = () => { snapshots++; return original(); };
+    try {
+      for (let poll = 0; poll < 4; poll++) {
+        expect(automationCall(actor, 'write', { databaseRef: fixture.databaseRef,
+          action: 'recover-expired', now: Date.now() })).toEqual({ requeued: 0, dead: 0 });
+        expect(automationCall(actor, 'write', { databaseRef: fixture.databaseRef,
+          action: 'claim', leaseOwner: 'worker:idle', now: Date.now(), leaseMs: 1_000 })).toBeNull();
+      }
+      expect(snapshots).toBe(0);
+      createOrder(actor, fixture.databaseRef, 'after-idle');
+      const beforeClaim = snapshots;
+      requireClaim(automationCall(actor, 'write', { databaseRef: fixture.databaseRef,
+        action: 'claim', leaseOwner: 'worker:active', now: Date.now() + 10_000, leaseMs: 1_000 }));
+      expect(snapshots).toBe(beforeClaim + 1);
+    } finally { snapshot.snapshotSyncDetailed = original; actor.close(); }
+  });
+
   test('quarantines a hot actor when claimed state cannot be durably published', () => {
     const actor = new DatabaseActorRuntime({ role: 'writer', realm: automatedRealm });
     const fixture = bindActor(

@@ -4,6 +4,16 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Fixed hot-mode login/refresh contention by giving asynchronous web-session
+  persistence a bounded, fair exclusive authority turn before entering SQLite.
+  Later actor work cannot starve queued auth; final eligibility, revocation,
+  generation, tenant and cross-process commit fences remain intact. Refresh
+  expiry is rechecked at the post-wait commit time. Genuine unresolved conflicts
+  retain the safe `AUTH_COMMIT_CONFLICT` fallback, without replaying requests.
+  Idle outbox polls skip unchanged hot durability images; real claims and private
+  writes keep their existing durability guarantees. Added populated hot-mode
+  managed HTTP login/refresh/read/outbox regressions. No database migration,
+  credential reset, placement change or new app setting is required.
 - Fixed native consent HTML's referrer policy so real Chromium approval/denial
   forms send the issuer Origin instead of `null`. HTML alone uses `same-origin`;
   code-bearing and other native redirects retain `no-referrer`. Exact Origin

@@ -8,14 +8,14 @@ visibility: internal
 system: database-automations
 feature: delivery
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.6.0 source baseline; not installed-package qualification"]
 modes: ["pinned application database", "Fabric realm database"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  snapshot: dirty
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -97,6 +97,16 @@ release before database/service disposal. Timeout/shutdown revokes scope-bound
 services and prevents stale terminal completion. External verification/calls
 can settle but cannot reactivate a closed execution. Cooperating external
 adapters should observe context.signal.
+
+In hot placement, a recovery or empty-claim poll that made no SQLite changes
+does not republish an unchanged database image. Detection includes private
+outbox SQL and triggers, not only tracked application sequence numbers. Recovery
+that only compacts terminal metadata still counts as a write. If change detection
+cannot establish a no-op, durability remains conservative. A successful claim
+always forces its durable image before dispatch; failed publication still fails
+closed. Active actor/outbox operations retain their shared authority leases.
+See [Fabric concurrency](../fabric/concurrency.md#guardian-authority-coordination)
+for bounded Guardian commit admission under load.
 
 Cancellation cannot undo a request a provider already accepted. Keep external
 idempotency regardless of the local lease and distinguish ambiguous outcomes

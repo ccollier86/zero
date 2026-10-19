@@ -8,14 +8,14 @@ visibility: internal
 system: fabric
 feature: concurrency
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased actor environment corrections"]
+applies_to: ["2.6.0 source; identify the installed archive by commit/hash"]
 modes: [single, multiple, shared-row, tenant-database, file, hot]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -49,6 +49,30 @@ concurrent writes inside the file.
 Hot placement owns a RAM-active image and durability policy. Do not treat a
 file WAL reader as a second connection to another process's private RAM image;
 placement-specific routing remains managed by Fabric.
+
+## Guardian Authority Coordination
+
+Actor work uses shared authority leases; authority-changing SYSTEM commits need
+exclusive ownership. Managed asynchronous web-session persistence reserves an
+exclusive turn through the existing bounded fair queue before entering SQLite.
+Once queued, later shared requests cannot barge ahead of it. Active shared work
+is not interrupted, and password hashing/signing does not occupy the exclusive
+turn. Session admission has an internal five-second waiting bound, not a new
+application configuration setting.
+
+The permit covers only the synchronous persistence callback. Authority revision,
+live session/eligibility checks and the nonwaiting cross-process final file fence
+still run. Direct synchronous commits cannot wait under SQLite locks and retain
+their fail-closed conflict path. The local queue is not distributed arbitration:
+an unresolved cross-process race or exhausted admission can still fail safely
+with a not-committed conflict. See [Guardian sessions](../guardian/sessions.md#fabric-commit-admission).
+
+Idle hot outbox recovery/claim polls no longer publish identical durability
+images when SQLite reports no changes. Actual private outbox writes, terminal
+compaction and successful claims retain their durability behavior; a real claim
+must be durably published before delivery even under periodic/final policies.
+This reduces avoidable lease occupancy without removing the lease from active
+writer work. See [outbox delivery](../database-automations/delivery.md).
 
 ## Bounded Work
 

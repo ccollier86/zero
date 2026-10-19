@@ -4,8 +4,9 @@
  *
  * Authority-table triggers advance one durable revision inside the same
  * SQLite transaction. The final commit guard acquires exclusive ownership
- * only when that revision changed. It never waits with SQLite locks held: a
- * concurrent tenant commit causes a retryable rollback instead.
+ * only when that revision changed. Async auth callers may reserve a fair turn
+ * before entering SQLite; direct synchronous callers still fail closed on a
+ * conflict. The final guard never waits with SQLite locks held.
  */
 
 import { readAuthAuthorityRevision } from '../auth/auth-authority-revision';
@@ -14,6 +15,8 @@ import {
   type ReactiveDB,
 } from '../sync/reactive-db';
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
+import type { AuthorityCommitLease } from './authority-commit-coordinator';
+import { registerReactiveDBCommitAdmission } from '../sync/reactive-db-commit-admission';
 import { DatabaseAuthorityCommitFileFence } from './database-authority-commit-file-fence';
 import { DatabaseError } from './database-error';
 
@@ -33,7 +36,11 @@ export function registerDatabaseAuthorityCommitGuard(
   }
   fileFence?.assertSystemDatabaseBinding(db);
 
-  return registerReactiveDBCommitGuard(db, {
+  let active = true;
+  // This ownership exists only on the current synchronous stack, never across
+  // signing, password hashing, network work or an awaited SQL transaction.
+  let admittedLease: AuthorityCommitLease | null = null;
+  const removeGuard = registerReactiveDBCommitGuard(db, {
     capture: () => {
       assertSystemFileCurrent(fileFence, 'not-started');
       return requireAuthorityRevision(
@@ -53,8 +60,9 @@ export function registerDatabaseAuthorityCommitGuard(
       );
       if (captured === currentRevision) return undefined;
 
-      const localLease = coordinator.tryAcquireExclusive();
-      if (!localLease) throw authorityConflict();
+      const admitted = admittedLease !== null && !admittedLease.released;
+      const localLease = admitted ? null : coordinator.tryAcquireExclusive();
+      if (!admitted && !localLease) throw authorityConflict();
       let fileLease: ReturnType<DatabaseAuthorityCommitFileFence['tryAcquireExclusive']> = null;
       try {
         if (fileFence) {
@@ -65,7 +73,7 @@ export function registerDatabaseAuthorityCommitGuard(
           try {
             fileLease?.release();
           } finally {
-            localLease.release();
+            localLease?.release();
           }
           return undefined;
         };
@@ -73,12 +81,38 @@ export function registerDatabaseAuthorityCommitGuard(
         try {
           fileLease?.release();
         } finally {
-          localLease.release();
+          localLease?.release();
         }
         throw error;
       }
     },
   });
+  let removeAdmission: () => void;
+  try {
+    removeAdmission = registerReactiveDBCommitAdmission(db, async (operation, options) => {
+      let lease: AuthorityCommitLease;
+      try {
+        lease = await coordinator.acquireExclusive({ ...options, timeoutMs: options.timeoutMs ?? 5_000 });
+      } catch (error) {
+        if (error instanceof DatabaseError
+          && (error.code === 'DATABASE_QUEUE_TIMEOUT' || error.code === 'DATABASE_BACKPRESSURE')) {
+          throw authorityConflict();
+        }
+        throw error;
+      }
+      try {
+        if (!active) throw new DatabaseError('DATABASE_CLOSED', 'Authority commit admission is closed.');
+        if (options.signal?.aborted) throw authorityConflict();
+        admittedLease = lease;
+        try { return operation(); }
+        finally { admittedLease = null; }
+      } finally { lease.release(); }
+    });
+  } catch (error) {
+    removeGuard();
+    throw error;
+  }
+  return () => { active = false; removeAdmission(); removeGuard(); };
 }
 
 function assertSystemFileCurrent(

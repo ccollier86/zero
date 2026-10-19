@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: safe-errors-security-and-observability
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0 source; identify the installed archive by commit/hash"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "61fd74faae7a6641fa03822ab0843f49cec1295b"
+  snapshot: dirty
+  date: "2026-10-19"
   evidence_level: source-observed
 ---
 
@@ -56,6 +56,14 @@ their admission.
 Do not automatically retry an operation whose outcome may already have
 committed. A not-committed conflict permits a fresh-authority retry; an
 accepted write with a failed follow-up callback is a different outcome.
+
+Managed asynchronous session commits use bounded, fair Fabric admission before
+entering SQLite, instead of immediately failing against a busy actor's shared
+authority lease. `AUTH_COMMIT_CONFLICT` remains the safe fallback for admission
+pressure/timeouts or a real unresolved final-fence race. It does not mean that
+password verification failed or that credentials need resetting. Keep the app's
+database placement and security checks intact; upgrade Zero rather than adding
+unbounded frontend retries. See [session admission](./sessions.md#fabric-commit-admission).
 
 ## Common User Decisions
 

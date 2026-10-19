@@ -3,6 +3,16 @@
 import type { DatabaseActorWriterBinding } from './database-actor-binding';
 import { DatabaseError } from './database-error';
 
+/** Includes private outbox writes/triggers, which do not advance tracked seq. */
+export function automationTotalChanges(binding: DatabaseActorWriterBinding): number | null {
+  const statement = binding.runtime.db.prepare('SELECT total_changes() AS total');
+  try {
+    const value = (statement.get() as { total: unknown }).total;
+    // An unrepresentable counter is not evidence that a write was a no-op.
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  } finally { statement.finalize(); }
+}
+
 /**
  * Publish a complete synchronous hot image before a claimed command leaves
  * the actor. This intentionally overrides periodic/final acknowledgement

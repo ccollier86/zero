@@ -39,6 +39,8 @@ export interface PageSessionTokenResult {
 }
 
 export interface AuthWebSessionTokenServiceOptions {
+  /** Reserve a fair turn before the narrow synchronous persistence callback. */
+  runCommit<T>(operation: () => T): Promise<T>;
   readonly codec: AuthTokenCodec;
   readonly authSessionService: AuthSessionService;
   readonly refreshTokenTTLMs: number;
@@ -127,16 +129,19 @@ export class AuthWebSessionTokenService {
     const claims = await this.verifyPageSessionProof(token);
     this.options.assertCurrentProfile();
     const userStore = this.options.getUserStore();
-    const proof = claims ? this.resolvePageSessionProof(claims) : null;
-    if (!proof || !userStore) return false;
-    this.options.authSessionService.revoke(
-      proof.parent.session.sessionId,
-      'page-session-replaced',
-      Date.now(),
-      { provenance: 'authenticated-request', request: capturedAuditRequest },
-    );
-    if (proof.legacyRecord) userStore.revokeRefreshToken(proof.legacyRecord.tokenId);
-    return true;
+    if (!claims || !userStore) return false;
+    return this.options.runCommit(() => {
+      const proof = this.resolvePageSessionProof(claims);
+      if (!proof) return false;
+      this.options.authSessionService.revoke(
+        proof.parent.session.sessionId,
+        'page-session-replaced',
+        Date.now(),
+        { provenance: 'authenticated-request', request: capturedAuditRequest },
+      );
+      if (proof.legacyRecord) userStore.revokeRefreshToken(proof.legacyRecord.tokenId);
+      return true;
+    });
   }
 
   async issueTokenPair(
@@ -174,7 +179,7 @@ export class AuthWebSessionTokenService {
     // A consumed token is a replay. Forced-password families were already
     // invalidated, and UserStore avoids a redundant generation bump there.
     if (record.revokedAt !== null) {
-      userStore.invalidateRefreshTokenReplay(record.userId);
+      await this.options.runCommit(() => userStore.invalidateRefreshTokenReplay(record.userId));
       return null;
     }
     if (record.expiresAt < Date.now()) return null;
@@ -198,7 +203,7 @@ export class AuthWebSessionTokenService {
     const refreshToken = crypto.randomUUID();
     const createdAt = Date.now();
     const expiresAt = createdAt + this.options.refreshTokenTTLMs;
-    const rotated = this.options.authSessionService.withActiveWebSession(
+    const rotated = await this.options.runCommit(() => this.options.authSessionService.withActiveWebSession(
       {
         sessionId: session.sessionId,
         userId: user.userId,
@@ -212,11 +217,11 @@ export class AuthWebSessionTokenService {
           tokenHash: hashToken(refreshToken),
           expiresAt,
           createdAt,
-        }, authGeneration, createdAt);
+        }, authGeneration, Date.now());
         this.options.assertFullSessionAdmission?.(user.userId);
         return value;
       },
-    );
+    ));
     if (!rotated || rotated.value !== 'rotated') return null;
     return { accessToken, refreshToken };
   }
@@ -266,7 +271,7 @@ export class AuthWebSessionTokenService {
     const initial = userStore.getRefreshTokenByHash(hashToken(rawToken));
     if (!initial) return null;
     if (initial.revokedAt !== null) {
-      userStore.invalidateRefreshTokenReplay(initial.userId);
+      await this.options.runCommit(() => userStore.invalidateRefreshTokenReplay(initial.userId));
       return null;
     }
     if (initial.expiresAt <= Date.now()) return null;
@@ -291,7 +296,7 @@ export class AuthWebSessionTokenService {
       replacement,
     );
     const refreshToken = crypto.randomUUID();
-    const rotated = this.requireUserStore().replaceRefreshSessionAtomically(
+    const rotated = await this.options.runCommit(() => this.requireUserStore().replaceRefreshSessionAtomically(
       current,
       {
         tokenId: crypto.randomUUID(),
@@ -331,8 +336,8 @@ export class AuthWebSessionTokenService {
         this.options.assertFullSessionAdmission?.(user.userId);
         return true;
       },
-      createdAt,
-    );
+      Date.now(),
+    ));
     return rotated === 'rotated'
       ? {
           user: cloneWebSessionUser(user),
@@ -426,7 +431,7 @@ export class AuthWebSessionTokenService {
     const refreshToken = crypto.randomUUID();
     const refreshHash = hashToken(refreshToken);
     const tokenId = crypto.randomUUID();
-    const stored = this.options.authSessionService.persistPreparedWebSession(
+    const stored = await this.options.runCommit(() => this.options.authSessionService.persistPreparedWebSession(
       session,
       () => {
         const accepted = this.requireUserStore().storeRefreshTokenIfCurrent(
@@ -444,7 +449,7 @@ export class AuthWebSessionTokenService {
           emitCode: this.options.emitCode,
         }) : true;
       },
-    );
+    ));
     if (!stored) return null;
     return { accessToken, refreshToken };
   }

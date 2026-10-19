@@ -1,5 +1,6 @@
 import type { JWK } from 'jose';
 import type { UserStore } from './user-store';
+import { withReactiveDBCommitAdmission } from '../sync/reactive-db-commit-admission';
 import type {
   TokenServiceConfig,
   TokenPair,
@@ -138,6 +139,10 @@ export class TokenService {
         config.emitCode,
       );
     this.webSessions = new AuthWebSessionTokenService({
+      runCommit: operation => withReactiveDBCommitAdmission(this.db, () => {
+        this.assertRuntimeProfileCurrent();
+        return operation();
+      }),
       codec: this.codec,
       authSessionService: this.authSessionService,
       refreshTokenTTLMs,

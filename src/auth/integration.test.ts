@@ -578,7 +578,7 @@ describe('Auth Plugin — Logout', () => {
 // ─── Me Endpoint ──────────────────────────────────────────────────────────
 
 describe('Auth Plugin — Page Session Cookie', () => {
-  test('login, refresh, and logout synchronize a refresh-bound HttpOnly cookie', async () => {
+  test('login, refresh, and logout synchronize a parent-bound HttpOnly cookie', async () => {
     await post('/auth/register', {
       username: 'page-cookie-flow',
       email: 'page-cookie-flow@test.com',
@@ -630,7 +630,11 @@ describe('Auth Plugin — Page Session Cookie', () => {
 
     expect(refreshResponse.status).toBe(200);
     expect(refreshedCookie).not.toBe(loginCookie);
-    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(loginPageToken)).toBeNull();
+    // Refresh replaces its one-use child, not the stable page-session parent.
+    // Concurrent navigation with the previous signed page proof stays valid.
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(loginPageToken)).toMatchObject({
+      userId: login.user.userId,
+    });
     expect(await authRuntime.getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toMatchObject({
       userId: login.user.userId,
     });
@@ -648,6 +652,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
     expect(logoutResponse.status).toBe(200);
     expect(logoutSetCookie).toContain(`${authRuntime.getTokenService()!.pageSessionCookieName}=`);
     expect(logoutSetCookie).toContain('Max-Age=0');
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(loginPageToken)).toBeNull();
     expect(await authRuntime.getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toBeNull();
   });
 
