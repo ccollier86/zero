@@ -165,7 +165,7 @@ export async function bootstrapAuthRuntimeServices(
   services.propertyService = new UserPropertyService(authConfig);
   services.actionTokenService = new AuthActionTokenService(
     services.userStore,
-    authConfig.accountEmails.actionTokenTTL,
+    authConfig.accountEmails,
     authConfig.accountEmails.requestCooldown,
     input.resolvePlatformTokenService(),
     emitCode,

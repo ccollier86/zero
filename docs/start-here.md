@@ -892,7 +892,9 @@ Common variables:
 | `AUTH_TOTP_ENCRYPTION_KEY` | Encryption key for self-hosted authenticator/TOTP secrets at rest. |
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
-| `AUTH_ACTION_TOKEN_TTL` | Setup/reset/verification token lifetime. |
+| `AUTH_ACTION_TOKEN_TTL` | Shared fallback for setup/reset/verification token lifetime. |
+| `AUTH_ACCOUNT_SETUP_TOKEN_TTL` | First-password/account-setup lifetime, independently configured; starter `.env.example` uses `48h`. |
+| `AUTH_PASSWORD_RESET_TOKEN_TTL` | User/admin password-reset lifetime, independently configured; starter `.env.example` uses `1h`. |
 | `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown for active setup/reset/verification emails per user/type. |
 | `AUTH_MANUAL_PASSWORD_RESET` | `false` disables direct admin password replacement. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |

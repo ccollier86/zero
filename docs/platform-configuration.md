@@ -162,6 +162,8 @@ createApp({
       passwordReset: Boolean(Bun.env.RESEND_API_KEY),
       manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
       actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+      accountSetupTokenTTL: Bun.env.AUTH_ACCOUNT_SETUP_TOKEN_TTL ?? Bun.env.AUTH_ACTION_TOKEN_TTL ?? '48h',
+      passwordResetTokenTTL: Bun.env.AUTH_PASSWORD_RESET_TOKEN_TTL ?? Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
       requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
     branding: {
@@ -1435,7 +1437,9 @@ Relevant environment variables are shown in `.env.example`:
 | `AUTH_MFA_POLICY` | MFA policy: `optional`, `required`, or `admin-required`. |
 | `AUTH_MFA_METHODS` | Comma list such as `email,totp`. |
 | `AUTH_TOTP_ENCRYPTION_KEY` | Encryption key for self-hosted authenticator/TOTP secrets at rest. Required once TOTP enrollment is enabled. |
-| `AUTH_ACTION_TOKEN_TTL` | Expiration for setup/reset/verification action tokens. |
+| `AUTH_ACTION_TOKEN_TTL` | Shared fallback expiration for setup/reset/verification action tokens. |
+| `AUTH_ACCOUNT_SETUP_TOKEN_TTL` | First-password/account-setup link expiration; the example config defaults to `48h` when neither this nor the shared fallback is set. |
+| `AUTH_PASSWORD_RESET_TOKEN_TTL` | User/admin password-reset link expiration; the example config defaults to `1h` when neither this nor the shared fallback is set. |
 | `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown between active setup/reset/verification emails for the same user and token type. |
 | `AUTH_MANUAL_PASSWORD_RESET` | Set to `false` to disable direct admin password replacement and require email-driven reset flows. |
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
@@ -1482,8 +1486,12 @@ Relevant environment variables are shown in `.env.example`:
 
 Generic platform action/resume tokens do not require environment variables.
 They are mounted by `createApp()` and use per-call TTL/cooldown options. Auth
-setup/reset email flows still read `AUTH_ACTION_TOKEN_TTL` and
-`AUTH_ACCOUNT_EMAIL_COOLDOWN` for their action-token defaults.
+email lifetimes are explicit `auth.accountEmails` config. The starter configs
+bind `AUTH_ACCOUNT_SETUP_TOKEN_TTL`, `AUTH_PASSWORD_RESET_TOKEN_TTL`, the shared
+fallback `AUTH_ACTION_TOKEN_TTL`, and `AUTH_ACCOUNT_EMAIL_COOLDOWN`; the auth
+resolver does not implicitly read those environment variables. Per-purpose
+overrides change newly issued tokens and their template `expiresAt` only;
+existing links keep their original expiry without a database migration.
 
 The current auth admin UI reads the admin-protected normalized response from
 `GET /auth/admin/config`; it does not load the source module. The Doctor CLI

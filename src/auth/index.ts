@@ -382,6 +382,7 @@ export type {
   TenantSelectionCompletion,
 } from './auth-tenant-session-types';
 export { AuthActionTokenService } from './action-token-service';
+export type { AuthActionTokenLifetimes } from './action-token-service';
 export { AccountEmailService } from './account-email-service';
 export { MfaMethodStore } from './mfa-method-store';
 export { MfaService } from './mfa-service';

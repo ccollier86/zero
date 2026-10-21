@@ -1077,6 +1077,25 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'auth.account_email_cooldown.invalid')).toBe(true);
   });
 
+  test('checks independent setup/reset lifetimes at their exact config paths', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, email: false,
+      auth: { accountEmails: {
+        actionTokenTTL: '1h', accountSetupTokenTTL: 'tomorrow', passwordResetTokenTTL: '9007199254740991d',
+      } },
+    }, { env: {} });
+    expect(report.ok).toBe(false);
+    expect(report.findings.filter(finding => finding.code === 'auth.action_token_ttl.invalid')
+      .map(finding => finding.path)).toEqual([
+        'auth.accountEmails.accountSetupTokenTTL', 'auth.accountEmails.passwordResetTokenTTL',
+      ]);
+    const valid = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, email: false,
+      auth: { accountEmails: { accountSetupTokenTTL: '48h', passwordResetTokenTTL: '1h' } },
+    }, { env: {} });
+    expect(hasFinding(valid, 'auth.action_token_ttl.invalid')).toBe(false);
+  });
+
   test('warns about file DB migration and lazy-table index guidance', () => {
     const report = runPlatformDoctor({
       db: { mode: './data/app.db' },

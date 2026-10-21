@@ -34,6 +34,10 @@ export interface AuthAdminConfig {
     emailVerification?: boolean;
     manualPasswordReset: boolean;
     actionTokenTTL: string;
+    /** Present on current servers; absent on older servers with a shared TTL. */
+    accountSetupTokenTTL?: string;
+    /** Covers user-initiated and administrator-initiated password resets. */
+    passwordResetTokenTTL?: string;
     requestCooldown: string;
     resetPath: string;
     setupPath: string;

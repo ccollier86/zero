@@ -13,6 +13,7 @@ import type {
 } from '../auth/types';
 import type { EmailConfig } from '../email/types';
 import type { ResolvedConfig } from '../frontend/server/types';
+import { parseTokenTTL } from '../tokens/token-utils';
 import { authPublicPathFindings } from './auth-public-path-checks';
 import {
   addPlatformDoctorFinding as addFinding,
@@ -91,13 +92,15 @@ export function checkAuthAndEmail(
     });
   }
 
-  if (!isDuration(authConfig.accountEmails.actionTokenTTL)) {
-    findings.push({
-      severity: 'error',
-      code: 'auth.action_token_ttl.invalid',
-      path: 'auth.accountEmails.actionTokenTTL',
-      message: 'auth.accountEmails.actionTokenTTL must use a duration like 15m, 1h, or 7d.',
-    });
+  for (const field of ['actionTokenTTL', 'accountSetupTokenTTL', 'passwordResetTokenTTL'] as const) {
+    if (!isDuration(authConfig.accountEmails[field])) {
+      findings.push({
+        severity: 'error',
+        code: 'auth.action_token_ttl.invalid',
+        path: `auth.accountEmails.${field}`,
+        message: `auth.accountEmails.${field} must use a duration like 15m, 1h, or 7d.`,
+      });
+    }
   }
   if (!isDuration(authConfig.accountEmails.requestCooldown)) {
     findings.push({
@@ -273,5 +276,10 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
 }
 
 function isDuration(value: string): boolean {
-  return /^\d+(s|m|h|d)$/.test(value);
+  try {
+    parseTokenTTL(value);
+    return true;
+  } catch {
+    return false;
+  }
 }

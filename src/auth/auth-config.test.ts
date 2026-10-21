@@ -923,6 +923,36 @@ describe('resolveAuthBehaviorConfig', () => {
     expect(configured.account.allowAdminMarkEmailVerified).toBe(true);
   });
 
+  test('resolves setup and reset lifetimes independently with the shared TTL as fallback', () => {
+    expect(resolveAuthBehaviorConfig().accountEmails).toMatchObject({
+      actionTokenTTL: '1h', accountSetupTokenTTL: '1h', passwordResetTokenTTL: '1h',
+    });
+    expect(resolveAuthBehaviorConfig({
+      accountEmails: { actionTokenTTL: '2h' },
+    }).accountEmails).toMatchObject({
+      actionTokenTTL: '2h', accountSetupTokenTTL: '2h', passwordResetTokenTTL: '2h',
+    });
+    expect(resolveAuthBehaviorConfig({
+      accountEmails: { accountSetupTokenTTL: '48h', passwordResetTokenTTL: '1h' },
+    }).accountEmails).toMatchObject({
+      actionTokenTTL: '1h', accountSetupTokenTTL: '48h', passwordResetTokenTTL: '1h',
+    });
+    expect(resolveAuthBehaviorConfig({
+      accountEmails: { actionTokenTTL: '3h', accountSetupTokenTTL: '48h' },
+    }).accountEmails).toMatchObject({ accountSetupTokenTTL: '48h', passwordResetTokenTTL: '3h' });
+    expect(resolveAuthBehaviorConfig({
+      accountEmails: { actionTokenTTL: '3h', passwordResetTokenTTL: '30m' },
+    }).accountEmails).toMatchObject({ accountSetupTokenTTL: '3h', passwordResetTokenTTL: '30m' });
+  });
+
+  test('rejects non-string per-purpose email lifetimes', () => {
+    for (const field of ['accountSetupTokenTTL', 'passwordResetTokenTTL']) {
+      expect(() => resolveAuthBehaviorConfig({
+        accountEmails: { [field]: 48 } as never,
+      })).toThrow(`Account email config ${field} must be a string`);
+    }
+  });
+
   test('does not advertise unimplemented password-change notices', () => {
     const configured = resolveAuthBehaviorConfig({
       accountEmails: { passwordChangedNotice: true },

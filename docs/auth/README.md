@@ -937,6 +937,8 @@ createApp({
       passwordReset: Boolean(Bun.env.RESEND_API_KEY),
       manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
       actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+      accountSetupTokenTTL: Bun.env.AUTH_ACCOUNT_SETUP_TOKEN_TTL ?? Bun.env.AUTH_ACTION_TOKEN_TTL ?? '48h',
+      passwordResetTokenTTL: Bun.env.AUTH_PASSWORD_RESET_TOKEN_TTL ?? Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
       requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
     branding: {
@@ -1330,10 +1332,19 @@ cleans its token, and returns the job to pending without spending an attempt
 before the database lifecycle is released.
 
 Reset/setup/verify tokens are opaque, stored only as hashes, bound to the
-account's exact security generation, expire according to
-`auth.accountEmails.actionTokenTTL`, are rate-limited by
+account's exact security generation, are rate-limited by
 `auth.accountEmails.requestCooldown`, and are consumed once. A later reset
-cycle cannot resurrect an older link. Tokens issued by a pre-hardening Zero
+cycle cannot resurrect an older link. Setup links expire according to
+`auth.accountEmails.accountSetupTokenTTL`; user/admin reset links use
+`auth.accountEmails.passwordResetTokenTTL`. Each setting falls back to
+`auth.accountEmails.actionTokenTTL` (default `1h`) when omitted; verification
+links continue using the shared fallback. Set setup to `48h` and reset to `1h`
+to allow two days for first-password setup without extending password resets.
+The real token expiry and email-template `expiresAt` match. Changing config
+affects newly issued links after restart/recomposition, not previously issued
+links, and needs no database migration. Organization-membership invitations
+have their own `auth.tenancy.onboarding.invitations.defaultTTL` policy.
+Tokens issued by a pre-hardening Zero
 version do not have the required identity/generation binding; resend any
 pending setup, reset, or verification email after deploying the upgrade.
 
@@ -1463,6 +1474,7 @@ The root `.env.example` documents the common auth/email environment variables:
 `APP_NAME`, `APP_PUBLIC_URL`, `APP_LOGO_URL`, `APP_SUPPORT_EMAIL`,
 `AUTH_EMAIL_BRAND_COLOR`, `EMAIL_FROM`, `EMAIL_REPLY_TO`, `RESEND_API_KEY`,
 `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `AUTH_ACTION_TOKEN_TTL`,
+`AUTH_ACCOUNT_SETUP_TOKEN_TTL`, `AUTH_PASSWORD_RESET_TOKEN_TTL`,
 `AUTH_BOOTSTRAP_SECRET`,
 `AUTH_ACCOUNT_EMAIL_COOLDOWN`, `AUTH_MANUAL_PASSWORD_RESET`,
 `AUTH_REQUIRE_EMAIL_VERIFICATION`, `AUTH_EMAIL_VERIFICATION_PATH`,

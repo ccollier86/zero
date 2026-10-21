@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: reset-setup-and-password-change
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "9aae9a686524ef1bffc1561ee9326eae83efc4e7"
+  snapshot: dirty
+  date: "2026-10-21"
   evidence_level: source-observed
 ---
 
@@ -27,6 +27,39 @@ Guardian distinguishes forgotten-password recovery, administrator-created
 first-password setup and a signed-in user's password change. Each has its own
 proof and token lifecycle; an API key or page cookie does not substitute for
 that proof.
+
+## Configure Setup And Reset Link Expiration
+
+Account setup and password recovery can use different lifetimes:
+
+```ts
+auth: {
+  accountEmails: {
+    accountSetupTokenTTL: '48h',
+    passwordResetTokenTTL: '1h',
+  },
+}
+```
+
+`accountSetupTokenTTL` controls `account_setup` proofs issued for first-password
+setup, including administrator resends. `passwordResetTokenTTL` controls both
+`password_reset` and `admin_password_reset`. Each omitted setting falls back to
+the existing `actionTokenTTL` (default `1h`); existing configurations therefore
+retain their lifetimes. Email/contact-verification proofs still use that shared
+fallback, not either setup/reset override.
+
+Lifetimes use integer duration strings ending in `s`, `m`, `h` or `d`. The
+issuer applies the selected duration when creating the token, and templates
+receive the resulting `expiresAt`. The proof is invalid at its exact expiry;
+the page and final password submission both validate it. A new configuration
+applies after app restart/recomposition, only to newly issued tokens. Existing
+links are not extended or shortened, and no database migration is needed.
+Doctor checks the independent settings at their exact config paths.
+
+This first-password invitation is not an organization-membership invitation.
+Organization admission has its own
+`auth.tenancy.onboarding.invitations.defaultTTL`; see the
+[configuration reference](./configuration.md#invitations-and-join-requests).
 
 ## Forgotten Password
 
@@ -41,7 +74,7 @@ public response. A 200 response means the request was accepted for public
 handling, not that an email provider delivered a message.
 
 Defaults: `auth.accountEmails.passwordReset: true`,
-`actionTokenTTL: '1h'`, `requestCooldown: '5m'`,
+`passwordResetTokenTTL` falls back to `actionTokenTTL: '1h'`, `requestCooldown: '5m'`,
 `resetPath: '/reset-password'`. Delivery requires the app's email service.
 Disabling reset email returns `PASSWORD_RESET_DISABLED` (403).
 

@@ -58,6 +58,8 @@ export const config = defineZeroConfig({
           passwordReset: hasEmail,
           manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
           actionTokenTTL: readEnv('AUTH_ACTION_TOKEN_TTL') ?? '1h',
+          accountSetupTokenTTL: readEnv('AUTH_ACCOUNT_SETUP_TOKEN_TTL') ?? readEnv('AUTH_ACTION_TOKEN_TTL') ?? '48h',
+          passwordResetTokenTTL: readEnv('AUTH_PASSWORD_RESET_TOKEN_TTL') ?? readEnv('AUTH_ACTION_TOKEN_TTL') ?? '1h',
           requestCooldown: readEnv('AUTH_ACCOUNT_EMAIL_COOLDOWN') ?? '5m',
         },
       }

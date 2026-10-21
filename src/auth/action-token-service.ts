@@ -9,7 +9,7 @@
 
 import type { UserStore } from './user-store';
 import { AuthError } from './types';
-import type { AuthActionTokenRecord, AuthActionTokenType, UserRecord } from './types';
+import type { AuthAccountEmailConfig, AuthActionTokenRecord, AuthActionTokenType, UserRecord } from './types';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import {
@@ -37,22 +37,38 @@ export interface AuthActionTokenInspection {
   user: UserRecord;
 }
 
+/** Trusted startup policy; callers cannot override a lifetime when minting a token. */
+export type AuthActionTokenLifetimes = Pick<
+  AuthAccountEmailConfig,
+  'actionTokenTTL' | 'accountSetupTokenTTL' | 'passwordResetTokenTTL'
+>;
+
 /** Framework-neutral service for auth action tokens. */
 export class AuthActionTokenService {
   private readonly ttl: string;
+  private readonly ttlByType: Readonly<Partial<Record<AuthActionTokenType, string>>>;
   private readonly requestCooldown: string;
   private readonly cooldownMs: number;
 
   constructor(
     private readonly store: UserStore,
-    ttl: string,
+    ttl: string | AuthActionTokenLifetimes,
     requestCooldown = '5m',
     private readonly platformTokens: PlatformTokenService | null = getPlatformTokenService(),
     private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
-    this.ttl = ttl;
+    const lifetimes = typeof ttl === 'string' ? { actionTokenTTL: ttl } : ttl;
+    this.ttl = lifetimes.actionTokenTTL ?? '1h';
+    this.ttlByType = Object.freeze({
+      account_setup: lifetimes.accountSetupTokenTTL ?? this.ttl,
+      password_reset: lifetimes.passwordResetTokenTTL ?? this.ttl,
+      admin_password_reset: lifetimes.passwordResetTokenTTL ?? this.ttl,
+    });
     this.requestCooldown = requestCooldown;
-    parseTokenTTL(ttl, 'auth action token TTL');
+    parseTokenTTL(this.ttl, 'auth action token TTL');
+    for (const [type, lifetime] of Object.entries(this.ttlByType)) {
+      parseTokenTTL(lifetime, `auth ${type} token TTL`);
+    }
     this.cooldownMs = parseTokenTTL(requestCooldown, 'auth action token cooldown');
     if (this.platformTokens
       && this.platformTokens.getTransactionDomain() !== this.store.getTransactionDomain()) {
@@ -88,6 +104,7 @@ export class AuthActionTokenService {
   }): CreatedAuthActionToken {
     const user = this.store.getUserById(params.userId);
     if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+    const ttl = this.ttlByType[params.type] ?? this.ttl;
     const metadata = bindActionTokenIdentity(
       user,
       this.store.getAuthGeneration(user.userId),
@@ -101,7 +118,7 @@ export class AuthActionTokenService {
         created = this.platformTokens.createActionToken({
           purpose: params.type,
           subject: { type: 'user', id: params.userId },
-          ttl: this.ttl,
+          ttl,
           cooldown: params.skipCooldown ? false : this.requestCooldown,
           createdBy: params.createdBy,
           metadata,
@@ -135,7 +152,7 @@ export class AuthActionTokenService {
       userId: params.userId,
       type: params.type,
       tokenHash: hashToken(rawToken),
-      expiresAt: tokenExpiryAt(now, this.ttl, 'auth action token TTL'),
+      expiresAt: tokenExpiryAt(now, ttl, 'auth action token TTL'),
       createdAt: now,
       createdBy: params.createdBy,
       metadata,

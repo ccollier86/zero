@@ -13,9 +13,9 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
-  date: "2026-10-07"
+  commit: "9aae9a686524ef1bffc1561ee9326eae83efc4e7"
+  snapshot: dirty
+  date: "2026-10-21"
   evidence_level: source-observed
 ---
 
@@ -208,13 +208,41 @@ See [password lifecycle](./password-recovery.md) and
 | passwordReset | Boolean; true. | User/admin reset email capability; delivery readiness still required. |
 | passwordChangedNotice | Boolean input, resolves false. | Reserved/deprecated; no committed-change notification sender. |
 | manualPasswordReset | Boolean; true. | Direct administrator password replacement. |
-| actionTokenTTL | Duration string; 1h. | One-time account action proof. |
+| actionTokenTTL | Duration string; 1h. | Shared fallback for one-time account action proofs; still controls email/contact verification. |
+| accountSetupTokenTTL | Duration string; actionTokenTTL. | First-password/account-setup links, including administrator resends. |
+| passwordResetTokenTTL | Duration string; actionTokenTTL. | Both public forgotten-password and administrator password-reset links. |
 | requestCooldown | Duration string; 5m. | Same-user/type active action-email cooldown. |
 | resetPath | String; /reset-password. | Public reset page appended to resolved branding/app public URL. |
 | setupPath | String; /setup-password. | Public setup page. |
 
 Account path normalization trims, falls back when empty and prefixes a slash.
 That does not replace managed safe-local-path/public-route validation.
+
+For a 48-hour account-setup invitation and a 1-hour password reset, configure:
+
+```ts
+auth: {
+  accountEmails: {
+    accountSetupTokenTTL: '48h',
+    passwordResetTokenTTL: '1h',
+  },
+}
+```
+
+These are independent overrides, not presentation-only email settings. The
+token issuer persists the selected expiry, and default/custom email templates
+receive that same `expiresAt`. Omitting an override preserves the existing
+`actionTokenTTL` policy (1 hour when that fallback is also omitted). Existing
+links keep their originally issued expiry; no database migration is required.
+Restart/recompose the app to apply changed configuration to newly issued links.
+
+The root and package-mode example configs explicitly bind
+`AUTH_ACCOUNT_SETUP_TOKEN_TTL` and `AUTH_PASSWORD_RESET_TOKEN_TTL`, falling back
+to `AUTH_ACTION_TOKEN_TTL`, then 48 hours/1 hour respectively. These environment
+names are app-config conventions, not implicit bindings in the auth resolver.
+An organization-membership invitation is a separate onboarding capability;
+its TTL is `auth.tenancy.onboarding.invitations.defaultTTL` (see below), not
+`accountSetupTokenTTL`.
 
 Branding is an optional string object:
 appName overrides app.name (then “Zero app”); publicUrl overrides app.publicUrl;

@@ -645,6 +645,8 @@ describe('resolveConfig', () => {
           adminCreatedUser: true,
           passwordReset: true,
           actionTokenTTL: '2h',
+          accountSetupTokenTTL: '48h',
+          passwordResetTokenTTL: '1h',
         },
         nativeApps: {
           clients: [{
@@ -686,6 +688,8 @@ describe('resolveConfig', () => {
       expect(config.auth.mfa?.totp?.issuer).toBe('Zero CRM');
       expect(config.auth.accountEmails?.adminCreatedUser).toBe(true);
       expect(config.auth.accountEmails?.actionTokenTTL).toBe('2h');
+      expect(config.auth.accountEmails?.accountSetupTokenTTL).toBe('48h');
+      expect(config.auth.accountEmails?.passwordResetTokenTTL).toBe('1h');
       expect(config.auth.nativeApps?.clients?.[0]?.clientId).toBe('com.example.desktop');
       expect(config.auth.branding?.appName).toBe('Zero CRM Auth');
       expect(typeof config.auth.emails?.passwordReset).toBe('function');

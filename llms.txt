@@ -1216,6 +1216,8 @@ auth: {
     passwordReset: true,
     manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
     actionTokenTTL: '1h',
+    accountSetupTokenTTL: '48h', // first-password setup; defaults to actionTokenTTL if omitted
+    passwordResetTokenTTL: '1h', // both user and admin reset links; same fallback
     requestCooldown: '5m',
   },
 }

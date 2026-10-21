@@ -46,6 +46,73 @@ afterEach(() => {
 });
 
 describe('AuthActionTokenService', () => {
+  test('enforces 48-hour setup and 1-hour reset expirations in both storage paths', async () => {
+    const user = await store.createUser({
+      username: 'split-expiry', email: 'split-expiry@example.test', password: 'password123',
+    });
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      for (const tokens of [platformTokens, null]) {
+        clock.mockReturnValue(now);
+        const action = new AuthActionTokenService(store, {
+          actionTokenTTL: '2h', accountSetupTokenTTL: '48h', passwordResetTokenTTL: '1h',
+        }, '5m', tokens);
+        const setup = action.create({ userId: user.userId, type: 'account_setup', skipCooldown: true });
+        const reset = action.create({ userId: user.userId, type: 'password_reset', skipCooldown: true });
+        const adminReset = action.create({ userId: user.userId, type: 'admin_password_reset', skipCooldown: true });
+        const verify = action.create({ userId: user.userId, type: 'email_verification', skipCooldown: true });
+        const contact = action.create({ userId: user.userId, type: 'profile_contact_verification', skipCooldown: true });
+        expect(setup.record.expiresAt).toBe(now + 48 * 3_600_000);
+        expect(reset.record.expiresAt).toBe(now + 3_600_000);
+        expect(adminReset.record.expiresAt).toBe(now + 3_600_000);
+        expect(verify.record.expiresAt).toBe(now + 2 * 3_600_000);
+        expect(contact.record.expiresAt).toBe(now + 2 * 3_600_000);
+        clock.mockReturnValue(reset.record.expiresAt - 1);
+        expect(action.inspect(reset.rawToken).record.type).toBe('password_reset');
+        expect(action.inspect(adminReset.rawToken).record.type).toBe('admin_password_reset');
+        clock.mockReturnValue(reset.record.expiresAt);
+        expect(() => action.inspect(reset.rawToken)).toThrow('expired');
+        expect(() => action.inspect(adminReset.rawToken)).toThrow('expired');
+        expect(action.inspect(setup.rawToken).record.type).toBe('account_setup');
+        clock.mockReturnValue(setup.record.expiresAt - 1);
+        expect(action.inspect(setup.rawToken).record.type).toBe('account_setup');
+        clock.mockReturnValue(setup.record.expiresAt);
+        expect(() => action.inspect(setup.rawToken)).toThrow('expired');
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test('preserves shared lifetimes and does not extend already-issued tokens', async () => {
+    const user = await store.createUser({
+      username: 'legacy-expiry', email: 'legacy-expiry@example.test', password: 'password123',
+    });
+    for (const tokens of [platformTokens, null]) {
+      const legacy = new AuthActionTokenService(store, '2h', '5m', tokens);
+      const setup = legacy.create({ userId: user.userId, type: 'account_setup', skipCooldown: true });
+      const reset = legacy.create({ userId: user.userId, type: 'admin_password_reset', skipCooldown: true });
+      expect(setup.record.expiresAt - setup.record.createdAt).toBe(2 * 3_600_000);
+      expect(reset.record.expiresAt - reset.record.createdAt).toBe(2 * 3_600_000);
+      const policy = { actionTokenTTL: '2h', accountSetupTokenTTL: '48h', passwordResetTokenTTL: '1h' };
+      const updated = new AuthActionTokenService(store, policy, '5m', tokens);
+      expect(updated.inspect(setup.rawToken).record.expiresAt).toBe(setup.record.expiresAt);
+      policy.accountSetupTokenTTL = '7d';
+      const next = updated.create({ userId: user.userId, type: 'account_setup', skipCooldown: true });
+      expect(next.record.expiresAt - next.record.createdAt).toBe(48 * 3_600_000);
+    }
+  });
+
+  test('validates every configured lifetime before any token is issued', () => {
+    for (const field of ['actionTokenTTL', 'accountSetupTokenTTL', 'passwordResetTokenTTL']) {
+      for (const value of ['soon', '-1h', '1.5h', '9007199254740991d']) {
+        expect(() => new AuthActionTokenService(store, { [field]: value }, '5m', null))
+          .toThrow('Invalid auth');
+      }
+    }
+  });
+
   test('rejects exact expiry in platform-backed and direct action-token composition', async () => {
     const user = await store.createUser({ username: 'expiry-boundary', email: 'expiry@example.test', password: 'password123' });
     const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);

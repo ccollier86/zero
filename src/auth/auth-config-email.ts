@@ -42,6 +42,8 @@ export function normalizeAuthAccountEmails(
     'passwordChangedNotice',
     'manualPasswordReset',
     'actionTokenTTL',
+    'accountSetupTokenTTL',
+    'passwordResetTokenTTL',
     'requestCooldown',
     'resetPath',
     'setupPath',
@@ -56,6 +58,8 @@ export function normalizeAuthAccountEmails(
   }
   for (const [field, value] of [
     ['actionTokenTTL', config.actionTokenTTL],
+    ['accountSetupTokenTTL', config.accountSetupTokenTTL],
+    ['passwordResetTokenTTL', config.passwordResetTokenTTL],
     ['requestCooldown', config.requestCooldown],
     ['resetPath', config.resetPath],
     ['setupPath', config.setupPath],
@@ -70,6 +74,8 @@ export function normalizeAuthAccountEmails(
     passwordChangedNotice: false,
     manualPasswordReset: config.manualPasswordReset ?? true,
     actionTokenTTL: config.actionTokenTTL ?? '1h',
+    accountSetupTokenTTL: config.accountSetupTokenTTL ?? config.actionTokenTTL ?? '1h',
+    passwordResetTokenTTL: config.passwordResetTokenTTL ?? config.actionTokenTTL ?? '1h',
     requestCooldown: config.requestCooldown ?? '5m',
     resetPath: normalizePublicPath(config.resetPath, '/reset-password'),
     setupPath: normalizePublicPath(config.setupPath, '/setup-password'),
