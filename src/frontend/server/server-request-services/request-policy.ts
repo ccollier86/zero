@@ -22,6 +22,7 @@ export const MULTI_TENANT_UNSCOPED_SERVICES = new Set<PropertyKey>([
   'vector',
   'vectors',
   'emailRuntime',
+  'mailbox',
   'scheduler',
   'workflowRegistry',
 ]);

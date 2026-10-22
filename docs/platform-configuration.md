@@ -125,6 +125,8 @@ or load the file.
 explicitly composed. Current auth behavior can also be passed inline:
 
 ```ts
+import { emailFromEnv } from '@zero/framework/email';
+
 createApp({
   app: {
     name: Bun.env.APP_NAME ?? 'Acme CRM',
@@ -133,16 +135,7 @@ createApp({
   },
   db,
   tables,
-  email: Bun.env.RESEND_API_KEY
-    ? {
-        from: Bun.env.EMAIL_FROM ?? 'Acme CRM <noreply@example.com>',
-        replyTo: Bun.env.EMAIL_REPLY_TO,
-        provider: 'resend',
-        resend: {
-          apiKey: Bun.env.RESEND_API_KEY,
-        },
-      }
-    : false,
+  email: emailFromEnv(),
   auth: {
     tenancy: 'single',
     authorization: 'simple',
@@ -1430,6 +1423,11 @@ Relevant environment variables are shown in `.env.example`:
 | `EMAIL_FROM` | Default sender for platform email. |
 | `EMAIL_REPLY_TO` | Optional reply-to address. |
 | `RESEND_API_KEY` | Enables the default Resend email provider. |
+| `EMAIL_PROVIDER` | Explicit `emailFromEnv()` provider selection. `false` disables sending/receiving. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Standard SMTP sending; 465 infers TLS, 587 requires STARTTLS. [SMTP guide](../docs-next/backend/email/smtp.md). |
+| `SMTP_SECURE`, `SMTP_REQUIRE_TLS` | Optional strict true/false environment overrides; TLS required by default. |
+| `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD` | Optional app-owned receiving module; port 993 defaults to TLS. [Mailbox guide](../docs-next/backend/email/mailbox.md). |
+| `IMAP_SECURE`, `IMAP_REQUIRE_TLS`, `IMAP_SENT_FOLDER` | Optional TLS overrides and opt-in sent-copy folder. No background inbox polling is enabled. |
 | `AUTH_BOOTSTRAP_SECRET` | App convention for the random operator setup key passed explicitly to `auth.bootstrap.secret`; Zero does not read it implicitly. |
 | `AUTH_REQUIRE_EMAIL_VERIFICATION` | Require email verification before public-registered users receive tokens. |
 | `AUTH_EMAIL_VERIFICATION_PATH` | Public page path used in email verification links. Defaults to `/verify-email`. |
@@ -1602,7 +1600,7 @@ Current checks cover:
 4. Invalid natural identity fields.
 5. Invalid auth action-token TTL/cooldown duration strings.
 6. Auth account email flows with email disabled.
-7. Missing `app.publicUrl`, sender address, or Resend API key for email-driven
+7. Missing `app.publicUrl`, sender address, or selected provider credentials for email-driven
    account flows.
 8. A durable system database with platform startup migrations disabled.
 9. Auth-enabled app tables not covered by an app `syncPolicy` or registered

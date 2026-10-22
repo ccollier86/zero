@@ -211,6 +211,7 @@ export const OBS_CODES = {
   EMAIL_CONFIGURED: code('email', 'configured', 'info', 'Email runtime configured.'),
   EMAIL_SEND_REQUESTED: code('email', 'send.requested', 'info', 'Email send requested.'),
   EMAIL_SENT: code('email', 'sent', 'info', 'Email sent.'),
+  EMAIL_SENT_COPY_FAILED: code('email', 'sent.copy_failed', 'warn', 'Email was accepted but its sent-folder copy failed.'),
   EMAIL_SEND_FAILED: code('email', 'send.failed', 'error', 'Email send failed.'),
   EMAIL_CONSOLE_PREVIEW: code('email', 'console.preview', 'info', 'Console email provider captured a preview.'),
 

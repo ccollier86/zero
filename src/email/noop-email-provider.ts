@@ -6,6 +6,7 @@
  */
 
 import type { EmailMessage, EmailProvider, EmailSendResult } from './types';
+import { recipients } from './email-message';
 
 /** Email provider used when email is disabled or intentionally swallowed. */
 export class NoopEmailProvider implements EmailProvider {
@@ -15,11 +16,7 @@ export class NoopEmailProvider implements EmailProvider {
   async send(message: EmailMessage): Promise<EmailSendResult> {
     return {
       provider: this.name,
-      accepted: normalizeRecipients(message.to),
+      accepted: [...recipients(message.to), ...recipients(message.cc), ...recipients(message.bcc)],
     };
   }
-}
-
-function normalizeRecipients(to: string | string[]): string[] {
-  return Array.isArray(to) ? to : [to];
 }

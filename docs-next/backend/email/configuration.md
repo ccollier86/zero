@@ -8,14 +8,14 @@ visibility: internal
 system: email
 feature: runtime-configuration
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.6.0 development source; not package-qualified"]
 modes: [managed-server, standalone-server]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "8850d12a24f1744818ab17fa37bb3dbf235229da"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-22"
   evidence_level: source-observed
 ---
 
@@ -38,6 +38,8 @@ setting or an ambient getter from whichever app started most recently.
 | `email.replyTo` | Optional string. Same nonblank precedence over `EMAIL_REPLY_TO`. |
 | `email.resend.apiKey` | Optional string. Explicit value by `??`, otherwise `RESEND_API_KEY`; explicit empty/whitespace is not fallback. |
 | `email.resend.baseUrl` | Optional string; default `https://api.resend.com`. Trusted server configuration, not a tenant-controlled URL. |
+| `email.smtp` | Standard SMTP settings using explicit fields then `SMTP_*`; TLS required by default. [Full SMTP reference](./smtp.md). |
+| `email.imap` | Omitted/false disables receiving; true reads `IMAP_*`; an object supplies captured connection/size/sent-folder options. [Mailbox reference](./mailbox.md). |
 | `app.name/publicUrl/supportEmail` | AppIdentityConfig, separate from email; used by Guardian template/link composition. |
 
 Values are captured at runtime/provider construction. Environment mutation is
@@ -52,7 +54,9 @@ keys, rather than recomputing an unrelated env fallback.
 ## Minimum Readiness Versus Real Delivery
 
 `isEmailDeliveryReady(runtime?)` requires enabled config and nonblank sender.
-Resend additionally requires its captured nonblank key. Custom provider objects
+Resend additionally requires its captured nonblank key. SMTP requires valid
+captured host/TLS/auth settings (or an
+explicit anonymous relay), without making a network call. Custom objects
 are treated as ready after sender admission; console/memory are ready for their
 local semantics, not production mailbox delivery; noop is not ready.
 Guardian public action links also require a valid configured public app URL.
@@ -61,6 +65,23 @@ Readiness is not a network probe or verified sender/domain certification.
 Use Doctor's Guardian email checks for policy combinations requiring delivery;
 Doctor imports trusted config and is not a no-side-effect static inspector.
 No environment contents or real providers are needed for documentation tests.
+
+## Environment Convenience
+
+`emailFromEnv(env?)` returns `EmailConfig | false`. Explicit `EMAIL_PROVIDER`
+wins; otherwise the helper chooses Resend when its key exists, SMTP when its
+host exists, or receive-only noop when only `IMAP_HOST` exists. It captures
+sender/reply-to and the chosen connection fields. `EMAIL_PROVIDER=false`
+disables all mail. The helper does not silently enable SMTP for `email: true`.
+Connection defaults and missing credentials are captured too: a later change
+to ambient environment variables cannot supply a different account or TLS policy.
+Boolean connection variables accept only `true`, `false` or unset/blank.
+`IMAP_SENT_FOLDER` opts into best-effort sent copies; it is off by default.
+
+The starter includes all corresponding variables in `.env.example`. Existing
+apps can retain explicit config or use the helper; no schema migration is
+required. Credentials and connection hosts are trusted server settings, never
+unvalidated request input or frontend config.
 
 ## Standalone And Compatibility APIs
 
@@ -78,6 +99,12 @@ disabled fallback when none exists. Multiple app registrations are not a
 Managed services receive their own email runtime/emitter; using a process-wide
 compatibility getter in a multi-app process forfeits that explicit dependency
 selection. Server secrets are never projected by the frontend configuration.
+
+`getMailboxService()` follows the same guarded compatibility lookup. Prefer
+the owning app's `zero.mailbox`. Standalone runtime owners must call
+`await runtime.close?.()`; managed apps do so automatically on stop, including
+failure during startup. A runtime can have an enabled receiving service while
+`enabled`/delivery readiness is false for its noop sender.
 
 ## Verification And Related Guides
 

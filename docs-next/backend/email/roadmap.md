@@ -14,10 +14,11 @@ maturity: planned
 
 [Email index](./index.md) · [Documentation index](../../index.md)
 
-The product backlog calls for more email/SMTP provider plugins and potentially
-SMS/push notification adapters. These are direction, not current provider names,
-configuration flags or supported delivery channels. The current extension seam
-is the [EmailProvider interface](./providers.md).
+Standard [SMTP sending](./smtp.md) and optional [IMAP receiving](./mailbox.md)
+are implemented. The remaining backlog includes additional vendor adapters
+and potential SMS/push channels. Those future channels are not current
+provider names or configuration flags. The extension seam remains the
+[EmailProvider interface](./providers.md).
 
 - [ ] Evaluate additional email providers without coupling account policy to a vendor.
 - [ ] Design SMS/push as appropriate channel adapters rather than mislabeling EmailMessage.

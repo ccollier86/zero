@@ -1413,8 +1413,22 @@ cache purge, and account switching on real targets. Read
 
 ## Email
 
-Zero email uses a provider boundary. Resend is the default provider when
-configured:
+Zero email has first-class Resend and standard SMTP providers. The optional
+IMAP module adds folders, message reading, attachments, flags, safe moves,
+draft/sent copies and real-time IDLE subscriptions. Both modules are server-only
+and need no new database migration.
+
+Use `emailFromEnv()` in the normal config to select Resend by key, otherwise
+SMTP by host, or receive-only noop when only IMAP is configured. Explicit
+EMAIL_PROVIDER wins; false disables both. `email: true` still means Resend.
+
+```ts
+import { emailFromEnv } from '@zero/framework/email';
+// in createApp(...) or zero.config.ts
+email: emailFromEnv(),
+```
+
+Or select/configure a provider explicitly:
 
 ```ts
 email: {
@@ -1428,6 +1442,19 @@ email: {
 Auth/account emails use branded defaults from app config. User apps can replace
 provider behavior through custom provider/adapters. Keep auth email templates
 themeable and app-name aware.
+
+For SMTP, select provider: 'smtp' with email.smtp or SMTP_HOST/PORT/USER/PASSWORD.
+TLS is required by default; Purelymail uses smtp.purelymail.com:465 and
+imap.purelymail.com:993. Managed services expose zero.email.send() and optional
+zero.mailbox. Normal multi-tenant/workflow projections block raw receiving;
+privileged code must apply its own mailbox/tenant permissions. IMAP IDLE emits
+bounded deltas and explicit resync events, not automatic public data access or
+mail persistence. Never use sequence numbers as durable message identities.
+
+Read docs-next/backend/email/index.md, smtp.md, mailbox.md and configuration.md
+before implementation. Guardian keeps its existing outbox/template boundary.
+SMTP is not exactly-once delivery; failed optional sent copies never trigger
+another accepted send. No application-owned SMTP/IMAP transport is needed.
 
 ## Platform Tokens
 

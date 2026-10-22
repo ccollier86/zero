@@ -13,7 +13,7 @@ import {
   getAuthStore,
   getTokenService,
 } from '../../auth/auth.plugin';
-import { getEmailRuntime, getEmailService } from '../../email';
+import { getEmailRuntime, getEmailService, ImapMailbox } from '../../email';
 import {
   MemoryEventStore,
   configureObservability,
@@ -80,6 +80,7 @@ describe('server service context', () => {
     expect(zero.resources).toBe(getResourceRegistry());
     expect(zero.email).toBe(getEmailService());
     expect(zero.emailRuntime).toBe(getEmailRuntime());
+    expect(zero.mailbox).toBe(getEmailRuntime().mailbox ?? null);
 
     expect(zero.observability.runtime).toBe(getObservabilityRuntime());
     expect(zero.observability.sink).toBe(getPlatformSink());
@@ -118,6 +119,9 @@ describe('server service context', () => {
     expect(second.resources).toBe(secondRuntime.resources);
     expect(first.emailRuntime).toBe(firstRuntime.email);
     expect(second.emailRuntime).toBe(secondRuntime.email);
+    expect(first.mailbox).toBe(firstRuntime.email.mailbox!);
+    expect(second.mailbox).toBe(secondRuntime.email.mailbox!);
+    expect(first.mailbox).not.toBe(second.mailbox);
 
     const code: PlatformCodeDefinition = {
       code: 'test.runtime_bound',
@@ -149,6 +153,7 @@ function createTestRuntime(label: string) {
     config: false,
     provider: { name: 'test', async send() { throw new Error('not used'); } },
     service: { async send() { throw new Error('not used'); } },
+    mailbox: new ImapMailbox({ host: 'imap.example.test', auth: { user: label, pass: 'synthetic' } }),
   } as EmailRuntime;
   const store = new MemoryEventStore({ maxEvents: 5 });
 

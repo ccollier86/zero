@@ -11,11 +11,16 @@ export { ConsoleEmailProvider } from './console-email-provider';
 export { MemoryEmailProvider, type CapturedEmail } from './memory-email-provider';
 export { NoopEmailProvider } from './noop-email-provider';
 export { ResendEmailProvider } from './resend-email-provider';
+export { SmtpEmailProvider } from './smtp-email-provider';
+export { ImapMailbox } from './imap-mailbox';
+export { emailFromEnv } from './email-from-env';
+export type { MailAddress, MailAttachment, MailFolder, MailMessageRef, MailMessageSummary, MailMessage, MailMessagePage, MailListOptions, MailboxSearch, MailboxChange, MailWatchOptions } from './mailbox-types';
 export {
   configureEmail,
   createEmailRuntime,
   getEmailRuntime,
   getEmailService,
+  getMailboxService,
   isEmailDeliveryReady,
   registerEmailRuntime,
 } from './runtime';
@@ -29,4 +34,7 @@ export type {
   EmailSendResult,
   EmailServiceLike,
   ResendEmailProviderConfig,
+  SmtpEmailProviderConfig,
+  ImapMailboxConfig,
+  MailConnectionConfig,
 } from './types';

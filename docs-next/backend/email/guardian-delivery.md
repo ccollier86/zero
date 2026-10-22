@@ -45,6 +45,11 @@ acknowledgment does not prove a mail was sent or a membership was granted.
 
 ## App Identity And Links
 
+Resend and [standard SMTP](./smtp.md) share this boundary. Selecting SMTP does
+not require custom auth templates, replacement routes or a second outbox.
+`email.imap` is independent receiving configuration and cannot make Guardian
+sending ready by itself.
+
 Configure the real public application origin in AppIdentityConfig rather than
 building action links from an untrusted request Host or arbitrary browser URL.
 Use the configured action paths and native continuation handling. Keep sender

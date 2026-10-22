@@ -6,12 +6,14 @@
  */
 
 import { defineZeroConfig, resolveAIConfig } from '@zero/framework/server';
+import { emailFromEnv } from '@zero/framework/email';
 import type { SQLiteStorageConfig, SQLiteStorageMode } from '@zero/framework/server';
 import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
 const APP_NAME = readEnv('APP_NAME') ?? 'Zero App';
-const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
+const emailConfig = emailFromEnv();
+const hasEmail = Boolean(emailConfig && emailConfig.provider !== 'noop');
 const authEnabled = Bun.env.ZERO_AUTH_ENABLED === 'true';
 const aiEnabled = readEnv('ZERO_AI_ENABLED');
 const detectedAI = resolveAIConfig(true);
@@ -71,14 +73,11 @@ export const config = defineZeroConfig({
     priority: 0.7,
     exclude: ['/login', '/forgot-password', '/reset-password'],
   },
-  email: hasEmail
+  email: emailConfig
     ? {
-        provider: 'resend',
-        from: readEnv('EMAIL_FROM') ?? `${APP_NAME} <noreply@example.com>`,
+        ...emailConfig,
+        from: emailConfig.from ?? `${APP_NAME} <noreply@example.com>`,
         replyTo: readEnv('EMAIL_REPLY_TO'),
-        resend: {
-          apiKey: Bun.env.RESEND_API_KEY,
-        },
       }
     : false,
   ai: hasAI ? true : false,

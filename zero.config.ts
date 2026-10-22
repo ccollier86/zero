@@ -7,13 +7,14 @@
 
 import { defineZeroConfig } from '@zero/framework/server';
 import type { EmailConfig, SQLiteStorageConfig, SQLiteStorageMode } from '@zero/framework/server';
+import { emailFromEnv } from '@zero/framework/email';
 import { launchBoardResources } from './app/launchboard/resources';
 import { tables } from './app/launchboard/schema';
 
 const port = Number(Bun.env.PORT ?? 3000);
 const appName = Bun.env.APP_NAME ?? 'LaunchBoard';
 const emailConfig = resolveLaunchBoardEmailConfig();
-const hasEmailProvider = Boolean(emailConfig);
+const hasEmailProvider = Boolean(emailConfig && emailConfig.provider !== 'noop');
 
 export const config = defineZeroConfig({
   app: {
@@ -108,16 +109,15 @@ function resolveMfaPolicy(value: string | undefined): 'optional' | 'required' | 
   return 'optional';
 }
 
-/** Enable LaunchBoard account email when a Resend key is configured. */
+/** Capture configured SMTP/Resend delivery and optional IMAP receiving. */
 function resolveLaunchBoardEmailConfig(): false | EmailConfig {
-  const apiKey = Bun.env.RESEND_API_KEY;
-  if (!apiKey) return false;
+  const email = emailFromEnv();
+  if (!email) return false;
 
   return {
-    provider: 'resend',
-    from: Bun.env.EMAIL_FROM ?? 'LaunchBoard <noreply@mail.shadowboy.app>',
+    ...email,
+    from: email.from ?? 'LaunchBoard <noreply@mail.shadowboy.app>',
     replyTo: Bun.env.EMAIL_REPLY_TO ?? Bun.env.APP_SUPPORT_EMAIL,
-    resend: { apiKey },
   };
 }
 

@@ -6,6 +6,7 @@
  */
 
 import type { EmailMessage, EmailProvider, EmailSendResult } from './types';
+import { recipients } from './email-message';
 
 export interface CapturedEmail {
   id: string;
@@ -27,7 +28,7 @@ export class MemoryEmailProvider implements EmailProvider {
     return {
       id,
       provider: this.name,
-      accepted: normalizeRecipients(message.to),
+      accepted: [...recipients(message.to), ...recipients(message.cc), ...recipients(message.bcc)],
     };
   }
 
@@ -35,8 +36,4 @@ export class MemoryEmailProvider implements EmailProvider {
   clear(): void {
     this.messages.length = 0;
   }
-}
-
-function normalizeRecipients(to: string | string[]): string[] {
-  return Array.isArray(to) ? to : [to];
 }

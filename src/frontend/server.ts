@@ -954,9 +954,13 @@ export {
   MemoryEmailProvider,
   NoopEmailProvider,
   ResendEmailProvider,
+  SmtpEmailProvider,
+  ImapMailbox,
+  emailFromEnv,
   configureEmail,
   getEmailRuntime,
   getEmailService,
+  getMailboxService,
 } from '../email';
 export type {
   AppIdentityConfig,
@@ -967,6 +971,11 @@ export type {
   EmailRuntime,
   EmailSendResult,
   ResendEmailProviderConfig,
+  SmtpEmailProviderConfig,
+  ImapMailboxConfig,
+  MailConnectionConfig,
+  MailAddress, MailAttachment, MailFolder, MailMessageRef, MailMessageSummary,
+  MailMessage, MailMessagePage, MailListOptions, MailboxSearch, MailboxChange, MailWatchOptions,
 } from '../email';
 
 // ─── AI: Server ───────────────────────────────────────────────────────────

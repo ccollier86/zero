@@ -19,6 +19,8 @@ export interface AppIdentityConfig {
 export interface EmailMessage {
   /** Recipient address or addresses. */
   to: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   /** Sender address. Defaults to configured email `from`. */
   from?: string;
   /** Optional reply-to address. Defaults to configured email `replyTo`. */
@@ -29,11 +31,15 @@ export interface EmailMessage {
   text: string;
   /** Optional HTML body. */
   html?: string;
+  /** In-memory attachments only; never filesystem paths or remote URLs. */
+  attachments?: Array<{ filename: string; content: Uint8Array; contentType?: string; contentId?: string }>;
+  inReplyTo?: string;
+  references?: string[];
   /** Provider-supported tags for delivery analytics. */
   tags?: Record<string, string>;
   /** Internal platform metadata. Never sent to external providers by default. */
   metadata?: Record<string, unknown>;
-  /** Stable provider request key used to make one delivery attempt idempotent. */
+  /** Stable request key for providers supporting idempotency (Resend); SMTP has no such guarantee. */
   idempotencyKey?: string;
   /** Abort delivery when the calling lifecycle no longer owns the attempt. */
   signal?: AbortSignal;
@@ -41,6 +47,8 @@ export interface EmailMessage {
 
 /** Provider send result normalized across email vendors. */
 export interface EmailSendResult {
+  /** Optional IMAP sent-folder copy outcome; failure never reclassifies an accepted send. */
+  sentCopy?: 'saved' | 'failed';
   /** Provider message id when available. */
   id?: string;
   /** Provider identifier such as `resend`, `memory`, or `noop`. */
@@ -55,10 +63,36 @@ export interface EmailSendResult {
 export interface EmailProvider {
   readonly name: string;
   send(message: EmailMessage): Promise<EmailSendResult>;
+  /** Retire active work owned by this provider; managed runtimes call this on stop. */
+  close?(): void | Promise<void>;
 }
 
 /** Built-in provider names accepted by email config. */
-export type BuiltInEmailProvider = 'resend' | 'console' | 'memory' | 'noop';
+export type BuiltInEmailProvider = 'resend' | 'smtp' | 'console' | 'memory' | 'noop';
+
+/** SMTP/IMAP settings; explicit values override protocol-prefixed environment variables. */
+export interface MailConnectionConfig {
+  host?: string;
+  port?: number;
+  /** Implicit TLS. Inferred from port (465 SMTP, 993 IMAP). */
+  secure?: boolean;
+  /** Require TLS/STARTTLS; default true. Disable only for a deliberately trusted development relay. */
+  requireTLS?: boolean;
+  /** Omit to read SMTP_USER/SMTP_PASSWORD or IMAP_USER/IMAP_PASSWORD. SMTP relays may use false. */
+  auth?: { user?: string; pass?: string } | false;
+  /** Certificate verification is always enabled. Private CAs may be supplied explicitly. */
+  tls?: { servername?: string; ca?: string | string[] };
+  /** Whole-operation deadline; default 30000 ms. */
+  timeoutMs?: number;
+}
+
+export interface SmtpEmailProviderConfig extends MailConnectionConfig {}
+export interface ImapMailboxConfig extends MailConnectionConfig {
+  /** Maximum raw MIME bytes loaded by read()/append(); default 25 MiB. */
+  maxMessageBytes?: number;
+  /** Optional folder for best-effort copies after accepted sends. Never retries an accepted SMTP send. */
+  sentFolder?: string;
+}
 
 /** Resend adapter configuration. */
 export interface ResendEmailProviderConfig {
@@ -78,6 +112,10 @@ export interface EmailConfig {
   provider?: BuiltInEmailProvider | EmailProvider;
   /** Resend-specific config when using the Resend provider. */
   resend?: ResendEmailProviderConfig;
+  /** Standard SMTP provider; omitted fields use SMTP_* environment variables. */
+  smtp?: SmtpEmailProviderConfig;
+  /** Optional receiving mailbox. true reads IMAP_*; omitted/false never opens an inbox. */
+  imap?: boolean | ImapMailboxConfig;
 }
 
 /** Active email runtime used by platform services. */
@@ -87,6 +125,10 @@ export interface EmailRuntime {
   config: EmailConfig | false | undefined;
   service: EmailServiceLike;
   provider: EmailProvider;
+  /** Optional app-local receiving API. Not a browser credential surface. */
+  mailbox?: import('./imap-mailbox').ImapMailbox | null;
+  /** Close network operations owned by this email runtime. */
+  close?(): void | Promise<void>;
 }
 
 /** Minimal service shape exposed from the runtime. */

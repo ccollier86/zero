@@ -11,14 +11,18 @@ import { emitPlatformCode } from '../observability/sink';
 import { EmailError } from './email-error';
 import { safeEmailFailureCode } from './email-failure-policy';
 import type { EmailConfig, EmailMessage, EmailProvider, EmailSendResult } from './types';
+import type { ImapMailbox } from './imap-mailbox';
+import { recipients, snapshotEmailMessage } from './email-message';
 
 /** Runtime service that applies defaults and delegates to a provider. */
 export class EmailService {
+  private readonly sentFolder: string | undefined;
   constructor(
     private readonly provider: EmailProvider,
     private readonly config: EmailConfig = {},
     private readonly emitCode: typeof emitPlatformCode = emitPlatformCode,
-  ) {}
+    private readonly mailbox: ImapMailbox | null = null,
+  ) { this.sentFolder = typeof config.imap === 'object' ? config.imap.sentFolder : undefined; }
 
   /**
    * Send an email message through the configured provider.
@@ -27,23 +31,32 @@ export class EmailService {
    * stable observability events, and never logs message bodies or secrets.
    */
   async send(message: EmailMessage): Promise<EmailSendResult> {
-    const resolved: EmailMessage = {
+    const resolved = snapshotEmailMessage({
       ...message,
       from: message.from ?? this.config.from,
       replyTo: message.replyTo ?? this.config.replyTo,
-    };
-
-    validateMessage(resolved);
+    });
 
     this.emitCode(OBS_CODES.EMAIL_SEND_REQUESTED, {
       metadata: {
         provider: this.provider.name,
-        toCount: normalizeRecipients(resolved.to).length,
+        toCount: recipients(resolved.to).length,
       },
     });
 
     try {
-      const result = await this.provider.send(resolved);
+      const result = { ...await this.provider.send(resolved) };
+      const sentFolder = this.sentFolder;
+      if (this.mailbox && sentFolder && result.accepted.length > 0 && !['noop', 'console', 'memory'].includes(this.provider.name)) {
+        try {
+          await this.mailbox.append(resolved, { folder: sentFolder, messageId: result.provider === 'smtp' ? result.id : undefined, signal: resolved.signal });
+          result.sentCopy = 'saved';
+        } catch {
+          // Sending already succeeded. Do not throw and cause an outbox/app to send a duplicate.
+          result.sentCopy = 'failed';
+          this.emitCode(OBS_CODES.EMAIL_SENT_COPY_FAILED, { metadata: { provider: result.provider } });
+        }
+      }
       this.emitCode(OBS_CODES.EMAIL_SENT, {
         metadata: {
           provider: result.provider,
@@ -74,23 +87,4 @@ function normalizeProviderError(error: unknown): EmailError {
     'EMAIL_SEND_FAILED',
     502
   );
-}
-
-function validateMessage(message: EmailMessage): void {
-  if (!message.from) {
-    throw new EmailError('Email `from` address is required', 'EMAIL_FROM_REQUIRED', 500);
-  }
-  if (normalizeRecipients(message.to).length === 0) {
-    throw new EmailError('At least one email recipient is required', 'EMAIL_RECIPIENT_REQUIRED', 400);
-  }
-  if (!message.subject.trim()) {
-    throw new EmailError('Email subject is required', 'EMAIL_SUBJECT_REQUIRED', 400);
-  }
-  if (!message.text.trim() && !message.html?.trim()) {
-    throw new EmailError('Email text or HTML body is required', 'EMAIL_BODY_REQUIRED', 400);
-  }
-}
-
-function normalizeRecipients(to: string | string[]): string[] {
-  return (Array.isArray(to) ? to : [to]).filter((value) => value.trim().length > 0);
 }

@@ -8,6 +8,7 @@
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { EmailMessage, EmailProvider, EmailSendResult } from './types';
+import { recipients } from './email-message';
 
 /** Local development provider that emits email previews as observability events. */
 export class ConsoleEmailProvider implements EmailProvider {
@@ -19,7 +20,7 @@ export class ConsoleEmailProvider implements EmailProvider {
 
   /** Emit a sanitized preview event and return a successful send result. */
   async send(message: EmailMessage): Promise<EmailSendResult> {
-    const accepted = normalizeRecipients(message.to);
+    const accepted = [...recipients(message.to), ...recipients(message.cc), ...recipients(message.bcc)];
     this.emitCode(OBS_CODES.EMAIL_CONSOLE_PREVIEW, {
       metadata: {
         recipientCount: accepted.length,
@@ -34,8 +35,4 @@ export class ConsoleEmailProvider implements EmailProvider {
       accepted,
     };
   }
-}
-
-function normalizeRecipients(to: string | string[]): string[] {
-  return Array.isArray(to) ? to : [to];
 }

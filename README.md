@@ -19,6 +19,13 @@ called **Guardian**. This is a documentation/product name; its established
 `auth.*` configuration, `/auth/*` routes, and `@zero/framework/auth` API remain
 unchanged.
 
+Email supports first-class [SMTP delivery](./docs-next/backend/email/smtp.md)
+alongside Resend, plus optional [IMAP mailboxes](./docs-next/backend/email/mailbox.md)
+with MIME/attachments, drafts, flags and live IDLE updates. Configure them
+through `email` or the shared `emailFromEnv()` helper; Guardian uses the same
+sender without a separate integration. Receiving is server-only and opt-in,
+not automatic public access to mailbox contents.
+
 Zero's durable, versioned workflow and orchestration system is called
 **Torrent**. Torrent is also a documentation/product name: the established
 `workflows` configuration, `/workflows/*` routes,

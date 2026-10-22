@@ -4,6 +4,19 @@ Zero includes or adapts the following third-party software. The notices below
 apply to those portions and do not change the licensing of unrelated Zero
 code.
 
+## Mail Protocol and MIME Dependencies
+
+Zero's optional mail modules use installed packages rather than copying or
+reimplementing their protocol engines:
+
+- Nodemailer 10.2.1 — SMTP and MIME composition, MIT license, https://github.com/nodemailer/nodemailer
+- ImapFlow 2.9.1 — IMAP/IDLE, MIT license, https://github.com/postalsys/imapflow
+- PostalMime 4.1.4 — bounded MIME parsing, MIT-0 license, https://github.com/postalsys/postal-mime
+- smtp-server 3.21.1 — development-only loopback protocol fixtures, MIT license, https://github.com/nodemailer/smtp-server
+
+Their npm distributions retain their upstream license files. Zero's facade,
+configuration, ownership, policy and integration remain Zero code.
+
 ## Pheralb Code Blocks — Shared Code Examples And Shiki Compositions
 
 Source repository: https://github.com/pheralb/code-blocks/tree/a726aec02e94797e1d8276f2eb5806ffc9f40d97

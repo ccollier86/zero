@@ -107,7 +107,7 @@ accepted mutations with fire-and-forget optimistic success.
 
 Multi-tenant requests block unscoped `db`, `syncDB`, `databases`,
 `sql`, `sqlite`, `system`, `tokens`, `kv`, `counter`, `limiter`,
-`vector`, `vectors`, `emailRuntime`, `scheduler` and
+`vector`, `vectors`, `emailRuntime`, `mailbox`, `scheduler` and
 `workflowRegistry`. Access raises `UnsafeServerServiceAccessError` with
 `ZERO_UNSAFE_SERVICE_REQUIRED`. A normal handler should use a scoped capability,
 not catch this error and automatically retry through `unsafe`.

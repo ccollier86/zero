@@ -684,7 +684,8 @@ See [Architecture](./architecture.md) for the full component diagram and data fl
 | [Browser Authorization Snapshot And Gates](./browser-authorization.md) | Sanitized live scope, cache boundary, permission hooks, and presentation gates |
 | [Guardian User API Keys](./api-keys.md) | Opt-in user-bound credentials, explicit HTTP admission, live authority, lifecycle routes, SDK/hooks, and optional packaged controls |
 | [Admin User Management](./admin-user-management-plan.md) | Implemented registration policy, user/security lifecycle routes, configured properties, and production admin UI |
-| [Email And Account Lifecycle](./email-account-lifecycle-plan.md) | Platform email foundation, Resend adapter, and implemented verification/reset/setup flows |
+| [Email](../../docs-next/backend/email/index.md) | SMTP/Resend delivery, optional live IMAP mailboxes and Guardian integration |
+| [Email And Account Lifecycle](./email-account-lifecycle-plan.md) | Platform email foundation and implemented verification/reset/setup flows |
 | [App Authentication SDK Guide](./app-auth-sdk-guide.md) | Choose web, TypeScript native, Rust/Tauri, Chrome, or another client and follow the installed-app onboarding checklist |
 | [Desktop, Mobile, And Chrome Extension Auth](./native-app-auth.md) | Public-client registration, system-browser OIDC + PKCE, redirects, secure storage, native SDKs, and packaged platform recipes |
 | [Metadata, Access Control, And Avatars Plan](./metadata-access-avatar-plan.md) | Historical access/tenancy sketch superseded by the current RBAC docs; remaining avatar ideas are still unimplemented |

@@ -8,14 +8,14 @@ visibility: internal
 system: email
 feature: send-contract
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.6.0 development source; not package-qualified"]
 modes: [managed-server, standalone-server]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "8850d12a24f1744818ab17fa37bb3dbf235229da"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-22"
   evidence_level: source-observed
 ---
 
@@ -51,10 +51,13 @@ const receipt = await runtime.service.send({
 | `EmailMessage` field | Contract |
 | --- | --- |
 | `to` | Required string or string array. At least one nonblank recipient is required; this is not a comprehensive mailbox validator. |
+| `cc`, `bcc` | Optional string or string array. Included in accepted/rejected recipient accounting; SMTP omits Bcc from visible MIME headers. |
 | `from`, `replyTo` | Optional per-message override, then service defaults by nullish precedence. |
 | `subject` | Required nonblank subject. |
 | `text` | Required string; either nonblank text or HTML must be supplied. |
 | `html` | Optional HTML; the caller owns safe rendering/content. |
+| `attachments` | Up to 100 in-memory `{ filename, content: Uint8Array, contentType?, contentId? }` records. SMTP supports explicit MIME type and inline IDs; Resend accepts basic file attachments and rejects unsupported MIME overrides. No paths/URLs. |
+| `inReplyTo`, `references` | Optional Message-ID and Message-ID array for reply threading. Header values cannot contain NUL/CR/LF. |
 | `tags` | Optional string map; built-in Resend maps it to name/value tags. |
 | `metadata` | Internal application metadata, not sent by the built-in Resend mapping. A custom provider receives the message and owns its mapping. |
 | `idempotencyKey` | Optional stable provider request key; Resend forwards it. No local generic-send deduplication store is created. |
@@ -66,6 +69,16 @@ delivery/read confirmation. Memory/no-op/console results do not mean real mail
 was sent. Per-message strings should be valid application-owned values;
 blank overrides do not request a fallback to environment configuration.
 
+Headers/attachments are validated and snapshotted before asynchronous work;
+mutating a caller's recipient array or attachment bytes cannot change the
+message already admitted for sending. Invalid headers/attachments raise
+`EMAIL_MESSAGE_INVALID`/400 before dispatch. Validation is not recipient
+authorization or an HTML sanitizer.
+
+With an explicitly configured IMAP Sent folder, `sentCopy` is `saved` or
+`failed`. A failed copy never converts an accepted send into a failed delivery
+or requests a duplicate send. Omitted means no copy was requested.
+
 ## Failure And Observability
 
 `EmailError` exposes `code` and `status`. Missing sender is
@@ -74,11 +87,17 @@ blank overrides do not request a fallback to environment configuration.
 Provider failures preserve an existing EmailError; other thrown values become
 generic `EMAIL_SEND_FAILED`/502. Validation happens before provider dispatch.
 
-Delivery uses `EMAIL_SEND_REQUESTED`, `EMAIL_SENT`, `EMAIL_SEND_FAILED` through
+Delivery uses `EMAIL_SEND_REQUESTED`, `EMAIL_SENT`, `EMAIL_SEND_FAILED` and optional
+`EMAIL_SENT_COPY_FAILED` through
 Zero's observability boundary. Metadata contains provider/count/status/code,
 not body, recipients or credentials. Do not log a full message or put secrets
 into custom provider errors. Provider idempotency/cancellation is not an
 exactly-once local transaction.
+
+SMTP has no provider idempotency guarantee. The auth outbox classifies SMTP
+4xx replies as retryable and 5xx rejections as terminal; those reply numbers
+must not be interpreted directly as HTTP statuses. Cancellation closes the
+actual connection, but cannot recall mail the server already accepted.
 
 ## Security, Testing And Next Steps
 

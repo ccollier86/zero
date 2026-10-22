@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added optional first-class SMTP delivery and IMAP receiving behind Zero's
+  email facade, with shared environment configuration, Guardian/outbox
+  integration, strict TLS/STARTTLS, MIME attachments and reply threading.
+  App-owned mailboxes provide bounded UID paging, safe flags/moves, drafts,
+  sent copies and live IDLE deltas with reconnect/resync/backpressure. Managed
+  shutdown closes owned sockets; Doctor and generated config understand both
+  modules. No new database migration or automatic private-mail ingestion.
+
 - Fixed DataTable live/background refreshes hiding every existing row and
   replaying the initial loading reveal. Same-query requests now preserve the
   visible native rows, selection and editor drafts; accepted changes animate
