@@ -6,13 +6,16 @@
  */
 
 import type { EmailMessage, EmailProvider, EmailSendResult } from './types';
+import { prepareEmailAttachments } from './email-attachments';
 
 /** Email provider used when email is disabled or intentionally swallowed. */
 export class NoopEmailProvider implements EmailProvider {
   readonly name = 'noop';
+  readonly supportsAttachments = false;
 
   /** Accept a message without delivering it. */
   async send(message: EmailMessage): Promise<EmailSendResult> {
+    prepareEmailAttachments(this, message.attachments);
     return {
       provider: this.name,
       accepted: normalizeRecipients(message.to),

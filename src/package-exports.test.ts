@@ -60,7 +60,7 @@ import {
   type NativeAuthorizationSourceResolver as AuthNativeSourceResolver,
 } from '@zero/framework/auth';
 import { runPlatformDoctor, runUsageAudit } from '@zero/framework/doctor';
-import { EmailService } from '@zero/framework/email';
+import { EmailService, isEmailAttachmentDeliveryReady, type EmailAttachment } from '@zero/framework/email';
 import {
   createKvPlugin as createKvPluginSubpath,
   getKvService as getKvServiceSubpath,
@@ -86,6 +86,7 @@ import {
   defineResource,
   getAI,
   getEmailService,
+  isEmailAttachmentDeliveryReady as serverEmailAttachmentDeliveryReady,
   getKvService,
   getPlatformTokenService,
   getPlatformSQLiteService,
@@ -128,6 +129,7 @@ import {
 } from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
+const emailAttachment: EmailAttachment = { filename: 'smoke.pdf', content: new Uint8Array([1]), contentType: 'application/pdf' };
 const authNativeSourceResolver: AuthNativeSourceResolver = () => 'trusted-edge';
 const configuredPostLoginPath = (config: AppConfig): string | undefined => config.postLoginPath;
 const resolvedPostLoginPath = (config: ResolvedConfig): string => config.postLoginPath;
@@ -140,6 +142,9 @@ const workflowTypeSurface = null as unknown as {
 };
 
 export const serverSymbols = {
+  emailAttachment,
+  isEmailAttachmentDeliveryReady,
+  serverEmailAttachmentDeliveryReady,
   AIService,
   authNativeSourceResolver,
   configuredPostLoginPath,

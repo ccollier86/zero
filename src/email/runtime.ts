@@ -80,6 +80,14 @@ export function isEmailDeliveryReady(
   return provider !== 'noop';
 }
 
+/** Positive document-delivery readiness excludes capture/discard providers, even when supplied as custom objects. */
+export function isEmailAttachmentDeliveryReady(candidate: EmailRuntime = runtime): boolean {
+  return isEmailDeliveryReady(candidate)
+    && candidate.provider.supportsAttachments === true
+    && (!(candidate.provider instanceof ResendEmailProvider) || candidate.provider.isConfigured())
+    && !['memory', 'console', 'noop'].includes(candidate.provider.name);
+}
+
 function createEmailRuntime(
   input: EmailConfig | boolean | false | undefined,
   app: AppIdentityConfig

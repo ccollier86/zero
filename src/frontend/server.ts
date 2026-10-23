@@ -554,11 +554,13 @@ export {
   configureEmail,
   getEmailRuntime,
   getEmailService,
+  isEmailAttachmentDeliveryReady,
 } from '../email';
 export type {
   AppIdentityConfig,
   BuiltInEmailProvider,
   EmailConfig,
+  EmailAttachment,
   EmailMessage,
   EmailProvider,
   EmailRuntime,

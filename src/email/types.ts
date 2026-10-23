@@ -15,6 +15,16 @@ export interface AppIdentityConfig {
   supportEmail?: string;
 }
 
+/** In-memory attachment bytes only; providers never fetch a URL or read a caller-supplied filesystem path. */
+export interface EmailAttachment {
+  /** Plain display filename, without path separators, control characters, or header delimiters. */
+  filename: string;
+  /** Nonempty exact bytes; Zero copies the selected view before asynchronous delivery. */
+  content: Uint8Array;
+  /** Optional media type such as application/pdf, without parameters or header delimiters. */
+  contentType?: string;
+}
+
 /** Message shape accepted by platform email providers. */
 export interface EmailMessage {
   /** Recipient address or addresses. */
@@ -29,6 +39,8 @@ export interface EmailMessage {
   text: string;
   /** Optional HTML body. */
   html?: string;
+  /** At most ten in-memory files totaling 25 MiB raw bytes; unsupported providers fail closed. */
+  attachments?: EmailAttachment[];
   /** Provider-supported tags for delivery analytics. */
   tags?: Record<string, string>;
   /** Internal platform metadata. Never sent to external providers by default. */
@@ -54,6 +66,8 @@ export interface EmailSendResult {
 /** Dependency-inversion boundary used by auth and future platform email. */
 export interface EmailProvider {
   readonly name: string;
+  /** Explicit attachment support; absent or false means attached messages must be rejected, never silently stripped. */
+  readonly supportsAttachments?: boolean;
   send(message: EmailMessage): Promise<EmailSendResult>;
 }
 

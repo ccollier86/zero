@@ -4,6 +4,18 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 1.3.4 - 2026-10-23
+
+### Added
+
+- Added bounded, copied in-memory email attachments to the public email and
+  server APIs. Resend transmits exact base64 file content with validated
+  filename/MIME mapping while preserving abort and idempotency controls.
+- Added explicit provider attachment capability and positive document-delivery
+  readiness. Unsupported providers fail closed; memory captures cloned bytes
+  for tests but is never advertised as real attachment delivery. Validation
+  rejects unsafe names/types, file paths/URLs, and excessive count or bytes.
+
 ## 1.3.3 - 2026-10-02
 
 ### Added

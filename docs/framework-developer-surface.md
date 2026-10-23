@@ -842,6 +842,15 @@ await getEmailService().send({
 
 Auth account lifecycle emails use this same runtime.
 
+For verified private files, use `EmailMessage.attachments` with
+`{ filename, content: Uint8Array, contentType? }` and first check
+`isEmailAttachmentDeliveryReady(getEmailRuntime())` from
+`@zero/framework/email` or `@zero/framework/server`. Resend supports bounded
+in-memory files; unsupported providers reject them instead of dropping them.
+Memory capture is never advertised as production delivery readiness.
+See [Email and attachments](./email.md) for limits, error codes, provider
+contracts, and durable-attempt responsibilities.
+
 ## Platform Tokens
 
 `createApp()` mounts the generic platform token service automatically. Server

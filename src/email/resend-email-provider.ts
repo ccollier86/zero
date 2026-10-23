@@ -6,6 +6,7 @@
  */
 
 import { EmailError } from './email-error';
+import { prepareEmailAttachments } from './email-attachments';
 import {
   EMAIL_PROVIDER_REQUEST_REJECTED,
   isDeterministicEmailProviderRejection,
@@ -19,12 +20,18 @@ interface ResendSendResponse {
 /** Production email provider using Resend's send-email API. */
 export class ResendEmailProvider implements EmailProvider {
   readonly name = 'resend';
+  readonly supportsAttachments = true;
   private readonly apiKey: string | undefined;
   private readonly baseUrl: string;
 
   constructor(config: ResendEmailProviderConfig = {}) {
     this.apiKey = config.apiKey ?? Bun.env.RESEND_API_KEY;
     this.baseUrl = config.baseUrl ?? 'https://api.resend.com';
+  }
+
+  /** Report the configured instance's credential presence without exposing a key or consulting later environment changes. */
+  isConfigured(): boolean {
+    return Boolean(this.apiKey?.trim());
   }
 
   /**
@@ -34,6 +41,7 @@ export class ResendEmailProvider implements EmailProvider {
    * response. Raw provider credentials are never included in thrown metadata.
    */
   async send(message: EmailMessage): Promise<EmailSendResult> {
+    const attachments = prepareEmailAttachments(this, message.attachments);
     if (!this.apiKey) {
       throw new EmailError('Resend API key is required', 'EMAIL_PROVIDER_MISCONFIGURED', 500);
     }
@@ -55,6 +63,11 @@ export class ResendEmailProvider implements EmailProvider {
         subject: message.subject,
         text: message.text,
         html: message.html,
+        attachments: attachments?.map((attachment) => ({
+          filename: attachment.filename,
+          content: Buffer.from(attachment.content).toString('base64'),
+          ...(attachment.contentType === undefined ? {} : { content_type: attachment.contentType }),
+        })),
         reply_to: message.replyTo,
         tags: message.tags ? mapTags(message.tags) : undefined,
       }),

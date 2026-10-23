@@ -6,6 +6,7 @@
  */
 
 import type { EmailMessage, EmailProvider, EmailSendResult } from './types';
+import { prepareEmailAttachments } from './email-attachments';
 
 export interface CapturedEmail {
   id: string;
@@ -16,13 +17,18 @@ export interface CapturedEmail {
 /** Test/local provider that records sent messages in memory. */
 export class MemoryEmailProvider implements EmailProvider {
   readonly name = 'memory';
+  readonly supportsAttachments = true;
   readonly messages: CapturedEmail[] = [];
   private nextId = 0;
 
   /** Store a message in memory and return a normalized send result. */
   async send(message: EmailMessage): Promise<EmailSendResult> {
+    const { attachments: supplied, ...fields } = message;
+    const attachments = prepareEmailAttachments(this, supplied);
+    const captured = { ...fields, ...(Array.isArray(fields.to) ? { to: [...fields.to] } : {}),
+      ...(attachments === undefined ? {} : { attachments }) };
     const id = `email_${++this.nextId}`;
-    this.messages.push({ id, message, sentAt: Date.now() });
+    this.messages.push({ id, message: captured, sentAt: Date.now() });
 
     return {
       id,
