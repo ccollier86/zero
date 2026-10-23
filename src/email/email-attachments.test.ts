@@ -88,6 +88,7 @@ test('invalid names, MIME types, URL/file inputs, sparse arrays, and shared byte
     [{ ...pdf(), filename: 'x'.repeat(256) }], [{ ...pdf(), contentType: 'application/pdf\r\nX-Header: value' }],
     [{ ...pdf(), contentType: 'not a MIME type' }], [{ ...pdf(), contentType: 'application/pdf; charset=utf-8' }],
     [{ ...pdf(), contentType: 'application/*' }],
+    [{ ...pdf(), contentType: 'application/pdf\n' }],
     [{ filename: 'patient.pdf', content: 'https://private.example.test/patient.pdf' }],
     [{ filename: 'patient.pdf', path: '/private/patient.pdf' }], [{ ...pdf(), path: 'https://private.example.test/patient.pdf' }],
     [{ ...pdf(), content: new ArrayBuffer(2) }], [{ ...pdf(), content: new Uint8Array(0) }],

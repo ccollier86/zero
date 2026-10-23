@@ -44,7 +44,8 @@ function copyEmailAttachments(input: EmailAttachment[] | undefined): EmailAttach
       const { filename, content, contentType } = entry;
       if (typeof filename !== 'string' || filename.length < 1 || filename.length > 255
         || filename !== filename.trim() || filename === '.' || filename === '..' || FILENAME_UNSAFE.test(filename)) throw invalid();
-      if (contentType !== undefined && (typeof contentType !== 'string' || contentType.length > 127 || !MEDIA_TYPE.test(contentType))) throw invalid();
+      if (contentType !== undefined && (typeof contentType !== 'string' || contentType !== contentType.trim()
+        || contentType.length > 127 || !MEDIA_TYPE.test(contentType))) throw invalid();
       if (!(content instanceof Uint8Array)) throw invalid();
       // Intrinsic getters cannot be replaced by a caller's shadow byteLength/buffer properties.
       const byteLength = byteLengthOf.call(content) as number;
