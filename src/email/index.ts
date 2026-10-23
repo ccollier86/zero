@@ -16,11 +16,13 @@ export {
   getEmailRuntime,
   getEmailService,
   isEmailDeliveryReady,
+  isEmailAttachmentDeliveryReady,
 } from './runtime';
 export type {
   AppIdentityConfig,
   BuiltInEmailProvider,
   EmailConfig,
+  EmailAttachment,
   EmailMessage,
   EmailProvider,
   EmailRuntime,

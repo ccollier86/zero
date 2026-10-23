@@ -918,6 +918,13 @@ Auth/account emails use branded defaults from app config. User apps can replace
 provider behavior through custom provider/adapters. Keep auth email templates
 themeable and app-name aware.
 
+Email supports bounded in-memory `EmailMessage.attachments` with
+`{ filename, content: Uint8Array, contentType? }`. Check
+`isEmailAttachmentDeliveryReady(getEmailRuntime())` before offering document
+sending. Resend sends exact base64 bytes; unsupported providers fail closed,
+and memory capture is not real delivery readiness. No attachment URLs or file
+paths are accepted. Read `docs/email.md` for limits and delivery responsibilities.
+
 ## Platform Tokens
 
 Platform tokens support one-time action tokens and resumable public-flow

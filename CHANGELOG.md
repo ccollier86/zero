@@ -165,6 +165,23 @@ All notable Zero Platform changes are tracked here.
   temporary outside-tree app, verify packaged docs, typecheck, and render SSR.
 - Increased the package integration-test timeout for slower mounted filesystems.
 
+## 1.3.0-piq.1 - 2026-10-23
+
+### Added
+
+- Added bounded, copied in-memory email attachments to the public email and
+  server APIs, with exact Resend base64 content and validated filename/MIME
+  mapping while preserving abort and idempotency controls.
+- Added explicit attachment capability and positive production readiness.
+  Unsupported providers fail closed; memory captures copied bytes for tests.
+  Unsafe filenames/types, file paths/URLs, excessive count/bytes, and MIME
+  whitespace injection are rejected before provider calls.
+
+This isolated PracticeIQ compatibility patch is based on exact framework commit
+`91db9f2892810bfa53666f0c6a4abeb5e4514b86`. It deliberately does not include
+later workflow engines, workflow migrations, frontend changes, or dependency
+upgrades from the maintained 1.3 release line.
+
 ## 1.3.0 - 2026-07-06
 
 Framework-readiness release focused on package-mode development, safer app

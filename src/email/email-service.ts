@@ -9,6 +9,7 @@
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { EmailError } from './email-error';
+import { prepareEmailAttachments } from './email-attachments';
 import { safeEmailFailureCode } from './email-failure-policy';
 import type { EmailConfig, EmailMessage, EmailProvider, EmailSendResult } from './types';
 
@@ -26,10 +27,12 @@ export class EmailService {
    * stable observability events, and never logs message bodies or secrets.
    */
   async send(message: EmailMessage): Promise<EmailSendResult> {
+    const { attachments, ...fields } = message;
     const resolved: EmailMessage = {
-      ...message,
-      from: message.from ?? this.config.from,
-      replyTo: message.replyTo ?? this.config.replyTo,
+      ...fields,
+      from: fields.from ?? this.config.from,
+      replyTo: fields.replyTo ?? this.config.replyTo,
+      ...(attachments === undefined ? {} : { attachments: prepareEmailAttachments(this.provider, attachments) }),
     };
 
     validateMessage(resolved);
