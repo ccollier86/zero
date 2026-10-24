@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from 'bun';
-import type { EphemeralStateManager } from './ephemeral-manager';
+import type { EphemeralEntry, EphemeralStateManager } from './ephemeral-manager';
 import type {
   EphemeralErrorCode,
   EphemeralErrorMessage,
@@ -244,7 +244,7 @@ export class EphemeralChannel {
       return;
     }
 
-    this.manager.set(decision.namespace, key, value, actorId, ttl, valueSize);
+    const entry = this.manager.set(decision.namespace, key, value, actorId, ttl, valueSize);
     await this.broadcast(decision.namespace, {
       type: 'ephemeral.change',
       topic,
@@ -252,7 +252,7 @@ export class EphemeralChannel {
       value,
       userId: actorId,
       op: 'set',
-    });
+    }, entry);
   }
 
   async delete(
@@ -415,6 +415,7 @@ export class EphemeralChannel {
   private async broadcast(
     namespace: string,
     change: EphemeralChangeMessage,
+    entry?: EphemeralEntry,
   ): Promise<void> {
     const connectionIds = [...this.manager.getSubscribers(namespace)];
     for (const connectionId of connectionIds) {
@@ -425,7 +426,14 @@ export class EphemeralChannel {
       for (const binding of [...socketBindings.values()]) {
         if (binding.namespace !== namespace) continue;
         if (!(await this.revalidateBinding(ws, binding))) continue;
-        this.send(ws, { ...change, topic: binding.topic });
+        // Policy checks may yield while a newer value replaces this change.
+        // Neither an old set nor its late expiry may overwrite that value.
+        const current = this.manager.getEntry(namespace, change.key);
+        if (change.op === 'set' && entry && current !== entry) continue;
+        if (change.op === 'delete' && current) continue;
+        const freshness = binding.topic.startsWith('typing:') && entry ? this.manager.getFreshness(entry) : undefined;
+        if (freshness && freshness.ageMs >= freshness.ttlMs) continue;
+        this.send(ws, { ...change, topic: binding.topic, ...(freshness ? { freshness } : {}) });
       }
     }
   }
@@ -602,7 +610,7 @@ export class EphemeralChannel {
     const snapshot: EphemeralSnapshotMessage = {
       type: 'ephemeral.snapshot',
       topic: binding.topic,
-      entries: this.manager.getSnapshot(binding.namespace),
+      entries: this.manager.getSnapshot(binding.namespace, binding.topic.startsWith('typing:')),
     };
     this.send(ws, snapshot);
   }

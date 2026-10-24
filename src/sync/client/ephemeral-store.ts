@@ -1,12 +1,12 @@
 import { createStore } from '@xstate/store';
-import type { JsonValue } from '../types';
+import type { EphemeralFreshness, EphemeralWireEntry, JsonValue } from '../types';
 import type { EphemeralErrorMessage } from '../ephemeral-policy';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export interface EphemeralEntryClient {
-  value: JsonValue;
-  userId: string;
+export interface EphemeralEntryClient extends EphemeralWireEntry {
+  /** Local monotonic receipt time. Never accepted from the wire or publisher. */
+  observedAt?: number;
 }
 
 export interface EphemeralTopicState {
@@ -22,7 +22,7 @@ export interface EphemeralStoreContext {
 type EphemeralStoreEvents = {
   'ephemeral.snapshot': {
     topic: string;
-    entries: Record<string, { value: JsonValue; userId: string }>;
+    entries: Record<string, EphemeralWireEntry>;
   };
   'ephemeral.change': {
     topic: string;
@@ -30,6 +30,7 @@ type EphemeralStoreEvents = {
     value: JsonValue | null;
     userId: string;
     op: 'set' | 'delete';
+    freshness?: EphemeralFreshness;
   };
   'ephemeral.clear-topic': {
     topic: string;
@@ -52,7 +53,7 @@ export function createEphemeralStore() {
         ...ctx,
         topics: {
           ...ctx.topics,
-          [event.topic]: { entries: { ...event.entries } },
+          [event.topic]: { entries: observeSnapshot(event.entries) },
         },
       }),
 
@@ -80,7 +81,8 @@ export function createEphemeralStore() {
             [event.topic]: {
               entries: {
                 ...topicState.entries,
-                [event.key]: { value: event.value!, userId: event.userId },
+                [event.key]: observeEntry({ value: event.value!, userId: event.userId,
+                  ...(event.freshness !== undefined ? { freshness: event.freshness } : {}) }),
               },
             },
           },
@@ -100,6 +102,18 @@ export function createEphemeralStore() {
 
 export type EphemeralStore = ReturnType<typeof createEphemeralStore>;
 
+function observeEntry(entry: EphemeralWireEntry): EphemeralEntryClient {
+  return { value: entry.value, userId: entry.userId,
+    ...(entry.freshness !== undefined ? { freshness: entry.freshness, observedAt: performance.now() } : {}) };
+}
+
+function observeSnapshot(entries: Record<string, EphemeralWireEntry>): Record<string, EphemeralEntryClient> {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {};
+  return Object.fromEntries(Object.entries(entries)
+    .filter(([, entry]) => !!entry && typeof entry === 'object' && typeof entry.userId === 'string')
+    .map(([key, entry]) => [key, observeEntry(entry)]));
+}
+
 // ─── Message Router ─────────────────────────────────────────────────────────
 
 /**
@@ -116,7 +130,7 @@ export function routeEphemeralMessage<TMessage extends { type: string }>(
       store.send({
         type: 'ephemeral.snapshot' as const,
         topic: wire.topic as string,
-        entries: wire.entries as Record<string, { value: JsonValue; userId: string }>,
+        entries: wire.entries as Record<string, EphemeralWireEntry>,
       });
       return true;
 
@@ -128,6 +142,7 @@ export function routeEphemeralMessage<TMessage extends { type: string }>(
         value: wire.value as JsonValue | null,
         userId: wire.userId as string,
         op: wire.op as 'set' | 'delete',
+        ...(wire.freshness !== undefined ? { freshness: wire.freshness as EphemeralFreshness } : {}),
       });
       return true;
 

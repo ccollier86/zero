@@ -1191,10 +1191,22 @@ export interface EphemeralDeleteMessage {
 
 // Server → Client
 
+/** Server-measured age and lifetime; independent of a publisher's wall clock. */
+export interface EphemeralFreshness {
+  ageMs: number;
+  ttlMs: number;
+}
+
+export interface EphemeralWireEntry {
+  value: JsonValue;
+  userId: string;
+  freshness?: EphemeralFreshness;
+}
+
 export interface EphemeralSnapshotMessage {
   type: 'ephemeral.snapshot';
   topic: string;
-  entries: Record<string, { value: JsonValue; userId: string }>;
+  entries: Record<string, EphemeralWireEntry>;
 }
 
 export interface EphemeralChangeMessage {
@@ -1204,6 +1216,7 @@ export interface EphemeralChangeMessage {
   value: JsonValue | null;
   userId: string;
   op: 'set' | 'delete';
+  freshness?: EphemeralFreshness;
 }
 
 // ─── State Client Store ──────────────────────────────────────────────────

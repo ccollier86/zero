@@ -76,6 +76,9 @@ than importing implementation files or reconstructing authentication in routes.
 
 ## Communication
 
+- [Messaging foundation](./messaging/index.md): active integration plan and release
+  gates for conversations, Storage attachments, AI takeover and channels.
+
 - [Realtime Sync](./sync/index.md): admitted snapshots, replay/live changes,
   mutation receipts, durable user state and bounded ephemeral collaboration.
 - [Email](./email/index.md): provider-neutral server delivery, captured app-local

@@ -163,6 +163,8 @@ export type {
   EphemeralDeleteMessage,
   EphemeralSnapshotMessage,
   EphemeralChangeMessage,
+  EphemeralFreshness,
+  EphemeralWireEntry,
 } from './types';
 
 // ─── State Sync Types ────────────────────────────────────────────────────

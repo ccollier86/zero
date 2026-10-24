@@ -113,12 +113,20 @@ function authorizeRoomTopic(
     return deny('EPHEMERAL_FORBIDDEN', 'Room topic is not available');
   }
 
-  if (context.operation !== 'subscribe'
-    && context.key !== `user:${auth.userId}`) {
+  const actorKey = `user:${auth.userId}`;
+  const sessionKey = kind === 'typing' && context.key?.startsWith(actorKey + ':session:')
+    && /^[A-Za-z0-9_-]{8,80}$/.test(context.key.slice((actorKey + ':session:').length));
+  if (context.operation !== 'subscribe' && context.key !== actorKey && !sessionKey) {
     return deny(
       'EPHEMERAL_KEY_NOT_OWNED',
       'Room presence and typing keys are derived from the authenticated user',
     );
+  }
+
+  if (sessionKey && context.operation === 'set') {
+    if (!Number.isSafeInteger(context.ttl) || context.ttl! < 1000 || context.ttl! > 15000) return deny('EPHEMERAL_INVALID_TTL', 'Typing sessions require a 1000–15000ms expiry');
+    const value = context.value;
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.userId !== auth.userId) return deny('EPHEMERAL_FORBIDDEN', 'Typing identity must match the authenticated actor');
   }
 
   return {

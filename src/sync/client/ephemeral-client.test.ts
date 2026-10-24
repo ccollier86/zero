@@ -4,6 +4,38 @@ import { createEphemeralStore, routeEphemeralMessage } from './ephemeral-store';
 import type { EphemeralErrorMessage } from '../ephemeral-policy';
 
 describe('EphemeralClient authorization lifecycle', () => {
+  test('explicit retry re-proves an existing subscription without an offline queue or stale cached activity', () => {
+    const regular: object[] = [], transient: object[] = [], store = createEphemeralStore();
+    let connected = true;
+    const client = new EphemeralClient(message => regular.push(message), store, message => {
+      if (!connected) return false;
+      transient.push(message); return true;
+    });
+    const unsubscribe = client.subscribe('typing:room-a', () => {});
+    regular.length = 0;
+    store.send({ type: 'ephemeral.snapshot', topic: 'typing:room-a', entries: { 'user:a': { value: true, userId: 'a' } } });
+    expect(client.retrySubscription('typing:room-a')).toBe(true);
+    expect(transient).toEqual([{ type: 'ephemeral.subscribe', topic: 'typing:room-a' }]);
+    expect(client.getEntries('typing:room-a')).toEqual({});
+    connected = false; transient.length = 0;
+    expect(client.retrySubscription('typing:room-a')).toBe(false);
+    expect(regular).toEqual([]); expect(transient).toEqual([]);
+    client.beginAuthorizationScopeTransition();
+    expect(client.retrySubscription('typing:room-a')).toBe(false);
+    unsubscribe(); client.dispose();
+    expect(client.retrySubscription('typing:room-a')).toBe(false);
+    expect(() => client.subscribe('typing:room-a', () => {})).toThrow('disposed');
+  });
+  test('session typing uses bounded transient TTL and cleanup never enters the offline queue', () => {
+    const buffered: object[] = [], transient: object[] = []; let connected = true;
+    const client = new EphemeralClient(value => buffered.push(value), createEphemeralStore(), value => { if (!connected) return false; transient.push(value); return true; });
+    expect(client.setTransient('typing:room', 'user:alice:session:tab-0001', { userId: 'alice' }, 5000)).toBe(true);
+    expect(client.deleteTransient('typing:room', 'user:alice:session:tab-0001')).toBe(true);
+    expect(transient).toEqual([{ type: 'ephemeral.set', topic: 'typing:room', key: 'user:alice:session:tab-0001', value: { userId: 'alice' }, ttl: 5000 }, { type: 'ephemeral.delete', topic: 'typing:room', key: 'user:alice:session:tab-0001' }]);
+    connected = false; expect(client.setTransient('typing:room', 'user:alice:session:tab-0001', true, 5000)).toBe(false); expect(client.deleteTransient('typing:room', 'user:alice:session:tab-0001')).toBe(false);
+    client.beginAuthorizationScopeTransition(); expect(client.deleteTransient('typing:room', 'user:alice:session:tab-0001')).toBe(false);
+    expect(buffered).toEqual([]); client.dispose();
+  });
   test('transient observations never enter the buffered ordinary send path', () => {
     const buffered: object[] = [], transient: object[] = [];
     let writable = false;

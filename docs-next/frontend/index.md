@@ -69,6 +69,8 @@ manuals and distinguish working-source additions from older installed packages.
 - [Notifications](./notifications/index.md) covers receipt hooks, optional toast
   provider and reusable inbox/badge controls.
 - [Rooms](./rooms/index.md) covers scoped membership hooks and room/topic presence.
+- [Messaging foundation](./messaging/index.md) covers experimental conversation
+  parts and real session-scoped typing; the durable chat backend is still in development.
 - [Email Inbox](./email/index.md) covers optional folder/message workspaces, safe HTML, rich composition, scoped drafts and live mail.
 - [Frontend observability](./observability.md) covers browser sink/event integration
   and safe diagnostics without bypassing backend ingest authority.

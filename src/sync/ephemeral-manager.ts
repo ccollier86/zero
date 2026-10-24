@@ -1,4 +1,4 @@
-import type { JsonValue } from './types';
+import type { EphemeralFreshness, EphemeralWireEntry, JsonValue } from './types';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 
@@ -8,6 +8,8 @@ export interface EphemeralEntry {
   value: JsonValue;
   userId: string;
   expiresAt: number;
+  /** Server acceptance time, never taken from the value's client timestamps. */
+  acceptedAt?: number;
   /** UTF-8 JSON wire size used for process-local capacity accounting. */
   byteSize?: number;
 }
@@ -99,7 +101,7 @@ export class EphemeralStateManager {
     userId: string,
     ttl = 30_000,
     byteSize = measureJsonValue(value),
-  ): void {
+  ): EphemeralEntry {
     if (this.disposed) throw new Error('Ephemeral state manager is disposed.');
     let entries = this.topics.get(topic);
     if (!entries) {
@@ -108,9 +110,11 @@ export class EphemeralStateManager {
     }
     const previous = entries.get(key);
     if (previous) this.removeUsage(topic, previous);
-    const entry = { value, userId, expiresAt: this.now() + ttl, byteSize };
+    const acceptedAt = this.now();
+    const entry = { value, userId, acceptedAt, expiresAt: acceptedAt + ttl, byteSize };
     entries.set(key, entry);
     this.addUsage(topic, entry);
+    return entry;
   }
 
   /** Delete a key from a topic. Returns true if it existed. */
@@ -154,17 +158,25 @@ export class EphemeralStateManager {
   }
 
   /** Get a snapshot of all entries in a topic. */
-  getSnapshot(topic: string): Record<string, { value: JsonValue; userId: string }> {
+  getSnapshot(topic: string, includeFreshness = false): Record<string, EphemeralWireEntry> {
     const entries = this.topics.get(topic);
     if (!entries) return {};
     const now = this.now();
-    const result: Record<string, { value: JsonValue; userId: string }> = {};
+    const result: Record<string, EphemeralWireEntry> = {};
     for (const [key, entry] of entries) {
       if (entry.expiresAt > now) {
-        result[key] = { value: entry.value, userId: entry.userId };
+        Object.defineProperty(result, key, { enumerable: true, configurable: true, writable: true,
+          value: { value: entry.value, userId: entry.userId,
+            ...(includeFreshness ? { freshness: this.getFreshness(entry) } : {}) } });
       }
     }
     return result;
+  }
+
+  /** Recompute age at delivery, including time spent awaiting policy checks. */
+  getFreshness(entry: EphemeralEntry): EphemeralFreshness | undefined {
+    if (entry.acceptedAt === undefined) return undefined;
+    return { ageMs: Math.max(0, this.now() - entry.acceptedAt), ttlMs: entry.expiresAt - entry.acceptedAt };
   }
 
   /** Get all topic names that match a prefix. */

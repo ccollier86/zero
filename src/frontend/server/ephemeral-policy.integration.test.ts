@@ -141,6 +141,17 @@ describe('createApp managed ephemeral topic policy', () => {
       code: 'EPHEMERAL_TOPIC_UNCLASSIFIED',
     });
 
+    const typingTopic = `typing:${room.room_id}`, sessionKey = `user:${owner.user.userId}:session:managed-01`;
+    ownerConnection.ws.send(JSON.stringify({ type: 'ephemeral.subscribe', topic: typingTopic }));
+    await ownerConnection.waitFor(message => message.type === 'ephemeral.snapshot' && message.topic === typingTopic, 'managed typing snapshot');
+    ownerConnection.ws.send(JSON.stringify({ type: 'ephemeral.set', topic: typingTopic, key: sessionKey,
+      value: { userId: owner.user.userId, updatedAt: 1 }, ttl: 5000 }));
+    const typing = await ownerConnection.waitFor(message => message.type === 'ephemeral.change' && message.topic === typingTopic && message.key === sessionKey, 'managed session typing');
+    expect(typing).toMatchObject({ userId: owner.user.userId, freshness: { ttlMs: 5000 } });
+    expect((typing as { freshness: { ageMs: number } }).freshness.ageMs).toBeLessThan(5000);
+    outsiderConnection.ws.send(JSON.stringify({ type: 'ephemeral.subscribe', topic: typingTopic }));
+    expect(await outsiderConnection.waitFor(message => message.type === 'ephemeral.error' && message.topic === typingTopic, 'non-member typing denial')).toMatchObject({ code: 'EPHEMERAL_FORBIDDEN' });
+
     const deleteRoom = await fetch(`${baseUrl}/rooms/${room.room_id}`, {
       method: 'DELETE',
       headers: bearerJson(owner.accessToken),
@@ -157,6 +168,7 @@ describe('createApp managed ephemeral topic policy', () => {
       operation: 'subscribe',
       revoked: true,
     });
+    expect(await ownerConnection.waitFor(message => message.type === 'ephemeral.error' && message.topic === typingTopic && message.revoked === true, 'typing revocation')).toMatchObject({ code: 'EPHEMERAL_FORBIDDEN' });
   }, 60_000);
 
   test('preserves shared legacy topics for an explicitly authless app', async () => {

@@ -11,11 +11,13 @@ const evidenceRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/str
 
 test('optional payments and provider-free clients work from fresh installed archives', async () => {
   const root = await mkdtemp(join(scratch, 'payments-package-'));
-  const consumer = join(root, 'consumer'), core = join(root, 'framework.tgz'), plugin = join(root, 'payments.tgz');
+  const consumer = join(root, 'consumer');
+  const core = process.env.ZERO_PAYMENTS_CORE_ARCHIVE ?? join(root, 'framework.tgz');
+  const plugin = process.env.ZERO_PAYMENTS_PLUGIN_ARCHIVE ?? join(root, 'payments.tgz');
   try {
     await mkdir(join(consumer, 'app'), { recursive: true });
-    await command(['pm', 'pack', '--ignore-scripts', '--filename', core], repository);
-    await command(['pm', 'pack', '--ignore-scripts', '--filename', plugin], join(repository, 'packages/payments'));
+    if (!process.env.ZERO_PAYMENTS_CORE_ARCHIVE) await command(['pm', 'pack', '--ignore-scripts', '--filename', core], repository);
+    if (!process.env.ZERO_PAYMENTS_PLUGIN_ARCHIVE) await command(['pm', 'pack', '--ignore-scripts', '--filename', plugin], join(repository, 'packages/payments'));
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({ name: 'payments-archive-consumer', private: true, type: 'module', dependencies: {
       '@zero/framework': `file:${core}`, '@zero/plugin-payments': `file:${plugin}`, typescript: '^5.9.3', '@types/bun': '1.3.14', '@types/react': '^19.2.14', '@types/react-dom': '^19.2.3', react: '19.2.4', 'react-dom': '19.2.4',
     } }));
@@ -35,9 +37,22 @@ test('optional payments and provider-free clients work from fresh installed arch
     for (const path of ['index.md', 'configuration.md', 'api.md', 'webhooks.md', 'operations.md', 'roadmap.md']) expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/plugins/payments', path)).exists()).toBe(true);
     const sha = async (path: string) => createHash('sha256').update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest('hex');
     await mkdir(evidenceRoot, { recursive: true });
-    await Bun.write(join(evidenceRoot, 'installed-archive-evidence.json'), JSON.stringify({ sourceSnapshot: 'dirty', branch: 'feature/stripe-payments-foundation', baseCommit: 'b726e69', framework: { version: '2.6.0', sha256: await sha(core) }, plugin: { version: '0.1.0', sha256: await sha(plugin) }, ...verified, verifiedAt: new Date().toISOString(), liveStripeOperations: false }, null, 2));
+    const source = await sourceIdentity();
+    await Bun.write(join(evidenceRoot, 'installed-archive-evidence.json'), JSON.stringify({ sourceSnapshot: source.dirty ? 'dirty' : 'clean', branch: source.branch, baseCommit: source.commit,
+      framework: { version: '2.6.0', archive: core, sha256: await sha(core) }, plugin: { version: '0.1.0', archive: plugin, sha256: await sha(plugin) },
+      ...verified, verifiedAt: new Date().toISOString(), liveStripeOperations: false }, null, 2));
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 180000);
+
+async function sourceIdentity() {
+  const git = async (args: string[]) => {
+    const child = Bun.spawn(['git', ...args], { cwd: repository, stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (code) throw new Error(`Cannot identify the qualified package source: ${stderr}`);
+    return stdout.trim();
+  };
+  return { commit: await git(['rev-parse', 'HEAD']), branch: await git(['branch', '--show-current']), dirty: !!await git(['status', '--porcelain']) };
+}
 
 async function command(args: string[], cwd: string): Promise<string> {
   const child = Bun.spawn([process.execPath, '--no-env-file', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH, TMPDIR: scratch, BUN_INSTALL_CACHE_DIR: '/Volumes/code-bank/caches/bun/install-cache' } });

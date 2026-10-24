@@ -9,11 +9,11 @@ import { imapFixture } from './test-support/imap-fixture';
 test('packed SMTP/IMAP facade resolves, typechecks and sends/receives from a fresh consumer', async () => {
   const scratch = Bun.env.PROJECT_SCRATCH_DIR ?? tmpdir();
   const root = await mkdtemp(join(scratch, 'zero-mail-package-'));
-  const consumer = join(root, 'consumer'), archive = join(root, 'framework.tgz');
+  const consumer = join(root, 'consumer'), archive = process.env.ZERO_MAIL_ARCHIVE ?? join(root, 'framework.tgz');
   const smtp = await smtpFixture(), imap = await imapFixture();
   try {
     await mkdir(consumer);
-    await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
+    if (!process.env.ZERO_MAIL_ARCHIVE) await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({ name: 'zero-mail-proof', private: true, type: 'module',
       dependencies: { '@zero/framework': `file:${archive}`, typescript: '^5.7.0', '@types/bun': 'latest', '@types/react': '^19.2.14', '@types/react-dom': '^19.2.3' },
     }));

@@ -8,14 +8,14 @@ visibility: internal
 system: frontend
 feature: ui-upgrade
 maturity: experimental
-applies_to: ["2.6.0 source on feature/ui-next-upgrade; unreleased application UI migration"]
+applies_to: ["2.6.0 source on main; application UI migration requires explicit testing"]
 modes: [browser, SSR, application, public-pages, package-imports, source-copy]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "645295dd1300164d31df52e80509eaff9f6903ee"
+  commit: "2764627453671fc23cc6cd609b0785a09fb5da40"
   snapshot: dirty
-  date: "2026-10-13"
+  date: "2026-10-24"
   evidence_level: source-observed
 ---
 
@@ -30,11 +30,11 @@ Keep the original implementations and theme available until the application
 comparison is approved. Pantheon is the intended first representative app;
 this handoff does not mean that Pantheon has already been upgraded.
 
-The framework source branch is **`feature/ui-next-upgrade`** in
+The framework source branch is **`main`** in
 `ccollier86/zero` (`origin` in the Zero workspace). It carries the existing
 modal, Tooltip and DataTable commits plus the newer theme, typography, chart,
 control, scroll, vector-visualization and document-editor work. It is a source
-checkpoint, not a new registry release. The package version remains `2.6.0`;
+checkpoint, not evidence of a new registry release. The package version remains `2.6.0`;
 that version alone cannot identify these changes. Record the resolved branch
 commit and archive checksum before installing it.
 
@@ -79,6 +79,7 @@ private helpers, the modal store or internal animation controllers.
 | Arc scroll treatment | `@zero/framework/components/ui/scroll-area`; [public facade](../../src/components/ui/scroll-area.tsx), private geometry in `src/components/_internal/scroll-viewport/`. | [ScrollArea](../frontend/components/primitives/scroll-area.md). Native scrolling with intelligent edge fades and overlay rails. Already-owned picker/menu/command viewports must not be wrapped in another ScrollArea. |
 | FloatingButtonGroup | `@zero/framework/components/floating-button-group`; [canonical family](../../src/components/controls/floating-button-group/index.ts). | [Full manual](../frontend/components/controls/floating-button-group.md). Compact commands with magnetic material, native keyboard navigation and shared tooltips. `variant="floating"` selects material; it does not position or portal the tray. |
 | Structured document editor | `@zero/framework/components/json-editor`; [facade](../../src/components/json-editor/index.ts), [Tree/Code organism](../../src/components/json-editor/json-document-editor.tsx). | [Editor manual](../frontend/components/json-editor.md). Adopt `DocumentEditor` for JSON/YAML/TOML/literal `.env`, or `JsonDocumentEditor` for JSON-facing consumers. Retained `JsonEditor` is not silently replaced. |
+| Phone input | `@zero/framework/components/phone-input`; [facade](../../src/components/phone-input/index.ts). | [Phone Input](../frontend/components/phone-input.md). Current packaged country/flag picker, formatting and validation are supported; any further Arc-specific restyle remains a separate plan. |
 
 ### Charts and Reactive Visualization
 
@@ -92,9 +93,20 @@ private helpers, the modal store or internal animation controllers.
 | Native analytical family | `@zero/framework/components/charts/native`; [family facade](../../src/components/charts/native/index.ts). | [Native manual](../frontend/charts/native.md): Cartesian/composed, statistical, financial, matrix, polar and observed-time charts. Choose geometry by the measurement, not by a similar-looking name. |
 | Pure chart models and reactive query bridge | `@zero/framework/charts`, `@zero/framework/charts/arc`, `@zero/framework/charts/native`, `@zero/framework/charts/react`; [pure facade](../../src/charts/index.ts), [query bridge](../../src/frontend/client/chart-query.ts). | [Charts data contract](../frontend/charts/index.md). Use authorized, bounded complete aggregates; one table page or a partial cache is not a complete chart source. Triggers/functions/Fabric retain data and acceptance ownership. |
 | Ingestion and vector search | `@zero/framework/components/vector-visualization`; [organisms](../../src/components/vector-visualization/index.ts). Backend: `@zero/framework/vector/visualization`, [facade](../../src/vector/visualization.ts). | [Component manual](../frontend/components/vector-visualization.md), [backend integration](../backend/vector/visualizations.md). Observe actual operations with explicit configuration/permissions. Do not enable this service just to change the theme, or fabricate completion from an animation. |
-| DataTable live presentation | `@zero/framework/components/data-table`; [family facade](../../src/components/data-table/index.ts). | [DataTable](../frontend/data-controls/data-table/index.md), [footer/progress](../frontend/data-controls/data-table/controls.md), [motion/live updates](../frontend/data-controls/data-table/motion-and-live-updates.md), [server sources](../frontend/data-controls/data-table/server-sources.md). Reactive totals/page counts, initial reveal/overflow fixes and sort-aware new-record navigation are part of this branch's history. |
+| DataTable live presentation | `@zero/framework/components/data-table`; [family facade](../../src/components/data-table/index.ts). | [DataTable](../frontend/data-controls/data-table/index.md), [footer/progress](../frontend/data-controls/data-table/controls.md), [motion/live updates](../frontend/data-controls/data-table/motion-and-live-updates.md), [server sources](../frontend/data-controls/data-table/server-sources.md). Reactive totals/page counts, initial reveal/overflow fixes and sort-aware new-record navigation are in main's source history. |
 | Table management / Data Studio | `@zero/framework/components/data-studio`; [workspace](../../src/components/data-studio/data-studio-workspace.tsx), internal catalog in the same family. Connected `DataStudio` is also at `@zero/framework/react`. | [Workspace/catalog](../frontend/data-studio/workspace.md), [options](../frontend/data-studio/configuration.md), [managed dialogs](../frontend/data-studio/dialogs.md). Catalog-first entry, empty-start create flow, direct initial-table option, and retained in-table dropdown. |
 | Storage management | `@zero/framework/components/storage`; [workspace](../../src/components/storage/storage-studio-workspace.tsx), native and retained legacy adapters in `src/components/storage/`. | [Workspace](../frontend/storage/storage-studio-workspace.md), [controller contract](../frontend/storage/controller-contract.md). Standard manager forms/prompts/hold-confirmations now carry real triggers; standalone workspace gets a single-scene fallback host. No backend storage migration is required for the presentation fix. |
+
+### Email and Messaging
+
+| Changed area | Supported entry and implementation location | Full documentation and adoption |
+| --- | --- | --- |
+| Email inbox | `@zero/framework/email-inbox`; [facade](../../src/components/email-inbox/index.ts). | [Inbox UI](../frontend/email/index.md), [email services](../backend/email/index.md). SMTP/IMAP/inbox are separately configured, with scoped account resolvers, safe HTML and actual delivery/live-mail behavior. Installing the framework does not configure a mailbox. |
+| Messaging presentation and typing | `@zero/framework/messaging`, or `@zero/framework/components/messaging`; [facade](../../src/components/messaging/index.ts). | [Components and adoption](../frontend/messaging/index.md), [integration plan](../backend/messaging/index.md). Experimental composable parts and authenticated room typing are packaged. Durable chat, file binding, AI takeover and Messenger delivery are not implemented; do not invent `client.messaging` calls. |
+
+These families are opt-in adoptions, not mandatory replacements for an app's
+existing mail/chat system. The separately installed [Stripe payments plugin](../plugins/payments/index.md)
+also needs its matching package and configuration; a core update does not install it.
 
 Broader public React imports remain at `@zero/framework/react` and the framework
 root where documented. Prefer focused entries during migration to make family
@@ -132,7 +144,7 @@ specialized contracts. A second scroll wrapper is not a fix for a partial item.
 
 ### Live-Test Refinements (October 13)
 
-These fixes belong to the same framework feature branch; include them when
+These fixes are included in the framework's main history; include them when
 resolving/pinning the snapshot instead of installing an earlier archive solely
 because it also says `2.6.0`:
 
@@ -193,10 +205,10 @@ From the existing Zero repository, first inspect both worktrees and local change
 ```sh
 git status --short
 git worktree list
-git fetch --no-tags origin feature/ui-next-upgrade
-UI_NEXT_COMMIT="$(git rev-parse origin/feature/ui-next-upgrade)"
+git fetch --no-tags origin main
+UI_NEXT_COMMIT="$(git rev-parse origin/main)"
 git show --no-patch --format='%H %s' "$UI_NEXT_COMMIT"
-git log --oneline origin/main.."$UI_NEXT_COMMIT"
+git log -5 --oneline "$UI_NEXT_COMMIT"
 ```
 
 Record the full resolved commit and keep the same shell for the next command.
@@ -300,7 +312,7 @@ Choose the application's existing installation model, then keep it consistent.
 | Current model | Upgrade procedure |
 | --- | --- |
 | Managed `file:./.zero/framework/zero-framework.tgz` binding with text `bun.lock` | Use [saved-archive update](../cli/tooling/zero-update.md) after explicitly selecting the recorded artifact, or the verified local-checkout procedure below. Respect updater preflight, lock and rollback reports. |
-| Registry or Git dependency | Deliberately pin the reviewed source commit or archive using the existing package-manager/workspace policy. `--latest` cannot select this unreleased branch. Keep overrides and resolved provenance aligned. |
+| Registry or Git dependency | Deliberately pin the reviewed main commit or archive using the existing package-manager/workspace policy. Registry `--latest` is not proof of the selected source snapshot. Keep overrides and resolved provenance aligned. |
 | Copied components or mixed ownership | Update the package where needed, then compare each owned copy separately. An installed package does not refresh app-local files. |
 
 For a managed local-archive app, the new CLI supports a script-free preview and
@@ -501,12 +513,12 @@ Prepare this application for the Zero UI upgrade on feature/ui-next-adoption.
 First read the pinned Zero framework's docs-next/guides/ui-upgrade.md and the
 linked UI reference, application guide, modal migration and chart manuals.
 
-Preserve unrelated changes. Fetch the Zero repository's feature/ui-next-upgrade
+Preserve unrelated changes. Fetch the Zero repository's main
 branch, record its exact commit, and use a clean isolated framework checkout.
 Do not merge the framework Git history into this application repository.
 Update the app's framework dependency using its existing ownership/update model;
 record the selected archive checksum or Git pin. Do not install registry latest
-and assume it contains this unreleased UI checkpoint.
+and assume it contains this reviewed source snapshot.
 
 Run the new Doctor's source-only upgrade/theme audit before and after installation.
 Inventory package imports, app-copied components/CSS, modal frames, legacy charts,
