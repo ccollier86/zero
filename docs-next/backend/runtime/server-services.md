@@ -56,6 +56,7 @@ not an organization data capability.
 | `notifications`, `rooms` | current-actor/scope facades; null when unavailable or no scope |
 | `workflows` | scoped run operations; privileged registration/lifecycle methods are not here |
 | `pdf` | scoped renderer/storage bridge when configured |
+| `payments` | optional [Stripe foundation](../../plugins/payments/api.md): current billing subject and live authority; no merchant SDK or arbitrary customer selector |
 | `auth` | compiler/evaluator access; multi-tenant requests cannot use raw user/role/token stores |
 | `observability` | emitters bound to request authority; multi-tenant requests cannot inspect raw global sinks/stores |
 | `unsafe` | deliberately privileged setup bag; trusted app code assumes enforcement responsibility |

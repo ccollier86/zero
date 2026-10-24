@@ -64,6 +64,8 @@ import type { DatabaseManager } from '../../databases/database-manager';
 import type { PdfService } from '../../pdf';
 import { getPdfService } from '../../pdf';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import type { PaymentsBackend } from '../../payments/contracts';
+import { getPaymentsBackend } from '../../payments/registry';
 import {
   ZERO_AI_SERVICE,
   ZERO_AUTH_STORE,
@@ -163,6 +165,8 @@ export interface ServerSystemDatabaseServices {
 
 /** Platform services exposed under `zero` in app-owned server route handlers. */
 export interface ServerRouteServices {
+  /** Optional payments plugin. Requests receive only the current billing subject. */
+  readonly payments: PaymentsBackend | null;
   /** Primary reactive database handle for app-owned server code. */
   readonly db: ReactiveDB;
   /** Backwards-compatible alias for the primary reactive database handle. */
@@ -242,6 +246,7 @@ export function createLazyServerRouteServices(runtime?: ZeroAppRuntime): ServerR
 
 function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
   return {
+    get payments() { const owner = runtime ? runtime.get(ZERO_SYNC_DB) : getSyncDB(); return owner ? getPaymentsBackend(owner) : null; },
     get db() {
       return requireSyncDB(runtime);
     },

@@ -18,6 +18,8 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Stripe payments foundation](./stripe-payments-foundation.md): optional
+  billing facade, durable webhooks, scoped services and installed-archive checks.
 - [Calendar/field-editor follow-up](./calendar-field-editors.md): shared picker
   drill-down/navigation, anchored validated Studio cells and management disclosure.
 - [Page/session refresh regression](./session-refresh-regression.md): separate

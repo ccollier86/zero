@@ -271,6 +271,8 @@
       "types": "./src/email/index.ts",
       "import": "./src/email/index.ts"
     },
+    "./payments/client": { "types": "./src/payments/client.ts", "import": "./src/payments/client.ts" },
+    "./payments": { "types": "./src/payments/index.ts", "import": "./src/payments/index.ts" },
     "./hooks": {
       "types": "./src/hooks/index.ts",
       "import": "./src/hooks/index.ts"
