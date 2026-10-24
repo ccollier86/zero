@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: configuration
-applies_to: ["2.6.0 main source with @zero/plugin-payments 0.1.0; identify archives by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
 modes: [single tenant, multi tenant, Stripe test, Stripe live]
 ---
 
@@ -18,6 +18,7 @@ modes: [single tenant, multi tenant, Stripe test, Stripe live]
 Install the optional package alongside the matching updated framework. The core
 framework does not depend on Stripe. This plugin pins the official `stripe`
 package to **23.0.1** and its API version to **2026-09-30.endive**.
+For the same facade backed by Square, use the [Square configuration guide](./square.md).
 
 For a saved-package rollout, update the framework through the normal
 [saved-archive workflow](../../cli/tooling/zero-update.md), then explicitly
@@ -101,7 +102,7 @@ separate minimal key for test fixtures and rotate deployment secrets normally.
 | `webhookPath` | `/api/webhooks/stripe`; signature-authenticated, not session-authenticated. |
 | `timeoutMs`, `maxNetworkRetries` | 30,000ms and 1; ranges 100–60,000ms and 0–2. Provider POST retries keep the same idempotency key. |
 | `maxProjectionAgeMs` | 300,000ms. Worker refreshes existing projections before expiry; stale grants are withheld. Range 1,000–86,400,000ms. |
-| `onChange`, `onEvent` | Optional durable, at-least-once integration callbacks. See [webhooks](./webhooks.md). |
+| `onChange`, `onEvent`, `onMerchantEvent` | Optional durable, at-least-once integration callbacks. See [webhooks](./webhooks.md) and [merchant charges](./merchant-charges.md). |
 | `callbackTimeoutMs` | 15,000ms, range 100–60,000ms. Callbacks receive an abort signal and must honor it. |
 | `httpClient` | Trusted official-SDK HTTP transport override, useful for synthetic fixtures; never browser-configurable. |
 

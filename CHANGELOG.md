@@ -4,6 +4,21 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added Square through the existing `zero.payments` / `client.payments` facade in
+  optional `@zero/plugin-payments` 0.2.0, with explicit provider capabilities,
+  Guardian scope, merchant/location verification, hosted checkout, scheduled
+  subscription changes, invoice/payment/refund history, verified raw-body
+  webhooks and reactive paid-entitlement projections. Checkout/order lineage
+  preserves Zero ownership when Square selects a different buyer customer.
+- Added trusted `getPayments(zero).charges` for custom-amount hosted checkout and
+  tokenized direct charges on both Stripe and Square without a catalog product,
+  customer or Zero user. Includes partial/full refunds, safe reads, operation
+  receipts and durable merchant callbacks; no arbitrary-amount browser endpoint.
+  Exact parameters survive lost responses, Square's non-idempotent mutations
+  are attempt-journaled and resource-fenced, and unsupported provider semantics
+  fail explicitly. Additive private plugin tables preserve existing Stripe
+  receipts; there is no new core or application database migration.
+
 - Added scope-bound Torrent definition authoring through
   `zero.workflows.definitions`: unpublished first drafts, revision-checked edits,
   immutable publication, active-head guards and bounded metadata paging. Native

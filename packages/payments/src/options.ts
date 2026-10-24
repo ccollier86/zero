@@ -32,6 +32,8 @@ export interface PaymentsOptions {
   onChange?: (input: { eventId: string; subject: import('@zero/framework/payments').BillingSubject; snapshot: import('@zero/framework/payments').BillingSnapshot }, context: { signal: AbortSignal }) => Promise<void>;
   /** At-least-once canonical event hook for order fulfillment / Fabric workflows. Deduplicate by eventId. */
   onEvent?: (input: import('@zero/framework/payments').BillingEvent, context: { signal: AbortSignal }) => Promise<void>;
+  /** Subjectless merchant charge/checkout events; durable and at-least-once like onEvent. */
+  onMerchantEvent?: (input: import('@zero/framework/payments').MerchantPaymentEvent, context: { signal: AbortSignal }) => Promise<void>;
 }
 export interface ResolvedPaymentsOptions extends PaymentsOptions {
   secretKey: string; webhookSecrets: readonly string[]; basePath: string; webhookPath: string;
@@ -42,7 +44,7 @@ export function resolvePaymentsOptions(input: PaymentsOptions): ResolvedPayments
   if (!input || !['test', 'live'].includes(input.mode) || !/^[a-zA-Z0-9_-]{1,80}$/.test(input.connectionId) || !/^acct_[a-zA-Z0-9]+$/.test(input.accountId) || !/^[a-zA-Z0-9_.-]{1,80}$/.test(input.policyVersion)) invalid('A mode, connection ID, merchant account ID and policy version are required.');
   if (input.subject !== undefined && !['auto', 'user', 'organization'].includes(input.subject)) invalid('Billing subject must be auto, user or organization.');
   for (const value of [input.acceptingSales, input.allowEphemeralTestMode]) if (value !== undefined && typeof value !== 'boolean') invalid('Payment feature switches must be booleans.');
-  for (const callback of [input.onChange, input.onEvent]) if (callback !== undefined && typeof callback !== 'function') invalid('Payment integration callbacks must be functions.');
+  for (const callback of [input.onChange, input.onEvent, input.onMerchantEvent]) if (callback !== undefined && typeof callback !== 'function') invalid('Payment integration callbacks must be functions.');
   if (input.access !== undefined) {
     if (!input.access || typeof input.access !== 'object' || Array.isArray(input.access) || Object.keys(input.access).some(key => !['read', 'manage', 'refund', 'reconcile'].includes(key))) invalid('Unknown payment access policy.');
     for (const policy of Object.values(input.access)) if (policy !== undefined) compileAccessRequirement(policy);
@@ -76,7 +78,7 @@ export function resolvePaymentsOptions(input: PaymentsOptions): ResolvedPayments
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000 || !Number.isInteger(maxNetworkRetries) || maxNetworkRetries < 0 || maxNetworkRetries > 2 || !Number.isSafeInteger(maxProjectionAgeMs) || maxProjectionAgeMs < 1000 || maxProjectionAgeMs > 86400000) invalid('Payment timeout, retry or projection-age bounds are invalid.');
   if (input.allowEphemeralTestMode && input.mode !== 'test') invalid('Ephemeral billing persistence is only available to explicit test fixtures.');
   if (!Number.isInteger(callbackTimeoutMs) || callbackTimeoutMs < 100 || callbackTimeoutMs > 60000) invalid('Callback timeout must be 100–60000ms.');
-  return Object.freeze({ ...input, access: input.access ? structuredClone(input.access) : undefined, secretKey, webhookSecrets: Object.freeze([...webhookSecrets]), offers, basePath, webhookPath, allowedOrigins: Object.freeze(origins), timeoutMs, maxNetworkRetries, maxProjectionAgeMs, callbackTimeoutMs });
+  return Object.freeze({ ...input, catalog: Object.freeze(Object.fromEntries(offers)), access: input.access ? structuredClone(input.access) : undefined, secretKey, webhookSecrets: Object.freeze([...webhookSecrets]), offers, basePath, webhookPath, allowedOrigins: Object.freeze(origins), timeoutMs, maxNetworkRetries, maxProjectionAgeMs, callbackTimeoutMs });
 }
 export function safeReturnUrl(value: string): URL {
   let url: URL; try { url = new URL(value); } catch { return invalid('Return URLs must be absolute.'); }

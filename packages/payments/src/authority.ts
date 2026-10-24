@@ -3,8 +3,9 @@ import type { ResolvedPaymentsOptions } from './options';
 import { PaymentsError } from './errors';
 
 export type BillingAction = 'read' | 'manage' | 'refund' | 'reconcile';
+export type PaymentsPolicy = Pick<ResolvedPaymentsOptions, 'subject' | 'access'>;
 /** Resolve from Guardian's live request boundary, never an input customer/organization ID. */
-export function billingSubject(authority: PaymentsAuthority, options: ResolvedPaymentsOptions, action: BillingAction): BillingSubject {
+export function billingSubject(authority: PaymentsAuthority, options: PaymentsPolicy, action: BillingAction): BillingSubject {
   authority.assertCurrentAuthoritySync();
   const user = authority.access.requireUser();
   const tenantId = authority.scope.scopeKind === 'tenant' ? authority.access.requireTenant().tenantId : undefined;
@@ -18,7 +19,7 @@ export function billingSubject(authority: PaymentsAuthority, options: ResolvedPa
   // The data scope and authorization scope must agree even for customized permission policies.
   return organization ? { kind: 'organization', id: tenantId! } : { kind: 'user', id: user.userId, ...(tenantId ? { tenantId } : {}) };
 }
-export async function guard(authority: PaymentsAuthority, options: ResolvedPaymentsOptions, action: BillingAction): Promise<BillingSubject> {
+export async function guard(authority: PaymentsAuthority, options: PaymentsPolicy, action: BillingAction): Promise<BillingSubject> {
   if (authority.signal?.aborted) throw new PaymentsError('Payment request was cancelled.', 'PAYMENTS_REQUEST_CANCELLED', 499);
   await authority.assertCurrentAuthority();
   return billingSubject(authority, options, action);

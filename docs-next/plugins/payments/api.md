@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: api
-applies_to: ["2.6.0 main source with @zero/plugin-payments 0.1.0; identify archives by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
 modes: [server, browser, trusted setup]
 ---
 
@@ -19,6 +19,10 @@ Request handlers receive `zero.payments: ScopedPayments | null`. Trusted setup
 receives the backend owner; it must use `forAuthority` for request operations.
 An app without the plugin has a null server service. `client.payments` is a
 provider-free transport and does not install or enable server payments.
+Stripe and [Square](./square.md) implement this same facade. Use
+`status().capabilities` to offer only the selected provider's supported semantics.
+For custom amounts without a product/customer/user, use the separate trusted
+[merchant charges API](./merchant-charges.md), not scoped checkout.
 
 ```ts
 import { defineEndpoint } from '@zero/framework/server';
@@ -70,9 +74,10 @@ remaining server/browser method contracts match. Import shared types from
 `@zero/plugin-payments/client` for a standalone browser transport.
 
 `snapshot()` and `subscriptions.list()` read the durable local projection, not
-Stripe on every render. It includes revision, subject, environment, policy version,
+the provider on every render. It includes revision, subject, environment, policy version,
 freshness, a content `version`, safe customer details, all reconciled subscriptions and the latest 20
-invoices/payments. The paginated history methods read Stripe and return
+invoices/payments. Stripe's paginated history methods read Stripe; Square's list
+methods read its canonically reconciled private resource ledger. Both return
 `{ items, next? }`, with a default limit of 20 and maximum of 100. Cursors and
 retrieved resource IDs are checked against the same customer binding.
 
@@ -96,7 +101,10 @@ Change/preview input contains `subscriptionId`, `offer`, optional `quantity`,
 explicit `proration` (`create_prorations`, `always_invoice`, `none`) and optional
 `prorationDate`. Preview returns `total`, `amountDue` and `prorationDate`; reuse
 that timestamp in the corresponding change. With `proration: 'none'`, no proration
-timestamp is sent to Stripe. Change additionally requires
+timestamp is sent to Stripe. Square does not offer the normalized preview or
+proration semantics; its plan swap accepts `proration: 'none'` and
+`paymentBehavior: 'error_if_incomplete'` and schedules the next period. Its optional
+`pendingChange` describes that schedule separately from current offers. Change additionally requires
 `operationId` and `paymentBehavior`: `error_if_incomplete` or
 `pending_if_incomplete`. Payment success is not inferred from an HTTP 200 when
 Stripe has left an update pending.
@@ -105,13 +113,14 @@ Self-service changes support a single-item subscription. Bundles, schedules,
 metered item transitions and other complex arrangements require an explicit
 trusted workflow rather than silently replacing unrelated items.
 
-Cancellation input adds `timing: 'period-end' | 'immediate'`. Immediate cancellation
+Cancellation input adds `timing: 'period-end' | 'immediate'`. Square supports only
+period-end cancellation. Stripe immediate cancellation
 does not silently prorate or issue an invoice; a refund is a separate authorized
 operation. Resume removes a scheduled cancellation on an active/trialing
 subscription; it does not resurrect a fully canceled subscription.
 
 Refund reasons are `requested_by_customer`, `duplicate` or `fraudulent`. Amount
-must be a positive safe integer within the remaining payment balance. Stripe
+must be a positive safe integer within the remaining payment balance. The provider
 remains the final atomic authority when concurrent refunds compete.
 
 ## HTTP Routes
@@ -131,15 +140,16 @@ Mutation bodies use exactly the facade input; unexpected fields are rejected.
 | GET | `/refunds?paymentId=pi_...`, `/events` |
 
 Billing JSON and event responses use `Cache-Control: no-store`. The webhook
-route is separate and accepts only a valid Stripe signature over the exact body.
-No route accepts arbitrary Stripe method names, API keys, account selectors,
+route is separate and accepts only the configured provider's valid signature over the exact body.
+No route accepts arbitrary SDK method names, API keys, account selectors,
 return URLs or card/price amounts.
 
 ## Trusted Merchant Integration
 
-`getStripePayments(zero)` is for `defineZeroPlugin.setup` or other explicitly
+`getPayments(zero)`, `getStripePayments(zero)` and `getSquarePayments(zero)` are for `defineZeroPlugin.setup` or other explicitly
 trusted server composition. Its `native` property exposes the full typed
-official SDK, including products outside the normalized facade. Application code
+official SDK, including products outside the normalized facade. `.charges` is
+the shared [custom-amount merchant API](./merchant-charges.md). Application code
 owns authorization, idempotency, validation and bookkeeping for those calls.
 
 The owner also provides `adoptCustomer(subject, customerId)` for an explicit
@@ -155,4 +165,4 @@ into this trusted API. Never auto-adopt by matching email or webhook metadata.
 
 `onEvent` and `onChange` are the preferred integration seams for application
 workflows. A framework-provided manager UI, invoice authoring API or Connect
-dashboard is not implied by the availability of the underlying Stripe SDK.
+dashboard is not implied by the availability of the underlying provider SDK.

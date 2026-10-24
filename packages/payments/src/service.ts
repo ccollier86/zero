@@ -2,20 +2,25 @@ import Stripe from 'stripe';
 import type { ReactiveDB } from '@zero/framework/sync';
 import { AuthError } from '@zero/framework/auth';
 import { OBS_CODES, type PlatformCodeDefinition, type PlatformCodeEmitOptions } from '@zero/framework/observability';
-import type { BillingEvent, BillingRevision, BillingSnapshot, BillingSubject, PaymentsAuthority, PaymentsBackend, PaymentsReadiness, ScopedPayments } from '@zero/framework/payments';
+import type { BillingEvent, BillingRevision, BillingSnapshot, BillingSubject, MerchantPayments, PaymentsAuthority, PaymentsBackend, PaymentsReadiness, ScopedPayments } from '@zero/framework/payments';
 import { billingSubject, guard, type BillingAction } from './authority';
 import { PaymentsError, safeProviderError, safeReadError } from './errors';
 import { PaymentExecutionBoundary, type PaymentExecution } from './execution';
 import { resolvePaymentsOptions, type PaymentsOptions, type ResolvedPaymentsOptions } from './options';
 import { assertResource, emptySnapshot, invoiceView, paymentView, stripeId, subscriptionView } from './projections';
 import { entitlementGrants, evaluateGrants, publicSnapshot, type StoredBillingSnapshot } from './entitlements';
-import { PaymentsStore, canonical, hash, PAYMENTS_VIEW_TABLE, subjectKey } from './store';
+import { PaymentsStore, canonical, hash, PAYMENTS_VIEW_TABLE, subjectKey, type BillingCommandOwner } from './store';
+import { PaymentsResources } from './resources';
+import { createStripeMerchantCharges, stripeMerchantEvent } from './stripe-merchant';
 import { createScopedPayments } from './scoped';
 import { operationId, resourceId, snapshotInput } from './validation';
 import type { PaymentsJobPage, PaymentsJobQuery } from './jobs';
 
 /** Server-only owner. No raw SDK, queue operations or subject selectors reach request projections. */
 export class StripePayments implements PaymentsBackend {
+  readonly provider = 'stripe' as const;
+  readonly resources: PaymentsResources;
+  readonly charges: MerchantPayments;
   readonly options: ResolvedPaymentsOptions;
   readonly store: PaymentsStore;
   /** Trusted escape hatch for Stripe APIs beyond the safe self-service facade. No HTTP proxy. */
@@ -39,11 +44,13 @@ export class StripePayments implements PaymentsBackend {
     const synchronous = db.prepare('PRAGMA synchronous').get() as { synchronous: number };
     if (synchronous.synchronous < 2 && !(this.options.mode === 'test' && this.options.allowEphemeralTestMode)) throw new PaymentsError('Payments require synchronous FULL (or EXTRA) on the file-backed system database before acknowledging financial receipts.', 'PAYMENTS_DURABILITY_REQUIRED', 503);
     this.store = new PaymentsStore(db, this.options.connectionId, canonical({ provider: 'stripe', mode: this.options.mode, account: this.options.accountId }));
-    this.native = new Stripe(this.options.secretKey, { apiVersion: Stripe.API_VERSION, timeout: this.options.timeoutMs, maxNetworkRetries: this.options.maxNetworkRetries, httpClient: this.executions.transport(this.options.httpClient ?? Stripe.createFetchHttpClient()), appInfo: { name: 'Zero Payments', version: '0.1.0' } });
+    this.native = new Stripe(this.options.secretKey, { apiVersion: Stripe.API_VERSION, timeout: this.options.timeoutMs, maxNetworkRetries: this.options.maxNetworkRetries, httpClient: this.executions.transport(this.options.httpClient ?? Stripe.createFetchHttpClient()), appInfo: { name: 'Zero Payments', version: '0.2.0' } });
+    this.resources = new PaymentsResources(db, this.options.connectionId); this.charges = createStripeMerchantCharges(this);
   }
   status(): PaymentsReadiness {
     return { enabled: !this.stopped, provider: 'stripe', mode: this.options.mode, acceptingSales: !this.stopped && this.options.acceptingSales !== false, apiVersion: Stripe.API_VERSION, webhookPath: this.options.webhookPath,
-      operations: ['customers', 'operations', 'catalog', 'checkout', 'portal', 'subscriptions', 'invoice-preview', 'invoices', 'payments', 'refunds', 'entitlements', 'webhooks', 'reconcile', 'watch'] };
+      operations: ['customers', 'operations', 'catalog', 'checkout', 'portal', 'subscriptions', 'invoice-preview', 'invoices', 'payments', 'refunds', 'entitlements', 'webhooks', 'reconcile', 'watch', 'merchant-charges'],
+      capabilities: { hostedCheckout: true, customerPortal: true, subscriptionPreview: true, subscriptionChange: 'immediate-proration', cancellation: ['period-end', 'immediate'], invoicePdf: true } };
   }
   forAuthority(authority: PaymentsAuthority): ScopedPayments { return createScopedPayments(this, authority); }
   assertOpen(): void { if (this.stopped) throw new PaymentsError('Payments service is stopping.', 'PAYMENTS_UNAVAILABLE', 503, 'none', true); }
@@ -82,7 +89,12 @@ export class StripePayments implements PaymentsBackend {
     const stored = this.store.providerRequest<T>(key, kind);
     return stored ?? this.store.saveProviderRequest(key, kind, await prepare());
   }
-  private async execute<T>(subject: BillingSubject, id: string, payload: unknown, run: (key: string) => Promise<T>, assertAuthority = this.executions.active?.assertAuthority): Promise<T> {
+  /** Trusted capability only: no billing customer/catalog/user is required for a merchant charge. */
+  merchantCommand<T>(id: string, payload: unknown, run: (owner: BillingCommandOwner, key: string) => Promise<T>): Promise<T> {
+    operationId(id); return this.tracked(async () => { await this.verifyMerchant(); const owner = { kind: 'merchant' as const, id: this.options.accountId }; return this.execute(owner, 'merchant:' + id, payload, key => run(owner, key)); });
+  }
+  merchantRead<T>(run: () => Promise<T>): Promise<T> { return this.tracked(async () => { await this.verifyMerchant(); try { return await run(); } catch (error) { throw safeReadError(error); } }); }
+  private async execute<T>(subject: BillingCommandOwner, id: string, payload: unknown, run: (key: string) => Promise<T>, assertAuthority = this.executions.active?.assertAuthority): Promise<T> {
     const ticket = this.store.reserve(subject, id, payload);
     if ('replay' in ticket) return ticket.replay as T;
     const heartbeat = setInterval(() => { try { this.store.renewCommand(subject, id, ticket.fence); } catch { /* The final receipt fence remains mandatory even after a lost heartbeat. */ } }, 30000); heartbeat.unref?.();
@@ -237,8 +249,12 @@ export class StripePayments implements PaymentsBackend {
             const value = JSON.parse(row.payload); if (this.options.onChange) await this.callback(signal => this.options.onChange!({ eventId: row.id, ...value }, { signal }));
           } else {
             const event = row.kind === 'webhook' ? JSON.parse(row.payload) as Stripe.Event : null;
+            const merchant = event ? await stripeMerchantEvent(this, event) : null;
+            if (merchant && this.options.onMerchantEvent) {
+              this.store.assertInbox(row); await this.callback(signal => this.options.onMerchantEvent!(merchant, { signal }));
+            }
             const customer = row.customer ?? (event ? await this.customerForEvent(event) : null);
-            if (customer) {
+            if (customer && (!merchant || this.store.owner(customer))) {
               await this.reconcileCustomer(customer);
               if (row.kind === 'webhook' && this.options.onEvent) {
                 const canonical = await this.canonicalEvent(event!, customer);

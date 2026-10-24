@@ -19,8 +19,9 @@ need a second authentication, database or UI framework.
 
 - [Markdown documentation](./docs/index.md): a folder-driven, read-only docs
   reader with navigation, search, syntax-highlighted examples and safe publication.
-- [Stripe payments](./payments/index.md): optional billing facade, hosted
-  Checkout/Portal, subscriptions, refunds, verified webhooks and reactive state.
+- [Stripe and Square payments](./payments/index.md): one optional billing facade,
+  custom-amount charges, hosted checkout, subscriptions, refunds, verified webhooks
+  and reactive state, with explicit provider capabilities.
 
 Each plugin has an overview/index, configuration reference, focused feature
 guides and a roadmap. A plugin's package/version is distinct from the framework
