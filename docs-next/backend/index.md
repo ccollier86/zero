@@ -41,8 +41,9 @@ than importing implementation files or reconstructing authentication in routes.
   feature switches, data modes, precedence, routing and safe diagnostics.
 - [Runtime and extensions](./runtime/index.md): app-local composition, validated
   endpoints, routers, middleware and plugin lifecycle.
-- [Core logging preview](./logging/index.md): branch-only dedicated Fabric log
-  workers and backend diagnostics; automatic activity/compliance capture remains planned.
+- [Core logging](./logging/index.md): branch-preview Fabric log workers, durable
+  application/Guardian capture, scoped SSE/SDK, browser observations and investigation UI;
+  full strict-profile qualification remains gated.
 
 ## Identity And Authority
 

@@ -8,15 +8,15 @@ visibility: internal
 system: logging
 feature: configurable-activity-and-compliance-logging
 maturity: planned
-applies_to: ["Proposed core logging system; not implemented or released"]
+applies_to: ["Unreleased feature/core-logging implementation and remaining subsystem plan"]
 modes: [single tenancy, multi tenancy, browser, server, file, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "e3809f4a94fc53b0168246128c844806a6757513"
+  commit: "af5554b750affc48645889debf3680bee29c2ef5"
   snapshot: clean
   date: "2026-10-24"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Configurable Core Logging and Compliance Plan
@@ -36,9 +36,10 @@ delivery, batching and recovery. The investigation UI composes Zero's DataTable,
 filter builder, detail surfaces, tokens and motion rather than a second UI stack.
 
 This is the full subsystem implementation plan. The branch-only
-[managed storage preview](../backend/logging/index.md) implements the limited
-configuration and diagnostics described there; the wider facades, capture and
-components below remain proposed.
+[logging preview](../backend/logging/index.md) describes the implemented
+contracts, capture, APIs, browser collection, workspace and evidence lifecycle.
+The remaining controls and qualification work below are release requirements,
+not capabilities implied by enabling the preview.
 It supersedes the earlier optional compliance-logging plugin direction in the
 payments, messaging and email roadmaps. Existing Guardian audit and operational
 observability remain authoritative until a separately qualified transition.
@@ -46,15 +47,22 @@ observability remain authoritative until a separately qualified transition.
 ## Branch Implementation Status
 
 The `feature/core-logging` branch implements event/configuration contracts,
-safe validation, a dedicated Fabric/ReactiveDB realm, idempotent append, scoped
-cursor queries, bounded batching and managed `createApp({ logging })` lifecycle.
-Backend diagnostics attach through a privacy-minimal adapter; automatic audit
-and browser capture remain unavailable. Compliance requests fail closed with
-`LOGGING_NOT_READY`. Real subprocess/app tests cover restart, isolation,
-acknowledgment loss, partial construction, drain and payload limits. The
-[branch review](./logging-foundation-review.md) records the remaining capture,
-client, UI and compliance gates. There is no `zero.logging` or `client.logging`
-facade yet, and neither main nor the saved upgrade packages include this preview.
+safe validation, dedicated Fabric/ReactiveDB audit and operational realms,
+idempotent append, scoped cursor queries, bounded batching and managed
+`createApp({ logging })` lifecycle. Pinned application/Guardian contributions
+capture durable source events; `zero.logging` and `client.logging` expose
+authorized APIs, authenticated SSE and browser collection. A shared DataTable
+workspace, bounded exports, holds, reviews and retained integrity/replay proofs
+are also implemented. Backend diagnostics use a privacy-minimal adapter.
+
+Compliance requests still fail closed with `LOGGING_NOT_READY`. Independent
+tenant-actor capture, required browser-delivery admission, complete evidence
+management and production qualification remain release gates. Real
+subprocess/app tests cover restart, isolation, acknowledgment loss, scoped
+release, partial construction, drain and payload limits. The
+[branch review](./logging-foundation-review.md) records current verification
+and the remaining work. Neither main nor saved upgrade packages include this
+preview.
 
 ## Product Levels and Granular Configuration
 
@@ -412,6 +420,51 @@ part of the deployment responsibility map. The package does not promise legal
 certification, universal disclosure accounting or operating-system surveillance.
 
 ## Implementation Stages and Acceptance
+
+The current branch's implemented contract is indexed under
+[core logging](../backend/logging/index.md). It now includes pinned source
+outboxes, Guardian mirroring, scoped APIs/SSE, a browser collector, an early
+shared DataTable workspace and bounded evidence lifecycle operations. The
+remaining strict-profile gates are recorded in its roadmap; these stage goals
+must not be used to imply that every surface below is already instrumented.
+
+### Required Browser Delivery at the Strict Level
+
+Only the explicit highest/compliance policy requires successful authenticated
+audit delivery before protected work continues. Basic, activity and detailed
+collection do not lock an application because optional browser delivery fails;
+enabling views, copy or print capture does not implicitly enable a gate.
+Existing required server-audit admission remains independent of optional
+browser delivery at every level.
+
+If an extension, relevant site setting, proxy, offline connection or service
+outage prevents acknowledgment,
+pause the protected workflow and show a retry/recovery screen. Ask the user to
+check blocking extensions for this application, relevant settings, connectivity
+and service status. Do not present it as a dismissible informational toast.
+
+Use a short server-backed admission bound to the current session, organization,
+policy version and expiry. Enforcement must cover SSR/loader release, protected
+HTTP/machine access, Sync/data subscriptions and the visible UI. A browser-only
+overlay or a successful SSE connection is insufficient: SSE is server-to-client,
+whereas observation delivery is an authenticated first-party HTTPS upload.
+Test the case where downloads/SSE work but observation uploads are blocked.
+
+Keep sign-in, health, the audit handshake and recovery available without making
+a circular dependency. Resume protected work only after fresh server validation;
+record the interruption/recovery without fabricating observations in the gap.
+Non-browser integrations need an explicit transport-appropriate admission policy,
+not an accidental bypass through an API key or native client.
+
+There is no reliable browser API to identify every installed extension or prove
+that all listeners ran. A healthy handshake is not browser integrity attestation.
+Do not label a server/network failure as a specific ad blocker, request unrelated
+permissions, read clipboard contents, or weaken server authorization. Source-side
+access/release evidence remains necessary. Ordinary lower-level collection can
+remain optional/best effort; the strict profile stays unavailable until all of
+these fail-closed paths are implemented and qualified together.
+
+### Delivery Stages
 
 1. Lock configuration presets, event/provenance schema, coverage matrix and
    failure policy. Type and test domain contracts before adding UI-only switches.

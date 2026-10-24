@@ -13,10 +13,10 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "cc3b54383fc11497dda0b5c3a6cc04c09a936c8e"
-  snapshot: dirty
+  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  snapshot: clean
   date: "2026-10-24"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Delivery And Lifecycle
@@ -57,10 +57,26 @@ batch. Unknown dispatched outcomes remain unknown, allowing a durable producer
 to retry the exact original event identity. The batching owner itself is not a
 durable originating outbox and does not automatically retry unknown writes.
 
+Managed source capture supplies that separate durability boundary: small private
+outboxes in the application and Guardian source databases join the originating
+transaction. A rollback leaves neither the change nor its queued success event.
+Those queues are delivery state, not the permanent logging store. They retain
+stable source identities, exclude row bodies and keep exact events until the
+dedicated log actor acknowledges a commit.
+
+After-commit wakeups run outside the source transaction and authority lease.
+Delivery submits bounded concurrent admissions so the log writer can batch them,
+then acknowledges only confirmed records in a short source transaction.
+Lost acknowledgments replay against permanent event proofs. An idle source is
+not continuously polled. Outages retain source evidence and back off from one
+to thirty seconds. Capture cannot silently return a successful application
+commit when its required origin queue is full.
+
 Operational forwarding remains best-effort. A delivery failure is reported to
 the previous sink with a safe code, once per failure burst, without recursively
 trying to persist that failure through the same store. Diagnostic loss cannot
-block an application action; this is not the future required-audit policy.
+block an application action. This differs deliberately from required source
+capture, whose admission failure rolls back a captured mutation.
 
 ## Shutdown And Queries
 
@@ -74,14 +90,15 @@ for logging IPC or disk synchronization.
 Internal investigation reads use bound scope predicates and source-local
 high-water/keyset pagination. New arrivals do not move an older page's boundary.
 Store response validation checks retained envelope scope and cursor order.
-This does not authorize exposing raw store access: future request, stream and
-export facades must derive and revalidate live Guardian authority.
+The request, SSE and export facades derive and revalidate live Guardian
+authority. The raw store and its platform query scope remain private.
 
 ## Related Guides And Next Steps
 
 - [Configuration](./configuration.md) records the current exact limits and
   default-off behavior.
-- [Roadmap](./roadmap.md) tracks atomic source capture, public scoped APIs,
-  browser observations and evidence lifecycle controls.
+- [Server APIs](./api.md) describes authorized query/stream release.
+- [Evidence lifecycle](./evidence.md) describes retained replay proofs after pruning.
+- [Roadmap](./roadmap.md) tracks complete tenant/service capture and strict-profile gates.
 - [Fabric consistency](../fabric/consistency.md) explains why ordinals from
   different physical databases do not form one global sequence.

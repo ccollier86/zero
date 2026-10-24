@@ -11,12 +11,13 @@ visibility: internal
 
 [Working index](./index.md) · [Complete subsystem plan](./logging-system-plan.md)
 
-The `feature/core-logging` branch contains the private storage/evidence
-foundation and the managed storage/diagnostics milestone. It is based on main
+The `feature/core-logging` branch contains the managed storage foundation and
+the subsequent capture/API/browser/workspace/evidence implementation. It is based on main
 `e3809f4a94fc53b0168246128c844806a6757513`; the initial foundation commit is
 `cc3b54383fc11497dda0b5c3a6cc04c09a936c8e`. Branch-only
-`createApp({ logging })` now owns startup/shutdown and backend diagnostic
-forwarding. Guardian audit, client SDK names and saved releases remain unchanged.
+`createApp({ logging })` owns startup/shutdown, backend diagnostics, durable
+source contributions and optional browser collection. Guardian's existing audit
+and saved releases remain unchanged; `zero.logging` and `client.logging` are additive.
 The [logging reference](../backend/logging/index.md) describes this preview.
 
 ## Implemented Foundation
@@ -40,7 +41,7 @@ audit/operational files. There is no in-memory storage substitute in those tests
 The batching owner is asynchronous; Fabric's existing subprocesses own SQLite
 execution and their bounded operation deadlines.
 
-## Verification
+## Earlier Managed Milestone Verification
 
 ```sh
 TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
@@ -81,22 +82,69 @@ responses wrap their domain output, so the adapter validates and unwraps that
 envelope before acknowledging events. These are branch-local implementation
 corrections, not changes to Fabric or consuming apps.
 
+## Current Integration Verification
+
+Implementation source commit:
+`af5554b750affc48645889debf3680bee29c2ef5`.
+The broad qualification run passes 301 tests across 27 files, covering the
+logging contracts/actors/queues, managed capture and SSE, existing Guardian
+audit, request authority, ReactiveDB, Doctor, export boundaries, isolated app
+ownership/shutdown and populated hot-mode login/refresh/protected reads.
+Ten focused interceptor tests additionally qualify independent core
+contributions without replacing the application's sole interceptor.
+
+The real Chromium workspace test passes: cursor pagination, preserved row DOM
+on committed arrivals, managed evidence dialogs, light/dark narrow layout and
+scope replacement. Screenshots use synthetic evidence and external diagnostic
+storage, not repository assets or live app data. The package smoke test installs
+an actual archive into a fresh consumer, boots the default source actors,
+exercises Guardian/query/SSE, verifies the new packaged manuals and builds the
+focused public browser component/contracts without SQLite or the origin outbox.
+
+The root TypeScript check passes. The documentation authoring check reports
+828 reachable pages/unique IDs and no problems. These are implementation and
+navigation checks, not legal certification, independent custody qualification,
+compiled deployment proof or authorization to update a live application.
+
+Focused commands include:
+
+```sh
+TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
+  src/logging src/frontend/client/logging-client.test.ts \
+  src/frontend/client/logging-collector.test.ts \
+  src/frontend/server/app-logging.integration.test.ts \
+  src/frontend/server/app-logging-api.integration.test.ts \
+  src/auth/auth-audit-service.test.ts src/auth/auth-audit.integration.test.ts \
+  src/sync/reactive-db.test.ts src/sync/reactive-db-mutation-interceptor.test.ts
+TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
+  src/components/logging/logging.browser.test.ts \
+  src/frontend/server/database-automation-torrent.package.test.ts
+bun --no-env-file x tsc --noEmit
+bun --no-env-file docs-next/_work/checks/check.ts
+```
+
+One existing export-contract test had not registered previously approved drawer,
+mail and messaging additions. The correction admits only their exact additive
+declarations, plus the new logging declarations, while retaining the original
+contract digest and type/symbol identity checks. It does not rebaseline away old
+exports.
+
 ## Remaining Integration Gates
 
-1. Public request-scoped service facade, complete coverage/readiness reporting,
-   compiled/custom actor qualification and installed-package verification.
-2. Atomic originating-transaction capture/outbox delivery, Guardian audit
-   compatibility/bridge and service-by-service instrumentation. The batching
-   queue is not a durable origin outbox and does not guarantee that an application
-   mutation is automatically audited.
-3. Live scoped server APIs, SDK, query subscriptions and browser activity collector.
-   A store's trusted `platform` query scope is not an authorization decision.
-4. Reusable hooks/workspace and the separately planned advanced Filters family.
-   No logging UI or observed viewing/copy/printing collector is implemented yet.
-5. Retention/holds, independent integrity/custody, exports and review evidence,
-   configured health/failure policies, full load/crash/security/browser and
-   installed-package qualification before exposing compliance readiness.
+The following are now implemented: scoped request/background capture; atomic
+application/Guardian source outboxes; guarded query/platform query APIs;
+authenticated SSE with revocation; generation-bound client collection and hooks;
+shared DataTable/filter/detail composition; explicit retention; atomic holds and
+reviews; retained replay/integrity proofs; bounded NDJSON export; and Doctor
+coverage findings. The private store remains unavailable through request JSON.
 
-Application interfaces must not import the private runtime/store as a substitute
-for the missing authorized facade. Existing main and saved update packages
+Remaining gates are independent tenant-actor capture and full service coverage;
+required-browser-delivery admission across UI/SSR/HTTP/Sync; advanced/saved
+Filters and evidence management UI; durable private-Storage export jobs and
+download reauthorization; independent checkpoint custody/signing/rotation;
+full-disk/SIGKILL/load and compiled actor qualification. The strict preset is
+still rejected rather than mislabeled ready.
+
+Application interfaces must use the authorized facade, not the private
+runtime/store. Existing main and saved update packages
 remain unchanged; this preview is not an upgrade-ready complete logging release.
