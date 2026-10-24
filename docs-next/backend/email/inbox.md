@@ -8,7 +8,7 @@ visibility: internal
 system: email
 feature: managed-inbox
 maturity: preview
-applies_to: ["2.6.0 email inbox development source; not a published release"]
+applies_to: ["2.6.0 main source with the optional email inbox; identify saved packages by commit and hash"]
 modes: [managed-server, Guardian-single, Guardian-multi-custom-resolver]
 reviewed_against:
   package: "@zero/framework"

@@ -8,7 +8,7 @@ visibility: internal
 system: email
 feature: source-contract
 maturity: preview
-applies_to: ["2.6.0 email inbox development source"]
+applies_to: ["2.6.0 main source with the optional email inbox; identify saved packages by commit and hash"]
 modes: [browser, managed-server, custom-source]
 reviewed_against:
   package: "@zero/framework"

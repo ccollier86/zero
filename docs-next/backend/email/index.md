@@ -8,7 +8,7 @@ visibility: internal
 system: email
 feature: overview
 maturity: supported
-applies_to: ["2.6.0 development source; not package-qualified"]
+applies_to: ["2.6.0 main source with SMTP/IMAP; identify saved packages by commit and hash"]
 modes: [managed-server, standalone-server]
 reviewed_against:
   package: "@zero/framework"
@@ -27,6 +27,12 @@ Email is Zero's server-side delivery boundary. Application code supplies a
 message; the service applies sender defaults, validates it and delegates to a
 built-in or custom provider. Guardian additionally owns durable account-action
 delivery. A provider acceptance is not proof that a recipient read a message.
+
+SMTP, IMAP and the optional inbox are merged to `main` and included in its saved
+framework package. Use the [normal package update](../../cli/tooling/zero-update.md)
+and record the source commit/archive checksum; older archives with the same
+2.6.0 version may lack these features. Updating alone does not enable mail,
+create an inbox state file or migrate an application's data.
 
 ## Feature Guides
 

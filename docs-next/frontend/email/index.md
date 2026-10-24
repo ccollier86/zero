@@ -8,7 +8,7 @@ visibility: internal
 system: email
 feature: inbox-workspace
 maturity: preview
-applies_to: ["2.6.0 development source on the email inbox feature branch; not a published release"]
+applies_to: ["2.6.0 main source with the optional email inbox; identify saved packages by commit and hash"]
 modes: [browser, SSR, managed-server, Guardian-single, Guardian-multi-custom-adapter]
 reviewed_against:
   package: "@zero/framework"
@@ -29,6 +29,12 @@ and a rich-text composer. The host retains its existing AppShell navigation;
 the inbox adds a resizable mail sidebar and reading area inside that shell.
 On a phone, Back switches between the list and detail without duplicating the
 composer tree.
+
+The implementation is merged to `main` and ships in its saved framework archive.
+After a [package update](../../cli/tooling/zero-update.md), rebuild the app's
+server and browser assets together and follow the configuration guide below.
+Older archives can share the 2.6.0 version without these exports. No separate UI
+package or automatic mailbox provisioning is required or implied.
 
 ## Choose an integration
 

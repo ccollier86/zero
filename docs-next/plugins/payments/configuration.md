@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: configuration
-applies_to: ["feature/stripe-payments-foundation with @zero/plugin-payments 0.1.0"]
+applies_to: ["2.6.0 main source with @zero/plugin-payments 0.1.0; identify archives by commit and hash"]
 modes: [single tenant, multi tenant, Stripe test, Stripe live]
 ---
 
@@ -18,6 +18,19 @@ modes: [single tenant, multi tenant, Stripe test, Stripe live]
 Install the optional package alongside the matching updated framework. The core
 framework does not depend on Stripe. This plugin pins the official `stripe`
 package to **23.0.1** and its API version to **2026-09-30.endive**.
+
+For a saved-package rollout, update the framework through the normal
+[saved-archive workflow](../../cli/tooling/zero-update.md), then explicitly
+install the matching plugin archive in the application:
+
+```sh
+bun add @zero/plugin-payments@file:/absolute/path/to/zero-plugin-payments.tgz
+```
+
+Use the archive produced from the same reviewed main commit, and record both
+checksums. This file dependency is a local artifact, not a claim that the package
+has been published to a registry. Do not enable the plugin until the configuration
+and deployment checks below are complete.
 
 ## Declare The Optional Plugin
 

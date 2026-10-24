@@ -8,7 +8,7 @@ visibility: internal
 system: email
 feature: html-reader
 maturity: preview
-applies_to: ["2.6.0 email inbox development source; HTML policy version 1"]
+applies_to: ["2.6.0 main source with the optional email inbox; HTML policy version 1"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"

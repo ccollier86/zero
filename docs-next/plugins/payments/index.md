@@ -66,7 +66,8 @@ No card number, CVV, payment amount, arbitrary customer, merchant or tenant sele
 is accepted by the browser Checkout API. A successful return redirect is not
 payment confirmation. [Webhook processing](./webhooks.md) owns confirmation.
 
-The source is on `feature/stripe-payments-foundation`, based on the 2.6.0 main
-line. An older package also labeled 2.6.0 does not necessarily include the new
+The implementation is merged to `main`; the feature branch retains its review
+history. An older package also labeled 2.6.0 does not necessarily include the new
 payments bridge. Use a matching framework/plugin artifact pair as described in
-[operations](./operations.md); a branch implementation is not a registry release.
+[operations](./operations.md). A saved local archive is not an npm publication,
+and updating the framework does not install or update this optional plugin.

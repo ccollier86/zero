@@ -8,7 +8,7 @@ visibility: internal
 system: email
 feature: runtime-configuration
 maturity: supported
-applies_to: ["2.6.0 development source; not package-qualified"]
+applies_to: ["2.6.0 main source with SMTP/IMAP; identify saved packages by commit and hash"]
 modes: [managed-server, standalone-server]
 reviewed_against:
   package: "@zero/framework"
