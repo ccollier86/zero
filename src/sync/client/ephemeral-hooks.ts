@@ -17,12 +17,14 @@ const EMPTY_EPHEMERAL_ENTRIES: Record<string, EphemeralEntryClient> = {};
  * Get the EphemeralClient from context.
  * Throws if not available.
  */
-function useEphemeralClient(): EphemeralClient {
+function useEphemeralClient(): EphemeralClient | null {
   const ctx = useContext(SyncContext);
   if (!ctx) {
+    if (typeof window === 'undefined') return null;
     throw new Error('useEphemeral must be used within a <SyncProvider> or <ClientProvider>');
   }
   if (!ctx.ephemeralClient) {
+    if (typeof window === 'undefined') return null;
     throw new Error('Ephemeral client is not available.');
   }
   return ctx.ephemeralClient;
@@ -43,7 +45,7 @@ export function useEphemeralErrors(
 
   useEffect(() => {
     if (!authorizationBoundary.ready) return;
-    return client.onError((error) => {
+    return client?.onError((error) => {
       if (isAuthorizationScopeCallbackCurrent(
         boundaryKeyRef.current,
         boundaryReadyRef.current,
@@ -87,7 +89,7 @@ export function useEphemeral<T extends JsonValue>(
   // Ensure subscription
   useEffect(() => {
     if (!authorizationBoundary.ready) return;
-    if (subscribed.current) return;
+    if (subscribed.current || !client) return;
     subscribed.current = true;
 
     const unsub = client.subscribe(topic, () => {});
@@ -99,7 +101,7 @@ export function useEphemeral<T extends JsonValue>(
 
   const subscribe = useCallback(
     (cb: () => void) => {
-      return authorizationBoundary.ready
+      return authorizationBoundary.ready && client
         ? client.subscribe(topic, () => cb())
         : NOOP_UNSUBSCRIBE;
     },
@@ -107,7 +109,7 @@ export function useEphemeral<T extends JsonValue>(
   );
 
   const getSnapshot = useCallback(
-    () => authorizationBoundary.ready
+    () => authorizationBoundary.ready && client
       ? (client.get(topic, key) as T) ?? defaultValue
       : defaultValue,
     [authorizationBoundary.ready, client, topic, key, defaultValue]
@@ -122,7 +124,7 @@ export function useEphemeral<T extends JsonValue>(
         boundaryReadyRef.current,
         callbackBoundaryKey,
       )) return;
-      client.set(topic, key, newValue);
+      client?.set(topic, key, newValue);
     },
     [callbackBoundaryKey, client, topic, key]
   );
@@ -154,7 +156,7 @@ export function useEphemeralTopic(topic: string): Record<string, EphemeralEntryC
   const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
 
   const subscribe = useCallback(
-    (cb: () => void) => authorizationBoundary.ready
+    (cb: () => void) => authorizationBoundary.ready && client
       ? client.subscribe(topic, () => cb())
       : NOOP_UNSUBSCRIBE,
     [authorizationBoundary.key, authorizationBoundary.ready, client, topic]
@@ -162,7 +164,7 @@ export function useEphemeralTopic(topic: string): Record<string, EphemeralEntryC
 
   const getSnapshot = useCallback(
     () => {
-      if (!authorizationBoundary.ready) return EMPTY_EPHEMERAL_ENTRIES;
+      if (!authorizationBoundary.ready || !client) return EMPTY_EPHEMERAL_ENTRIES;
       const entries = client.getEntries(topic);
       return Object.keys(entries).length > 0 ? entries : EMPTY_EPHEMERAL_ENTRIES;
     },

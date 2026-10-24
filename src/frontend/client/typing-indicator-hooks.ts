@@ -70,7 +70,8 @@ export function useTypingIndicator(
   scope: string,
   options: UseTypingIndicatorOptions = {},
 ): UseTypingIndicatorReturn {
-  const client = useClient() as InternalClient;
+  const client = useClient() as InternalClient | null;
+  const ephemeral = client?.ephemeral;
   const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const { user } = useAuth();
   const anonymousIdRef = useRef<string | null>(null);
@@ -93,7 +94,7 @@ export function useTypingIndicator(
   const entries = useEphemeralTopic(topic);
   const [isTyping, setIsTypingState] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const lastSentRef = useRef(0);
+  const lastSentRef = useRef<number | null>(null);
   const sinceRef = useRef(0);
   const publishedRef = useRef(false);
   const clearTimerRef = useRef<number | null>(null);
@@ -124,12 +125,12 @@ export function useTypingIndicator(
     clearLocalTimer();
     setIsTypingState(false);
     sinceRef.current = 0;
-    lastSentRef.current = 0;
+    lastSentRef.current = null;
     if (sessionId) {
-      if (publishedRef.current) client.ephemeral.deleteTransient(topic, key);
+      if (publishedRef.current) ephemeral?.deleteTransient(topic, key);
       publishedRef.current = false;
-    } else client.ephemeral.delete(topic, key);
-  }, [callbackBoundaryKey, callbackEpoch, clearLocalTimer, client.ephemeral, key, sessionId, topic]);
+    } else ephemeral?.delete(topic, key);
+  }, [callbackBoundaryKey, callbackEpoch, clearLocalTimer, ephemeral, key, sessionId, topic]);
 
   const scheduleIdleClear = useCallback(() => {
     clearLocalTimer();
@@ -150,8 +151,9 @@ export function useTypingIndicator(
     setIsTypingState(true);
     scheduleIdleClear();
 
-    if (timestamp - lastSentRef.current < throttleMs) return;
-    lastSentRef.current = timestamp;
+    const tick = performance.now();
+    if (lastSentRef.current !== null && tick - lastSentRef.current < throttleMs) return;
+    lastSentRef.current = tick;
 
     const value: Record<string, JsonValue> = {
       userId: actorId,
@@ -161,18 +163,18 @@ export function useTypingIndicator(
     };
     if (options.metadata) value.metadata = options.metadata;
     if (sessionId) {
-      if (client.ephemeral.setTransient(topic, key, value, ttlMs)) publishedRef.current = true;
+      if (ephemeral?.setTransient(topic, key, value, ttlMs)) publishedRef.current = true;
       else {
-        clearLocalTimer(); setIsTypingState(false); sinceRef.current = 0; lastSentRef.current = 0;
+        clearLocalTimer(); setIsTypingState(false); sinceRef.current = 0; lastSentRef.current = null;
       }
-    } else client.ephemeral.set(topic, key, value, ttlMs);
+    } else ephemeral?.set(topic, key, value, ttlMs);
   }, [
     actorId,
     clearLocalTimer,
     callbackBoundaryKey,
     callbackEpoch,
     clearTyping,
-    client.ephemeral,
+    ephemeral,
     key,
     label,
     options.metadata,
@@ -198,7 +200,7 @@ export function useTypingIndicator(
     clearLocalTimer();
     setIsTypingState(false);
     sinceRef.current = 0;
-    lastSentRef.current = 0;
+    lastSentRef.current = null;
     publishedRef.current = false;
     setNow(Date.now());
     const effectBoundaryKey = authorizationBoundary.key;
@@ -208,8 +210,8 @@ export function useTypingIndicator(
       if (boundaryReadyRef.current
         && boundaryKeyRef.current === effectBoundaryKey) {
         if (sessionId) {
-          if (publishedRef.current) client.ephemeral.deleteTransient(topic, key);
-        } else client.ephemeral.delete(topic, key);
+          if (publishedRef.current) ephemeral?.deleteTransient(topic, key);
+        } else ephemeral?.delete(topic, key);
       }
       publishedRef.current = false;
     };
@@ -218,7 +220,7 @@ export function useTypingIndicator(
     authorizationBoundary.ready,
     callbackEpoch,
     clearLocalTimer,
-    client.ephemeral,
+    ephemeral,
     key,
     sessionId,
     topic,
@@ -226,13 +228,13 @@ export function useTypingIndicator(
 
   const typingUsers = useMemo(() => {
     if (!authorizationBoundary.ready) return [];
-    return typingIndicatorMembers(entries, { now, idleMs, actorId, includeSelf });
-  }, [actorId, authorizationBoundary.ready, entries, idleMs, includeSelf, now]);
+    return typingIndicatorMembers(entries, { now, idleMs, actorId, includeSelf, customKeys: !topic.startsWith('typing:') });
+  }, [actorId, authorizationBoundary.ready, entries, idleMs, includeSelf, now, topic]);
 
   return {
     topic,
     key,
-    isTyping: authorizationBoundary.ready && isTyping,
+    isTyping: authorizationBoundary.ready && publication.current.mounted && isTyping,
     isAnyoneTyping: typingUsers.length > 0,
     typingUsers,
     markTyping,

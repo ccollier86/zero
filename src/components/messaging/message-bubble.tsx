@@ -8,17 +8,19 @@ import type { MessageDeliveryState, MessagingAttachment, MessagingMessage } from
 import './messaging.css';
 
 const DELIVERY_LABELS: Record<MessageDeliveryState, string> = { queued: 'Queued', sending: 'Sending', accepted: 'Saved by server', delivered: 'Delivered', read: 'Read', failed: 'Failed', unknown: 'Delivery not confirmed' };
-export function MessageDeliveryIndicator({ state }: { state: MessageDeliveryState }) {
+export interface MessageDeliveryIndicatorProps { state: MessageDeliveryState }
+export function MessageDeliveryIndicator({ state }: MessageDeliveryIndicatorProps) {
   const Icon = state === 'read' || state === 'delivered' ? CheckCheck : state === 'accepted' ? Check : state === 'sending' ? LoaderCircle : state === 'failed' || state === 'unknown' ? CircleAlert : Clock3;
   return <span data-slot="message-delivery" data-state={state} className="zero-messaging-delivery"><Icon aria-hidden="true" className="size-3" /><span>{DELIVERY_LABELS[state]}</span></span>;
 }
-export function MessageBubble({ message, own = false, onAttachment, onReaction, formatTime, className }: {
+export interface MessageBubbleProps {
   message: MessagingMessage; own?: boolean; onAttachment?: (attachment: MessagingAttachment) => void;
   onReaction?: (emoji: string) => void;
   /** Defaults to stable UTC HH:mm for identical server/browser hydration. */
   formatTime?: (timestamp: number) => React.ReactNode;
   className?: string;
-}) {
+}
+export function MessageBubble({ message, own = false, onAttachment, onReaction, formatTime, className }: MessageBubbleProps) {
   const date = new Date(message.createdAt), validDate = Number.isFinite(date.getTime());
   return <article data-slot="message-bubble" data-message-id={message.id} data-own={own || undefined} className={cn('zero-messaging-message', className)} aria-label={`Message from ${message.author.label}`}>
     {!own && <span className="zero-messaging-message-avatar" aria-hidden="true">{message.author.avatar ?? <Avatar><AvatarFallback>{message.author.label.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>}</span>}

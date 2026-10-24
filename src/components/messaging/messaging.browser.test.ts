@@ -104,6 +104,8 @@ browserTest('typing is throttled, idle-bounded, session-scoped, transient offlin
     });
     messages = await page.evaluate(() => window.__messagingFixture.sent()) as any[];
     expect(messages.filter(message => message.type === 'ephemeral.delete')).toHaveLength(1);
+    await page.evaluate(() => { window.__messagingFixture.clearSent(); window.__messagingFixture.mark(); });
+    expect(await page.evaluate(() => window.__messagingFixture.sent())).toEqual([]);
     await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
       document.dispatchEvent(new Event('visibilitychange'));
@@ -113,6 +115,7 @@ browserTest('typing is throttled, idle-bounded, session-scoped, transient offlin
     await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
       document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
     });
     expect(await page.evaluate(() => window.__messagingFixture.sent())).toEqual([]);
     await page.evaluate(() => { window.__messagingFixture.selectRoom('room-a'); window.__messagingFixture.clearSent(); window.__messagingFixture.invokeOldMark(); });
@@ -133,20 +136,29 @@ browserTest('IME/modified Enter never submits, upload readiness blocks send, and
     await input.dispatchEvent('compositionstart', { data: '' }); await input.press('Enter');
     expect(await page.evaluate(() => window.__messagingFixture.submissions())).toBe(0);
     await input.dispatchEvent('compositionend', { data: 'An unfinished composition' }); await input.press('Shift+Enter');
+    for (const key of ['Control+Enter', 'Meta+Enter', 'Alt+Enter']) await input.press(key);
     expect(await page.evaluate(() => window.__messagingFixture.submissions())).toBe(0);
     await page.evaluate(() => window.__messagingFixture.files([{ id: 'f1', name: 'fixture.pdf', state: 'uploading', progress: 40 }]));
     expect(await page.getByRole('button', { name: 'Send message', exact: true }).isEnabled()).toBe(false);
     await input.press('Enter'); expect(await page.evaluate(() => window.__messagingFixture.submissions())).toBe(0);
     await page.evaluate(() => window.__messagingFixture.files([{ id: 'f1', name: 'fixture.pdf', state: 'ready' }]));
     await input.press('Enter'); expect(await page.evaluate(() => window.__messagingFixture.submissions())).toBe(1);
-    await page.evaluate(() => window.__messagingFixture.peer()); await page.locator('.zero-messaging-typing-dots i').first().waitFor();
+    await page.evaluate(() => window.__messagingFixture.peer(1)); await page.locator('.zero-messaging-typing-dots i').first().waitFor();
     expect(await page.locator('.zero-messaging-typing-dots i').first().evaluate(element => getComputedStyle(element).animationName)).toBe('none');
     await page.evaluate(() => window.__messagingFixture.reject());
     await page.waitForFunction(() => document.querySelector('[data-testid="typing-state"]')?.textContent === 'EPHEMERAL_FORBIDDEN');
     expect(await page.locator('[data-slot="conversation-typing"]').count()).toBe(0);
     await page.evaluate(() => { window.__messagingFixture.clearSent(); window.__messagingFixture.mark(); });
     expect(await page.evaluate(() => window.__messagingFixture.sent())).toEqual([]);
-    await page.evaluate(() => window.__messagingFixture.retry());
+    expect(await page.evaluate(() => window.__messagingFixture.retry())).toBe(true);
     expect(await page.evaluate(() => window.__messagingFixture.sent())).toContainEqual({ type: 'ephemeral.subscribe', topic: 'typing:room-a' });
+    await page.evaluate(() => { window.__messagingFixture.reject('set'); });
+    await page.waitForFunction(() => document.querySelector('[data-testid="typing-state"]')?.textContent === 'EPHEMERAL_FORBIDDEN');
+    await page.evaluate(() => { window.__messagingFixture.clearSent(); window.__messagingFixture.connected(false); });
+    expect(await page.evaluate(() => window.__messagingFixture.retry())).toBe(false);
+    expect(await page.getByTestId('typing-state').textContent()).toBe('EPHEMERAL_FORBIDDEN');
+    await page.evaluate(() => window.__messagingFixture.connected(true));
+    expect(await page.evaluate(() => window.__messagingFixture.retry())).toBe(true);
+    expect(await page.evaluate(() => window.__messagingFixture.sent())).toEqual([{ type: 'ephemeral.subscribe', topic: 'typing:room-a' }]);
   } finally { await page.close(); }
 }, 30_000);

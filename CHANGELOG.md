@@ -4,6 +4,22 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added the experimental messaging presentation/room-typing family under
+  `@zero/framework/messaging` and `@zero/framework/components/messaging`, also
+  exported by the root/React facade. Includes compact responsive conversation
+  parts, magnetic highlights, shared ScrollArea, escaped messages, explicit
+  delivery states, attachment/composer presentation and IME guards. Typing uses
+  authenticated room membership, independent tab sessions, transient no-queue
+  publication, bounded expiry, server-relative freshness and scope-safe retries.
+  Hooks have an SSR fallback without creating clients. Durable chat persistence,
+  Storage binding, AI takeover and external channel delivery remain planned;
+  there is no new messaging database migration or `client.messaging` facade.
+- Fixed normal and compiled application build output naming so JavaScript and
+  component CSS entries cannot collide. The executable's configured filename
+  remains unchanged. Added production-build and fresh installed-archive checks
+  for the messaging family and updated the UI upgrade handoff to use main's
+  pinned commit rather than the former UI feature branch.
+
 - Added optional first-class SMTP delivery and IMAP receiving behind Zero's
   email facade, with shared environment configuration, Guardian/outbox
   integration, strict TLS/STARTTLS, MIME attachments and reply threading.

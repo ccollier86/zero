@@ -1,7 +1,8 @@
 /** Browser regression coverage for root authorization readiness transitions. */
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Browser, Page } from 'playwright';
 import {
@@ -24,9 +25,10 @@ beforeAll(async () => {
   browserLease = await acquirePlaywrightTestBrowser();
   browser = browserLease.browser;
 
-  const scratchRoot = join(process.cwd(), '.zero');
+  const scratchRoot = process.env.PROJECT_SCRATCH_DIR ?? tmpdir();
   await mkdir(scratchRoot, { recursive: true });
   buildDir = await mkdtemp(join(scratchRoot, 'authorization-scope-browser-'));
+  await symlink(join(process.cwd(), 'node_modules'), join(buildDir, 'node_modules'), 'dir');
   const entrypoint = join(buildDir, 'entry.tsx');
   bundlePath = join(buildDir, 'bundle.js');
   const appEntrypoint = join(
@@ -270,12 +272,15 @@ async function buildAppProviderFixture(
 ): Promise<void> {
   const build = Bun.spawn([
     process.execPath,
+    '--no-env-file',
     'build',
     entrypoint,
     '--target=browser',
     '--format=iife',
-    '--outfile',
-    output,
+    '--outdir',
+    dirname(output),
+    '--entry-naming',
+    `${basename(output, '.js')}.[ext]`,
   ], {
     cwd: process.cwd(),
     stdout: 'pipe',
@@ -307,6 +312,8 @@ async function openAppProviderHarness(): Promise<Page> {
     });
   });
   await page.goto('http://zero.test/login?redirect=%2F');
+  const css = appBundlePath.replace(/\.js$/u, '.css');
+  if (await Bun.file(css).exists()) await page.addStyleTag({ path: css });
   await page.addScriptTag({ path: appBundlePath });
   await page.waitForFunction(() => (
     typeof window.__appProviderAuthorizationHarness === 'object'

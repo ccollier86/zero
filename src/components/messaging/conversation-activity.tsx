@@ -34,7 +34,8 @@ export function ConversationTypingIndicator({ participants, participantFor, vari
 }
 
 /** Assistant work is not misrepresented as a human typing or as a delivered message. */
-export function ConversationAssistantActivity({ activity, className }: { activity: MessagingAssistantActivity | null; className?: string }) {
+export interface ConversationAssistantActivityProps { activity: MessagingAssistantActivity | null; className?: string }
+export function ConversationAssistantActivity({ activity, className }: ConversationAssistantActivityProps) {
   if (!activity) return null;
   const label = { queued: 'is queued', thinking: 'is thinking', searching: 'is searching', responding: 'is responding', 'awaiting-human': 'is waiting for a team member' }[activity.state];
   return <div data-slot="conversation-assistant-activity" data-run-id={activity.runId} className={cn('zero-messaging-assistant-activity', className)} role="status" aria-live="polite"><Bot aria-hidden="true" className="size-3.5" /><span>{activity.label} {label}…</span></div>;

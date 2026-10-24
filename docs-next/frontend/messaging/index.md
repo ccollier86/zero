@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: presentation-and-typing
 maturity: experimental
-applies_to: ["feature/messaging-foundation based on main 1637605"]
+applies_to: ["2.6.0 source with the messaging presentation and typing exports"]
 ---
 
 # Messaging Components And Typing
@@ -20,8 +20,11 @@ room-authorized typing. It is not yet a durable chat backend or a Facebook/AI
 connector. The complete service, Storage binding and controller are explicit
 release gates in the integration plan. Existing email/inbox remains separate.
 
-Import from `@zero/framework/messaging` on this feature branch; older main
-archives do not have this entry point. Sources live in `src/components/messaging/`,
+Import from `@zero/framework/messaging` or the identical
+`@zero/framework/components/messaging` facade. The documented parts are also
+exported by the root and `@zero/framework/react`. Older 2.6.0 archives may lack
+these entries; identify the source commit/archive hash, not just the version.
+Sources live in `src/components/messaging/`,
 `src/messaging/` and the existing typing/ephemeral modules.
 
 Source map: [layout](../../../src/components/messaging/messaging-layout.tsx),
@@ -59,6 +62,10 @@ on their independently configured local clocks or locales.
 ## Real Typing Integration
 
 Use inside an admitted active conversation under the normal Zero providers:
+
+Browser providers must be auth-enabled. The high-level room helper rejects
+auth-disabled browser wiring instead of treating an anonymous legacy topic as
+Guardian-authorized messaging.
 
 ```tsx
 import {
@@ -112,6 +119,10 @@ helpers, `error` and `resetError`. A denied/revoked topic masks participants and
 blocks publication. Reauthorize before explicitly resetting an error; reset
 requests a fresh subscription proof from the server, not a grant or success
 acknowledgement. Do not silently loop retries around a forbidden room.
+`resetError()` returns true only when the current connection dispatched a new
+subscription request; the server still decides admission. Offline/closed/scope-
+transition calls return false and keep the error. A retry clears stale cached
+activity while it waits for an authorized snapshot.
 
 Each tab has a distinct random session key. Publication is transient and never
 enters an offline send queue. Input throttles to 750ms, idle clears at 3500ms,
@@ -120,13 +131,53 @@ requires payload identity to match the authenticated actor. Duplicate sessions
 group into one participant using the server envelope's identity. Draft text is
 never sent in the activity payload.
 
+Freshness comes from server-measured age/lifetime and a local monotonic receipt
+clock, not a publisher's wall clock. Reconnect snapshots retain their original
+age rather than renewing typing. Throttling also uses a monotonic clock, so a
+local time correction cannot freeze publication. Older wire messages without
+freshness retain the bounded legacy timestamp filter.
+
 Stop on send, blur, document hiding, navigation/unmount and authorization changes.
 Retained handlers cannot publish after conversation replacement (including an
 A → B → A round trip), after privacy is disabled or after unmount. A cleared
 session never deletes its sibling tab's independent key.
+The hook also blocks retained publication while the window is unfocused or a
+page is leaving; returning to the page never republishes old activity on its own.
 Mount only for the active admitted conversation, or disable publication while
 its pane is inactive. The server's current membership policy is the actual
 authorization boundary; display state and local timestamps are not.
+
+`useConversationTyping` and the underlying ephemeral hooks server-render with
+empty observations and no socket/client creation under AppProvider's ordinary
+SSR fallback. Browser calls still require the real Client/Sync providers; missing
+providers do not silently create an unauthenticated second client. Named props
+and the full `UseConversationTypingReturn` are exported from the public facade.
+
+## Adopt After A Package Update
+
+1. Follow the normal [saved-package update flow](../../cli/tooling/zero-update.md)
+   and record the selected source commit and archive checksum. Update client and
+   server together before adopting session typing.
+2. Use the app's existing Zero style entry (`@zero/framework/styles.css`) and
+   AppShell/providers. Messaging styles ship with that entry and the component
+   facade; do not copy colors or create another theme or connection owner.
+3. Compose the parts with an existing authorized conversation/message source, or
+   use them as local presentation while building that source. Retain stable keys,
+   scoped data, accepted-write receipts, file authorization and read-cursor rules.
+4. Test desktop/narrow navigation, keyboard/IME, reduced motion, revoked room
+   access, reconnect and two tabs in the consuming app.
+
+There is no new messaging database migration or automatic app-source rewrite.
+Importing parts does not provision a chat service or enable AI, file uploads or
+Messenger. Do not call `zero.messaging` or `client.messaging`: those planned
+facades do not exist in this release. Email/inbox is separate and the optional
+Stripe plugin remains a separately installed package.
+
+The normal [Zero build](../../cli/tooling/build.md) emits JavaScript and imported
+component CSS separately, including compiled-executable builds. If the app has
+a custom Bun build script, review fixed `--outfile`/entry-naming settings:
+JavaScript and CSS must not be assigned the same output filename. A package
+update does not rewrite those custom scripts.
 
 ## Component And Service Boundaries
 
@@ -153,9 +204,13 @@ modified Enter, upload readiness, reduced motion and typing lifecycle fences.
 Its synthetic fixture never connects a message server, sends an external message,
 uploads a file or calls an AI provider. It is visual/lifecycle evidence only.
 
-The real `ephemeral-channel.test.ts` exercises the room/actor/tenant policy and
-session TTL; `ephemeral-client.test.ts` exercises no-queue transient transport.
-Clock-skew filtering uses client timestamps as a UI heuristic and hides
-malformed/far-future claims; server expiry and membership remain authoritative.
-Server-relative freshness for arbitrary client clock skew is a remaining full
-messaging transport gate, alongside durable storage, uploads and delivery.
+The real `ephemeral-channel.test.ts` exercises room/actor/tenant policy, TTL,
+server freshness and delayed-fanout races; the managed `createApp` integration
+test exercises actual authenticated sockets and room revocation. Client/store
+tests cover no-queue transport and locally measured receipt times.
+`messaging.package.test.ts` installs a fresh framework archive, checks all public
+aliases/types/styles, server-renders the real hook under AppProvider and builds
+a browser consumer without app config or live services. Durable chat, Storage
+binding, AI takeover and channel delivery remain separate completion gates.
+Production-build regressions also serve the actual components and styles from
+both a normal server bundle and the compiled executable.

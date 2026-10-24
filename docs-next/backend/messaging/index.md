@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: integration-plan
 maturity: planned
-applies_to: ["feature/messaging-foundation based on main 1637605"]
+applies_to: ["2.6.0 presentation and room typing; complete messaging backend is planned"]
 ---
 
 # Messaging Foundation And Integration Plan
@@ -24,7 +24,7 @@ organization conversations without weakening their different admission rules.
 
 ## Implementation Status
 
-The first feature-branch slice implements session-scoped room typing over the
+The packaged foundation implements session-scoped room typing over the
 existing authenticated ephemeral Sync transport, participant aggregation, activity
 presentation, magnetic conversation list/header, message/composer/layout parts
 and browser-safe presentation records.
@@ -32,13 +32,13 @@ It does not yet install messaging tables, expose `zero.messaging`, send messages
 upload attachments or connect an AI/Messenger provider. Storage references and
 delivery labels in a presentation record are not evidence those operations ran.
 
-The remaining backend is a release gate, not an application integration exercise
+The remaining backend is a complete-messaging release gate, not an application integration exercise
 left to every consumer. Do not present the frontend parts as a complete messaging
 product or build a production app against an invented SDK method.
 
 | Layer | Current status | Required completion |
 | --- | --- | --- |
-| Typing | Implemented with real room authorization, transient Sync and local browser lifecycle tests | Complete conversation-membership integration and server-relative freshness for clock skew |
+| Typing | Implemented with real room authorization, transient Sync, server-relative freshness and browser lifecycle tests | Complete conversation-membership integration |
 | UI parts | Implemented, tokenized, source-controlled with desktop/narrow browser tests | Managed controller, realtime history, delivery and attachment binding |
 | Durable messages | Not implemented | Canonical ReactiveDB schema, scoped facade, accepted receipts and paging |
 | Storage | Reference-only presentation contract | Managed staging, upload, attach, authorized download and safe cleanup |
@@ -137,7 +137,10 @@ Read identity from the server-attributed Sync envelope, not a client payload's
 `userId`. Display names are presentation; use the admitted Guardian/contact
 directory to supply authoritative labels and avatars. Ignore malformed, idle,
 non-finite and far-future timestamps, hide the current user by default and
-deduplicate sessions. TTL and local clocks are presentation heuristics, never
+deduplicate sessions. Current typing envelopes carry server-measured age and
+lifetime; receivers use local monotonic time to age them without comparing two
+machines' wall clocks. Reconnect does not renew old activity. Legacy envelopes
+retain their timestamp filter. Neither freshness nor local clocks are
 authorization or evidence of message delivery.
 
 `ConversationTypingIndicator` supports one/two/many participants, avatars, compact
@@ -262,13 +265,15 @@ message nodes, composition input, upload gating, reduced motion, per-tab keys,
 callback rejection. Policy tests use the actual ephemeral channel and managed
 room/tenant authorization, not a browser mock as an authorization proof.
 
-The first-slice qualification run passed 35 tests across the typing model,
-ephemeral channel/client, public component export and Chromium suites, plus a
-full `tsc --noEmit` and the documentation navigation/metadata check (807 pages,
-zero problems). These are source/lifecycle proofs, not a fresh installed-package
-or production messaging qualification.
+The review adds SSR-safe hooks, forced current-connection admission retry,
+server-relative freshness, monotonic throttling, stale fanout rejection and
+public props/facade checks. The installed-archive qualification checks exact
+packaged sources, types/styles, public import aliases, browser isolation and
+the real hook under AppProvider's SSR fallback. None of those checks claim a
+durable messaging backend or external channel is running.
 
 This slice deliberately has no messaging migration, new private database or
-production data changes. It is isolated on the feature branch. Main's payment,
-SMTP/IMAP and inbox merge is separate and remains deployable without installing
-an unfinished messaging subsystem.
+production data changes. Updating the package exposes the documented parts
+without provisioning an unfinished messaging subsystem. The merged payment,
+SMTP/IMAP and email-inbox features retain their own opt-in configuration and
+release/installation contracts.

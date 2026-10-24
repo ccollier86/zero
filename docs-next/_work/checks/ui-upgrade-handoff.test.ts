@@ -28,6 +28,7 @@ test('UI upgrade handoff is reachable and routes the implemented system manuals'
     'frontend/charts/funnel.md', 'frontend/charts/arc.md', 'frontend/charts/native.md',
     'frontend/components/vector-visualization.md', 'backend/vector/visualizations.md',
     'frontend/components/json-editor.md', 'frontend/data-controls/data-table/controls.md',
+    'frontend/email/index.md', 'frontend/messaging/index.md', 'backend/messaging/index.md',
     'cli/doctor/source-audit.md', 'cli/tooling/update.md', 'cli/tooling/source-copy.md',
   ]) expect(routesTo(handoff.links, handoffPath, target), target).toBe(true);
 });
@@ -42,6 +43,7 @@ test('handoff import entries and source locations resolve in the current distrib
     'components/floating-button-group', 'components/json-editor', 'components/charts',
     'components/charts/arc', 'components/charts/native', 'charts', 'charts/react',
     'components/vector-visualization', 'vector/visualization', 'components/data-table',
+    'messaging', 'components/messaging', 'email-inbox',
   ]) {
     expect(text.includes(`@zero/framework/${entry}`), entry).toBe(true);
     expect(manifest.exports[`./${entry}`], entry).toBeDefined();
@@ -65,7 +67,8 @@ test('handoff retains planned-work boundaries, installation ownership and compil
     'run-doctor-before-and-after-installation', 'planned-work-is-not-an-upgrade-prerequisite',
     'application-acceptance-and-rollback', 'prompt-for-the-application-migration-window',
   ]) expect(handoff.anchors.has(anchor), anchor).toBe(true);
-  expect(text).toContain('feature/ui-next-upgrade');
+  expect(text).toContain('git fetch --no-tags origin main');
+  expect(text).not.toContain('origin/feature/ui-next-upgrade');
   expect(text).toContain('feature/ui-next-adoption');
   expect(text).toContain('Do not merge the Zero framework branch into the Pantheon application repo.');
   expect(text).toContain('--source-only');

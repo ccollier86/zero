@@ -32,7 +32,10 @@ export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuild
   if (location === '' || (!isAbsolute(location) && location !== '..' && !location.startsWith('../'))) throw new Error('Server build output must stay outside the public /_build asset directory.');
   const result = await Bun.build({
     entrypoints: [entryPath], outdir: outDir, target: 'bun', format: 'esm',
-    minify: false, sourcemap: 'none', naming: { entry: serverName, asset: '[name].[hash].[ext]' },
+    minify: false, sourcemap: 'none',
+    // Bun also emits imported CSS as an entry. A fixed .js/native name makes
+    // those outputs collide; compile.outfile still owns the executable name.
+    naming: { entry: options.compile ? `${serverName}.[ext]` : 'server.[ext]', asset: '[name].[hash].[ext]' },
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     ...(options.compile ? { compile: { outfile: join(outDir, serverName) } } : {}),
     plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir), createSharpNativeBuildPlugin(outDir, options.compile === true)],

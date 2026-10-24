@@ -17,7 +17,7 @@ async function verifyMacCompiledSignature(binary: string, compiled: boolean): Pr
   expect(await new Response(verification.stderr).text()).toBe('');
 }
 
-async function fixture(root: string, avatars = false): Promise<string> {
+async function fixture(root: string, avatars = false, messaging = false): Promise<string> {
   await Promise.all([mkdir(join(root, 'app'), { recursive: true }), mkdir(join(root, 'server/plugins'), { recursive: true }), mkdir(join(root, 'node_modules/@zero'), { recursive: true })]);
   await symlink(repository, join(root, 'node_modules/@zero/framework'), 'dir');
   for (const dependency of ['react', 'react-dom']) await symlink(join(repository, 'node_modules', dependency), join(root, 'node_modules', dependency), 'dir');
@@ -33,13 +33,14 @@ async function fixture(root: string, avatars = false): Promise<string> {
   ].join('\n'));
   await Bun.write(join(root, 'server/plugins/reader.ts'), [
     'import * as React from "react";',
+    ...(messaging ? ['import { MessageBubble } from "@zero/framework/messaging";'] : []),
     'import { defineZeroPlugin, renderServerPage } from "@zero/framework/server";',
     'export default defineZeroPlugin({name:"fixture.reader",build:{identity:"fixture-v1",async prepare(context){',
     ' return { data:{ text:"Compiled documentation survives deployment",private:"PRIVATE_COMPILED_METADATA" },browserEntries:[{name:"reader",path:"./enhance.ts"}],styles:[{name:"reader-style",path:"./reader.css"}],privateAssets:[{name:"attachment",path:"./attachment.txt",contentType:"text/plain"}] };',
     '}},setup(context){',
     ' const built=context.frontend.plugins["fixture.reader"];',
     ' let attachmentAllowed=true;',
-    ' function Reader(){const id=React.useId();const [state]=React.useState("hooks-rendered");return React.createElement("article",{className:"documentation","data-hook-state":state,"data-react-id":id},built.data.text);}',
+    ` function Reader(){const id=React.useId();const [state]=React.useState("hooks-rendered");return React.createElement("article",{className:"documentation","data-hook-state":state,"data-react-id":id},built.data.text${messaging ? ',React.createElement(MessageBubble,{message:{id:"build-message",author:{id:"build-user",kind:"user",label:"Build user"},text:"Packaged messaging survives production build",createdAt:1792843200000}})' : ''});}`,
     ' return context.app.get("/docs",({request})=>renderServerPage({component:Reader,props:{},request,appDir:context.appDir,frontend:context.frontend,pluginName:"fixture.reader",rootId:"docs-root",emitCode:context.emitCode})).get("/docs-assets",()=>built.assets).get("/docs/attachment",()=>attachmentAllowed?new Response(Bun.file(context.files.attachment)):new Response("Not found",{status:404})).get("/simulate-revoke",()=>{attachmentAllowed=false;return "revoked";}).onStop(async()=>{await Bun.sleep(20);const result=context.zero.sql.raw.query("select 1 as alive").get();await Bun.write("./plugin-stopped.txt",String(result.alive));});',
     '}});',
   ].join('\n'));
@@ -114,6 +115,26 @@ describe('Zero build arguments', () => {
 });
 
 describe('normal declared app deployment', () => {
+  for (const compile of [false, true]) test(`messaging components survive the ${compile ? 'compiled' : 'normal'} production build with separate JavaScript and CSS assets`, async () => {
+    const root = await scratch();
+    try {
+      const configPath = await fixture(root, false, true);
+      const result = await buildZeroApp({ configPath, compile });
+      await verifyMacCompiledSignature(result.serverPath, compile);
+      await running(compile ? [result.serverPath] : [process.execPath, result.serverPath], root, async url => {
+        const response = await fetch(`${url}/docs`), html = await response.text();
+        expect(response.status).toBe(200);
+        expect(html).toContain('Packaged messaging survives production build');
+        const styles = [...html.matchAll(/<link\b[^>]*href="([^"]+)"/gu)].map(match => match[1]!).filter(path => path.startsWith('/_build/') && path.includes('.css'));
+        expect(styles.length).toBeGreaterThan(0);
+        const css = (await Promise.all(styles.map(async path => {
+          const sheet = await fetch(url + path); expect(sheet.status).toBe(200);
+          expect(sheet.headers.get('content-type')).toContain('text/css'); return sheet.text();
+        }))).join('\n');
+        expect(css).toContain('zero-messaging-layout');
+      });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 120_000);
   for (const compile of [false, true]) {
     test(`${compile ? 'compiled executable' : 'server bundle'} serves docs and public assets without app/plugin/node_modules sources`, async () => {
       const root = await scratch();

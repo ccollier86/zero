@@ -75,7 +75,7 @@ export class EphemeralClient {
         // React tears down subscriptions. There is no old-scope server
         // subscription left to notify, and sending here would throw through
         // SyncClient.sendRaw().
-        if (!this.authorizationScopeTransition) {
+        if (!this.disposed && !this.authorizationScopeTransition) {
           this.sendMessage({ type: 'ephemeral.unsubscribe', topic });
         }
         this.store.send({ type: 'ephemeral.clear-topic', topic });
@@ -95,6 +95,18 @@ export class EphemeralClient {
       this.subscribedTopics.delete(error.topic);
     }
     for (const listener of this.errorListeners) listener(error);
+  }
+
+  /** Explicit current-connection retry; never queues a stale admission request. */
+  retrySubscription(topic: string): boolean {
+    if (this.disposed || this.authorizationScopeTransition || !this.topicListeners.get(topic)?.size
+      || !this.sendTransientMessage) return false;
+    const wasSubscribed = this.subscribedTopics.has(topic);
+    this.store.send({ type: 'ephemeral.clear-topic', topic });
+    this.subscribedTopics.add(topic);
+    const dispatched = this.sendTransientMessage({ type: 'ephemeral.subscribe', topic });
+    if (!dispatched && !wasSubscribed) this.subscribedTopics.delete(topic);
+    return dispatched;
   }
 
   // ─── Read ─────────────────────────────────────────────────────────────
@@ -190,6 +202,7 @@ export class EphemeralClient {
   }
 
   private assertScopeWritesAvailable(): void {
+    if (this.disposed) throw new Error('[ephemeral] Client has been disposed.');
     if (this.authorizationScopeTransition) {
       throw new Error(
         '[ephemeral] Operations are unavailable during an authorization scope transition.',

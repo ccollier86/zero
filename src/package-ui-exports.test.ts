@@ -5,6 +5,14 @@ import { describe, expect, test } from 'bun:test';
 const frameworkRoot = import.meta.dir.replace(/\/src$/u, '');
 
 describe('public UI export boundary', () => {
+  test('exposes messaging only through its public facade, not test fixtures or private modules', () => {
+    for (const path of ['messaging', 'components/messaging']) {
+      expect(Bun.resolveSync(`@zero/framework/${path}`, frameworkRoot)).toEndWith('/src/components/messaging/index.ts');
+      for (const internal of ['use-conversation-typing', 'messaging.browser-fixture', 'messaging-parts.test', 'messaging.browser.test']) {
+        expect(() => Bun.resolveSync(`@zero/framework/${path}/${internal}`, frameworkRoot)).toThrow();
+      }
+    }
+  });
   test('keeps intended components resolvable', () => {
     for (const name of ['card', 'list-detail-layout', 'record-navigation-bar', 'input', 'resizable']) {
       expect(Bun.resolveSync(`@zero/framework/components/ui/${name}`, frameworkRoot))

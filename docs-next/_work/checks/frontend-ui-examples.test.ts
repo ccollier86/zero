@@ -4,6 +4,7 @@ import ts from 'typescript';
 
 const selected: Record<string, number[]> = {
   'guides/ui-upgrade.md': [0, 1],
+  'frontend/messaging/index.md': [0],
   'backend/storage/public-access.md': [0],
   'frontend/storage/storage-studio-inspector.md': [0],
   'frontend/app-shell/presets.md': [0],

@@ -34,6 +34,59 @@ afterEach(() => {
 });
 
 describe('managed ephemeral topic authorization', () => {
+  test('snapshot dictionaries preserve an admitted prototype-named key as data', async () => {
+    const channel = createLegacyChannel(), publisher = createSocket('proto-writer', null), reader = createSocket('proto-reader', null);
+    await channel.set(publisher.ws, { topic: 'legacy', key: '__proto__', value: 'ordinary data', ttl: 1000 });
+    await channel.subscribe(reader.ws, 'legacy');
+    const snapshot = reader.messages.at(-1) as EphemeralSnapshotMessage;
+    expect(Object.hasOwn(snapshot.entries, '__proto__')).toBe(true);
+    expect(snapshot.entries['__proto__']!.value).toBe('ordinary data');
+    expect(Object.getPrototypeOf(snapshot.entries)).toBe(Object.prototype);
+  });
+  test('typing changes and reconnect snapshots carry server age, not publisher wall-clock claims', async () => {
+    let now = 10_000;
+    const manager = new EphemeralStateManager(0, () => now); managers.push(manager);
+    const channel = new EphemeralChannel(manager, createManagedEphemeralTopicPolicy({ getRoomService: () => ({ isMember: () => true }) }), { revalidateIntervalMs: 0 }); channels.push(channel);
+    const publisher = createSocket('publisher', 'alice'), reader = createSocket('reader', 'bob');
+    await channel.subscribe(reader.ws, 'typing:room-a');
+    await channel.set(publisher.ws, { topic: 'typing:room-a', key: 'user:alice:session:clock-01', value: { userId: 'alice', updatedAt: 1e20 }, ttl: 5000 });
+    expect(reader.messages.at(-1)).toMatchObject({ type: 'ephemeral.change', freshness: { ageMs: 0, ttlMs: 5000 } });
+    now += 3600;
+    await channel.subscribe(reader.ws, 'typing:room-a');
+    const snapshot = reader.messages.at(-1) as EphemeralSnapshotMessage;
+    expect(snapshot.entries['user:alice:session:clock-01']!.freshness).toEqual({ ageMs: 3600, ttlMs: 5000 });
+    now += 1400;
+    await channel.subscribe(reader.ws, 'typing:room-a');
+    expect((reader.messages.at(-1) as EphemeralSnapshotMessage).entries).toEqual({});
+  });
+  test('a delayed expiry or set cannot overwrite a newer value after asynchronous policy checks', async () => {
+    let now = 1000, release: (() => void) | undefined;
+    const manager = new EphemeralStateManager(0, () => now); managers.push(manager);
+    const channel = new EphemeralChannel(manager, { async authorize(context) {
+      if (release && context.connectionId === 'read') { const wait = release; release = undefined; await new Promise<void>(resolve => { wait(); release = resolve; }); }
+      return { ok: true, namespace: 'race', keyOwnership: 'actor' };
+    } }, { revalidateIntervalMs: 0 }); channels.push(channel);
+    const publisher = createSocket('pub', 'alice'), reader = createSocket('read', 'bob');
+    await channel.subscribe(reader.ws, 'custom:race');
+    await channel.set(publisher.ws, { topic: 'custom:race', key: 'same', value: 'old', ttl: 1000 });
+    reader.messages.length = 0;
+    // Pause the expiry fanout in its reader policy, replace the value, then resume.
+    let entered!: () => void; const paused = new Promise<void>(resolve => { entered = resolve; });
+    release = entered; now = 2000; manager.sweep(); await paused;
+    const continueExpiry = release!; release = undefined;
+    await channel.set(publisher.ws, { topic: 'custom:race', key: 'same', value: 'new', ttl: 5000 });
+    continueExpiry(); for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+    expect(reader.messages.filter(message => message.type === 'ephemeral.change' && message.op === 'delete')).toEqual([]);
+    expect(reader.messages.at(-1)).toMatchObject({ type: 'ephemeral.change', value: 'new' });
+    let setEntered!: () => void; const setPaused = new Promise<void>(resolve => { setEntered = resolve; });
+    release = setEntered;
+    const lateSet = channel.set(publisher.ws, { topic: 'custom:race', key: 'same', value: 'late-old', ttl: 5000 });
+    await setPaused; const continueSet = release!; release = undefined;
+    await channel.set(publisher.ws, { topic: 'custom:race', key: 'same', value: 'newest', ttl: 5000 });
+    continueSet(); await lateSet;
+    expect(reader.messages.filter(message => message.type === 'ephemeral.change' && message.value === 'late-old')).toEqual([]);
+    expect(reader.messages.at(-1)).toMatchObject({ type: 'ephemeral.change', value: 'newest' });
+  });
   test('session typing remains room/actor scoped, bounded and independent across tabs', async () => {
     const channel = createManagedChannel(new Set(['room-a:alice', 'room-a:bob'])), alice = createSocket('alice-one', 'alice'), second = createSocket('alice-two', 'alice'), bob = createSocket('bob', 'bob');
     const topic = 'typing:room-a', firstKey = 'user:alice:session:first-01', secondKey = 'user:alice:session:second-1';

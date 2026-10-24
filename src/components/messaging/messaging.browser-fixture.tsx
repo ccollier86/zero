@@ -98,7 +98,7 @@ export interface MessagingFixtureApi {
   selectRoom(room: string): void; publish(value: boolean): void; second(value: boolean): void;
   saveMark(): void; invokeOldMark(): void; unmount(): void; scope(): void;
   files(value: MessagingComposerFile[]): void; submissions(): number;
-  peer(): void; reject(): void; retry(): void;
+  peer(updatedAt?: number): void; reject(operation?: 'subscribe' | 'set'): void; retry(): boolean;
 }
 declare global { interface Window { __messagingFixture: MessagingFixtureApi } }
 window.__messagingFixture = {
@@ -110,15 +110,16 @@ window.__messagingFixture = {
   invokeOldMark: () => oldMark?.(), unmount: () => flushSync(() => root.unmount()),
   scope() { scope = scope === 'fixture-tenant-a' ? 'fixture-tenant-b' : 'fixture-tenant-a'; authState = { ...authState }; cachedSnapshot = authSnapshot(); flushSync(() => { for (const listener of listeners) listener(); }); },
   files: value => flushSync(() => setFiles(value)), submissions: () => submissions,
-  peer() {
-    const now = Date.now(); store.send({ type: 'ephemeral.snapshot', topic: 'typing:room-a', entries: {
-      'user:alex:session:fixture-1': { userId: 'alex', value: { label: customer.label, since: now, updatedAt: now } },
-      'user:alex:session:fixture-2': { userId: 'alex', value: { label: customer.label, since: now, updatedAt: now } },
+  peer(updatedAt = Date.now()) {
+    store.send({ type: 'ephemeral.snapshot', topic: 'typing:room-a', entries: {
+      'user:alex:session:fixture-1': { userId: 'alex', value: { label: customer.label, since: updatedAt, updatedAt }, freshness: { ageMs: 0, ttlMs: 5000 } },
+      'user:alex:session:fixture-2': { userId: 'alex', value: { label: customer.label, since: updatedAt, updatedAt }, freshness: { ageMs: 0, ttlMs: 5000 } },
     } });
   },
-  reject() {
+  reject(operation = 'subscribe') {
     store.send({ type: 'ephemeral.clear-topic', topic: 'typing:room-a' });
-    ephemeral.handleError({ type: 'ephemeral.error', topic: 'typing:room-a', operation: 'subscribe', code: 'EPHEMERAL_FORBIDDEN', message: 'Fixture membership removed', revoked: true } satisfies EphemeralErrorMessage);
+    ephemeral.handleError({ type: 'ephemeral.error', topic: 'typing:room-a', operation, code: 'EPHEMERAL_FORBIDDEN', message: 'Fixture membership removed', revoked: true,
+      ...(operation === 'set' ? { key: hooks.get('main')!.key } : {}) } satisfies EphemeralErrorMessage);
   },
   retry: () => hooks.get('main')!.resetError(),
 };

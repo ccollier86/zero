@@ -1,16 +1,38 @@
 import { expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { ClientProvider } from '../../frontend/client/client-context';
+import type { Client } from '../../frontend/client/sdk';
+import { installMinimalHookDom } from '../../frontend/client/test-fixtures/react-hook-dom';
 import {
   ConversationTypingIndicator, ConversationAssistantActivity, MessageBubble,
   MessageDeliveryIndicator, MessagingLayout, MessagingComposer, ConversationList,
   ConversationHeader,
+  useConversationTyping,
 } from '@zero/framework/messaging';
 
 test('typing is accessible, escapes display labels and never invents an active participant', () => {
   expect(renderToStaticMarkup(createElement(ConversationTypingIndicator, { participants: [] }))).toBe('');
   const output = renderToStaticMarkup(createElement(ConversationTypingIndicator, { participants: [{ userId: 'alice', label: '<script>bad</script>', since: 1, updatedAt: 1, activity: 'typing' }], participantFor: () => ({ id: 'alice', kind: 'user' as const, label: 'Alice' }) }));
   expect(output).toContain('role="status"'); expect(output).toContain('aria-live="polite"'); expect(output).toContain('Alice is typing'); expect(output).not.toContain('<script>');
+});
+test('conversation typing server-renders safely under the standard provider SSR fallback', () => {
+  function Input() {
+    const typing = useConversationTyping('room-ssr');
+    expect(typing.isTyping).toBe(false); expect(typing.participants).toEqual([]);
+    expect(typing.resetError()).toBe(false);
+    return createElement(MessagingComposer, { value: '', onChange() {}, onSubmit() {}, onTyping: typing.onTextChange });
+  }
+  expect(renderToStaticMarkup(createElement(Input))).toContain('aria-label="Message"');
+});
+test('browser room typing cannot silently opt into an auth-disabled legacy topic', () => {
+  const restore = installMinimalHookDom();
+  try {
+    function Input() { useConversationTyping('room-auth-required'); return null; }
+    expect(() => renderToStaticMarkup(createElement(ClientProvider, {
+      client: { auth: null } as unknown as Client, children: createElement(Input),
+    }))).toThrow('auth-enabled Zero');
+  } finally { restore(); }
 });
 test('human activity, assistant processing and delivery receipts remain distinct', () => {
   const output = renderToStaticMarkup(createElement(ConversationAssistantActivity, { activity: { runId: 'run-fixture', label: 'Assistant', state: 'awaiting-human' } }));
