@@ -69,6 +69,9 @@ future extension or release/security qualification.
 - [ ] Evaluate focused compliance evidence/control packs, including access
   review, retention/export and deployment responsibility maps. A plugin cannot
   certify an application's legal/regulatory compliance by installation alone.
+  The [core logging plan](../../_work/logging-system-plan.md) owns built-in
+  configurable activity/audit storage and investigation; preserve Guardian's
+  existing audit guarantees rather than replacing them with browser telemetry.
 
 ## Ideas That Still Need A Contract
 

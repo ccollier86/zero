@@ -26,6 +26,12 @@ publication, search, and production agent bundles.
 - [Filters integration plan](./filters-integration-plan.md): planned standalone
   query editing, compact visuals, DataTable/Data Studio integration, execution
   parity, authorization, verification and documentation deliverables.
+- [Configurable core logging](./logging-system-plan.md): basic through detailed
+  activity/compliance presets, granular capture, dedicated Fabric databases and
+  workers, honest browser evidence, scoped investigation UI and shared filters.
+  - [Logging foundation review](./logging-foundation-review.md): working private
+    Fabric storage, validation and batching milestone with real-actor tests;
+    separates source groundwork from the remaining managed/client/UI guarantees.
 - [Email Inbox plan](./email-inbox-plan.md): approved double-sidebar email
   workspace with visible folders, optional mailbox switching, safe HTML,
   composition/drafts, scoped service integration and live updates. The

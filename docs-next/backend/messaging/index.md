@@ -244,7 +244,9 @@ Magnetic hover highlights belong in the conversation/contact/menu lists.
    notifications and safe observability.
 6. Verified Messenger ingress/outbox and channel capability differences.
 7. Full organism/browser/accessibility polish and installed-archive qualification,
-   then reviewed merge. Square and the compliance-logging plugin follow this work.
+   then reviewed merge. Square and the planned
+   [configurable core logging system](../../_work/logging-system-plan.md) follow
+   this work; logging is no longer planned as a separate compliance plugin.
 
 Required tests include same actor in multiple tabs, spoofed typing identity,
 cross-tenant IDs, removed membership while subscribed, unauthorized contact

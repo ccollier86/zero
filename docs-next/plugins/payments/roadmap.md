@@ -32,12 +32,12 @@ verified checkout/order ownership, durable receipts and real-time projections.
 Its native SDK remains available for advanced merchant workflows beyond the
 normalized API. See [Square](./square.md) and [custom-amount charges](./merchant-charges.md).
 
-The next planned optional plugin is compliance logging: an application audit
-trail distinct from transient diagnostics. Its design needs explicit actor and
-tenant attribution, access controls, sensitive-field policy, durable ingestion,
-retention, export, and verifiable integrity guarantees. Define those contracts
-and the applicable deployment requirements before implementation; installing a
-logging plugin alone does not establish regulatory compliance.
+The follow-on logging work is now a **built-in configurable core system**, not
+a separate compliance plugin. It spans basic operational/security logs through
+detailed user activity and compliance evidence, with dedicated Fabric databases,
+workers, scoped investigation UI and granular capture/retention policies. The
+[core logging plan](../../_work/logging-system-plan.md) owns that proposed work;
+payment events integrate without copying credentials or raw provider payloads.
 
 The full official provider SDKs are available to trusted setup as an escape
 hatch. Adding one of these products there does not automatically implement its

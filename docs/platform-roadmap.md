@@ -222,7 +222,20 @@ the linked documentation.
   - Keep policy declarative, observable, and impossible to bypass through Sync,
     GraphQL, MCP, or other official transports.
 
-- [ ] **Compliance support packages** — **Official plugin**. Explore focused
+- [ ] **Configurable logging and activity audit** — **Core**. One built-in system
+  spans basic operational/security logs, application activity, detailed view/copy/
+  print/export observations and compliance-oriented audit guarantees.
+  - All persistent streams use dedicated Fabric-managed log databases and
+    lifecycle-owned workers, separate from application and Guardian data.
+  - Presets provide simple setup; granular policies govern capture, privacy,
+    permissions, durability, retention and evidence review. Diagnostic verbosity
+    is not the same as a required sensitive-access audit guarantee.
+  - Reuse Zero DataTable, shared advanced filters and managed detail surfaces for
+    scoped investigations, with accurate live arrivals and provenance.
+  - Follow the [core logging plan](../docs-next/_work/logging-system-plan.md).
+    This supersedes the earlier optional compliance-logging plugin direction.
+
+- [ ] **Specialized compliance support packs** — **Official plugin**. Explore focused
   control and evidence packs, beginning with HIPAA-oriented deployments.
   - Treat these as secure defaults, policy templates, checks, evidence tooling,
     and responsibility maps—not a claim that installing a package makes an
@@ -432,6 +445,9 @@ the linked documentation.
   existing event codes, backend and frontend sinks, fan-out adapters, protected
   ingestion, query endpoint, tracing, and app-bound runtime with a first-party
   persistent store.
+  - Align storage, workers and the viewer with the
+    [configurable core logging plan](../docs-next/_work/logging-system-plan.md),
+    keeping diagnostics and required audit evidence in separately governed streams.
   - Use the same managed database-plane architecture as Fabric. A dedicated,
     pinned observability service database is the preferred default so logs stay
     outside the application and Guardian databases without paying actor IPC and

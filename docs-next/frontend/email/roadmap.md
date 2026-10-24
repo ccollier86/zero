@@ -42,9 +42,11 @@ access decisions; external channel contacts do not automatically become app
 users. Define channel delivery receipts, duplicate handling, routing, AI/human
 ownership and realtime participant state before connecting real customers.
 
-Following messaging qualification, add Square behind the payments facade, then
-design the optional compliance-logging plugin with explicit audit guarantees.
-These are follow-on implementations, not enabled email capabilities.
+Following messaging and Square qualification, the
+[core logging plan](../../_work/logging-system-plan.md) covers the next built-in
+configurable logging system, from basic events to detailed activity/compliance
+evidence. Email integration must preserve actual delivery states and exclude
+message bodies by default. This is planned work, not an enabled email capability.
 
 ## Related guides and next steps
 

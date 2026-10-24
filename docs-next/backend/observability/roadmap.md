@@ -27,6 +27,13 @@ Known product direction includes optional Fabric-separated logs/errors/metrics,
 reusable viewers and error grouping by app version/build/commit with source-map
 symbolication. These are not implemented by the current bounded MemoryEventStore.
 
+The [configurable core logging plan](../../_work/logging-system-plan.md) now
+defines the integrated product direction: basic, activity, detailed and compliance
+presets with granular controls, dedicated Fabric log databases and workers, and
+shared DataTable/filter-based investigation. Operational, activity and required
+audit evidence retain distinct privacy, access, retention and failure policies;
+they are streams within one core system, not separate mandatory plugins.
+
 - [ ] Design durable log/error/metric storage and retention per owning app.
 - [ ] Build token-themed viewers with explicit platform/tenant access.
 - [ ] Evaluate build-aware errors/source maps and safe external adapters.
