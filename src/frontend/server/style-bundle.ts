@@ -15,6 +15,7 @@ import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foun
 const PLATFORM_SOURCE_DIR = resolve(import.meta.dir, '../..');
 const PLATFORM_CSS_ENTRYPOINT = resolve(import.meta.dir, '../styles/globals.css');
 const NEXT_CSS_SUPPLEMENT = resolve(import.meta.dir, '../styles/theme-next.css');
+const DRAWER_CSS_SUPPLEMENT = resolve(import.meta.dir, '../../modals/drawer-shell.css');
 const STYLE_FILE_PREFIX = 'platform.';
 const STYLE_FILE_SUFFIX = '.css';
 const runtimeRequire = createRequire(import.meta.url);
@@ -70,6 +71,7 @@ export async function buildPlatformStyles(
 
   const entrypoint = PLATFORM_CSS_ENTRYPOINT;
   const css = readFileSync(entrypoint, 'utf8')
+    + `\n${readFileSync(DRAWER_CSS_SUPPLEMENT, 'utf8')}`
     + (foundation === 'next' ? `\n${readFileSync(NEXT_CSS_SUPPLEMENT, 'utf8')}` : '');
   const { compile } = loadTailwindCompiler();
   const compiler = await compile(css, {

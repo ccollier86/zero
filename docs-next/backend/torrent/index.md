@@ -47,6 +47,8 @@ server code, not arbitrary JavaScript stored in a database.
 - [Control flow](./control-flow.md): choice, parallel joins and bounded each.
 - [Definitions](./definitions.md): immutable versions, activation, drafts and
   database editor integration.
+- [Application authoring API](./definition-authoring.md): scoped draft/version commands, dependency manifests and application-owned HTTP/MCP admission.
+- [Retry-safe actor starts](./actor-starts.md): durable user/credential-bound start receipts without SYSTEM escalation.
 - [Events](./events.md): durable inbox, exact run targeting and system receipts.
 - [Retry-safe system starts](./system-starts.md): one durable run per logical
   background command, including lost acknowledgements and restart.

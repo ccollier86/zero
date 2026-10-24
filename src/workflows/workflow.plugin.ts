@@ -1,6 +1,7 @@
 /** Elysia composition root for durable workflows. */
 
 import Elysia from 'elysia';
+import { WorkflowError } from './workflow-error';
 import { installAppStopBarrier } from '../frontend/server/app-stop-lifecycle';
 import { OBS_CODES } from '../observability/codes';
 import { createWorkflowDefinitionAdminHttpPlugin } from './workflow-definition-http.plugin';
@@ -22,6 +23,7 @@ export function createWorkflowPlugin(
   config: WorkflowPluginConfig,
   lifecycleOptions: WorkflowPluginLifecycleOptions = {},
 ) {
+  if (config.http !== undefined && typeof config.http !== 'boolean') throw new WorkflowError('Workflow http must be a boolean', 'WORKFLOW_CONFIG_INVALID', 500);
   const runtime = createWorkflowPluginRuntimeOwner(config, lifecycleOptions);
   const httpDependencies = {
     registry: runtime.registry,
@@ -64,6 +66,6 @@ export function createWorkflowPlugin(
       return startup;
     })
     .onStop(() => runtime.stop())
-    .use(createWorkflowHttpPlugin(httpDependencies))
-    .use(createWorkflowDefinitionAdminHttpPlugin(httpDependencies));
+    .use(config.http === false ? undefined : createWorkflowHttpPlugin(httpDependencies))
+    .use(config.http === false ? undefined : createWorkflowDefinitionAdminHttpPlugin(httpDependencies));
 }

@@ -4,6 +4,7 @@ import { ValidationError, type AnyElysia } from 'elysia';
 
 import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import { AuthError } from '../../auth/types';
+import { WorkflowError } from '../../workflows/workflow-error';
 
 export const ZERO_REQUEST_VALIDATION_FAILED = 'ZERO_REQUEST_VALIDATION_FAILED';
 export const ZERO_REQUEST_PARSE_FAILED = 'ZERO_REQUEST_PARSE_FAILED';
@@ -27,6 +28,14 @@ export function applyServerExtensionErrorHandler(app: AnyElysia): AnyElysia {
         error: getPublicAuthErrorMessage(error),
         code: error.code,
       };
+    }
+
+    // App-owned HTTP/MCP adapters use the same public Torrent contracts as
+    // native workflow routes. Preserve domain codes without exposing 5xx detail.
+    if (error instanceof WorkflowError) {
+      set.status = error.status;
+      return { error: error.status >= 500 ? 'Workflow operation failed.' : error.message,
+        code: error.code, ...(error.retryable ? { retryable: true } : {}) };
     }
 
     if (code === 'VALIDATION' && error instanceof ValidationError

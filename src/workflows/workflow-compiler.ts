@@ -229,6 +229,7 @@ function canonicalizeClonedGraph(graph: WorkflowGraphIR): WorkflowGraphIR {
   return {
     schemaVersion: WORKFLOW_GRAPH_SCHEMA_VERSION,
     entry: graph.entry,
+    ...(graph.metadata === undefined ? {} : { metadata: graph.metadata }),
     nodes,
     edges,
   };

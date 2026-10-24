@@ -30,6 +30,7 @@ panels, tooltips add nonessential descriptions, and collapsibles disclose conten
 
 ## Feature Guides
 
+- [Managed drawers](../../drawers/index.md): workspace inspectors, shared modal ownership and narrow-screen sheets.
 - [Dropdown menus](./dropdown-menu.md): ordinary/check/radio items, groups and submenus.
 - [Context menus](./context-menu.md): conventional right-click/keyboard/touch actions, nested commands, icons and trailing choice indicators.
 - [Popovers](./popover.md): trigger-origin anchored panels with native placement/focus and decorated native viewports.

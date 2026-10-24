@@ -46,6 +46,7 @@ manuals and distinguish working-source additions from older installed packages.
   access, browser navigation and deliberate anonymous caching.
 - [State](./state/index.md) covers durable user/org-principal state, explicit
   preference/form drafts and authorized ephemeral topics.
+- [Managed drawers](./drawers/index.md) covers contained workspace inspectors and modal sheets on the shared overlay owner.
 - [Modals](./modals/index.md) covers stack ownership, confirmations, exact dismissal
   and callback-free scope discard.
 - [Generic hooks](./hooks/index.md) covers local interaction helpers distinct

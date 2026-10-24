@@ -284,5 +284,5 @@ function count(db: ReactiveDB, table: string): number {
   return Number((db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count);
 }
 function startHooks(service: WorkflowService) {
-  return (service as unknown as { systemStarts: { hooks: { advance(instanceId: string): Promise<void> } } }).systemStarts.hooks;
+  return (service as unknown as { idempotentStarts: { hooks: { advance(instanceId: string): Promise<void> } } }).idempotentStarts.hooks;
 }

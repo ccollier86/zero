@@ -301,6 +301,10 @@
       "types": "./src/modals/index.ts",
       "import": "./src/modals/index.ts"
     },
+    "./drawers": {
+      "types": "./src/drawers/index.ts",
+      "import": "./src/drawers/index.ts"
+    },
     "./notifications": {
       "types": "./src/notifications/index.ts",
       "import": "./src/notifications/index.ts"

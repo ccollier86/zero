@@ -36,7 +36,7 @@ export interface WorkflowSystemStartIdentity {
 /** Admit a bounded key without reflecting its value into errors or observability. */
 export function requireWorkflowSystemStartKey(value: unknown): string {
   if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)) {
-    throw new WorkflowError('Workflow system start requires a bounded idempotency key', 'WORKFLOW_START_IDEMPOTENCY_INVALID', 422);
+    throw new WorkflowError('Workflow start requires a bounded idempotency key', 'WORKFLOW_START_IDEMPOTENCY_INVALID', 422);
   }
   return value;
 }

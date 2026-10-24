@@ -72,6 +72,7 @@ Rise. Do not wrap the body in another Dialog or add a duplicate header/close but
 - [Scope transitions](./scope-transitions.md): old-scope retirement without stale callbacks.
 - [HoldButton](./hold-button.md): sustained pointer/keyboard interaction and safety timing.
 - [Migration](./migration.md): convert legacy dialogs and use Doctor's source-only review.
+- [Managed drawers](../drawers/index.md): contained nonmodal inspectors and responsive modal sheets sharing this host and its guards.
 - [Roadmap](./roadmap.md): implementation sequencing and remaining qualification, not a released API guarantee.
 
 ## Boundaries

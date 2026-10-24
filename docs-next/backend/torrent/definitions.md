@@ -55,6 +55,14 @@ or retain compatible exact versions.
 
 ## Drafts And Editor API
 
+Use the [scope-bound authoring facade](./definition-authoring.md) for app-owned
+HTTP/MCP services. `zero.workflows.definitions` supplies bounded metadata reads,
+first-draft creation without publication, revision-guarded edits, native
+validation, immutable publication and exact active-head fencing. Do not import
+`WorkflowDefinitionManager` internals or create a second definition store.
+Graph `metadata` can retain a bounded app-admitted dependency manifest in the
+same immutable version fingerprint and run pin.
+
 The authenticated management API at /workflows/admin/definitions supports
 activity listing, catalogs, exact versions, publication, activation, retirement
 and drafts. Draft save uses PUT /drafts:

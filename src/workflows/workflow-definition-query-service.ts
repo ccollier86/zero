@@ -271,8 +271,7 @@ export class WorkflowDefinitionQueryService {
   }
 
   private requireOwnedCatalog(definitionId: string): WorkflowDefinitionCatalogRecord {
-    const catalog = this.versions.listCatalogs(this.scope)
-      .find((candidate) => candidate.definition_id === definitionId);
+    const catalog = this.versions.getCatalog(definitionId, this.scope);
     if (!catalog || !workflowDefinitionCatalogMatchesScope(catalog, this.scope)) {
       throw workflowDefinitionHidden();
     }

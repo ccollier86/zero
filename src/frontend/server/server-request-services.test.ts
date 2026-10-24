@@ -36,6 +36,22 @@ import type { ServerRouteServices } from './server-services';
 import type { DatabaseManager } from '../../databases/database-manager';
 
 describe('request-bound server services', () => {
+  test('public workflow authoring and once-only starts retain tenant and credential fences', async () => {
+    const fixture = createFixture();
+    try {
+      const owner = fixture.forToken('alpha'), other = fixture.forToken('beta');
+      const platformAdmin = fixture.forToken('tenant-platform-admin');
+      expect(() => platformAdmin.workflows!.definitions.list()).toThrow();
+      expect(owner.workflows!.definitions.list().items).toEqual([]);
+      const ack = await owner.workflows!.startOnce('proof', { synthetic: true }, { idempotencyKey: 'request:once' });
+      expect(owner.workflows!.getStartReceipt('request:once')).toEqual(ack);
+      expect(other.workflows!.getStartReceipt('request:once')).toBeNull();
+      expect(await owner.workflows!.startOnce('proof', { synthetic: true }, { idempotencyKey: 'request:once' })).toEqual(ack);
+      fixture.contexts.delete('alpha');
+      expect(() => owner.workflows!.definitions.list()).toThrow();
+      expect(() => owner.workflows!.getStartReceipt('request:once')).toThrow();
+    } finally { await fixture.workflows.dispose(); fixture.db.dispose(); }
+  });
   test('types graph activity input and managed services without privileged workflows', () => {
     const registry = new WorkflowRegistry();
     const activity = registry.registerActivity<

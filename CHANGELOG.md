@@ -4,6 +4,27 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added scope-bound Torrent definition authoring through
+  `zero.workflows.definitions`: unpublished first drafts, revision-checked edits,
+  immutable publication, active-head guards and bounded metadata paging. Native
+  workflow HTTP routes can be disabled with `workflows.http: false` while keeping
+  the managed runtime and app-owned HTTP/MCP admission. App endpoints preserve
+  structured workflow error codes without exposing internal server errors.
+- Added actor-preserving `zero.workflows.startOnce` and `getStartReceipt` with
+  atomic, sealed start receipts, exact command replay and restart recovery.
+  Additive SYSTEM migration 044 installs the permanent actor ledger and bounded
+  usage accounting; application/Fabric schemas and existing migrations are
+  unchanged. Added recursive `expr.object`/`expr.array` field mapping and inert,
+  fingerprinted graph metadata. Upgrade cooperating runtimes together before
+  publishing these new expression variants; downstream effects still require
+  provider idempotency and uncertain-send reconciliation.
+- Added `@zero/framework/drawers` and root/React exports for managed edge panels,
+  contained nonmodal workspace inspectors and narrow-screen modal sheets. They
+  share ModalManager ownership, guarded outcomes, nested popovers, theme, focus
+  and Arc scroll treatment; responsive admission preserves an open editor's
+  draft during resize. Drawer styles are additive; the original modal shell and
+  legacy theme remain unchanged. Existing Sheet/Sidebar primitives remain available.
+  Gesture detents, elastic dragging and snap-point APIs remain planned.
 - Added the experimental messaging presentation/room-typing family under
   `@zero/framework/messaging` and `@zero/framework/components/messaging`, also
   exported by the root/React facade. Includes compact responsive conversation

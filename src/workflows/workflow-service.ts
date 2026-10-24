@@ -9,6 +9,13 @@
 
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthContext } from '../auth/types';
+import { AuthError } from '../auth/types';
+import { WorkflowDefinitionManager } from './workflow-definition-manager';
+import { workflowDefinitionScopeFromServiceDataScope } from './workflow-definition-scope';
+import { workflowAccessPrincipalFromExecutionIdentity } from './workflow-access';
+import { scopeFromIdentity } from './workflow-execution-authority';
+import { assertWorkflowSynchronousAuthority } from './workflow-authority-assertion';
+import { createWorkflowDefinitionAuthoring, type WorkflowDefinitionAuthoring } from './workflow-definition-authoring';
 import type { ServiceDataScope } from '../auth/service-data-scope';
 import { OBS_CODES } from '../observability/codes';
 import type {
@@ -34,8 +41,11 @@ import {
   type WorkflowEventMutationOptions,
 } from './workflow-event-coordinator';
 import { WorkflowSystemEventDeliveryCoordinator } from './workflow-system-event-delivery-coordinator';
-import { WorkflowSystemStartCoordinator } from './workflow-system-start-coordinator';
+import { WorkflowIdempotentStartCoordinator } from './workflow-idempotent-start-coordinator';
 import type { WorkflowSystemStartOptions, WorkflowSystemStartResult, WorkflowSystemStartMutation } from './workflow-system-start-contract';
+import type { WorkflowActorStartOptions, WorkflowActorStartResult } from './workflow-actor-start-contract';
+import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
+import { serializeWorkflowJson } from './workflow-json-value';
 import type {
   WorkflowSystemEventDeliveryOptions,
   WorkflowSystemEventDeliveryResult,
@@ -143,7 +153,7 @@ export class WorkflowService {
   private readonly starts: WorkflowStartCoordinator;
   private readonly events: WorkflowEventCoordinator;
   private readonly systemEventDeliveries: WorkflowSystemEventDeliveryCoordinator;
-  private readonly systemStarts: WorkflowSystemStartCoordinator;
+  private readonly idempotentStarts: WorkflowIdempotentStartCoordinator;
   private readonly ownerLease: WorkflowRuntimeOwnerLease;
   private readonly onRuntimeOwnershipLost:
     ((error: WorkflowError) => void | Promise<void>) | null;
@@ -151,8 +161,8 @@ export class WorkflowService {
   private disposalPromise: Promise<void> | null = null;
 
   constructor(
-    db: ReactiveDB,
-    registry: WorkflowRegistry,
+    private readonly db: ReactiveDB,
+    private readonly registry: WorkflowRegistry,
     modeOrOptions: 'single' | 'multi' | WorkflowServiceOptions = {},
     legacyOptions: WorkflowServiceOptions = {},
   ) {
@@ -274,7 +284,7 @@ export class WorkflowService {
         this.observability,
         hooks,
       );
-      this.systemStarts = new WorkflowSystemStartCoordinator(db, registry, this.graph, instanceFactory,
+      this.idempotentStarts = new WorkflowIdempotentStartCoordinator(db, registry, this.graph, instanceFactory,
         this.repository, this.authority, this.scopes, hooks, this.observability);
       this.events = new WorkflowEventCoordinator(
         this.repository,
@@ -316,6 +326,25 @@ export class WorkflowService {
     );
   }
 
+  /** Scope-bound definition authoring under a live Guardian workflow administrator. No raw manager or scope selector is exposed. */
+  definitionsForActor(context: AuthContext, assertCurrentAuthority?: () => void): WorkflowDefinitionAuthoring {
+    this.assertAvailable();
+    const captured = this.captureActorAuthorityFence(context);
+    const principal = workflowAccessPrincipalFromExecutionIdentity(captured.authority.identity);
+    const fence = () => {
+      this.assertAvailable();
+      captured.assertCurrentAuthority();
+      assertWorkflowSynchronousAuthority(assertCurrentAuthority);
+      if (!principal.administrator) throw new AuthError('Workflow administration is not permitted', 'FORBIDDEN', 403);
+    };
+    fence();
+    const manager = new WorkflowDefinitionManager(this.registry, this.graph.versions,
+      workflowDefinitionScopeFromServiceDataScope(scopeFromIdentity(captured.authority.identity)));
+    return createWorkflowDefinitionAuthoring(manager, captured.authority.identity.userId, fence, () => {
+      if (this.db.getRawDatabase().inTransaction) throw new WorkflowError('Workflow authoring must run outside an existing database transaction', 'WORKFLOW_REQUEST_INVALID', 422);
+    });
+  }
+
   /** Start under the exact live Guardian authority of an authenticated request. */
   async startAsActor(
     name: string,
@@ -343,6 +372,28 @@ export class WorkflowService {
     return this.startAsActor(name, input, context, options, assertCurrentAuthority);
   }
 
+  /** Atomically retain the original actor, pinned graph and request receipt; exact retries cannot start another run. */
+  async startAsActorOnce(name: string, input: unknown, context: AuthContext, options: WorkflowActorStartOptions,
+    assertCurrentAuthority?: () => void): Promise<WorkflowActorStartResult> {
+    const captured = this.captureActorAuthorityFence(context);
+    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new WorkflowError('Workflow actor start options must be an object', 'WORKFLOW_REQUEST_INVALID', 422);
+    const { idempotencyKey, binding, ...startOptions } = options;
+    const text = serializeWorkflowRuntimeJson(binding, { code: 'WORKFLOW_REQUEST_INVALID', label: 'Workflow actor start binding' });
+    const bindingJson = text === null ? null : serializeWorkflowJson(JSON.parse(text), 'WORKFLOW_REQUEST_INVALID', 422);
+    return this.idempotentStarts.startActor(name, input, captured.authority, idempotencyKey, startOptions, bindingJson, {
+      assertCurrentAuthority: () => { captured.assertCurrentAuthority(); assertWorkflowSynchronousAuthority(assertCurrentAuthority); },
+    });
+  }
+
+  /** Reconcile a lost start acknowledgement under the same live actor/credential/scope, without running any work. */
+  getActorStartReceipt(context: AuthContext, idempotencyKey: string, assertCurrentAuthority?: () => void): WorkflowActorStartResult | null {
+    const captured = this.captureActorAuthorityFence(context);
+    const fence = () => { captured.assertCurrentAuthority(); assertWorkflowSynchronousAuthority(assertCurrentAuthority); };
+    const result = this.idempotentStarts.lookupActor(captured.authority, idempotencyKey, { assertCurrentAuthority: fence });
+    fence();
+    return result;
+  }
+
   /**
    * Capture a secret-free Guardian authority and return its final-commit fence.
    * Callers must invoke the returned assertion inside their writer transaction.
@@ -368,7 +419,7 @@ export class WorkflowService {
   /** Commit one privileged run per stable effect key; all replays return its original acknowledgement. */
   async startAsSystemOnce(name: string, input: unknown, system: WorkflowSystemStartOptions,
     options: WorkflowStartOptions = {}, mutation: WorkflowSystemStartMutation = {}): Promise<WorkflowSystemStartResult> {
-    return this.systemStarts.start(name, input, system, options, mutation);
+    return this.idempotentStarts.start(name, input, system, options, mutation);
   }
 
   async runAsSystem(
@@ -524,7 +575,7 @@ export class WorkflowService {
     // operation started; it must still reject disposed or stale ownership
     // before reading or validating any durable run.
     this.assertAvailable();
-    this.systemStarts.validateRecovery();
+    this.idempotentStarts.validateRecovery();
     for (const instance of this.repository.listNonterminalInstances()) {
       this.authority.validateRecoveryInstance(instance.instance_id);
     }

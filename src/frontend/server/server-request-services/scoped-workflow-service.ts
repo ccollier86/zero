@@ -4,6 +4,8 @@ import { canManageWorkflowScope } from '../../../workflows/workflow-access';
 import type { WorkflowPublicTopology } from '../../../workflows/workflow-public-topology';
 import type { WorkflowInstanceListFilter } from '../../../workflows/workflow-repository';
 import type { WorkflowService } from '../../../workflows/workflow-service';
+import type { WorkflowDefinitionAuthoring } from '../../../workflows/workflow-definition-authoring';
+import type { WorkflowActorStartOptions, WorkflowActorStartResult } from '../../../workflows/workflow-actor-start-contract';
 import {
   validateWorkflowStartOptions,
   type WorkflowStartOptions,
@@ -28,6 +30,9 @@ export type ScopedWorkflowInstanceListFilter = Omit<
 
 /** Request/activity-safe workflow facade enforced by createScopedWorkflowService(). */
 export interface ScopedWorkflowService {
+  readonly definitions: WorkflowDefinitionAuthoring;
+  startOnce(name: string, input: unknown, options: WorkflowActorStartOptions): Promise<WorkflowActorStartResult>;
+  getStartReceipt(idempotencyKey: string): WorkflowActorStartResult | null;
   start(
     name: string,
     input?: unknown,
@@ -61,6 +66,9 @@ export interface ScopedWorkflowService {
 }
 
 type NonRequestWorkflowMember =
+  | 'definitionsForActor'
+  | 'startAsActorOnce'
+  | 'getActorStartReceipt'
   | 'startAsActor'
   | 'runAsActor'
   | 'startAsSystem'
@@ -77,7 +85,7 @@ type NonRequestWorkflowMember =
 
 const WORKFLOW_SERVICE_INVENTORY: CompleteServiceMemberInventory<
   WorkflowService,
-  keyof ScopedWorkflowService,
+  Exclude<keyof ScopedWorkflowService, 'definitions' | 'startOnce' | 'getStartReceipt'>,
   NonRequestWorkflowMember
 > = true;
 void WORKFLOW_SERVICE_INVENTORY;
@@ -118,6 +126,20 @@ export function createScopedWorkflowService(
     return instance;
   };
   const methods: ScopedWorkflowService = {
+    get definitions() {
+      assertCurrentAuthoritySync();
+      return service.definitionsForActor(access.requireUser(), assertCurrentAuthoritySync);
+    },
+    async startOnce(name, input, options) {
+      await assertCurrentAuthority();
+      const result = await service.startAsActorOnce(name, input, access.requireUser(), options, assertCurrentAuthoritySync);
+      await assertCurrentAuthority();
+      return result;
+    },
+    getStartReceipt(key) {
+      assertCurrentAuthoritySync();
+      return service.getActorStartReceipt(access.requireUser(), key, assertCurrentAuthoritySync);
+    },
     async start(name, input, startedBy, options = {}) {
       requireActor(startedBy);
       const actor = access.requireUser();

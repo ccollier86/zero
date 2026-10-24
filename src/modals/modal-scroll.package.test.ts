@@ -11,11 +11,13 @@ const ORIGINALS = {
   'src/modals/modal-shell.tsx': '08c87f4fadfdd31eb0b1c8f8554acf2aad1071855ec1c1f736d1497fb87251f9',
   'src/modals/modal-shell.css': 'c11d71c03295ace5a48549fbf98a15114099f261e92358cd5ec8af934ee1ad1f',
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
-  'src/frontend/styles/globals.css': 'af1682801435cc0ceef66a2a472099b7adc25e9e55b626ce56d1815a9e2a282d',
+  'src/frontend/styles/globals.css': '1c1669a61ea3a1cc22f91d3621b95822a814d7af15a050ec90ff33703b511ce5',
 } as const;
 // Oct 13 intentionally fixes shared table scroll policy and picker trigger
 // presentation. Keep those files in archive/source identity qualification, not
 // the frozen original modal-shell/skin/legacy-theme rollback set.
+// Globals are pinned to main's already-shipped messaging/email/component
+// imports. The drawer supplement must leave that approved entry byte-identical.
 const QUALIFIED_SOURCE = [...new Set([
   ...Object.keys(ORIGINALS),
   'src/components/_internal/scroll-viewport/use-scroll-viewport.ts',

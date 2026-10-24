@@ -47,6 +47,8 @@ export interface DatabaseWorkflowDefinitionInput {
   version?: number;
   activate?: boolean;
   expectedActiveVersionId?: string | null;
+  /** Optional exact compiler result admitted by the caller before publication. */
+  expectedFingerprint?: string;
 }
 
 interface DatabaseWorkflowDraftBase {
@@ -68,6 +70,11 @@ export type DatabaseWorkflowDraftInput = DatabaseWorkflowDraftBase & (
 /** Compile and mutate trusted database-authored workflow history. */
 export class WorkflowDefinitionManager {
   private readonly queries: WorkflowDefinitionQueryService;
+
+  /** Internal owner-fenced mutation boundary used by the public actor-bound facade. */
+  command<T>(operation: () => T, assertCurrentAuthority: () => void): T {
+    return this.versions.command(operation, assertCurrentAuthority);
+  }
 
   constructor(
     private readonly registry: WorkflowRegistry,
@@ -94,6 +101,35 @@ export class WorkflowDefinitionManager {
   /** Return the administration catalog, including staged and retired definitions. */
   listAdmin(): WorkflowDefinitionSummary[] {
     return this.queries.listAdmin();
+  }
+
+  /** Compile through the same database-callable activity admission used by publication. */
+  validate(input: DatabaseWorkflowDefinitionInput) { return this.compile(input); }
+
+  /** Create a first draft without publishing an executable version. */
+  createDraft(input: Omit<DatabaseWorkflowDefinitionInput, 'version' | 'activate' | 'expectedActiveVersionId' | 'expectedFingerprint'> & { editorMetadata?: unknown }, actorId: string, assertCurrentAuthority?: () => void) {
+    return this.run(() => this.versions.createDraft({ ...this.compilePublication(input, actorId), editorMetadata: input.editorMetadata }, assertCurrentAuthority));
+  }
+
+  /** Return bounded metadata only for catalogs owned by this definition scope. */
+  page(limit: number, after?: string) {
+    return this.versions.pageCatalogs(this.scope, limit, after).map(catalog => ({
+      definitionId: catalog.definition_id, name: catalog.name, source: catalog.source,
+      activeVersionId: catalog.active_version_id, latestVersion: catalog.version, status: catalog.status,
+      createdAt: catalog.created_at, updatedAt: catalog.updated_at,
+    }));
+  }
+
+  /** Return bounded safe version metadata after checking the owning scope. */
+  pageVersions(definitionId: string, limit: number, before?: number) {
+    this.requireOwnedCatalog(definitionId);
+    return this.versions.pageVersions(definitionId, limit, before);
+  }
+
+  /** Return bounded safe draft metadata after checking the owning scope. */
+  pageDrafts(definitionId: string, limit: number, after?: string) {
+    this.requireOwnedCatalog(definitionId);
+    return this.versions.pageDrafts(definitionId, limit, after);
   }
 
   /** Return immutable versions only after confirming definition ownership. */
@@ -272,6 +308,9 @@ export class WorkflowDefinitionManager {
     actorId: string,
   ): PublishWorkflowDefinitionVersionInput {
     const compiled = this.compile(input);
+    if (input.expectedFingerprint !== undefined && input.expectedFingerprint !== compiled.fingerprint) {
+      throw new WorkflowError('Workflow definition fingerprint changed', 'WORKFLOW_VERSION_CONFLICT', 409);
+    }
     return {
       name: compiled.name,
       graph: compiled.graph,
@@ -292,8 +331,7 @@ export class WorkflowDefinitionManager {
   }
 
   private requireOwnedCatalog(definitionId: string): WorkflowDefinitionCatalogRecord {
-    const catalog = this.versions.listCatalogs(this.scope)
-      .find((candidate) => candidate.definition_id === definitionId);
+    const catalog = this.versions.getCatalog(definitionId, this.scope);
     if (!catalog || !workflowDefinitionCatalogMatchesScope(catalog, this.scope)) {
       throw workflowDefinitionHidden();
     }

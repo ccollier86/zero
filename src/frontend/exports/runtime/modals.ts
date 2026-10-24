@@ -10,3 +10,5 @@ export type * from '../../../modals/modal-workflow-progress.types';
 export type { UseModalFormOptions } from '../../../modals/modal-form';
 export type { ControlledModalProps } from '../../../modals/modal-controlled';
 export type { ModalPromptOptions } from '../../../modals/modal-prompt';
+export { drawers, DrawerManager, DrawerWorkspace, ControlledDrawer, useDrawers } from '../../../drawers';
+export type { DrawerDescriptor, DrawerHandle, DrawerOptions, DrawerResult, DrawerSide, ControlledDrawerProps } from '../../../drawers';

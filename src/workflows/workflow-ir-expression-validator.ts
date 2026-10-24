@@ -92,6 +92,8 @@ function collectReferences(expression: WorkflowExpression): WorkflowReferenceExp
     return [...collectReferences(expression.left), ...collectReferences(expression.right)];
   }
   if (expression.type === 'logical') return expression.values.flatMap(collectReferences);
+  if (expression.type === 'object') return Object.values(expression.fields).flatMap(collectReferences);
+  if (expression.type === 'array') return expression.items.flatMap(collectReferences);
   if (expression.type === 'includes') {
     return [
       ...collectReferences(expression.collection),

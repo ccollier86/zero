@@ -40,11 +40,24 @@ service/secret/global or run application code.
 
 ## Operators
 
-Builders are literal, eq/ne/gt/gte/lt/lte, and/or/not, exists and includes.
+Builders are literal, object, array, eq/ne/gt/gte/lt/lte, and/or/not, exists and includes.
 Their operands accept expression nodes or JSON values normalized as literals.
 validateWorkflowExpression checks tags, keys, depth, node/path/literal bounds.
 evaluateWorkflowExpression(expression, context) is side-effect-free;
 isWorkflowExpression is shape recognition, not authorization.
+
+`expr.object({ recipient: expr.output('customer', ['email']), dryRun: false })`
+and `expr.array([expr.input('requestId'), null])` construct structured bindings.
+Nested bindings share the same 512-node/32-depth AST budget and graph output
+dominance/item-scope validation. A missing field/array item fails with its
+destination JSON-pointer path; explicit null stays null. Literals are never
+recursively interpolated. Accessor/prototype paths and executable values are
+rejected. Evaluated structured values are detached and capped at the 1MiB
+runtime JSON boundary before activity dispatch.
+
+After an all-branch join, use the guaranteed join result (or `previous`) to
+select collected branch outputs. A reference to an optional branch's individual
+node is not made valid merely by placing it inside an object binding.
 
 Complete expression/choice fragment as an independently compilable descriptor:
 

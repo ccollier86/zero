@@ -235,6 +235,8 @@ export interface AppWorkflowRegistrationContext {
 
 /** Managed durable-workflow registration for a full-stack app. */
 export interface AppWorkflowsConfig {
+  /** Keep managed Torrent services and recovery, but omit every generic workflow HTTP route when false. Default: true. */
+  http?: boolean;
   /**
    * Register handlers and definitions during app composition. Async setup is
    * awaited before crash recovery and service publication.
