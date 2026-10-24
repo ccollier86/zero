@@ -117,9 +117,15 @@ export class EphemeralClient {
     this.sendMessage({ type: 'ephemeral.set', topic, key, value, ttl });
   }
   /** Best-effort current-connection observation; deliberately drops instead of queuing. */
-  setTransient(topic: string, key: string, value: JsonValue): boolean {
+  setTransient(topic: string, key: string, value: JsonValue, ttl?: number): boolean {
     if (this.disposed || this.authorizationScopeTransition || !this.sendTransientMessage) return false;
-    return this.sendTransientMessage({ type: 'ephemeral.set', topic, key, value });
+    return this.sendTransientMessage({ type: 'ephemeral.set', topic, key, value, ...(ttl !== undefined ? { ttl } : {}) });
+  }
+
+  /** Best-effort cleanup; never replay old activity deletes after reconnect. */
+  deleteTransient(topic: string, key: string): boolean {
+    if (this.disposed || this.authorizationScopeTransition || !this.sendTransientMessage) return false;
+    return this.sendTransientMessage({ type: 'ephemeral.delete', topic, key });
   }
 
   /**

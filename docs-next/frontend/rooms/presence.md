@@ -62,6 +62,13 @@ are throttled. Timings are UI/ephemeral heuristics, not security deadlines.
 A custom non-room topic requires explicit app topic authorization; changing
 topic/userId props cannot grant access or impersonation rights server-side.
 
+The messaging feature branch adds optional `sessionId` to the existing hook,
+with actor-owned per-session keys and transient publication, plus
+`useConversationTyping` for the complete foreground/idle lifecycle. The
+[messaging guide](../messaging/index.md) records the matching server requirement,
+identity-safe aggregation, timing bounds and privacy controls. Existing callers
+without sessionId retain their original key and transport behavior.
+
 ## Verification And Related Guides
 
 Test synthetic TTL/heartbeat/idle/throttle, sudden disconnect, unmount,

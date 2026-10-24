@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../../components/messaging/messaging.css";
 @import "./code-block-tokens.css";
 @import "../../components/code-block/code-block.styles.css";
 @import "../../components/avatar-group/avatar-group.styles.css";

@@ -277,6 +277,10 @@
       "types": "./src/components/email-inbox/index.ts",
       "import": "./src/components/email-inbox/index.ts"
     },
+    "./messaging": {
+      "types": "./src/components/messaging/index.ts",
+      "import": "./src/components/messaging/index.ts"
+    },
     "./hooks": {
       "types": "./src/hooks/index.ts",
       "import": "./src/hooks/index.ts"

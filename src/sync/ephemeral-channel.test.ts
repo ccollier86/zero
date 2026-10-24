@@ -34,6 +34,20 @@ afterEach(() => {
 });
 
 describe('managed ephemeral topic authorization', () => {
+  test('session typing remains room/actor scoped, bounded and independent across tabs', async () => {
+    const channel = createManagedChannel(new Set(['room-a:alice', 'room-a:bob'])), alice = createSocket('alice-one', 'alice'), second = createSocket('alice-two', 'alice'), bob = createSocket('bob', 'bob');
+    const topic = 'typing:room-a', firstKey = 'user:alice:session:first-01', secondKey = 'user:alice:session:second-1';
+    await channel.set(alice.ws, { topic, key: firstKey, value: { userId: 'alice', updatedAt: Date.now() }, ttl: 5000 });
+    await channel.set(second.ws, { topic, key: secondKey, value: { userId: 'alice', updatedAt: Date.now() }, ttl: 5000 });
+    expect(Object.keys(managers.at(-1)!.getSnapshot('application:room:room-a:typing'))).toHaveLength(2);
+    await channel.delete(alice.ws, topic, firstKey);
+    expect(Object.keys(managers.at(-1)!.getSnapshot('application:room:room-a:typing'))).toEqual([secondKey]);
+    await channel.set(bob.ws, { topic, key: secondKey, value: { userId: 'alice' }, ttl: 5000 });
+    await channel.set(alice.ws, { topic, key: firstKey, value: { userId: 'bob' }, ttl: 5000 });
+    await channel.set(alice.ws, { topic, key: firstKey, value: { userId: 'alice' }, ttl: 60000 });
+    expect(errorCodes(bob)).toEqual(['EPHEMERAL_KEY_NOT_OWNED']);
+    expect(errorCodes(alice)).toEqual(['EPHEMERAL_FORBIDDEN', 'EPHEMERAL_INVALID_TTL']);
+  });
   test('expiration emits one authorized delete and a closed async policy continuation cannot resurrect state', async () => {
     let now = 1000;
     const manager = new EphemeralStateManager(0, () => now); managers.push(manager);

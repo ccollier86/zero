@@ -36,6 +36,7 @@ export * from './exports/controls/validation';
 export * from './exports/hooks/collaboration';
 export * from './exports/features/notifications';
 export * from './exports/features/email';
+export * from './exports/features/messaging';
 export * from './exports/hooks/workflows';
 export * from './exports/hooks/storage';
 export * from './exports/features/administration';

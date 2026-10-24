@@ -14,14 +14,8 @@ import { useAuth } from './auth-hooks';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import type { AuthUser } from './auth-client';
 import type { InternalClient } from './sdk';
-
-export interface TypingIndicatorMember {
-  userId: string;
-  label: string;
-  since: number;
-  updatedAt: number;
-  metadata?: Record<string, JsonValue>;
-}
+import { typingIndicatorMembers, type TypingIndicatorMember } from './typing-indicator-model';
+export type { TypingIndicatorMember } from './typing-indicator-model';
 
 export interface UseTypingIndicatorOptions {
   topic?: string;
@@ -32,6 +26,8 @@ export interface UseTypingIndicatorOptions {
   throttleMs?: number;
   includeSelf?: boolean;
   metadata?: Record<string, JsonValue>;
+  /** Separate session keys avoid one tab clearing a sibling tab's activity. */
+  sessionId?: string;
 }
 
 export interface UseTypingIndicatorReturn {
@@ -62,28 +58,6 @@ function getUserLabel(user: AuthUser | null): string | null {
   return fullName || user.username || user.email || user.userId;
 }
 
-function isRecord(value: JsonValue): value is Record<string, JsonValue> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readTypingMember(key: string, value: JsonValue): TypingIndicatorMember | null {
-  if (!key.startsWith('user:') || !isRecord(value)) return null;
-
-  const userId = typeof value.userId === 'string' ? value.userId : key.slice(5);
-  const label = typeof value.label === 'string' ? value.label : userId;
-  const since = typeof value.since === 'number' ? value.since : 0;
-  const updatedAt = typeof value.updatedAt === 'number' ? value.updatedAt : since;
-  const metadata = isRecord(value.metadata) ? value.metadata : undefined;
-
-  return {
-    userId,
-    label,
-    since,
-    updatedAt,
-    metadata,
-  };
-}
-
 /**
  * Publish and read "user is typing" state. The default `typing:<scope>` topic
  * treats `scope` as a Zero room ID and is authorized by live membership.
@@ -108,22 +82,34 @@ export function useTypingIndicator(
     ? scopedUser.userId
     : options.userId ?? scopedUser?.userId ?? scopedUser?.username ?? anonymousIdRef.current;
   const label = options.label ?? getUserLabel(scopedUser) ?? actorId;
-  const key = `user:${actorId}`;
+  const sessionId = options.sessionId;
+  if (sessionId !== undefined && !/^[A-Za-z0-9_-]{8,80}$/.test(sessionId)) throw new Error('Typing session ID must contain 8–80 letters, numbers, underscores or hyphens.');
+  const key = `user:${actorId}${sessionId ? ':session:' + sessionId : ''}`;
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const idleMs = options.idleMs ?? DEFAULT_IDLE_MS;
   const throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
   const includeSelf = options.includeSelf ?? false;
+  if (sessionId && (!Number.isSafeInteger(ttlMs) || ttlMs < 1000 || ttlMs > 15000 || !Number.isSafeInteger(idleMs) || idleMs < 250 || idleMs > ttlMs || !Number.isSafeInteger(throttleMs) || throttleMs < 100 || throttleMs >= idleMs)) throw new Error('Typing session timings require 1000–15000ms TTL and a shorter, positive throttle/idle interval.');
   const entries = useEphemeralTopic(topic);
   const [isTyping, setIsTypingState] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const lastSentRef = useRef(0);
   const sinceRef = useRef(0);
+  const publishedRef = useRef(false);
   const clearTimerRef = useRef<number | null>(null);
   const boundaryKeyRef = useRef(authorizationBoundary.key);
   const boundaryReadyRef = useRef(authorizationBoundary.ready);
   boundaryKeyRef.current = authorizationBoundary.key;
   boundaryReadyRef.current = authorizationBoundary.ready;
   const callbackBoundaryKey = authorizationBoundary.key;
+  // A retained event callback must not publish into a room that has been left,
+  // even if the actor's authorization family has not changed (or returns to it).
+  const publicationIdentity = JSON.stringify([callbackBoundaryKey, topic, key]);
+  const publication = useRef({ identity: publicationIdentity, epoch: 0, mounted: false });
+  if (publication.current.identity !== publicationIdentity) {
+    publication.current = { identity: publicationIdentity, epoch: publication.current.epoch + 1, mounted: false };
+  }
+  const callbackEpoch = publication.current.epoch;
 
   const clearLocalTimer = useCallback(() => {
     if (clearTimerRef.current === null) return;
@@ -133,13 +119,17 @@ export function useTypingIndicator(
 
   const clearTyping = useCallback(() => {
     if (!boundaryReadyRef.current
-      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+      || boundaryKeyRef.current !== callbackBoundaryKey
+      || !publication.current.mounted || publication.current.epoch !== callbackEpoch) return;
     clearLocalTimer();
     setIsTypingState(false);
     sinceRef.current = 0;
     lastSentRef.current = 0;
-    client.ephemeral.delete(topic, key);
-  }, [callbackBoundaryKey, clearLocalTimer, client.ephemeral, key, topic]);
+    if (sessionId) {
+      if (publishedRef.current) client.ephemeral.deleteTransient(topic, key);
+      publishedRef.current = false;
+    } else client.ephemeral.delete(topic, key);
+  }, [callbackBoundaryKey, callbackEpoch, clearLocalTimer, client.ephemeral, key, sessionId, topic]);
 
   const scheduleIdleClear = useCallback(() => {
     clearLocalTimer();
@@ -148,7 +138,8 @@ export function useTypingIndicator(
 
   const setTyping = useCallback((typing: boolean) => {
     if (!boundaryReadyRef.current
-      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+      || boundaryKeyRef.current !== callbackBoundaryKey
+      || !publication.current.mounted || publication.current.epoch !== callbackEpoch) return;
     if (!typing) {
       clearTyping();
       return;
@@ -169,16 +160,24 @@ export function useTypingIndicator(
       updatedAt: timestamp,
     };
     if (options.metadata) value.metadata = options.metadata;
-    client.ephemeral.set(topic, key, value, ttlMs);
+    if (sessionId) {
+      if (client.ephemeral.setTransient(topic, key, value, ttlMs)) publishedRef.current = true;
+      else {
+        clearLocalTimer(); setIsTypingState(false); sinceRef.current = 0; lastSentRef.current = 0;
+      }
+    } else client.ephemeral.set(topic, key, value, ttlMs);
   }, [
     actorId,
+    clearLocalTimer,
     callbackBoundaryKey,
+    callbackEpoch,
     clearTyping,
     client.ephemeral,
     key,
     label,
     options.metadata,
     scheduleIdleClear,
+    sessionId,
     throttleMs,
     topic,
     ttlMs,
@@ -195,38 +194,39 @@ export function useTypingIndicator(
   }, [authorizationBoundary.key, authorizationBoundary.ready]);
 
   useEffect(() => {
+    publication.current.mounted = authorizationBoundary.ready;
     clearLocalTimer();
     setIsTypingState(false);
     sinceRef.current = 0;
     lastSentRef.current = 0;
+    publishedRef.current = false;
     setNow(Date.now());
     const effectBoundaryKey = authorizationBoundary.key;
     return () => {
+      if (publication.current.epoch === callbackEpoch) publication.current.mounted = false;
       clearLocalTimer();
       if (boundaryReadyRef.current
         && boundaryKeyRef.current === effectBoundaryKey) {
-        client.ephemeral.delete(topic, key);
+        if (sessionId) {
+          if (publishedRef.current) client.ephemeral.deleteTransient(topic, key);
+        } else client.ephemeral.delete(topic, key);
       }
+      publishedRef.current = false;
     };
   }, [
     authorizationBoundary.key,
+    authorizationBoundary.ready,
+    callbackEpoch,
     clearLocalTimer,
     client.ephemeral,
     key,
+    sessionId,
     topic,
   ]);
 
   const typingUsers = useMemo(() => {
     if (!authorizationBoundary.ready) return [];
-    const cutoff = now - idleMs;
-    return Object.entries(entries)
-      .map(([entryKey, entry]) => readTypingMember(entryKey, entry.value))
-      .filter((member): member is TypingIndicatorMember => {
-        if (!member) return false;
-        if (!includeSelf && member.userId === actorId) return false;
-        return member.updatedAt >= cutoff;
-      })
-      .sort((left, right) => right.updatedAt - left.updatedAt);
+    return typingIndicatorMembers(entries, { now, idleMs, actorId, includeSelf });
   }, [actorId, authorizationBoundary.ready, entries, idleMs, includeSelf, now]);
 
   return {

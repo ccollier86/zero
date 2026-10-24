@@ -27,6 +27,10 @@ The product backlog proposes a Comms platform with user-to-user chat and
 possibly audio/video/public widgets. Rooms and ephemeral activity are useful
 existing primitives, not those complete features.
 
+Active implementation is tracked in the [messaging foundation](../messaging/index.md).
+Its first slice extends real room typing and adds reusable presentation parts;
+durable chat, Storage and channel integration remain explicit completion gates.
+
 - [ ] Design future chat admission/history/delivery separately from ephemeral presence.
 - [ ] Reuse Guardian/Fabric authority rather than infer it from room membership UI.
 - [ ] Define any future room invitation/role editing APIs explicitly; current self-join remains closed.
