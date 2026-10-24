@@ -11,6 +11,10 @@ import type { NormalizedAuthBehaviorConfig } from '../../auth/types';
 import { resolveDataStudioInstallation } from '../../data-studio/data-studio-installation';
 import { createDataStudioRouter } from '../../data-studio/data-studio-router';
 import type { EmailRuntime } from '../../email';
+import { EmailInboxService } from '../../email/inbox/inbox-service';
+import { createEmailInboxRouter } from '../../email/inbox/inbox-router';
+import { emailInboxConfigIssues } from '../../email/inbox/inbox-config';
+import { resolve } from 'node:path';
 import { emitPlatformCodeTo } from '../../observability';
 import {
   createResourceCrudPlugin,
@@ -89,6 +93,17 @@ export async function mountPlatformRoutes({
   const getAuthorizationKernel = () => runtime.get(ZERO_AUTHORIZATION_KERNEL);
   const getRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
   const observabilityRuntime = runtime.require(ZERO_OBSERVABILITY_RUNTIME);
+
+  if (config.email && config.email.inbox) {
+    const issues = emailInboxConfigIssues(config); if (issues.length) throw new Error(`[email.inbox] ${issues.join(' ')}`);
+    const inbox = config.email.inbox;
+    if (resourceAuthConfig.tenancy.mode === 'multi' && !inbox.accounts) throw new Error('[email.inbox] Multi-tenant mail requires an authorized accounts resolver.');
+    if (!inbox.accounts && !emailRuntime.mailbox) throw new Error('[email.inbox] Configure email.imap or supply an accounts resolver.');
+    const statePath = inbox.statePath === ':memory:' ? ':memory:' : resolve(config.projectRoot, inbox.statePath);
+    const service = new EmailInboxService({ ...inbox, statePath }, emailRuntime);
+    runtime.addCleanup(() => service.close());
+    app.use(await createServerExtensionApp({ name: 'zero.email-inbox', extensions: [createEmailInboxRouter(service)], runtime }) as any);
+  }
 
   app.use(createDataQueryPlugin({
     queryableTables: resolveGenericDataQueryableTables(config.lazyTables),

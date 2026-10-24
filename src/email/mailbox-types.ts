@@ -1,7 +1,7 @@
 /** Provider-neutral, JSON-safe mailbox identifiers and live change contracts. */
 export interface MailMessageRef { folder: string; uidValidity: string; uid: number }
 export interface MailAddress { name?: string; address: string }
-export interface MailFolder { path: string; name: string; specialUse?: string; flags: string[] }
+export interface MailFolder { path: string; name: string; specialUse?: string; flags: string[]; total?: number; unread?: number }
 export interface MailMessageSummary extends MailMessageRef {
   messageId?: string; subject: string; from: MailAddress[]; to: MailAddress[];
   date?: string; size: number; flags: string[];

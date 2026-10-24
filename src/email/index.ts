@@ -14,6 +14,8 @@ export { ResendEmailProvider } from './resend-email-provider';
 export { SmtpEmailProvider } from './smtp-email-provider';
 export { ImapMailbox } from './imap-mailbox';
 export { emailFromEnv } from './email-from-env';
+export type { EmailInboxConfig, EmailInboxServerAccount } from './inbox/server-types';
+export type * from './inbox/contracts';
 export type { MailAddress, MailAttachment, MailFolder, MailMessageRef, MailMessageSummary, MailMessage, MailMessagePage, MailListOptions, MailboxSearch, MailboxChange, MailWatchOptions } from './mailbox-types';
 export {
   configureEmail,

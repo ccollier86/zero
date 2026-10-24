@@ -47,14 +47,16 @@ Resend captures `apiKey` with nullish precedence and `baseUrl` when constructed.
 `isConfigured()` checks that captured key is nonblank. A non-2xx response
 becomes a generic EmailError: deterministic rejections are classified
 `EMAIL_PROVIDER_REQUEST_REJECTED`, while other failures use `EMAIL_SEND_FAILED`.
-The response body is not reflected to callers or logs. A successful result may
-lack a vendor ID; the adapter does not invent one.
+The response body is not reflected to callers or logs. A successful HTTP response
+without a valid vendor receipt is an uncertain send failure, not fabricated
+acceptance.
 
 The expanded send contract supports Cc/Bcc, reply threading and in-memory file
-attachments through both production providers. This Resend adapter infers file
-MIME types and rejects explicit attachment `contentType`/inline `contentId`
-rather than silently dropping unsupported fields. SMTP supports those explicit
-MIME options. [Resend send API](https://resend.com/docs/api-reference/emails/send-email)
+attachments through both production providers. Resend maps explicit attachment
+`contentType` and inline `contentId` to its documented `content_type` and
+`content_id` fields. Its content IDs must contain 1–127 characters. SMTP maps
+these fields to MIME headers. Neither adapter reads arbitrary local file paths
+or attachment URLs. [Resend send API](https://resend.com/docs/api-reference/emails/send-email)
 
 Receiving is a separate [IMAP module](./mailbox.md), usable with either send
 provider or a receive-only noop runtime. SMTP sending does not poll an inbox.

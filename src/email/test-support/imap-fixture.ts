@@ -48,6 +48,11 @@ export async function imapFixture(options: { idle?: boolean; stall?: boolean } =
           }
           for (const folder of folders.keys()) socket.write(`* ${command} (\\HasNoChildren${folder === 'Sent' ? ' \\Sent' : folder === 'Trash' ? ' \\Trash' : ''}) "/" "${folder}"\r\n`);
           send(tag!);
+        } else if (command === 'STATUS') {
+          const folder = rest.match(/^(?:"([^"]+)"|(\S+))/)?.slice(1).find(Boolean) ?? '';
+          const list = folders.get(folder);
+          if (!list) { send(tag!, 'NO missing folder'); continue; }
+          socket.write(`* STATUS "${folder}" (MESSAGES ${list.length} UNSEEN ${list.filter(mail => !mail.flags.includes('\\Seen')).length} UIDNEXT ${nextUid} UIDVALIDITY ${validity})\r\n`); send(tag!);
         } else if (command === 'EXAMINE' || command === 'SELECT') {
           client.folder = rest.replace(/\s+\(.*$/, '').replace(/^"|"$/g, '');
           const list = folders.get(client.folder);
@@ -66,10 +71,16 @@ export async function imapFixture(options: { idle?: boolean; stall?: boolean } =
           if (!sub) { send(tag!, 'BAD unknown UID operation'); continue; }
           const action = sub[1]!.toUpperCase(), args = sub[2]!;
           const list = folders.get(client.folder) ?? [];
-          const range = args.match(/(?:^|\bUID\s+)(\d+(?::\d+)?)/i)?.[1] ?? '';
-          const [low = 0, high = low] = range.split(':').map(Number);
-          const selected = list.filter(item => item.uid >= low && item.uid <= high);
-          if (action === 'SEARCH') { socket.write(`* SEARCH ${selected.map(item => item.uid).join(' ')}\r\n`); send(tag!); }
+          const range = args.match(/(?:^|\bUID\s+)(\d+(?::\d+)?(?:,\d+(?::\d+)?)*)(?=\s|$)/i)?.[1];
+          let selected = range ? list.filter(item => range.split(',').some(part => { const [low = 0, high = low] = part.split(':').map(Number); return item.uid >= low && item.uid <= high; })) : list;
+          if (action === 'SEARCH') {
+            if (/\bUNSEEN\b/i.test(args)) selected = selected.filter(item => !item.flags.includes('\\Seen'));
+            else if (/\bSEEN\b/i.test(args)) selected = selected.filter(item => item.flags.includes('\\Seen'));
+            if (/\bFLAGGED\b/i.test(args)) selected = selected.filter(item => item.flags.includes('\\Flagged'));
+            const text = args.match(/\bTEXT\s+(?:"([^"]*)"|(\S+))/i)?.slice(1).find(value => value !== undefined);
+            if (text) selected = selected.filter(item => item.source.toString().toLowerCase().includes(text.toLowerCase()));
+            socket.write(`* SEARCH ${selected.map(item => item.uid).join(' ')}\r\n`); send(tag!);
+          }
           else if (action === 'FETCH') {
             for (const mail of selected) {
               const seq = list.indexOf(mail) + 1;

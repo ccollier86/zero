@@ -976,6 +976,7 @@ export type {
   MailConnectionConfig,
   MailAddress, MailAttachment, MailFolder, MailMessageRef, MailMessageSummary,
   MailMessage, MailMessagePage, MailListOptions, MailboxSearch, MailboxChange, MailWatchOptions,
+  EmailInboxConfig, EmailInboxServerAccount,
 } from '../email';
 
 // ─── AI: Server ───────────────────────────────────────────────────────────

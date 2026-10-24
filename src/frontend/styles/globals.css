@@ -29,6 +29,7 @@
 @import "../../components/controls/floating-button-group/floating-button-group.css";
 @import "react-easy-crop/react-easy-crop.css";
 @import "../../components/avatar-editor/avatar-editor.styles.css";
+@import "../../components/email-inbox/email-inbox.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 

@@ -40,6 +40,7 @@ setting or an ambient getter from whichever app started most recently.
 | `email.resend.baseUrl` | Optional string; default `https://api.resend.com`. Trusted server configuration, not a tenant-controlled URL. |
 | `email.smtp` | Standard SMTP settings using explicit fields then `SMTP_*`; TLS required by default. [Full SMTP reference](./smtp.md). |
 | `email.imap` | Omitted/false disables receiving; true reads `IMAP_*`; an object supplies captured connection/size/sent-folder options. [Mailbox reference](./mailbox.md). |
+| `email.inbox` | Omitted/false disables the browser workspace bridge. An object supplies private `statePath`, Guardian `access`, optional label and authorized account resolver. [Complete inbox configuration](./inbox.md). |
 | `app.name/publicUrl/supportEmail` | AppIdentityConfig, separate from email; used by Guardian template/link composition. |
 
 Values are captured at runtime/provider construction. Environment mutation is

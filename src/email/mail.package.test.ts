@@ -23,10 +23,17 @@ test('packed SMTP/IMAP facade resolves, typechecks and sends/receives from a fre
     await checked(['install', '--ignore-scripts'], consumer);
     const installed = await Bun.file(join(consumer, 'node_modules/@zero/framework/package.json')).json();
     expect(installed.dependencies.nodemailer).toBe('10.2.1'); expect(installed.dependencies.imapflow).toBe('2.9.1');
-    for (const file of ['smtp.md', 'mailbox.md']) expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/backend/email', file)).exists()).toBe(true);
+    for (const file of ['smtp.md', 'mailbox.md', 'inbox.md']) expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/backend/email', file)).exists()).toBe(true);
+    expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/frontend/email/index.md')).exists()).toBe(true);
+    expect(installed.dependencies['@types/css-tree']).toBe('3.2.0');
+    for (const file of ['src/email/inbox/inbox-service.ts', 'src/email/inbox/inbox-stream.ts', 'src/email/inbox/inbox-state-store.ts', 'src/email/resend-email-provider.ts', 'src/frontend/client/email-inbox-source.ts']) {
+      expect(await Bun.file(join(consumer, 'node_modules/@zero/framework', file)).text()).toBe(await Bun.file(join(process.cwd(), file)).text());
+    }
     await checked(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
     const output = await checked(['consumer.ts'], consumer, { TEST_SMTP_PORT: String(smtp.config.port), TEST_IMAP_PORT: String(imap.config.port) });
     expect(output).toContain('[zero-mail-package] complete'); expect(smtp.messages).toHaveLength(1);
+    await Bun.write(join(consumer, 'browser.tsx'), `import { EmailInbox } from '@zero/framework/email-inbox'; export const page = <EmailInbox />;`);
+    await checked(['build', 'browser.tsx', '--target=browser', '--outdir', join(root, 'browser')], consumer);
   } finally { await smtp.close(); await imap.close(); await rm(root, { recursive: true, force: true }); }
 }, 180_000);
 
@@ -46,6 +53,16 @@ async function checked(args: string[], cwd: string, extra: Record<string, string
 const CONSUMER = `
 import { createEmailRuntime, emailFromEnv, SmtpEmailProvider, ImapMailbox, type MailMessageRef, type MailboxChange } from '@zero/framework/email';
 import { SmtpEmailProvider as ServerSmtp, ImapMailbox as ServerImap } from '@zero/framework/server';
+import { EmailInbox, EmailHtmlBody, EmailInboxController, emptyEmailCompose, type EmailInboxSource } from '@zero/framework/email-inbox';
+import { createElement } from 'react';
+import { renderToString } from 'react-dom/server';
+
+const shell = renderToString(createElement(EmailInbox));
+if (!shell.includes('Email workspace')) throw new Error('Inbox SSR failed');
+const body = renderToString(createElement(EmailHtmlBody, { html: '<script>throw 1</script><p>Synthetic</p>', contentKey: 'ssr-test' }));
+if (body.includes('<script>')) throw new Error('SSR emitted sender markup');
+const empty = emptyEmailCompose('default');
+if (empty.from !== 'default' || typeof EmailInboxController !== 'function') throw new Error('Inbox public facade failed');
 
 if (ServerSmtp !== SmtpEmailProvider || ServerImap !== ImapMailbox) throw new Error('Public server exports diverged');
 const config = emailFromEnv({ EMAIL_PROVIDER: 'smtp', EMAIL_FROM: 'sender@example.test',

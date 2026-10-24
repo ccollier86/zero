@@ -29,10 +29,39 @@ export class ImapMailbox {
   verify(options: { signal?: AbortSignal } = {}): Promise<void> {
     return this.use(options.signal, async () => {});
   }
-  folders(options: { signal?: AbortSignal } = {}): Promise<MailFolder[]> {
-    return this.use(options.signal, async client => (await client.list()).map(folder => ({
+  folders(options: { signal?: AbortSignal; counts?: boolean } = {}): Promise<MailFolder[]> {
+    return this.use(options.signal, async client => (await client.list(options.counts ? { statusQuery: { messages: true, unseen: true } } : undefined)).map(folder => ({
       path: folder.path, name: folder.name, specialUse: folder.specialUse, flags: [...folder.flags],
+      ...(folder.status ? { total: folder.status.messages, unread: folder.status.unseen } : {}),
     })));
+  }
+
+  /** User-facing mailbox search/paging, distinct from the original bounded UID-window ingestion API. */
+  browse(options: { folder?: string; limit?: number; beforeUid?: number; search?: string; seen?: boolean; flagged?: boolean; signal?: AbortSignal } = {}): Promise<MailMessagePage> {
+    options = { ...options };
+    const folder = validateFolder(options.folder ?? 'INBOX'), limit = options.limit ?? 40;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw invalid('Message limit must be between 1 and 100');
+    if (options.beforeUid !== undefined) validateUid(options.beforeUid);
+    if (options.search !== undefined && (typeof options.search !== 'string' || options.search.length > 1000)) throw invalid('Search must contain at most 1000 characters');
+    return this.use(options.signal, async client => {
+      const lock = await client.getMailboxLock(folder, { readOnly: true });
+      try {
+        const box = requireMailbox(client);
+        const query = { ...(options.search ? { text: options.search } : { all: true }),
+          ...(options.seen !== undefined ? { seen: options.seen } : {}), ...(options.flagged !== undefined ? { flagged: options.flagged } : {}) };
+        const found = box.exists ? await client.search(query, { uid: true }) : [];
+        if (!Array.isArray(found)) throw new EmailError('Mailbox search could not be completed.', 'EMAIL_MAILBOX_FAILED', 502);
+        if (found.length > 250_000) throw new EmailError('Narrow this mailbox search to fewer than 250,000 messages.', 'EMAIL_SEARCH_TOO_LARGE', 413);
+        const candidates = found.filter(uid => options.beforeUid === undefined || uid < options.beforeUid).sort((a, b) => b - a);
+        const selected = candidates.slice(0, limit);
+        const records = selected.length ? await client.fetchAll(selected.join(','), { uid: true, envelope: true, flags: true, size: true, internalDate: true }, { uid: true }) : [];
+        const messages = records.map(record => summary(folder, box.uidValidity.toString(), record)).sort((a, b) => b.uid - a.uid);
+        return { folder, uidValidity: box.uidValidity.toString(), uidNext: box.uidNext, total: found.length, messages,
+          hasMore: candidates.length > selected.length,
+          ...(candidates.length > selected.length ? { nextBeforeUid: selected.at(-1) } : {}),
+        };
+      } finally { lock.release(); }
+    });
   }
 
   list(options: MailListOptions = {}): Promise<MailMessagePage> {

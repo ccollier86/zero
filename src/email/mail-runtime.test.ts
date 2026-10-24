@@ -61,7 +61,7 @@ test('message admission rejects header injection and paths; async transports rec
   expect(captured!.to).toEqual([message.to]); expect(captured!.attachments![0]!.content[0]).toBe(1);
 });
 
-test('Resend keeps the expanded send contract without silently dropping unsupported MIME settings', async () => {
+test('Resend preserves attachments, explicit MIME types and inline content IDs', async () => {
   const original = globalThis.fetch; let body: any; let calls = 0;
   globalThis.fetch = (async (_input, init) => { calls++; body = JSON.parse(init!.body as string); return Response.json({ id: 'vendor-id' }); }) as typeof fetch;
   try {
@@ -75,7 +75,15 @@ test('Resend keeps the expanded send contract without silently dropping unsuppor
       headers: { 'In-Reply-To': '<original@example.test>', References: '<original@example.test>' },
       attachments: [{ filename: 'data.txt', content: 'dGVzdA==' }],
     });
-    await expect(provider.send({ ...message, attachments: [{ filename: 'data.txt', content: new Uint8Array(), contentId: 'inline' }] })).rejects.toMatchObject({ code: 'EMAIL_PROVIDER_REQUEST_REJECTED' });
-    expect(calls).toBe(1);
+    await provider.send({ ...message, attachments: [{ filename: 'data.txt', content: new Uint8Array(), contentId: 'inline', contentType: 'text/plain' }] });
+    expect(body.attachments).toEqual([{ filename: 'data.txt', content: '', content_id: 'inline', content_type: 'text/plain' }]);
+    await expect(provider.send({ ...message, attachments: [{ filename: 'data.txt', content: new Uint8Array(), contentId: 'a'.repeat(128) }] })).rejects.toMatchObject({ code: 'EMAIL_PROVIDER_REQUEST_REJECTED' });
+    expect(calls).toBe(2);
   } finally { globalThis.fetch = original; }
+});
+
+test('a successful HTTP response without a provider receipt remains an uncertain delivery', async () => {
+  const original = globalThis.fetch; globalThis.fetch = (async () => Response.json({ unexpected: true })) as unknown as typeof fetch;
+  try { await expect(new ResendEmailProvider({ apiKey: 'synthetic' }).send(message)).rejects.toMatchObject({ code: 'EMAIL_SEND_FAILED' }); }
+  finally { globalThis.fetch = original; }
 });

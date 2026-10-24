@@ -87,6 +87,9 @@ describe('registered database read-query capability', () => {
           expect('handle' in database).toBe(false);
           expect('loadExtension' in database).toBe(false);
           expect('native' in retained).toBe(false);
+          // SQLite VALUES rows can contain SQL NULL; the facade must admit the
+          // actual Bun result with both older and newer Bun type declarations.
+          expect(database.query('SELECT NULL AS value').values()).toEqual([[null]]);
           return retained.get();
         },
       );

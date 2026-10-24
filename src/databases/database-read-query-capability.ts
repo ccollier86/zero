@@ -33,7 +33,7 @@ export interface DatabaseReadQueryStatement<
   ) => IterableIterator<TRow>;
   readonly values: (
     ...params: NormalizedQueryParams<TParams>
-  ) => Array<Array<string | bigint | number | boolean | Uint8Array>>;
+  ) => Array<Array<string | bigint | number | boolean | Uint8Array | null>>;
   readonly raw: (
     ...params: NormalizedQueryParams<TParams>
   ) => Array<Array<Uint8Array | null>>;

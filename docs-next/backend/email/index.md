@@ -36,6 +36,7 @@ delivery. A provider acceptance is not proof that a recipient read a message.
 | [Providers](./providers.md) | SMTP, Resend, synthetic capture, no-op and custom adapters. |
 | [SMTP](./smtp.md) | Standard SMTP, Purelymail configuration, TLS and Guardian delivery. |
 | [Receiving and live mailboxes](./mailbox.md) | Optional IMAP folders, MIME, attachments, flags, drafts and IDLE updates. |
+| [Managed Email Inbox](./inbox.md) | Optional Guardian-authorized browser API, private draft revisions, durable send receipts and shared live subscriptions. |
 | [Configuration](./configuration.md) | Exact app/env precedence, readiness and runtime ownership. |
 | [Guardian delivery](./guardian-delivery.md) | Account-action templates, public links and security ceremonies. |
 | [Durable auth outbox](./outbox.md) | Transaction-coupled enqueue, leases, retries and shutdown. |
@@ -45,8 +46,10 @@ delivery. A provider acceptance is not proof that a recipient read a message.
 
 Use `@zero/framework/email` on the server. Managed application code receives
 the owning app's email service; standalone code can create its own runtime.
-There is no browser email credential surface or generic public send endpoint.
-The app decides who may send, to whom and with what content.
+There is no browser email credential surface or unauthenticated generic send
+endpoint. The optional [inbox bridge](./inbox.md) admits a scoped mailbox and
+explicit From identities; the app decides who may send and what account policy
+applies.
 
 The separation is intentional: provider adapters own HTTP/SMTP mapping,
 EmailService owns delivery mechanics, the mailbox owns IMAP/MIME and Guardian owns account
@@ -68,7 +71,9 @@ why app-local injection is preferable to ambient compatibility getters.
 
 Both modules are optional and require no new database migration. Enabling
 sending does not enable receiving; enabling receiving does not create a public
-mail interface or provisioning service. Protocol/integration tests use
+mail interface or provisioning service. Enabling `email.inbox` additionally
+creates its explicitly configured private state file, without changing existing
+app/Guardian databases. Protocol/integration tests use
 loopback servers and synthetic messages, not production accounts.
 
 - [Guardian](../guardian/index.md) owns identity/authentication policy.

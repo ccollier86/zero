@@ -26,6 +26,14 @@ publication, search, and production agent bundles.
 - [Filters integration plan](./filters-integration-plan.md): planned standalone
   query editing, compact visuals, DataTable/Data Studio integration, execution
   parity, authorization, verification and documentation deliverables.
+- [Email Inbox plan](./email-inbox-plan.md): approved double-sidebar email
+  workspace with visible folders, optional mailbox switching, safe HTML,
+  composition/drafts, scoped service integration and live updates. The
+  [current manuals](../frontend/email/index.md) distinguish the implemented
+  working-source baseline from the remaining product and qualification work.
+  - [HTML email rendering](./email-html-rendering-plan.md): researched library
+    recommendation, email-viewer/webmail comparisons, HTML/CSS/resource policy,
+    isolated browser rendering and sizing/scroll/privacy qualification gates.
 - [Declarative configuration evolution](./declarative-configuration-plan.md):
   domain-organized configuration, detailed setting contracts, optional
   database-backed settings, organization/user delegation and safe post-bootstrap

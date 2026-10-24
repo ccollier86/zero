@@ -116,6 +116,8 @@ export interface EmailConfig {
   smtp?: SmtpEmailProviderConfig;
   /** Optional receiving mailbox. true reads IMAP_*; omitted/false never opens an inbox. */
   imap?: boolean | ImapMailboxConfig;
+  /** Optional authenticated email workspace; omitted/false mounts no inbox routes or state store. */
+  inbox?: false | import('./inbox/server-types').EmailInboxConfig;
 }
 
 /** Active email runtime used by platform services. */

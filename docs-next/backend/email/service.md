@@ -56,7 +56,7 @@ const receipt = await runtime.service.send({
 | `subject` | Required nonblank subject. |
 | `text` | Required string; either nonblank text or HTML must be supplied. |
 | `html` | Optional HTML; the caller owns safe rendering/content. |
-| `attachments` | Up to 100 in-memory `{ filename, content: Uint8Array, contentType?, contentId? }` records. SMTP supports explicit MIME type and inline IDs; Resend accepts basic file attachments and rejects unsupported MIME overrides. No paths/URLs. |
+| `attachments` | Up to 100 in-memory `{ filename, content: Uint8Array, contentType?, contentId? }` records. SMTP and Resend preserve explicit MIME types and inline IDs; Resend content IDs have a provider-specific 1–127 character limit. No paths/URLs. |
 | `inReplyTo`, `references` | Optional Message-ID and Message-ID array for reply threading. Header values cannot contain NUL/CR/LF. |
 | `tags` | Optional string map; built-in Resend maps it to name/value tags. |
 | `metadata` | Internal application metadata, not sent by the built-in Resend mapping. A custom provider receives the message and owns its mapping. |

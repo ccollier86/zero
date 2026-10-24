@@ -20,6 +20,18 @@ and potential SMS/push channels. Those future channels are not current
 provider names or configuration flags. The extension seam remains the
 [EmailProvider interface](./providers.md).
 
+## Email Workspace Baseline
+
+The working-source [Email Inbox](../../frontend/email/index.md) now supplies an
+optional message/folder sidebar, isolated HTML reader, composer, attachments,
+draft revisions, mailbox switching and live updates over the
+[managed bridge](./inbox.md). It preserves the existing AppShell. Its
+[roadmap](../../frontend/email/roadmap.md) separates conversation view, account
+provisioning, provider Drafts synchronization and distributed state from this
+implemented baseline.
+
+## Other Future Work
+
 - [ ] Evaluate additional email providers without coupling account policy to a vendor.
 - [ ] Design SMS/push as appropriate channel adapters rather than mislabeling EmailMessage.
 - [ ] Preserve captured app-local credentials, safe observability and honest acceptance/durability semantics in every adapter.

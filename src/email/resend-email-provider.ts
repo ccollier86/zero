@@ -45,8 +45,8 @@ export class ResendEmailProvider implements EmailProvider {
     }
 
     message = snapshotEmailMessage(message);
-    if (message.attachments?.some(attachment => attachment.contentId !== undefined || attachment.contentType !== undefined)) {
-      throw new EmailError('This Resend adapter supports file attachments, not explicit MIME types or inline content IDs', EMAIL_PROVIDER_REQUEST_REJECTED, 422);
+    if (message.attachments?.some(attachment => attachment.contentId !== undefined && (!attachment.contentId || attachment.contentId.length >= 128))) {
+      throw new EmailError('Resend inline content IDs must contain 1–127 characters', EMAIL_PROVIDER_REQUEST_REJECTED, 422);
     }
     const to = recipients(message.to);
     const accepted = [...to, ...recipients(message.cc), ...recipients(message.bcc)];
@@ -73,7 +73,9 @@ export class ResendEmailProvider implements EmailProvider {
           ...(message.inReplyTo ? { 'In-Reply-To': message.inReplyTo } : {}),
           ...(message.references?.length ? { References: message.references.join(' ') } : {}),
         } : undefined,
-        attachments: message.attachments?.map(attachment => ({ filename: attachment.filename, content: Buffer.from(attachment.content).toString('base64') })),
+        attachments: message.attachments?.map(attachment => ({ filename: attachment.filename, content: Buffer.from(attachment.content).toString('base64'),
+          ...(attachment.contentType !== undefined ? { content_type: attachment.contentType } : {}),
+          ...(attachment.contentId !== undefined ? { content_id: attachment.contentId } : {}) })),
         tags: message.tags ? mapTags(message.tags) : undefined,
       }),
     });
@@ -88,6 +90,7 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
     const body = await response.json().catch(() => null) as ResendSendResponse | null;
+    if (!body || typeof body.id !== 'string' || !body.id || body.id.length > 256) throw new EmailError('Email provider did not return a valid acceptance receipt', 'EMAIL_SEND_FAILED', 502);
 
     return {
       id: body?.id,

@@ -16,6 +16,7 @@ import type { ResolvedConfig } from '../frontend/server/types';
 import { parseTokenTTL } from '../tokens/token-utils';
 import { inspectMailConnection } from '../email/mail-connection-config';
 import { checkMailConfiguration } from './platform-doctor-mail';
+import { emailInboxConfigIssues } from '../email/inbox/inbox-config';
 import { authPublicPathFindings } from './auth-public-path-checks';
 import {
   addPlatformDoctorFinding as addFinding,
@@ -72,6 +73,8 @@ export function checkAuthAndEmail(
   authConfig: ResolvedAuthBehaviorConfig | null,
 ): void {
   checkMailConfiguration(resolved.email, env, findings);
+  for (const message of emailInboxConfigIssues(resolved)) findings.push({ severity: 'error', code: 'email.inbox.config_invalid', path: 'email.inbox', message, docs: './docs-next/backend/email/inbox.md' });
+  if (resolved.email && resolved.email.inbox && resolved.email.inbox.statePath === ':memory:') findings.push({ severity: 'warning', code: 'email.inbox.memory_state', path: 'email.inbox.statePath', message: 'In-memory inbox state loses drafts and duplicate-send receipts on restart. Use it only in tests.', docs: './docs-next/backend/email/inbox.md' });
   if (resolved.auth === false || !authConfig) return;
 
   const bootstrap = getBootstrapConfig(authConfig);
