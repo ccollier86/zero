@@ -14,6 +14,9 @@ import type {
 import type { EmailConfig } from '../email/types';
 import type { ResolvedConfig } from '../frontend/server/types';
 import { parseTokenTTL } from '../tokens/token-utils';
+import { inspectMailConnection } from '../email/mail-connection-config';
+import { checkMailConfiguration } from './platform-doctor-mail';
+import { emailInboxConfigIssues } from '../email/inbox/inbox-config';
 import { authPublicPathFindings } from './auth-public-path-checks';
 import {
   addPlatformDoctorFinding as addFinding,
@@ -69,6 +72,9 @@ export function checkAuthAndEmail(
   env: Record<string, string | undefined>,
   authConfig: ResolvedAuthBehaviorConfig | null,
 ): void {
+  checkMailConfiguration(resolved.email, env, findings);
+  for (const message of emailInboxConfigIssues(resolved)) findings.push({ severity: 'error', code: 'email.inbox.config_invalid', path: 'email.inbox', message, docs: './docs-next/backend/email/inbox.md' });
+  if (resolved.email && resolved.email.inbox && resolved.email.inbox.statePath === ':memory:') findings.push({ severity: 'warning', code: 'email.inbox.memory_state', path: 'email.inbox.statePath', message: 'In-memory inbox state loses drafts and duplicate-send receipts on restart. Use it only in tests.', docs: './docs-next/backend/email/inbox.md' });
   if (resolved.auth === false || !authConfig) return;
 
   const bootstrap = getBootstrapConfig(authConfig);
@@ -263,8 +269,9 @@ function isDoctorEmailDeliveryReady(
   const provider = email.provider ?? 'resend';
   if (typeof provider === 'object') return true;
   if (provider === 'resend') {
-    return Boolean(firstNonEmpty(email.resend?.apiKey, env.RESEND_API_KEY));
+    return Boolean((email.resend?.apiKey ?? env.RESEND_API_KEY)?.trim());
   }
+  if (provider === 'smtp') return inspectMailConnection('smtp', email.smtp, env).issues.length === 0;
   return provider === 'console' || provider === 'memory';
 }
 

@@ -18,7 +18,7 @@ import type { AuthorizationRoleService } from '../../auth/authorization-role-ser
 import type { TokenService } from '../../auth/token-service';
 import type { AuthRequestCredentialResolver } from '../../auth/auth-api-key-types';
 import type { UserStore } from '../../auth/user-store';
-import type { EmailService } from '../../email';
+import type { EmailService, ImapMailbox } from '../../email';
 import { getEmailRuntime, getEmailService } from '../../email';
 import type { EmailRuntime } from '../../email/types';
 import type { NotificationService } from '../../notifications/notification-service';
@@ -202,6 +202,8 @@ export interface ServerRouteServices {
   readonly pdf: PdfService | null;
   /** Email sending service. Uses a noop provider when email is disabled. */
   readonly email: EmailService;
+  /** App-configured mailbox; privileged/unscoped in multi-tenant requests. */
+  readonly mailbox: ImapMailbox | null;
   /** Active email runtime for provider/status inspection. */
   readonly emailRuntime: EmailRuntime;
   /** Storage service, when auth/storage are enabled. */
@@ -306,6 +308,9 @@ function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteService
     },
     get emailRuntime() {
       return runtime ? runtime.require(ZERO_EMAIL_RUNTIME) : getEmailRuntime();
+    },
+    get mailbox() {
+      return (runtime ? runtime.require(ZERO_EMAIL_RUNTIME) : getEmailRuntime()).mailbox ?? null;
     },
     get storage() {
       return runtime ? runtime.get(ZERO_STORAGE_SERVICE) : getStorageService();

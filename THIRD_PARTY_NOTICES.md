@@ -4,6 +4,33 @@ Zero includes or adapts the following third-party software. The notices below
 apply to those portions and do not change the licensing of unrelated Zero
 code.
 
+## Mail Protocol and MIME Dependencies
+
+Zero's optional mail modules use installed packages rather than copying or
+reimplementing their protocol engines:
+
+- Nodemailer 10.2.1 — SMTP and MIME composition, MIT license, https://github.com/nodemailer/nodemailer
+- ImapFlow 2.9.1 — IMAP/IDLE, MIT license, https://github.com/postalsys/imapflow
+- PostalMime 4.1.4 — bounded MIME parsing, MIT-0 license, https://github.com/postalsys/postal-mime
+- smtp-server 3.21.1 — development-only loopback protocol fixtures, MIT license, https://github.com/nodemailer/smtp-server
+
+Their npm distributions retain their upstream license files. Zero's facade,
+configuration, ownership, policy and integration remain Zero code.
+
+## Received Email Rendering and Composition
+
+The optional email workspace uses installed libraries, not copied webmail-client source:
+
+- DOMPurify 3.4.17 — HTML sanitization, MPL-2.0 OR Apache-2.0; used under Apache-2.0. https://github.com/cure53/DOMPurify
+- CSS Tree 3.2.1 — CSS syntax trees and validation, MIT. https://github.com/csstree/csstree
+- parse5 8.0.1 — HTML5 parsing, MIT. https://github.com/inikulin/parse5
+- Tiptap React/Core/StarterKit/ProseMirror integration 3.32.0 — rich-text composition, MIT. https://github.com/ueberdosis/tiptap
+
+Upstream distributions retain their license files and transitive notices. Zero's
+email policy, resource handling, isolated document, controller and UI are its own
+implementation. Proton and Tuta were architecture references only; their client
+code was not copied or vendored.
+
 ## Pheralb Code Blocks — Shared Code Examples And Shiki Compositions
 
 Source repository: https://github.com/pheralb/code-blocks/tree/a726aec02e94797e1d8276f2eb5806ffc9f40d97

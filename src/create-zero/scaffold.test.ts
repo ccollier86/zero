@@ -65,11 +65,15 @@ describe('scaffoldZeroApp', () => {
 
       const generatedConfig = await readFile(join(targetDir, 'zero.config.ts'), 'utf8');
       expect(generatedConfig).toContain('systemDb: resolveSystemDatabaseConfig()');
+      expect(generatedConfig).toContain('emailFromEnv()');
       expect(generatedConfig).toContain("'./data/zero.system.db'");
       const generatedEnv = await readFile(join(targetDir, '.env.example'), 'utf8');
       expect(generatedEnv).toContain('SYSTEM_DB_MODE=file');
       expect(generatedEnv).toContain('SYSTEM_DB_PATH=./data/zero.system.db');
       expect(generatedEnv).toContain('SYSTEM_DB_SNAPSHOT_PATH=');
+      expect(generatedEnv).toContain('EMAIL_PROVIDER=');
+      expect(generatedEnv).toContain('SMTP_HOST=');
+      expect(generatedEnv).toContain('IMAP_HOST=');
 
       const tsconfig = JSON.parse(await readFile(join(targetDir, 'tsconfig.json'), 'utf8')) as {
         compilerOptions: {

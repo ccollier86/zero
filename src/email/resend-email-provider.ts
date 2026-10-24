@@ -11,6 +11,7 @@ import {
   isDeterministicEmailProviderRejection,
 } from './email-failure-policy';
 import type { EmailMessage, EmailProvider, EmailSendResult, ResendEmailProviderConfig } from './types';
+import { recipients, snapshotEmailMessage } from './email-message';
 
 interface ResendSendResponse {
   id?: string;
@@ -43,7 +44,12 @@ export class ResendEmailProvider implements EmailProvider {
       throw new EmailError('Resend API key is required', 'EMAIL_PROVIDER_MISCONFIGURED', 500);
     }
 
-    const accepted = normalizeRecipients(message.to);
+    message = snapshotEmailMessage(message);
+    if (message.attachments?.some(attachment => attachment.contentId !== undefined && (!attachment.contentId || attachment.contentId.length >= 128))) {
+      throw new EmailError('Resend inline content IDs must contain 1–127 characters', EMAIL_PROVIDER_REQUEST_REJECTED, 422);
+    }
+    const to = recipients(message.to);
+    const accepted = [...to, ...recipients(message.cc), ...recipients(message.bcc)];
     const response = await fetch(`${this.baseUrl}/emails`, {
       method: 'POST',
       headers: {
@@ -56,11 +62,20 @@ export class ResendEmailProvider implements EmailProvider {
       signal: message.signal,
       body: JSON.stringify({
         from: message.from,
-        to: accepted,
+        to,
+        cc: message.cc,
+        bcc: message.bcc,
         subject: message.subject,
         text: message.text,
         html: message.html,
         reply_to: message.replyTo,
+        headers: message.inReplyTo || message.references?.length ? {
+          ...(message.inReplyTo ? { 'In-Reply-To': message.inReplyTo } : {}),
+          ...(message.references?.length ? { References: message.references.join(' ') } : {}),
+        } : undefined,
+        attachments: message.attachments?.map(attachment => ({ filename: attachment.filename, content: Buffer.from(attachment.content).toString('base64'),
+          ...(attachment.contentType !== undefined ? { content_type: attachment.contentType } : {}),
+          ...(attachment.contentId !== undefined ? { content_id: attachment.contentId } : {}) })),
         tags: message.tags ? mapTags(message.tags) : undefined,
       }),
     });
@@ -75,6 +90,7 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
     const body = await response.json().catch(() => null) as ResendSendResponse | null;
+    if (!body || typeof body.id !== 'string' || !body.id || body.id.length > 256) throw new EmailError('Email provider did not return a valid acceptance receipt', 'EMAIL_SEND_FAILED', 502);
 
     return {
       id: body?.id,
@@ -82,10 +98,6 @@ export class ResendEmailProvider implements EmailProvider {
       accepted,
     };
   }
-}
-
-function normalizeRecipients(to: string | string[]): string[] {
-  return Array.isArray(to) ? to : [to];
 }
 
 function mapTags(tags: Record<string, string>): Array<{ name: string; value: string }> {

@@ -197,6 +197,8 @@ export type {
 } from './data-studio-hooks';
 
 export { useStorageStudioManagement } from '../../components/storage/use-storage-studio-management';
+export { useEmailInbox } from '../../components/email-inbox/use-email-inbox';
+export type { UseEmailInboxOptions } from '../../components/email-inbox/use-email-inbox';
 export type {
   UseStorageStudioManagementOptions,
   UseStorageStudioManagementResult,

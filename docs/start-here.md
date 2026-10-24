@@ -289,11 +289,11 @@ Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 
 ```ts
-import { defineZeroConfig, resolveAIConfig } from '@zero/framework/server';
+import { defineZeroConfig, resolveAIConfig, emailFromEnv } from '@zero/framework/server';
 import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
-const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
+const email = emailFromEnv();
 const aiEnabled = Bun.env.ZERO_AI_ENABLED?.trim();
 const detectedAI = resolveAIConfig(true);
 const hasDetectedAIProvider = detectedAI !== false
@@ -331,14 +331,7 @@ const config = defineZeroConfig({
       Bun.env.SYSTEM_DB_SNAPSHOT_PATH ?? './data/zero.system.snapshot.db',
   },
   tables,
-  email: hasEmail
-    ? {
-        from: Bun.env.EMAIL_FROM ?? 'Zero App <noreply@example.com>',
-        replyTo: Bun.env.EMAIL_REPLY_TO,
-        provider: 'resend',
-        resend: { apiKey: Bun.env.RESEND_API_KEY },
-      }
-    : false,
+  email,
   // Generated apps start public. Change to `true` or an auth object when the
   // app needs accounts, email verification, MFA, or admin user management.
   auth: false,
@@ -884,6 +877,10 @@ Common variables:
 | `EMAIL_FROM` | Default sender. |
 | `EMAIL_REPLY_TO` | Optional reply-to. |
 | `RESEND_API_KEY` | Enables the default Resend provider. |
+| `EMAIL_PROVIDER` | Explicit mail provider selection for `emailFromEnv()`; `smtp`, `resend`, local/test names or `false`. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Optional standard SMTP sending. [TLS and full configuration](../docs-next/backend/email/smtp.md). |
+| `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD` | Optional receiving mailbox with live IDLE updates. [Mailbox API](../docs-next/backend/email/mailbox.md). |
+| `IMAP_SENT_FOLDER` | Opt-in best-effort sent copies; leave blank if the provider already saves sent mail. |
 | `AUTH_REQUIRE_EMAIL_VERIFICATION` | Require email verification before public-registered users receive tokens. |
 | `AUTH_EMAIL_VERIFICATION_PATH` | Public page path used in email verification links. Defaults to `/verify-email`. |
 | `AUTH_MFA_ENABLED` | Enables first-party MFA setup and login challenges. |

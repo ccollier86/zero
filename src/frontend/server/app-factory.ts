@@ -123,6 +123,7 @@ export async function createApp(userConfig: AppConfig) {
     assertApplicationDatabaseHasNoLegacySystemLayout(sqlite);
     const emailRuntime = createEmailRuntime(config.email, config.app, emitCode);
     runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
+    runtime.addCleanup(() => emailRuntime.close?.());
     const emailRuntimeRegistration = registerEmailRuntime(runtime, emailRuntime);
     runtime.addCleanup(() => emailRuntimeRegistration.unregister());
     const {

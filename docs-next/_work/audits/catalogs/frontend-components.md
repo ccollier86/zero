@@ -31,6 +31,20 @@ Reviewed independently on 2026-10-05. The three public frontend runtime-symbol c
 
 ## Symbol Coverage
 
+### Email Inbox Working Source — 2026-10-23
+
+The additive `@zero/framework/email-inbox` family is inventoried in its
+[workspace](../../../frontend/email/workspace.md),
+[parts](../../../frontend/email/parts.md) and
+[HTML reader](../../../frontend/email/html-reader.md) manuals. These cover
+EmailInbox, EmailInboxWorkspace, EmailMailboxSwitcher, EmailFolderNav,
+EmailMessageList, EmailMessageRow, EmailReader, EmailHeaders, EmailAttachments,
+EmailComposer, EmailRecipientField, EmailHtmlBody and EmailPlainTextBody. Its
+controller/hook/SDK contracts are linked from the
+[family index](../../../frontend/email/index.md). This preview supplements the
+dated baseline count; it does not revise that historical inventory or claim
+the feature exists in an earlier release.
+
 ### Structured Modal And Dense List Working Source — 2026-10-08
 
 These additions are observed in dirty 2.6.0 source at baseline

@@ -69,6 +69,7 @@ manuals and distinguish working-source additions from older installed packages.
 - [Notifications](./notifications/index.md) covers receipt hooks, optional toast
   provider and reusable inbox/badge controls.
 - [Rooms](./rooms/index.md) covers scoped membership hooks and room/topic presence.
+- [Email Inbox](./email/index.md) covers optional folder/message workspaces, safe HTML, rich composition, scoped drafts and live mail.
 - [Frontend observability](./observability.md) covers browser sink/event integration
   and safe diagnostics without bypassing backend ingest authority.
 - [Torrent interfaces](./torrent/index.md) covers workflow hooks and realtime run
@@ -87,6 +88,11 @@ reference sections as their focused contracts are reviewed. A page being absent
 from this draft index is not a promise that its feature is unavailable.
 
 ## Choose The Public Surface
+
+The [Email Inbox](./email/index.md) is an additive working-source family over
+the optional SMTP/IMAP modules. Its [configuration](./email/configuration.md)
+is explicit; it is separate from chat and notification inboxes and is not
+present in earlier installed archives merely because this guide exists.
 
 `@zero/framework/react` and the root package expose the browser-safe frontend
 barrel. `@zero/framework/server` is server-only. `@zero/framework/schema` is the

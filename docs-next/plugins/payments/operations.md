@@ -123,7 +123,8 @@ metadata prevents automatic downloads of an unpublished framework package; it
 does not make the updated framework optional at runtime. Do not assume a registry
 publication or that `zero update` updates a separately installed plugin.
 
-The current implementation lives on `feature/stripe-payments-foundation`. Read
+The implementation is merged to `main`; `feature/stripe-payments-foundation`
+retains its reviewed feature history. Read
 the [qualification record](../../_work/audits/stripe-payments-foundation.md) for
 the actual source/archive checks. Merge/publication/deployment are separate actions.
 

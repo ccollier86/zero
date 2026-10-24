@@ -274,6 +274,7 @@ describe('request-bound server services', () => {
       expect(() => alpha.sql).toThrow('zero.unsafe.sql');
       expect(() => alpha.kv).toThrow('zero.unsafe.kv');
       expect(() => alpha.vector).toThrow('zero.unsafe.vector');
+      expect(() => alpha.mailbox).toThrow('zero.unsafe.mailbox');
       expect(() => alpha.scheduler).toThrow('zero.unsafe.scheduler');
       expect(() => alpha.auth.store).toThrow('zero.unsafe.auth.store');
       expect(() => alpha.auth.tokens).toThrow('zero.unsafe.auth.tokens');
@@ -652,6 +653,7 @@ describe('request-bound server services', () => {
       expect(() => (zero as any).db).toThrow('zero.db');
       expect(() => (zero as any).databases).toThrow('zero.databases');
       expect(() => (zero as any).email).toThrow('zero.email');
+      expect(() => (zero as any).mailbox).toThrow('zero.mailbox');
       expect(() => (zero.auth as any).store).toThrow('zero.unsafe.auth.store');
       expect(Object.getOwnPropertyDescriptor(zero, 'db')).toBeUndefined();
       expect(Object.getOwnPropertyDescriptor(zero, 'databases')).toBeUndefined();

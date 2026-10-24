@@ -48,6 +48,11 @@ The worker claims due work with a bounded lease, extends the exact lease while
 delivery is owned and uses an AbortController for ownership loss/deadline/
 shutdown. Provider idempotency keys reduce repeated vendor acceptance after
 uncertain delivery, but external delivery is not a transaction with SQLite.
+Resend forwards the job's idempotency key; standard SMTP has no equivalent
+provider guarantee. A lost acknowledgment can therefore lead to a duplicate
+SMTP attempt. Temporary SMTP 4xx replies are retryable; permanent 5xx replies
+are terminal after conversion to Zero's safe failure policy. A failed optional
+IMAP sent copy never requests another outgoing delivery.
 Eligibility is checked against canonical account/invitation/domain state;
 obsolete jobs are suppressed rather than mailed under stale authority.
 

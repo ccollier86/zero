@@ -8,7 +8,7 @@ visibility: internal
 system: payments
 feature: overview
 maturity: preview
-applies_to: ["feature/stripe-payments-foundation with @zero/plugin-payments 0.1.0"]
+applies_to: ["2.6.0 main source with @zero/plugin-payments 0.1.0; identify archives by commit and hash"]
 modes: [single tenant, multi tenant, Stripe test, Stripe live]
 reviewed_against:
   package: "@zero/framework"

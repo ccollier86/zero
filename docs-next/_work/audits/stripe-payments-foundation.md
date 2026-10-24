@@ -83,7 +83,22 @@ successful run writes its exact core/plugin SHA-256 and verified flags to
 That record labels its source snapshot honestly; it does not claim a main merge
 or release merely because the version remains 2.6.0.
 
-## Operational Boundaries
+## Main Integration
+
+The reviewed payments commits `b726e69` and `e47266f` and email/inbox commits
+`7aa638f` and `c6c5417` are combined on main. The package export conflict is
+resolved by retaining both public entry points. The managed payments test now
+also enables the authenticated inbox in single and multi tenancy and checks
+both HTTP namespaces.
+
+Combined integration evidence is under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/payments-email-main-merge/`.
+The first broad run hit loopback timeouts while the host was severely overloaded;
+it is not a passing qualification. Sequential reruns and TypeScript results
+must be read from their individual records. The earlier isolated feature-branch
+qualifications above remain separate evidence.
+
+## Deployment Boundaries
 
 No production application/database, merchant configuration, remote webhook,
 Stripe resource, charge, refund or credential is changed by this work. Live

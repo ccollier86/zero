@@ -26,6 +26,11 @@ Static interface-member enumeration against committed main a3a5f726768dac890f241
 
 ## Independent Member Reconciliation
 
+The 2026-10-23 working-source addition `Client.emailInbox` is separately
+inventoried in the [email source contract](../../../frontend/email/source.md).
+Its managed accounts/folders/list/read/download/flags/move/draft/send/watch
+methods and scope-retirement `clear()` do not change this dated baseline count.
+
 Reviewed independently on 2026-10-05 using TypeScript syntax trees without executing application modules. All **227 records** are declared members in their cited source interfaces; all **227 direct members across the selected 20 interfaces** have records, with no missing member. This is exhaustive for those selected interface declarations, not a claim that every public nested type/React prop is among these 20 interfaces. HTTP, collection/receipts, resources, Guardian and scoped-control-plane members now have their own planned contract destinations instead of an undifferentiated client-lifecycle home. Public types beyond this facade map remain tracked by the package-export and configuration-field catalogs.
 
 | Declaring interface | Member | Kind | Declared shape (abridged; source authoritative) | Source evidence | Planned contract owner |

@@ -52,6 +52,8 @@ persistence simply because they are exported by Zero.
   media, trailing controls and safe single-action picker composition.
 - [Vector visualizations](./vector-visualization.md) covers real ingestion/search
   organisms, tool-operation attachment, external adapters and public stories.
+- [Email Inbox](../email/index.md) covers the optional folder/message workspace,
+  safe HTML reader, rich composer and scoped mail controller/parts.
 - [Zero Charts API and families](../charts/index.md) routes the shared facade,
   reactive data/runtime rules and five full manuals alongside Recharts compatibility.
 - [Sankey flow](../charts/sankey.md) covers proportional flow math, compact inspection

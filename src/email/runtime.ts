@@ -12,6 +12,9 @@ import { EmailService } from './email-service';
 import { MemoryEmailProvider } from './memory-email-provider';
 import { NoopEmailProvider } from './noop-email-provider';
 import { ResendEmailProvider } from './resend-email-provider';
+import { SmtpEmailProvider } from './smtp-email-provider';
+import { ImapMailbox } from './imap-mailbox';
+import { EmailError } from './email-error';
 import type {
   AppIdentityConfig,
   BuiltInEmailProvider,
@@ -62,6 +65,11 @@ export function getEmailService(): EmailService {
   return getEmailRuntime().service as EmailService;
 }
 
+/** Optional receiving service from the unambiguous owning runtime. */
+export function getMailboxService(): ImapMailbox | null {
+  return getEmailRuntime().mailbox ?? null;
+}
+
 /**
  * Whether the active email boundary has the minimum configuration required to
  * attempt delivery. Public action-link flows must additionally require an app
@@ -84,6 +92,7 @@ export function isEmailDeliveryReady(
   if (provider === 'resend') {
     return candidate.provider instanceof ResendEmailProvider && candidate.provider.isConfigured();
   }
+  if (provider === 'smtp') return candidate.provider instanceof SmtpEmailProvider && candidate.provider.isConfigured();
 
   return provider !== 'noop';
 }
@@ -111,13 +120,16 @@ export function createEmailRuntime(
     replyTo: firstNonEmpty(configured.replyTo) ?? firstNonEmpty(Bun.env.EMAIL_REPLY_TO),
   };
   const provider = resolveProvider(config, emitCode);
+  const mailbox = config.imap ? new ImapMailbox(config.imap === true ? {} : config.imap) : null;
 
   return {
     enabled: provider.name !== 'noop',
     app,
     config,
     provider,
-    service: new EmailService(provider, config, emitCode),
+    service: new EmailService(provider, config, emitCode, mailbox),
+    mailbox,
+    async close() { try { await provider.close?.(); } finally { await mailbox?.close(); } },
   };
 }
 
@@ -155,11 +167,15 @@ function resolveProvider(
   switch (provider as BuiltInEmailProvider) {
     case 'resend':
       return new ResendEmailProvider(config.resend);
+    case 'smtp':
+      return new SmtpEmailProvider(config.smtp);
     case 'console':
       return new ConsoleEmailProvider(emitCode);
     case 'memory':
       return new MemoryEmailProvider();
     case 'noop':
       return new NoopEmailProvider();
+    default:
+      throw new EmailError('Email provider is not supported', 'EMAIL_PROVIDER_MISCONFIGURED', 500);
   }
 }

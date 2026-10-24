@@ -8,14 +8,14 @@ visibility: internal
 system: email
 feature: overview
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.6.0 development source; not package-qualified"]
 modes: [managed-server, standalone-server]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "8850d12a24f1744818ab17fa37bb3dbf235229da"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-22"
   evidence_level: source-observed
 ---
 
@@ -33,7 +33,10 @@ delivery. A provider acceptance is not proof that a recipient read a message.
 | Guide | Use it for |
 | --- | --- |
 | [Service](./service.md) | Sending messages, normalized results and safe failure handling. |
-| [Providers](./providers.md) | Resend, synthetic capture, no-op and custom adapters. |
+| [Providers](./providers.md) | SMTP, Resend, synthetic capture, no-op and custom adapters. |
+| [SMTP](./smtp.md) | Standard SMTP, Purelymail configuration, TLS and Guardian delivery. |
+| [Receiving and live mailboxes](./mailbox.md) | Optional IMAP folders, MIME, attachments, flags, drafts and IDLE updates. |
+| [Managed Email Inbox](./inbox.md) | Optional Guardian-authorized browser API, private draft revisions, durable send receipts and shared live subscriptions. |
 | [Configuration](./configuration.md) | Exact app/env precedence, readiness and runtime ownership. |
 | [Guardian delivery](./guardian-delivery.md) | Account-action templates, public links and security ceremonies. |
 | [Durable auth outbox](./outbox.md) | Transaction-coupled enqueue, leases, retries and shutdown. |
@@ -43,22 +46,35 @@ delivery. A provider acceptance is not proof that a recipient read a message.
 
 Use `@zero/framework/email` on the server. Managed application code receives
 the owning app's email service; standalone code can create its own runtime.
-There is no browser email credential surface or generic public send endpoint.
-The app decides who may send, to whom and with what content.
+There is no browser email credential surface or unauthenticated generic send
+endpoint. The optional [inbox bridge](./inbox.md) admits a scoped mailbox and
+explicit From identities; the app decides who may send and what account policy
+applies.
 
-The separation observed in source is intentional: provider adapters own vendor
-HTTP mapping, EmailService owns delivery mechanics, and Guardian owns account
+The separation is intentional: provider adapters own HTTP/SMTP mapping,
+EmailService owns delivery mechanics, the mailbox owns IMAP/MIME and Guardian owns account
 policy and secret-bearing links. Generic sends are not automatically put in
 Guardian's outbox. [Runtime services](../runtime/server-services.md) explains
 why app-local injection is preferable to ambient compatibility getters.
 
-## Applicability And Verification
+## Integration Map
 
-This draft includes the unreleased captured-credential readiness correction:
-an explicit empty Resend key does not fall back only during readiness, and
-later ambient environment changes cannot alter the adapter's captured key.
-The inspected focused tests used synthetic messages and made no provider calls.
-Released package support remains a separate qualification gate.
+| Layer | Zero integration |
+| --- | --- |
+| Configuration | `email.provider: 'smtp'` and optional `email.imap`; `emailFromEnv()` is shared by the root app and generated starter. |
+| Server API | App-local `zero.email.send()` and optional `zero.mailbox`; public classes/types through `@zero/framework/email` and `@zero/framework/server`. |
+| Guardian | Existing setup/reset, verification, invitation and MFA delivery uses the selected provider without replacing templates or routes. |
+| Durable delivery | Guardian retains its transaction-coupled outbox, retry and shutdown ownership. Generic email is not automatically queued. |
+| Real time | IMAP IDLE publishes bounded metadata deltas and explicit resync events, ready for the app's authorized ReactiveDB ingestion and Sync UI. No automatic private-mail persistence. |
+| Isolation | Runtime ownership separates apps. Raw receiving is blocked in normal multi-tenant/workflow projections; deliberate privileged access still needs app policy. |
+| Operations | Doctor checks connection settings and Guardian readiness without network probes. Managed stop retires mail sockets and subscriptions. |
+
+Both modules are optional and require no new database migration. Enabling
+sending does not enable receiving; enabling receiving does not create a public
+mail interface or provisioning service. Enabling `email.inbox` additionally
+creates its explicitly configured private state file, without changing existing
+app/Guardian databases. Protocol/integration tests use
+loopback servers and synthetic messages, not production accounts.
 
 - [Guardian](../guardian/index.md) owns identity/authentication policy.
 - [Scheduler](../scheduler/index.md) supplies process-local scheduling, not mail persistence.

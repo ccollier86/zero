@@ -16,7 +16,8 @@ for (const tenancy of ['single', 'multi'] as const) test(`managed ${tenancy} cre
     auth: { tenancy, bootstrap: 'public' as const, registration: { mode: 'public' as const } },
     appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     serverResourcesDir: false as const, serverPluginsDir: false as const, serverMiddlewareDir: false as const, serverEndpointsDir: false as const, serverRoutesDir: false as const,
-    workflows: false as const, stateSync: false, ai: false as const, vector: false as const, pdf: false as const, kv: false as const, email: false as const, observability: false as const,
+    workflows: false as const, stateSync: false, ai: false as const, vector: false as const, pdf: false as const, kv: false as const,
+    email: { provider: 'noop' as const, inbox: { statePath: join(root, 'inbox.sqlite'), accounts: () => [] } }, observability: false as const,
     serverExtensions: [stripePayments({ ...fixtureOptions, allowEphemeralTestMode: false, httpClient: stripe.httpClient }),
       defineZeroPlugin({ name: 'payments-fixture-capture', setup: ({ zero }) => { service = getStripePayments(zero); } }),
       defineEndpoint({ method: 'GET', path: '/test/payments-isolation', auth: 'user', handler: ({ zero }) => ({
@@ -33,6 +34,8 @@ for (const tenancy of ['single', 'multi'] as const) test(`managed ${tenancy} cre
     const user = await request('/auth/register', { username: 'payment-owner', email: 'payment-owner@example.test', password: 'Fixture-only-password-123', ...(tenancy === 'multi' ? { organizationName: 'Payment Fixture' } : {}) });
     expect(user.status).toBe(200); const bearer = user.body.accessToken as string;
     expect((await request('/api/_zero/payments/snapshot')).status).toBe(401);
+    expect((await request('/api/_zero/email-inbox/accounts')).status).toBe(401);
+    expect(await request('/api/_zero/email-inbox/accounts', undefined, bearer)).toEqual({ status: 200, body: [] });
     expect(await request('/test/payments-isolation', undefined, bearer)).toEqual({ status: 200, body: { scoped: true, raw: false } });
     const checkout = { operationId: 'managed-checkout-1', offer: 'pro' };
     expect((await request('/api/_zero/payments/checkout', checkout, bearer)).status).toBe(200);
@@ -67,7 +70,7 @@ for (const tenancy of ['single', 'multi'] as const) test(`managed ${tenancy} cre
     expect(stripe.customerCount).toBe(2); expect(stripe.requests.filter(r => r.path === '/v1/checkout/sessions')).toHaveLength(1);
     expect((await request('/api/_zero/payments/snapshot', undefined, login.body.accessToken)).body.revision).toBeGreaterThan(0);
   } finally { try { await app?.stop(true); } finally { await rm(root, { recursive: true, force: true }); } }
-}, 30000);
+}, 120000);
 function customerId(snapshot: { customer: { id: string } }): string { return snapshot.customer.id; }
 
 test('an app without payments gets no payment schema or SDK service', async () => {
