@@ -48,7 +48,8 @@ export class StripeFixture {
     else if (record.path === '/v1/checkout/sessions') value = { id: 'cs_test_fixture', object: 'checkout.session', customer: customer.id, livemode: false, url: 'https://checkout.stripe.com/fixture', status: 'open' };
     else if (record.path.startsWith('/v1/checkout/sessions/')) value = { id: 'cs_test_fixture', customer: customer.id, livemode: false, payment_status: 'paid', status: 'complete' };
     else if (record.path === '/v1/billing_portal/sessions') value = { id: 'bps_fixture', object: 'billing_portal.session', url: 'https://billing.stripe.com/fixture' };
-    else if (record.path === '/v1/refunds') { const refund = { id: 're_fixture', object: 'refund', payment_intent: this.pay.id, amount: Number(data.get('amount') ?? 1900), currency: 'usd', status: 'succeeded', created: 12345 }; value = record.method === 'POST' ? refund : list([refund]); }
+    else if (record.path === '/v1/refunds') { const refund = { id: 're_fixture', object: 'refund', payment_intent: this.pay.id, amount: Number(data.get('amount') ?? 1900), currency: 'usd', status: 'succeeded', created: 12345,
+      metadata: Object.fromEntries([...data].filter(([key]) => /^metadata\[[^\]]+\]$/.test(key)).map(([key, value]) => [key.slice(9, -1), value])) }; value = record.method === 'POST' ? refund : list([refund]); }
     else if (record.path.startsWith('/v1/refunds/')) value = { id: record.path.split('/').at(-1), payment_intent: this.pay.id, amount: 500, currency: 'usd', status: 'succeeded', created: 12345 };
     else return Response.json({ error: { type: 'invalid_request_error', message: 'Unknown synthetic endpoint.' } }, { status: 404 });
     return Response.json(value, { headers: { 'request-id': 'req_fixture' } });

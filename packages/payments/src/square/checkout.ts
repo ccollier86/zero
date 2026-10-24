@@ -10,11 +10,11 @@ import { safeReturnUrl } from '../options';
 
 export interface SquareCheckoutIntent {
   operationId: string; description: string; amount: number; currency: string; quantity?: number;
-  itemVariationId?: string; planVariationId?: string; offer?: string; reference?: string;
+  itemVariationId?: string; planVariationId?: string; offer?: string; reference?: string; successUrl?: string;
 }
 export async function squareCheckout(service: SquarePayments, owner: BillingCommandOwner, key: string, input: SquareCheckoutIntent) {
   if (service.options.acceptingSales === false) throw new PaymentsError('New sales are disabled.', 'PAYMENTS_SALES_DISABLED', 409);
-  const saved = await service.parameters(key, 'checkout.create', async () => ({ ...input, quantity: input.quantity ?? 1 }));
+  const saved = await service.parameters(key, 'checkout.create', async () => ({ ...input, quantity: input.quantity ?? 1, successUrl: service.options.successUrl }));
   if (saved.currency !== service.currency) throw new PaymentsError('Charge currency does not match the Square location.', 'PAYMENTS_INPUT_INVALID');
   const intent = service.resources.intent(owner, key, saved.operationId, { kind: saved.planVariationId ? 'subscription' : 'checkout', amount: saved.amount, currency: saved.currency,
     quantity: saved.quantity, ...(saved.itemVariationId ? { itemVariationId: saved.itemVariationId } : {}), ...(saved.planVariationId ? { planVariationId: saved.planVariationId } : {}), ...(saved.offer ? { offer: saved.offer } : {}), ...(saved.reference ? { reference: saved.reference } : {}) });
@@ -22,12 +22,12 @@ export async function squareCheckout(service: SquarePayments, owner: BillingComm
     description: saved.description,
     order: { locationId: service.options.locationId, referenceId: intent.reference, pricingOptions: { autoApplyTaxes: false, autoApplyDiscounts: false }, lineItems: [{ name: saved.description, quantity: String(saved.quantity),
       ...(saved.itemVariationId ? { catalogObjectId: saved.itemVariationId } : {}), basePriceMoney: { amount: BigInt(saved.amount / saved.quantity), currency: saved.currency.toUpperCase() as Square.Currency } }] },
-    checkoutOptions: { redirectUrl: service.options.successUrl, allowTipping: false, enableCoupon: false, enableLoyalty: false, ...(saved.planVariationId ? { subscriptionPlanId: saved.planVariationId } : {}) },
+    checkoutOptions: { redirectUrl: saved.successUrl ?? service.options.successUrl, allowTipping: false, enableCoupon: false, enableLoyalty: false, ...(saved.planVariationId ? { subscriptionPlanId: saved.planVariationId } : {}) },
   });
   const link = response.paymentLink;
   if (!link?.id || !link.orderId || !link.url) return providerInvalid(); safeReturnUrl(link.url);
   const order = (await service.native.orders.get({ orderId: link.orderId })).order;
-  if (!order || order.locationId !== service.options.locationId || order.referenceId !== intent.reference) return providerInvalid();
+  if (!order || order.id !== link.orderId || order.locationId !== service.options.locationId || order.referenceId !== intent.reference) return providerInvalid();
   const total = money(order.totalMoney); if (total.amount !== saved.amount || total.currency !== saved.currency) return providerInvalid();
   service.resources.bind(owner, 'order', link.orderId, order, intent.reference);
   service.resources.bind(owner, 'checkout', link.id, link, intent.reference);
@@ -36,7 +36,7 @@ export async function squareCheckout(service: SquarePayments, owner: BillingComm
 export async function readSquareCheckout(service: SquarePayments, owner: BillingCommandOwner, id: string) {
   const bound = service.resources.require<Square.PaymentLink>(owner, 'checkout', id);
   const link = (await service.native.checkout.paymentLinks.get({ id })).paymentLink;
-  if (!link?.orderId || link.orderId !== bound.data?.orderId) return providerInvalid();
+  if (link?.id !== id || !link.orderId || link.orderId !== bound.data?.orderId) return providerInvalid();
   const order = (await service.ownership.require<Square.Order>(owner, 'order', link.orderId)).data!;
   let paid = 0; const expected = money(order.totalMoney), seen = new Set<string>();
   for (const tender of order.tenders ?? []) if (tender.paymentId) {

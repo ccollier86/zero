@@ -5,8 +5,13 @@ import { PaymentsError } from './errors';
 import { entitlementGrants, evaluateGrants } from './entitlements';
 
 export const stripeId = (value: string | { id: string } | null | undefined): string | null => typeof value === 'string' ? value : value?.id ?? null;
-export function assertResource(value: { livemode?: boolean; customer?: unknown }, customer: string | null, options: ResolvedPaymentsOptions): void {
+export function assertResource(value: { id?: string; livemode?: boolean; customer?: unknown }, customer: string | null, options: ResolvedPaymentsOptions, expectedId?: string): void {
   if (value.livemode !== (options.mode === 'live') || customer !== null && stripeId(value.customer as any) !== customer) throw new PaymentsError('The provider resource is outside this billing subject/environment.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
+  if (expectedId !== undefined) assertResourceId(value, expectedId);
+}
+/** Provider responses must identify the requested canonical resource, including resources without a livemode field. */
+export function assertResourceId(value: { id?: string } | null | undefined, expectedId: string): void {
+  if (value?.id !== expectedId) throw new PaymentsError('Stripe returned a different resource than requested.', 'PAYMENTS_PROVIDER_RESPONSE_INVALID', 503);
 }
 export function subscriptionView(value: Stripe.Subscription, options: ResolvedPaymentsOptions): BillingSubscription {
   const offer = (price: string) => [...options.offers.values()].find(offer => offer.price === price)?.id;

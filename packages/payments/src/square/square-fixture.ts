@@ -16,6 +16,7 @@ export class SquareFixture {
   handle?: (request: SquareRequest) => Response | undefined | Promise<Response | undefined>;
   dropAfter?: (request: SquareRequest) => boolean;
   private idempotent = new Map<string, unknown>();
+  private idempotentBodies = new Map<string, string>();
   fetch: typeof globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init), body = await request.text(), record = { method: request.method, path: new URL(request.url).pathname, body: body ? JSON.parse(body) : {}, headers: request.headers, signal: request.signal };
     this.requests.push(record); const override = await this.handle?.(record); if (override) return override;
@@ -24,7 +25,7 @@ export class SquareFixture {
   }, { preconnect: globalThis.fetch.preconnect });
   private respond(request: SquareRequest): unknown {
     const { path, method, body } = request, key = body.idempotency_key ? method + ':' + path + ':' + body.idempotency_key : null;
-    if (key && this.idempotent.has(key)) return this.idempotent.get(key);
+    if (key && this.idempotent.has(key)) return this.idempotentBodies.get(key) === JSON.stringify(body) ? this.idempotent.get(key) : Response.json({ errors: [{ category: 'INVALID_REQUEST_ERROR', code: 'IDEMPOTENCY_KEY_REUSED' }] }, { status: 400 });
     let result: unknown;
     const id = decodeURIComponent(path.split('/').at(-1)!);
     if (path.startsWith('/v2/merchants/')) result = { merchant: { id: this.merchantId, status: 'ACTIVE' } };
@@ -63,7 +64,7 @@ export class SquareFixture {
       this.refunds.set(refund.id, refund); payment.refunded_money.amount += amount; payment.refund_ids.push(refund.id); result = { refund };
     } else if (path.startsWith('/v2/refunds/')) result = this.refunds.has(id) ? { refund: this.refunds.get(id) } : this.missing();
     else return this.missing();
-    if (key && !(result instanceof Response)) this.idempotent.set(key, structuredClone(result)); return result;
+    if (key && !(result instanceof Response)) { this.idempotent.set(key, structuredClone(result)); this.idempotentBodies.set(key, JSON.stringify(body)); } return result;
   }
   private missing() { return Response.json({ errors: [{ code: 'NOT_FOUND', category: 'INVALID_REQUEST_ERROR', detail: 'Synthetic private provider detail' }] }, { status: 404 }); }
   complete(linkId: string, buyer = 'BUYER_SQUARE_CUSTOMER') {

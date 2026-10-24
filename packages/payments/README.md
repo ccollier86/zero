@@ -4,6 +4,8 @@ Optional Stripe and Square payments for Zero. Install alongside the matching
 framework that exports `@zero/framework/payments`; importing the package alone
 starts nothing. Version 0.2.0 adds Square and subjectless custom-amount payments
 through the same facade; install matching framework and plugin archives.
+Version 0.2.1 hardens concurrent Square ownership, sales-pause enforcement,
+canonical resource IDs/totals, captured-balance refunds and checkout URL replay.
 
 ```ts
 // server/plugins/payments.ts

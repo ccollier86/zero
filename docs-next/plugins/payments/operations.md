@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: operations and recovery
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [Stripe test, Stripe live, Square sandbox, Square production, file system database]
 ---
 
@@ -71,6 +71,16 @@ operation. The provider still enforces the final balance on a genuinely new refu
 Completed receipts remain replayable when catalog aliases or return URLs change,
 or new sales are paused. An unresolved operation still obeys the sales pause.
 
+Version 0.2.1 also captures return URLs for custom-amount Stripe checkout and
+both Square checkout paths. An unresolved **0.2.0** merchant/Square checkout may
+lack that URL snapshot: retain its original return-URL configuration until it
+settles, or reconcile it with the merchant. No upgrade can reconstruct settings
+that were never saved. An idempotency-key conflict remains an unknown financial
+outcome, not proof of rejection; never issue a replacement operation ID to bypass it.
+A subsequent blocked retry also cannot erase an earlier unknown/expired-pending
+outcome. Sales pause, revoked authority or a provider error may prevent replay,
+but none proves that the original attempt did not execute.
+
 Customer creation uses a separate stable internal command so simultaneous
 Checkout/customer requests cannot create unrelated customer bindings. Financial
 acceptance is recorded before returning through the final Guardian revalidation.
@@ -86,7 +96,9 @@ revoking the caller; its receipt still needs reconciliation.
 ## Worker Health And Operator Recovery
 
 The plugin owns its worker and drains admitted requests, webhook persistence and
-worker operations before Zero disposes its system services. Network calls have bounded SDK timeouts/retries. Idle work checks the
+worker operations before Zero disposes its system services. Network calls have bounded SDK timeouts/retries.
+Square webhook resource resolution shares one deadline across its canonical reads,
+as reconciliation already does. Idle work checks the
 indexed inbox once per second; empty probes are reads and acquire no write
 transaction/authority lease. UI renders do not start provider polling loops.
 Replicas share durable claims and customer locks, with four-minute leases and
@@ -139,6 +151,9 @@ The original Stripe qualification is recorded in the
 [foundation audit](../../_work/audits/stripe-payments-foundation.md). The 0.2.0
 Square/custom-charge additions require matching newly built core/plugin archives;
 fresh-install tests verify both server imports and provider-free browser bundles.
+The [0.2.1 review record](../../_work/audits/payments-review.md) covers follow-up
+policy, retry and canonical-response corrections. Update the optional plugin
+explicitly; updating the framework alone does not replace an installed 0.2.0 plugin.
 Merge, package publication and application deployment remain separate actions.
 
 ## Deployment Checklist

@@ -8,7 +8,7 @@ visibility: internal
 system: payments
 feature: overview
 maturity: preview
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [single tenant, multi tenant, Stripe test, Stripe live, Square sandbox, Square production]
 reviewed_against:
   package: "@zero/framework"
@@ -19,7 +19,7 @@ reviewed_against:
   evidence_level: source-observed
 related_packages:
   - package: "@zero/plugin-payments"
-    version: "0.2.0"
+    version: "0.2.1"
     maturity: preview
 ---
 

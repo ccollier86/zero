@@ -98,7 +98,7 @@ export class SquarePayments implements PaymentsBackend {
     try { result = await this.transport.run(execution, () => run(ticket.key)); }
     catch (error) {
       const cause = execution.blocked ?? error;
-      const mapped = execution.accepted || execution.blocked && execution.attempted ? new PaymentsError('Square may have accepted this operation. Reconcile its original ID.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown')
+      const mapped = execution.accepted || ticket.uncertain || execution.blocked && execution.attempted ? new PaymentsError('Square may have accepted this operation. Reconcile its original ID.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown')
         : cause instanceof AuthError ? new PaymentsError('Billing authority changed before Square admission.', 'PAYMENTS_AUTHORITY_CHANGED', 403, 'none', true) : squareError(cause);
       try { this.store.finish(owner, id, ticket.fence, null, mapped); } catch { throw new PaymentsError('Square result could not be durably recorded. Reconcile the original ID.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown'); }
       if (mapped.outcome === 'unknown') this.observe(OBS_CODES.PAYMENTS_COMMAND_UNKNOWN, { operationDigest: hash(canonical([owner, id])), reason: mapped.code });

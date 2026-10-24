@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: configuration
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [single tenant, multi tenant, Stripe test, Stripe live]
 ---
 
@@ -106,7 +106,7 @@ separate minimal key for test fixtures and rotate deployment secrets normally.
 | `callbackTimeoutMs` | 15,000ms, range 100–60,000ms. Callbacks receive an abort signal and must honor it. |
 | `httpClient` | Trusted official-SDK HTTP transport override, useful for synthetic fixtures; never browser-configurable. |
 
-Quantities default to exactly one, with configurable integer bounds up to
+Quantities default to the configured minimum (one unless configured otherwise), with configurable integer bounds up to
 100,000. Features are booleans or nonnegative integer limits; one key must have
 the same type across offers. Boolean grants combine with OR and numeric limits
 with MAX, not addition or seat multiplication. One-time purchases use the

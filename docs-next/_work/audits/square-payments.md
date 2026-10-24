@@ -16,6 +16,8 @@ contracts, developed on `feature/square-payments` from main
 `78f1193b79723348734000db614e7098d5a942fe`. Existing Stripe receipts and normalized
 method names remain compatible. The unrelated AI-planning worktree is not part
 of this change. No application database, merchant account or live provider was used.
+The later [0.2.1 review](./payments-review.md) records additional confirmed gaps
+and their focused corrections; this original qualification is not superseded silently.
 
 ## Implemented contracts
 

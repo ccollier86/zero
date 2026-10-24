@@ -7,7 +7,7 @@ import { billingSubject, guard, type BillingAction } from './authority';
 import { PaymentsError, safeProviderError, safeReadError } from './errors';
 import { PaymentExecutionBoundary, type PaymentExecution } from './execution';
 import { resolvePaymentsOptions, type PaymentsOptions, type ResolvedPaymentsOptions } from './options';
-import { assertResource, emptySnapshot, invoiceView, paymentView, stripeId, subscriptionView } from './projections';
+import { assertResource, assertResourceId, emptySnapshot, invoiceView, paymentView, stripeId, subscriptionView } from './projections';
 import { entitlementGrants, evaluateGrants, publicSnapshot, type StoredBillingSnapshot } from './entitlements';
 import { PaymentsStore, canonical, hash, PAYMENTS_VIEW_TABLE, subjectKey, type BillingCommandOwner } from './store';
 import { PaymentsResources } from './resources';
@@ -44,7 +44,7 @@ export class StripePayments implements PaymentsBackend {
     const synchronous = db.prepare('PRAGMA synchronous').get() as { synchronous: number };
     if (synchronous.synchronous < 2 && !(this.options.mode === 'test' && this.options.allowEphemeralTestMode)) throw new PaymentsError('Payments require synchronous FULL (or EXTRA) on the file-backed system database before acknowledging financial receipts.', 'PAYMENTS_DURABILITY_REQUIRED', 503);
     this.store = new PaymentsStore(db, this.options.connectionId, canonical({ provider: 'stripe', mode: this.options.mode, account: this.options.accountId }));
-    this.native = new Stripe(this.options.secretKey, { apiVersion: Stripe.API_VERSION, timeout: this.options.timeoutMs, maxNetworkRetries: this.options.maxNetworkRetries, httpClient: this.executions.transport(this.options.httpClient ?? Stripe.createFetchHttpClient()), appInfo: { name: 'Zero Payments', version: '0.2.0' } });
+    this.native = new Stripe(this.options.secretKey, { apiVersion: Stripe.API_VERSION, timeout: this.options.timeoutMs, maxNetworkRetries: this.options.maxNetworkRetries, httpClient: this.executions.transport(this.options.httpClient ?? Stripe.createFetchHttpClient()), appInfo: { name: 'Zero Payments', version: '0.2.1' } });
     this.resources = new PaymentsResources(db, this.options.connectionId); this.charges = createStripeMerchantCharges(this);
   }
   status(): PaymentsReadiness {
@@ -103,7 +103,7 @@ export class StripePayments implements PaymentsBackend {
     try { value = await this.executions.run(execution, () => run(ticket.key)); }
     catch (error) {
       const cause = execution.blocked ?? error;
-      const mapped = execution.accepted || execution.blocked && execution.attempted
+      const mapped = execution.accepted || ticket.uncertain || execution.blocked && execution.attempted
         ? new PaymentsError('The provider may have accepted this operation. Reconcile it using the original operation ID.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown')
         : cause instanceof AuthError ? new PaymentsError('Billing authority changed before provider admission.', 'PAYMENTS_AUTHORITY_CHANGED', 403, 'none', true) : safeProviderError(cause);
       try { this.store.finish(subject, id, ticket.fence, null, mapped); }
@@ -146,7 +146,7 @@ export class StripePayments implements PaymentsBackend {
     resourceId(id, 'cus'); await this.verifyMerchant();
     const customer = await this.native.customers.retrieve(id);
     if (customer.deleted) throw new PaymentsError('Deleted customers cannot be adopted.', 'PAYMENTS_CUSTOMER_DELETED', 409);
-    assertResource(customer, null, this.options); this.store.bind(subject, id); this.enqueue(id);
+    assertResource(customer, null, this.options, id); this.store.bind(subject, id); this.enqueue(id);
   }
   enqueue(customer: string): void { this.store.admit(`reconcile-${crypto.randomUUID()}`, 'reconcile', '{}', customer); this.wake(); }
   snapshot(subject: BillingSubject): BillingSnapshot {
@@ -168,7 +168,7 @@ export class StripePayments implements PaymentsBackend {
     const lock = this.store.lock(`customer:${customerId}`);
     if (!lock) throw new PaymentsError('Another worker is reconciling this customer.', 'PAYMENTS_RECONCILE_BUSY', 409);
     try {
-      const customer = await this.native.customers.retrieve(customerId); this.store.renew(lock);
+      const customer = await this.native.customers.retrieve(customerId); assertResourceId(customer, customerId); this.store.renew(lock);
       if (customer.deleted) {
         this.store.writeView(subject, { ...emptySnapshot(subject, this.options), _grants: [], reconciledAt: new Date().toISOString(), stale: false, error: 'PAYMENTS_CUSTOMER_DELETED' }, lock, !!this.options.onChange);
         return this.snapshot(subject);
@@ -290,10 +290,10 @@ export class StripePayments implements PaymentsBackend {
     await this.verifyMerchant();
     const payment = stripeId(object.payment_intent), charge = stripeId(object.charge);
     if (payment) {
-      const value = await this.native.paymentIntents.retrieve(payment); assertResource(value, null, this.options); return stripeId(value.customer);
+      const value = await this.native.paymentIntents.retrieve(payment); assertResource(value, null, this.options, payment); return stripeId(value.customer);
     }
     if (charge) {
-      const value = await this.native.charges.retrieve(charge); assertResource(value, null, this.options); return stripeId(value.customer);
+      const value = await this.native.charges.retrieve(charge); assertResource(value, null, this.options, charge); return stripeId(value.customer);
     }
     return null;
   }
@@ -302,30 +302,32 @@ export class StripePayments implements PaymentsBackend {
     const object = event.data.object as unknown as { id: string; object: string };
     let resource: BillingEvent['resource'];
     if (object.object === 'checkout.session') {
-      const value = await this.native.checkout.sessions.retrieve(object.id); assertResource(value, customer, this.options);
+      const value = await this.native.checkout.sessions.retrieve(object.id); assertResource(value, customer, this.options, object.id);
       resource = { id: value.id, kind: object.object, status: value.status, paymentStatus: value.payment_status, ...(value.amount_total !== null && value.currency ? { total: { amount: value.amount_total, currency: value.currency } } : {}), ...(value.metadata?.zero_connection === this.options.connectionId && this.options.offers.has(value.metadata.zero_offer!) ? { offer: value.metadata.zero_offer } : {}) };
     } else if (object.object === 'payment_intent') {
-      const value = await this.native.paymentIntents.retrieve(object.id); assertResource(value, customer, this.options);
+      const value = await this.native.paymentIntents.retrieve(object.id); assertResource(value, customer, this.options, object.id);
       resource = { id: value.id, kind: object.object, status: value.status, total: { amount: value.amount_received, currency: value.currency }, ...(value.metadata?.zero_connection === this.options.connectionId && this.options.offers.has(value.metadata.zero_offer!) ? { offer: value.metadata.zero_offer } : {}) };
     } else if (object.object === 'invoice') {
-      const value = await this.native.invoices.retrieve(object.id); assertResource(value, customer, this.options);
+      const value = await this.native.invoices.retrieve(object.id); assertResource(value, customer, this.options, object.id);
       resource = { id: value.id, kind: object.object, status: value.status, total: { amount: value.total, currency: value.currency } };
     } else if (object.object === 'subscription') {
-      const value = await this.native.subscriptions.retrieve(object.id); assertResource(value, customer, this.options);
+      const value = await this.native.subscriptions.retrieve(object.id); assertResource(value, customer, this.options, object.id);
       resource = { id: value.id, kind: object.object, status: value.status };
     } else if (object.object === 'refund') {
       const value = await this.native.refunds.retrieve(object.id), paymentId = stripeId(value.payment_intent), charge = stripeId(value.charge);
-      if (paymentId) assertResource(await this.native.paymentIntents.retrieve(paymentId), customer, this.options);
-      else if (charge) assertResource(await this.native.charges.retrieve(charge), customer, this.options);
+      assertResourceId(value, object.id);
+      if (paymentId) assertResource(await this.native.paymentIntents.retrieve(paymentId), customer, this.options, paymentId);
+      else if (charge) assertResource(await this.native.charges.retrieve(charge), customer, this.options, charge);
       else throw new PaymentsError('Refund has no verifiable payment customer.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
       resource = { id: value.id, kind: object.object, status: value.status ?? null, total: { amount: value.amount, currency: value.currency } };
     } else if (object.object === 'charge') {
-      const value = await this.native.charges.retrieve(object.id); assertResource(value, customer, this.options);
+      const value = await this.native.charges.retrieve(object.id); assertResource(value, customer, this.options, object.id);
       resource = { id: value.id, kind: object.object, status: value.status, total: { amount: value.amount, currency: value.currency } };
     } else if (object.object === 'dispute') {
       const value = await this.native.disputes.retrieve(object.id), charge = stripeId(value.charge);
+      assertResourceId(value, object.id);
       if (!charge) throw new PaymentsError('Dispute has no verifiable charge.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
-      assertResource(await this.native.charges.retrieve(charge), customer, this.options);
+      assertResource(await this.native.charges.retrieve(charge), customer, this.options, charge);
       resource = { id: value.id, kind: object.object, status: value.status, total: { amount: value.amount, currency: value.currency } };
     } else {
       // Customer updates/deletion have no financial status to infer from an old event snapshot.

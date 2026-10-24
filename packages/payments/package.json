@@ -1,6 +1,6 @@
 {
   "name": "@zero/plugin-payments",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Optional Stripe and Square payments, billing and verified webhooks through one Zero facade.",
   "type": "module",
   "engines": { "bun": ">=1.3.14" },

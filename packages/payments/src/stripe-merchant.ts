@@ -4,14 +4,18 @@ import type { BillingEvent, MerchantPaymentEvent, MerchantPayments } from '@zero
 import type { StripePayments } from './service';
 import { merchantInput } from './merchant-input';
 import { snapshotInput, resourceId, operationId } from './validation';
-import { assertResource, paymentView, refundView, stripeId } from './projections';
+import { assertResource, assertResourceId, paymentView, refundView, stripeId } from './projections';
 import { PaymentsError, invalid } from './errors';
 import { safeReturnUrl } from './options';
 import type { PaymentIntentRecord } from './resources';
+import type { MerchantCheckoutRequest } from '@zero/framework/payments';
 
 export function createStripeMerchantCharges(service: StripePayments): MerchantPayments {
   const sale = () => { if (service.options.acceptingSales === false) throw new PaymentsError('New sales are disabled.', 'PAYMENTS_SALES_DISABLED', 409); };
-  const payment = async (id: string) => { resourceId(id, 'pi'); const value = await service.native.paymentIntents.retrieve(id, { expand: ['latest_charge'] }); assertResource(value, null, service.options); return value; };
+  const binding = (value: { metadata?: Stripe.Metadata | null }, reference: string) => {
+    if (value.metadata?.zero_connection !== service.options.connectionId || value.metadata.zero_merchant_operation !== reference) throw new PaymentsError('Stripe response lost its admitted merchant intent.', 'PAYMENTS_PROVIDER_RESPONSE_INVALID', 503, 'unknown');
+  };
+  const payment = async (id: string) => { resourceId(id, 'pi'); const value = await service.native.paymentIntents.retrieve(id, { expand: ['latest_charge'] }); assertResource(value, null, service.options, id); return value; };
   return {
     operations: { read: async id => { operationId(id); service.assertOpen(); return service.store.operation({ kind: 'merchant', id: service.options.accountId }, id, 'merchant'); } },
     create: async request => {
@@ -22,37 +26,40 @@ export function createStripeMerchantCharges(service: StripePayments): MerchantPa
         const value = await service.native.paymentIntents.create({ amount: prepared.total.amount, currency: prepared.total.currency, payment_method: prepared.paymentToken, confirm: true,
           automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, description: prepared.description,
           metadata: { zero_connection: service.options.connectionId, zero_merchant_operation: intent.reference } }, { idempotencyKey: key });
-        assertResource(value, null, service.options);
+        assertResource(value, null, service.options); binding(value, intent.reference);
         if (value.amount !== prepared.total.amount || value.currency !== prepared.total.currency) throw new PaymentsError('Stripe changed the captured charge total.', 'PAYMENTS_PROVIDER_RESPONSE_INVALID', 503, 'unknown');
         service.resources.bind(owner, 'payment', value.id, { id: value.id }, intent.reference);
         return paymentView(value);
       });
     },
     checkout: async request => { const input = merchantInput(request); return service.merchantCommand(input.operationId, { ...input, type: 'merchant.checkout' }, async (owner, key) => {
-      sale(); const prepared = await service.parameters(key, 'merchant.checkout', async () => input);
+      sale(); const prepared = await service.parameters<MerchantCheckoutRequest & { successUrl?: string; cancelUrl?: string }>(key, 'merchant.checkout', async () => ({ ...input, successUrl: service.options.successUrl, cancelUrl: service.options.cancelUrl }));
       const intent = service.resources.intent(owner, key, input.operationId, { kind: 'checkout', amount: prepared.total.amount, currency: prepared.total.currency, ...(prepared.reference ? { reference: prepared.reference } : {}) });
       const metadata = { zero_connection: service.options.connectionId, zero_merchant_operation: intent.reference };
-      const value = await service.native.checkout.sessions.create({ mode: 'payment', success_url: service.options.successUrl, cancel_url: service.options.cancelUrl,
+      const value = await service.native.checkout.sessions.create({ mode: 'payment', success_url: prepared.successUrl ?? service.options.successUrl, cancel_url: prepared.cancelUrl ?? service.options.cancelUrl,
         line_items: [{ quantity: 1, price_data: { currency: prepared.total.currency, unit_amount: prepared.total.amount, product_data: { name: prepared.description } } }], metadata, payment_intent_data: { metadata } }, { idempotencyKey: key });
-      assertResource(value, null, service.options); if (value.url) safeReturnUrl(value.url);
+      assertResource(value, null, service.options); binding(value, intent.reference); if (value.url) safeReturnUrl(value.url);
+      if (value.amount_total !== prepared.total.amount || value.currency !== prepared.total.currency) throw new PaymentsError('Stripe checkout differs from its captured total.', 'PAYMENTS_PROVIDER_RESPONSE_INVALID', 503, 'unknown');
       service.resources.bind(owner, 'checkout', value.id, { id: value.id }, intent.reference);
       return { id: value.id, url: value.url, status: value.status };
     }); },
     read: id => service.merchantRead(async () => paymentView(await payment(id))),
-    readCheckout: id => service.merchantRead(async () => { resourceId(id, 'cs'); const value = await service.native.checkout.sessions.retrieve(id); assertResource(value, null, service.options); return { id: value.id, status: value.status, paymentStatus: value.payment_status }; }),
+    readCheckout: id => service.merchantRead(async () => { resourceId(id, 'cs'); const value = await service.native.checkout.sessions.retrieve(id); assertResource(value, null, service.options, id); return { id: value.id, status: value.status, paymentStatus: value.payment_status }; }),
     refund: async request => {
       const input = snapshotInput(request, ['operationId', 'paymentId', 'amount', 'reason']); resourceId(input.paymentId, 'pi');
       if (input.reason !== undefined && !['requested_by_customer', 'duplicate', 'fraudulent'].includes(input.reason)) invalid('Invalid refund reason.');
       return service.merchantCommand(input.operationId, { ...input, type: 'merchant.refund' }, async (owner, key) => {
         const prepared = await service.parameters(key, 'merchant.refund', async () => {
-          const original = paymentView(await payment(input.paymentId)), amount = input.amount ?? original.total.amount - original.refunded;
-          if (!Number.isSafeInteger(amount) || amount < 1 || amount > original.total.amount - original.refunded) invalid('Refund amount exceeds the remaining balance.');
+          const current = await payment(input.paymentId), original = paymentView(current), remaining = current.amount_received - original.refunded, amount = input.amount ?? remaining;
+          if (current.status !== 'succeeded' || !Number.isSafeInteger(amount) || amount < 1 || amount > remaining) invalid('Refund amount exceeds the captured payment balance.');
           return { paymentId: input.paymentId, amount, currency: original.total.currency, reason: input.reason };
         });
         const intent = service.resources.intent(owner, key, input.operationId, { kind: 'refund', paymentId: prepared.paymentId, amount: prepared.amount, currency: prepared.currency });
         const value = await service.native.refunds.create({ payment_intent: prepared.paymentId, amount: prepared.amount, ...(prepared.reason ? { reason: prepared.reason } : {}),
           metadata: { zero_connection: service.options.connectionId, zero_merchant_operation: intent.reference } }, { idempotencyKey: key });
         if (stripeId(value.payment_intent) !== prepared.paymentId) throw new PaymentsError('Stripe refund parent changed.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403, 'unknown');
+        binding(value, intent.reference);
+        if (value.amount !== prepared.amount || value.currency !== prepared.currency) throw new PaymentsError('Stripe refund differs from its captured total.', 'PAYMENTS_PROVIDER_RESPONSE_INVALID', 503, 'unknown');
         service.resources.bind(owner, 'refund', value.id, { id: value.id }, intent.reference); return refundView(value);
       });
     },
@@ -77,7 +84,7 @@ export async function stripeMerchantEvent(service: StripePayments, event: Stripe
     return candidate?.owner.kind === 'merchant' ? candidate : null;
   };
   const parent = async (id: string) => {
-    const value = await service.native.paymentIntents.retrieve(id, { expand: ['latest_charge'] }); assertResource(value, null, service.options);
+    const value = await service.native.paymentIntents.retrieve(id, { expand: ['latest_charge'] }); assertResource(value, null, service.options, id);
     const found = find('payment', value.id, value.metadata);
     if (!found || !['charge', 'checkout'].includes(String(found.details.kind)) || found.details.amount !== value.amount || found.details.currency !== value.currency) return null;
     service.resources.bind(found.owner, 'payment', value.id, { id: value.id }, found.reference); return { value, intent: found };
@@ -85,19 +92,19 @@ export async function stripeMerchantEvent(service: StripePayments, event: Stripe
   if (object.object === 'payment_intent') {
     const resolved = await parent(object.id); if (resolved) { intent = resolved.intent; const value = paymentView(resolved.value); resource = { id: value.id, kind: 'payment_intent', status: value.status, total: value.total, paymentStatus: value.status === 'succeeded' ? 'paid' : 'unpaid' }; }
   } else if (object.object === 'checkout.session') {
-    const value = await service.native.checkout.sessions.retrieve(object.id); assertResource(value, null, service.options); intent = find('checkout', value.id, value.metadata);
+    const value = await service.native.checkout.sessions.retrieve(object.id); assertResource(value, null, service.options, object.id); intent = find('checkout', value.id, value.metadata);
     if (intent && (intent.details.amount !== value.amount_total || intent.details.currency !== value.currency)) throw new PaymentsError('Checkout total differs from its captured merchant intent.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
     if (intent) resource = { id: value.id, kind: 'checkout.session', status: value.status, paymentStatus: value.payment_status, total: { amount: value.amount_total!, currency: value.currency! } };
   } else if (object.object === 'refund') {
-    const value = await service.native.refunds.retrieve(object.id), id = stripeId(value.payment_intent); if (!id) return null;
+    const value = await service.native.refunds.retrieve(object.id); assertResourceId(value, object.id); const id = stripeId(value.payment_intent); if (!id) return null;
     const refundIntent = find('refund', value.id, value.metadata);
     if (refundIntent?.details.kind === 'refund') {
-      assertResource(await service.native.paymentIntents.retrieve(id), null, service.options); intent = refundIntent;
+      assertResource(await service.native.paymentIntents.retrieve(id), null, service.options, id); intent = refundIntent;
     } else { const resolved = await parent(id); if (!resolved) return null; intent = resolved.intent; }
     if (intent.details.kind === 'refund' && (intent.details.paymentId !== id || intent.details.amount !== value.amount || intent.details.currency !== value.currency)) throw new PaymentsError('Refund differs from its captured merchant intent.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
     const projected = refundView(value); resource = { id: value.id, kind: 'refund', status: projected.status, total: projected.total };
   } else if (object.object === 'charge' && stripeId(object.payment_intent)) {
-    const value = await service.native.charges.retrieve(object.id); assertResource(value, null, service.options);
+    const value = await service.native.charges.retrieve(object.id); assertResource(value, null, service.options, object.id);
     const id = stripeId(value.payment_intent); const resolved = id ? await parent(id) : null;
     if (resolved) { intent = resolved.intent; resource = { id: value.id, kind: 'charge', status: value.status, total: { amount: value.amount, currency: value.currency } }; }
   }

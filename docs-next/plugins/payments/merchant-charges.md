@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: custom amount merchant charges
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [trusted server, Stripe test, Stripe live, Square sandbox, Square production]
 ---
 
@@ -100,6 +100,9 @@ Refund reasons are `requested_by_customer`, `duplicate` or `fraudulent`.
 Trusted merchant reads/refunds can operate on a payment that has no Zero user
 association. Refunding an existing subject-bound payment does not reassign it.
 Provider-native administration is available separately for advanced products.
+Full Stripe refunds use captured funds minus prior refunds, not an uncaptured
+authorization balance. Refund/session totals and canonical resource IDs are
+checked before a successful acknowledgment is stored.
 
 ## Confirmation and durable integration
 
