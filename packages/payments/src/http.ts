@@ -22,7 +22,7 @@ export async function readWebhookBody(request: Request, maximum = 512 * 1024): P
   catch { throw new PaymentsError('Webhook body must be valid UTF-8.', 'PAYMENTS_WEBHOOK_FORMAT_INVALID', 400); }
 }
 export function paymentErrorResponse(error: PaymentsError): Response {
-  return Response.json({ error: error.message, code: error.code, outcome: error.outcome }, { status: error.status, headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ error: error.message, code: error.code, outcome: error.outcome, retryable: error.retryable }, { status: error.status, headers: { 'Cache-Control': 'no-store' } });
 }
 export async function paymentEndpoint(run: () => unknown | Promise<unknown>): Promise<unknown> {
   try { const result = await run(); return result instanceof Response ? result : Response.json(result, { headers: { 'Cache-Control': 'no-store' } }); }
@@ -32,17 +32,24 @@ export async function paymentEvents(payments: ScopedPayments, request: Request):
   // Establish Guardian admission before starting a 200 stream; the generator rechecks on every delivery/heartbeat.
   await payments.snapshot();
   const abort = new AbortController(), encoder = new TextEncoder();
+  const iterator = payments.watch({ signal: abort.signal })[Symbol.asyncIterator]();
+  let ended = false, source: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const cleanup = () => { abort.abort(); request.signal.removeEventListener('abort', onAbort); void iterator.return?.().catch(() => {}); };
+  const onAbort = () => { if (!ended) { ended = true; source?.close(); } cleanup(); };
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    start(controller) { source = controller; request.signal.addEventListener('abort', onAbort, { once: true }); if (request.signal.aborted) onAbort(); },
+    async pull(controller) {
+      if (ended) return;
       try {
-        for await (const event of payments.watch({ signal: abort.signal })) {
-          if (abort.signal.aborted || request.signal.aborted) break;
-          controller.enqueue(encoder.encode(`event: revision\ndata: ${JSON.stringify(event)}\n\n`));
-        }
-      } catch { if (!abort.signal.aborted) controller.enqueue(encoder.encode('event: stopped\ndata: {"code":"PAYMENTS_STREAM_STOPPED"}\n\n')); }
-      finally { if (!abort.signal.aborted) controller.close(); }
+        const next = await iterator.next();
+        if (ended) return;
+        if (next.done) { ended = true; controller.close(); cleanup(); return; }
+        controller.enqueue(encoder.encode(`event: revision\ndata: ${JSON.stringify(next.value)}\n\n`));
+      } catch {
+        if (!ended) { ended = true; controller.enqueue(encoder.encode('event: stopped\ndata: {"code":"PAYMENTS_STREAM_STOPPED"}\n\n')); controller.close(); cleanup(); }
+      }
     },
-    cancel() { abort.abort(); },
+    cancel() { ended = true; cleanup(); },
   });
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' } });
 }

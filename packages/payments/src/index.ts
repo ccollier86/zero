@@ -15,9 +15,10 @@ export function stripePayments(input: PaymentsOptions): ZeroRouterDefinition {
     return run(payments, context);
   }) });
   return defineRouter({ name: `payments-${options.connectionId}`, routes: [
-    defineZeroPlugin({ name: `payments-${options.connectionId}-runtime`, setup: ({ app, zero }) => {
+    defineZeroPlugin({ name: `payments-${options.connectionId}-runtime`, setup: ({ app, zero, emitCode }) => {
       if (!zero.system) throw new PaymentsError('Payments require the Zero system database.', 'PAYMENTS_DURABILITY_REQUIRED', 503);
-      const service = new StripePayments(zero.system.db, options);
+      for (const policy of Object.values(options.access ?? {})) if (policy !== undefined) zero.auth.authorizationKernel?.compile(policy);
+      const service = new StripePayments(zero.system.db, options, { emitCode });
       const unregister = registerPaymentsBackend(zero.db, service);
       app.post(options.webhookPath, async ({ request }) => {
         try {
@@ -72,4 +73,5 @@ export function getStripePayments(zero: Pick<ServerRouteServices, 'payments'>): 
 }
 export { StripePayments, PaymentsError };
 export type { PaymentsOptions, StripeOffer } from './options';
+export type { PaymentsJob, PaymentsJobStatus, PaymentsJobQuery, PaymentsJobPage } from './jobs';
 export type * from '@zero/framework/payments';

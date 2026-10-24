@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type { ReactiveDB } from '@zero/framework/sync';
 import type { BillingSubject, BillingSnapshot, BillingOperation } from '@zero/framework/payments';
 import { PaymentsError } from './errors';
+import { publicSnapshot, type StoredBillingSnapshot } from './entitlements';
+import type { PaymentsJob, PaymentsJobPage, PaymentsJobQuery } from './jobs';
 
 export const PAYMENTS_VIEW_TABLE = '_zero_payments_views';
 export function canonical(value: unknown): string {
@@ -81,15 +83,20 @@ export class PaymentsStore {
     });
   }
   finish(subject: BillingSubject, operation: string, fence: string, value: unknown, error?: PaymentsError): void {
-    const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET status=?,result=?,error=?,lease=0 WHERE connection=? AND subject=? AND id=? AND fence=?').run(error ? error.outcome === 'unknown' ? 'unknown' : 'rejected' : 'complete', error ? null : canonical(value), error?.code ?? null, this.connection, subjectKey(subject), operation, fence));
+    const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET status=?,result=?,error=?,lease=0 WHERE connection=? AND subject=? AND id=? AND fence=?').run(error ? error.outcome === 'unknown' ? 'unknown' : error.retryable ? 'retryable' : 'rejected' : 'complete', error ? null : canonical(value), error?.code ?? null, this.connection, subjectKey(subject), operation, fence));
     if (!changed.changes) throw new PaymentsError('Payment result lost its commit fence. Reconcile the existing operation.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown');
   }
   renewCommand(subject: BillingSubject, operation: string, fence: string): void {
     const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET lease=? WHERE connection=? AND subject=? AND id=? AND fence=? AND status=\'pending\' AND lease>?').run(Date.now() + 240000, this.connection, subjectKey(subject), operation, fence, Date.now()));
     if (!changed.changes) throw new PaymentsError('Payment command lost its execution fence.', 'PAYMENTS_LEASE_LOST', 409, 'unknown');
   }
-  view(subject: BillingSubject): BillingSnapshot | null { const row = this.db.prepare('SELECT snapshot FROM _zero_payments_views WHERE connection=? AND subject=?').get(this.connection, subjectKey(subject)) as { snapshot: string } | null; return row ? JSON.parse(row.snapshot) : null; }
-  writeView(subject: BillingSubject, snapshot: BillingSnapshot, lock: { id: string; fence: string }, notify = false, refreshMs = 150000): BillingSnapshot {
+  assertCommand(subject: BillingSubject, operation: string, fence: string): void {
+    const row = this.db.prepare('SELECT created,lease,status FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=? AND fence=?').get(this.connection, subjectKey(subject), operation, fence) as Pick<CommandRow, 'created' | 'lease' | 'status'> | null;
+    const now = Date.now();
+    if (!row || row.status !== 'pending' || row.lease <= now || now - row.created >= 23 * 3600000) throw new PaymentsError('Payment execution is stale or outside its safe replay window. Reconcile the original operation.', 'PAYMENTS_LEASE_LOST', 409, 'unknown');
+  }
+  view(subject: BillingSubject): StoredBillingSnapshot | null { const row = this.db.prepare('SELECT snapshot FROM _zero_payments_views WHERE connection=? AND subject=?').get(this.connection, subjectKey(subject)) as { snapshot: string } | null; return row ? JSON.parse(row.snapshot) : null; }
+  writeView(subject: BillingSubject, snapshot: StoredBillingSnapshot, lock: { id: string; fence: string }, notify = false, refreshMs = 150000): StoredBillingSnapshot {
     return this.db.transaction(() => {
       this.assertLock(lock); const previous = this.view(subject), revision = (previous?.revision ?? 0) + 1;
       const next = { ...snapshot, revision }, id = hash(canonical([this.connection, subject]));
@@ -97,7 +104,7 @@ export class PaymentsStore {
       this.db.prepare('INSERT INTO _zero_payments_views(id,connection,subject,revision,snapshot,next_refresh) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,snapshot=excluded.snapshot,next_refresh=excluded.next_refresh').run(id, this.connection, row.subject, revision, row.snapshot, Date.now() + refreshMs);
       this.db.recordInternalChange({ table: PAYMENTS_VIEW_TABLE, op: previous ? 'UPDATE' : 'INSERT', rowId: id, row,
         previousRow: previous ? { id, connection: this.connection, subject: row.subject, revision: previous.revision, snapshot: canonical(previous) } : null });
-      if (notify) this.admit(`view-${id}-${revision}`, 'notify', canonical({ subject, snapshot: next }));
+      if (notify) this.admit(`view-${id}-${revision}`, 'notify', canonical({ subject, snapshot: publicSnapshot(next) }));
       return next;
     });
   }
@@ -119,7 +126,13 @@ export class PaymentsStore {
     });
   }
   complete(row: InboxRow): void { this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET status='complete',payload='',lease=0 WHERE connection=? AND id=? AND fence=?").run(this.connection, row.id, row.fence)); }
-  renewInbox(row: InboxRow): void { this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET lease=? WHERE connection=? AND id=? AND fence=? AND status='processing' AND lease>?").run(Date.now() + 240000, this.connection, row.id, row.fence, Date.now())); }
+  renewInbox(row: InboxRow): void {
+    const changed = this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET lease=? WHERE connection=? AND id=? AND fence=? AND status='processing' AND lease>?").run(Date.now() + 240000, this.connection, row.id, row.fence, Date.now()));
+    if (!changed.changes) throw new PaymentsError('Billing job lost its claim.', 'PAYMENTS_LEASE_LOST', 409);
+  }
+  assertInbox(row: InboxRow): void {
+    if (!this.db.prepare("SELECT 1 FROM _zero_payments_inbox WHERE connection=? AND id=? AND fence=? AND status='processing' AND lease>?").get(this.connection, row.id, row.fence, Date.now())) throw new PaymentsError('Billing job lost its claim.', 'PAYMENTS_LEASE_LOST', 409);
+  }
   queueRefreshes(refreshMs: number): void {
     const now = Date.now();
     const rows = this.db.prepare('SELECT id,subject,revision FROM _zero_payments_views WHERE connection=? AND next_refresh<=? ORDER BY next_refresh LIMIT 10').all(this.connection, now) as { id: string; subject: string; revision: number }[];
@@ -138,7 +151,13 @@ export class PaymentsStore {
     const rows = this.db.prepare("SELECT status,count(*) AS count FROM _zero_payments_inbox WHERE connection=? AND status!='complete' GROUP BY status").all(this.connection) as { status: string; count: number }[];
     return { pending: rows.filter(row => row.status !== 'quarantined').reduce((n, row) => n + row.count, 0), quarantined: rows.find(row => row.status === 'quarantined')?.count ?? 0 };
   }
-  replay(id: string): void { this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET status='pending',due=?,attempts=0,lease=0 WHERE connection=? AND id=? AND status IN ('quarantined','retry')").run(Date.now(), this.connection, id)); }
+  replay(id: string): boolean { return this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET status='pending',due=?,attempts=0,lease=0 WHERE connection=? AND id=? AND status IN ('quarantined','retry')").run(Date.now(), this.connection, id)).changes > 0; }
+  listJobs(query: PaymentsJobQuery = {}): PaymentsJobPage {
+    const limit = query.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || query.status !== undefined && !['pending', 'processing', 'retry', 'quarantined', 'complete'].includes(query.status) || query.after !== undefined && !/^[a-zA-Z0-9_-]{1,256}$/.test(query.after)) throw new PaymentsError('Invalid billing job query.', 'PAYMENTS_INPUT_INVALID');
+    const rows = this.db.prepare(`SELECT id,kind,status,attempts,due,error FROM _zero_payments_inbox WHERE connection=? AND ${query.status ? 'status=?' : "status!='complete'"} ${query.after ? 'AND id>?' : ''} ORDER BY id LIMIT ?`).all(this.connection, ...(query.status ? [query.status] : []), ...(query.after ? [query.after] : []), limit + 1) as (Omit<PaymentsJob, 'dueAt'> & { due: number })[];
+    return { items: rows.slice(0, limit).map(({ due, ...row }) => ({ ...row, dueAt: new Date(due).toISOString() })), ...(rows.length > limit ? { next: rows[limit - 1]!.id } : {}) };
+  }
   lock(id: string): { id: string; fence: string } | null {
     return this.db.transaction(() => {
       const fence = crypto.randomUUID(), now = Date.now();

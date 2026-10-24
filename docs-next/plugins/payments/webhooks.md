@@ -52,11 +52,13 @@ raw body → signature verification → durable inbox → HTTP acknowledgement
                           application integration callbacks
 ```
 
-The event ID deduplicates deliveries. Reuse with different signed content is a
+The event ID deduplicates deliveries. Changing only Stripe's `pending_webhooks`
+delivery count is accepted; reuse with different immutable signed content is a
 conflict. Claims, command receipts and customer locks use durable compare-and-swap
 fences; a stale worker cannot publish over a newer resource owner. Each customer
 is reconciled from Stripe's current resources, not from an event's age or body.
-Reconciliation exhausts up to 1,000 subscriptions and fails instead of granting
+Reconciliation exhausts up to 1,000 subscriptions, including paginated items
+(up to 1,000 per subscription and 10,000 aggregate), and fails instead of granting
 from a silently truncated set. History previews retain the latest 20 payments
 and invoices; use paginated readers for older history.
 
@@ -77,9 +79,12 @@ Active subscriptions require paid or open zero-due invoice evidence; valid trial
 use their explicit expiry. Past-due/unpaid/canceled subscriptions do not receive
 an implicit grace policy. Expired item periods do not grant features.
 
-The projection records its policy version and a validity deadline. A changed
-policy, expired period/trial or projection older than `maxProjectionAgeMs`
-withholds grants. The worker schedules refreshes halfway through the configured
+The projection records its policy version and private per-source grant expiry.
+Expired periods/trials lose their own grants without removing independent paid
+subscriptions' still-valid grants. This evidence is not sent to browsers or
+application callbacks. A changed policy or projection older than
+`maxProjectionAgeMs` withholds all grants. The worker schedules refreshes at the
+next grant expiry or halfway through the configured
 freshness window so an otherwise quiet monthly subscription does not simply
 lose access after five minutes. An unavailable provider can still cause stale
 grants to be withheld; applications may design an explicit grace policy later.
@@ -111,10 +116,14 @@ Checkout `paymentStatus: 'paid'` and verify the matching order/offer and amount.
 ## Browser Updates
 
 `client.payments.watch({ signal })` consumes an authenticated SSE revision stream.
-It emits an initial revision and later changes/heartbeats; fetch `snapshot()`
-when the revision changes. The server uses ReactiveDB's committed change feed,
+It emits `{ revision, version }` initially and on later changes/heartbeats; fetch
+`snapshot()` when `version` changes (fall back to `revision` for older transports).
+The version also changes when a time-limited grant expires without a database
+write. The server uses ReactiveDB's committed change feed,
 including the managed external dispatcher, rather than polling Stripe per UI.
-Slow readers coalesce to the newest revision. A heartbeat revalidates Guardian
+Slow readers coalesce to the newest revision using a pull-based, bounded stream;
+they do not build an unbounded event queue. Cancellation removes its database
+listener even while the consumer is paused. A heartbeat revalidates Guardian
 authority at most every 15 seconds; each event is also revalidated before delivery.
 
 The standard client transport rejects in-flight results after an auth/scope

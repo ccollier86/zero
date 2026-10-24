@@ -6,7 +6,7 @@ import { billingSubject, guard } from './authority';
 import { PaymentsError, invalid } from './errors';
 import { assertResource, invoiceView, paymentView, refundView, subscriptionView } from './projections';
 import { publicOffers } from './options';
-import { inputObject, operationId, pageInput, resourceId } from './validation';
+import { operationId, pageInput, resourceId, snapshotInput } from './validation';
 
 export function createScopedPayments(service: StripePayments, authority: PaymentsAuthority): ScopedPayments {
   const options = service.options, stripe = service.native;
@@ -48,20 +48,22 @@ export function createScopedPayments(service: StripePayments, authority: Payment
     status() { service.assertOpen(); billingSubject(authority, options, 'read'); return service.status(); },
     catalog: () => service.read(authority, 'read', async () => {
       const result = [];
-      for (const item of publicOffers(options)) { const { price } = await priceFor(item.id); result.push({ ...item, unitAmount: price.unit_amount, currency: price.currency, ...(price.recurring ? { interval: price.recurring.interval } : {}) }); }
+      for (const item of publicOffers(options)) { await authority.assertCurrentAuthority(); const { price } = await priceFor(item.id); result.push({ ...item, unitAmount: price.unit_amount, currency: price.currency, ...(price.recurring ? { interval: price.recurring.interval } : {}) }); }
       return result;
     }),
     snapshot: () => service.read(authority, 'read', subject => service.snapshot(subject)),
     operations: { read(id) { operationId(id); return service.read(authority, 'read', subject => service.store.operation(subject, id)); } },
-    customers: { ensure(input) {
-      inputObject(input, ['operationId']);
+    customers: { ensure(request) {
+      const input = snapshotInput(request, ['operationId']);
       return service.command(authority, 'manage', input.operationId, { type: 'customer.ensure' }, async subject => ({ id: await service.ensureCustomer(subject, () => guard(authority, options, 'manage')) }));
     } },
     checkout: {
-      create(input) {
-        inputObject(input, ['operationId', 'offer', 'quantity']); sale(); const selected = offerFor(input.offer, input.quantity);
-        return service.command(authority, 'manage', input.operationId, { type: 'checkout.create', price: selected.offer.price, quantity: selected.quantity, mode: selected.offer.kind, successUrl: options.successUrl, cancelUrl: options.cancelUrl }, async (subject, key) => {
+      create(request) {
+        const input = snapshotInput(request, ['operationId', 'offer', 'quantity']);
+        return service.command(authority, 'manage', input.operationId, { ...input, type: 'checkout.create' }, async (subject, key) => {
+          sale();
           const params = await service.parameters<Stripe.Checkout.SessionCreateParams>(key, 'checkout.create', async () => {
+            const selected = offerFor(input.offer, input.quantity);
             await priceFor(input.offer, input.quantity); const customer = await service.ensureCustomer(subject, () => guard(authority, options, 'manage'));
             const metadata = { zero_connection: options.connectionId, zero_offer: selected.offer.id, zero_policy: options.policyVersion };
             return { customer, mode: selected.offer.kind, line_items: [{ price: selected.offer.price, quantity: selected.quantity }], success_url: options.successUrl, cancel_url: options.cancelUrl, metadata,
@@ -80,16 +82,18 @@ export function createScopedPayments(service: StripePayments, authority: Payment
         return { id: value.id, status: value.status, paymentStatus: value.payment_status };
       }); },
     },
-    portal: { create(input) {
-      inputObject(input, ['operationId']);
-      return service.command(authority, 'manage', input.operationId, { type: 'portal.create', returnUrl: options.portalReturnUrl }, async (subject, key) => {
-        const value = await stripe.billingPortal.sessions.create({ customer: requireCustomer(subject), return_url: options.portalReturnUrl }, { idempotencyKey: key }); return { url: value.url };
+    portal: { create(request) {
+      const input = snapshotInput(request, ['operationId']);
+      return service.command(authority, 'manage', input.operationId, { type: 'portal.create' }, async (subject, key) => {
+        const params = await service.parameters<Stripe.BillingPortal.SessionCreateParams>(key, 'portal.create', async () => ({ customer: requireCustomer(subject), return_url: options.portalReturnUrl }));
+        if (params.customer !== requireCustomer(subject)) throw new PaymentsError('Portal customer binding changed during replay.', 'PAYMENTS_BINDING_CONFLICT', 409);
+        const value = await stripe.billingPortal.sessions.create(params, { idempotencyKey: key }); return { url: value.url };
       });
     } },
     subscriptions: {
       list: () => service.read(authority, 'read', subject => service.snapshot(subject).subscriptions),
-      preview(input) {
-        inputObject(input, ['subscriptionId', 'offer', 'quantity', 'proration', 'prorationDate']);
+      preview(request) {
+        const input = snapshotInput(request, ['subscriptionId', 'offer', 'quantity', 'proration', 'prorationDate']);
         return service.read(authority, 'manage', async subject => {
           const { items } = await prepareChange(subject, input), prorationDate = input.prorationDate ?? Math.floor(Date.now() / 1000);
           const value = await stripe.invoices.createPreview({ customer: requireCustomer(subject), subscription: input.subscriptionId, subscription_details: { items, proration_behavior: input.proration, ...(input.proration !== 'none' ? { proration_date: prorationDate } : {}) } });
@@ -97,11 +101,11 @@ export function createScopedPayments(service: StripePayments, authority: Payment
           return { total: { amount: value.total, currency: value.currency }, amountDue: { amount: value.amount_due, currency: value.currency }, prorationDate };
         });
       },
-      change(input) {
-        inputObject(input, ['operationId', 'subscriptionId', 'offer', 'quantity', 'proration', 'paymentBehavior', 'prorationDate']); sale();
-        const selected = offerFor(input.offer, input.quantity, 'subscription');
+      change(request) {
+        const input = snapshotInput(request, ['operationId', 'subscriptionId', 'offer', 'quantity', 'proration', 'paymentBehavior', 'prorationDate']);
         if (!['pending_if_incomplete', 'error_if_incomplete'].includes(input.paymentBehavior)) invalid('Choose an explicit subscription payment behavior.');
-        return service.command(authority, 'manage', input.operationId, { ...input, type: 'subscription.change', price: selected.offer.price }, async (subject, key) => {
+        return service.command(authority, 'manage', input.operationId, { ...input, type: 'subscription.change' }, async (subject, key) => {
+          sale();
           const params = await service.parameters<Stripe.SubscriptionUpdateParams>(key, 'subscription.change', async () => {
             const { items } = await prepareChange(subject, input);
             return { items, proration_behavior: input.proration, payment_behavior: input.paymentBehavior, ...(input.proration !== 'none' && input.prorationDate !== undefined ? { proration_date: input.prorationDate } : {}) };
@@ -111,8 +115,8 @@ export function createScopedPayments(service: StripePayments, authority: Payment
           assertResource(value, requireCustomer(subject), options); service.enqueue(requireCustomer(subject)); return subscriptionView(value, options);
         });
       },
-      cancel(input) {
-        inputObject(input, ['operationId', 'subscriptionId', 'timing']);
+      cancel(request) {
+        const input = snapshotInput(request, ['operationId', 'subscriptionId', 'timing']);
         if (!['immediate', 'period-end'].includes(input.timing)) invalid('Choose immediate or period-end cancellation.');
         return service.command(authority, 'manage', input.operationId, { ...input, type: 'subscription.cancel' }, async (subject, key) => {
           const current = await subscription(subject, input.subscriptionId); await guard(authority, options, 'manage');
@@ -122,20 +126,23 @@ export function createScopedPayments(service: StripePayments, authority: Payment
           assertResource(value, requireCustomer(subject), options); service.enqueue(requireCustomer(subject)); return subscriptionView(value, options);
         });
       },
-      resume(input) {
-        inputObject(input, ['operationId', 'subscriptionId']);
+      resume(request) {
+        const input = snapshotInput(request, ['operationId', 'subscriptionId']);
         return service.command(authority, 'manage', input.operationId, { ...input, type: 'subscription.resume' }, async (subject, key) => {
           const current = await subscription(subject, input.subscriptionId);
-          if (!['active', 'trialing'].includes(current.status)) throw new PaymentsError('Only scheduled cancellations on active/trialing subscriptions can be resumed here.', 'PAYMENTS_SUBSCRIPTION_STATE', 409);
+          const params = await service.parameters<Stripe.SubscriptionUpdateParams>(key, 'subscription.resume', async () => {
+            if (!['active', 'trialing'].includes(current.status)) throw new PaymentsError('Only scheduled cancellations on active/trialing subscriptions can be resumed here.', 'PAYMENTS_SUBSCRIPTION_STATE', 409);
+            return { cancel_at_period_end: false };
+          });
           await guard(authority, options, 'manage');
-          const value = await stripe.subscriptions.update(input.subscriptionId, { cancel_at_period_end: false }, { idempotencyKey: key });
+          const value = await stripe.subscriptions.update(input.subscriptionId, params, { idempotencyKey: key });
           assertResource(value, requireCustomer(subject), options); service.enqueue(requireCustomer(subject)); return subscriptionView(value, options);
         });
       },
     },
     invoices: {
-      list(query: BillingPageQuery = {}) {
-        inputObject(query, ['limit', 'after']); const page = pageInput(query);
+      list(request: BillingPageQuery = {}) {
+        const query = snapshotInput(request, ['limit', 'after']), page = pageInput(query);
         return service.read(authority, 'read', async subject => {
           await service.verifyMerchant(); if (query.after) await invoice(subject, query.after);
           const value = await stripe.invoices.list({ customer: requireCustomer(subject), ...page }); value.data.forEach(row => assertResource(row, requireCustomer(subject), options));
@@ -145,8 +152,8 @@ export function createScopedPayments(service: StripePayments, authority: Payment
       read: id => service.read(authority, 'read', async subject => invoiceView(await invoice(subject, id))),
       document: id => service.read(authority, 'read', async subject => { const value = await invoice(subject, id); return { hostedUrl: value.hosted_invoice_url ?? null, pdfUrl: value.invoice_pdf ?? null }; }),
     },
-    payments: { list(query: BillingPageQuery = {}) {
-      inputObject(query, ['limit', 'after']); const page = pageInput(query);
+    payments: { list(request: BillingPageQuery = {}) {
+      const query = snapshotInput(request, ['limit', 'after']), page = pageInput(query);
       return service.read(authority, 'read', async subject => {
         await service.verifyMerchant(); if (query.after) await payment(subject, query.after);
         const value = await stripe.paymentIntents.list({ customer: requireCustomer(subject), ...page, expand: ['data.latest_charge'] }); value.data.forEach(row => assertResource(row, requireCustomer(subject), options));
@@ -154,8 +161,8 @@ export function createScopedPayments(service: StripePayments, authority: Payment
       });
     } },
     refunds: {
-      create(input) {
-        inputObject(input, ['operationId', 'paymentId', 'amount', 'reason']); resourceId(input.paymentId, 'pi');
+      create(request) {
+        const input = snapshotInput(request, ['operationId', 'paymentId', 'amount', 'reason']); resourceId(input.paymentId, 'pi');
         if (input.amount !== undefined && (!Number.isSafeInteger(input.amount) || input.amount < 1) || input.reason !== undefined && !['requested_by_customer', 'duplicate', 'fraudulent'].includes(input.reason)) invalid('Refund amount/reason is invalid. Amounts are integer minor currency units.');
         return service.command(authority, 'refund', input.operationId, { ...input, type: 'refund.create' }, async (subject, key) => {
           const current = await payment(subject, input.paymentId);
@@ -170,8 +177,8 @@ export function createScopedPayments(service: StripePayments, authority: Payment
           service.enqueue(requireCustomer(subject)); return refundView(value);
         });
       },
-      list(input) {
-        inputObject(input, ['paymentId', 'limit', 'after']); const page = pageInput(input);
+      list(request) {
+        const input = snapshotInput(request, ['paymentId', 'limit', 'after']), page = pageInput(input);
         return service.read(authority, 'read', async subject => {
           await payment(subject, input.paymentId);
           if (input.after) { resourceId(input.after, 're'); const prior = await stripe.refunds.retrieve(input.after); if (refundView(prior).paymentId !== input.paymentId) throw new PaymentsError('Refund cursor is outside this payment.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403); }

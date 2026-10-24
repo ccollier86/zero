@@ -71,7 +71,7 @@ remaining server/browser method contracts match. Import shared types from
 
 `snapshot()` and `subscriptions.list()` read the durable local projection, not
 Stripe on every render. It includes revision, subject, environment, policy version,
-freshness, safe customer details, all reconciled subscriptions and the latest 20
+freshness, a content `version`, safe customer details, all reconciled subscriptions and the latest 20
 invoices/payments. The paginated history methods read Stripe and return
 `{ items, next? }`, with a default limit of 20 and maximum of 100. Cursors and
 retrieved resource IDs are checked against the same customer binding.
@@ -81,6 +81,14 @@ pretending to be dollars. Raw payment client secrets, card data, SDK responses
 and webhook payloads are not projected. Invoice document URLs are returned only
 by the separately authorized `invoices.document` reader and are not stored in
 the reactive billing view.
+
+Command inputs are copied before asynchronous admission. Changing the caller's
+object cannot change the reserved payment intent. `operations.read` distinguishes
+`retryable` (known not to have executed), `unknown` (provider acceptance is not
+settled), `rejected`, `pending` and `complete`. Retryable errors include
+`retryable: true` in HTTP responses; retain the same operation ID and input.
+Read-only provider failures return `PAYMENTS_READ_UNAVAILABLE`, not an unknown
+financial outcome.
 
 ## Subscription Changes
 
@@ -135,8 +143,13 @@ official SDK, including products outside the normalized facade. Application code
 owns authorization, idempotency, validation and bookkeeping for those calls.
 
 The owner also provides `adoptCustomer(subject, customerId)` for an explicit
-migration, `reconcileCustomer(customerId)`, `store.pending()`, `store.replay(id)`,
-and `drain()`. Adoption verifies the merchant/environment and refuses reassignment
+migration, `reconcileCustomer(customerId)`, `jobs.list({ status?, limit?, after? })`,
+`jobs.retry(jobId)`, `store.pending()` and `drain()`. Job inspection defaults to
+unfinished work, uses keyset pagination (20 by default, at most 100), and returns
+IDs, kind, status, attempt count, due time and a safe error code, never payloads.
+`jobs.retry` returns whether a retryable/quarantined job was requeued and wakes
+the worker. These are trusted operator APIs, not self-service browser methods.
+Adoption verifies the merchant/environment and refuses reassignment
 or sharing a customer between subjects. Never feed a browser-supplied subject
 into this trusted API. Never auto-adopt by matching email or webhook metadata.
 

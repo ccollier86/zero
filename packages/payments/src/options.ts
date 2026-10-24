@@ -1,5 +1,5 @@
 import type Stripe from 'stripe';
-import type { AccessRequirement } from '@zero/framework/server';
+import { compileAccessRequirement, type AccessRequirement } from '@zero/framework/server';
 import type { BillingOffer } from '@zero/framework/payments';
 import { invalid } from './errors';
 
@@ -40,18 +40,25 @@ export interface ResolvedPaymentsOptions extends PaymentsOptions {
 }
 export function resolvePaymentsOptions(input: PaymentsOptions): ResolvedPaymentsOptions {
   if (!input || !['test', 'live'].includes(input.mode) || !/^[a-zA-Z0-9_-]{1,80}$/.test(input.connectionId) || !/^acct_[a-zA-Z0-9]+$/.test(input.accountId) || !/^[a-zA-Z0-9_.-]{1,80}$/.test(input.policyVersion)) invalid('A mode, connection ID, merchant account ID and policy version are required.');
+  if (input.subject !== undefined && !['auto', 'user', 'organization'].includes(input.subject)) invalid('Billing subject must be auto, user or organization.');
+  for (const value of [input.acceptingSales, input.allowEphemeralTestMode]) if (value !== undefined && typeof value !== 'boolean') invalid('Payment feature switches must be booleans.');
+  for (const callback of [input.onChange, input.onEvent]) if (callback !== undefined && typeof callback !== 'function') invalid('Payment integration callbacks must be functions.');
+  if (input.access !== undefined) {
+    if (!input.access || typeof input.access !== 'object' || Array.isArray(input.access) || Object.keys(input.access).some(key => !['read', 'manage', 'refund', 'reconcile'].includes(key))) invalid('Unknown payment access policy.');
+    for (const policy of Object.values(input.access)) if (policy !== undefined) compileAccessRequirement(policy);
+  }
   const secretKey = input.secretKey ?? Bun.env.STRIPE_SECRET_KEY ?? '';
   if (!new RegExp(`^(?:sk|rk)_${input.mode}_[a-zA-Z0-9_]+$`).test(secretKey)) invalid('A secret/restricted key matching the configured Stripe mode is required.');
   const webhookSecrets = input.webhookSecrets ?? (Bun.env.STRIPE_WEBHOOK_SECRET ? [Bun.env.STRIPE_WEBHOOK_SECRET] : []);
-  if (!webhookSecrets.length || webhookSecrets.length > 4 || webhookSecrets.some(value => !/^whsec_[a-zA-Z0-9_]+$/.test(value))) invalid('Configure one to four Stripe webhook signing secrets.');
+  if (!Array.isArray(webhookSecrets) || !webhookSecrets.length || webhookSecrets.length > 4 || webhookSecrets.some(value => !/^whsec_[a-zA-Z0-9_]+$/.test(value))) invalid('Configure one to four Stripe webhook signing secrets.');
   if (!Array.isArray(input.allowedOrigins) || !input.allowedOrigins.length || input.allowedOrigins.length > 20) invalid('Explicit allowed return origins are required.');
   const origins = input.allowedOrigins.map(value => { const url = safeReturnUrl(value); if (url.origin !== value) invalid('Return origins must be exact origins, not paths.'); return url.origin; });
   for (const value of [input.successUrl, input.cancelUrl, input.portalReturnUrl]) if (!origins.includes(safeReturnUrl(value).origin)) invalid('A return URL is outside the declared origins.');
   const basePath = input.basePath ?? '/api/_zero/payments', webhookPath = input.webhookPath ?? '/api/webhooks/stripe';
-  for (const path of [basePath, webhookPath]) if (!/^\/[a-zA-Z0-9/_-]+$/.test(path) || path.endsWith('/')) invalid('Payment route paths must be absolute normalized paths.');
+  for (const path of [basePath, webhookPath]) if (typeof path !== 'string' || !/^\/[a-zA-Z0-9/_-]+$/.test(path) || path.includes('//') || path.endsWith('/')) invalid('Payment route paths must be absolute normalized paths.');
   if (basePath === webhookPath || webhookPath.startsWith(basePath + '/') || basePath.startsWith(webhookPath + '/')) invalid('Webhook and authenticated API paths must be disjoint.');
   const offers = new Map< string, StripeOffer & { id: string; quantity: { min: number; max: number }; features: Record<string, boolean | number> }>();
-  if (!input.catalog || typeof input.catalog !== 'object' || Object.keys(input.catalog).length > 100) invalid('A bounded server-owned offer catalog is required.');
+  if (!input.catalog || typeof input.catalog !== 'object' || Array.isArray(input.catalog) || Object.keys(input.catalog).length > 100) invalid('A bounded server-owned offer catalog is required.');
   const prices = new Set<string>(), featureTypes = new Map<string, string>();
   for (const [id, offer] of Object.entries(input.catalog)) {
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || !offer || !/^price_[a-zA-Z0-9]+$/.test(offer.price) || !['payment', 'subscription'].includes(offer.kind) || typeof offer.label !== 'string' || !offer.label.trim() || offer.label.length > 160 || prices.has(offer.price)) invalid('Offer IDs/prices must be unique, bounded and valid.');

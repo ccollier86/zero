@@ -29,13 +29,13 @@ test('optional payments and provider-free clients work from fresh installed arch
     expect(verified.declared).toBe(true); expect(verified.sharedRegistry).toBe(true); expect(verified.disabledSchema).toBe(true); expect(verified.browserClean).toBe(true);
     expect(verified.checkoutPath).toBe('/api/_zero/payments/checkout');
     for (const [sourceRoot, installedRoot, files] of [
-      [repository, join(consumer, 'node_modules/@zero/framework'), ['src/payments/contracts.ts', 'src/payments/client.ts', 'src/payments/registry.ts', 'src/frontend/client/sdk.ts', 'src/frontend/server/server-services.ts', 'src/frontend/server/server-request-services/create-request-services.ts']],
-      [join(repository, 'packages/payments'), join(consumer, 'node_modules/@zero/plugin-payments'), ['src/index.ts', 'src/options.ts', 'src/service.ts', 'src/store.ts', 'src/scoped.ts', 'src/authority.ts', 'src/http.ts', 'src/projections.ts']],
+      [repository, join(consumer, 'node_modules/@zero/framework'), ['src/payments/contracts.ts', 'src/payments/client.ts', 'src/payments/registry.ts', 'src/observability/codes.ts', 'src/frontend/client/sdk.ts', 'src/frontend/server/server-services.ts', 'src/frontend/server/server-request-services/create-request-services.ts']],
+      [join(repository, 'packages/payments'), join(consumer, 'node_modules/@zero/plugin-payments'), ['src/index.ts', 'src/options.ts', 'src/service.ts', 'src/store.ts', 'src/scoped.ts', 'src/authority.ts', 'src/http.ts', 'src/projections.ts', 'src/execution.ts', 'src/entitlements.ts', 'src/jobs.ts', 'src/validation.ts', 'src/errors.ts']],
     ] as const) for (const file of files) expect(await Bun.file(join(installedRoot, file)).text(), `Fresh archive source mismatch: ${file}`).toBe(await Bun.file(join(sourceRoot, file)).text());
     for (const path of ['index.md', 'configuration.md', 'api.md', 'webhooks.md', 'operations.md', 'roadmap.md']) expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/plugins/payments', path)).exists()).toBe(true);
     const sha = async (path: string) => createHash('sha256').update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest('hex');
     await mkdir(evidenceRoot, { recursive: true });
-    await Bun.write(join(evidenceRoot, 'installed-archive-evidence.json'), JSON.stringify({ sourceSnapshot: 'dirty', branch: 'feature/stripe-payments-foundation', baseCommit: '8850d12a24f1744818ab17fa37bb3dbf235229da', framework: { version: '2.6.0', sha256: await sha(core) }, plugin: { version: '0.1.0', sha256: await sha(plugin) }, ...verified, verifiedAt: new Date().toISOString(), liveStripeOperations: false }, null, 2));
+    await Bun.write(join(evidenceRoot, 'installed-archive-evidence.json'), JSON.stringify({ sourceSnapshot: 'dirty', branch: 'feature/stripe-payments-foundation', baseCommit: 'b726e69', framework: { version: '2.6.0', sha256: await sha(core) }, plugin: { version: '0.1.0', sha256: await sha(plugin) }, ...verified, verifiedAt: new Date().toISOString(), liveStripeOperations: false }, null, 2));
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 180000);
 

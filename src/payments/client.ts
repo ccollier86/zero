@@ -13,13 +13,19 @@ export class PaymentsClientError extends Error {
 }
 export function createPaymentsClient(transport: PaymentsClientTransport, options: { basePath?: string } = {}): PaymentsClient {
   const prefix = options.basePath ?? '/api/_zero/payments';
-  if (!/^\/[a-zA-Z0-9/_-]+$/.test(prefix) || prefix.endsWith('/')) throw new PaymentsClientError('Invalid payments API path.', 'PAYMENTS_INPUT_INVALID');
+  if (!/^\/[a-zA-Z0-9/_-]+$/.test(prefix) || prefix.includes('//') || prefix.endsWith('/')) throw new PaymentsClientError('Invalid payments API path.', 'PAYMENTS_INPUT_INVALID');
   const boundary = () => transport.boundary?.() ?? { key: '', ready: true };
   const check = (key: string) => { const current = boundary(); if (!current.ready || current.key !== key) throw new PaymentsClientError('Billing authority changed. Discard this result and reload billing for the active scope.', 'PAYMENTS_AUTHORITY_CHANGED'); };
   const request = async <T>(path: string, body?: unknown): Promise<T> => {
     const key = boundary().key; check(key);
-    const value = await transport.request<T>(prefix + path, body === undefined ? undefined : { method: 'POST', body });
-    check(key); return value;
+    const controller = new AbortController();
+    const unsubscribe = transport.subscribeBoundary?.(() => { try { check(key); } catch { controller.abort(); } });
+    try {
+      check(key);
+      const value = await transport.request<T>(prefix + path, { signal: controller.signal, ...(body === undefined ? {} : { method: 'POST', body: structuredClone(body) }) });
+      check(key); return value;
+    } catch (error) { check(key); throw error; }
+    finally { unsubscribe?.(); }
   };
   const id = (value: string) => encodeURIComponent(value);
   const query = (input: object = {}) => { const params = new URLSearchParams(); for (const [key, value] of Object.entries(input)) if (value !== undefined) params.set(key, String(value)); return params.size ? '?' + params : ''; };
@@ -36,29 +42,36 @@ export function createPaymentsClient(transport: PaymentsClientTransport, options
     entitlements: { read: () => request('/entitlements') }, reconcile: () => request('/reconcile', {}),
     async *watch(input) {
       const key = boundary().key; check(key);
-      const controller = new AbortController(), abort = () => controller.abort();
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      const controller = new AbortController(), abort = () => { controller.abort(); void reader?.cancel().catch(() => {}); };
       input?.signal?.addEventListener('abort', abort);
       if (input?.signal?.aborted) controller.abort();
-      const unsubscribe = transport.subscribeBoundary?.(() => { try { check(key); } catch { controller.abort(); } });
-      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      const unsubscribe = transport.subscribeBoundary?.(() => { try { check(key); } catch { abort(); } });
       try {
         const response = await transport.request<Response>(prefix + '/events', { signal: controller.signal, json: false }); check(key);
         if (!response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) throw new PaymentsClientError('Invalid billing event stream.', 'PAYMENTS_STREAM_INVALID');
-        reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+        reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '', afterCR = false;
         while (!controller.signal.aborted) {
           const part = await reader.read(); if (part.done) break;
-          check(key); buffer += decoder.decode(part.value, { stream: true }).replace(/\r\n/g, '\n');
-          if (buffer.length > 65536) throw new PaymentsClientError('Billing event stream exceeded its buffer limit.', 'PAYMENTS_STREAM_INVALID');
+          check(key);
+          for (const character of decoder.decode(part.value, { stream: true })) {
+            if (afterCR) { afterCR = false; if (character === '\n') continue; }
+            if (character === '\r') { buffer += '\n'; afterCR = true; } else buffer += character;
+          }
           let end: number;
           while ((end = buffer.indexOf('\n\n')) >= 0) {
             const message = buffer.slice(0, end); buffer = buffer.slice(end + 2);
-            if (message.startsWith('event: stopped')) throw new PaymentsClientError('Billing stream stopped. Reauthorize before reconnecting.', 'PAYMENTS_STREAM_STOPPED');
-            if (!message.startsWith('event: revision')) continue;
-            const line = message.split('\n').find(line => line.startsWith('data: '));
-            const event = line ? JSON.parse(line.slice(6)) : null;
-            if (!Number.isSafeInteger(event?.revision) || event.revision < 0) throw new PaymentsClientError('Invalid billing event.', 'PAYMENTS_STREAM_INVALID');
-            check(key); yield { revision: event.revision };
+            if (message.length > 65536) throw new PaymentsClientError('Billing event stream exceeded its buffer limit.', 'PAYMENTS_STREAM_INVALID');
+            const lines = message.split('\n'), kind = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
+            if (kind === 'stopped') throw new PaymentsClientError('Billing stream stopped. Reauthorize before reconnecting.', 'PAYMENTS_STREAM_STOPPED');
+            if (kind !== 'revision') continue;
+            let event: { revision?: number; version?: string } | null;
+            try { event = JSON.parse(lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n')); }
+            catch { throw new PaymentsClientError('Invalid billing event.', 'PAYMENTS_STREAM_INVALID'); }
+            if (!event || typeof event.revision !== 'number' || !Number.isSafeInteger(event.revision) || event.revision < 0 || event.version !== undefined && (typeof event.version !== 'string' || !/^[a-f0-9]{64}$/.test(event.version))) throw new PaymentsClientError('Invalid billing event.', 'PAYMENTS_STREAM_INVALID');
+            check(key); yield { revision: event.revision, ...(event.version !== undefined ? { version: event.version } : {}) };
           }
+          if (buffer.length > 65536) throw new PaymentsClientError('Billing event stream exceeded its buffer limit.', 'PAYMENTS_STREAM_INVALID');
         }
       } finally { controller.abort(); await reader?.cancel().catch(() => {}); reader?.releaseLock(); unsubscribe?.(); input?.signal?.removeEventListener('abort', abort); }
     },

@@ -29,7 +29,7 @@ input. A completed result is replayed; changed input conflicts. Concurrent
 attempts are rejected while the original owner runs.
 
 Use `operations.read(operationId)` to inspect this subject's pending, complete,
-rejected or unknown status and retry timing. It returns no raw provider request
+retryable, rejected or unknown status and retry timing. It returns no raw provider request
 or payment capability URL. Repeating the original authorized operation retrieves
 its completed receipt without creating a new intent.
 
@@ -46,10 +46,18 @@ even error results for a key. A new key is not a generic recovery strategy.
 [Stripe idempotency semantics](https://docs.stripe.com/api/idempotent_requests)
 describe the provider's minimum retention and parameter checks.
 
-Exact outbound Checkout, subscription-change and refund parameters are saved
+Known pre-execution authentication, permission, rate-limit and concurrent-key
+admission failures remain retryable with the original operation ID. They do not
+permanently poison a command as a terminal rejection. Read outages never imply
+an uncertain charge. A failure to persist a result after provider acceptance
+always reports an unknown outcome.
+
+Exact outbound Checkout, portal, subscription-change, resume and refund parameters are saved
 before their provider call. Recovery uses those original parameters, not a new
 balance/item layout/price lookup that could invalidate the already accepted
 operation. Stripe still enforces the final balance on a genuinely new refund.
+Completed receipts remain replayable when catalog aliases or return URLs change,
+or new sales are paused. An unresolved operation still obeys the sales pause.
 
 Customer creation uses a separate stable internal command so simultaneous
 Checkout/customer requests cannot create unrelated customer bindings. Financial
@@ -57,10 +65,16 @@ acceptance is recorded before returning through the final Guardian revalidation.
 A revoked caller does not get the response, but the accepted charge/session
 receipt is not erased.
 
+Every physical SDK mutation, including an automatic network retry, rechecks the
+command lease, replay deadline and live Guardian authority immediately before
+transport admission. A worker that lost its durable fence cannot start a new
+financial request. A request already accepted by Stripe cannot be undone by
+revoking the caller; its receipt still needs reconciliation.
+
 ## Worker Health And Operator Recovery
 
-The plugin owns its worker and stops/drains it before Zero disposes its system
-services. Network calls have bounded SDK timeouts/retries. Idle work checks the
+The plugin owns its worker and drains admitted requests, webhook persistence and
+worker operations before Zero disposes its system services. Network calls have bounded SDK timeouts/retries. Idle work checks the
 indexed inbox once per second; empty probes are reads and acquire no write
 transaction/authority lease. UI renders do not start Stripe polling loops.
 Replicas share durable claims and customer locks, with four-minute leases and
@@ -74,11 +88,19 @@ work/freshness instead of hiding a backlog with stale grants.
 
 Failures retry with bounded exponential backoff (up to five minutes). After
 12 attempts a job is quarantined. Trusted operator code can inspect
-`getStripePayments(zero).store.pending()`, fix the actual provider/configuration/
-binding/callback problem, call `store.replay(eventId)` and allow the worker to
-resume. Do not expose these raw operator capabilities to a browser route without
+`getStripePayments(zero).jobs.list({ status: 'quarantined' })` and
+`store.pending()`, fix the actual provider/configuration/binding/callback problem,
+then call `jobs.retry(jobId)` to requeue it and wake the worker. Job inspection
+is bounded and excludes webhook bodies and provider parameters. Do not expose these operator capabilities to a browser route without
 an explicit administration policy. Completed event payloads are compacted, not
 replayed as new financial operations.
+
+The normal Zero observability pipeline receives stable diagnostic codes
+`payments.job.retry`, `payments.job.quarantined`, `payments.worker.failed` and
+`payments.command.unknown`. Metadata contains the connection, job identity/kind,
+attempt and safe reason, or a hashed command identity. Raw provider errors,
+callback exceptions, keys, bodies and payment URLs are excluded. Diagnostic
+delivery failure cannot change a financial receipt.
 
 Use an immutable connection ID when changing merchant/mode, and a new
 `policyVersion` when changing grants. Webhook rotation allows both old and new

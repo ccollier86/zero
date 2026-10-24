@@ -7,7 +7,7 @@ export interface PaymentsAuthority {
   assertCurrentAuthority: () => Promise<void>; assertCurrentAuthoritySync: () => void; signal?: AbortSignal;
 }
 export interface PaymentCommand { operationId: string }
-export interface BillingOperation { operationId: string; status: 'pending' | 'complete' | 'rejected' | 'unknown'; createdAt: string; error: string | null; retryAfterMs: number }
+export interface BillingOperation { operationId: string; status: 'pending' | 'complete' | 'rejected' | 'retryable' | 'unknown'; createdAt: string; error: string | null; retryAfterMs: number }
 export interface CheckoutRequest extends PaymentCommand { offer: string; quantity?: number }
 export interface SubscriptionChange extends PaymentCommand {
   subscriptionId: string; offer: string; quantity?: number;
@@ -34,7 +34,10 @@ export interface BillingSnapshot {
   subscriptions: BillingSubscription[]; invoices: BillingInvoice[]; payments: BillingPayment[];
   entitlements: Record<string, boolean | number>; reconciledAt: string | null; stale: boolean; error?: string;
   policyVersion: string; entitlementsValidUntil: number | null;
+  /** Changes when either the stored revision or time-sensitive access state changes. */
+  version?: string;
 }
+export interface BillingRevision { revision: number; version?: string }
 export interface PaymentsReadiness {
   enabled: boolean; provider: 'stripe'; mode: 'test' | 'live'; acceptingSales: boolean;
   apiVersion: string; webhookPath: string; operations: readonly string[];
@@ -66,7 +69,7 @@ export interface ScopedPayments {
   refunds: { create(input: RefundRequest): Promise<BillingRefund>; list(input: BillingPageQuery & { paymentId: string }): Promise<BillingPage<BillingRefund>> };
   entitlements: { read(): Promise<Record<string, boolean | number>> };
   reconcile(): Promise<BillingSnapshot>;
-  watch(options?: { signal?: AbortSignal }): AsyncIterable<{ revision: number }>;
+  watch(options?: { signal?: AbortSignal }): AsyncIterable<BillingRevision>;
 }
 /** Trusted setup boundary; HTTP/machine contexts receive only forAuthority's closed facade. */
 export interface PaymentsBackend { status(): PaymentsReadiness; forAuthority(authority: PaymentsAuthority): ScopedPayments }

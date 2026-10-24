@@ -26,6 +26,10 @@ function code(
 
 /** Stable platform observability codes. */
 export const OBS_CODES = {
+  PAYMENTS_JOB_RETRY: code('payments', 'job.retry', 'warn', 'Billing background work will retry.'),
+  PAYMENTS_JOB_QUARANTINED: code('payments', 'job.quarantined', 'error', 'Billing background work needs operator recovery.'),
+  PAYMENTS_WORKER_FAILED: code('payments', 'worker.failed', 'error', 'Billing worker could not access its durable queue.'),
+  PAYMENTS_COMMAND_UNKNOWN: code('payments', 'command.unknown', 'warn', 'A billing operation requires reconciliation with its original operation ID.'),
   AUTH_USER_AVATAR_UPDATED: code('auth', 'user_avatar.updated', 'info', 'User avatar change committed.'),
   AUTH_USER_AVATAR_CLEANUP_RETRY: code('auth', 'user_avatar.cleanup_retry', 'warn', 'Retained avatar cleanup will retry.'),
   APP_CLIENT_BUNDLE_READY: code('app', 'client_bundle.ready', 'info', 'Client bundle is ready.'),

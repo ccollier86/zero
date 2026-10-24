@@ -101,7 +101,7 @@ describe('Stripe scoped billing foundation', () => {
   });
   test('sales pause still permits billing reads, cancellation and portal', async () => {
     const { scoped, service } = fixture({ acceptingSales: false }); service.store.bind({ kind: 'user', id: 'user-fixture' }, customer.id);
-    expect(() => scoped.checkout.create({ operationId: 'checkout-operation', offer: 'pro' })).toThrow('New sales');
+    await expect(scoped.checkout.create({ operationId: 'checkout-operation', offer: 'pro' })).rejects.toThrow('New sales');
     expect((await scoped.portal.create({ operationId: 'portal-operation' })).url).toStartWith('https:');
     await scoped.subscriptions.cancel({ operationId: 'subscription-cancel', subscriptionId: 'sub_fixture', timing: 'period-end' });
   });

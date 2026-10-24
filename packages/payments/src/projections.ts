@@ -2,6 +2,7 @@ import type Stripe from 'stripe';
 import type { BillingInvoice, BillingPayment, BillingRefund, BillingSubscription, BillingSnapshot, BillingSubject } from '@zero/framework/payments';
 import type { ResolvedPaymentsOptions } from './options';
 import { PaymentsError } from './errors';
+import { entitlementGrants, evaluateGrants } from './entitlements';
 
 export const stripeId = (value: string | { id: string } | null | undefined): string | null => typeof value === 'string' ? value : value?.id ?? null;
 export function assertResource(value: { livemode?: boolean; customer?: unknown }, customer: string | null, options: ResolvedPaymentsOptions): void {
@@ -20,24 +21,6 @@ export function paymentView(value: Stripe.PaymentIntent): BillingPayment {
 }
 export function refundView(value: Stripe.Refund): BillingRefund { return { id: value.id, status: value.status ?? null, total: { amount: value.amount, currency: value.currency }, paymentId: stripeId(value.payment_intent) ?? '', createdAt: value.created }; }
 export function deriveEntitlements(subscriptions: Stripe.Subscription[], options: ResolvedPaymentsOptions): Record<string, boolean | number> {
-  const grants: Record<string, boolean | number> = Object.create(null);
-  for (const sub of subscriptions) {
-    const invoice = sub.latest_invoice && typeof sub.latest_invoice !== 'string' ? sub.latest_invoice : null;
-    // No implicit past-due grace or role mutation. Trialing is an explicit Stripe trial; active requires paid/zero-due evidence.
-    if (!(sub.status === 'trialing' && (sub.trial_end ?? 0) > Date.now() / 1000 || sub.status === 'active' && invoice && (invoice.status === 'paid' || invoice.status === 'open' && invoice.amount_due === 0))) continue;
-    for (const item of sub.items.data) {
-      if (item.current_period_end <= Date.now() / 1000) continue;
-      const offer = [...options.offers.values()].find(offer => offer.price === item.price.id); if (!offer) continue;
-      for (const [key, value] of Object.entries(offer.features)) {
-        if (typeof value === 'boolean') grants[key] = value || grants[key] === true;
-        else grants[key] = Math.max(typeof grants[key] === 'number' ? grants[key] as number : 0, value);
-      }
-    }
-  }
-  return grants;
-}
-export function entitlementDeadline(subscriptions: Stripe.Subscription[]): number | null {
-  const ends = subscriptions.filter(sub => ['active', 'trialing'].includes(sub.status)).flatMap(sub => [sub.trial_end, ...sub.items.data.map(item => item.current_period_end)]).filter((end): end is number => end !== null && end > Date.now() / 1000);
-  return ends.length ? Math.min(...ends) : null;
+  return evaluateGrants(entitlementGrants(subscriptions, options)).entitlements;
 }
 export function emptySnapshot(subject: BillingSubject, options: ResolvedPaymentsOptions): BillingSnapshot { return { subject, provider: 'stripe', mode: options.mode, revision: 0, customer: null, subscriptions: [], invoices: [], payments: [], entitlements: {}, reconciledAt: null, stale: true, policyVersion: options.policyVersion, entitlementsValidUntil: null }; }

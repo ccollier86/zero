@@ -112,6 +112,8 @@ user's personal customer in one workspace is not reused in another. An
 organization-only configuration fails closed outside a validated tenant scope.
 
 Declare custom permissions in Guardian before referencing them in `access`.
+Configuration shapes and Guardian permission references are validated during
+plugin setup, before payment tables or provider operations are installed.
 Organization billing roles are not inferred from a client-supplied role string.
 The built-in HTTP readers are user-session routes. Explicit app-owned machine
 routes and sealed workflows can compose the scoped service with their own
