@@ -15,6 +15,8 @@ import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foun
 import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
+import { resolveManagedLoggingConfig, type ManagedLoggingConfig, type ResolvedManagedLoggingConfig } from '../../logging/logging-managed-config';
+import { assertLoggingDirectoryIsolation } from '../../logging/logging-directory-isolation';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import type {
   AuthBehaviorConfig,
@@ -294,6 +296,9 @@ export interface AppConfig {
    * without changing which database backs existing platform services.
    */
   databaseTopology?: AppDatabaseTopologyConfig;
+
+  /** Branch-preview dedicated log storage and backend diagnostics. Automatic activity/audit capture is not yet available. */
+  logging?: boolean | ManagedLoggingConfig;
 
   /**
    * Table definitions — accepts ANY of:
@@ -580,6 +585,7 @@ export interface ResolvedConfig {
   db: ReactiveDBConfig;
   systemDb: ReactiveDBConfig;
   databaseTopology: ResolvedAppDatabaseTopologyConfig;
+  logging: ResolvedManagedLoggingConfig | false;
   tables: Record<string, TableSchema>;
   /** Schema-admitted functions/triggers for the pinned application database. */
   databaseAutomations?: DatabaseAutomationRegistry;
@@ -643,6 +649,7 @@ export function resolveConfig(
 ): ResolvedConfig {
   const themeFoundation = resolveAppThemeFoundation(config.themeFoundation);
   const projectRoot = resolveAppProjectRoot(config);
+  const logging = resolveManagedLoggingConfig(config.logging, projectRoot);
   const auth = config.auth === true
     ? {}
     : config.auth === false || config.auth === undefined
@@ -756,6 +763,13 @@ export function resolveConfig(
   }
   const storageDir = config.storageDir ?? '.storage';
   const outDir = resolveAppOwnedPath(projectRoot, config.outDir ?? './.build');
+  const generatedDir = resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated');
+  const appDir = resolveAppOwnedPath(projectRoot, config.appDir ?? './app');
+  if (logging) assertLoggingDirectoryIsolation({
+    rootDirectory: logging.rootDirectory, outDir, storageDir, generatedDir, appDir,
+    controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
+    ...(databaseTopology.mode === 'multiple' ? { applicationFabricRoot: databaseTopology.rootDirectory } : {}),
+  });
   if (databaseTopology.mode === 'multiple') {
     assertDatabaseDirectoryIsolation({
       rootDirectory: databaseTopology.rootDirectory,
@@ -806,6 +820,7 @@ export function resolveConfig(
     db: config.db,
     systemDb,
     databaseTopology,
+    logging,
     tables: normalized,
     ...(databaseAutomations === undefined ? {} : { databaseAutomations }),
     mutationValidators,
@@ -831,10 +846,10 @@ export function resolveConfig(
     syncDefaults,
     storageDir,
     storage,
-    appDir: resolveAppOwnedPath(projectRoot, config.appDir ?? './app'),
+    appDir,
     outDir: resolveAppOwnedPath(projectRoot, outDir),
     themeFoundation,
-    generatedDir: resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated'),
+    generatedDir,
     serverPluginsDir: config.serverPluginsDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverPluginsDir ?? './server/plugins'),
     serverMiddlewareDir: config.serverMiddlewareDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverMiddlewareDir ?? './server/middleware'),
     serverEndpointsDir: config.serverEndpointsDir === false ? false : resolveAppOwnedPath(projectRoot, config.serverEndpointsDir ?? './server/endpoints'),

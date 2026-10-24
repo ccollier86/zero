@@ -37,6 +37,8 @@ import { createManagedAppDatabasePlanes } from './app-database-planes';
 import { mountPlatformApp } from './app-platform-mount';
 import { discoverAppServerExtensions, resolveAppFrontendBuild } from './app-build';
 import { AppDatabaseBootstrap } from './app-database-bootstrap';
+import { installManagedAppLogging } from './app-logging';
+import { assertManagedAppLoggingIsolation } from './app-logging-isolation';
 import { composeAppResources } from './app-resource-composition';
 import { mountAppSyncEngine } from './app-sync-mount';
 import {
@@ -73,6 +75,8 @@ import {
  */
 export async function createApp(userConfig: AppConfig) {
   const config = resolveConfig(userConfig);
+  assertManagedAppLoggingIsolation(config);
+  assertManagedAppLoggingIsolation(config, true);
   if (config.databaseTopology.mode === 'multiple') {
     assertCanonicalDatabaseDirectoryIsolation({
       rootDirectory: config.databaseTopology.rootDirectory,
@@ -171,6 +175,7 @@ export async function createApp(userConfig: AppConfig) {
     const openedDatabaseManager = databasePlanes.manager;
     const identityProjectionRuntime = databasePlanes.identityProjection;
     const tenantDataPlane = databasePlanes.tenantDataPlane;
+    await installManagedAppLogging(config, runtime, observabilityRuntime);
 
     // ─── Assemble Elysia app ────────────────────────────────
     const app = new Elysia({ name: 'platform' });

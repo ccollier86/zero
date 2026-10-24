@@ -26,6 +26,7 @@ import type { AuthorizationRoleService } from '../auth/authorization-role-servic
 import type { AuthAuditService } from '../auth/auth-audit-service';
 import type { AuthApiKeyService } from '../auth/auth-api-key-service';
 import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
+import type { LoggingRuntime } from '../logging/logging-runtime';
 import { createZeroRuntimeServiceKey } from './zero-app-runtime';
 
 export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
@@ -78,6 +79,8 @@ export const ZERO_AUTH_AUDIT_SERVICE = createZeroRuntimeServiceKey<AuthAuditServ
 export const ZERO_EMAIL_RUNTIME = createZeroRuntimeServiceKey<EmailRuntime>('Email runtime');
 export const ZERO_OBSERVABILITY_RUNTIME =
   createZeroRuntimeServiceKey<PlatformObservabilityRuntime>('Observability runtime');
+/** Private lifecycle-owned logging plane. Request authorization is not implied by this key. */
+export const ZERO_LOGGING_RUNTIME = createZeroRuntimeServiceKey<LoggingRuntime>('Logging runtime');
 
 /** App-local Scheduler service installed by the managed scheduler plugin. */
 export const ZERO_SCHEDULER_SERVICE = createZeroRuntimeServiceKey<SchedulerService>(

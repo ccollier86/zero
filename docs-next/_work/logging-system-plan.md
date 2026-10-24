@@ -35,22 +35,26 @@ from application and Guardian data. A managed ingestion worker performs bounded
 delivery, batching and recovery. The investigation UI composes Zero's DataTable,
 filter builder, detail surfaces, tokens and motion rather than a second UI stack.
 
-This is the implementation plan, not an available managed `logging` configuration or
-SDK. References to new configuration, facades and components below are proposed.
+This is the full subsystem implementation plan. The branch-only
+[managed storage preview](../backend/logging/index.md) implements the limited
+configuration and diagnostics described there; the wider facades, capture and
+components below remain proposed.
 It supersedes the earlier optional compliance-logging plugin direction in the
 payments, messaging and email roadmaps. Existing Guardian audit and operational
 observability remain authoritative until a separately qualified transition.
 
 ## Branch Implementation Status
 
-The `feature/core-logging` branch begins with internal event/configuration
-contracts, safe validation, a dedicated Fabric/ReactiveDB realm, idempotent append,
-scoped cursor queries and a bounded batching worker. Real subprocess tests cover
-restart, isolation, acknowledgment loss and payload limits. The
-[foundation review](./logging-foundation-review.md) distinguishes those working
-pieces from the remaining runtime, capture, client, UI and compliance gates.
-There is no public `createApp.logging`, `zero.logging` or `client.logging`
-integration yet, and neither main nor the saved upgrade packages include it.
+The `feature/core-logging` branch implements event/configuration contracts,
+safe validation, a dedicated Fabric/ReactiveDB realm, idempotent append, scoped
+cursor queries, bounded batching and managed `createApp({ logging })` lifecycle.
+Backend diagnostics attach through a privacy-minimal adapter; automatic audit
+and browser capture remain unavailable. Compliance requests fail closed with
+`LOGGING_NOT_READY`. Real subprocess/app tests cover restart, isolation,
+acknowledgment loss, partial construction, drain and payload limits. The
+[branch review](./logging-foundation-review.md) records the remaining capture,
+client, UI and compliance gates. There is no `zero.logging` or `client.logging`
+facade yet, and neither main nor the saved upgrade packages include this preview.
 
 ## Product Levels and Granular Configuration
 

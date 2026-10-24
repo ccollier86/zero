@@ -8,6 +8,7 @@ import type { ZeroServerExtensionMountable } from './server-extensions';
 import { admitAppFrontendBuildManifest } from './server-plugin-build-manifest';
 import { assertPluginBuildManifestMatches, collectPluginBuildContributors, compilePluginContributions } from './server-plugin-build';
 import { AppPluginBuildError } from './server-plugin-build-error';
+import { assertManagedAppLoggingIsolation } from './app-logging-isolation';
 import { assertPluginBuildRouteOwnership } from './server-plugin-build-route-ownership';
 import type { AppFrontendBuildManifest, ResolvedAppFrontendAssets } from './server-plugin-build-types';
 import { resolveConfig, type AppConfig, type ResolvedConfig } from './types';
@@ -26,6 +27,7 @@ export interface PreparedAppBuild {
 /** Discover once, prepare plugin content, then build shared frontend assets without touching databases. */
 export async function prepareAppBuild(userConfig: AppConfig, options: { readonly mode?: 'development' | 'production'; readonly emitCode?: typeof EmitCode } = {}): Promise<PreparedAppBuild> {
   const config = resolveConfig(userConfig);
+  assertManagedAppLoggingIsolation(config, true);
   const discovered = await discoverAppServerExtensionDeclarations(config);
   return compileResolvedAppBuild(config, discovered.extensions, options.mode ?? 'production', options.emitCode ?? emitPlatformCode, discovered.modulePaths);
 }
@@ -46,6 +48,7 @@ export async function discoverAppServerExtensionDeclarations(config: ResolvedCon
 
 /** Compile a previously discovered list so managed startup cannot import/mount declarations twice. */
 export async function compileResolvedAppBuild(config: ResolvedConfig, extensions: readonly ZeroServerExtensionMountable[], mode: 'development' | 'production', emitCode: typeof EmitCode, extensionModulePaths: readonly string[] = []): Promise<PreparedAppBuild> {
+  assertManagedAppLoggingIsolation(config, true);
   await assertPrivateGeneratedDirectory(config);
   const contributions = await compilePluginContributions(config, collectPluginBuildContributors(extensions), mode, emitCode);
   const assets = await buildAppAssets(config, emitCode, { styleSources: contributions.styleSources, requiredStyles: contributions.requiredStyles });
@@ -60,6 +63,7 @@ export async function compileResolvedAppBuild(config: ResolvedConfig, extensions
 
 /** Use a built production artifact, or compile ordinary development/legacy frontend assets. */
 export async function resolveAppFrontendBuild(config: ResolvedConfig, extensions: readonly ZeroServerExtensionMountable[], emitCode: typeof EmitCode): Promise<ResolvedAppFrontendAssets> {
+  assertManagedAppLoggingIsolation(config, true);
   const contributors = collectPluginBuildContributors(extensions);
   assertPluginBuildRouteOwnership(config.appDir, contributors);
   if (config.frontendBuild) {

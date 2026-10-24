@@ -36,6 +36,8 @@ analytics, billing accounting or an already shipped Sentry replacement.
 - [Configuration](./configuration.md): defaults, capture and app isolation.
 - [Frontend events](../../frontend/observability.md): browser sink and reporting contract.
 - [Roadmap](./roadmap.md): durable logs/errors/versioned source maps and dashboards.
+- [Core logging preview](../logging/index.md): unreleased dedicated Fabric
+  storage and minimal backend diagnostic forwarding, separate from required audit capture.
 
 Use `@zero/framework/observability` on the server, or request-bound
 `zero.observability` in managed code. Console is an adapter, not permission

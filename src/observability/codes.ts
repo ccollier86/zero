@@ -63,6 +63,10 @@ export const OBS_CODES = {
   OBSERVABILITY_FRONTEND_REJECTED: code('observability', 'frontend.rejected', 'warn', 'Frontend observability event rejected.'),
   OBSERVABILITY_ACCESS_DENIED: code('observability', 'access.denied', 'warn', 'Observability endpoint access denied.'),
 
+  LOGGING_STARTED: code('logging', 'started', 'info', 'Dedicated logging storage is ready; capture coverage is reported separately.'),
+  LOGGING_DELIVERY_FAILED: code('logging', 'delivery.failed', 'warn', 'A diagnostic event could not be retained; inspect logging health.'),
+  LOGGING_STOP_FAILED: code('logging', 'stop.failed', 'error', 'Logging work or database shutdown failed.'),
+
   SYNC_STARTED: code('sync', 'started', 'info', 'Sync engine started.'),
   SYNC_STOPPED: code('sync', 'stopped', 'info', 'Sync engine stopped.'),
   SYNC_AUTH_REQUIRED_DEFAULTED: code('sync', 'auth.required_defaulted', 'warn', 'Auth-enabled app defaulted WebSocket sync to authenticated-only.'),
