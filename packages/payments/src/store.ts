@@ -14,6 +14,9 @@ export function canonical(value: unknown): string {
 }
 export function hash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
 export function subjectKey(subject: BillingSubject): string { return canonical(subject); }
+/** Internal command partition for subjectless merchant work; never admitted from a browser payload. */
+export type BillingCommandOwner = BillingSubject | { kind: 'merchant'; id: string };
+const commandOwnerKey = (owner: BillingCommandOwner) => canonical(owner);
 interface CommandRow { digest: string; status: string; result: string | null; created: number; lease: number; fence: string; error: string | null }
 export interface InboxRow { id: string; payload: string; attempts: number; fence: string; customer: string | null; kind: 'webhook' | 'reconcile' | 'notify' }
 export class PaymentsStore {
@@ -47,8 +50,8 @@ export class PaymentsStore {
     if (row && row.kind !== kind) throw new PaymentsError('Provider operation kind changed during replay.', 'PAYMENTS_COMMAND_CONFLICT', 409);
     return row ? JSON.parse(row.params) as T : null;
   }
-  operation(subject: BillingSubject, id: string): BillingOperation | null {
-    const row = this.db.prepare('SELECT status,created,error,lease FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=?').get(this.connection, subjectKey(subject), `user:${id}`) as Pick<CommandRow, 'status' | 'created' | 'error' | 'lease'> | null;
+  operation(subject: BillingCommandOwner, id: string, namespace: 'user' | 'merchant' = 'user'): BillingOperation | null {
+    const row = this.db.prepare('SELECT status,created,error,lease FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=?').get(this.connection, commandOwnerKey(subject), `${namespace}:${id}`) as Pick<CommandRow, 'status' | 'created' | 'error' | 'lease'> | null;
     return row ? { operationId: id, status: row.status as BillingOperation['status'], createdAt: new Date(row.created).toISOString(), error: row.error, retryAfterMs: Math.max(0, row.lease - Date.now()) } : null;
   }
   saveProviderRequest<T>(id: string, kind: string, params: T): T {
@@ -65,9 +68,9 @@ export class PaymentsStore {
       if (this.customer(subject) !== customer) throw new PaymentsError('This provider customer belongs to a different subject.', 'PAYMENTS_BINDING_CONFLICT', 409);
     });
   }
-  reserve(subject: BillingSubject, operation: string, payload: unknown): { fence: string; key: string; replay?: unknown } {
+  reserve(subject: BillingCommandOwner, operation: string, payload: unknown): { fence: string; key: string; replay?: unknown } {
     return this.db.transaction(() => {
-      const owner = subjectKey(subject), digest = hash(canonical(payload)), now = Date.now(), fence = crypto.randomUUID();
+      const owner = commandOwnerKey(subject), digest = hash(canonical(payload)), now = Date.now(), fence = crypto.randomUUID();
       const row = this.db.prepare('SELECT * FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=?').get(this.connection, owner, operation) as CommandRow | null;
       const key = 'zero-' + hash(canonical([this.connection, owner, operation]));
       if (row) {
@@ -82,16 +85,16 @@ export class PaymentsStore {
       return { fence, key };
     });
   }
-  finish(subject: BillingSubject, operation: string, fence: string, value: unknown, error?: PaymentsError): void {
-    const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET status=?,result=?,error=?,lease=0 WHERE connection=? AND subject=? AND id=? AND fence=?').run(error ? error.outcome === 'unknown' ? 'unknown' : error.retryable ? 'retryable' : 'rejected' : 'complete', error ? null : canonical(value), error?.code ?? null, this.connection, subjectKey(subject), operation, fence));
+  finish(subject: BillingCommandOwner, operation: string, fence: string, value: unknown, error?: PaymentsError): void {
+    const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET status=?,result=?,error=?,lease=0 WHERE connection=? AND subject=? AND id=? AND fence=?').run(error ? error.outcome === 'unknown' ? 'unknown' : error.retryable ? 'retryable' : 'rejected' : 'complete', error ? null : canonical(value), error?.code ?? null, this.connection, commandOwnerKey(subject), operation, fence));
     if (!changed.changes) throw new PaymentsError('Payment result lost its commit fence. Reconcile the existing operation.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown');
   }
-  renewCommand(subject: BillingSubject, operation: string, fence: string): void {
-    const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET lease=? WHERE connection=? AND subject=? AND id=? AND fence=? AND status=\'pending\' AND lease>?').run(Date.now() + 240000, this.connection, subjectKey(subject), operation, fence, Date.now()));
+  renewCommand(subject: BillingCommandOwner, operation: string, fence: string): void {
+    const changed = this.db.transaction(() => this.db.prepare('UPDATE _zero_payments_commands SET lease=? WHERE connection=? AND subject=? AND id=? AND fence=? AND status=\'pending\' AND lease>?').run(Date.now() + 240000, this.connection, commandOwnerKey(subject), operation, fence, Date.now()));
     if (!changed.changes) throw new PaymentsError('Payment command lost its execution fence.', 'PAYMENTS_LEASE_LOST', 409, 'unknown');
   }
-  assertCommand(subject: BillingSubject, operation: string, fence: string): void {
-    const row = this.db.prepare('SELECT created,lease,status FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=? AND fence=?').get(this.connection, subjectKey(subject), operation, fence) as Pick<CommandRow, 'created' | 'lease' | 'status'> | null;
+  assertCommand(subject: BillingCommandOwner, operation: string, fence: string): void {
+    const row = this.db.prepare('SELECT created,lease,status FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=? AND fence=?').get(this.connection, commandOwnerKey(subject), operation, fence) as Pick<CommandRow, 'created' | 'lease' | 'status'> | null;
     const now = Date.now();
     if (!row || row.status !== 'pending' || row.lease <= now || now - row.created >= 23 * 3600000) throw new PaymentsError('Payment execution is stale or outside its safe replay window. Reconcile the original operation.', 'PAYMENTS_LEASE_LOST', 409, 'unknown');
   }
@@ -125,7 +128,7 @@ export class PaymentsStore {
       return result.changes ? { ...row, attempts: row.attempts + 1, fence } : null;
     });
   }
-  complete(row: InboxRow): void { this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET status='complete',payload='',lease=0 WHERE connection=? AND id=? AND fence=?").run(this.connection, row.id, row.fence)); }
+  complete(row: InboxRow): void { this.db.transaction(() => { this.assertInbox(row); this.db.prepare("UPDATE _zero_payments_inbox SET status='complete',payload='',lease=0 WHERE connection=? AND id=? AND fence=?").run(this.connection, row.id, row.fence); }); }
   renewInbox(row: InboxRow): void {
     const changed = this.db.transaction(() => this.db.prepare("UPDATE _zero_payments_inbox SET lease=? WHERE connection=? AND id=? AND fence=? AND status='processing' AND lease>?").run(Date.now() + 240000, this.connection, row.id, row.fence, Date.now()));
     if (!changed.changes) throw new PaymentsError('Billing job lost its claim.', 'PAYMENTS_LEASE_LOST', 409);
@@ -174,7 +177,7 @@ export class PaymentsStore {
       this.db.prepare('UPDATE _zero_payments_locks SET lease=? WHERE connection=? AND id=? AND fence=?').run(Date.now() + 240000, this.connection, lock.id, lock.fence);
     });
   }
-  private assertLock(lock: { id: string; fence: string }): void {
+  assertLock(lock: { id: string; fence: string }): void {
     if (!this.db.prepare('SELECT 1 FROM _zero_payments_locks WHERE connection=? AND id=? AND fence=? AND lease>?').get(this.connection, lock.id, lock.fence, Date.now())) throw new PaymentsError('Billing reconciliation lost its resource fence.', 'PAYMENTS_LEASE_LOST', 409);
   }
 }

@@ -18,6 +18,9 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Square and merchant payments](./square-payments.md): shared Stripe/Square facade,
+  subjectless custom amounts, canonical ownership, uncertain sends and archive qualification.
+
 - [Stripe payments foundation](./stripe-payments-foundation.md): optional
   billing facade, durable webhooks, scoped services and installed-archive checks.
 - [Calendar/field-editor follow-up](./calendar-field-editors.md): shared picker

@@ -7,8 +7,8 @@ status: draft
 visibility: internal
 system: payments
 feature: operations and recovery
-applies_to: ["2.6.0 main source with @zero/plugin-payments 0.1.0; identify archives by commit and hash"]
-modes: [Stripe test, Stripe live, file system database]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+modes: [Stripe test, Stripe live, Square sandbox, Square production, file system database]
 ---
 
 # Payments Operations And Recovery
@@ -17,8 +17,14 @@ modes: [Stripe test, Stripe live, file system database]
 
 Payments are opt-in and use private `_zero_payments_*` tables on the existing
 system ReactiveDB. Enabling the plugin installs its versioned private schema;
-it does not migrate tenant tables, rewrite Guardian data, register a Stripe
+it does not migrate tenant tables, rewrite Guardian data, register a provider
 endpoint remotely or create products/prices on startup.
+
+Plugin 0.2.0 adds private intent, resource-proof and Square-attempt tables using
+additive `CREATE TABLE IF NOT EXISTS`. Existing Stripe connection identities and
+receipt keys remain unchanged; no core/application migration or data reset is
+required. Keep the original database and backups. Old plugin code ignores these
+additions, but cannot operate a Square connection or new merchant commands.
 
 ## Durable Commands
 
@@ -46,6 +52,12 @@ even error results for a key. A new key is not a generic recovery strategy.
 [Stripe idempotency semantics](https://docs.stripe.com/api/idempotent_requests)
 describe the provider's minimum retention and parameter checks.
 
+Square idempotent writes use 45-character hashed provider keys. Its subscription
+cancel/swap/action-deletion APIs lack such keys: Zero journals the attempt before
+transport admission and reconciles observed canonical results, without blindly
+resending unresolved writes. Durable per-subscription locks serialize distinct
+commands and are rechecked at the actual send. See [Square recovery](./square.md).
+
 Known pre-execution authentication, permission, rate-limit and concurrent-key
 admission failures remain retryable with the original operation ID. They do not
 permanently poison a command as a terminal rejection. Read outages never imply
@@ -55,7 +67,7 @@ always reports an unknown outcome.
 Exact outbound Checkout, portal, subscription-change, resume and refund parameters are saved
 before their provider call. Recovery uses those original parameters, not a new
 balance/item layout/price lookup that could invalidate the already accepted
-operation. Stripe still enforces the final balance on a genuinely new refund.
+operation. The provider still enforces the final balance on a genuinely new refund.
 Completed receipts remain replayable when catalog aliases or return URLs change,
 or new sales are paused. An unresolved operation still obeys the sales pause.
 
@@ -68,7 +80,7 @@ receipt is not erased.
 Every physical SDK mutation, including an automatic network retry, rechecks the
 command lease, replay deadline and live Guardian authority immediately before
 transport admission. A worker that lost its durable fence cannot start a new
-financial request. A request already accepted by Stripe cannot be undone by
+financial request. A request already accepted by a provider cannot be undone by
 revoking the caller; its receipt still needs reconciliation.
 
 ## Worker Health And Operator Recovery
@@ -76,19 +88,19 @@ revoking the caller; its receipt still needs reconciliation.
 The plugin owns its worker and drains admitted requests, webhook persistence and
 worker operations before Zero disposes its system services. Network calls have bounded SDK timeouts/retries. Idle work checks the
 indexed inbox once per second; empty probes are reads and acquire no write
-transaction/authority lease. UI renders do not start Stripe polling loops.
+transaction/authority lease. UI renders do not start provider polling loops.
 Replicas share durable claims and customer locks, with four-minute leases and
 command/job heartbeat renewal.
 
 Size freshness windows and replica capacity against the number of billing
-subjects and Stripe account rate limits. A worker processes a bounded batch of
+subjects and provider account rate limits. A worker processes a bounded batch of
 25 jobs serially; this is not a claim of unlimited provider throughput. Increase
 `maxProjectionAgeMs` deliberately for large installations and monitor pending
 work/freshness instead of hiding a backlog with stale grants.
 
 Failures retry with bounded exponential backoff (up to five minutes). After
 12 attempts a job is quarantined. Trusted operator code can inspect
-`getStripePayments(zero).jobs.list({ status: 'quarantined' })` and
+`getPayments(zero).jobs.list({ status: 'quarantined' })` and
 `store.pending()`, fix the actual provider/configuration/binding/callback problem,
 then call `jobs.retry(jobId)` to requeue it and wake the worker. Job inspection
 is bounded and excludes webhook bodies and provider parameters. Do not expose these operator capabilities to a browser route without
@@ -113,7 +125,7 @@ for private command/customer/event receipts.
 
 The plugin is a separate package under `packages/payments/`. The matching core
 adds `@zero/framework/payments`, `@zero/framework/payments/client`, scoped server
-services and `client.payments`. There is no Stripe dependency in the core.
+services and `client.payments`. There is no Stripe or Square SDK dependency in the core.
 An older core archive with the same 2.6.0 number can lack these exports; use the
 source commit and archive SHA-256, not just the version string.
 
@@ -123,10 +135,11 @@ metadata prevents automatic downloads of an unpublished framework package; it
 does not make the updated framework optional at runtime. Do not assume a registry
 publication or that `zero update` updates a separately installed plugin.
 
-The implementation is merged to `main`; `feature/stripe-payments-foundation`
-retains its reviewed feature history. Read
-the [qualification record](../../_work/audits/stripe-payments-foundation.md) for
-the actual source/archive checks. Merge/publication/deployment are separate actions.
+The original Stripe qualification is recorded in the
+[foundation audit](../../_work/audits/stripe-payments-foundation.md). The 0.2.0
+Square/custom-charge additions require matching newly built core/plugin archives;
+fresh-install tests verify both server imports and provider-free browser bundles.
+Merge, package publication and application deployment remain separate actions.
 
 ## Deployment Checklist
 
@@ -135,12 +148,12 @@ the actual source/archive checks. Merge/publication/deployment are separate acti
 2. Back up the file-backed system database; require SQLite synchronous FULL
    (or EXTRA) and verify the deployment volume's durability.
 3. Declare the intended merchant/mode, prices, return origins, Guardian policies
-   and policy version. Configure the Stripe billing portal in the merchant account.
+   and policy version. Configure the Stripe portal or Square's optional app-owned billing URL.
 4. Register the explicit versioned snapshot webhook endpoint and signing secret.
    Check that your proxy preserves the body and permits HTTPS and SSE.
 5. Qualify hosted test-mode Checkout, asynchronous failures, subscription changes,
    cancellation, refunds, signature failures and restart recovery in your own
-   authorized Stripe sandbox before enabling live sales.
+   authorized provider sandbox before enabling live sales.
 6. Inspect pending/quarantined counts and grant freshness during rollout. Set
    `acceptingSales: false` to pause new sales without blocking billing recovery.
 

@@ -71,7 +71,7 @@ than importing implementation files or reconstructing authentication in routes.
 
 - [Storage](./storage/index.md): authenticated files, ACLs, signed capabilities,
   shared-CAS publication and adaptive owner-bound Storage Studio.
-- [Stripe payments](../plugins/payments/index.md): separately installed billing
+- [Stripe and Square payments](../plugins/payments/index.md): separately installed billing
   integration using Guardian, private system persistence and reactive projections.
 
 ## Communication

@@ -7,16 +7,18 @@ status: draft
 visibility: internal
 system: payments
 feature: webhooks and reactive state
-applies_to: ["2.6.0 main source with @zero/plugin-payments 0.1.0; identify archives by commit and hash"]
-modes: [Stripe v1 snapshot events, ReactiveDB system plane]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+modes: [Stripe v1 snapshot events, Square events, ReactiveDB system plane]
 ---
 
 # Payment Webhooks And Reactive State
 
 [Payments](./index.md) · [Operations](./operations.md)
 
-The webhook endpoint verifies the exact raw UTF-8 body with the official SDK,
-including its timestamp/signature tolerance. Its Elysia route explicitly uses
+The Stripe webhook verifies the exact raw UTF-8 body with the official SDK,
+including its timestamp/signature tolerance. Square verifies HMAC over its exact
+configured public notification URL plus body; see [Square setup and ownership](./square.md).
+Each Elysia route explicitly uses
 `parse: 'none'`. Bodies are bounded to 512 KiB, including chunked requests.
 Do not insert a JSON/body parser ahead of this route.
 
@@ -70,11 +72,17 @@ quarantined jobs retain their private payload for recovery.
 
 An event for an unbound customer retries/quarantines; it cannot choose a Zero
 subject from metadata. Explicitly adopt an existing customer through the trusted
-API, then replay the event. Events without a customer do not establish a binding.
+API, then replay the event. These are Stripe's customer-bound event semantics;
+Square additionally follows its admitted checkout/order lineage and ignores
+unrelated merchant resources. Events without a customer do not establish a binding.
+Locally admitted [merchant charges](./merchant-charges.md) use a separate intent
+and `onMerchantEvent` callback, without inventing a subject/customer binding.
 
 ## Entitlements And Freshness
 
 Grants come from the server-owned offer mapping and canonical subscriptions.
+The following trial and zero-due policy describes Stripe; Square requires the
+latest PAID invoice and uses its actual location/subscription calendar boundary.
 Active subscriptions require paid or open zero-due invoice evidence; valid trials
 use their explicit expiry. Past-due/unpaid/canceled subscriptions do not receive
 an implicit grace policy. Expired item periods do not grant features.
@@ -100,7 +108,9 @@ receives a verified provider event ID and a freshly retrieved, allowlisted
 resource summary for Checkout, payments, invoices, subscriptions, charges or
 refunds. The original event body is not a payment-success proof.
 
-Both callbacks are **at least once**. Deduplicate side effects with `eventId`.
+The subjectless `onMerchantEvent` callback receives the same safe confirmation
+information plus local merchant operation correlation; see [merchant charges](./merchant-charges.md).
+All callbacks are **at least once**. Deduplicate side effects with `eventId`.
 Projection consumers also fence by subject/revision; an older callback must not
 overwrite a newer application projection. Callbacks must honor their abort signal
 and finish within `callbackTimeoutMs`. Timeouts remain durable retry work, not
@@ -120,7 +130,7 @@ It emits `{ revision, version }` initially and on later changes/heartbeats; fetc
 `snapshot()` when `version` changes (fall back to `revision` for older transports).
 The version also changes when a time-limited grant expires without a database
 write. The server uses ReactiveDB's committed change feed,
-including the managed external dispatcher, rather than polling Stripe per UI.
+including the managed external dispatcher, rather than polling the provider per UI.
 Slow readers coalesce to the newest revision using a pull-based, bounded stream;
 they do not build an unbounded event queue. Cancellation removes its database
 listener even while the consumer is paused. A heartbeat revalidates Guardian

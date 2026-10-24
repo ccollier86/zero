@@ -11,6 +11,9 @@ visibility: internal
 
 [Audit index](./index.md) · [Payments operations](../../plugins/payments/operations.md)
 
+This records the original 0.1.0 scope. The later 0.2.0 Square and custom-amount
+implementation has a separate [qualification record](./square-payments.md).
+
 Scope: optional `@zero/plugin-payments` 0.1.0 and the provider-free framework
 payments bridge, on `feature/stripe-payments-foundation`, based on main commit
 `8850d12a24f1744818ab17fa37bb3dbf235229da` (2.6.0). Inbox work remains in its

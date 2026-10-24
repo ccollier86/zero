@@ -30,7 +30,7 @@ test('customer binding is one-to-one, inbox claims are fenced and terminal paylo
     store.admit('evt_one', 'webhook', 'sensitive-fixture', 'cus_one'); expect(() => store.admit('evt_one', 'webhook', 'other-body', 'cus_one')).toThrow('conflicts');
     const first = store.claim()!; expect(store.claim()).toBeNull();
     db.prepare('UPDATE _zero_payments_inbox SET lease=0').run(); const second = store.claim()!;
-    store.complete(first); expect(store.pending().pending).toBe(1); store.complete(second); expect(store.pending().pending).toBe(0);
+    expect(() => store.complete(first)).toThrow('lost its claim'); expect(store.pending().pending).toBe(1); store.complete(second); expect(store.pending().pending).toBe(0);
     expect(db.prepare('SELECT payload FROM _zero_payments_inbox').get()).toEqual({ payload: '' });
     store.admit('evt_one', 'webhook', 'sensitive-fixture', 'cus_one'); expect(store.pending().pending).toBe(0);
   } finally { db.dispose(); }
