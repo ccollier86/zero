@@ -21,6 +21,9 @@ import { emitFrontendCode } from '../frontend/client/observability';
 import { OBS_CODES } from '../observability/codes';
 import { ModalHostContext, useModalHostLease, hasModalHosts } from './modal-host-context';
 import { ModalExitSnapshot, type ModalExitPaint } from './modal-exit-snapshot';
+import { isDrawerModal } from './drawer-types';
+import { animateDrawer } from './drawer-motion';
+import './drawer-shell.css';
 
 const EMPTY: ModalStoreState = { modals: [], closingIds: [] };
 
@@ -39,6 +42,27 @@ function useModalViewport(): React.CSSProperties {
     return () => { target.removeEventListener('resize', refresh); target.removeEventListener('scroll', refresh); };
   }, []);
   return viewport;
+}
+
+/** Bound a portalled inspector to its workspace without remounting its form when responsive modality changes. */
+function useDrawerBounds(container: HTMLElement | null | undefined, contained: boolean, id: string): React.CSSProperties | undefined {
+  const [bounds, setBounds] = React.useState<React.CSSProperties>();
+  React.useLayoutEffect(() => {
+    if (!container || !contained) { setBounds(undefined); return; }
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      if (!container.isConnected) { modals.disposeHost([id]); return; }
+      const rect = container.getBoundingClientRect();
+      setBounds(previous => previous?.left === rect.left && previous?.top === rect.top && previous?.width === rect.width && previous?.height === rect.height
+        ? previous : { position: 'fixed', left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: 'auto', bottom: 'auto' });
+    };
+    const refresh = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refresh);
+    observer?.observe(container); window.addEventListener('resize', refresh); window.addEventListener('scroll', refresh, { capture: true, passive: true }); measure();
+    return () => { observer?.disconnect(); cancelAnimationFrame(frame); window.removeEventListener('resize', refresh); window.removeEventListener('scroll', refresh, true); };
+  }, [container, contained, id]);
+  return bounds;
 }
 
 function useModalStore() {
@@ -81,6 +105,13 @@ function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalC
     setShellElement(paint.element);
   }, []);
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)', { initializeWithValue: true });
+  const narrow = useMediaQuery('(max-width: 640px)', { initializeWithValue: true });
+  const drawer = modal.descriptor?.drawer;
+  const blocking = isDrawerModal(drawer, narrow);
+  const drawerSide = drawer && (drawer.narrow ?? narrow) && drawer.mobile === 'bottom-sheet' ? 'bottom' : drawer?.side;
+  const targetContainer = portalContainer;
+  const contained = Boolean(drawer && !blocking && drawer.container);
+  const drawerBounds = useDrawerBounds(drawer?.container, contained, modal.id);
   const profile = React.useRef<ResolvedModalMotion | null>(null), entrance = React.useRef<ModalMotionEntrance>('rise');
   const admittedDefaults = React.useRef({ ...defaults }).current;
   const options = { ...admittedDefaults, ...modal.descriptor?.motion }, signature = JSON.stringify(options);
@@ -100,8 +131,8 @@ function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalC
     profile.current = resolveModalMotion(shell.current, options, false);
     setResolved(profile.current);
     if (!closing && (first || shell.current.getAnimations().some(animation => animation.playState === 'running'))) {
-      const playback = animateModalIn(shell.current, inner.current, descriptor?.trigger ?? null,
-        reduceProfile(profile.current, reduced));
+      const playback = drawerSide ? animateDrawer(shell.current, drawerSide, reduceProfile(profile.current, reduced), true)
+        : animateModalIn(shell.current, inner.current, descriptor?.trigger ?? null, reduceProfile(profile.current, reduced));
       entrance.current = playback.entrance;
     }
   }, [shellElement, signature]);
@@ -117,7 +148,8 @@ function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalC
   React.useLayoutEffect(() => {
     if (!closing) return;
     if (!shell.current) { modals.completeExit(modal.id, generation); return; }
-    const playback = animateModalOut(shell.current, inner.current, descriptor?.trigger ?? null, motion, entrance.current);
+    const playback = drawerSide ? animateDrawer(shell.current, drawerSide, motion, false)
+      : animateModalOut(shell.current, inner.current, descriptor?.trigger ?? null, motion, entrance.current);
     let current = true;
     void playback.finished.then(() => { if (current) modals.completeExit(modal.id, generation); });
     return () => { current = false; };
@@ -170,19 +202,22 @@ function ModalRenderer({ modal, depth, active, closing, layer, defaults, portalC
     ...(custom?.maxWidth ? { maxWidth: `min(${custom.maxWidth},100%)` } : {}),
     ...(custom?.height ? { height: `min(${custom.height},100%)` } : {}),
     ...(custom?.maxHeight ? { maxHeight: `min(${custom.maxHeight},100%)` } : {}),
+    ...(drawer ? { '--zero-modal-width': drawerSide === 'bottom' || drawerSide === 'top' ? '100%' : drawer.width,
+      height: drawerSide === 'bottom' || drawerSide === 'top' ? `min(${drawer.sheetHeight},100%)` : '100%' } : {}),
   } as React.CSSProperties;
   return <OverlayScopeProvider value={{ id: modal.id, zIndex: layer, active, themeStyle: theme, container: portalContainer }}>
     <ModalExitSnapshot closing={closing} element={shell} onCapture={paint => { exitPaint.current = paint; }}>
-    <Dialog.Root open={!closing} modal onOpenChange={open => {
+    <Dialog.Root open={!closing} modal={blocking} onOpenChange={open => {
       if (!open && active) void modals.requestClose(modal.id, { reason: 'backdrop' });
-    }}><Dialog.Portal forceMount container={portalContainer}>
-      <div className="zero-modal-layer" data-placement={descriptor?.placement ?? 'center'} data-size={size}
+    }}><Dialog.Portal forceMount container={targetContainer}>
+      <div className="zero-modal-layer" data-placement={drawerSide ?? descriptor?.placement ?? 'center'} data-size={size}
+        data-drawer={Boolean(drawer) || undefined} data-contained={contained || undefined}
         inert={!active || closing || undefined} aria-hidden={!active || closing || undefined}
-        style={{ ...viewport, zIndex: layer, transform: modalStackTransform(retainedDepth.current, motion), transition: `transform ${motion.timings.stack}ms ${motion.easing.out}`,
+        style={{ ...(contained ? drawerBounds : viewport), zIndex: layer, transform: modalStackTransform(retainedDepth.current, motion), transition: `transform ${motion.timings.stack}ms ${motion.easing.out}`,
           ...(closing ? { pointerEvents: 'none' } : {}) }}>
         {closing ? <div ref={mountPaint} className="zero-modal__exit-paint" aria-hidden="true" inert /> : <Dialog.Content forceMount ref={mountShell} role={descriptor?.role ?? (modal.type === 'confirm' ? 'alertdialog' : 'dialog')}
           {...(descriptor?.description == null ? { 'aria-describedby': undefined } : {})}
-          className={cn('zero-modal', !descriptor && 'zero-modal__legacy', descriptor?.className ?? modal.className)}
+          className={cn('zero-modal', drawer && 'zero-modal--drawer', !descriptor && 'zero-modal__legacy', descriptor?.className ?? modal.className)}
           data-zero-modal-id={modal.id} data-size={size}
           data-slot={descriptor?.dataSlot}
           data-height={descriptor?.height ?? (descriptor?.layout === 'tabs' || descriptor?.layout === 'nav' ? 'fixed' : 'auto')}
@@ -223,6 +258,7 @@ export interface ModalManagerProps {
 }
 
 function ModalHost({ children, motion: defaults, recedeSurface = true, portalContainer }: ModalManagerProps) {
+  const narrow = useMediaQuery('(max-width: 640px)', { initializeWithValue: true });
   const state = useModalStore(), surface = React.useRef<HTMLDivElement>(null), backdrop = React.useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = React.useState(false), [reserved, setReserved] = React.useState(false);
   const [layerBase, setLayerBase] = React.useState(1000);
@@ -252,8 +288,10 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
     returnFocus.current = restore; setFocusVersion(value => value + 1);
   }, []);
   const activeModals = state.modals.filter(modal => !state.closingIds.includes(modal.id));
-  const top = activeModals.at(-1), visible = activeModals.length > 0, present = state.modals.length > 0;
-  const activeBackdrop = top ? backdropThemes.current.get(top.id) : undefined;
+  const top = activeModals.at(-1), blockingModals = activeModals.filter(modal => isDrawerModal(modal.descriptor?.drawer, narrow));
+  const blockingTop = blockingModals.at(-1), visible = blockingModals.length > 0;
+  const present = state.modals.some(modal => isDrawerModal(modal.descriptor?.drawer, narrow));
+  const activeBackdrop = blockingTop ? backdropThemes.current.get(blockingTop.id) : undefined;
   const backdropColor = activeBackdrop ?? retainedBackdrop;
   React.useLayoutEffect(() => {
     // Retirement may remove the last shell before the shared scene fade ends.
@@ -279,17 +317,17 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
   React.useLayoutEffect(() => {
     if (!ownsHost || !mounted || !backdrop.current) return;
     controller.current ??= createModalSceneMotion(backdrop.current, recedeSurface ? surface.current : null);
-    const profile = top ? profiles.current.get(top.id) ?? resolveModalMotion(surface.current, defaults)
+    const profile = blockingTop ? profiles.current.get(blockingTop.id) ?? resolveModalMotion(surface.current, defaults)
       : [...profiles.current.values()].at(-1) ?? resolveModalMotion(surface.current, defaults);
     const epoch = ++sceneEpoch.current;
     if (visible) setReserved(true);
-    void controller.current.update({ visible, recedes: activeModals.some(modal =>
+    void controller.current.update({ visible, recedes: blockingModals.some(modal =>
       (profiles.current.get(modal.id) ?? profile).pageRecedes), motion: profile }).then(() => {
       if (epoch === sceneEpoch.current && !visible) {
         setReserved(false); profiles.current.clear(); backdropThemes.current.clear(); setRetainedBackdrop('');
       }
     });
-  }, [ownsHost, mounted, visible, top?.id, state.closingIds.join(','), profileVersion, defaults, recedeSurface]);
+  }, [ownsHost, mounted, visible, blockingTop?.id, state.closingIds.join(','), profileVersion, defaults, recedeSurface]);
   React.useLayoutEffect(() => {
     if (!ownsHost || !present && !reserved) return;
     const element = document.body, overflow = element.style.overflow, padding = element.style.paddingRight;
@@ -299,17 +337,17 @@ function ModalHost({ children, motion: defaults, recedeSurface = true, portalCon
     return () => { element.style.overflow = overflow; element.style.paddingRight = padding; };
   }, [ownsHost, present || reserved]);
   React.useLayoutEffect(() => {
-    if (present || reserved || !returnFocus.current) return;
+    if (present || reserved || state.modals.length || !returnFocus.current) return;
     const restore = returnFocus.current, epoch = sceneEpoch.current; returnFocus.current = null;
     const frame = requestAnimationFrame(() => {
       if (epoch === sceneEpoch.current && !modalStore.getSnapshot().context.modals.length) restore();
     });
     return () => cancelAnimationFrame(frame);
-  }, [present, reserved, focusVersion]);
+  }, [present, reserved, state.modals.length, focusVersion]);
   const scene = mounted && ownsHost && <>
     <div ref={backdrop} className="zero-modal-backdrop" hidden={!visible && !reserved} aria-hidden="true"
       style={{ ...(backdropColor ? { '--zero-modal-backdrop-color': backdropColor } : {}),
-        zIndex: top ? layerBase + state.modals.findIndex(item => item.id === top.id) * 10 : layerBase } as React.CSSProperties} />
+        zIndex: blockingTop ? layerBase + state.modals.findIndex(item => item.id === blockingTop.id) * 10 : layerBase } as React.CSSProperties} />
     {state.modals.map((modal, index) => <ModalRenderer key={modal.id} modal={modal} layer={layerBase + 1 + index * 10}
       depth={Math.max(0, activeModals.length - 1 - activeModals.findIndex(item => item.id === modal.id))}
       active={top?.id === modal.id} closing={state.closingIds.includes(modal.id)} defaults={defaults}

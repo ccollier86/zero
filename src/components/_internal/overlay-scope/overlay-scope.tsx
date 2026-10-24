@@ -25,7 +25,11 @@ export function hasOwnedFloatingOverlay(id: string): boolean {
 }
 
 /** Register one mounted floating branch and inherit its owner's token lane and layer. */
-export function useOwnedFloatingOverlay() {
+export function useOwnedFloatingOverlay(): {
+  owner: OverlayScope | null;
+  ref: (element: HTMLElement | null) => void;
+  contentProps: { 'data-zero-overlay-owner'?: string; inert?: boolean; style?: React.CSSProperties };
+} {
   const owner = useOverlayScope();
   const cleanup = React.useRef<(() => void) | null>(null);
   const ref = React.useCallback((element: HTMLElement | null) => {

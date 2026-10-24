@@ -51,6 +51,8 @@ import {
 
 export interface WorkflowPluginConfig {
   db: ReactiveDB;
+  /** False omits the native definition, instance, event and lifecycle HTTP surfaces, not runtime ownership. */
+  http?: boolean;
   /** App-local owner used by managed createApp() composition. */
   runtime?: ZeroAppRuntime;
   /** Concrete app scheduler. Managed apps should always inject this. */

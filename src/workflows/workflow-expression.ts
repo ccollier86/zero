@@ -9,6 +9,7 @@
 import type { WorkflowJsonValue } from './workflow-ir';
 import { WORKFLOW_GRAPH_LIMITS } from './workflow-ir';
 import { WorkflowError } from './workflow-error';
+import { serializeWorkflowRuntimeJson, MAX_WORKFLOW_RUNTIME_JSON_BYTES } from './workflow-runtime-json';
 
 const MAX_EXPRESSION_LITERAL_DEPTH = 64;
 
@@ -64,6 +65,18 @@ export interface WorkflowIncludesExpression {
   value: WorkflowExpression;
 }
 
+/** Construct a JSON object from independently evaluated bindings. Missing fields fail rather than disappear. */
+export interface WorkflowObjectExpression {
+  type: 'object';
+  fields: Readonly<Record<string, WorkflowExpression>>;
+}
+
+/** Construct a dense JSON array from independently evaluated bindings. */
+export interface WorkflowArrayExpression {
+  type: 'array';
+  items: readonly WorkflowExpression[];
+}
+
 /** Safe expression nodes accepted by code, database, API, and visual editors. */
 export type WorkflowExpression =
   | WorkflowLiteralExpression
@@ -72,7 +85,9 @@ export type WorkflowExpression =
   | WorkflowLogicalExpression
   | WorkflowNotExpression
   | WorkflowExistsExpression
-  | WorkflowIncludesExpression;
+  | WorkflowIncludesExpression
+  | WorkflowObjectExpression
+  | WorkflowArrayExpression;
 
 export type WorkflowExpressionInput = WorkflowExpression | WorkflowJsonValue;
 
@@ -87,6 +102,19 @@ export interface WorkflowExpressionContext {
 
 /** Ergonomic, closure-free expression builders for code-authored workflows. */
 export const expr = Object.freeze({
+  object: (fields: Readonly<Record<string, WorkflowExpressionInput>>): WorkflowExpression => {
+    if (!isRecord(fields)) fail('Object bindings require a fields map');
+    assertExpressionObject(fields);
+    return { type: 'object', fields: Object.fromEntries(Object.entries(fields).map(([key, value]) => {
+      assertPathPart(key);
+      return [key, asExpression(value)];
+    })) };
+  },
+  array: (items: readonly WorkflowExpressionInput[]): WorkflowExpression => {
+    if (!Array.isArray(items)) fail('Array bindings require an items array');
+    assertExpressionArray(items);
+    return { type: 'array', items: items.map(asExpression) };
+  },
   literal: (value: WorkflowJsonValue): WorkflowExpression => literal(value),
   input: (path?: string | readonly string[]): WorkflowExpression => ref('input', path),
   previous: (path?: string | readonly string[]): WorkflowExpression => ref('previous', path),
@@ -114,8 +142,9 @@ export const expr = Object.freeze({
 /** Return true only for an object carrying a recognized expression tag. */
 export function isWorkflowExpression(value: unknown): value is WorkflowExpression {
   if (!isRecord(value)) return false;
-  return ['literal', 'ref', 'compare', 'logical', 'not', 'exists', 'includes']
-    .includes(String(value.type));
+  const tag = Object.getOwnPropertyDescriptor(value, 'type');
+  return Boolean(tag && 'value' in tag && typeof tag.value === 'string'
+    && ['literal', 'ref', 'compare', 'logical', 'not', 'exists', 'includes', 'object', 'array'].includes(tag.value));
 }
 
 /** Validate expression shape, depth, size, reference paths, and JSON literals. */
@@ -128,6 +157,21 @@ export function validateWorkflowExpression(expression: unknown): asserts express
     if (!isRecord(value)) fail('Expression node must be an object');
     assertExpressionObject(value);
     switch (value.type) {
+      case 'object':
+        assertKeys(value, ['type', 'fields']);
+        if (!isRecord(value.fields)) fail('Object bindings require a fields map');
+        assertExpressionObject(value.fields);
+        for (const [key, child] of Object.entries(value.fields)) {
+          assertPathPart(key);
+          visit(child, depth + 1);
+        }
+        return;
+      case 'array':
+        assertKeys(value, ['type', 'items']);
+        if (!Array.isArray(value.items)) fail('Array bindings require an items array');
+        assertExpressionArray(value.items);
+        for (const child of value.items) visit(child, depth + 1);
+        return;
       case 'literal':
         assertKeys(value, ['type', 'value']);
         assertJson(value.value, new Set());
@@ -167,6 +211,7 @@ export function validateWorkflowExpression(expression: unknown): asserts express
         if (!Array.isArray(value.values) || value.values.length === 0) {
           fail('Logical expressions require at least one value');
         }
+        assertExpressionArray(value.values);
         for (const child of value.values) visit(child, depth + 1);
         return;
       case 'not':
@@ -192,12 +237,36 @@ export function evaluateWorkflowExpression(
   context: WorkflowExpressionContext,
 ): unknown {
   validateWorkflowExpression(expression);
+  return evaluate(expression, context, '');
+}
+
+function evaluate(expression: WorkflowExpression, context: WorkflowExpressionContext, destination: string): unknown {
   switch (expression.type) {
+    case 'object': {
+      const result: Record<string, unknown> = {};
+      let bytes = 2, fields = 0;
+      for (const [key, child] of Object.entries(expression.fields)) {
+        const path = `${destination}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`;
+        const text = mappedJson(evaluate(child, context, path), path, child);
+        bytes += Buffer.byteLength(JSON.stringify(key), 'utf8') + Buffer.byteLength(text, 'utf8') + (fields++ ? 2 : 1);
+        assertMappingBudget(bytes, path);
+        result[key] = JSON.parse(text);
+      }
+      return result;
+    }
+    case 'array': {
+      let bytes = 2;
+      return expression.items.map((child, index) => {
+        const path = `${destination}/${index}`, text = mappedJson(evaluate(child, context, path), path, child);
+        bytes += Buffer.byteLength(text, 'utf8') + (index ? 1 : 0); assertMappingBudget(bytes, path);
+        return JSON.parse(text);
+      });
+    }
     case 'literal': return expression.value;
     case 'ref': return readReference(expression, context);
     case 'compare': {
-      const left = evaluateWorkflowExpression(expression.left, context);
-      const right = evaluateWorkflowExpression(expression.right, context);
+      const left = evaluate(expression.left, context, destination);
+      const right = evaluate(expression.right, context, destination);
       if (expression.op === 'eq') return jsonEqual(left, right);
       if (expression.op === 'ne') return !jsonEqual(left, right);
       if (expression.op === 'gt') return comparable(left, right, (a, b) => a > b);
@@ -207,13 +276,13 @@ export function evaluateWorkflowExpression(
     }
     case 'logical':
       return expression.op === 'and'
-        ? expression.values.every((value) => Boolean(evaluateWorkflowExpression(value, context)))
-        : expression.values.some((value) => Boolean(evaluateWorkflowExpression(value, context)));
-    case 'not': return !Boolean(evaluateWorkflowExpression(expression.value, context));
-    case 'exists': return evaluateWorkflowExpression(expression.value, context) !== undefined;
+        ? expression.values.every((value) => Boolean(evaluate(value, context, destination)))
+        : expression.values.some((value) => Boolean(evaluate(value, context, destination)));
+    case 'not': return !Boolean(evaluate(expression.value, context, destination));
+    case 'exists': return evaluate(expression.value, context, destination) !== undefined;
     case 'includes': {
-      const collection = evaluateWorkflowExpression(expression.collection, context);
-      const sought = evaluateWorkflowExpression(expression.value, context);
+      const collection = evaluate(expression.collection, context, destination);
+      const sought = evaluate(expression.value, context, destination);
       if (Array.isArray(collection)) return collection.some((value) => jsonEqual(value, sought));
       if (typeof collection === 'string') return collection.includes(String(sought));
       if (isRecord(collection) && typeof sought === 'string') {
@@ -221,6 +290,31 @@ export function evaluateWorkflowExpression(
       }
       return false;
     }
+  }
+}
+
+function requireMappedValue(value: unknown, destination: string, source?: WorkflowExpression): unknown {
+  if (value === undefined) {
+    const reference = source?.type === 'ref' ? ` from ${source.scope}${source.node ? ':' + source.node : ''}:/${source.path.map(part => part.replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}` : '';
+    fail(`Workflow binding at "${destination}" resolves to a missing value${reference}; use explicit null when intended`);
+  }
+  return value;
+}
+
+function mappedJson(value: unknown, destination: string, source?: WorkflowExpression): string {
+  return serializeWorkflowRuntimeJson(requireMappedValue(value, destination, source), { code: 'WORKFLOW_GRAPH_INVALID', label: `Workflow binding at "${destination || '/'}"` })!;
+}
+
+function assertMappingBudget(bytes: number, destination: string): void {
+  if (bytes > MAX_WORKFLOW_RUNTIME_JSON_BYTES) throw new WorkflowError(`Workflow binding at "${destination}" exceeds its byte limit`, 'WORKFLOW_GRAPH_INVALID', 413);
+}
+
+function assertExpressionArray(value: readonly unknown[]): void {
+  if (value.length > WORKFLOW_GRAPH_LIMITS.maxExpressionNodes) fail('Expression is too large');
+  if (Object.getOwnPropertySymbols(value).length || Object.getOwnPropertyNames(value).some(key => key !== 'length' && !/^(0|[1-9]\d*)$/.test(key))) fail('Binding arrays cannot have named or symbol properties');
+  for (let i = 0; i < value.length; i++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+    if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) fail('Binding arrays must be dense without accessors');
   }
 }
 
@@ -279,17 +373,20 @@ function readReference(refValue: WorkflowReferenceExpression, context: WorkflowE
   else if (refValue.scope === 'itemIndex') value = context.itemIndex;
   else {
     const outputs = context.outputs;
-    value = outputs && Object.prototype.hasOwnProperty.call(outputs, refValue.node!)
-      ? outputs[refValue.node!]
-      : undefined;
+    value = outputs ? ownValue(outputs, refValue.node!) : undefined;
   }
   for (const part of refValue.path) {
     if (value === null || typeof value !== 'object') return undefined;
-    value = Object.prototype.hasOwnProperty.call(value, part)
-      ? (value as Record<string, unknown>)[part]
-      : undefined;
+    value = ownValue(value, part);
   }
   return value;
+}
+
+function ownValue(value: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!('value' in descriptor)) fail('Workflow references cannot invoke property accessors');
+  return descriptor.value;
 }
 
 function comparable(
@@ -335,10 +432,11 @@ function assertJson(value: unknown, seen: Set<object>, depth = 0): void {
   seen.add(value);
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
-      if (!Object.prototype.hasOwnProperty.call(value, index)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
         fail('Expression literal arrays must not be sparse');
       }
-      assertJson(value[index], seen, depth + 1);
+      assertJson(descriptor.value, seen, depth + 1);
     }
     const extra = Object.getOwnPropertyNames(value)
       .find((key) => key !== 'length' && !/^\d+$/.test(key));

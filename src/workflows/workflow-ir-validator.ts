@@ -74,7 +74,7 @@ function validateGraph(
 ): void {
   if (depth > WORKFLOW_GRAPH_LIMITS.maxDepth) invalid('Workflow graph nesting is too deep');
   if (!isRecord(value)) invalid('Workflow graph must be an object');
-  assertKeys(value, ['schemaVersion', 'entry', 'nodes', 'edges'], 'Workflow graph');
+  assertKeys(value, ['schemaVersion', 'entry', 'nodes', 'edges', 'metadata'], 'Workflow graph');
   if (value.schemaVersion !== WORKFLOW_GRAPH_SCHEMA_VERSION) {
     invalid(`Unsupported workflow graph schema version "${String(value.schemaVersion)}"`);
   }

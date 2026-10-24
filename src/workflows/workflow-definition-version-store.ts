@@ -52,6 +52,11 @@ type VersionDatabase = Pick<
 export class WorkflowDefinitionVersionStore {
   readonly drafts: WorkflowDefinitionDraftStore;
 
+  /** Keep an authoring mutation and its final live authority assertion in one writer transaction. */
+  command<T>(operation: () => T, assertCurrentAuthority: () => void): T {
+    return this.transaction(() => { assertCurrentAuthority(); const result = operation(); assertCurrentAuthority(); return result; });
+  }
+
   constructor(
     private readonly db: VersionDatabase,
     private readonly clock: () => string = () => new Date().toISOString(),
@@ -157,6 +162,59 @@ export class WorkflowDefinitionVersionStore {
       );
     }
     return result;
+  }
+
+  /** Create an unpublished catalog and its first mutable draft in one owner-fenced commit. */
+  createDraft(input: PublishWorkflowDefinitionVersionInput & { editorMetadata?: unknown }, assertCurrentAuthority?: () => void) {
+    const name = requireName(input.name);
+    const scope = normalizeScope(input.scope);
+    assertWorkflowDefinitionSourceScope(input.source, scope);
+    const content = canonicalizeWorkflowVersionContent(input);
+    return this.transaction(() => {
+      assertCurrentAuthority?.();
+      if (this.findCatalogByName(name, scope)) throw conflict('A workflow definition with this name already exists');
+      const catalog = this.createCatalog(input, name, scope, content);
+      const result = this.drafts.save({ definitionId: catalog.definition_id, source: input.source,
+        graphFormat: input.graphFormat, schemaVersion: input.schemaVersion, graph: input.graph,
+        inputSchema: input.inputSchema, accessPolicy: input.accessPolicy, actorId: input.actorId,
+        editorMetadata: input.editorMetadata }, assertCurrentAuthority);
+      assertCurrentAuthority?.();
+      return result;
+    });
+  }
+
+  /** Resolve an exact catalog only inside the requested definition scope. */
+  getCatalog(definitionId: string, scope: WorkflowDefinitionScope): WorkflowDefinitionCatalogRecord | null {
+    this.assertCurrent();
+    const normalized = normalizeScope(scope);
+    return this.db.prepare('SELECT * FROM workflow_definitions WHERE definition_id = ? AND scope_type = ? AND scope_id = ?')
+      .get(definitionId, normalized.type, normalized.id) as WorkflowDefinitionCatalogRecord | null;
+  }
+
+  /** Bounded keyset page of owned catalogs; the cursor is the last exact name. */
+  pageCatalogs(scope: WorkflowDefinitionScope, limit: number, after = ''): WorkflowDefinitionCatalogRecord[] {
+    this.assertCurrent();
+    const normalized = normalizeScope(scope);
+    return this.db.prepare(`SELECT * FROM workflow_definitions WHERE scope_type = ? AND scope_id = ? AND name > ? ORDER BY name LIMIT ?`)
+      .all(normalized.type, normalized.id, after, limit) as WorkflowDefinitionCatalogRecord[];
+  }
+
+  /** Bounded newest-first immutable version metadata without loading graph payloads. */
+  pageVersions(definitionId: string, limit: number, before?: number): Array<Omit<WorkflowDefinitionVersionRecord, 'graph_json' | 'input_schema_json' | 'access_policy_json'>> {
+    this.assertCurrent();
+    return this.db.prepare(`SELECT version_id, definition_id, version_number, source, graph_format, schema_version,
+      fingerprint, status, created_by, created_at, retired_by, retired_at FROM workflow_definition_versions
+      WHERE definition_id = ?${before === undefined ? '' : ' AND version_number < ?'} ORDER BY version_number DESC LIMIT ?`)
+      .all(...(before === undefined ? [definitionId, limit] : [definitionId, before, limit])) as Array<Omit<WorkflowDefinitionVersionRecord, 'graph_json' | 'input_schema_json' | 'access_policy_json'>>;
+  }
+
+  /** Bounded stable draft metadata; graphs are fetched only by getDraft. */
+  pageDrafts(definitionId: string, limit: number, after = '') {
+    this.assertCurrent();
+    return this.db.prepare(`SELECT draft_id, definition_id, base_version_id, fingerprint, revision, created_by, updated_by,
+      created_at, updated_at FROM _workflow_definition_drafts WHERE definition_id = ? AND draft_id > ? ORDER BY draft_id LIMIT ?`)
+      .all(definitionId, after, limit) as Array<Pick<import('./workflow-definition-version-types').WorkflowDefinitionDraftRecord,
+        'draft_id' | 'definition_id' | 'base_version_id' | 'fingerprint' | 'revision' | 'created_by' | 'updated_by' | 'created_at' | 'updated_at'>>;
   }
 
   /**

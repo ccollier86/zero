@@ -11,6 +11,7 @@ import { Elysia, t, type AnyElysia } from 'elysia';
 
 import { createAuthPlugin, getAuthStore } from '../../auth/auth.plugin';
 import { OBS_CODES } from '../../observability/codes';
+import { WorkflowError } from '../../workflows/workflow-error';
 import { MemoryEventStore } from '../../observability/memory-event-store';
 import { createObservabilityPlugin } from '../../observability/plugin';
 import type { ReactiveDB } from '../../sync';
@@ -35,6 +36,18 @@ afterEach(async () => {
 });
 
 describe('server extensions middleware policy', () => {
+  test('public workflow failures retain stable JSON codes while server details stay private', async () => {
+    const extensions = await createServerExtensionApp({ extensions: [
+      defineEndpoint({ method: 'POST', path: '/api/workflow-conflict', handler() { throw new WorkflowError('Changed workflow command', 'WORKFLOW_START_IDEMPOTENCY_CONFLICT', 409); } }),
+      defineEndpoint({ method: 'POST', path: '/api/workflow-failure', handler() { throw new WorkflowError('Private SQL and bound customer data', 'WORKFLOW_INTERNAL_ERROR', 500); } }),
+    ] });
+    const app = new Elysia().use(extensions).compile(); policyApps.push(app);
+    const conflict = await app.handle(new Request('http://localhost/api/workflow-conflict', { method: 'POST' }));
+    expect(conflict.status).toBe(409); expect(await conflict.json()).toMatchObject({ code: 'WORKFLOW_START_IDEMPOTENCY_CONFLICT' });
+    const failure = await app.handle(new Request('http://localhost/api/workflow-failure', { method: 'POST' }));
+    expect(failure.status).toBe(500); const error = await failure.text();
+    expect(error).toContain('WORKFLOW_INTERNAL_ERROR'); expect(error).not.toContain('Private SQL');
+  });
   test('sanitizes validation and parse failures without reflecting request values', async () => {
     const events = new MemoryEventStore();
     const observability = {

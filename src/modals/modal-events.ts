@@ -138,7 +138,7 @@ function validateDescriptor(descriptor: ModalDescriptor<unknown>): void {
     }
   } else if (descriptor.sections !== undefined) throw new TypeError('Content modals cannot supply sections.');
   for (const [key, choices] of Object.entries({ size: ['xs', 'sm', 'md', 'lg', 'xl', 'full'],
-    tone: ['default', 'info', 'success', 'danger'], placement: ['center', 'left', 'right', 'bottom'],
+    tone: ['default', 'info', 'success', 'danger'], placement: ['center', 'left', 'right', 'bottom', 'top'],
     height: ['auto', 'fixed'], scrollTreatment: ['arc', 'native'], scrollbar: ['auto', 'thin', 'hidden'], navScrollbar: ['auto', 'thin', 'hidden'] })) {
     const value = (descriptor as unknown as Record<string, unknown>)[key];
     if (value !== undefined && (typeof value !== 'string' || !choices.includes(value))) throw new TypeError(`Unsupported modal ${key}.`);
@@ -170,11 +170,25 @@ function validateDescriptor(descriptor: ModalDescriptor<unknown>): void {
   if (descriptor.beforeClose !== undefined && typeof descriptor.beforeClose !== 'function') throw new TypeError('Modal beforeClose must be a function.');
   if (descriptor.onCloseAutoFocus !== undefined && typeof descriptor.onCloseAutoFocus !== 'function') throw new TypeError('Modal onCloseAutoFocus must be a function.');
   validateModalMotionOptions(descriptor.motion);
+  if (descriptor.drawer !== undefined) {
+    const drawer = descriptor.drawer;
+    if (!drawer || typeof drawer !== 'object' || !['left', 'right', 'top', 'bottom'].includes(drawer.side)
+      || !['modal', 'nonmodal'].includes(drawer.mode) || !['bottom-sheet', 'modal', 'same'].includes(drawer.mobile)
+      || typeof drawer.reserveSpace !== 'boolean') throw new TypeError('Unsupported drawer presentation.');
+    if (drawer.narrow !== undefined && typeof drawer.narrow !== 'boolean') throw new TypeError('Drawer responsive admission must be boolean.');
+    for (const size of [drawer.width, drawer.sheetHeight]) {
+      if (typeof size !== 'string' || !size.trim() || size.length > 256 || /[;{}]/.test(size)
+        || typeof CSS !== 'undefined' && !CSS.supports('width', size)) throw new TypeError('Drawer dimensions must be bounded CSS lengths.');
+    }
+    if (drawer.container != null && (typeof HTMLElement === 'undefined' || !(drawer.container instanceof HTMLElement)
+      || drawer.container.ownerDocument !== document || !drawer.container.isConnected)) throw new TypeError('Drawer container must be connected in the current document.');
+  }
 }
 
 function snapshotDescriptor(descriptor: ModalDescriptor<unknown>): ModalDescriptor<unknown> {
   return Object.freeze({ ...descriptor,
     motion: descriptor.motion ? Object.freeze({ ...descriptor.motion }) : undefined,
+    drawer: descriptor.drawer ? Object.freeze({ ...descriptor.drawer }) : undefined,
     customSize: descriptor.customSize ? Object.freeze({ ...descriptor.customSize }) : undefined,
     footer: descriptor.footer ? Object.freeze({ ...descriptor.footer }) : undefined,
     actions: descriptor.actions ? Object.freeze(descriptor.actions.map(action => Object.freeze({ ...action }))) : undefined,

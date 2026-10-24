@@ -134,6 +134,8 @@ export interface WorkflowIREdge {
 /** Immutable workflow graph persisted on a definition version and run snapshot. */
 export interface WorkflowGraphIR {
   schemaVersion: typeof WORKFLOW_GRAPH_SCHEMA_VERSION;
+  /** Immutable app-admitted dependency manifest or authoring annotations. Never interpreted as code or authority. */
+  metadata?: WorkflowJsonValue;
   entry: string;
   nodes: readonly WorkflowIRNode[];
   edges: readonly WorkflowIREdge[];

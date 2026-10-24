@@ -6,6 +6,7 @@
 import type { ReactNode } from 'react';
 import type { ModalMotionOptions } from './modal-motion-types';
 import type { ModalCloseContext, ModalCustomSize, ModalSize } from './modal.types';
+import type { ModalDrawerPresentation } from './drawer-types';
 
 /** A user dismissal is distinct from accepted work and authoritative retirement. */
 export type ModalCloseReason = 'escape' | 'backdrop' | 'close-button' | 'cancel'
@@ -83,7 +84,9 @@ export interface ModalDescriptorBase<T = unknown> {
   readonly tone?: 'default' | 'info' | 'success' | 'danger';
   readonly size?: ModalSize;
   readonly customSize?: ModalCustomSize;
-  readonly placement?: 'center' | 'left' | 'right' | 'bottom';
+  readonly placement?: 'center' | 'left' | 'right' | 'bottom' | 'top';
+  /** Renderer-owned projection used by the public drawer facade; shares this manager's lifecycle. */
+  readonly drawer?: ModalDrawerPresentation;
   readonly height?: 'auto' | 'fixed';
   /** Shared edge fades/overlay rails by default; native retains the original shell's scroll skin. */
   readonly scrollTreatment?: 'arc' | 'native';

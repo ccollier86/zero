@@ -10,6 +10,8 @@ export {
   type WorkflowPluginConfig,
 } from './workflow.plugin';
 export { WorkflowRegistry, type RegisterWorkflowOptions } from './workflow-registry';
+export type { WorkflowDefinitionAuthoring, WorkflowAuthoringPageOptions, WorkflowAuthoringPage, WorkflowCreateDraftInput, WorkflowPublishDraftOptions } from './workflow-definition-authoring';
+export type { DatabaseWorkflowDefinitionInput, DatabaseWorkflowDraftInput } from './workflow-definition-manager';
 export {
   WorkflowActivityCatalog,
   type WorkflowActivityCapability,
@@ -68,6 +70,8 @@ export {
   type WorkflowExpressionContext,
   type WorkflowExpressionInput,
   type WorkflowIncludesExpression,
+  type WorkflowObjectExpression,
+  type WorkflowArrayExpression,
   type WorkflowLiteralExpression,
   type WorkflowLogicalExpression,
   type WorkflowNotExpression,
@@ -121,6 +125,7 @@ export {
   type WorkflowSystemEventDeliveryResult,
 } from './workflow-system-event-delivery-contract';
 export type { WorkflowStartOptions } from './workflow-start-options';
+export type { WorkflowActorStartOptions, WorkflowActorStartResult } from './workflow-actor-start-contract';
 export type { WorkflowSystemStartOptions, WorkflowSystemStartResult, WorkflowSystemStartMutation } from './workflow-system-start-contract';
 export {
   WorkflowInteractionAuthority,

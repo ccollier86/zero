@@ -1,6 +1,7 @@
 /** Computed scoped-backdrop and real scene-retirement checks; no app bootstrap or default-theme activation. */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createRequire } from 'node:module';
+import { mkdtemp, rm } from 'node:fs/promises';
 import type { Page } from 'playwright';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type PlaywrightTestBrowserLease } from '../test-support/playwright-test-browser';
 
@@ -8,17 +9,22 @@ const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 let lease: PlaywrightTestBrowserLease | undefined, bundle = '', css = '';
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
-  const build = Bun.spawn([process.execPath, '--no-env-file', 'build', `${import.meta.dir}/modal-backdrop-theme.browser-fixture.tsx`,
-    '--target=browser', '--format=iife'], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
-  const [code, output, diagnostic] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
-  if (code !== 0) throw new Error(`Backdrop fixture build failed: ${diagnostic}`);
-  bundle = output;
+  const directory = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/backdrop-browser-');
+  let componentCss = '';
+  try {
+    const build = Bun.spawn([process.execPath, '--no-env-file', 'build', `${import.meta.dir}/modal-backdrop-theme.browser-fixture.tsx`,
+      '--target=browser', '--format=iife', '--outdir=' + directory, '--entry-naming=fixture.[ext]'], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
+    const [code, output, diagnostic] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
+    if (code !== 0) throw new Error(`Backdrop fixture build failed: ${output}\n${diagnostic}`);
+    bundle = await Bun.file(directory + '/fixture.js').text();
+    if (await Bun.file(directory + '/fixture.css').exists()) componentCss = await Bun.file(directory + '/fixture.css').text();
+  } finally { await rm(directory, { recursive: true, force: true }); }
   const require = createRequire(import.meta.url), { compile } = require('@tailwindcss/node') as typeof import('@tailwindcss/node');
   const url = new URL('../frontend/styles/globals.css', import.meta.url);
   const compiler = await compile(await Bun.file(url).text(), { base: new URL('../frontend/styles/', import.meta.url).pathname,
     from: url.pathname, onDependency() {} });
   const button = await Bun.file(new URL('../components/ui/button.tsx', import.meta.url)).text();
-  css = compiler.build(button.match(/[^\s"'`]+/gu) ?? []);
+  css = compiler.build(button.match(/[^\s"'`]+/gu) ?? []) + '\n' + componentCss;
   lease = await acquirePlaywrightTestBrowser();
 }, 60_000);
 afterAll(() => lease?.release());

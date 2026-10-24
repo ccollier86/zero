@@ -182,7 +182,7 @@ pagination percentage honest when another page is added.
 
 | Area | Status and instruction |
 | --- | --- |
-| Managed drawer and BottomSheet with detents | [Planned separately](../_work/drawer-bottom-sheet-system-plan.md). Existing Sheet remains; do not invent a new drawer facade or call a bottom-positioned modal a detent sheet. |
+| Managed drawers and advanced sheets | [Managed drawers](../frontend/drawers/index.md) now supply workspace inspectors and basic responsive sheets. Gesture/detent behavior remains [planned separately](../_work/drawer-bottom-sheet-system-plan.md). Existing Sheet remains compatible. |
 | Arc TagInput, PhoneInput, MentionInput and InlineEdit refresh | [Documentation-only modernization plan](../_work/arc-input-modernization-plan.md). Existing TagInput, PhoneInput and InlineEditText remain usable. A new MentionInput integration is not shipped by this checkpoint. |
 | Universal NumberField and reusable rolling-number facade | [Planned numeric work](../_work/number-field-rolling-number-plan.md). Existing table/number presentation does not prove these proposed exports exist. |
 | Further file/folder organization | [Explicitly deferred](../_work/frontend-component-organization-plan.md#current-scope-hold). Preserve qualified moves and compatibility forwards already present; do not resume the larger cleanup during an app upgrade. |
@@ -530,8 +530,9 @@ tenant ownership, exact file source and supported legacy APIs. Follow each
 system's full manual; do not build a second modal, tooltip, chart-query or theme
 owner. Do not force-overwrite customized copies.
 
-Drawer/BottomSheet, planned Arc input/number work and further folder organization
-are outside this upgrade. Keep original components and theme files.
+Use the new managed drawer contract only when the app needs an inspector.
+Advanced sheet gestures/detents, planned Arc input/number work and further folder
+organization remain outside this upgrade. Keep original components and theme files.
 Run app type/build and focused interaction tests, collect before/after screenshots,
 and document rollback and any unresolved findings. Stop for approval before
 deployment, merging to main or deleting originals.

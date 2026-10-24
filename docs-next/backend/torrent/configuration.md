@@ -30,7 +30,7 @@ AppWorkflowsConfig object. No workflow-specific env variables are introduced.
 
 ## Managed Registration
 
-AppWorkflowsConfig accepts register, onServiceCreated, shutdownGraceMs and
+AppWorkflowsConfig accepts http, register, onServiceCreated, shutdownGraceMs and
 interactionAuthority. register(registry, { ai }) can be async and is awaited
 before crash recovery and service publication. The AI context is the app-bound
 AIService or null, not a browser credential.
@@ -74,6 +74,14 @@ All Torrent tables—including private coordination/memory/version state—belon
 to the managed system database, separate from application/Fabric business data.
 Do not add workflow table schemas to a customer realm as a relocation strategy.
 
+`http` defaults true. Set `http: false` to retain the managed service, registration,
+recovery and injected facade while removing every generic `/workflows` HTTP
+route, including definitions and lifecycle commands. Apps with their own
+resource/caller policy can then expose one admitted HTTP/MCP surface through
+the [public authoring API](./definition-authoring.md) and
+[actor-preserving start receipts](./actor-starts.md). Apply the host's policy
+to reads, writes, results and lifecycle, and recheck resources in every activity.
+
 ## Defaults And Runtime Phase
 
 shutdownGraceMs defaults to 30,000 and accepts safe integers from 0 through the
@@ -97,7 +105,7 @@ register is preferred over the compatibility synchronous onRegistryCreated.
 Inject concrete app-local auth/Scheduler dependencies; otherwise compatibility
 lookups are used. The plugin installs schemas, awaits readiness/registration,
 constructs its owner-fenced service, recovers and only then publishes it.
-It mounts /workflows; no configurable route-prefix property is provided.
+It mounts /workflows unless `http: false`; no configurable route-prefix property is provided.
 
 Explicit lower-level composition does not automatically supply Guardian,
 scope-closed services, persisted signing authority, app shutdown or Sync policy.

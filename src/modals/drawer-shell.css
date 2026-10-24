@@ -1,0 +1,8 @@
+/* Additive managed drawer presentation. The original modal shell and legacy theme remain byte-for-byte preserved. */
+.zero-modal-layer[data-placement="top"] { place-items: start center; }
+.zero-modal-layer[data-drawer][data-placement] { padding: 0; }
+.zero-modal-layer[data-drawer][data-placement="left"], .zero-modal-layer[data-drawer][data-placement="right"] { place-items: stretch end; }
+.zero-modal-layer[data-drawer][data-placement="left"] { place-items: stretch start; }
+.zero-modal-layer[data-drawer] .zero-modal--drawer { border-radius: 0; }
+.zero-modal-layer[data-drawer][data-placement="bottom"] .zero-modal--drawer { border-radius: var(--zero-modal-radius) var(--zero-modal-radius) 0 0; }
+.zero-modal-layer[data-drawer][data-placement="top"] .zero-modal--drawer { border-radius: 0 0 var(--zero-modal-radius) var(--zero-modal-radius); }

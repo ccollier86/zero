@@ -302,6 +302,7 @@ function mountWorkflowService({
 }: WorkflowMountInput): void {
   app.use(createWorkflowPlugin({
     db: systemDB,
+    http: workflowConfig.http,
     runtime,
     scheduler,
     register: workflowConfig.register

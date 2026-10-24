@@ -54,6 +54,7 @@ import { migration as m040 } from './definitions/040_guardian_presence';
 import { migration as m041 } from './definitions/041_guardian_user_contacts';
 import { migration as m042 } from './definitions/042_guardian_user_avatars';
 import { migration as m043 } from './definitions/043_guardian_profile_completion';
+import { migration as m044 } from './definitions/044_workflow_actor_start_receipts';
 
 export {
   createMigrationRegistry,
@@ -134,4 +135,5 @@ export const migrations: Migration[] = [
   m041,
   m042,
   m043,
+  m044,
 ];

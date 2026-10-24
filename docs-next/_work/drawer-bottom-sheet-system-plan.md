@@ -27,8 +27,12 @@ Add the requested Arc-style BottomSheet and a full drawer facade comparable to
 the modal/dialog system. Standard use supplies content/actions rather than
 rebuilding title, close button, body, footer, portals and dismissal each time.
 Custom composition and sizing remain available through the same ownership
-system. This is a **proposed subsystem**, not an existing drawer export or an
-implementation claim. The latest request keeps this phase documentation-only.
+system. The initial [managed drawer contract](../frontend/drawers/index.md) now
+implements shared ownership, contained nonmodal inspectors, basic narrow-screen
+modal sheets, guards, results and scrolling. The gesture/detent system below
+remains proposed; this plan is not a claim that every named capability ships.
+The existing-boundary inventory below records the planning baseline before the
+initial drawer implementation; use the linked manual for current public exports.
 
 ## Reference And Existing Zero Boundaries
 
