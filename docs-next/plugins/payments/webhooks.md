@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: webhooks and reactive state
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [Stripe v1 snapshot events, Square events, ReactiveDB system plane]
 ---
 

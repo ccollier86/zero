@@ -57,8 +57,7 @@ export class SquareJobs {
             if (row.customer) await this.service.reconcileCustomer(row.customer);
           } else {
             const event = JSON.parse(row.payload) as SquareEvent;
-            await this.service.verifyMerchant();
-            const resolved = await this.resolve(event);
+            const resolved = await this.service.transport.bounded(this.service.options.timeoutMs, async () => { await this.service.verifyMerchant(); return this.resolve(event); });
             if (resolved) {
               const { owner, reference } = resolved.record;
               const intent = reference ? this.service.resources.getIntent(reference) : null;

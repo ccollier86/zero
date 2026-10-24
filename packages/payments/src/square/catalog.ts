@@ -5,7 +5,7 @@ import { money } from './models';
 import { PaymentsError, invalid } from '../errors';
 export async function squareOffer(service: SquarePayments, id: string, quantity?: number) {
   const offer = service.options.offers.get(id); if (!offer) invalid('Unknown billing offer.');
-  const count = quantity ?? 1; if (!Number.isSafeInteger(count) || count < offer.quantity.min || count > offer.quantity.max) invalid('Offer quantity is outside its declared range.');
+  const count = quantity ?? offer.quantity.min; if (!Number.isSafeInteger(count) || count < offer.quantity.min || count > offer.quantity.max) invalid('Offer quantity is outside its declared range.');
   await service.verifyMerchant();
   const objectId = offer.kind === 'payment' ? offer.itemVariationId : offer.planVariationId;
   const value = (await service.native.catalog.object.get({ objectId, includeRelatedObjects: true })).object;

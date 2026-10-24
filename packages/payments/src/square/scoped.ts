@@ -25,6 +25,7 @@ export function createScopedSquarePayments(service: SquarePayments, authority: P
     customers: { ensure: request => { const input = snapshotInput(request, ['operationId']); return service.command(authority, 'manage', input.operationId, { type: 'customer.ensure' }, async subject => ({ id: await service.ensureCustomer(subject) })); } },
     checkout: {
       create: request => { const input = snapshotInput(request, ['operationId', 'offer', 'quantity']); return service.command(authority, 'manage', input.operationId, { ...input, type: 'checkout.create' }, async (subject, key) => {
+        if (service.options.acceptingSales === false) throw new PaymentsError('New sales are disabled.', 'PAYMENTS_SALES_DISABLED', 409);
         await service.ensureCustomer(subject);
         const saved = service.store.providerRequest<SquareCheckoutIntent>(key, 'checkout.create');
         if (saved) { await guard(authority, service.options, 'manage'); return squareCheckout(service, subject, key, saved); }
@@ -38,9 +39,10 @@ export function createScopedSquarePayments(service: SquarePayments, authority: P
     portal: { create: request => { const input = snapshotInput(request, ['operationId']); return service.command(authority, 'manage', input.operationId, { type: 'portal.create' }, async () => { if (!service.options.portalUrl) return unsupported('hosted customer portal'); return { url: service.options.portalUrl }; }); } },
     subscriptions: {
       list: () => service.read(authority, 'read', subject => service.snapshot(subject).subscriptions),
-      preview: request => { snapshotInput(request, ['subscriptionId', 'offer', 'quantity', 'proration', 'prorationDate']); return service.read(authority, 'read', () => unsupported('Stripe-style proration/invoice preview')); },
+      preview: request => { snapshotInput(request, ['subscriptionId', 'offer', 'quantity', 'proration', 'prorationDate']); return service.read(authority, 'manage', () => unsupported('Stripe-style proration/invoice preview')); },
       change: request => { const input = snapshotInput(request, ['operationId', 'subscriptionId', 'offer', 'quantity', 'proration', 'paymentBehavior', 'prorationDate']);
         return service.command(authority, 'manage', input.operationId, { ...input, type: 'subscription.change' }, (subject, key) => service.withResource('subscription:' + squareId(input.subscriptionId), async () => {
+          if (service.options.acceptingSales === false) throw new PaymentsError('New sales are disabled.', 'PAYMENTS_SALES_DISABLED', 409);
           if (input.proration !== 'none' || input.paymentBehavior !== 'error_if_incomplete' || input.prorationDate !== undefined) return unsupported('immediate/prorated subscription change');
           const desired = await service.parameters(key, 'subscription.change', async () => {
             const selected = await squareOffer(service, input.offer, input.quantity); if (selected.offer.kind !== 'subscription') invalid('Choose a subscription offer.');
@@ -103,6 +105,7 @@ export async function refundSquarePayment(service: SquarePayments, key: string, 
   if (input.reason !== undefined && !['requested_by_customer', 'duplicate', 'fraudulent'].includes(input.reason)) invalid('Invalid refund reason.');
   const parameters = await service.parameters(key, 'refund.create', async () => {
     const original = paymentView(payment), amount = input.amount ?? original.total.amount - original.refunded;
+    if (original.status !== 'succeeded') throw new PaymentsError('The payment has not been captured and is not refundable.', 'PAYMENTS_REFUND_INVALID', 409);
     if (!Number.isSafeInteger(amount) || amount < 1 || amount > original.total.amount - original.refunded) invalid('Refund amount exceeds the remaining payment balance.');
     return { amount, currency: original.total.currency, paymentId: input.paymentId, reason: input.reason };
   });

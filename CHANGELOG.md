@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Hardened optional payments plugin 0.2.1: Square checkout/plan changes honor
+  sales pause, concurrent ownership lookups use independent recursion guards,
+  checkout retries retain original return URLs, and idempotency conflicts keep
+  an unresolved outcome. Canonical reads verify exact resource IDs; Stripe
+  custom checkout/refund totals and captured refund balances are validated.
+  Square minimum quantities and background lookup deadlines are corrected.
+  Existing ledgers remain compatible; no database migration or reset is added.
+
 - Added Square through the existing `zero.payments` / `client.payments` facade in
   optional `@zero/plugin-payments` 0.2.0, with explicit provider capabilities,
   Guardian scope, merchant/location verification, hosted checkout, scheduled

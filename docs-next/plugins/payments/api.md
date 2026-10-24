@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: api
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [server, browser, trusted setup]
 ---
 
@@ -122,6 +122,9 @@ subscription; it does not resurrect a fully canceled subscription.
 Refund reasons are `requested_by_customer`, `duplicate` or `fraudulent`. Amount
 must be a positive safe integer within the remaining payment balance. The provider
 remains the final atomic authority when concurrent refunds compete.
+Refund calculations use captured funds rather than an uncaptured PaymentIntent
+authorization. Canonical reads verify the requested resource ID as well as
+merchant/customer scope; mismatched provider results are not published as success.
 
 ## HTTP Routes
 

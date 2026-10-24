@@ -14,6 +14,7 @@ export function createSquareMerchantCharges(service: SquarePayments): MerchantPa
   const owner = { kind: 'merchant' as const, id: service.options.merchantId };
   const payment = async (id: string) => {
     const value = (await service.native.payments.get({ paymentId: squareId(id) })).payment;
+    if (value?.id !== id) return providerInvalid();
     if (!value || value.locationId !== service.options.locationId) throw new PaymentsError('Payment is outside this Square location.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
     return value;
   };

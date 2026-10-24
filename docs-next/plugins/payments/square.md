@@ -7,7 +7,7 @@ status: draft
 visibility: internal
 system: payments
 feature: Square provider
-applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.0 archives; identify by commit and hash"]
+applies_to: ["Matching 2.6.0 framework and @zero/plugin-payments 0.2.1 archives; identify by commit and hash"]
 modes: [single tenant, multi tenant, Square sandbox, Square production]
 ---
 
@@ -92,6 +92,8 @@ they are rejected rather than given misleading normalized semantics. The initial
 checkout price must match the selected plan; Square allows checkout amounts to
 override plan pricing, so Zero validates the canonical total against its captured
 intent. See [Square subscription checkout](https://developer.squareup.com/docs/checkout-api/subscription-plan-checkout).
+When quantity is omitted, a one-time offer uses its configured minimum. Catalog
+reads therefore remain valid when that minimum is greater than one.
 
 | Facade behavior | Stripe | Square |
 | --- | --- | --- |
@@ -115,9 +117,13 @@ Square-hosted checkout may create or select its own buyer customer record. That
 record is not a Zero login, organization or proof of access. Zero retains its
 separate customer directory and records each admitted checkout's local intent,
 order reference, exact total/currency and catalog selection. Canonical subscription
-phases' order-template references connect a buyer-selected subscription back to
+phases' order-template references (or its legacy canonical top-level template)
+connect a buyer-selected subscription back to
 that original intent. Invoices and payments inherit only proven ownership.
 No email/phone match or webhook-supplied subject can reassign a resource.
+Recursive lineage detection is isolated to each asynchronous lookup, not shared
+across unrelated concurrent requests. Canonical reads must return the exact
+requested resource ID; a different object cannot overwrite a local binding.
 Even a provider customer already bound to another Zero user is not sufficient:
 admitted checkout lineage wins, and an ordinary directory binding does not import
 unproven Square financial resources. `adoptCustomer` explicitly authorizes importing
@@ -152,6 +158,9 @@ have no provider idempotency key: Zero records the physical attempt before sendi
 serializes subscription mutations with a durable resource fence, and checks
 canonical state on recovery. It never blindly sends an unresolved attempt again.
 A genuinely ambiguous result requires merchant reconciliation, not a new operation ID.
+`IDEMPOTENCY_KEY_REUSED` and temporary provider errors preserve that unresolved
+state, including the physical-send fence for mutations without a provider key.
+An HTTP 4xx alone does not prove non-execution. See [Square idempotency](https://developer.squareup.com/docs/build-basics/common-api-patterns/idempotency).
 
 Reconciliation bounds subscription discovery to 1,000 items and per-subscription
 invoice lineage to 1,000. It refreshes recent invoice/order pages of 100 and up to

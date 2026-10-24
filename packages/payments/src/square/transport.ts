@@ -47,7 +47,12 @@ export class SquareTransport {
       const deadline = this.deadlines.getStore();
       const response = await delegate(request, { signal: AbortSignal.any([request.signal, this.shutdown.signal, ...(deadline ? [deadline] : [])]) });
       if (execution && !readOnly && response.ok) execution.accepted = true;
-      if (attempt && response.status >= 400 && response.status < 500 && response.status !== 408) resources.clearAttempt(attempt, digest);
+      if (attempt && response.status >= 400 && response.status < 500 && response.status !== 408) {
+        // HTTP 4xx alone does not prove non-execution. Keep the physical fence
+        // for ambiguous Square errors (or an unreadable error response).
+        const failure = await response.clone().json().catch(() => null) as { errors?: { code?: unknown }[] } | null;
+        if (Array.isArray(failure?.errors) && failure.errors.length && failure.errors.every(error => typeof error?.code === 'string' && !['IDEMPOTENCY_KEY_REUSED', 'TEMPORARY_ERROR'].includes(error.code))) resources.clearAttempt(attempt, digest);
+      }
       return response;
     }, { preconnect: globalThis.fetch.preconnect });
     this.native = new SquareClient({ token: options.accessToken, environment: origin, version: SQUARE_API_VERSION,
@@ -58,6 +63,8 @@ export function squareError(error: unknown, read = false): PaymentsError {
   if (error instanceof PaymentsError) return error;
   if (read) return new PaymentsError('Square billing information is temporarily unavailable.', 'PAYMENTS_READ_UNAVAILABLE', 503, 'none', true);
   if (error instanceof SquareError && error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500 && error.statusCode !== 408) {
+    if (error.errors.some(item => item.code === 'IDEMPOTENCY_KEY_REUSED')) return new PaymentsError('Square already used this operation key. Reconcile the original outcome; do not issue a replacement.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown');
+    if (error.errors.some(item => item.code === 'TEMPORARY_ERROR')) return new PaymentsError('Square did not confirm this operation. Retry only the original operation ID.', 'PAYMENTS_OUTCOME_UNKNOWN', 409, 'unknown');
     if ([401, 403, 429].includes(error.statusCode)) return new PaymentsError('Square could not admit the operation. Correct configuration or retry the same operation ID.', 'PAYMENTS_PROVIDER_UNAVAILABLE', 503, 'none', true);
     return new PaymentsError('Square rejected this payment operation.', 'PAYMENTS_PROVIDER_REJECTED', 422);
   }

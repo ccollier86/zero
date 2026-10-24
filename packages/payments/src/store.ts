@@ -68,7 +68,7 @@ export class PaymentsStore {
       if (this.customer(subject) !== customer) throw new PaymentsError('This provider customer belongs to a different subject.', 'PAYMENTS_BINDING_CONFLICT', 409);
     });
   }
-  reserve(subject: BillingCommandOwner, operation: string, payload: unknown): { fence: string; key: string; replay?: unknown } {
+  reserve(subject: BillingCommandOwner, operation: string, payload: unknown): { fence: string; key: string; replay?: unknown; uncertain?: boolean } {
     return this.db.transaction(() => {
       const owner = commandOwnerKey(subject), digest = hash(canonical(payload)), now = Date.now(), fence = crypto.randomUUID();
       const row = this.db.prepare('SELECT * FROM _zero_payments_commands WHERE connection=? AND subject=? AND id=?').get(this.connection, owner, operation) as CommandRow | null;
@@ -82,7 +82,7 @@ export class PaymentsStore {
         const changed = this.db.prepare("UPDATE _zero_payments_commands SET status='pending',lease=?,fence=? WHERE connection=? AND subject=? AND id=? AND fence=? AND lease<=?").run(now + 240000, fence, this.connection, owner, operation, row.fence, now);
         if (!changed.changes) throw new PaymentsError('This operation has another active owner.', 'PAYMENTS_COMMAND_IN_PROGRESS', 409, 'unknown');
       } else this.db.prepare("INSERT INTO _zero_payments_commands(connection,subject,id,digest,status,created,lease,fence) VALUES(?,?,?,?,'pending',?,?,?)").run(this.connection, owner, operation, digest, now, now + 240000, fence);
-      return { fence, key };
+      return { fence, key, uncertain: !!row && ['unknown', 'pending'].includes(row.status) };
     });
   }
   finish(subject: BillingCommandOwner, operation: string, fence: string, value: unknown, error?: PaymentsError): void {

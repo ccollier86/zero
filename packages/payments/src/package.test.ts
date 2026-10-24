@@ -28,6 +28,10 @@ test('optional payments and provider-free clients work from fresh installed arch
     await command(['install', '--ignore-scripts'], consumer);
     await command(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
     const verified = JSON.parse((await command(['verify.ts'], consumer)).trim());
+    const frameworkManifest = await Bun.file(join(consumer, 'node_modules/@zero/framework/package.json')).json();
+    const pluginManifest = await Bun.file(join(consumer, 'node_modules/@zero/plugin-payments/package.json')).json();
+    expect(frameworkManifest).toEqual(await Bun.file(join(repository, 'package.json')).json());
+    expect(pluginManifest).toEqual(await Bun.file(join(repository, 'packages/payments/package.json')).json());
     expect(verified.declared).toBe(true); expect(verified.sharedRegistry).toBe(true); expect(verified.disabledSchema).toBe(true); expect(verified.browserClean).toBe(true);
     expect(verified.checkoutPath).toBe('/api/_zero/payments/checkout');
     expect(verified.squareReady).toBe(true); expect(verified.squareCharge).toBe(true);
@@ -40,7 +44,7 @@ test('optional payments and provider-free clients work from fresh installed arch
     await mkdir(evidenceRoot, { recursive: true });
     const source = await sourceIdentity();
     await Bun.write(join(evidenceRoot, 'installed-archive-evidence.json'), JSON.stringify({ sourceSnapshot: source.dirty ? 'dirty' : 'clean', branch: source.branch, baseCommit: source.commit,
-      framework: { version: '2.6.0', archive: core, sha256: await sha(core) }, plugin: { version: '0.2.0', archive: plugin, sha256: await sha(plugin) },
+      framework: { version: frameworkManifest.version, archive: core, sha256: await sha(core) }, plugin: { version: pluginManifest.version, archive: plugin, sha256: await sha(plugin) },
       ...verified, verifiedAt: new Date().toISOString(), liveProviderOperations: false }, null, 2));
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 180000);

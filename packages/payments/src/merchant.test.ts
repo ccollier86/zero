@@ -13,7 +13,7 @@ function fixture(extra: Partial<typeof fixtureOptions> = {}) {
     const metadata = (prefix: string) => Object.fromEntries(['zero_connection', 'zero_merchant_operation'].map(name => [name, data.get(`${prefix}[${name}]`)]));
     if (path === '/v1/payment_intents' && method === 'POST') {
       let value = values.get(key!);
-      if (!value) { value = payment({ id: 'pi_custom' + values.size, customer: null, amount: Number(data.get('amount')), currency: data.get('currency'), metadata: metadata('metadata') }); values.set(key!, value); }
+      if (!value) { value = payment({ id: 'pi_custom' + values.size, customer: null, amount: Number(data.get('amount')), amount_received: Number(data.get('amount')), currency: data.get('currency'), metadata: metadata('metadata') }); values.set(key!, value); }
       if (loseResponse) throw new Error('Synthetic lost payment response');
       return Response.json(value);
     }

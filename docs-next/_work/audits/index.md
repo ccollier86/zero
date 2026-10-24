@@ -18,6 +18,9 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Payments follow-up review](./payments-review.md): 0.2.1 policy parity, exact
+  retry parameters, concurrent ownership and canonical-response validation.
+
 - [Square and merchant payments](./square-payments.md): shared Stripe/Square facade,
   subjectless custom amounts, canonical ownership, uncertain sends and archive qualification.
 

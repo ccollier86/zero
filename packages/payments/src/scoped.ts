@@ -4,7 +4,7 @@ import type { BillingPageQuery, BillingSubject, PaymentsAuthority, ScopedPayment
 import type { StripePayments } from './service';
 import { billingSubject, guard } from './authority';
 import { PaymentsError, invalid } from './errors';
-import { assertResource, invoiceView, paymentView, refundView, subscriptionView } from './projections';
+import { assertResource, assertResourceId, invoiceView, paymentView, refundView, subscriptionView } from './projections';
 import { publicOffers } from './options';
 import { operationId, pageInput, resourceId, snapshotInput } from './validation';
 
@@ -21,21 +21,21 @@ export function createScopedPayments(service: StripePayments, authority: Payment
     const value = offerFor(id, quantity, kind);
     await service.verifyMerchant();
     const price = await stripe.prices.retrieve(value.offer.price);
-    assertResource(price, null, options);
+    assertResource(price, null, options, value.offer.price);
     if (!price.active || !!price.recurring !== (value.offer.kind === 'subscription')) throw new PaymentsError('Offer price is inactive or has the wrong billing type.', 'PAYMENTS_OFFER_UNAVAILABLE', 409);
     return { ...value, price };
   };
   const subscription = async (subject: BillingSubject, id: string) => {
     resourceId(id, 'sub'); await service.verifyMerchant();
-    const value = await stripe.subscriptions.retrieve(id); assertResource(value, requireCustomer(subject), options); return value;
+    const value = await stripe.subscriptions.retrieve(id); assertResource(value, requireCustomer(subject), options, id); return value;
   };
   const invoice = async (subject: BillingSubject, id: string) => {
     resourceId(id, 'in'); await service.verifyMerchant();
-    const value = await stripe.invoices.retrieve(id); assertResource(value, requireCustomer(subject), options); return value;
+    const value = await stripe.invoices.retrieve(id); assertResource(value, requireCustomer(subject), options, id); return value;
   };
   const payment = async (subject: BillingSubject, id: string) => {
     resourceId(id, 'pi'); await service.verifyMerchant();
-    const value = await stripe.paymentIntents.retrieve(id, { expand: ['latest_charge'] }); assertResource(value, requireCustomer(subject), options); return value;
+    const value = await stripe.paymentIntents.retrieve(id, { expand: ['latest_charge'] }); assertResource(value, requireCustomer(subject), options, id); return value;
   };
   const prepareChange = async (subject: BillingSubject, input: Omit<SubscriptionChange, 'operationId' | 'paymentBehavior'>) => {
     if (!['create_prorations', 'always_invoice', 'none'].includes(input.proration) || input.prorationDate !== undefined && (!Number.isInteger(input.prorationDate) || input.prorationDate < 0 || input.prorationDate > Math.floor(Date.now() / 1000))) invalid('Choose an explicit proration policy and a valid preview timestamp.');
@@ -78,7 +78,7 @@ export function createScopedPayments(service: StripePayments, authority: Payment
         });
       },
       read(id) { resourceId(id, 'cs'); return service.read(authority, 'read', async subject => {
-        await service.verifyMerchant(); const value = await stripe.checkout.sessions.retrieve(id); assertResource(value, requireCustomer(subject), options);
+        await service.verifyMerchant(); const value = await stripe.checkout.sessions.retrieve(id); assertResource(value, requireCustomer(subject), options, id);
         return { id: value.id, status: value.status, paymentStatus: value.payment_status };
       }); },
     },
@@ -169,11 +169,12 @@ export function createScopedPayments(service: StripePayments, authority: Payment
           const params = await service.parameters<Stripe.RefundCreateParams>(key, 'refund.create', async () => {
             const view = paymentView(current), remaining = current.amount_received - view.refunded;
             if (current.status !== 'succeeded' || remaining <= 0 || input.amount !== undefined && input.amount > remaining) throw new PaymentsError('Refund exceeds the refundable payment balance.', 'PAYMENTS_REFUND_INVALID', 409);
-            return { payment_intent: input.paymentId, ...(input.amount !== undefined ? { amount: input.amount } : {}), ...(input.reason ? { reason: input.reason } : {}) };
+            return { payment_intent: input.paymentId, amount: input.amount ?? remaining, ...(input.reason ? { reason: input.reason } : {}) };
           });
           await guard(authority, options, 'refund');
           const value = await stripe.refunds.create(params, { idempotencyKey: key });
           if (value.payment_intent !== input.paymentId && (value.payment_intent as Stripe.PaymentIntent | null)?.id !== input.paymentId) throw new PaymentsError('Refund payment did not match its command.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
+          if (value.currency !== current.currency || params.amount !== undefined && value.amount !== params.amount) throw new PaymentsError('Refund total did not match its command.', 'PAYMENTS_PROVIDER_RESPONSE_INVALID', 503, 'unknown');
           service.enqueue(requireCustomer(subject)); return refundView(value);
         });
       },
@@ -181,7 +182,7 @@ export function createScopedPayments(service: StripePayments, authority: Payment
         const input = snapshotInput(request, ['paymentId', 'limit', 'after']), page = pageInput(input);
         return service.read(authority, 'read', async subject => {
           await payment(subject, input.paymentId);
-          if (input.after) { resourceId(input.after, 're'); const prior = await stripe.refunds.retrieve(input.after); if (refundView(prior).paymentId !== input.paymentId) throw new PaymentsError('Refund cursor is outside this payment.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403); }
+          if (input.after) { resourceId(input.after, 're'); const prior = await stripe.refunds.retrieve(input.after); assertResourceId(prior, input.after); if (refundView(prior).paymentId !== input.paymentId) throw new PaymentsError('Refund cursor is outside this payment.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403); }
           const value = await stripe.refunds.list({ payment_intent: input.paymentId, ...page });
           if (value.data.some(row => refundView(row).paymentId !== input.paymentId)) throw new PaymentsError('Refund is outside this payment.', 'PAYMENTS_RESOURCE_FORBIDDEN', 403);
           return { items: value.data.map(refundView), ...(value.has_more && value.data.length ? { next: value.data.at(-1)!.id } : {}) };
