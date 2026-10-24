@@ -8,6 +8,7 @@ import {
 } from '@zero/framework/database-automations';
 import { createApp, type DatabaseAutomationExecutionServerServices } from '@zero/framework/server';
 import { expr, flow, step } from '@zero/framework/workflows';
+import { LOGGING_API } from '@zero/framework/logging';
 
 const root = process.cwd();
 const attempts: Array<{ orderId: string; instanceId: string; title: unknown }> = [];
@@ -48,7 +49,7 @@ const app = await createApp({
       });
     },
   },
-  auth: true, stateSync: false, email: false, ai: false, vector: false, kv: false,
+  auth: { bootstrap: 'public', registration: { mode: 'public' }, accountEmails: { passwordReset: false } }, stateSync: false, email: false, ai: false, vector: false, kv: false,
   pdf: false, sitemap: false, appDir: join(root, 'app'), outDir: join(root, 'build'),
   generatedDir: join(root, 'generated'), serverRoutesDir: join(root, 'routes'),
   logging: { rootDirectory: join(root, 'runtime', 'logs') },
@@ -75,6 +76,17 @@ try {
     assert.equal((system.query('SELECT COUNT(*) AS count FROM workflow_instances').get() as { count: number }).count, 2);
     assert.equal((system.query('SELECT COUNT(*) AS count FROM _workflow_system_start_receipts').get() as { count: number }).count, 2);
   } finally { system.close(); }
+  assert.equal(LOGGING_API, '/api/_zero/logging');
+  const registration = await fetch(base + '/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'package-logging-owner', email: 'package-logging@example.test', password: 'Package-fixture-password-123!' }) });
+  const session = await registration.json() as any; assert.equal(registration.status, 200);
+  const events = await fetch(base + LOGGING_API + '/events', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.accessToken }, body: JSON.stringify({ stream: 'audit', query: { family: 'security' } }) });
+  assert.equal(events.status, 200); assert.ok((await events.json() as any).events.length > 0);
+  const abort = new AbortController();
+  try {
+    const response = await fetch(base + LOGGING_API + '/stream', { method: 'POST', signal: abort.signal, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.accessToken }, body: JSON.stringify({ stream: 'audit', query: { limit: 1 } }) });
+    assert.equal(response.status, 200); assert.ok(response.headers.get('content-type')?.includes('text/event-stream'));
+    const reader = response.body!.getReader(); const first = await reader.read(); assert.ok(new TextDecoder().decode(first.value).includes('event: snapshot')); await reader.cancel();
+  } finally { abort.abort(); }
   console.log('[zero-public-automation-torrent] complete');
 } finally { await app.stop(true); }
 

@@ -14,6 +14,11 @@
 
 // ─── App Factory ────────────────────────────────────────────────────────
 export { createApp } from './server/app-factory';
+export type { ManagedLoggingConfig, ResolvedManagedLoggingConfig } from '../logging/logging-managed-config';
+export type { ScopedLogging, LoggingObservation, LoggingHoldInput, LoggingReviewInput } from '../logging/logging-api-contracts';
+export type { LoggingContext, LoggingEventInput, LoggingQuery, LoggingReceipt, LoggingStream } from '../logging/logging-contracts';
+export { runLoggingActorIfRequested } from '../logging/logging-actor-bootstrap';
+export { LoggingError, type LoggingErrorCode } from '../logging/logging-error';
 export type { VectorVisualizationConfig, VectorVisualizationIndexConfig, ResolvedVectorVisualizationConfig } from '../vector/visualization-config';
 export { prepareAppBuild } from './server/app-build';
 export type { PreparedAppBuild } from './server/app-build';

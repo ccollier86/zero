@@ -17,6 +17,7 @@ import type {
 import type { Client, InternalClient } from './sdk';
 import { createClient, getClient } from './sdk';
 import { useAuth } from './auth-hooks';
+import { LoggingActivityProvider } from './logging-hooks';
 import { useAuthorization } from './authorization-hooks';
 import { ClientProvider } from './client-context';
 import { RouterProvider, useHasRouter, usePathname, useRouter } from './router-context';
@@ -82,6 +83,7 @@ interface BrowserPlatformConfig {
   stateSync?: boolean;
   presence?: boolean;
   vectorVisualization?: boolean;
+  logging?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
   /** Server-owned Sync-visible application table routing catalog. */
   tableSyncPlanes?: Record<string, SyncDataPlaneName>;
@@ -311,7 +313,8 @@ export function AppProvider({
       )
     : children;
 
-  const modalTree = createElement(ModalManager, { children: guardedChildren });
+  const activityTree = platformConfig.logging && authEnabled ? createElement(LoggingActivityProvider, { children: guardedChildren }) : guardedChildren;
+  const modalTree = createElement(ModalManager, { children: activityTree });
   const authorizationScopedTree = authEnabled
     ? createElement(AuthorizationScopeGuard, { client, children: modalTree })
     : modalTree;

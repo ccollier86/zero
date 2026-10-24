@@ -76,7 +76,21 @@ test('curated facades preserve every original ordered named/type/star source con
     && record.clause.every(item => item.name.startsWith('JsonDocument') || ['parseJsonDocument', 'diffJsonDocument', 'DocumentEditor', 'parseDocumentSource',
       'DocumentEditorProps', 'DocumentEditorHandle', 'DocumentFormat', 'DocumentSourceChange', 'DocumentParseResult'].includes(item.name));
   const documentAdditive = result.records.filter(documentPart);
-  const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record));
+  const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts',
+    'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
+  const loggingAdditive = result.records.filter(record => loggingTargets.has(record.target));
+  const domainPart = (record: ExportRecord) => !record.type && record.clause === null && ['src/components/email-inbox', 'src/components/messaging'].includes(record.target);
+  expect(result.records.filter(domainPart)).toHaveLength(2);
+  const drawerPart = (record: ExportRecord) => record.target === 'src/drawers';
+  expect(result.records.filter(drawerPart)).toHaveLength(2);
+  expect(result.records.filter(drawerPart).flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
+    'ControlledDrawer', 'ControlledDrawerProps', 'DrawerDescriptor', 'DrawerHandle', 'DrawerManager', 'DrawerOptions', 'DrawerResult', 'DrawerSide', 'DrawerWorkspace', 'drawers', 'useDrawers',
+  ].sort());
+  const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record) && !loggingTargets.has(record.target) && !domainPart(record) && !drawerPart(record));
+  expect(loggingAdditive).toHaveLength(7);
+  expect(loggingAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
+    'LoggingActivityProvider', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingExport', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
+  ].sort());
   expect(additive).toHaveLength(2);
   expect(additive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
     'FloatingButtonGroup', 'FloatingButtonGroupAction', 'FloatingButtonGroupItem', 'FloatingButtonGroupOrientation',
@@ -92,7 +106,7 @@ test('curated facades preserve every original ordered named/type/star source con
     'JsonDocumentEdit', 'JsonDocumentEditor', 'JsonDocumentEditorHandle', 'JsonDocumentEditorProps', 'JsonDocumentMode',
     'JsonDocumentParseResult', 'JsonDocumentPatch', 'JsonDocumentPath', 'JsonDocumentSaveContext', 'JsonDocumentValue', 'diffJsonDocument', 'parseDocumentSource', 'parseJsonDocument',
   ]);
-  expect(result.files).toHaveLength(38);
+  expect(result.files).toHaveLength(41);
   expect(preserved).toHaveLength(296);
   expect(preserved.reduce((count, record) => count + (Array.isArray(record.clause) ? record.clause.length : 0), 0)).toBe(1455);
   expect(preserved.filter(record => record.clause === null)).toHaveLength(14);

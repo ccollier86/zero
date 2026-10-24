@@ -6,6 +6,7 @@ import {
 } from './reactive-db';
 import {
   registerReactiveDBMutationInterceptor,
+  registerReactiveDBMutationContribution,
   type ReactiveDBMutationChange,
 } from './reactive-db-mutation-interceptor';
 import {
@@ -31,6 +32,24 @@ describe('ReactiveDB mutation interceptor', () => {
 
   afterEach(() => {
     db.dispose();
+  });
+
+  test('independent core contributions preserve the sole application interceptor and detach without replacing it', () => {
+    const order: string[] = [];
+    const remove = registerReactiveDBMutationContribution(db, ({ change }) => { expect(Object.isFrozen(change)).toBe(true); order.push('core'); });
+    registerReactiveDBMutationInterceptor(db, () => { order.push('application'); });
+    db.create('items', { id: 'one', label: 'One' });
+    remove(); remove(); db.create('items', { id: 'two', label: 'Two' });
+    expect(order).toEqual(['core', 'application', 'application']);
+    expect(() => registerReactiveDBMutationInterceptor(db, () => {})).toThrow();
+  });
+
+  test('an asynchronous core contribution rejects the entire source transaction before application observers run', () => {
+    let observed = false;
+    registerReactiveDBMutationContribution(db, () => Promise.resolve());
+    registerReactiveDBMutationInterceptor(db, () => { observed = true; });
+    expect(() => db.create('items', { id: 'rejected', label: 'Never committed' })).toThrow('must be synchronous');
+    expect(db.get('items', 'rejected')).toBeNull(); expect(observed).toBe(false);
   });
 
   test('runs after durable recording and before commit or listener delivery', () => {

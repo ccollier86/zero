@@ -64,6 +64,7 @@ import type { DatabaseManager } from '../../databases/database-manager';
 import type { PdfService } from '../../pdf';
 import { getPdfService } from '../../pdf';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import type { LoggingRuntime } from '../../logging/logging-runtime';
 import type { PaymentsBackend } from '../../payments/contracts';
 import { getPaymentsBackend } from '../../payments/registry';
 import {
@@ -78,6 +79,7 @@ import {
   ZERO_KV_SERVICE,
   ZERO_NOTIFICATION_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_LOGGING_RUNTIME,
   ZERO_PDF_SERVICE,
   ZERO_PLATFORM_TOKEN_SERVICE,
   ZERO_RESOURCE_REGISTRY,
@@ -165,6 +167,8 @@ export interface ServerSystemDatabaseServices {
 
 /** Platform services exposed under `zero` in app-owned server route handlers. */
 export interface ServerRouteServices {
+  /** Privileged composition owner; request code receives a separately scoped logging facade. */
+  readonly logging: LoggingRuntime | null;
   /** Optional payments plugin. Requests receive only the current billing subject. */
   readonly payments: PaymentsBackend | null;
   /** Primary reactive database handle for app-owned server code. */
@@ -248,6 +252,7 @@ export function createLazyServerRouteServices(runtime?: ZeroAppRuntime): ServerR
 
 function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
   return {
+    get logging() { return runtime?.get(ZERO_LOGGING_RUNTIME) ?? null; },
     get payments() { const owner = runtime ? runtime.get(ZERO_SYNC_DB) : getSyncDB(); return owner ? getPaymentsBackend(owner) : null; },
     get db() {
       return requireSyncDB(runtime);

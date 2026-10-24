@@ -5,6 +5,13 @@ import { describe, expect, test } from 'bun:test';
 const frameworkRoot = import.meta.dir.replace(/\/src$/u, '');
 
 describe('public UI export boundary', () => {
+  test('logging exposes contracts and the component facade, not actor/private/fixture modules', () => {
+    expect(Bun.resolveSync('@zero/framework/logging', frameworkRoot)).toEndWith('/src/logging/index.ts');
+    expect(Bun.resolveSync('@zero/framework/components/logging', frameworkRoot)).toEndWith('/src/components/logging/index.ts');
+    for (const path of ['logging/logging-runtime', 'logging/logging-actor-entry', 'logging/logging-source-outbox', 'components/logging/logging.browser-fixture', 'components/logging/logging.browser.test']) {
+      expect(() => Bun.resolveSync('@zero/framework/' + path, frameworkRoot)).toThrow();
+    }
+  });
   test('exposes messaging only through its public facade, not test fixtures or private modules', () => {
     for (const path of ['messaging', 'components/messaging']) {
       expect(Bun.resolveSync(`@zero/framework/${path}`, frameworkRoot)).toEndWith('/src/components/messaging/index.ts');

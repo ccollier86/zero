@@ -67,7 +67,7 @@ test('diagnostic bridge excludes private contents, preserves previous sinks, avo
     await runtime.flush();
     expect((await runtime.page('operational', { kind: 'platform' })).highWaterOrdinal).toBe(first.highWaterOrdinal);
     expect(bridge.diagnostics()).toMatchObject({ accepted: 1, failed: 0 });
-    expect(runtime.diagnostics().coverage).toEqual({ automaticAudit: false, browserActivity: false, complianceReady: false });
+    expect(runtime.diagnostics().coverage).toMatchObject({ automaticAudit: false, complianceReady: false });
     bridge.detach(); expect(obs.sink).toBe(previous);
     emitPlatformEventTo(obs, diagnostic('fixture.after_detach')); await runtime.flush();
     expect((await runtime.page('operational', { kind: 'platform' })).events).toHaveLength(1);

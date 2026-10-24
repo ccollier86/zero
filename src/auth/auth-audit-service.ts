@@ -19,6 +19,7 @@ import type {
 } from './auth-audit-types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import { appendWithAuthAuditCapture } from './auth-audit-capture';
 
 interface AuditRow {
   event_id: string;
@@ -89,6 +90,11 @@ export class AuthAuditService {
    */
   append(raw: AppendAuthAuditEventInput): AuthAuditEvent {
     const input = normalizeAppendInput(raw);
+    return appendWithAuthAuditCapture(this.db, () => this.appendNormalized(input));
+  }
+
+  /** Keep the legacy Guardian insert/DTO and optional core capture inside the same owned transaction. */
+  private appendNormalized(input: ReturnType<typeof normalizeAppendInput>): AuthAuditEvent {
     const eventId = crypto.randomUUID();
     this.insert.run(
       eventId,

@@ -65,6 +65,7 @@ export const OBS_CODES = {
 
   LOGGING_STARTED: code('logging', 'started', 'info', 'Dedicated logging storage is ready; capture coverage is reported separately.'),
   LOGGING_DELIVERY_FAILED: code('logging', 'delivery.failed', 'warn', 'A diagnostic event could not be retained; inspect logging health.'),
+  LOGGING_BROWSER_FAILED: code('logging', 'browser.failed', 'warn', 'Browser activity delivery is incomplete; inspect collector health.'),
   LOGGING_STOP_FAILED: code('logging', 'stop.failed', 'error', 'Logging work or database shutdown failed.'),
 
   SYNC_STARTED: code('sync', 'started', 'info', 'Sync engine started.'),

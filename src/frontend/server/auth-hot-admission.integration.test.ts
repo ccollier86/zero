@@ -30,6 +30,7 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       serverRoutesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverResourcesDir: false,
       workflows: false, email: false, stateSync: false, ai: false, vector: false, pdf: false, kv: false,
       observability: { console: false, endpoint: false },
+      logging: { preset: 'activity', rootDirectory: join(root, 'logging') },
     });
     app.listen({ hostname: '127.0.0.1', port: 0 });
     const origin = `http://127.0.0.1:${app.server!.port}`;

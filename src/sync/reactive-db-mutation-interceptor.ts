@@ -60,6 +60,15 @@ export type ReactiveDBMutationInterceptor = (
 
 const activeHosts = new WeakSet<object>();
 const interceptors = new WeakMap<object, ReactiveDBMutationInterceptor>();
+const contributions = new WeakMap<object, Set<ReactiveDBMutationInterceptor>>();
+
+/** @internal Independent same-transaction core contributions; cannot replace the application's sole automation interceptor. */
+export function registerReactiveDBMutationContribution(db: ReactiveDB, contribution: ReactiveDBMutationInterceptor): () => void {
+  if (!activeHosts.has(db) || typeof contribution !== 'function') throw new Error('Invalid mutation contribution host.');
+  let entries = contributions.get(db); if (!entries) contributions.set(db, entries = new Set());
+  entries.add(contribution); let removed = false;
+  return () => { if (!removed) { removed = true; entries!.delete(contribution); } };
+}
 
 /** @internal Admit a fully constructed ReactiveDB as an interceptor host. */
 export function initializeReactiveDBMutationInterceptorHost(db: ReactiveDB): void {
@@ -107,22 +116,27 @@ export function invokeReactiveDBMutationInterceptor(
   transactionToken: ReactiveDBTransactionToken,
 ): void {
   const interceptor = interceptors.get(db);
-  if (!interceptor) return;
+  const entries = contributions.get(db);
+  if (!interceptor && !entries?.size) return;
 
   assertReactiveDBTransactionTokenActive(transactionToken);
-  const result = interceptor(Object.freeze({
+  const interception = Object.freeze({
     change: createReadOnlyChange(change),
     transactionToken,
-  }));
-  if (isReactiveDBPromiseLike(result)) {
-    void Promise.resolve(result).catch(() => {});
-    throw new Error('ReactiveDB mutation interceptors must be synchronous');
+  });
+  for (const callback of [...(entries ?? []), ...(interceptor ? [interceptor] : [])]) {
+    const result = callback(interception);
+    if (isReactiveDBPromiseLike(result)) {
+      void Promise.resolve(result).catch(() => {});
+      throw new Error('ReactiveDB mutation interceptors must be synchronous');
+    }
   }
 }
 
 /** @internal Seal a host and release any registered interceptor reference. */
 export function disposeReactiveDBMutationInterceptorHost(db: ReactiveDB): void {
   interceptors.delete(db);
+  contributions.delete(db);
   activeHosts.delete(db);
 }
 

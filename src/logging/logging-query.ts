@@ -36,17 +36,18 @@ export function normalizeLoggingQuery(stream: LoggingStream, scope: LoggingReadS
 }
 
 /** All identifiers are static; untrusted criteria become bind values only. */
-export function loggingPagePredicate(input: NormalizedLoggingQuery, highWater: number): { sql: string; values: (string | number)[] } {
-  const sql = ['stream = ?', 'ordinal <= ?'], values: (string | number)[] = [input.stream, highWater];
-  if (input.scope.kind === 'tenant') { sql.push('scope_kind = ? AND tenant_id = ?'); values.push('tenant', input.scope.tenantId); }
-  else if (input.scope.kind === 'application') { sql.push('scope_kind = ?'); values.push('application'); }
+export function loggingPagePredicate(input: NormalizedLoggingQuery, highWater: number, alias?: 'e'): { sql: string; values: (string | number)[] } {
+  const p = alias ? 'e.' : '';
+  const sql = [p + 'stream = ?', p + 'ordinal <= ?'], values: (string | number)[] = [input.stream, highWater];
+  if (input.scope.kind === 'tenant') { sql.push(p + 'scope_kind = ? AND ' + p + 'tenant_id = ?'); values.push('tenant', input.scope.tenantId); }
+  else if (input.scope.kind === 'application') { sql.push(p + 'scope_kind = ?'); values.push('application'); }
   const q = input.query;
-  if (q.since !== undefined) { sql.push('occurred_at >= ?'); values.push(q.since); }
-  if (q.until !== undefined) { sql.push('occurred_at < ?'); values.push(q.until); }
-  if (q.beforeOrdinal !== undefined) { sql.push('ordinal < ?'); values.push(q.beforeOrdinal); }
+  if (q.since !== undefined) { sql.push(p + 'occurred_at >= ?'); values.push(q.since); }
+  if (q.until !== undefined) { sql.push(p + 'occurred_at < ?'); values.push(q.until); }
+  if (q.beforeOrdinal !== undefined) { sql.push(p + 'ordinal < ?'); values.push(q.beforeOrdinal); }
   const columns = { family: 'family', action: 'action', actorId: 'actor_id', sessionId: 'session_id', targetType: 'target_type', targetId: 'target_id', outcome: 'outcome', level: 'level' } as const;
   for (const [key, column] of Object.entries(columns)) {
-    const value = q[key as keyof typeof columns]; if (value !== undefined) { sql.push(column + ' = ?'); values.push(value); }
+    const value = q[key as keyof typeof columns]; if (value !== undefined) { sql.push(p + column + ' = ?'); values.push(value); }
   }
   return { sql: sql.join(' AND '), values };
 }

@@ -9,13 +9,13 @@ import type { LoggingRuntime } from './logging-runtime';
 import { loggingRecord } from './logging-validation';
 
 /** Mount only onto one app-local runtime and retain previous adapters/endpoint store unchanged. */
-export function installLoggingObservabilityBridge(logging: Pick<LoggingRuntime, 'capture'>, observability: PlatformObservabilityRuntime) {
+export function installLoggingObservabilityBridge(logging: Pick<LoggingRuntime, 'capture'>, observability: PlatformObservabilityRuntime, policyVersion = 'logging-diagnostics-v1') {
   const previous = observability.sink;
   const fallback = { ...observability, sink: previous };
   const context: LoggingContext = Object.freeze({ sourceId: 'runtime:' + crypto.randomUUID(), origin: 'backend',
     scope: Object.freeze({ kind: 'application', tenantId: null }),
     actor: Object.freeze({ kind: 'system', id: 'zero', sessionId: null, initiatorId: null }),
-    requestId: null, correlationId: null, policyVersion: 'logging-diagnostics-v1' });
+    requestId: null, correlationId: null, policyVersion });
   let attached = true, accepted = 0, filtered = 0, failed = 0, reported = false;
   const sink: PlatformSink = { emit(event: PlatformEvent) {
     if (!attached || observability.config.enabled === false) return;

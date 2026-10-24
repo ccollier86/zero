@@ -656,6 +656,11 @@ export function resolveConfig(
       ? false
       : config.auth;
   const authBehavior = auth === false ? null : validateAppAuthConfig(auth);
+  if (logging) for (const permission of Object.values(logging.access)) {
+    if (permission && (!authBehavior || !Object.hasOwn(authBehavior.authorization.permissions, permission))) {
+      throw new Error('[app] logging permissions must be declared in Guardian authorization.permissions.');
+    }
+  }
   const workflows = config.workflows === false || auth === false
     ? false
     : config.workflows ?? {};

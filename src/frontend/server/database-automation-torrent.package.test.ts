@@ -29,7 +29,14 @@ test('installed package enqueues retry-safe Torrent runs and boots dedicated log
     expect(await Bun.file(join(installed, 'docs-next/backend/database-automations/app-functions.md')).exists()).toBe(true);
     expect(await Bun.file(join(installed, 'docs-next/backend/database-automations/torrent.md')).text()).toContain('torrent.start');
     expect(await Bun.file(join(installed, 'docs-next/backend/logging/configuration.md')).exists()).toBe(true);
+    for (const page of ['api', 'browser', 'events-and-coverage', 'evidence', 'operations']) expect(await Bun.file(join(installed, `docs-next/backend/logging/${page}.md`)).exists()).toBe(true);
+    expect(await Bun.file(join(installed, 'docs-next/frontend/components/logging.md')).exists()).toBe(true);
     expect(await Bun.file(join(installed, 'src/logging/logging-actor-entry.ts')).exists()).toBe(true);
+    // The focused component entry owns components, while hooks remain at /react.
+    await Bun.write(join(consumer, 'logging-browser.tsx'), `import { LoggingWorkspace } from '@zero/framework/components/logging';\nimport { LOGGING_API } from '@zero/framework/logging';\nexport { LoggingWorkspace, LOGGING_API };`);
+    await checked([process.execPath, '--no-env-file', 'build', 'logging-browser.tsx', '--target=browser', '--outdir', join(root, 'browser')], consumer);
+    const browserCode = await Bun.file(join(root, 'browser', 'logging-browser.js')).text();
+    expect(browserCode).not.toContain('bun:sqlite'); expect(browserCode).not.toContain('LoggingSourceOutbox');
     const output = await checked([process.execPath, '--no-env-file', 'gateway.ts'], consumer);
     expect(output).toContain('[zero-public-automation-torrent] complete');
   } finally {

@@ -7,7 +7,8 @@ import type { LoggingEvent, LoggingReadScope, LoggingStream, LoggingQuery } from
 import { loggingDigest } from './logging-hash';
 import { loggingPagePredicate, normalizeLoggingQuery } from './logging-query';
 import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingArray, loggingByteLength, loggingCanonical, loggingChoice, loggingRecord, normalizeLoggingEvent } from './logging-validation';
-import { LOGGING_EVENTS_TABLE, LOGGING_STATE_TABLE, LOGGING_TABLES } from './logging-schema';
+import { LOGGING_EVENTS_TABLE, LOGGING_STATE_TABLE, LOGGING_TABLES, LOGGING_CHAIN_TABLE, LOGGING_PROOFS_TABLE } from './logging-schema';
+import { changeLoggingHold, recordLoggingReview, loggingPruneCandidates, pruneLoggingEvents, verifyLoggingEvidence, listLoggingEvidence, LOGGING_GENESIS_HASH, loggingChainHash } from './logging-evidence-realm';
 
 const HEADS = LOGGING_STATE_TABLE;
 const HEAD_ID = 'head';
@@ -16,7 +17,7 @@ type EventRow = Row & { id: string; digest: string; envelope: string; ordinal: n
 
 /** Side-effect-free declaration. Both writer and reader actors import this exact realm/version. */
 export const loggingRealm = defineDatabaseRealm({
-  name: 'zero-logging', version: '1',
+  name: 'zero-logging', version: '2',
   tables: LOGGING_TABLES,
   migrations: [{
     version: '001', description: 'Index bounded scope, actor and resource investigations', safety: 'safe',
@@ -32,9 +33,29 @@ export const loggingRealm = defineDatabaseRealm({
       database.run('CREATE INDEX IF NOT EXISTS logging_target_page ON logging_events(target_type, target_id, ordinal DESC)');
       database.run('CREATE INDEX IF NOT EXISTS logging_time_page ON logging_events(occurred_at, ordinal DESC)');
     },
+  }, {
+    version: '002', description: 'Retained replay proofs, integrity chains, legal holds and review evidence', safety: 'safe',
+    up(database) {
+      for (const [table, columns] of Object.entries(LOGGING_TABLES)) {
+        const definitions = Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition);
+        database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + definitions.join(', ') + ')');
+      }
+      database.run('CREATE INDEX IF NOT EXISTS logging_proof_order ON logging_proofs(ordinal)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_expiration ON logging_events(ingested_at,ordinal)');
+      let previous = LOGGING_GENESIS_HASH, ordinal = 0;
+      for (const row of database.query<{ id: string; digest: string; envelope: string; ordinal: number; ingested_at: number }, []>('SELECT id,digest,envelope,ordinal,ingested_at FROM logging_events ORDER BY ordinal').iterate()) {
+        if (row.ordinal !== ordinal + 1 || loggingDigest(normalizeLoggingEvent(JSON.parse(row.envelope))) !== row.digest) throw new Error('Existing logging evidence is inconsistent.');
+        const hash = loggingChainHash(previous, row.ordinal, row.id, row.digest, row.ingested_at);
+        database.run('INSERT INTO logging_proofs(id,ordinal,digest,previous_hash,chain_hash,expired,ingested_at) VALUES(?,?,?,?,?,0,?)', [row.id, row.ordinal, row.digest, previous, hash, row.ingested_at]);
+        previous = hash; ordinal = row.ordinal;
+      }
+      database.run('INSERT INTO logging_chain(id,ordinal,hash) VALUES(?,?,?)', ['head', ordinal, previous]);
+    },
   }],
-  commands: { 'logging.append': appendLoggingBatch },
-  queries: { 'logging.page': readLoggingPage },
+  commands: { 'logging.append': appendLoggingBatch,
+    'logging.hold': (context, input) => changeLoggingHold(context, input, appendLoggingBatch),
+    'logging.review': (context, input) => recordLoggingReview(context, input, appendLoggingBatch), 'logging.prune': pruneLoggingEvents },
+  queries: { 'logging.page': readLoggingPage, 'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence },
 });
 
 function admitBatch(value: unknown): { stream: LoggingStream; events: readonly LoggingEvent[] } {
@@ -56,7 +77,8 @@ function appendLoggingBatch({ db }: DatabaseWriteCommandContext, input: unknown)
   const planned = new Map<string, { event: LoggingEvent; digest: string; existing: EventRow | null }>();
   for (const event of events) {
     const id = loggingDigest([event.sourceId, event.id]), digest = loggingDigest(event);
-    const existing = db.get(LOGGING_EVENTS_TABLE, id) as EventRow | null;
+    const proof = db.get(LOGGING_PROOFS_TABLE, id);
+    const existing = (proof ?? db.get(LOGGING_EVENTS_TABLE, id)) as EventRow | null;
     if (existing && existing.digest !== digest || planned.has(id) && planned.get(id)!.digest !== digest) return { status: 'event-conflict' };
     planned.set(id, { event, digest, existing });
   }
@@ -64,6 +86,9 @@ function appendLoggingBatch({ db }: DatabaseWriteCommandContext, input: unknown)
   const last = head?.ordinal ?? 0;
   if (!Number.isSafeInteger(last) || last < 0 || !Number.isSafeInteger(last + newCount)) throw new DatabaseError('DATABASE_CAPACITY_EXHAUSTED', 'Logging sequence is exhausted.', { outcome: 'not-committed' });
   let ordinal = last; const ingestedAt = Date.now();
+  const chain = db.get(LOGGING_CHAIN_TABLE, HEAD_ID);
+  if (!chain || chain.ordinal !== last) throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Logging integrity head is inconsistent.');
+  let previous = String(chain.hash);
   const rows = new Map<string, { ordinal: number; inserted: boolean }>();
   for (const [id, item] of planned) {
     if (item.existing) { rows.set(id, { ordinal: item.existing.ordinal, inserted: false }); continue; }
@@ -75,10 +100,14 @@ function appendLoggingBatch({ db }: DatabaseWriteCommandContext, input: unknown)
       level: event.level, outcome: event.outcome, target_type: event.target?.type ?? null, target_id: event.target?.id ?? null,
       envelope: loggingCanonical(event),
     });
+    const hash = loggingChainHash(previous, ordinal, id, item.digest, ingestedAt);
+    db.createStrict(LOGGING_PROOFS_TABLE, { id, ordinal, digest: item.digest, previous_hash: previous, chain_hash: hash, expired: 0, ingested_at: ingestedAt });
+    previous = hash;
     rows.set(id, { ordinal, inserted: true });
   }
   if (!head) db.createStrict(HEADS, { id: HEAD_ID, stream, ordinal });
   else if (ordinal !== last) db.update(HEADS, HEAD_ID, { ordinal });
+  if (ordinal !== last) db.update(LOGGING_CHAIN_TABLE, HEAD_ID, { ordinal, hash: previous });
   const emitted = new Set<string>();
   return { status: 'stored', receipts: events.map(event => {
     const id = loggingDigest([event.sourceId, event.id]), row = rows.get(id)!;
@@ -96,8 +125,8 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
   const head = database.query<Head>('SELECT id, stream, ordinal FROM logging_state WHERE id = ?').get(HEAD_ID);
   if (head && head.stream !== input.stream) throw new DatabaseError('DATABASE_CONFLICT', 'Logging stream binding does not match.');
   const highWaterOrdinal = Math.min(input.query.highWaterOrdinal ?? head?.ordinal ?? 0, head?.ordinal ?? 0);
-  const predicate = loggingPagePredicate(input, highWaterOrdinal);
-  const found = database.query<EventRow>('SELECT * FROM logging_events WHERE ' + predicate.sql + ' ORDER BY ordinal DESC LIMIT ?').all(...predicate.values, input.query.limit + 1);
+  const predicate = loggingPagePredicate(input, highWaterOrdinal, 'e');
+  const found = database.query<EventRow>('SELECT e.*,p.digest AS proof_digest,p.previous_hash,p.chain_hash,p.expired FROM logging_events e LEFT JOIN logging_proofs p ON p.id=e.id WHERE ' + predicate.sql + ' ORDER BY e.ordinal DESC LIMIT ?').all(...predicate.values, input.query.limit + 1);
   const events = []; let bytes = 1024;
   for (const row of found.slice(0, input.query.limit)) {
     const event = normalizeLoggingEvent(JSON.parse(row.envelope));
@@ -105,7 +134,8 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
     const columns = { stream: event.stream, source_id: event.sourceId, event_id: event.id, scope_kind: event.scope.kind, tenant_id: event.scope.tenantId,
       occurred_at: event.occurredAt, actor_id: event.actor.id, session_id: event.actor.sessionId, family: event.family, action: event.action,
       level: event.level, outcome: event.outcome, target_type: event.target?.type ?? null, target_id: event.target?.id ?? null };
-    if (row.id !== loggingDigest([event.sourceId, event.id]) || row.digest !== loggingDigest(event)
+    if (row.expired !== 0 || row.proof_digest !== row.digest || row.chain_hash !== loggingChainHash(String(row.previous_hash), row.ordinal, row.id, row.digest, row.ingested_at)
+      || row.id !== loggingDigest([event.sourceId, event.id]) || row.digest !== loggingDigest(event)
       || Object.entries(columns).some(([key, value]) => row[key] !== value)) throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Stored logging evidence is inconsistent.');
     const item = { event, ordinal: row.ordinal, ingestedAt: row.ingested_at }, size = loggingByteLength(item);
     if (bytes + size > LOGGING_MAX_BATCH_BYTES) break;

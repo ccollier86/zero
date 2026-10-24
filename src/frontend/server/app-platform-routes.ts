@@ -94,6 +94,10 @@ export async function mountPlatformRoutes({
   const getRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
   const observabilityRuntime = runtime.require(ZERO_OBSERVABILITY_RUNTIME);
 
+  if (config.logging && config.auth !== false) {
+    const { createLoggingRouter } = await import('../../logging/logging-router');
+    app.use(await createServerExtensionApp({ name: 'zero.logging', extensions: [createLoggingRouter()], runtime }) as any);
+  }
   if (config.email && config.email.inbox) {
     const issues = emailInboxConfigIssues(config); if (issues.length) throw new Error(`[email.inbox] ${issues.join(' ')}`);
     const inbox = config.email.inbox;
@@ -222,6 +226,7 @@ export async function mountPlatformRoutes({
       stateSync: config.stateSync,
       presence: config.auth !== false && config.auth.presence?.enabled === true,
       vectorVisualization: config.vectorVisualization !== false,
+      logging: config.logging !== false,
       tableSyncModes: config.resolvedSyncModes,
       tableSyncPlanes: resolveBrowserSyncTablePlanes(
         Object.keys(config.tables),

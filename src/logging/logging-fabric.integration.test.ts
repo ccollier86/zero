@@ -73,6 +73,47 @@ test('event identity prevents duplicates across regrouped batches; conflicting c
   } finally { await f.close(); }
 }, 30000);
 
+test('holds fence pruning, retained proofs prevent expired event resurrection, and independent checkpoints remain comparable', async () => {
+  const f = await fixture();
+  try {
+    const { audit } = await f.stores(), a = loggingEvent('held', 'tenant-a'), b = loggingEvent('expired', 'tenant-b');
+    await audit.append([a, b]);
+    const action = (name: string, id: string) => captureLoggingEvent(loggingContext('tenant-a'), { id: crypto.randomUUID(), family: 'investigations', action: name, outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: Date.now(), target: { type: 'logging.hold', id } });
+    const hold = { id: 'hold-a', actorId: 'fixture-user', scope: { kind: 'tenant', tenantId: 'tenant-a' }, since: 1700000000000, until: 1700000000001, reasonRef: 'case-opaque' };
+    await audit.evidenceCommand('logging.hold', { ...hold, auditEvent: action('logging.hold.created', 'hold-a') });
+    const checkpoint = (await audit.verify()).checkpoint;
+    expect(await audit.prune(Date.now() + 1000)).toBe(2);
+    expect((await audit.page({ kind: 'platform' })).events.map(e => e.event.id)).toEqual(['held']);
+    const replay = await audit.append([b]); expect(replay.receipts[0]?.duplicate).toBe(true);
+    expect((await audit.page({ kind: 'tenant', tenantId: 'tenant-b' })).events).toHaveLength(0);
+    await expect(audit.append([loggingEvent('expired', 'tenant-b', { outcome: 'failed' })])).rejects.toMatchObject({ code: 'LOGGING_EVENT_CONFLICT' });
+    expect((await audit.verify(0, checkpoint)).expired).toBe(2);
+    await expect(audit.evidenceCommand('logging.hold', { id: 'hold-a', actorId: 'fixture-user', scope: { kind: 'tenant', tenantId: 'tenant-b' }, release: true, auditEvent: action('logging.hold.released', 'hold-a') })).rejects.toThrow();
+    await audit.evidenceCommand('logging.hold', { id: 'hold-a', actorId: 'fixture-user', scope: hold.scope, release: true, auditEvent: action('logging.hold.released', 'hold-a') });
+    await audit.prune(Date.now() + 1000);
+    expect((await audit.page({ kind: 'platform' })).events).toHaveLength(0);
+    const final = await audit.verify(0, checkpoint); expect(final.expired).toBe(4);
+    await expect(audit.verify(0, { ...checkpoint, hash: '0'.repeat(64) })).rejects.toThrow();
+    const reopened = await f.restart(); expect((await reopened.audit.append([b])).receipts[0]?.duplicate).toBe(true);
+    expect((await reopened.audit.verify()).expired).toBe(4);
+  } finally { await f.close(); }
+}, 30000);
+
+test('review records are separate, scoped, idempotent and atomically accompanied by audit evidence', async () => {
+  const f = await fixture();
+  try {
+    const { audit } = await f.stores(); await audit.append([loggingEvent('reviewed-event')]);
+    const auditEvent = captureLoggingEvent(loggingContext('tenant-a'), { id: 'review-audit', family: 'investigations', action: 'logging.review.recorded', outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: Date.now(), target: { type: 'logging.review', id: 'review-a' } });
+    const input = { id: 'review-a', actorId: 'fixture-user', scope: { kind: 'tenant', tenantId: 'tenant-a' }, query: { family: 'records' }, highWaterOrdinal: 1, result: 'follow-up', reference: 'ticket-opaque', auditEvent };
+    await audit.evidenceCommand('logging.review', input); await audit.evidenceCommand('logging.review', input);
+    expect((await audit.page({ kind: 'platform' })).events).toHaveLength(2);
+    expect((await audit.evidence({ kind: 'tenant', tenantId: 'tenant-a' }) as any).reviews).toHaveLength(1);
+    expect((await audit.evidence({ kind: 'tenant', tenantId: 'tenant-b' }) as any).reviews).toHaveLength(0);
+    await expect(audit.evidenceCommand('logging.review', { ...input, id: 'not-recorded', auditEvent: { ...auditEvent, action: 'forged' } })).rejects.toThrow();
+    expect((await audit.evidence({ kind: 'platform' }) as any).reviews).toHaveLength(1);
+  } finally { await f.close(); }
+}, 30000);
+
 test('investigation pages keep a fixed high-water snapshot while new events arrive and obey date/actor/target filters', async () => {
   const f = await fixture();
   try {

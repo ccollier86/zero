@@ -235,6 +235,14 @@
       "types": "./src/schema/index.ts",
       "import": "./src/schema/index.ts"
     },
+    "./logging": {
+      "types": "./src/logging/index.ts",
+      "import": "./src/logging/index.ts"
+    },
+    "./components/logging": {
+      "types": "./src/components/logging/index.ts",
+      "import": "./src/components/logging/index.ts"
+    },
     "./icons": {
       "types": "./src/frontend/icons.ts",
       "import": "./src/frontend/icons.ts"

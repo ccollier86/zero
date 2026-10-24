@@ -25,6 +25,7 @@ import { createScopedNotificationService } from './scoped-notification-service';
 import { createScopedRoomService } from './scoped-room-service';
 import { createScopedStorageService } from './scoped-storage-service';
 import { createScopedWorkflowService } from './scoped-workflow-service';
+import { createScopedLoggingService } from '../../../logging/logging-scoped-service';
 
 /** Create (or preserve) the authorized service view for one HTTP request. */
 export function createServerRequestServices(
@@ -230,6 +231,8 @@ export function createInternalAuthorityScopedServerServices(
 
   const overrides: Record<PropertyKey, unknown> = {
     [REQUEST_SERVICES]: true,
+    logging: services.logging ? createScopedLoggingService(services.logging, projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync,
+      auditProvenance === 'system' && privilegedSystem ? 'zero.durable-work' : undefined) : null,
     payments: services.payments?.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync, signal: request?.signal }) ?? null,
     access: projectedAccess,
     scope,
@@ -290,6 +293,7 @@ function createUncommittedRequestServices(
 ): ServerRequestServices {
   const authority = createAuthorityRevalidators(request, access, services);
   const overrides: Record<PropertyKey, unknown> = {
+    logging: null,
     [REQUEST_SERVICES]: true,
     payments: null,
     access,
