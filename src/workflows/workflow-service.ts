@@ -268,6 +268,7 @@ export class WorkflowService {
           this.markOperationStarted();
         },
         advance: (instanceId: string) => this.advanceTrusted(instanceId),
+        dispatch: (instanceId: string) => this.dispatchAdvance(instanceId, 'enqueue'),
       };
       this.queries = new WorkflowRunQueryService(
         this.repository,
@@ -422,6 +423,12 @@ export class WorkflowService {
     return this.idempotentStarts.start(name, input, system, options, mutation);
   }
 
+  /** Commit the same permanent start receipt, then dispatch owned work without waiting on its activities. */
+  async enqueueAsSystemOnce(name: string, input: unknown, system: WorkflowSystemStartOptions,
+    options: WorkflowStartOptions = {}, mutation: WorkflowSystemStartMutation = {}): Promise<WorkflowSystemStartResult> {
+    return this.idempotentStarts.start(name, input, system, options, mutation, true);
+  }
+
   async runAsSystem(
     name: string,
     input: unknown,
@@ -498,6 +505,12 @@ export class WorkflowService {
       options,
       mutation,
     );
+  }
+
+  /** Commit an idempotent system event without holding the caller behind its resumed workflow activities. */
+  async enqueueEventAsSystem(instanceId: string, eventName: string, payload: unknown,
+    options: WorkflowSystemEventDeliveryOptions, mutation: WorkflowSystemEventDeliveryMutation = {}): Promise<WorkflowSystemEventDeliveryResult> {
+    return this.systemEventDeliveries.deliver(instanceId, eventName, payload, options, mutation, true);
   }
 
   cancel(

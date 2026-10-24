@@ -182,6 +182,23 @@ preview/thumbnail from loss of the accepted message.
 
 ## AI And Human Ownership
 
+### Durable Job Handoff
+
+The source automation worker handles one delivery at a time per physical
+database. Long AI work belongs in a Torrent activity, not inline in the source
+handler. Use the branch-preview [commit-acknowledged enqueue](../torrent/enqueue.md)
+for both starts and resumes; an eager `torrent.start`/`deliverEvent` can itself
+wait on initial activity execution. Await the enqueue receipt, then let the
+source delivery finish. This implementation does not make the planned messaging
+backend available; it supplies the underlying short handoff contract.
+
+Track the exact conversation/message, source sequence, workflow instance and
+ownership epoch in the durable domain command. A retry keeps its original
+identity. Re-read current conversation authority and eligibility before acting;
+a captured event snapshot is context, not permanent permission to send later.
+
+### Takeover And Publication Races
+
 Conversation ownership is durable state, for example AI, human or triage, with
 an increasing ownership epoch. Taking over must commit the new epoch and cancel
 old work. An AI worker checks that epoch before generation, before emitting
@@ -198,6 +215,37 @@ Human takeover, assignment, transfer, internal notes, handback and escalation
 need accepted command receipts. Staff and AI cannot both publish because they
 read the same old boolean. A stale run may record its cancellation/outcome but
 cannot reopen an AI-owned lane or overwrite a human response.
+
+The final reply commit and its outbound job must compare the expected owner
+epoch in the canonical conversation transaction. If takeover won that commit
+race, the stale AI result cannot create a new accepted reply or send job. Sending
+workers recheck current ownership before external dispatch. Cancellation cannot
+unsend a provider request already accepted or retract tokens already delivered;
+record and reconcile in-flight/unknown outcomes rather than relabeling them as
+never sent. Human handback creates a new epoch, not permission to revive old work.
+
+### Unread Counts And Private Notes
+
+Store a monotonic per-participant read position with an idempotent accepted
+command; multiple tabs/devices cannot move it backwards. Advance only through
+authorized messages actually presented under the configured read policy, not
+because a conversation list mounted, a background tab exists or an enqueue
+receipt arrived. Derive counts server-side from eligible message visibility and
+the admitted read position. Reconnect must reconcile authoritative counts and
+cursor state; optimistic UI cannot permanently clear unread work.
+
+Private staff notes are a separate visibility class, not a cosmetic bubble
+style. Server queries, realtime payloads, counts, search, attachments, exports
+and notifications all enforce that visibility. Notes never enter customer or
+Messenger delivery, customer unread counts or default assistant context. Any
+explicit staff-authorized AI use of notes requires a deliberate policy.
+Shared sequence gaps or aggregate counts must not disclose hidden note activity.
+
+The dashboard distinguishes accepted incoming messages, queued/running AI work,
+committed replies, provider acceptance and actual supported delivery/read
+receipts. Private-note acceptance, human takeover and stale-run suppression
+need their own durable outcomes. These remain messaging backend acceptance
+requirements, not guarantees supplied by today's presentation/typing components.
 
 ## Channels And Delivery
 

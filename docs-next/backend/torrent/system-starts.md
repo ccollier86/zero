@@ -29,9 +29,11 @@ duplicate run creation across concurrent calls, lost acknowledgements and
 restart. Ordinary `startAsSystem`/`runAsSystem` remain non-idempotent starts;
 they have not silently changed semantics.
 
-For a ReactiveDB durable function, prefer the narrower
-[`zero.torrent.start`](../database-automations/torrent.md#durably-start-a-new-run).
-That adapter derives the key and trusted source scope for you.
+For a ReactiveDB durable function, use the narrower
+[source-bound helpers](../database-automations/torrent.md#durably-start-a-new-run)
+which derive the key and trusted source scope. The branch-preview
+[`zero.torrent.enqueue`](./enqueue.md) returns at the durable commit boundary;
+existing `start` joins initial advancement and can wait on a long activity.
 
 ## Public Contract
 

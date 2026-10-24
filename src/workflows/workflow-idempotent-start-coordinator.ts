@@ -14,7 +14,7 @@ import type { WorkflowObservability } from './workflow-observability';
 import type { WorkflowRegistry } from './workflow-registry';
 import type { WorkflowRepository } from './workflow-repository';
 import type { WorkflowScopeBoundary } from './workflow-scope-boundary';
-import type { WorkflowStartCoordinatorHooks } from './workflow-start-coordinator';
+import type { WorkflowCommitDispatchHooks } from './workflow-commit-dispatch-hooks';
 import type { WorkflowStartOptions } from './workflow-start-options';
 import { tryCreateWorkflowGraph } from './workflow-start-router';
 import { WorkflowStartReceiptStore } from './workflow-start-receipt-store';
@@ -30,17 +30,17 @@ export class WorkflowIdempotentStartCoordinator {
   constructor(private readonly db: ReactiveDB, private readonly registry: WorkflowRegistry, private readonly graph: WorkflowGraphRuntime,
     private readonly instances: WorkflowInstanceFactory, private readonly repository: WorkflowRepository,
     private readonly authority: WorkflowExecutionAuthorityGate, private readonly scopes: WorkflowScopeBoundary,
-    private readonly hooks: WorkflowStartCoordinatorHooks, private readonly observability: WorkflowObservability) {
+    private readonly hooks: WorkflowCommitDispatchHooks, private readonly observability: WorkflowObservability) {
     this.receipts = new WorkflowStartReceiptStore(db, authority.store);
     this.actorReceipts = new WorkflowStartReceiptStore(db, authority.store, 'actor');
   }
 
   async start(name: string, input: unknown, system: WorkflowSystemStartOptions,
-    options: WorkflowStartOptions = {}, mutation: WorkflowSystemStartMutation = {}): Promise<WorkflowSystemStartResult> {
+    options: WorkflowStartOptions = {}, mutation: WorkflowSystemStartMutation = {}, deferred = false): Promise<WorkflowSystemStartResult> {
     const key = requireWorkflowSystemStartKey(system?.idempotencyKey);
     const scope = this.scopes.requireScope(system.scope);
     const authority = createSystemAuthority({ principal: system.principal, reason: system.reason, scope });
-    return this.startAuthorized(name, input, authority, key, options, mutation);
+    return this.startAuthorized(name, input, authority, key, options, mutation, null, deferred);
   }
 
   /** Actor and SYSTEM commands share atomic creation mechanics, never their authority or receipt namespace. */
@@ -67,7 +67,7 @@ export class WorkflowIdempotentStartCoordinator {
   }
 
   private async startAuthorized(name: string, input: unknown, authority: WorkflowPersistedExecutionAuthority, key: string,
-    options: WorkflowStartOptions, mutation: WorkflowSystemStartMutation, bindingJson: string | null = null): Promise<WorkflowSystemStartResult> {
+    options: WorkflowStartOptions, mutation: WorkflowSystemStartMutation, bindingJson: string | null = null, deferred = false): Promise<WorkflowSystemStartResult> {
     // This async API cannot acknowledge an unrelated caller's unfinished root
     // transaction. Check only Bun's transaction state; all writes below still
     // flow through the owner-fenced ReactiveDB repository.
@@ -153,7 +153,10 @@ export class WorkflowIdempotentStartCoordinator {
     // transaction() returns. Never execute a command whose pinned snapshot was
     // altered either by the final fence or by a publication callback.
     receipts.validateInstance(result.instanceId);
-    if (this.repository.getInstance(result.instanceId)?.status === 'running') await this.hooks.advance(result.instanceId);
+    if (this.repository.getInstance(result.instanceId)?.status === 'running') {
+      if (deferred) this.hooks.dispatch(result.instanceId);
+      else await this.hooks.advance(result.instanceId);
+    }
     return result;
   }
 

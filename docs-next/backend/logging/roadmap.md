@@ -43,10 +43,10 @@ present. Enabling a preset is not legal certification. Preserve existing
 Guardian security audit and current observability behavior throughout the
 transition. Do not migrate real records or activate browser capture implicitly.
 
-The [automation and Torrent scheduling work](../database-automations/delivery.md)
-is a separate concern: a short durable handoff should not spend an entire
-per-database automation lane waiting on AI inference. Logging capture must not
-introduce the same wait inside a database transaction or auth lease.
+The branch's [Torrent enqueue API](../torrent/enqueue.md) addresses a separate
+scheduling concern: a short durable handoff need not spend an entire per-database
+automation lane waiting on AI inference. Logging capture must not introduce the
+same wait inside a database transaction or auth lease.
 
 ## Related Guides And Next Steps
 

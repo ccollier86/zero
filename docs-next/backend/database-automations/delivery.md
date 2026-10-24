@@ -72,6 +72,14 @@ then immediately rescans while backlog exists. This preserves source fairness
 instead of letting the first occupied slots monopolize admission. One source
 worker is sequential; different physical sources can execute concurrently.
 
+This sequential delivery lane is distinct from the SQLite writer lane, which
+is already released before the handler runs. An inline AI call or an eager
+Torrent start/resume can still hold the delivery lane for its entire initial
+activity. For short durable handoffs use the branch-preview
+[Torrent enqueue APIs](../torrent/enqueue.md), then return after their committed
+receipt. Their owned workflow runs progress independently; no arbitrary
+same-source handler parallelism or database write-order weakening is required.
+
 After a source has no active records, bounded in-memory idle knowledge avoids
 reopening its cold actor on every pass. Cooldown begins after the complete
 catalog pass, so slow tail sources do not immediately expire earlier entries.

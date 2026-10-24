@@ -13,6 +13,16 @@ import { createDatabaseAutomationTorrentService } from './database-automation-to
 import type { ServerRouteServices } from './server-services';
 
 describe('delivery-bound Torrent start adapter', () => {
+  test('enqueue uses the short commit-acknowledged path with the same permanent identity and source fences', async () => {
+    const calls: string[] = [];
+    let checked = 0;
+    const { torrent } = fixture({ enqueue: async (_name, _input, options, _start, mutation) => {
+      calls.push(options.idempotencyKey); mutation.assertCurrentAuthority?.(); return acknowledgement;
+    }, assertAuthority: () => { checked++; } });
+    expect(await torrent.enqueue('orders.fulfill', {}, { key: 'handoff' })).toEqual(acknowledgement);
+    expect(await torrent.enqueue('orders.fulfill', {}, { key: 'handoff' })).toEqual(acknowledgement);
+    expect(calls).toHaveLength(2); expect(calls[0]).toBe(calls[1]); expect(checked).toBe(6);
+  });
   test('forwards exact input/options, source scope and a stable final commit fence', async () => {
     const calls: Array<{
       name: string;
@@ -135,12 +145,14 @@ type Start = (
 function fixture(options: {
   deliveryId?: string;
   start?: Start;
+  enqueue?: Start;
   assertAuthority?: () => void;
   unavailable?: boolean;
 } = {}) {
   const services = {
     workflows: options.unavailable ? null : {
       startAsSystemOnce: options.start ?? (async () => acknowledgement),
+      enqueueAsSystemOnce: options.enqueue ?? (async () => acknowledgement),
     },
   } as unknown as ServerRouteServices;
   return {

@@ -387,6 +387,18 @@ describe('request-bound server services', () => {
           scope: alpha.scope!, idempotencyKey: 'forbidden',
         },
       )).toThrow('not available');
+      expect(() => (alpha.workflows as unknown as WorkflowService).enqueueAsSystemOnce(
+        'proof', {}, {
+          principal: 'attempted-request-bypass', reason: 'Synthetic forbidden system enqueue',
+          scope: alpha.scope!, idempotencyKey: 'forbidden',
+        },
+      )).toThrow('not available');
+      expect(() => (alpha.workflows as unknown as WorkflowService).enqueueEventAsSystem(
+        workflowA, 'proof.ready', {}, {
+          principal: 'attempted-request-bypass', reason: 'Synthetic forbidden system event enqueue',
+          scope: alpha.scope!, idempotencyKey: 'forbidden-event',
+        },
+      )).toThrow('not available');
     } finally {
       fixture.db.dispose();
     }

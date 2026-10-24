@@ -15,7 +15,7 @@ const executions: Array<{ orderId: string; title: string }> = [];
 const starts = defineDatabaseFunction<DatabaseTriggerFunctionInput, void, DatabaseAutomationExecutionServerServices>({
   name: 'orders.start-processing', version: 1, mode: 'durable',
   async handler({ input, zero }) {
-    const acknowledgement = await zero.torrent.start('order-processing', {
+    const acknowledgement = await zero.torrent.enqueue('order-processing', {
       orderId: input.change.rowId, title: input.change.row?.title,
     }, { key: 'process', initialMemory: { originSequence: input.change.sequence } });
     attempts.push({
@@ -51,6 +51,7 @@ const app = await createApp({
   auth: true, stateSync: false, email: false, ai: false, vector: false, kv: false,
   pdf: false, sitemap: false, appDir: join(root, 'app'), outDir: join(root, 'build'),
   generatedDir: join(root, 'generated'), serverRoutesDir: join(root, 'routes'),
+  logging: { rootDirectory: join(root, 'runtime', 'logs') },
   serverResourcesDir: false, serverPluginsDir: false, serverEndpointsDir: false,
   serverMiddlewareDir: false, routeAuth: 'explicit', publicPaths: ['/'],
   observability: { console: false, endpoint: false },
@@ -61,12 +62,12 @@ try {
   assert.equal((await fetch(`${base}/proof/orders/order-one`, { method: 'POST' })).status, 200);
   await until(() => attempts.length >= 1);
   assert.equal((await fetch(`${base}/proof/orders/order-one`, { method: 'PATCH' })).status, 200);
-  await until(() => attempts.length >= 2 && completedDeliveries() === 1);
+  await until(() => attempts.length >= 2 && completedDeliveries() === 1 && executions.length === 1);
   assert.equal(new Set(attempts.map(entry => entry.instanceId)).size, 1);
   assert.ok(attempts.every(entry => entry.title === 'Captured title'));
   assert.deepEqual(executions, [{ orderId: 'order-one', title: 'Captured title' }]);
   assert.equal((await fetch(`${base}/proof/orders/order-two`, { method: 'POST' })).status, 200);
-  await until(() => attempts.length >= 3 && completedDeliveries() === 2);
+  await until(() => attempts.length >= 3 && completedDeliveries() === 2 && executions.length === 2);
   assert.equal(new Set(attempts.map(entry => entry.instanceId)).size, 2);
   assert.equal(executions.length, 2);
   const system = new Database(join(root, 'runtime', 'system.db'), { readonly: true, strict: true });

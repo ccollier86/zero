@@ -57,6 +57,13 @@ It acknowledges durable event identity, not completed workflow execution.
 A replay of the same principal/scope/key returns the original acknowledgement
 and re-kicks a running frontier; it does not append another event.
 
+`deliverEventAsSystem` can still await activities in that initial advancement.
+The branch-preview [enqueue API](./enqueue.md) adds `enqueueEventAsSystem` and
+source-bound `zero.torrent.enqueueEvent` for a short durable handoff that does
+not wait on downstream AI/network work. The command/receipt identity is shared
+with eager delivery; system methods reject an unfinished outer transaction and
+promise-returning final authority assertions.
+
 The key is 1–128 characters matching alphanumeric first, then alphanumeric,
 dot/underscore/colon/hyphen. Changing target, event, payload or provenance for
 the same key produces WORKFLOW_EVENT_IDEMPOTENCY_CONFLICT, not redirect.

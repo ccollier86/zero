@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 
-test('installed package durably starts one Torrent run per captured trigger effect', async () => {
+test('installed package enqueues retry-safe Torrent runs and boots dedicated logging actors', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'automation-torrent-package-'));
   const consumer = join(root, 'consumer');
@@ -28,6 +28,8 @@ test('installed package durably starts one Torrent run per captured trigger effe
     const installed = join(consumer, 'node_modules/@zero/framework');
     expect(await Bun.file(join(installed, 'docs-next/backend/database-automations/app-functions.md')).exists()).toBe(true);
     expect(await Bun.file(join(installed, 'docs-next/backend/database-automations/torrent.md')).text()).toContain('torrent.start');
+    expect(await Bun.file(join(installed, 'docs-next/backend/logging/configuration.md')).exists()).toBe(true);
+    expect(await Bun.file(join(installed, 'src/logging/logging-actor-entry.ts')).exists()).toBe(true);
     const output = await checked([process.execPath, '--no-env-file', 'gateway.ts'], consumer);
     expect(output).toContain('[zero-public-automation-torrent] complete');
   } finally {

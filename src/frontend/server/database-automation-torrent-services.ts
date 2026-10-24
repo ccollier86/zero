@@ -17,6 +17,12 @@ const TORRENT_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
 
 /** Scoped, permanently idempotent Torrent effects owned by one outbox delivery. */
 export interface DatabaseAutomationTorrentService {
+  /** Commit a retry-safe start receipt and return without joining AI/network activities. Prefer for short outbox handoffs. */
+  enqueue(
+    name: string,
+    input?: unknown,
+    options?: WorkflowStartOptions & Readonly<{ key?: string }>,
+  ): Promise<WorkflowSystemStartResult>;
   /**
    * Start one run in the source scope. Repeating the same delivery/key returns
    * its original run; a changed command conflicts instead of creating a second.
@@ -32,6 +38,13 @@ export interface DatabaseAutomationTorrentService {
    * the outbox delivery plus the optional per-handler discriminator.
    */
   deliverEvent(
+    instanceId: string,
+    eventName: string,
+    payload?: unknown,
+    options?: Readonly<{ key?: string }>,
+  ): Promise<WorkflowSystemEventDeliveryResult>;
+  /** Commit a retry-safe event receipt without joining the resumed execution frontier. */
+  enqueueEvent(
     instanceId: string,
     eventName: string,
     payload?: unknown,
@@ -69,12 +82,12 @@ export function createDatabaseAutomationTorrentService(
       );
     }
   };
-  return Object.freeze({
-    async start(name, input, options = {}) {
+  const start = (method: 'startAsSystemOnce' | 'enqueueAsSystemOnce'): DatabaseAutomationTorrentService['start'] =>
+    async (name, input, options = {}) => {
       const workflows = requireWorkflows();
       const { key: discriminator, ...startOptions } = options;
       const key = normalizeTorrentKey(discriminator);
-      const result = await workflows.startAsSystemOnce(name, input, {
+      const result = await workflows[method](name, input, {
         principal: 'reactivedb-automation',
         reason: 'ReactiveDB durable function workflow start',
         scope,
@@ -82,11 +95,12 @@ export function createDatabaseAutomationTorrentService(
       }, startOptions, { assertCurrentAuthority: assertWorkflowAuthority });
       assertCurrentAuthority();
       return result;
-    },
-    async deliverEvent(instanceId, eventName, payload, options = {}) {
+    };
+  const event = (method: 'deliverEventAsSystem' | 'enqueueEventAsSystem'): DatabaseAutomationTorrentService['deliverEvent'] =>
+    async (instanceId, eventName, payload, options = {}) => {
       const workflows = requireWorkflows();
       const key = normalizeTorrentKey(options.key);
-      const result = await workflows.deliverEventAsSystem(
+      const result = await workflows[method](
         instanceId,
         eventName,
         payload,
@@ -100,7 +114,10 @@ export function createDatabaseAutomationTorrentService(
       );
       assertCurrentAuthority();
       return result;
-    },
+    };
+  return Object.freeze({
+    start: start('startAsSystemOnce'), enqueue: start('enqueueAsSystemOnce'),
+    deliverEvent: event('deliverEventAsSystem'), enqueueEvent: event('enqueueEventAsSystem'),
   } satisfies DatabaseAutomationTorrentService);
 }
 

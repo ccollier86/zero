@@ -6,7 +6,8 @@ import {
   createSystemAuthority,
 } from './workflow-execution-authority';
 import { serializeWorkflowEventActor } from './workflow-event-actor';
-import type { WorkflowEventCoordinatorHooks } from './workflow-event-coordinator';
+import type { WorkflowCommitDispatchHooks } from './workflow-commit-dispatch-hooks';
+import { assertWorkflowSynchronousAuthority } from './workflow-authority-assertion';
 import type { WorkflowClock } from './workflow-executor';
 import { WorkflowError, workflowNotFound } from './workflow-error';
 import type { WorkflowObservability } from './workflow-observability';
@@ -35,12 +36,12 @@ export class WorkflowSystemEventDeliveryCoordinator {
   private readonly receipts: WorkflowSystemEventReceiptStore;
 
   constructor(
-    db: ReactiveDB,
+    private readonly db: ReactiveDB,
     private readonly repository: WorkflowRepository,
     private readonly runtime: WorkflowRuntimeStore,
     private readonly clock: WorkflowClock,
     private readonly scopes: WorkflowScopeBoundary,
-    private readonly hooks: WorkflowEventCoordinatorHooks,
+    private readonly hooks: WorkflowCommitDispatchHooks,
     private readonly observability: WorkflowObservability,
   ) {
     this.receipts = new WorkflowSystemEventReceiptStore(db);
@@ -56,7 +57,11 @@ export class WorkflowSystemEventDeliveryCoordinator {
     payload: unknown,
     options: WorkflowSystemEventDeliveryOptions,
     mutation: WorkflowSystemEventDeliveryMutation = {},
+    deferred = false,
   ): Promise<WorkflowSystemEventDeliveryResult> {
+    if (this.db.getRawDatabase().inTransaction) {
+      throw new WorkflowError('Workflow system event delivery requires an independent transaction', 'WORKFLOW_REQUEST_INVALID', 422);
+    }
     this.hooks.beginOperation();
     const idempotencyKey = requireWorkflowSystemEventIdempotencyKey(
       options?.idempotencyKey,
@@ -110,7 +115,7 @@ export class WorkflowSystemEventDeliveryCoordinator {
         // The final authority check joins the same writer transaction as the
         // event, sealed authority envelope, and idempotency receipt. A caller
         // cannot revoke a source after preflight and still win the commit race.
-        mutation.assertCurrentAuthority?.();
+        assertWorkflowSynchronousAuthority(mutation.assertCurrentAuthority);
         const instance = this.repository.getInstance(instanceId);
         if (!instance || instance.tenant_id !== scopedInstance.tenant_id) {
           throw workflowNotFound();
@@ -193,7 +198,10 @@ export class WorkflowSystemEventDeliveryCoordinator {
         500,
       );
     }
-    if (shouldAdvance) await this.hooks.advance(instanceId);
+    if (shouldAdvance) {
+      if (deferred) this.hooks.dispatch(instanceId);
+      else await this.hooks.advance(instanceId);
+    }
     // Replays intentionally return the original receipt rather than decorating
     // it. Callers can retry without branching on transport history.
     return result;

@@ -65,9 +65,14 @@ independent app sinks, final extension events, backend diagnostic privacy,
 backpressure reporting and restart identity. Diagnostics use the external project's
 `diagnostics/logging-*` artifacts, synthetic inputs and disposable databases.
 The root TypeScript check passes. Documentation navigation and metadata are
-checked separately from implementation/release readiness: 820 reachable/unique
+checked separately from implementation/release readiness: 822 reachable/unique
 pages, no problems. Four existing hot-auth, app-isolation and shutdown regression
 tests also pass, for 74 tests across the two focused runs.
+
+The subsequent [enqueue review](./automation-torrent-enqueue-review.md) adds an
+installed-source-package smoke test that starts the real packaged logging actor
+through `createApp({ logging })`. This verifies default source packaging, not
+compiled/custom actor launches or complete compliance release readiness.
 
 Initial construction exposed two integration mistakes that are corrected:
 realm migrations execute before table registration, so the logging migration

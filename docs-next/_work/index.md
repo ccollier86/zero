@@ -32,6 +32,9 @@ publication, search, and production agent bundles.
   - [Logging foundation review](./logging-foundation-review.md): working private
     Fabric storage, validation and batching milestone with real-actor tests;
     separates source groundwork from the remaining managed/client/UI guarantees.
+- [Automation and Torrent enqueue review](./automation-torrent-enqueue-review.md):
+  commit-acknowledged handoff for long AI work, unchanged eager compatibility,
+  source/request authority fences and real managed/package regression evidence.
 - [Email Inbox plan](./email-inbox-plan.md): approved double-sidebar email
   workspace with visible folders, optional mailbox switching, safe HTML,
   composition/drafts, scoped service integration and live updates. The

@@ -24,7 +24,7 @@ import type {
 
 const TERMINAL_STEP_STATUSES = new Set(['completed', 'skipped']);
 
-export type WorkflowDispatchPhase = 'retry' | 'recovery' | 'timeout';
+export type WorkflowDispatchPhase = 'retry' | 'recovery' | 'timeout' | 'enqueue';
 export type WorkflowDispatch = (
   instanceId: string,
   phase: WorkflowDispatchPhase,

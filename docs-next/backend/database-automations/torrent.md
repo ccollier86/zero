@@ -28,6 +28,13 @@ An AFTER durable function observes that committed change and sends an event to
 the exact stored instance ID. Three waiting SMS replies must stay three
 independent correlations, not one broadcast event.
 
+For long AI/provider work, use the branch-preview
+[`zero.torrent.enqueue` / `enqueueEvent`](../torrent/enqueue.md) handoff. Existing
+`start`/`deliverEvent` join initial Torrent advancement and can occupy the source
+delivery while an activity awaits. Enqueue preserves the same scoped permanent
+receipts but returns without joining activities. These new methods are not in
+the saved main package yet; the guide explains the deliberate migration.
+
 ## End-To-End Ownership
 
 1. An authorized start creates a Torrent instance and a business record storing
