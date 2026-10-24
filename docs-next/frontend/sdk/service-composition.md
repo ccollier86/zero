@@ -35,6 +35,9 @@ proof its server feature is enabled.
 - [Rooms](../rooms/index.md) covers scoped room membership and topic presence.
 - [Torrent](../torrent/index.md) covers workflow monitoring/actions/visualization.
 - [State](../state/index.md) covers durable per-user state and ephemeral topics.
+- [Payments](../../plugins/payments/index.md) covers the optional Stripe billing
+  facade and its server/plugin compatibility boundary. `client.payments` uses
+  shared authenticated transport; installing the client does not enable billing.
 
 Choose the corresponding normal server configuration/permissions. Frontend props/
 hidden controls do not mount an HTTP service, provision a realm or grant roles.

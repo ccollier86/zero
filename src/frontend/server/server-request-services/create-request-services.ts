@@ -230,6 +230,7 @@ export function createInternalAuthorityScopedServerServices(
 
   const overrides: Record<PropertyKey, unknown> = {
     [REQUEST_SERVICES]: true,
+    payments: services.payments?.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync, signal: request?.signal }) ?? null,
     access: projectedAccess,
     scope,
     data: requestData,
@@ -290,6 +291,7 @@ function createUncommittedRequestServices(
   const authority = createAuthorityRevalidators(request, access, services);
   const overrides: Record<PropertyKey, unknown> = {
     [REQUEST_SERVICES]: true,
+    payments: null,
     access,
     scope: null,
     data: null,

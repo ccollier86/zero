@@ -1,4 +1,5 @@
 import type { RequestAuthorizationAccess } from '../../../auth/authorization-access';
+import type { ScopedPayments } from '../../../payments/contracts';
 import type { ServiceDataScope } from '../../../auth/service-data-scope';
 import type { AsyncDatabaseClient } from '../../../databases/database-operations';
 import type {
@@ -16,6 +17,7 @@ import type { ScopedWorkflowService } from './scoped-workflow-service';
 export interface ServerRequestServices extends Omit<
   ServerRouteServices,
   | 'auth'
+  | 'payments'
   | 'notifications'
   | 'observability'
   | 'pdf'
@@ -25,6 +27,7 @@ export interface ServerRequestServices extends Omit<
 > {
   /** The same live authorization facade exposed on the Elysia request. */
   readonly access: RequestAuthorizationAccess;
+  readonly payments: ScopedPayments | null;
   /** Validated data boundary, or null for a multi-tenant selection/anonymous session. */
   readonly scope: ServiceDataScope | null;
   /** Tenant-file data client, or null outside tenant-database isolation. */
@@ -95,6 +98,7 @@ export type AuthorityScopedObservabilityServices = Pick<
  * absent from this public contract because strict projections reject them.
  */
 export interface AuthorityScopedServerServices {
+  readonly payments: ScopedPayments | null;
   readonly access: RequestAuthorizationAccess;
   readonly scope: ServiceDataScope;
   /** Tenant-file data client, or null outside tenant-database isolation. */

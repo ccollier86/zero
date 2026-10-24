@@ -108,6 +108,7 @@ import type {
   AuthAdminUserListResult,
 } from './auth-admin-types';
 import { createApi } from './api';
+import { createPaymentsClient, type PaymentsClient } from '../../payments/client';
 import type { Api } from './api';
 import { NOTIFICATION_TABLES } from '../../notifications/types';
 import { ROOM_TABLES } from '../../rooms/types';
@@ -414,6 +415,9 @@ export interface ClientConfig {
 
   /** Generated resource route prefix. Default: `/api/resources`. */
   resourcePrefix?: string;
+
+  /** Optional payments transport path. Installing/enabling payments remains a server-side decision. */
+  payments?: { basePath?: string };
 
   /** Called on unrecoverable connection error. */
   onError?: (error: string) => void;
@@ -748,6 +752,9 @@ export interface Client extends AuthAdminSdkSurface {
    * ```
    */
   readonly api: Api;
+
+  /** Current-subject billing facade; unavailable server plugins fail closed with a route error. */
+  readonly payments: PaymentsClient;
 
   // ─── Data ────────────────────────────────────────────────────────
 
@@ -1314,6 +1321,18 @@ export function createClient(config: ClientConfig): Client {
 
   // ─── Eden Treaty API ────────────────────────────────────────────
   const api = createApi(url, authClient);
+  const payments = createPaymentsClient({
+    request: clientFetch,
+    boundary: () => ({
+      key: JSON.stringify([authClient?.authorizationScopeKey, authClient?.user?.userId, authClient?.sessionTransition.revision, authorizationDataBoundary.revision]),
+      ready: Boolean(authClient?.isAuthenticated && isAuthorizationScopeReady(authClient.sessionTransition, authClient.isRestoring)
+        && isAuthorizationDataReady(authorizationDataBoundary.revision, authClient.authorizationState.status, authClient.isAuthenticated)),
+    }),
+    subscribeBoundary(callback) {
+      const auth = authClient?.subscribe(callback), access = authClient?.subscribeAuthorization(callback), data = authorizationDataBoundary.subscribe(callback);
+      return () => { auth?.(); access?.(); data(); };
+    },
+  }, config.payments);
   const applicationAdmin: AuthApplicationAdminSdkSurface = Object.freeze({
     getConfig: async () => requireAuthClient().applicationAdmin.getConfig(),
     listUsers: async (params?: AuthApplicationUserListParams) => (
@@ -1360,6 +1379,7 @@ export function createClient(config: ClientConfig): Client {
 
     // ─── Typed API ─────────────────────────────────────────────────
     get api() { return api; },
+    get payments() { return payments; },
 
     // ─── Auth (top-level) ──────────────────────────────────────────
     get user() { return authClient?.user ?? null; },

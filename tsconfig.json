@@ -49,6 +49,8 @@
       "@zero/framework/components/code-block/highlight": ["./src/components/code-block/code-block-highlight.ts"],
       "@zero/framework/components/code-block/server": ["./src/components/code-block/code-block-server.ts"],
       "@zero/framework/ai": ["./src/ai"],
+      "@zero/framework/payments": ["./src/payments"],
+      "@zero/framework/payments/client": ["./src/payments/client.ts"],
       "@zero/framework/auth": ["./src/auth"],
       "@zero/framework/kv": ["./src/kv"],
       "@zero/framework/notifications": ["./src/notifications"],

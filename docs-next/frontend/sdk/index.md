@@ -45,6 +45,8 @@ headers or replace server authority.
 - [Mutations and health](./mutations-and-connection.md): accepted app commands and
   honest connection observations.
 - [Scoped control planes](./scoped-control-planes.md): data readiness and Studio facades.
+- [Optional payments](../../plugins/payments/api.md): current-subject billing,
+  Checkout/Portal and revision streaming in the Stripe foundation branch.
 - [Service composition](./service-composition.md): links to owning Guardian/Torrent/
   room/notification/state contracts.
 - [Low-level Sync](./low-level-sync.md): advanced transport/store/hooks, distinct
