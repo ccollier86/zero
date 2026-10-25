@@ -9,6 +9,7 @@ import type { EmailMessage, EmailProvider, EmailSendResult, SmtpEmailProviderCon
 
 export class SmtpEmailProvider implements EmailProvider {
   readonly name = 'smtp';
+  readonly supportsAttachments = true;
   private readonly resolved;
   private readonly active = new Set<() => void>();
   private closed = false;
@@ -24,7 +25,7 @@ export class SmtpEmailProvider implements EmailProvider {
   }
 
   async send(message: EmailMessage): Promise<EmailSendResult> {
-    message = snapshotEmailMessage(message);
+    message = snapshotEmailMessage(message, this);
     const mime = new MailComposer({
       from: message.from, to: message.to, cc: message.cc, bcc: message.bcc, replyTo: message.replyTo,
       subject: message.subject, text: message.text, html: message.html,

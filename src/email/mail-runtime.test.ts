@@ -49,12 +49,13 @@ test('receive-only and synthetic senders never append fake delivered mail', asyn
 
 test('message admission rejects header injection and paths; async transports receive owned snapshots', async () => {
   let captured: EmailMessage | undefined;
-  const service = new EmailService({ name: 'capture', async send(value) { captured = value; return { provider: 'capture', accepted: [message.to] }; } });
-  for (const extra of [{ subject: 'Subject\r\nBcc: attacker@example.test' }, { cc: ['valid@example.test', null] },
-    { attachments: [{ filename: 'private', content: { path: '/synthetic/private/file' } }] }]) {
+  const service = new EmailService({ name: 'capture', supportsAttachments: true, async send(value) { captured = value; return { provider: 'capture', accepted: [message.to] }; } });
+  for (const extra of [{ subject: 'Subject\r\nBcc: attacker@example.test' }, { cc: ['valid@example.test', null] }]) {
     await expect(service.send({ ...message, ...extra } as EmailMessage)).rejects.toMatchObject({ code: 'EMAIL_MESSAGE_INVALID' });
     expect(captured).toBeUndefined();
   }
+  await expect(service.send({ ...message, attachments: [{ filename: 'private', content: { path: '/synthetic/private/file' } }] } as unknown as EmailMessage)).rejects.toMatchObject({ code: 'EMAIL_ATTACHMENT_INVALID' });
+  expect(captured).toBeUndefined();
   const content = new Uint8Array([1, 2]), to = [message.to];
   const sent = service.send({ ...message, to, attachments: [{ filename: 'data.bin', content }] });
   content[0] = 99; to[0] = 'changed@example.test'; await sent;
@@ -79,6 +80,26 @@ test('Resend preserves attachments, explicit MIME types and inline content IDs',
     expect(body.attachments).toEqual([{ filename: 'data.txt', content: '', content_id: 'inline', content_type: 'text/plain' }]);
     await expect(provider.send({ ...message, attachments: [{ filename: 'data.txt', content: new Uint8Array(), contentId: 'a'.repeat(128) }] })).rejects.toMatchObject({ code: 'EMAIL_PROVIDER_REQUEST_REJECTED' });
     expect(calls).toBe(2);
+  } finally { globalThis.fetch = original; }
+});
+
+test('direct and facade Resend sends preserve exact binary subviews without mutating caller data', async () => {
+  const original = globalThis.fetch;
+  const bodies: Array<Record<string, any>> = [];
+  globalThis.fetch = (async (_input, init) => { bodies.push(JSON.parse(init!.body as string)); return Response.json({ id: 'synthetic-receipt' }); }) as typeof fetch;
+  const bytes = new Uint8Array([0, 1, 10, 13, 127, 128, 254, 255]);
+  const provider = new ResendEmailProvider({ apiKey: 'synthetic' });
+  try {
+    for (const sender of [provider, new EmailService(provider, { from: message.from })]) {
+      const backing = new Uint8Array([77, ...bytes, 88]);
+      const sent = sender.send({ ...message, idempotencyKey: 'synthetic-attempt',
+        attachments: [{ filename: 'synthetic.pdf', content: backing.subarray(1, backing.length - 1), contentType: 'application/pdf', contentId: 'synthetic@example.test' }],
+      });
+      backing.fill(0);
+      expect((await sent).id).toBe('synthetic-receipt');
+      expect(bodies.at(-1)!.attachments).toEqual([{ filename: 'synthetic.pdf', content: Buffer.from(bytes).toString('base64'), content_type: 'application/pdf', content_id: 'synthetic@example.test' }]);
+    }
+    expect(bodies).toHaveLength(2);
   } finally { globalThis.fetch = original; }
 });
 

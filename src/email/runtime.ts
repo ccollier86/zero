@@ -97,6 +97,24 @@ export function isEmailDeliveryReady(
   return provider !== 'noop';
 }
 
+/**
+ * Whether this runtime can attempt real file delivery. This network-free
+ * capability check is not proof of provider acceptance or recipient delivery.
+ */
+export function isEmailAttachmentDeliveryReady(
+  candidate: EmailRuntime = getEmailRuntime(),
+): boolean {
+  if (!isEmailDeliveryReady(candidate) || candidate.provider.supportsAttachments !== true
+    || candidate.provider instanceof MemoryEmailProvider
+    || candidate.provider instanceof ConsoleEmailProvider
+    || candidate.provider instanceof NoopEmailProvider
+    || ['memory', 'console', 'noop'].includes(candidate.provider.name)) return false;
+  if (candidate.provider instanceof ResendEmailProvider || candidate.provider instanceof SmtpEmailProvider) {
+    return candidate.provider.isConfigured();
+  }
+  return true;
+}
+
 export function createEmailRuntime(
   input: EmailConfig | boolean | false | undefined,
   app: AppIdentityConfig,

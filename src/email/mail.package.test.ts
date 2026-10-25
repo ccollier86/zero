@@ -26,7 +26,7 @@ test('packed SMTP/IMAP facade resolves, typechecks and sends/receives from a fre
     for (const file of ['smtp.md', 'mailbox.md', 'inbox.md']) expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/backend/email', file)).exists()).toBe(true);
     expect(await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/frontend/email/index.md')).exists()).toBe(true);
     expect(installed.dependencies['@types/css-tree']).toBe('3.2.0');
-    for (const file of ['src/email/inbox/inbox-service.ts', 'src/email/inbox/inbox-stream.ts', 'src/email/inbox/inbox-state-store.ts', 'src/email/resend-email-provider.ts', 'src/frontend/client/email-inbox-source.ts']) {
+    for (const file of ['src/email/inbox/inbox-service.ts', 'src/email/inbox/inbox-stream.ts', 'src/email/inbox/inbox-state-store.ts', 'src/email/email-attachments.ts', 'src/email/types.ts', 'src/email/runtime.ts', 'src/email/index.ts', 'src/email/resend-email-provider.ts', 'src/email/smtp-email-provider.ts', 'src/frontend/client/email-inbox-source.ts']) {
       expect(await Bun.file(join(consumer, 'node_modules/@zero/framework', file)).text()).toBe(await Bun.file(join(process.cwd(), file)).text());
     }
     await checked(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
@@ -51,7 +51,7 @@ async function checked(args: string[], cwd: string, extra: Record<string, string
 }
 
 const CONSUMER = `
-import { createEmailRuntime, emailFromEnv, SmtpEmailProvider, ImapMailbox, type MailMessageRef, type MailboxChange } from '@zero/framework/email';
+import { createEmailRuntime, emailFromEnv, isEmailAttachmentDeliveryReady, ResendEmailProvider, SmtpEmailProvider, ImapMailbox, type EmailAttachment, type MailMessageRef, type MailboxChange } from '@zero/framework/email';
 import { SmtpEmailProvider as ServerSmtp, ImapMailbox as ServerImap } from '@zero/framework/server';
 import { EmailInbox, EmailHtmlBody, EmailInboxController, emptyEmailCompose, type EmailInboxSource } from '@zero/framework/email-inbox';
 import { createElement } from 'react';
@@ -73,7 +73,9 @@ const config = emailFromEnv({ EMAIL_PROVIDER: 'smtp', EMAIL_FROM: 'sender@exampl
 });
 const runtime = createEmailRuntime(config, {});
 try {
-  const receipt = await runtime.service.send({ to: 'recipient@example.test', subject: 'Packaged', text: 'Synthetic package proof' });
+  if (!isEmailAttachmentDeliveryReady(runtime)) throw new Error('SMTP attachment readiness failed');
+  const attachment: EmailAttachment = { filename: 'synthetic.pdf', content: new Uint8Array([0, 1, 127, 128, 255]), contentType: 'application/pdf' };
+  const receipt = await runtime.service.send({ to: 'recipient@example.test', subject: 'Packaged', text: 'Synthetic package proof', attachments: [attachment] });
   if (receipt.provider !== 'smtp' || receipt.sentCopy !== 'saved') throw new Error('Send/copy failed');
   const mailbox = runtime.mailbox;
   if (!mailbox) throw new Error('Receiving was not configured');
@@ -86,5 +88,18 @@ try {
   if (change.type !== 'resync') throw new Error('Live subscription failed');
   await live.return?.();
 } finally { await runtime.close?.(); }
+const originalFetch = globalThis.fetch;
+let attached = false;
+globalThis.fetch = (async (_input, options) => {
+  const body = JSON.parse(options!.body as string);
+  attached = body.attachments[0].content === 'AAF/gP8=' && body.attachments[0].content_type === 'application/pdf';
+  return Response.json({ id: 'synthetic-resend-receipt' });
+}) as typeof fetch;
+try {
+  const resend = createEmailRuntime({ from: 'sender@example.test', provider: new ResendEmailProvider({ apiKey: 'synthetic' }) }, {});
+  if (!isEmailAttachmentDeliveryReady(resend)) throw new Error('Resend attachment readiness failed');
+  await resend.service.send({ to: 'recipient@example.test', subject: 'Synthetic', text: 'Body', attachments: [{ filename: 'synthetic.pdf', content: new Uint8Array([0, 1, 127, 128, 255]), contentType: 'application/pdf' }] });
+  if (!attached) throw new Error('Resend attachment bytes changed');
+} finally { globalThis.fetch = originalFetch; }
 console.log('[zero-mail-package] complete');
 `;

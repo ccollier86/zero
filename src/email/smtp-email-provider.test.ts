@@ -4,8 +4,52 @@ import { SmtpEmailProvider } from './smtp-email-provider';
 import { createEmailRuntime, isEmailDeliveryReady } from './runtime';
 import { smtpFixture, testCertificate, tlsSmtpFixture } from './test-support/smtp-fixture';
 import { classifyAuthEmailFailure } from '../auth/auth-email-outbox-failure-classification';
+import { isEmailAttachmentDeliveryReady } from './index';
 
 const message = { from: 'Sender <sender@example.test>', to: 'receiver@example.test', subject: 'Synthetic mail', text: 'Test body' };
+
+test('direct and facade SMTP sends preserve exact binary subviews, filenames, MIME types and inline IDs', async () => {
+  const local = await smtpFixture();
+  const runtime = createEmailRuntime({ provider: 'smtp', smtp: local.config, from: message.from }, {});
+  const direct = new SmtpEmailProvider(local.config);
+  const bytes = new Uint8Array([0, 1, 10, 13, 127, 128, 254, 255]);
+  try {
+    expect(isEmailAttachmentDeliveryReady(runtime)).toBe(true);
+    expect(direct.supportsAttachments).toBe(true);
+    for (const sender of [runtime.service, direct]) {
+      const backing = new Uint8Array([77, ...bytes, 88]);
+      const content = backing.subarray(1, backing.length - 1);
+      const sent = sender.send({ ...message, html: '<p>Inline <img src="cid:synthetic@example.test"></p>',
+        attachments: [
+          { filename: 'synthetic.pdf', content, contentType: 'application/pdf' },
+          { filename: 'synthetic.png', content, contentType: 'image/png', contentId: 'synthetic@example.test' },
+        ],
+      });
+      backing.fill(0);
+      expect((await sent).accepted).toEqual(['receiver@example.test']);
+      const parsed = await PostalMime.parse(local.messages.at(-1)!);
+      expect(parsed.attachments).toHaveLength(2);
+      for (const part of parsed.attachments) expect(new Uint8Array(part.content as ArrayBuffer)).toEqual(bytes);
+      expect(parsed.attachments.find(part => part.filename === 'synthetic.pdf')).toMatchObject({ mimeType: 'application/pdf' });
+      expect(parsed.attachments.find(part => part.filename === 'synthetic.png')).toMatchObject({ mimeType: 'image/png', contentId: '<synthetic@example.test>' });
+    }
+    expect(local.messages).toHaveLength(2);
+  } finally { direct.close(); await runtime.close?.(); await local.close(); }
+});
+
+test('invalid SMTP attachments fail before authentication or opening a socket', async () => {
+  let connections = 0;
+  const local = await smtpFixture({ onConnect(_session, done) { connections++; done(); } });
+  const runtime = createEmailRuntime({ provider: 'smtp', smtp: local.config, from: message.from }, {});
+  try {
+    for (const attachments of [
+      [{ filename: '../synthetic.pdf', content: new Uint8Array([1]) }],
+      [{ filename: 'synthetic.pdf', content: new Uint8Array([1]), contentType: 'application/pdf\r\nX-Header: test' }],
+      [{ filename: 'synthetic.pdf', content: new Uint8Array(25 * 1024 * 1024 + 1) }],
+    ]) await expect(runtime.service.send({ ...message, attachments })).rejects.toBeInstanceOf(Error);
+    expect(connections).toBe(0); expect(local.messages).toHaveLength(0);
+  } finally { await runtime.close?.(); await local.close(); }
+});
 
 test('SMTP sends MIME, Unicode, reply-to, attachments and honest accepted/rejected results', async () => {
   const local = await smtpFixture({ onRcptTo(address, _session, callback) {

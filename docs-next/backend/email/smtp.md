@@ -119,7 +119,8 @@ const receipt = await zero.email.send({
 ```
 
 SMTP supports text/HTML, Unicode, To/Cc/Bcc, reply-to, in-memory attachments,
-inline `contentId`, `inReplyTo`, and `references`. Bcc is part of the envelope,
+inline `contentId`, `inReplyTo`, and `references`, subject to the shared
+[attachment limits and readiness contract](./attachments.md). Bcc is part of the envelope,
 not the visible message headers. Arbitrary paths and remote attachment URLs
 are not accepted. Internal `metadata`, tags and idempotency correlation keys
 are not inserted into the SMTP message. [Send contract](./service.md)

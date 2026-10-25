@@ -58,6 +58,13 @@ attachments through both production providers. Resend maps explicit attachment
 these fields to MIME headers. Neither adapter reads arbitrary local file paths
 or attachment URLs. [Resend send API](https://resend.com/docs/api-reference/emails/send-email)
 
+Resend and SMTP declare `supportsAttachments: true`. The shared facade bounds
+files to 100 parts and 25 MiB total raw bytes. Use
+`isEmailAttachmentDeliveryReady(runtime)` before presenting document-delivery
+capability. Memory can capture files for tests but is never ready for real
+delivery; console/noop reject files instead of discarding them. See the
+[attachment contract](./attachments.md) for validation and compatibility.
+
 Receiving is a separate [IMAP module](./mailbox.md), usable with either send
 provider or a receive-only noop runtime. SMTP sending does not poll an inbox.
 
@@ -88,6 +95,12 @@ timeouts/cancellation, metadata policy and external credentials. Minimum
 runtime readiness treats a custom object with a sender as ready; there is no
 generic custom-provider credential probe. Report safe actionable failures,
 not vendor payloads containing addresses or tokens.
+
+File support is opt-in: add `supportsAttachments: true` to a custom provider
+only when its adapter actually preserves the attached bytes. An undeclared
+provider continues to support plain messages, but attached sends reject with
+`EMAIL_ATTACHMENTS_UNSUPPORTED` before its `send()` method runs. This avoids
+silently losing documents through an older adapter.
 
 ## Verification And Related Guides
 

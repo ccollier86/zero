@@ -42,6 +42,7 @@ create an inbox state file or migrate an application's data.
 | [Providers](./providers.md) | SMTP, Resend, synthetic capture, no-op and custom adapters. |
 | [SMTP](./smtp.md) | Standard SMTP, Purelymail configuration, TLS and Guardian delivery. |
 | [Receiving and live mailboxes](./mailbox.md) | Optional IMAP folders, MIME, attachments, flags, drafts and IDLE updates. |
+| [Attachments and readiness](./attachments.md) | Shared Resend/SMTP file limits, exact bytes, explicit provider capability and the public readiness helper. |
 | [Managed Email Inbox](./inbox.md) | Optional Guardian-authorized browser API, private draft revisions, durable send receipts and shared live subscriptions. |
 | [Configuration](./configuration.md) | Exact app/env precedence, readiness and runtime ownership. |
 | [Guardian delivery](./guardian-delivery.md) | Account-action templates, public links and security ceremonies. |

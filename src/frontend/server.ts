@@ -971,6 +971,7 @@ export type {
   AppIdentityConfig,
   BuiltInEmailProvider,
   EmailConfig,
+  EmailAttachment,
   EmailMessage,
   EmailProvider,
   EmailRuntime,

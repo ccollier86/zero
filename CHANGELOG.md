@@ -4,6 +4,13 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Restored public `EmailAttachment`, explicit provider attachment capabilities
+  and `isEmailAttachmentDeliveryReady()` for both Resend and SMTP. Shared
+  admission preserves exact owned bytes/MIME/inline IDs, rejects unsafe inputs
+  and unsupported providers, and bounds aggregate raw files to 25 MiB while
+  retaining v2's 100-file and zero-byte-file support. Console/noop can no longer
+  silently discard attached documents; memory capture is not real delivery
+  readiness. No database migration or application-local framework patch is needed.
 - Added opt-in core logging through `createApp({ logging })`, with separate
   Fabric audit/operational databases, a supervised delivery subprocess,
   same-commit origin queues, scoped server/client APIs, authenticated SSE,

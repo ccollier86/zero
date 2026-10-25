@@ -1,16 +1,19 @@
 /** Shared message validation and snapshots. Only in-memory MIME inputs enter built-in transports. */
 import { EmailError } from './email-error';
-import type { EmailMessage } from './types';
+import { prepareEmailAttachments } from './email-attachments';
+import type { EmailMessage, EmailProvider } from './types';
 
-export function snapshotEmailMessage(message: EmailMessage): EmailMessage {
+/** Resolve headers and owned attachment bytes before yielding to a transport. */
+export function snapshotEmailMessage(message: EmailMessage, provider?: Pick<EmailProvider, 'supportsAttachments'>): EmailMessage {
   validateEmailMessage(message);
+  const attachments = prepareEmailAttachments(message.attachments, provider);
   return {
     ...message,
     to: Array.isArray(message.to) ? [...message.to] : message.to,
     cc: Array.isArray(message.cc) ? [...message.cc] : message.cc,
     bcc: Array.isArray(message.bcc) ? [...message.bcc] : message.bcc,
     references: message.references ? [...message.references] : undefined,
-    attachments: message.attachments?.map(attachment => ({ ...attachment, content: new Uint8Array(attachment.content) })),
+    attachments,
   };
 }
 
@@ -33,13 +36,5 @@ function validateEmailMessage(message: EmailMessage): void {
     if (value !== undefined && !(Array.isArray(value) ? value.every(header) : header(value))) throw invalid();
   }
   if (message.references !== undefined && (!Array.isArray(message.references) || message.references.length > 100 || !message.references.every(header))) throw invalid();
-  if (message.attachments !== undefined) {
-    if (!Array.isArray(message.attachments) || message.attachments.length > 100) throw invalid();
-    for (const value of message.attachments) {
-      if (!value || !header(value.filename) || !value.filename.trim() || !(value.content instanceof Uint8Array)) throw invalid();
-      if (value.contentType !== undefined && !header(value.contentType)) throw invalid();
-      if (value.contentId !== undefined && !header(value.contentId)) throw invalid();
-    }
-  }
 }
 function invalid() { return new EmailError('Email headers or attachments are invalid', 'EMAIL_MESSAGE_INVALID', 400); }

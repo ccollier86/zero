@@ -35,7 +35,7 @@ export class EmailService {
       ...message,
       from: message.from ?? this.config.from,
       replyTo: message.replyTo ?? this.config.replyTo,
-    });
+    }, this.provider);
 
     this.emitCode(OBS_CODES.EMAIL_SEND_REQUESTED, {
       metadata: {

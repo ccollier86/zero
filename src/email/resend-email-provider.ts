@@ -20,6 +20,7 @@ interface ResendSendResponse {
 /** Production email provider using Resend's send-email API. */
 export class ResendEmailProvider implements EmailProvider {
   readonly name = 'resend';
+  readonly supportsAttachments = true;
   private readonly apiKey: string | undefined;
   private readonly baseUrl: string;
 
@@ -44,7 +45,7 @@ export class ResendEmailProvider implements EmailProvider {
       throw new EmailError('Resend API key is required', 'EMAIL_PROVIDER_MISCONFIGURED', 500);
     }
 
-    message = snapshotEmailMessage(message);
+    message = snapshotEmailMessage(message, this);
     if (message.attachments?.some(attachment => attachment.contentId !== undefined && (!attachment.contentId || attachment.contentId.length >= 128))) {
       throw new EmailError('Resend inline content IDs must contain 1–127 characters', EMAIL_PROVIDER_REQUEST_REJECTED, 422);
     }

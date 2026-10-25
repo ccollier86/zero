@@ -15,6 +15,14 @@ export interface AppIdentityConfig {
   supportEmail?: string;
 }
 
+/** An owned in-memory MIME part; paths and remote URLs are never accepted. */
+export interface EmailAttachment {
+  filename: string;
+  content: Uint8Array;
+  contentType?: string;
+  contentId?: string;
+}
+
 /** Message shape accepted by platform email providers. */
 export interface EmailMessage {
   /** Recipient address or addresses. */
@@ -32,7 +40,7 @@ export interface EmailMessage {
   /** Optional HTML body. */
   html?: string;
   /** In-memory attachments only; never filesystem paths or remote URLs. */
-  attachments?: Array<{ filename: string; content: Uint8Array; contentType?: string; contentId?: string }>;
+  attachments?: EmailAttachment[];
   inReplyTo?: string;
   references?: string[];
   /** Provider-supported tags for delivery analytics. */
@@ -62,6 +70,8 @@ export interface EmailSendResult {
 /** Dependency-inversion boundary used by auth and future platform email. */
 export interface EmailProvider {
   readonly name: string;
+  /** Explicit file support. Omission preserves plain sends but rejects attachments. */
+  readonly supportsAttachments?: boolean;
   send(message: EmailMessage): Promise<EmailSendResult>;
   /** Retire active work owned by this provider; managed runtimes call this on stop. */
   close?(): void | Promise<void>;

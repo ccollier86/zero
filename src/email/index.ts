@@ -24,12 +24,14 @@ export {
   getEmailService,
   getMailboxService,
   isEmailDeliveryReady,
+  isEmailAttachmentDeliveryReady,
   registerEmailRuntime,
 } from './runtime';
 export type {
   AppIdentityConfig,
   BuiltInEmailProvider,
   EmailConfig,
+  EmailAttachment,
   EmailMessage,
   EmailProvider,
   EmailRuntime,
