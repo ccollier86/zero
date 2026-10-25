@@ -4,7 +4,9 @@ import { resolveRequestAuthContext } from '../../auth/auth.middleware';
 import { resolvePageSessionAuth } from '../../auth/page-session';
 import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
 import { AuthError } from '../../auth/types';
+import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import { LoggingError } from '../../logging/logging-error';
+import { projectLoggingHttpFailure } from '../../logging/logging-http-error';
 import { loggingAuthContext } from '../../logging/logging-auth-context';
 import { captureLoggingEvent } from '../../logging/logging-validation';
 import { loggingRecoveryPage } from '../../logging/logging-recovery-page';
@@ -24,10 +26,14 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
   if (!logging?.admission.required) return;
   const requests = new WeakMap<Request, { authority: LoggingAdmissionAuthority; context: LoggingContext; fence: () => void; revalidate: () => Promise<void>; id: string }>();
   const headers = { 'Cache-Control': 'private, no-store', Vary: 'Authorization, Cookie' };
-  const failure = (error: unknown): Response => Response.json({
-    code: error instanceof LoggingError || error instanceof AuthError ? error.code : 'LOGGING_AUDIT_UNAVAILABLE',
-    error: error instanceof LoggingError || error instanceof AuthError ? error.message : 'Audit admission is unavailable.',
-  }, { status: error instanceof AuthError ? error.status : error instanceof LoggingError && error.code === 'LOGGING_ADMISSION_REQUIRED' ? 428 : 503, headers });
+  const failure = (error: unknown): Response => {
+    if (error instanceof LoggingError) {
+      const projected = projectLoggingHttpFailure(error);
+      return Response.json(projected.body, { status: projected.status, headers });
+    }
+    if (error instanceof AuthError) return Response.json({ code: error.code, error: getPublicAuthErrorMessage(error) }, { status: error.status, headers });
+    return Response.json({ code: 'LOGGING_AUDIT_UNAVAILABLE', error: 'Audit admission is unavailable.' }, { status: 503, headers });
+  };
   app.onBeforeHandle({ as: 'global' }, async ({ request }) => {
     if (isLoggingRecoveryRequest(request)) return;
     try {

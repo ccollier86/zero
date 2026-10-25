@@ -101,7 +101,7 @@ test('strict release fences interrupt streaming after grant loss and never imply
     expect((await f.logging.page('audit', { kind: 'platform' }, { action: 'access.http.stream.incomplete' })).events).toHaveLength(1);
     expect((await acknowledge()).status).toBe(200);
     const write = await f.call('/expired-write', {}, headers);
-    expect(write.status).toBe(503); expect(await write.json()).toMatchObject({ code: 'LOGGING_OUTCOME_UNKNOWN' });
+    expect(write.status).toBe(503); expect(await write.json()).toMatchObject({ code: 'LOGGING_OUTCOME_UNKNOWN', outcome: 'unknown' });
     expect(f.calls()).toBe(1);
   } finally { await f.close(); }
 }, 45000);

@@ -14,7 +14,7 @@ import { LOCAL_FRAMEWORK_DEPENDENCY } from './create-zero/local-framework-packag
 import { runCreateZeroCli } from './create-zero/run';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 43 },
+  { length: 45 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 const PACKAGE_RUNTIME_SMOKE_TIMEOUT_MS = 180_000;
@@ -70,6 +70,7 @@ describe('package distribution', () => {
         'mac-signing-command.ts',
         'sharp-native-assets.ts',
         'sharp-native-build-plugin.ts',
+        'logging-realm-build-plugin.ts',
       ]) {
         expect(packagedFiles).toContain(`package/src/build/${file}`);
       }
@@ -1001,6 +1002,11 @@ async function smokeCleanMigrations(root: string): Promise<void> {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_auth_audit_events'"
     ).get() as { name?: string } | null;
     assert(auditTable?.name === '_auth_audit_events', 'migration 018 audit table is missing');
+
+    const privateArtifacts = migrator.database.query(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_storage_private_objects'"
+    ).get() as { name?: string } | null;
+    assert(privateArtifacts?.name === '_storage_private_objects', 'migration 045 private artifact metadata is missing');
 
     const claimColumns = migrator.database.query(
       'PRAGMA table_info(_auth_tenant_domain_claims)'
