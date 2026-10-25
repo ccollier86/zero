@@ -17,7 +17,16 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   let logger: LoggingRuntime | null = null;
   const started = performance.now(), stages: unknown[] = [];
-  const mark = (stage: string) => stages.push({ stage, elapsedMs: Math.round(performance.now() - started), sources: logger?.diagnostics().fabricSources });
+  const reportPath = Bun.env.ZERO_LOGGING_QUALIFICATION_REPORT;
+  let reportTask = Promise.resolve();
+  const mark = (stage: string) => {
+    const diagnostics = logger?.diagnostics();
+    stages.push({ stage, elapsedMs: Math.round(performance.now() - started), sources: diagnostics?.fabricSources,
+      pinnedSources: diagnostics?.sources, deliveryWorker: diagnostics?.deliveryWorker, streams: diagnostics?.streams });
+    // Optional synthetic phase diagnostics survive a test deadline, including
+    // when a shutdown join itself is the phase that needs investigation.
+    if (reportPath) { const snapshot = JSON.stringify(stages, null, 2); reportTask = reportTask.then(async () => { await Bun.write(reportPath, snapshot); }); }
+  };
   try {
     await mkdir(join(root, 'app'));
     app = await createApp({
@@ -108,7 +117,7 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
     try { await app?.stop(true); }
     finally {
       mark('stopped');
-      if (Bun.env.ZERO_LOGGING_QUALIFICATION_REPORT) await Bun.write(Bun.env.ZERO_LOGGING_QUALIFICATION_REPORT, JSON.stringify(stages, null, 2));
+      await reportTask;
       await rm(root, { recursive: true, force: true });
     }
   }

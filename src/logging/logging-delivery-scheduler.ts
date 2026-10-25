@@ -7,7 +7,7 @@ import { LoggingError } from './logging-error';
 import { readDeliveryPage, LOGGING_DELIVERY_MAX_SOURCES, type DeliverySourceState } from './logging-delivery-protocol';
 import { loggingByteLength } from './logging-validation';
 
-interface Source { queued: number; bytes: number; failed: number; pending: boolean; active: boolean; attempts: number; retryAt: number }
+interface Source { queued: number; bytes: number; failed: number; pending: boolean; active: boolean; closing: boolean; attempts: number; retryAt: number }
 export interface DeliverySchedulerBroker {
   page(id: string, acknowledgments: readonly string[]): Promise<unknown>;
   append(stream: LoggingStream, events: readonly LoggingEvent[]): Promise<LoggingAppendResult>;
@@ -28,7 +28,7 @@ export class LoggingDeliveryScheduler {
   private readonly sourcePending = { audit: { count: 0, bytes: 0 }, operational: { count: 0, bytes: 0 } };
   private pendingQueued = false;
 
-  constructor(queue: ResolvedLoggingConfig['queue'], private readonly broker: DeliverySchedulerBroker) {
+  constructor(queue: ResolvedLoggingConfig['queue'], private readonly broker: DeliverySchedulerBroker, private readonly now: () => number = () => performance.now()) {
     this.writers = Object.fromEntries((['audit', 'operational'] as const).map(stream =>
       [stream, new LoggingWriter({ stream, append: events => broker.append(stream, events) }, queue)])) as Record<LoggingStream, LoggingWriter>;
   }
@@ -46,20 +46,20 @@ export class LoggingDeliveryScheduler {
     if (this.stopping) throw new LoggingError('LOGGING_CLOSED', 'Delivery worker is draining.');
     if (this.sources.size + ids.filter(id => !this.sources.has(id)).length > LOGGING_DELIVERY_MAX_SOURCES) throw new LoggingError('LOGGING_BACKPRESSURE', 'Delivery source capacity exceeded.');
     for (const id of ids) {
-      if (!this.sources.has(id)) this.sources.set(id, { queued: 0, bytes: 0, failed: 0, pending: true, active: false, attempts: 0, retryAt: 0 });
+      if (!this.sources.has(id)) this.sources.set(id, { queued: 0, bytes: 0, failed: 0, pending: true, active: false, closing: false, attempts: 0, retryAt: 0 });
       this.wake(id);
     }
   }
   wake(id: string): void {
-    const source = this.sources.get(id); if (!source || this.stopping) return;
+    const source = this.sources.get(id); if (!source || source.closing || this.stopping) return;
     this.pending.add(id); this.publish(id, source); this.schedule();
   }
   diagnostics() { return Object.freeze({ audit: this.writers.audit.diagnostics(), operational: this.writers.operational.diagnostics() }); }
   async flush(ids?: readonly string[], closing = false): Promise<void> {
     const wanted = ids ? new Set(ids) : null;
-    const deadline = closing ? Date.now() + 5000 : Infinity;
+    const deadline = closing ? this.now() + 5000 : Infinity;
     await this.task;
-    for (let pass = 0; pass < 80 && Date.now() < deadline && [...this.pending].some(id => !wanted || wanted.has(id)); pass++) {
+    for (let pass = 0; pass < 80 && this.now() < deadline && [...this.pending].some(id => !wanted || wanted.has(id)); pass++) {
       const failures = [...this.sources.values()].reduce((n, s) => n + s.failed, 0);
       await this.drain(true, wanted);
       if ([...this.sources.values()].reduce((n, s) => n + s.failed, 0) !== failures) break;
@@ -67,6 +67,7 @@ export class LoggingDeliveryScheduler {
     if (!ids) await Promise.all([this.writers.audit.flush(), this.writers.operational.flush()]);
   }
   async remove(ids: readonly string[]): Promise<void> {
+    for (const id of ids) { const source = this.sources.get(id); if (source) source.closing = true; }
     await this.flush(ids, true);
     for (const id of ids) { this.pending.delete(id); this.sources.delete(id); }
   }
@@ -84,7 +85,7 @@ export class LoggingDeliveryScheduler {
     let page = readDeliveryPage(await this.broker.page(id, []));
     const remember = () => { source.queued = page.queued; source.bytes = page.bytes; this.publish(id, source); };
     remember();
-    for (let batch = 0; batch < 4 && page.rows.length; batch++) {
+    for (let batch = 0; batch < 4 && page.rows.length && (!source.closing || batch === 0); batch++) {
       const results = await Promise.allSettled(page.rows.map(row => this.write(row.event, true)));
       const ids = page.rows.filter((_, i) => results[i]!.status === 'fulfilled').map(row => row.id);
       if (ids.length) { page = readDeliveryPage(await this.broker.page(id, ids)); remember(); }
@@ -95,14 +96,14 @@ export class LoggingDeliveryScheduler {
   private drain(force = false, wanted: Set<string> | null = null): Promise<void> {
     if (this.task) return this.task;
     this.task = (async () => {
-      const ids = [...this.pending].filter(id => (!wanted || wanted.has(id)) && (force || this.sources.get(id)!.retryAt <= Date.now())).slice(0, 3);
+      const ids = [...this.pending].filter(id => (!wanted || wanted.has(id)) && (force || this.sources.get(id)!.retryAt <= this.now())).slice(0, 3);
       for (const id of ids) { this.pending.delete(id); const source = this.sources.get(id)!; source.active = true; this.publish(id, source); }
       const result = await Promise.allSettled(ids.map(id => this.deliver(id, this.sources.get(id)!)));
       ids.forEach((id, i) => {
         const source = this.sources.get(id)!; source.active = false;
         if (result[i]!.status === 'fulfilled') { source.attempts = 0; source.retryAt = 0; }
         else {
-          source.failed++; source.attempts++; source.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(5, source.attempts - 1)); this.pending.add(id);
+          source.failed++; source.attempts++; source.retryAt = this.now() + Math.min(30000, 1000 * 2 ** Math.min(5, source.attempts - 1)); this.pending.add(id);
           if (source.attempts === 1) this.broker.sourceFailed(id);
         }
         this.publish(id, source);
@@ -113,9 +114,9 @@ export class LoggingDeliveryScheduler {
   private schedule(): void {
     if (this.stopping || !this.pending.size) return;
     let at = Infinity; for (const id of this.pending) at = Math.min(at, this.sources.get(id)!.retryAt);
-    at = Math.max(Date.now(), at); if (this.timer && this.timerAt <= at) return;
+    at = Math.max(this.now(), at); if (this.timer && this.timerAt <= at) return;
     if (this.timer) clearTimeout(this.timer);
-    this.timerAt = at; this.timer = setTimeout(() => { this.timer = null; this.timerAt = Infinity; if (!this.stopping) void this.drain(); }, Math.max(0, at - Date.now()));
+    this.timerAt = at; this.timer = setTimeout(() => { this.timer = null; this.timerAt = Infinity; if (!this.stopping) void this.drain(); }, Math.max(0, at - this.now()));
     this.timer.unref?.();
   }
   private publishPending(): void {
