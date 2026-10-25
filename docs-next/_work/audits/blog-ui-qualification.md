@@ -11,6 +11,52 @@ visibility: internal
 
 [Audit index](./index.md) · [Blog UI](../../frontend/components/public-pages/blog/index.md) · [Documentation index](../../index.md)
 
+## Completed UI Migration Qualification
+
+The complete configurable UI source is `68ed0ba811437375dac340474e972952d7c88ab7` on
+`feature/blog-foundation`. The corresponding retained development archive is
+`zero-framework-2.6.0-blog-complete.tgz` under
+`/Volumes/code-bank/artifacts/zero-platform/dev/2026-10-25-blog-complete/`.
+Its SHA-256 is `0457000e8d564f7fa838a5be9963827b1f6c0c0eda93845899cb5be598d415b9`.
+It was packed from clean committed source with lifecycle scripts disabled;
+the following documentation-only evidence update does not change those bytes.
+No main merge, stable selection, registry publication or live-app upgrade occurred.
+
+The [migration inventory](../../frontend/components/public-pages/blog/migration.md)
+accounts for all **109** original runtime exports. A portable test fixes that
+inventory and requires a documented working destination or deliberate exclusion.
+This supersedes any earlier implication that the first core-page slice already
+completed the migration. Archived theme switches/stores, duplicate code themes,
+tracking and service wrappers have explicit shared replacements or exclusions;
+the blog publishing backend remains separately planned.
+
+| Final check | Result and scope |
+| --- | --- |
+| Blog/palette source | 14 passed, 334 assertions: all 109 export dispositions, actual public parts, defaults/omissions, escaping/URLs, local filters, bounded reading/search/zoom and native-control SSR. |
+| Shared ownership regressions | 34 passed, 347 assertions across modal adapters/motion, Card and anchored surface/motion/scroll. Existing default owners and native viewport behavior remain intact. |
+| Chromium UI | 15 passed, 60 assertions: desktop/mobile/dark/reduced motion, keyboard search, rich previews/Escape, retained gallery/lens/zoom, real scroll progress, pointer-transparent spotlight, accepted/rejected newsletter/palette actions, decoded native audio/video/playback/seek/mute/loop/fullscreen, isolated players and late retired-source play resolution. |
+| Frozen installed archive | 1 passed, 17 assertions; fresh consumer installs the exact retained archive with React/React DOM 19.2.4, checks 98 focused destinations plus 6 generic/anchor exports, SSR defaults/native media/progress, browser bundle, emitted tokens/CSS and packaged detailed guides. |
+| TypeScript | Root tsc --noEmit passed. |
+| Documentation/whitespace | Structural/link/reachability and git diff --check passed; repeated for the evidence update. |
+
+Total focused tests: **64 passed, 0 failed**, with 758 assertions. This does not
+claim a whole-framework release suite, installed-app browser run, every optional
+browser/codec or a deployed CMS. Browser checks use synthetic local images,
+generated WAV/VP8 media and request interception; no application/provider services
+or real user data are contacted. The in-app browser infrastructure remained
+unavailable; the repository Chromium harness supplied runtime and screenshots.
+
+Visual evidence was inspected for Magazine, the corrected title-over-image
+contained article hero, mobile/dark article and managed gallery/lens. The old
+above-image hero remains an explicit editorial variant. The gallery changes image
+within one manager opening and restores focus to its original trigger.
+
+The older frozen archive below remains retained as historical core-slice evidence;
+it does **not** qualify the new completion components. Use the complete archive
+and source hash above for this UI feature.
+
+## Historical Core Slice
+
 The UI-only feature is on `feature/blog-foundation`. The reviewed framework
 2.6.0 source is `b7fb829919d0e55e6a43d54835f7d69ee2b98da8`, following the
 initial UI commit `180e839d9a87c3139348b13e6ef77fd58693bde4`. This baseline

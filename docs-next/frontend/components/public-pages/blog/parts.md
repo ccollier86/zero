@@ -13,10 +13,14 @@ modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "ac857766bc10c8a0643622bf95bb541159592c31"
-  snapshot: dirty
+  commit: "68ed0ba811437375dac340474e972952d7c88ab7"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "68ed0ba811437375dac340474e972952d7c88ab7"
+    sha256: "0457000e8d564f7fa838a5be9963827b1f6c0c0eda93845899cb5be598d415b9"
 ---
 
 # Blog Parts And Media

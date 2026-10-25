@@ -13,10 +13,14 @@ modes: ["React browser UI", "SSR composition", "controlled or local interaction 
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
-  snapshot: dirty
-  date: "2026-10-10"
-  evidence_level: source-observed
+  commit: "68ed0ba811437375dac340474e972952d7c88ab7"
+  snapshot: clean
+  date: "2026-10-25"
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "68ed0ba811437375dac340474e972952d7c88ab7"
+    sha256: "0457000e8d564f7fa838a5be9963827b1f6c0c0eda93845899cb5be598d415b9"
 ---
 
 # Small Interactive Panels With Popover
