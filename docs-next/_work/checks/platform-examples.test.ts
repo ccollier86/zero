@@ -37,7 +37,7 @@ test('Schema, runtime and configuration Markdown examples use valid public sourc
     'backend/fabric/database-identities.md': [0],
     'backend/fabric/realms.md': [0],
     'backend/fabric/realm-composition.md': [0],
-    'backend/fabric/operations.md': [0, 1],
+    'backend/fabric/operations.md': [0, 2],
     'backend/fabric/idempotency.md': [0],
     'backend/fabric/placement.md': [0],
     'backend/fabric/operations-diagnostics.md': [0],
@@ -51,6 +51,8 @@ test('Schema, runtime and configuration Markdown examples use valid public sourc
     'backend/migrations/declarations.md': [0],
     'backend/migrations/registries.md': [0],
     'backend/migrations/apply.md': [0],
+    'backend/email/attachments.md': [0],
+    'guides/practiceiq-upgrade/logging.md': [0],
     'backend/storage/permissions.md': [0],
     'backend/storage/upload-grants.md': [0],
     'backend/storage/studio-installation.md': [0],
@@ -81,6 +83,11 @@ test('Schema, runtime and configuration Markdown examples use valid public sourc
       add(`${page.replace('.md', '')}_${index}.example.ts`, examples[index]!);
     }
   }
+  // The findPage block is explicitly an authorized-request fragment, not a standalone module.
+  add('backend/fabric/operations.find-page.example.ts',
+    `import type { AsyncDatabaseClient } from '@zero/framework/server';\n`
+    + `export async function readAuthorizedNotes(data: AsyncDatabaseClient) {\n`
+    + (await blocks('backend/fabric/operations.md'))[1]! + '\nreturn result;\n}\n');
   const organization = await Bun.file(new URL('guides/organization-assembly.md', root)).text();
   const modules = [...organization.matchAll(/^```(ts|tsx)\n\/\/ ([a-z][a-z0-9./-]+\.(?:ts|tsx))\n([\s\S]*?)^```/gm)];
   expect(modules).toHaveLength(12);

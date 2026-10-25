@@ -27,6 +27,11 @@ An installed package update and an application migration are different
 operations. The normal updater does not rewrite app source, move data, change
 secrets or migrate tenants.
 
+For PracticeIQ's custom v1.3 pin, use the
+[application-specific handoff](./practiceiq-upgrade/index.md): preserve single
+tenancy and the main website while planning separate system/logging storage,
+normal Zero attachment support, isolated conversion and tested restoration.
+
 ## Identify The Starting Point
 
 Record branch/release version, source provenance and archive checksum when

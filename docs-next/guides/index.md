@@ -55,6 +55,9 @@ needs them. They do not replace each system's exact reference.
 - [Present code examples](../frontend/components/public-pages/code-block.md): reuse
   the shared CodeBlock family for files, copy controls and prepared highlights.
 - [Upgrade safely](./upgrade.md): dependency updates versus real data/model changes.
+- [PracticeIQ upgrade preparation](./practiceiq-upgrade/index.md): pinned v1.3
+  handoff, tested verification scripts, independent system/logging files and a
+  public-design-preserving feature-branch runbook; no live conversion.
 - [UI upgrade handoff](./ui-upgrade.md): framework branch and artifact provenance,
   new component/manual locations, Doctor triage and staged app adoption with
   original implementations retained.
