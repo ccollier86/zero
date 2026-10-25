@@ -4,6 +4,19 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added opt-in core logging through `createApp({ logging })`, with separate
+  Fabric audit/operational databases, a supervised delivery subprocess,
+  same-commit origin queues, scoped server/client APIs, authenticated SSE,
+  optional browser observations and LoggingWorkspace. Worker restart/replay,
+  bounded ingestion/reads, queue pressure and joined shutdown preserve source
+  evidence. Existing Guardian audit remains intact and logging stays off by
+  default. Strict compliance mode still rejects until its remaining controls
+  are implemented and qualified; this is not a compliance certification.
+- Added commit-acknowledged Torrent enqueue handoffs so short durable database
+  handlers can schedule long AI/provider work without awaiting its activities.
+  Existing eager start/event behavior, live authority and idempotent receipts
+  remain unchanged. Upgrading does not rewrite app handlers or run migrations.
+
 - Hardened optional payments plugin 0.2.1: Square checkout/plan changes honor
   sales pause, concurrent ownership lookups use independent recursion guards,
   checkout retries retain original return URLs, and idempotency conflicts keep

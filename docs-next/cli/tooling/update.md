@@ -79,6 +79,15 @@ inspection. Rollback is not a backup of all app data or user scripts.
 Human errors include rollback status, not a guarantee that arbitrary filesystem
 races can be repaired.
 
+### Adopting Core Logging
+
+Main packages containing the opt-in logging preview install its server APIs,
+managed delivery/Fabric workers, browser hooks and LoggingWorkspace together.
+The update does not enable logging or rewrite application configuration. Use
+the [logging adoption guide](../../backend/logging/operations.md#upgrade-procedure)
+after installation. Compare release commit/archive checksum rather than the
+reused `2.6.0` version alone. Strict compliance mode remains unavailable.
+
 ### Local Archive Rollback Binding
 
 Zero 2.6.0 regression checks include a subsequent ordinary

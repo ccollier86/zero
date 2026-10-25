@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: managed-configuration-preview
 maturity: preview
-applies_to: ["Unreleased feature/core-logging source only"]
+applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
@@ -29,7 +29,7 @@ the configured browser families. Configuration is read at resolution/startup
 and requires restart; there are no separate logging environment variables or
 runtime database settings.
 
-Branch-only fragment using the normal server entry:
+Configuration fragment using the normal server entry after updating Zero:
 
 ```ts
 import { createApp } from '@zero/framework/server';

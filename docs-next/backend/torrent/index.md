@@ -52,7 +52,7 @@ server code, not arbitrary JavaScript stored in a database.
 - [Events](./events.md): durable inbox, exact run targeting and system receipts.
 - [Retry-safe system starts](./system-starts.md): one durable run per logical
   background command, including lost acknowledgements and restart.
-- [Enqueue long work](./enqueue.md): branch-preview commit receipts that release
+- [Enqueue long work](./enqueue.md): commit receipts that release
   an automation caller without waiting for its AI/provider activities.
 - [Interactions](./interactions.md): request-and-wait, delivery, validation and
   response authority across web/email/SMS.

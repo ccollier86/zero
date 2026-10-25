@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: configurable-activity-and-compliance-logging
 maturity: planned
-applies_to: ["Unreleased feature/core-logging implementation and remaining subsystem plan"]
+applies_to: ["2.6.0 opt-in logging preview and remaining subsystem plan"]
 modes: [single tenancy, multi tenancy, browser, server, file, Fabric]
 reviewed_against:
   package: "@zero/framework"
@@ -36,7 +36,7 @@ dedicated Fabric SQLite worker processes perform bounded batching and recovery.
 The investigation UI composes Zero's DataTable,
 filter builder, detail surfaces, tokens and motion rather than a second UI stack.
 
-This is the full subsystem implementation plan. The branch-only
+This is the full subsystem implementation plan. The opt-in
 [logging preview](../backend/logging/index.md) describes the implemented
 contracts, capture, APIs, browser collection, workspace and evidence lifecycle.
 The remaining controls and qualification work below are release requirements,

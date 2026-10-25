@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: integrated-logging-preview
 maturity: preview
-applies_to: ["Unreleased feature/core-logging source only"]
+applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
@@ -26,8 +26,9 @@ reviewed_against:
 Core logging is an optional managed Zero subsystem with dedicated Fabric audit
 and diagnostic databases, durable source capture, Guardian-scoped APIs,
 authenticated SSE, browser observations and a reusable investigation workspace.
-The current implementation is an unreleased branch preview. Main and saved
-upgrade packages remain unchanged. The strict compliance preset is still gated;
+The implementation is available as an opt-in preview in main's saved update
+package. Existing apps keep logging disabled until configured; updating Zero
+does not silently enable collection. The strict compliance preset is still gated;
 see the explicit coverage and qualification requirements below.
 
 - [Configuration](./configuration.md): presets, permissions, metadata, retention,

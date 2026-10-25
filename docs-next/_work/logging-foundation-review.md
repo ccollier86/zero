@@ -20,6 +20,21 @@ source contributions and optional browser collection. Guardian's existing audit
 and saved releases remain unchanged; `zero.logging` and `client.logging` are additive.
 The [logging reference](../backend/logging/index.md) describes this preview.
 
+## Main Adoption Handoff
+
+The user-approved main integration makes the implemented logging and enqueue
+preview available through the saved-package update workflow. The implementation
+and qualification milestones below retain their original source identities;
+their statements about main remaining unchanged describe those earlier
+milestones, not the current adoption target. The selected release commit and
+archive SHA-256 are authoritative when the package version is reused.
+
+Logging remains opt-in and its strict compliance preset remains rejected.
+Use the [adoption procedure](../backend/logging/operations.md#upgrade-procedure)
+to update on an application feature branch, configure the intended families and
+permissions, and verify the app before deployment. Publication does not update
+live applications, migrate app records or activate browser collection by itself.
+
 ## Implemented Foundation
 
 | Responsibility | Source and behavior |
@@ -315,5 +330,5 @@ The strict preset is
 still rejected rather than mislabeled ready.
 
 Application interfaces must use the authorized facade, not the private
-runtime/store. Existing main and saved update packages
-remain unchanged; this preview is not an upgrade-ready complete logging release.
+runtime/store. Main adoption publishes the implemented opt-in preview; it does
+not declare the complete strict logging profile ready or bypass the gates above.

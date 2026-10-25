@@ -8,7 +8,7 @@ visibility: internal
 system: torrent
 feature: commit-acknowledged-enqueue
 maturity: preview
-applies_to: ["Unreleased feature/core-logging update; not present in saved main packages"]
+applies_to: ["2.6.0 main builds containing commit-acknowledged enqueue"]
 modes: [managed-system-database, trusted-standalone-service, durable-database-functions]
 reviewed_against:
   package: "@zero/framework"
@@ -28,7 +28,7 @@ own long AI, provider or human-wait work. Awaiting the enqueue receipt confirms
 the durable handoff, not completion of the activity. The caller's database
 automation lane can then admit its next delivery.
 
-This is an explicit new branch-preview API. Existing `start`, `startAsSystemOnce`
+This is an explicit additive preview API. Existing `start`, `startAsSystemOnce`
 and `deliverEventAsSystem` retain their eager advancement behavior; merely
 moving a long AI call behind one of those methods can still delay the caller.
 

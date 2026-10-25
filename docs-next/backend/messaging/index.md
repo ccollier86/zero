@@ -186,7 +186,7 @@ preview/thumbnail from loss of the accepted message.
 
 The source automation worker handles one delivery at a time per physical
 database. Long AI work belongs in a Torrent activity, not inline in the source
-handler. Use the branch-preview [commit-acknowledged enqueue](../torrent/enqueue.md)
+handler. Use the additive [commit-acknowledged enqueue](../torrent/enqueue.md)
 for both starts and resumes; an eager `torrent.start`/`deliverEvent` can itself
 wait on initial activity execution. Await the enqueue receipt, then let the
 source delivery finish. This implementation does not make the planned messaging

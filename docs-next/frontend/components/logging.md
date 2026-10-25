@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: logging-workspace
 maturity: preview
-applies_to: ["Unreleased feature/core-logging source only"]
+applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"

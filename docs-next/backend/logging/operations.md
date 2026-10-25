@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: operations-and-upgrade
 maturity: preview
-applies_to: ["Unreleased feature/core-logging source only"]
+applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
@@ -19,13 +19,14 @@ reviewed_against:
   evidence_level: implementation-verified
 ---
 
-# Logging Operations and Branch Adoption
+# Logging Operations and Adoption
 
 [Logging index](./index.md) · [Documentation index](../../index.md)
 
-This implementation remains on `feature/core-logging`. Do not interpret the
-unchanged framework version number as proof that an installed package includes
-it. Main and the saved upgrade release are deliberately independent.
+Logging is an opt-in preview in main's saved update package. Do not interpret
+the unchanged framework version number as proof that an installed package
+includes it: check the selected release commit and archive checksum. The
+normal updater installs framework files, not application feature configuration.
 
 ## Readiness and Failure Signals
 
@@ -95,8 +96,8 @@ distributed multi-server logging cluster.
 
 1. Keep the app's current release pinned and back up its application, system,
    Storage and logging state through approved deployment procedures.
-2. Create an application feature branch and install an archive built from the
-   intended Zero feature commit. Record commit and archive SHA-256.
+2. Create an application feature branch, inspect the saved main release, and
+   apply the normal saved-package update. Record its commit and archive SHA-256.
 3. Enable `logging` explicitly in a disposable preview first. Existing Guardian
    audit remains intact; no historical backfill or source-data deletion occurs.
 4. Declare Guardian permissions and explicit semantic-read/raw/service capture.
@@ -111,6 +112,28 @@ distributed multi-server logging cluster.
 Do not remove older audit APIs, compatibility documentation or app theme files
 as part of adopting logging. There is no migration that moves application
 business records into the logging databases.
+
+For managed archive apps using the installed workstation launchers:
+
+```sh
+zero-release --status
+zero-update /path/to/example-app --dry-run
+zero-update /path/to/example-app
+```
+
+`zero-release --status` must identify the intended main commit; it does not
+refresh or publish a release. `zero-update` is the saved-archive launcher for
+the same engine exposed by `zero update`. The package CLI's ordinary registry
+mode does not install a locally saved archive; see the
+[updater modes](../../cli/tooling/update.md) before mixing workflows.
+
+After installation, add the `logging` configuration from the
+[configuration guide](./configuration.md), declare the intended Guardian
+permissions and mount [LoggingWorkspace](../../frontend/components/logging.md).
+Rebuild/restart the app so managed workers and browser styles use the same
+package. Source/compiled custom actor entries must call the public logging
+bootstrap before ordinary app startup. Existing apps without logging enabled
+do not acquire new log files or workers merely by updating.
 
 ## Verification
 

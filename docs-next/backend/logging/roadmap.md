@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: integrated-logging-roadmap
 maturity: planned
-applies_to: ["Planned work after the feature/core-logging managed storage preview"]
+applies_to: ["Planned work after the 2.6.0 opt-in logging preview"]
 modes: [managed-server, browser, Fabric]
 reviewed_against:
   package: "@zero/framework"

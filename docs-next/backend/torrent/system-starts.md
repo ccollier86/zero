@@ -31,7 +31,7 @@ they have not silently changed semantics.
 
 For a ReactiveDB durable function, use the narrower
 [source-bound helpers](../database-automations/torrent.md#durably-start-a-new-run)
-which derive the key and trusted source scope. The branch-preview
+which derive the key and trusted source scope. The additive
 [`zero.torrent.enqueue`](./enqueue.md) returns at the durable commit boundary;
 existing `start` joins initial advancement and can wait on a long activity.
 
