@@ -11,7 +11,13 @@ test('packed SMTP/IMAP facade resolves, typechecks and sends/receives from a fre
   const root = await mkdtemp(join(scratch, 'zero-mail-package-'));
   const consumer = join(root, 'consumer'), archive = process.env.ZERO_MAIL_ARCHIVE ?? join(root, 'framework.tgz');
   const smtp = await smtpFixture(), imap = await imapFixture();
+  const started = performance.now();
+  const phase = async (name: string) => {
+    if (process.env.ZERO_MAIL_PHASE_REPORT) await Bun.write(process.env.ZERO_MAIL_PHASE_REPORT,
+      `${JSON.stringify({ phase: name, elapsedMs: Math.round(performance.now() - started) })}\n`);
+  };
   try {
+    await phase('pack');
     await mkdir(consumer);
     if (!process.env.ZERO_MAIL_ARCHIVE) await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({ name: 'zero-mail-proof', private: true, type: 'module',
@@ -20,6 +26,7 @@ test('packed SMTP/IMAP facade resolves, typechecks and sends/receives from a fre
     await Bun.write(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'ESNext',
       moduleResolution: 'Bundler', strict: true, skipLibCheck: true, esModuleInterop: true, jsx: 'react-jsx', types: ['bun'] }, include: ['consumer.ts'] }));
     await Bun.write(join(consumer, 'consumer.ts'), CONSUMER);
+    await phase('install');
     await checked(['install', '--ignore-scripts'], consumer);
     const installed = await Bun.file(join(consumer, 'node_modules/@zero/framework/package.json')).json();
     expect(installed.dependencies.nodemailer).toBe('10.2.1'); expect(installed.dependencies.imapflow).toBe('2.9.1');
@@ -29,12 +36,15 @@ test('packed SMTP/IMAP facade resolves, typechecks and sends/receives from a fre
     for (const file of ['src/email/inbox/inbox-service.ts', 'src/email/inbox/inbox-stream.ts', 'src/email/inbox/inbox-state-store.ts', 'src/email/email-attachments.ts', 'src/email/types.ts', 'src/email/runtime.ts', 'src/email/index.ts', 'src/email/resend-email-provider.ts', 'src/email/smtp-email-provider.ts', 'src/frontend/client/email-inbox-source.ts']) {
       expect(await Bun.file(join(consumer, 'node_modules/@zero/framework', file)).text()).toBe(await Bun.file(join(process.cwd(), file)).text());
     }
+    await phase('typecheck');
     await checked(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
+    await phase('runtime');
     const output = await checked(['consumer.ts'], consumer, { TEST_SMTP_PORT: String(smtp.config.port), TEST_IMAP_PORT: String(imap.config.port) });
     expect(output).toContain('[zero-mail-package] complete'); expect(smtp.messages).toHaveLength(1);
     await Bun.write(join(consumer, 'browser.tsx'), `import { EmailInbox } from '@zero/framework/email-inbox'; export const page = <EmailInbox />;`);
+    await phase('browser');
     await checked(['build', 'browser.tsx', '--target=browser', '--outdir', join(root, 'browser')], consumer);
-  } finally { await smtp.close(); await imap.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await phase('cleanup'); await smtp.close(); await imap.close(); await rm(root, { recursive: true, force: true }); await phase('complete'); }
 }, 180_000);
 
 async function checked(args: string[], cwd: string, extra: Record<string, string> = {}): Promise<string> {
