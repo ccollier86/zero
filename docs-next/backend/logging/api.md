@@ -13,9 +13,9 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -152,14 +152,18 @@ Same-origin transport does not guarantee passage through an extension or proxy.
 The private authenticated prefix is `/api/_zero/logging`. POST operations are
 `/events`, `/platform/events`, `/stream`, `/observations`, `/evidence`,
 `/holds`, `/holds/release`, `/reviews`, `/export` and `/verify`.
-GET `/policy` returns collection settings; GET `/health` returns authorized
-readiness and counters. Query filters remain in POST bodies, not URLs/referrers.
+GET `/policy` returns collection settings; GET `/health` returns global readiness
+and counters only under platform-administrator, application-control and configured
+manage authority. Tenant-granted read/manage permissions cannot expose global
+backlog or integrity state. Query filters remain in POST bodies, not URLs/referrers.
 Responses are private/no-store. Server identities never come from body fields;
 schema normalization may discard additional HTTP fields.
 
 `health()` separates in-memory `pendingEvents`, durable
 `sourcePendingEvents`, writer `failedEvents`, `sourceDeliveryFailures`,
-and `maintenanceFailures`. Do not add the two pending counts: a delivered but
+and `maintenanceFailures`. `sourceDiscoveryPending` separately counts sources
+with pending or active reconciliation; their exact event count may not yet be
+known. Do not add the two pending event counts: a delivered but
 unacknowledged source event can appear in both. Failure counters include retry
 attempts and are not counts of distinct lost business events.
 

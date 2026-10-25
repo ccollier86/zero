@@ -129,6 +129,86 @@ declarations, plus the new logging declarations, while retaining the original
 contract digest and type/symbol identity checks. It does not rebaseline away old
 exports.
 
+## Independent Fabric Capture Verification
+
+Source commit `09d31583e6c4160aaf2843e2d40079080fdbf16d` adds actor-local
+same-commit capture in managed named/tenant writers, immutable scope/policy
+bindings, a required actor-readiness proof, a private source catalog and
+existing-only restart recovery. Delivery uses dedicated Fabric log actors;
+its app-local coordinator schedules at most three sources concurrently with
+per-source backoff. It does not hold Guardian authority across delivery IPC.
+
+Durable spool capacity is separately configurable. Defaults are 50000 events
+and 64 MiB per origin, bounded by 100000/256 MiB. Decreasing limits preserves
+old evidence. Source pages are bounded to 256 events/256 KiB, sink batches to
+256 events/512 KiB, with no wait to fill a sparse batch. Repeated attribution
+shares private source storage while old full-envelope rows remain readable.
+
+The broad regression selection passes 208 tests across 28 files. A subsequent
+focused selection passes 20 tests across five files, covering the final codec,
+read-only WAL page path and bind proof. These selections overlap and must not
+be added into a unique-test total. Checks cover actual source/sink subprocesses,
+file and hot placement, rollback, changed identity conflicts, acknowledged
+event replay after source reopen, missing-source noncreation, source capacity,
+SQLite-full rollback and smaller-policy recovery. An actor without the audit
+readiness proof is rejected before a capability is published.
+
+The populated hot-mode test now durably captures the 20267 seeded mutations.
+Eight login/refresh cycles each keep a separate two-second per-operation auth
+budget, with protected reads and no request retries. Background automation has
+its own 45-second drain allowance instead of inheriting the earlier 10-second
+budget for the previously unaudited workload. All 51 deliveries complete.
+This is bounded observed performance, not a claim of zero audit/shared-disk cost.
+Shutdown joins dispatched work and spends at most five seconds starting new
+drain passes; a remaining source backlog is preserved for restart.
+
+Hot acknowledgments deliberately do not force a whole-image snapshot per page:
+they may replay, safely deduplicated by retained sink proofs. Business snapshot
+guarantees remain unchanged. Full source failure/recovery semantics still
+depend on its configured placement and durability. Doctor warns about weaker
+hot source policies; it does not advertise legal certification.
+
+Review also found and corrected a global-health disclosure boundary: tenant
+read/manage grants cannot inspect installation-wide backlog or integrity state.
+Those operations require platform-administrator, application-control and manage
+authority. Closed pinned-source diagnostics retain a frozen final snapshot
+rather than querying a disposed source database.
+
+The root TypeScript check passes. Broader deployment/fault, strict-browser,
+service-stage and evidence-workspace gates below are not established merely
+by these successful checks.
+
+## Compiled Worker Recovery Verification
+
+`src/logging/logging-compiled.integration.test.ts` compiles the shared-entry
+owner and its logging actor bootstrap into the same Bun executable. The test
+obtains a real actor commit, forcibly kills the owner with SIGKILL and starts a
+replacement against the same disposable directory. The replacement recovers
+the committed event, verifies the chain, acknowledges exact replay as duplicate
+and closes cleanly. Parent-death fencing, root-owner handoff and retained event
+identity are exercised rather than approximated by an orderly database close.
+
+The test passes with explicit subprocess deadlines and test-owned temporary
+cleanup. Parent and child use the same realm implementation/build; a source
+parent and separately transformed executable must not bypass Fabric's realm
+fingerprint validation. This is a focused compiled-owner crash proof, not
+universal qualification of custom launch wrappers or all crash timings.
+
+The final worker/package selection passes two tests with 17 assertions. Alongside
+the compiled crash test, the installed archive test boots dedicated logging
+actors through public `createApp`, checks Guardian query/SSE, builds the public
+browser entry without SQLite/outbox internals and confirms the packaged manuals
+exist. Root TypeScript and the documentation check (828 reachable unique pages,
+no reported problems) pass after these changes.
+
+```sh
+TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
+  src/logging/logging-compiled.integration.test.ts \
+  src/frontend/server/database-automation-torrent.package.test.ts
+bun --no-env-file x tsc --noEmit
+bun --no-env-file docs-next/_work/checks/check.ts
+```
+
 ## Remaining Integration Gates
 
 The following are now implemented: scoped request/background capture; atomic
@@ -138,11 +218,12 @@ shared DataTable/filter/detail composition; explicit retention; atomic holds and
 reviews; retained replay/integrity proofs; bounded NDJSON export; and Doctor
 coverage findings. The private store remains unavailable through request JSON.
 
-Remaining gates are independent tenant-actor capture and full service coverage;
+Remaining gates are full service-stage coverage;
 required-browser-delivery admission across UI/SSR/HTTP/Sync; advanced/saved
 Filters and evidence management UI; durable private-Storage export jobs and
 download reauthorization; independent checkpoint custody/signing/rotation;
-full-disk/SIGKILL/load and compiled actor qualification. The strict preset is
+broader full-disk/worker-death/load qualification and other deployment targets.
+The strict preset is
 still rejected rather than mislabeled ready.
 
 Application interfaces must use the authorized facade, not the private

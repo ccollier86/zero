@@ -13,9 +13,9 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -28,6 +28,13 @@ the fixed logging realm before publishing its private runtime. Fabric owns
 per-file writer ordering and read-only WAL workers; the files use FULL SQLite
 commit synchronization. Partial construction closes acquired writers/readers
 and releases root ownership before returning an error.
+
+These are dedicated Fabric worker processes, not SQLite writes performed by
+an HTTP handler. A lifecycle-owned delivery coordinator schedules bounded
+transfers in the app process. Validation, hashing, event/proof writes, retention
+and integrity operations on the log databases execute in their actors. The
+source still performs the small same-transaction admission described below;
+worker isolation is not a claim of zero capture or shared-disk cost.
 
 ## Diagnostic Capture
 
@@ -64,6 +71,31 @@ Those queues are delivery state, not the permanent logging store. They retain
 stable source identities, exclude row bodies and keep exact events until the
 dedicated log actor acknowledges a commit.
 
+The same contribution is installed locally in each managed tenant/named Fabric
+writer. Request attribution travels through the private actor envelope and is
+checked against the binding's immutable scope. It lasts for one synchronous
+operation; unrelated work falls back to an honest system actor. Read-only
+actors do not install mutation capture or accept source acknowledgments.
+
+A private system-database catalog records a manager-proven source before its
+file can be created. Startup recovery opens only existing cataloged files;
+it never provisions missing tenant databases. Tenant scope must match the
+manager's physical binding derivation. Changing the canonical Fabric root or
+realm owner requires explicit recovery, not silent reassignment of queued data.
+The source catalog is currently bounded to 10000 entries.
+
+Source pages contain at most 256 events and 256 KiB of normalized envelope
+data. Three source deliveries may progress independently, leaving room in the
+default sink queue for other admissions. Per-source retry backoff prevents one
+unavailable source from delaying otherwise-ready sources. Commit/startup hints
+wake delivery; there is no continuous idle-source polling.
+
+Source storage shares repeated attribution between events, without changing
+the public envelope or including row contents. Older full-envelope queue rows
+remain readable without a destructive rewrite. Unreferenced attribution is
+reclaimed with acknowledgment. Capacity accounting still uses full normalized
+event bytes, not the smaller private encoding.
+
 After-commit wakeups run outside the source transaction and authority lease.
 Delivery submits bounded concurrent admissions so the log writer can batch them,
 then acknowledges only confirmed records in a short source transaction.
@@ -71,6 +103,11 @@ Lost acknowledgments replay against permanent event proofs. An idle source is
 not continuously polled. Outages retain source evidence and back off from one
 to thirty seconds. Capture cannot silently return a successful application
 commit when its required origin queue is full.
+
+Hot source acknowledgments do not force a complete database image per page.
+Their deletions are included in the next ordinary business/close snapshot.
+After a crash an already-delivered event may replay; retained sink proofs
+deduplicate it. Business-write snapshot guarantees are unchanged.
 
 Operational forwarding remains best-effort. A delivery failure is reported to
 the previous sink with a safe code, once per failure burst, without recursively
@@ -84,8 +121,12 @@ App extensions drain while their services remain available. Logging then
 detaches its adapter, closes new intake, joins admitted batches across both
 streams, releases capabilities and closes the actor coordinator. Repeated close
 calls join the same task. Failure in one batch does not skip remaining drains
-or other owners' cleanup. No application authority lease is held while waiting
-for logging IPC or disk synchronization.
+or other owners' cleanup. Source shutdown joins in-flight work, then spends up
+to five seconds starting additional drain passes, with a finite pass cap.
+Already-dispatched actor operations retain their own bounded deadlines; this
+is not a five-second cancellation of an unresolved commit. Remaining source
+evidence stays durable for restart. No application authority lease is held
+while waiting for delivery IPC or logging disk synchronization.
 
 Internal investigation reads use bound scope predicates and source-local
 high-water/keyset pagination. New arrivals do not move an older page's boundary.

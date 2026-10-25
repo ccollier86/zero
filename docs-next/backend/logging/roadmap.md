@@ -13,9 +13,9 @@ modes: [managed-server, browser, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -29,9 +29,9 @@ workspace, bounded exports, holds, reviews and retained integrity/replay proofs.
 It does not yet qualify the complete strict compliance profile. Remaining work
 follows the [complete plan](../../_work/logging-system-plan.md):
 
-1. Actor-local same-commit capture in independent tenant Fabric databases,
-   source discovery/recovery and a complete service-stage coverage matrix.
-   Pinned application/Guardian capture must not be relabeled as universal capture.
+1. Complete service-stage coverage beyond the implemented pinned/Guardian and
+   managed tenant/named Fabric ReactiveDB capture. Raw SQL, semantic reads and
+   actual external/service outcomes must not be inferred from a record mutation.
 2. Required browser-delivery admission for the explicit strict compliance
    profile only, across protected UI, SSR/loaders, HTTP,
    machine and Sync paths. Use authenticated acknowledgments with server-side
@@ -44,7 +44,8 @@ follows the [complete plan](../../_work/logging-system-plan.md):
 4. Durable private-Storage export jobs/download reauthorization, artifact expiry,
    reconciliation and catalog/history pagination beyond the bounded preview.
 5. Independently held/signed checkpoints, key rotation, restore/custody procedures,
-   and production-like full-disk/SIGKILL/load and compiled actor qualification.
+   and broader production-like full-disk/worker-death/load qualification and
+   deployment targets beyond the tested source/shared-entry compiled launch.
 
 Compliance configuration remains unavailable until the required guarantees are
 present. Enabling a preset is not legal certification. Preserve existing

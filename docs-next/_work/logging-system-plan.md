@@ -13,9 +13,9 @@ modes: [single tenancy, multi tenancy, browser, server, file, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -31,8 +31,9 @@ Healthcare and HIPAA audit use cases guide the strict configuration without
 turning ordinary applications into healthcare-specific products.
 
 All persistent Zero log streams use Fabric-managed dedicated databases, separate
-from application and Guardian data. A managed ingestion worker performs bounded
-delivery, batching and recovery. The investigation UI composes Zero's DataTable,
+from application and Guardian data. A lifecycle-owned delivery coordinator and
+dedicated Fabric SQLite worker processes perform bounded batching and recovery.
+The investigation UI composes Zero's DataTable,
 filter builder, detail surfaces, tokens and motion rather than a second UI stack.
 
 This is the full subsystem implementation plan. The branch-only
@@ -50,13 +51,14 @@ The `feature/core-logging` branch implements event/configuration contracts,
 safe validation, dedicated Fabric/ReactiveDB audit and operational realms,
 idempotent append, scoped cursor queries, bounded batching and managed
 `createApp({ logging })` lifecycle. Pinned application/Guardian contributions
-capture durable source events; `zero.logging` and `client.logging` expose
+capture source events; managed tenant/named writers add actor-local same-commit
+capture and existing-only recovery. `zero.logging` and `client.logging` expose
 authorized APIs, authenticated SSE and browser collection. A shared DataTable
 workspace, bounded exports, holds, reviews and retained integrity/replay proofs
 are also implemented. Backend diagnostics use a privacy-minimal adapter.
 
-Compliance requests still fail closed with `LOGGING_NOT_READY`. Independent
-tenant-actor capture, required browser-delivery admission, complete evidence
+Compliance requests still fail closed with `LOGGING_NOT_READY`. Complete service
+instrumentation, required browser-delivery admission, complete evidence
 management and production qualification remain release gates. Real
 subprocess/app tests cover restart, isolation, acknowledgment loss, scoped
 release, partial construction, drain and payload limits. The

@@ -13,9 +13,9 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -50,7 +50,7 @@ confirmations retain their own identities rather than rewriting the original.
 | Guardian audit | Mirrors newly appended Guardian audit events into a same-transaction source outbox. The existing Guardian trail and its public APIs remain intact. Existing historical events are not automatically backfilled. |
 | Pinned application ReactiveDB mutations | Captures committed creates/updates/deletes, opaque row target and source sequence. Rollback removes the queued evidence too. Private underscore-prefixed tables and raw SQL are excluded. |
 | Shared-row tenant resources | Uses registered resource storage fields for tenant attribution. A missing tenant rejects the captured mutation; tenant identity is not taken from browser claims. |
-| Independent tenant Fabric actors | Automatic same-commit capture is not implemented. Doctor reports this gap. Do not infer it from the fact that the logging sink itself uses Fabric. |
+| Managed tenant/named Fabric actors | Writer-local same-commit capture, manager-proven scope, required bind-policy readiness proof, existing-only source discovery/recovery and independent delivery. Raw SQL is still excluded. Source crash guarantees follow the selected placement/durability. |
 | Request-owned source mutations | `zero.logging.run()` carries trusted actor/scope attribution during its operation. Without an attributed operation, automatic database capture honestly identifies a system actor. |
 | Semantic record reads | Use `zero.logging.read()` after domain authorization. A SQL SELECT alone does not identify what a person saw. |
 | Browser views, copy and print | The authenticated AppProvider collector follows configured families and explicit opaque view bindings. All signals remain browser observations. |

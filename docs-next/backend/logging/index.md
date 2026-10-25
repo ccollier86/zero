@@ -13,9 +13,9 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -55,9 +55,9 @@ authority lease. This does not change SQLite's per-file write serialization.
 
 Existing Guardian audit and observability APIs remain intact. The broader log
 plane mirrors newly appended Guardian events rather than deleting or replacing
-the old trail. Automatic record capture covers the pinned application database;
-independent tenant Fabric actors and complete service-stage instrumentation are
-explicit remaining gates. A selected preset is not proof of complete coverage,
+the old trail. Automatic ReactiveDB record capture covers the pinned application
+database and managed tenant/named Fabric writers; complete service-stage
+instrumentation remains an explicit gate. A selected preset is not proof of complete coverage,
 independent evidence custody, uncompromised browser behavior or legal compliance.
 
 ## Related Guides And Next Steps

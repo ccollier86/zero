@@ -13,9 +13,9 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -42,8 +42,9 @@ const app = await createApp({
 ```
 
 This opens dedicated storage, attaches backend diagnostics and installs the
-configured managed source contributions. It does not promise every raw SQL,
-semantic read or independent tenant-actor action is automatically audited.
+configured managed source contributions, including managed tenant/named
+Fabric ReactiveDB writers. It does not promise every raw SQL, semantic read
+or external service outcome is automatically audited.
 Selecting `compliance` fails with `LOGGING_NOT_READY` until its complete required
 controls are implemented and qualified. Review [coverage](./events-and-coverage.md).
 
@@ -60,7 +61,9 @@ controls are implemented and qualified. Review [coverage](./events-and-coverage.
 | `logging.retention.operationalDays` | `null`: indefinite retention. Otherwise an integer 1–36500. Diagnostic retention is not compliance audit policy. |
 | `logging.queue.maxEvents` | 1024 outstanding events per stream, including in-flight work; integer 1–100000. |
 | `logging.queue.maxBytes` | 8 MiB event-payload budget per stream; integer 16384–67108864. This is not a total JavaScript heap bound. |
-| `logging.queue.batchSize` | `min(64, maxEvents)`; integer 1–`min(100, maxEvents)`. The 512 KiB actor-batch limit can split it further. |
+| `logging.queue.batchSize` | `min(256, maxEvents)`; integer 1–`min(256, maxEvents)`. The unchanged 512 KiB actor-batch byte limit can split it further. Sparse events flush on a microtask without waiting to fill a batch. |
+| `logging.sourceQueue.maxEvents` | 50000 admitted events per originating database; integer 1–100000. Independent of the in-memory writer queue. |
+| `logging.sourceQueue.maxBytes` | 64 MiB per originating database; integer 16384–268435456. Counts normalized event bytes, not an exact SQLite file or heap size. |
 | `logging.actors` | Default packaged source actor with empty child environment. Explicit `launch`, `env` and `executor` use Fabric's validated subprocess contract. Nothing implicitly inherits the parent's secrets or dotenv files. |
 
 `basic` enables operational/security families. `activity` additionally enables
@@ -82,13 +85,51 @@ from managed source/scoped integrations carry a fingerprint of their resolved
 capture/metadata/retention policy; queued events retain the policy under which
 they were originally admitted.
 
+Source queue settings are server-only, detached at startup and included in
+that policy fingerprint. Lowering a budget does not delete previously admitted
+evidence or prevent its delivery; it can block new captured mutations until the
+backlog drops below the new limit. Size bulk transactions explicitly. A queue
+capacity failure rolls back the source change rather than silently losing audit.
+
+Actor-local capture is installed before managed Fabric admission. The child
+must prove that it installed the supplied audit policy before its binding is
+published. Use actors built with the matching Zero source; an older/custom
+actor cannot silently ignore the new bind policy. Crash guarantees for the
+source follow its placement and durability: use file/FULL or hot on-write for
+required crash-persistent evidence. The dedicated log sink remains file/FULL.
+
 The default actor is a private package source file run through Bun with
 `--no-env-file`. A missing source actor fails startup with a safe configuration
 error. Shared-entry/compiled deployments can call the public
 `runLoggingActorIfRequested()` before app startup and point `logging.actors.launch`
 at that entry. This uses a separate private logging marker and fixed realm;
-never boot the app in an actor child. Installed source launch is qualified;
-compiled/custom deployment qualification remains a separate release gate.
+never boot the app in an actor child. The owner and actors must use matching
+realm/build fingerprints; do not weaken the check to mix separately built
+implementations. The shared-entry pattern is:
+
+```ts
+import { createApp, runLoggingActorIfRequested } from '@zero/framework/server';
+
+if (!await runLoggingActorIfRequested()) {
+  const app = await createApp({
+    db: { mode: 'file', path: './data/application.db' },
+    tables: {},
+    logging: {
+      actors: {
+        launch: { kind: 'bundle', entrypoint: process.execPath },
+        env: {},
+      },
+    },
+  });
+  app.listen(3000);
+}
+```
+
+This example is for a compiled Bun executable, not a source invocation where
+`process.execPath` names the Bun runtime. Source apps normally retain the
+default packaged actor. Installed source launch and compiled shared-entry
+owner-SIGKILL recovery have focused tests; arbitrary wrappers, other target
+platforms and complete compliance release readiness remain separate gates.
 
 Paths are checked lexically during configuration and through filesystem aliases
 before builds/startup mutate their owners. The log directory cannot overlap
@@ -106,7 +147,7 @@ logging API is separate from the existing recent-event endpoint.
 
 - [Delivery](./delivery.md) explains policy-filtered versus committed receipts,
   best-effort diagnostic failures and ownership drain.
-- [Roadmap](./roadmap.md) identifies remaining independent-actor capture,
+- [Roadmap](./roadmap.md) identifies remaining service-stage instrumentation,
   strict browser admission and compliance qualification work.
 - [Fabric configuration](../fabric/configuration.md) covers explicit actor
   launch and the underlying private database ownership model.

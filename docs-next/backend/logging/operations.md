@@ -13,9 +13,9 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -29,16 +29,21 @@ it. Main and the saved upgrade release are deliberately independent.
 
 ## Readiness and Failure Signals
 
-Use `client.logging.health()` under log-read authority and run the normal Zero
+Use `client.logging.health()` under platform-administrator, application-control
+and configured manage authority, and run the normal Zero
 Doctor against the app's explicit configuration. Doctor shares path admission,
 reports missing actors, auth-disabled API access, indefinite retention, declared
-instrumentation gaps and missing tenant-Fabric capture. It neither starts log
+instrumentation gaps and weak hot-source durability. It neither starts log
 workers nor deletes evidence, and it cannot certify legal compliance.
 
-Source queue capacity is 10000 events or 16 MiB per originating database.
+Source queue capacity defaults to 50000 events or 64 MiB per originating
+database and is explicitly configurable through `logging.sourceQueue`.
 A captured source transaction rejects when its durable queue cannot admit the
 evidence. It must not return success while omitting required change evidence.
 This can affect large bulk transactions; qualify import batch sizes explicitly.
+Source discovery/reconciliation can temporarily make an exact pending-event
+total unknown. `sourceDiscoveryPending` reports those sources separately; a
+zero known-event count does not mean discovery has completed.
 
 Healthy source delivery wakes after commit rather than continuously polling an
 idle database. It submits bounded batches and acknowledges only confirmed sink
@@ -59,10 +64,19 @@ source/event identity. Never edit queued envelopes, reset source identities,
 delete files, or clear replay proofs to make a health counter turn green.
 
 On orderly stop, app-owned work drains before source capture detaches. Logging
-drains its finite admitted backlog, then its independent stream writers and
-Fabric owners. A sink outage may leave durably queued source evidence for the
-next startup. Capture installation and dependent database closure remain ordered;
+joins in-flight transfers and bounded additional source-drain passes, then its
+independent stream writers and Fabric owners. A large backlog or a sink outage
+can leave source evidence for the next startup. In-flight work is not falsely
+declared canceled; see [delivery deadlines](./delivery.md#shutdown-and-queries).
+Capture installation and dependent database closure remain ordered;
 an actor cleanup failure does not skip the other owners.
+
+The private source catalog and per-source queues are required recovery state,
+even though permanent audit storage is separate. Back them up alongside their
+owning system/application/Fabric databases. Never copy a tenant file into a
+different scope, reset source identities, or wipe the catalog to bypass a
+binding mismatch. Replaying an unpersisted hot acknowledgment is safe; deleting
+unacknowledged evidence is not.
 
 Protect the complete logging directory with the same deployment custody,
 backup and access controls required for its evidence. It must not overlap
@@ -100,6 +114,14 @@ semantics and actual Chromium rendering. Installed-package smoke tests exercise
 the packaged source actor, not just in-repository imports. See the sanitized
 [branch review](../../_work/logging-foundation-review.md) for exact commands,
 runs and known gates.
+
+The compiled shared-entry regression builds a real Bun executable that launches
+its dedicated log actors, commits an event, and is then killed with SIGKILL.
+A replacement owner opens the same disposable files, verifies the hash chain
+and confirms that exact event replay is a duplicate rather than another row.
+This proves that tested owner-crash path; it does not establish arbitrary
+custom launchers, every child-death timing, cross-platform behavior, storage
+restore procedures or independent checkpoint custody.
 
 ## Related Guides and Next Steps
 
