@@ -3,20 +3,20 @@ id: zero.logging.configuration
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: managed-configuration-preview
 maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+applies_to: ["Unreleased logging completion branch based on 2.6.0"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
-  snapshot: clean
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: implementation-verified
+  evidence_level: source-observed
 ---
 
 # Logging Configuration Preview
@@ -45,14 +45,18 @@ This opens dedicated storage, attaches backend diagnostics and installs the
 configured managed source contributions, including managed tenant/named
 Fabric ReactiveDB writers. It does not promise every raw SQL, semantic read
 or external service outcome is automatically audited.
-Selecting `compliance` fails with `LOGGING_NOT_READY` until its complete required
-controls are implemented and qualified. Review [coverage](./events-and-coverage.md).
+The completion branch implements `compliance` as a distinct strict policy, not
+an alias for `detailed`. It requires managed Guardian, durable source commits,
+signed checkpoints, protected delivery admission and private export storage.
+Review [coverage](./events-and-coverage.md) for the operations an app must declare.
+The branch is not yet selected for the normal updater; use the final qualified
+archive identified in the release handoff, not an intermediate source pack.
 
 | Option | Default and behavior |
 | --- | --- |
 | `logging` | Omitted/`false`: no new files or workers. `true`: default policy/storage. Object: explicit policy/storage. `null` and unknown fields are invalid. |
 | `logging.rootDirectory` | `data/zero.logs`, resolved from immutable `projectRoot`. Dedicated private Fabric ownership; never a browser value. |
-| `logging.preset` | `basic`; policy vocabulary also includes `activity` and `detailed`. Compliance is reserved and rejected by managed startup. |
+| `logging.preset` | `basic`; alternatives `activity`, `detailed`, `compliance`. Strict startup verifies source durability and required owners; it does not silently downgrade on failure. |
 | `logging.minimumLevel` | `info`; `debug`, `info`, `warn`, `error`, `fatal`. Filters diagnostics, not required audit events. |
 | `logging.capture` | Granular boolean family overrides. Automatic Guardian/application capture and browser collection follow enabled families; uncovered services still require declared instrumentation. |
 | `logging.access` | Optional Guardian permission codes for `read`, `export`, `hold`, `review`, `manage`. Omitted codes require a platform administrator. Codes must already be declared in Guardian; export and review additionally require read. |
@@ -65,6 +69,47 @@ controls are implemented and qualified. Review [coverage](./events-and-coverage.
 | `logging.sourceQueue.maxEvents` | 50000 admitted events per originating database; integer 1–100000. Independent of the in-memory writer queue. |
 | `logging.sourceQueue.maxBytes` | 64 MiB per originating database; integer 16384–268435456. Counts normalized event bytes, not an exact SQLite file or heap size. |
 | `logging.actors` | Default packaged source entry and empty child environment. The validated launch also starts the dedicated delivery subprocess through a distinct private marker. Explicit `launch`, `env` and `executor` configure the Fabric actors; delivery IPC has its own bounded deadlines. Nothing implicitly inherits the parent's secrets or dotenv files. |
+| `logging.custody` | Omitted on lower presets: no signing identity or checkpoint database. Omitted on `compliance`: built-in private Fabric checkpoint ledger and parent-owned signing identity (`{ kind: 'local' }`). An external service is not required. Explicit custom `LoggingCustodyConfig` selects an operator-supplied signer/store instead. |
+| `logging.custody.adoptExisting` | `false`. An existing unsigned trail requires explicit, verified adoption. This is not permission to regenerate missing keys, rewrite signed history or accept a conflicting checkpoint. |
+| `logging.custody.maxAdoptionProofs` | 100000; integer 100–10000000. Maximum existing unsigned proof count admitted for the one-time adoption scan. |
+| `logging.custody.maxVerificationProofs` | 1000000; integer 100–10000000. Full startup verification scans bounded 100-proof pages before publication. Exceeding the declared proof budget fails closed; it never skips old pages and calls the trail verified. |
+| `logging.custody.keyId` | Local owner only. Omission preserves the existing generated key. Setting a new stable opaque ID rotates the private key at restart and retains previous public keys. IDs cannot be reused; the built-in ring retains at most 32 keys and rejects rotation beyond that bound. |
+
+## Self contained signing and checkpoints
+
+This optional fragment enables built-in custody without another account:
+
+```ts
+logging: {
+  preset: 'activity',
+  custody: { kind: 'local' },
+}
+```
+
+The first startup generates an Ed25519 signing identity in the private logging
+root's `identity/signing.json` with file mode 0600. The private key never enters
+Fabric actor payloads, browser configuration or logging events. The separate
+`logging:checkpoints` Fabric database retains signed checkpoint versions through
+append-only commands. The root remains exclusively owned by the normal Fabric
+coordinator; no second service or network listener is introduced.
+
+To rotate, set a new stable `keyId`, restart, verify readiness, and keep that ID
+in configuration. Earlier public verification keys remain in the identity file;
+their private counterparts are not needed to verify older checkpoints. A missing
+identity or established checkpoint database requires recovery of the original
+state, not automatic key generation. Preserve the complete private directory
+through existing deployment backup procedures. Zero's own nightly-backup and
+older-log archive/import services are deferred, not prerequisites supplied by
+this change.
+
+Local custody detects event-database rollback and verified history changes while
+the corresponding checkpoint/identity state survives. It is not an off-host
+write-once service and does not promise detection if an attacker replaces all
+local evidence and trusted state together. A configured independent custodian
+can provide a separate security/failure domain. Its deployment guarantees must
+be established by the operator, not inferred from the adapter's name.
+
+## Capture and delivery policy
 
 `basic` enables operational/security families. `activity` additionally enables
 records, transfers, workflow, communications, AI, investigations and navigation.
@@ -76,7 +121,38 @@ compliance profile. Enabling more optional capture in `basic`, `activity` or
 `detailed` must not lock users out when a browser upload fails. The preview
 reports delivery failures; it does not silently promote those presets to strict
 mode. See [required delivery](./browser.md#strict-compliance-delivery-requirement)
-for the planned fail-closed enforcement and recovery boundaries.
+for fail-closed enforcement and recovery boundaries.
+
+## Strict source durability
+
+The supported strict managed configuration uses **file mode with `FULL` or
+`EXTRA` synchronization for both `db` and `systemDb`**. Set this explicitly;
+ordinary file mode defaults to `NORMAL`. Hot/ephemeral control sources are
+rejected before managed files are opened. This is not a tenant-mode change:
+the application can remain single-tenant with separate application, system
+and private logging files.
+
+```ts
+const app = await createApp({
+  db: { mode: 'file', path: './data/application.db', synchronous: 'FULL' },
+  systemDb: { mode: 'file', path: './data/zero.system.db', synchronous: 'FULL' },
+  tables,
+  auth: authConfig,
+  logging: {
+    preset: 'compliance',
+    rootDirectory: './data/zero.logs',
+    metadataKeys: ['operation', 'documentKind', 'rowCount'],
+    retention: { auditDays: null, operationalDays: null },
+  },
+});
+```
+
+Actor-backed application Fabric files additionally require `sqlite.synchronous`
+of `FULL`/`EXTRA`. Any configured hot placement must use `durability: 'on-write'`,
+not periodic/final snapshots. These requirements do not alter the source files'
+identities, copy application tables into logging, or serialize unrelated
+databases. A source which cannot be recovered remains visibly unavailable;
+it is not silently reported as an empty, fully delivered queue.
 
 Explicit `read()` admission, investigation-access windows, hold changes and
 review changes retain their required evidence even if optional family capture
@@ -155,7 +231,7 @@ logging API is separate from the existing recent-event endpoint.
 
 - [Delivery](./delivery.md) explains policy-filtered versus committed receipts,
   best-effort diagnostic failures and ownership drain.
-- [Roadmap](./roadmap.md) identifies remaining service-stage instrumentation,
-  strict browser admission and compliance qualification work.
+- [Roadmap](./roadmap.md) separates optional UI, additional deployment targets
+  and deferred backups from current strict controls and explicit app capture.
 - [Fabric configuration](../fabric/configuration.md) covers explicit actor
   launch and the underlying private database ownership model.

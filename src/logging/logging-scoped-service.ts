@@ -10,15 +10,20 @@ import { loggingDigest } from './logging-hash';
 import { normalizeLoggingQuery } from './logging-query';
 import { runWithLoggingAttribution } from './logging-attribution';
 import { createLoggingProjectionStream } from './logging-stream';
+import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
+import { AuthError } from '../auth/types';
+import { readOwnedLoggingExport } from './logging-export-validation';
+import { LOGGING_EXPORT_NAMESPACE } from './logging-export-manager';
 
 const rateWindows = new WeakMap<LoggingRuntime, Map<string, { start: number; count: number }>>();
 const readWindows = new WeakMap<LoggingRuntime, Map<string, { expires: number; admission: Promise<void> }>>();
 
 /** Every yielding operation fences authority on both sides, and before any protected evidence release. */
 export function createScopedLoggingService(runtime: LoggingRuntime, access: RequestAuthorizationAccess, scope: ServiceDataScope,
-  revalidate: () => Promise<void>, assertCurrent: () => void, systemActor?: string): ScopedLogging {
+  revalidate: () => Promise<void>, assertCurrent: () => void, systemActor?: string, getProperties: () => Readonly<Record<string, string>> = () => ({}), assertWorkAdmission: () => void = () => {}): ScopedLogging {
   const readScope: LoggingReadScope = scope.scopeKind === 'tenant' ? { kind: 'tenant', tenantId: scope.tenantId! } : { kind: 'application' };
   const permit = (kind: keyof LoggingRuntime['config']['access']) => {
+    assertWorkAdmission();
     const user = access.requireUser();
     const permission = runtime.config.access[kind];
     if (permission) access.requirePermission(permission);
@@ -71,16 +76,18 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       const result = await runtime.append(captured);
       await revalidate(); return result;
     },
-    async observe(raw: readonly LoggingObservation[]) {
+    async observe(raw: readonly LoggingObservation[], policyVersion?: string) {
       assertCurrent(); const user = access.requireUser();
       if (user.credentialKind === 'api-key') throw new LoggingError('LOGGING_FORBIDDEN', 'Browser observation requires an interactive session.');
+      if (runtime.config.policy.complianceRequested && policyVersion !== runtime.config.policyVersion) throw new LoggingError('LOGGING_ADMISSION_REQUIRED', 'The current audit delivery policy is required.');
       const items = loggingArray(raw, 32);
-      if (!items.length) return { accepted: 0 };
+      if (!items.length && !runtime.config.policy.complianceRequested) return { accepted: 0 };
       const now = Date.now(), key = loggingDigest([user.userId, user.sessionId ?? null, scope.scopeKind, scope.tenantId]);
       let windows = rateWindows.get(runtime); if (!windows) rateWindows.set(runtime, windows = new Map());
       for (const [id, window] of windows) if (now - window.start >= 60000) windows.delete(id);
       const window = windows.get(key) ?? { start: now, count: 0 };
-      if (window.count + items.length > 240 || !windows.has(key) && windows.size >= 4096) throw new LoggingError('LOGGING_BACKPRESSURE', 'Browser logging rate exceeded.');
+      const charge = Math.max(1, items.length);
+      if (window.count + charge > 240 || !windows.has(key) && windows.size >= 4096) throw new LoggingError('LOGGING_BACKPRESSURE', 'Browser logging rate exceeded.');
       // Validate the complete batch before admitting any part. Browser clocks/durations remain observations.
       const events = items.map(value => {
         const r = loggingRecord(value, ['id', 'collectorId', 'action', 'occurredAt', 'target', 'interval']);
@@ -105,38 +112,66 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
         return captureLoggingEvent(c, { id, family: LOGGING_BROWSER_ACTIONS[action], action, occurredAt,
           outcome: 'attempted', evidence: 'browser-observed', target: r.target, metadata } as LoggingEventInput, Object.keys(metadata));
       });
-      window.count += items.length; windows.set(key, window);
+      window.count += charge; windows.set(key, window);
       await revalidate(); assertCurrent();
       let accepted = 0;
       for (const event of events) { assertCurrent(); if (await runtime.append(event)) accepted++; }
-      await revalidate(); return Object.freeze({ accepted });
+      await revalidate();
+      const admission = runtime.config.policy.complianceRequested
+        ? await runtime.admission.acknowledge({ auth: user, properties: getProperties() }, context('backend'), policyVersion ?? '', revalidate)
+        : undefined;
+      return Object.freeze({ accepted, ...(admission ? { admission } : {}) });
     },
     async collectionPolicy() {
       await revalidate(); access.requireUser();
-      return Object.freeze({ enabled: runtime.config.policy.enabled, capture: runtime.config.policy.capture, heartbeatMs: 30000, idleMs: 60000 });
+      return Object.freeze({ enabled: runtime.config.policy.enabled, capture: runtime.config.policy.capture, heartbeatMs: 30000, idleMs: 60000,
+        durableExports: Boolean(runtime.exports),
+        ...(runtime.config.policy.complianceRequested ? { delivery: { required: true as const, policyVersion: runtime.config.policyVersion, ttlMs: runtime.admission.ttlMs } } : {}) });
     },
     async health() {
       await revalidate(); permitPlatformManagement(); const d = runtime.diagnostics();
       const streams = Object.values(d.streams) as { pendingEvents: number; failed: number }[];
-      return Object.freeze({ state: d.state === 'ready' && d.deliveryWorker?.state === 'recovering' ? 'recovering' : d.state, preset: d.preset, coverage: d.coverage,
+      return Object.freeze({ state: d.state === 'ready' && (d.deliveryWorker?.state === 'recovering' || d.custody?.state === 'unavailable' || d.unavailableSources > 0) ? 'recovering' : d.state, preset: d.preset, coverage: d.coverage,
         pendingEvents: streams.reduce((n, s) => n + s.pendingEvents, 0), failedEvents: streams.reduce((n, s) => n + s.failed, 0),
         sourcePendingEvents: (d.sources?.application.queued ?? 0) + (d.sources?.guardian.queued ?? 0) + (d.fabricSources?.queued ?? 0),
         sourceDiscoveryPending: d.fabricSources?.pendingSources ?? 0,
         sourceDeliveryFailures: (d.sources?.failed ?? 0) + (d.fabricSources?.failed ?? 0) + (d.deliveryWorker?.failures ?? 0), maintenanceFailures: d.maintenanceFailed });
     },
     async run(operation) {
-      const captured = context('backend'); await revalidate(); assertCurrent();
-      const result = await runWithLoggingAttribution(runtime, captured, assertCurrent, operation);
-      await revalidate(); return result;
+      const captured = context('backend'); await revalidate(); assertCurrent(); assertWorkAdmission();
+      const result = await runWithLoggingAttribution(runtime, captured, () => { assertCurrent(); assertWorkAdmission(); }, operation);
+      await revalidate(); assertWorkAdmission(); return result;
     },
     async read(target, operation) {
       const attribution = context('backend');
-      const captured = captureLoggingEvent(attribution, { id: crypto.randomUUID(), family: 'records', action: 'record.read.admitted', occurredAt: Date.now(), evidence: 'server-confirmed', outcome: 'attempted', target });
-      await revalidate(); assertCurrent(); await runtime.deliver(captured); await revalidate();
-      const result = await runWithLoggingAttribution(runtime, attribution, assertCurrent, operation);
-      await revalidate(); await runtime.deliver(audit('record.read.prepared', {}, captured.target!)); await revalidate(); return result;
+      const operationId = crypto.randomUUID();
+      const stage = (action: string, outcome: LoggingEventInput['outcome']) => captureLoggingEvent(attribution, {
+        id: operationId + ':' + action, family: 'records', action, occurredAt: Date.now(), evidence: 'server-confirmed', outcome, target,
+      });
+      // Snapshot the target before the first await. Later caller mutation must
+      // not change the identity of the release/failure stage.
+      const captured = stage('record.read.admitted', 'attempted');
+      await revalidate(); assertCurrent(); assertWorkAdmission(); await runtime.deliver(captured); await revalidate(); assertWorkAdmission();
+      let result;
+      try {
+        result = await runWithLoggingAttribution(runtime, attribution, () => { assertCurrent(); assertWorkAdmission(); }, operation);
+        await revalidate(); assertWorkAdmission();
+      } catch (error) {
+        // Never retain exception messages, SQL, query content or provider bodies.
+        // A failed read is not a successful preparation/release. An unknown
+        // operation outcome is not falsely converted into a definite failure.
+        const unknown = error !== null && typeof error === 'object'
+          && Object.getOwnPropertyDescriptor(error, 'outcome')?.value === 'unknown';
+        const outcome = unknown ? 'unknown' : error instanceof AuthError ? 'denied' : 'failed';
+        await runtime.deliver(captureLoggingEvent(attribution, { id: operationId + ':terminal', family: 'records',
+          action: 'record.read.' + outcome, occurredAt: Date.now(), evidence: 'server-confirmed', outcome, target: captured.target }));
+        throw error;
+      }
+      await runtime.deliver(captureLoggingEvent(attribution, { id: operationId + ':terminal', family: 'records',
+        action: 'record.read.prepared', occurredAt: Date.now(), evidence: 'server-confirmed', outcome: 'succeeded', target: captured.target }));
+      await revalidate(); assertWorkAdmission(); return result;
     },
-    async evidence(before) { if (before !== undefined) loggingTime(before); await revalidate(); permit('read'); await readAdmission('evidence', { before: before ?? null }); const result = await runtime.evidence(readScope, before); await revalidate(); permit('read'); return result; },
+    async evidence(before) { const cursor = normalizeLoggingEvidenceCursor(before); await revalidate(); permit('read'); await readAdmission('evidence', { before: cursor ?? null }); const result = await runtime.evidence(readScope, cursor); await revalidate(); permit('read'); return result; },
     async hold(input) {
       const r = loggingRecord(input, ['id', 'since', 'until', 'reasonRef']);
       const detached = { id: loggingId(r.id)!, since: loggingTime(r.since), until: loggingTime(r.until), reasonRef: loggingId(r.reasonRef)! };
@@ -165,6 +200,7 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       return Object.freeze({ id, reviewedAt: loggingTime(receipt.reviewedAt) });
     },
     async export(stream, query = {}) {
+      if (runtime.config.policy.complianceRequested) throw new LoggingError('LOGGING_FORBIDDEN', 'Strict evidence exports require createExport() and a separately authorized download.');
       const capturedQuery = normalizeLoggingQuery(stream, readScope, query);
       const admitted = normalizeLoggingQuery(stream, readScope, { ...capturedQuery.query, limit: 100 });
       await revalidate(); permit('read'); permit('export'); await readAdmission('export', admitted.query);
@@ -186,6 +222,78 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       await runtime.deliver(audit('logging.export.generated', { count: lines.length, highWaterOrdinal: highWater ?? 0, complete, sha256 }, { type: 'logging.export', id }));
       await revalidate(); permit('read'); permit('export');
       return Object.freeze({ version: 1 as const, id, stream, highWaterOrdinal: highWater ?? 0, count: lines.length, complete, nextBeforeOrdinal: complete ? null : before ?? null, sha256, ndjson });
+    },
+    async createExport(input) {
+      const r = loggingRecord(input, ['id', 'stream', 'query']);
+      const id = loggingId(r.id)!, stream = loggingChoice(r.stream, ['audit', 'operational'] as const);
+      const admitted = normalizeLoggingQuery(stream, readScope, r.query as Parameters<ScopedLogging['page']>[1]);
+      await revalidate(); const user = permit('export'); permit('read');
+      if (!runtime.exports) throw new LoggingError('LOGGING_NOT_READY', 'Private export storage is unavailable.');
+      const prior = await runtime.exportJob(readScope, id);
+      await revalidate(); permit('read'); permit('export');
+      const first = prior ? null : await runtime.page(stream, readScope, { ...admitted.query, limit: 1 });
+      const query = { ...admitted.query, limit: 100, highWaterOrdinal: prior?.job.highWaterOrdinal ?? first!.highWaterOrdinal };
+      const queryDigest = loggingDigest([stream, readScope, query]);
+      await revalidate(); permit('read'); permit('export');
+      const raw = await runtime.evidenceCommand('logging.export.reserve', { id, stream, scope: readScope, query, actorId: user.userId, expiresAt: Date.now() + 3600000,
+        auditEvent: audit('logging.export.requested', { queryDigest }, { type: 'logging.export', id }) });
+      const owned = readOwnedLoggingExport(raw);
+      await revalidate(); permit('read'); permit('export');
+      const result = await runtime.exports.materialize(owned);
+      await revalidate(); permit('read'); permit('export'); return result;
+    },
+    async exportJob(id) {
+      loggingId(id); await revalidate(); permit('read'); permit('export');
+      const result = await runtime.exportJob(readScope, id);
+      await revalidate(); permit('read'); permit('export'); return result?.job ?? null;
+    },
+    async openExport(id) {
+      loggingId(id); await revalidate(); permit('read'); permit('export');
+      const owned = await runtime.exportJob(readScope, id), manager = runtime.exports;
+      if (!manager || !owned || owned.job.state !== 'ready' || owned.job.expiresAt <= Date.now()) throw new LoggingError('LOGGING_FORBIDDEN', 'Export is unavailable or expired.');
+      const job = owned.job, attribution = context('backend'), operationId = crypto.randomUUID();
+      const fence = () => { assertCurrent(); permit('read'); permit('export'); if (job.expiresAt <= Date.now()) throw new LoggingError('LOGGING_FORBIDDEN', 'Export access expired.'); };
+      await runtime.deliver(audit('logging.export.download.admitted', {}, { type: 'logging.export', id }));
+      await revalidate(); fence();
+      const opened = await manager.storage.get(LOGGING_EXPORT_NAMESPACE, id, fence);
+      try { await revalidate(); fence(); }
+      catch (error) { await opened?.stream.cancel().catch(() => {}); throw error; }
+      if (!opened || opened.object.checksum !== job.sha256 || opened.object.sizeBytes > 8 * 1024 * 1024 + 16384) {
+        await opened?.stream.cancel().catch(() => {}); throw new LoggingError('LOGGING_INTEGRITY_FAILED', 'Export artifact does not match its evidence receipt.');
+      }
+      const reader = opened.stream.getReader(), hash = new Bun.CryptoHasher('sha256');
+      let done = false, bytes = 0, remove = () => {};
+      const release = () => { try { reader.releaseLock(); } catch { /* Never replace the actual read/cancel outcome with native cleanup behavior. */ } };
+      const cancel = async () => { try { await reader.cancel(); } catch { /* The terminal evidence records interruption. */ } finally { release(); } };
+      const terminal = async (complete: boolean) => {
+        if (done) return; done = true; remove();
+        await runtime.deliver(captureLoggingEvent(attribution, { id: operationId + ':terminal', family: 'investigations',
+          action: complete ? 'logging.export.stream.completed' : 'logging.export.stream.incomplete', occurredAt: Date.now(),
+          outcome: complete ? 'succeeded' : 'unknown', evidence: complete ? 'server-confirmed' : 'incomplete', target: { type: 'logging.export', id } }));
+      };
+      let stream: ReadableStream<Uint8Array>;
+      try { stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          remove = runtime.subscribe('audit', () => {}, () => {
+            if (done) return; done = true; remove(); void cancel();
+            try { controller.error(new LoggingError('LOGGING_CLOSED', 'Export stream stopped.')); } catch { /* Already retired. */ }
+          });
+        },
+        async pull(controller) {
+          try {
+            await revalidate(); fence(); const chunk = await reader.read(); await revalidate(); fence();
+            if (chunk.done) {
+              if (bytes !== opened.object.sizeBytes || hash.digest('hex') !== job.sha256) throw new LoggingError('LOGGING_INTEGRITY_FAILED', 'Export bytes failed integrity verification.');
+              release(); await terminal(true); await revalidate(); fence(); controller.close(); return;
+            }
+            bytes += chunk.value.byteLength;
+            if (bytes > opened.object.sizeBytes) throw new LoggingError('LOGGING_INTEGRITY_FAILED', 'Export artifact length is invalid.');
+            hash.update(chunk.value); controller.enqueue(chunk.value);
+          } catch (error) { await cancel(); await terminal(false).catch(() => {}); controller.error(error); }
+        },
+        async cancel() { await cancel(); await terminal(false).catch(() => {}); },
+      }); } catch (error) { await cancel(); remove(); throw error; }
+      return Object.freeze({ job, stream });
     },
     async verify(stream, afterOrdinal = 0, checkpoint) {
       loggingTime(afterOrdinal); let cp: typeof checkpoint;

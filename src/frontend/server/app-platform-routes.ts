@@ -46,6 +46,7 @@ import { createServerExtensionApp, type ZeroServerExtensionMountable } from './s
 import type { ResolvedAppFrontendAssets } from './server-plugin-build-types';
 import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 import type { ResolvedConfig } from './types';
+import { loggingPageRecovery } from './app-logging-page-recovery';
 
 interface MountPlatformRoutesInput {
   readonly app: Elysia;
@@ -96,7 +97,7 @@ export async function mountPlatformRoutes({
 
   if (config.logging && config.auth !== false) {
     const { createLoggingRouter } = await import('../../logging/logging-router');
-    app.use(await createServerExtensionApp({ name: 'zero.logging', extensions: [createLoggingRouter()], runtime }) as any);
+    app.use(await createServerExtensionApp({ name: 'zero.logging', extensions: [createLoggingRouter({ pageRecovery: loggingPageRecovery(runtime, config.app.publicUrl) })], runtime }) as any);
   }
   if (config.email && config.email.inbox) {
     const issues = emailInboxConfigIssues(config); if (issues.length) throw new Error(`[email.inbox] ${issues.join(' ')}`);
@@ -227,6 +228,8 @@ export async function mountPlatformRoutes({
       presence: config.auth !== false && config.auth.presence?.enabled === true,
       vectorVisualization: config.vectorVisualization !== false,
       logging: config.logging !== false,
+      loggingRequired: config.logging !== false && config.logging.policy.complianceRequested,
+      loggingPolicyVersion: config.logging !== false ? config.logging.policyVersion : undefined,
       tableSyncModes: config.resolvedSyncModes,
       tableSyncPlanes: resolveBrowserSyncTablePlanes(
         Object.keys(config.tables),

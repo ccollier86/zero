@@ -3,18 +3,18 @@ id: zero.guides.practiceiq-upgrade.logging
 type: how-to
 audience: [developer, agent, operator]
 owner: zero-documentation
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: practiceiq-logging-rollout
 maturity: preview
-applies_to: ["PracticeIQ upgraded to pinned Zero 2.6.0 logging preview"]
+applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
 modes: [single-tenant, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "202b9f7f35c761192ce9089e7ea84c4fbe9c58c3"
-  snapshot: clean
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
 ---
@@ -25,9 +25,11 @@ reviewed_against:
 
 Enable logging only after the isolated data conversion and ordinary app
 authorization pass. Logging is core but optional; updating Zero alone creates
-no new log files, workers or browser collection. Do not label this rollout a
-complete compliance implementation: `preset: 'compliance'` is still gated by
-`LOGGING_NOT_READY`.
+no new log files, workers or browser collection. PracticeIQ requires the actual
+`preset: 'compliance'`, not a `detailed` substitution or disabled audit.
+This completion branch implements it with strict source/admission/custody/export
+checks. Select the final qualified archive before application acceptance;
+the feature branch is not yet the normal updater selection.
 
 ## Configure Separate Storage
 
@@ -38,15 +40,17 @@ full config or a command to execute against current data:
 import type { AppConfig } from '@zero/framework/server';
 
 export const upgradedPlanes = {
-  systemDb: { mode: 'file', path: './data/zero.system.db' },
+  db: { mode: 'file', path: './data/application.db', synchronous: 'FULL' },
+  systemDb: { mode: 'file', path: './data/zero.system.db', synchronous: 'FULL' },
   databaseTopology: { mode: 'single' },
   logging: {
     rootDirectory: './data/zero.logs',
-    preset: 'detailed',
+    preset: 'compliance',
     minimumLevel: 'info',
     metadataKeys: ['operation', 'documentKind', 'rowCount'],
+    retention: { auditDays: null, operationalDays: null },
   },
-} satisfies Pick<AppConfig, 'systemDb' | 'databaseTopology' | 'logging'>;
+} satisfies Pick<AppConfig, 'db' | 'systemDb' | 'databaseTopology' | 'logging'>;
 ```
 
 Merge reviewed slices into the actual typed app config, retaining its app DB,
@@ -55,8 +59,15 @@ KV, AI and PDF settings. Keep Guardian single-tenant. Resolve paths under the
 actual immutable project root and verify none overlap app/system/snapshot,
 Storage, build output or other Fabric ownership.
 
-Logging owns **separate audit and operational Fabric database files** under
-its private root, with FULL sink durability. Do not point either at the clinical
+Preserve PracticeIQ's actual application/system file paths; the example names
+are not permission to create an empty replacement or switch a live hot image
+without its approved migration boundary. Both sources must explicitly use
+`FULL`/`EXTRA`; the ordinary `NORMAL` default is not strict-qualified.
+Guardian remains single-tenant.
+
+Logging owns **separate audit and operational Fabric database files**, plus
+a third private signed-checkpoint file for built-in local custody, under
+its private root with FULL sink durability. Do not point any at the clinical
 database or `systemDb`, create a `logs` table in the patient DB, or invent an
 organization/tenant to hold logs. Original-source queues are small private
 same-transaction evidence queues; they are not the final log store.
@@ -68,14 +79,27 @@ capture and authorized query coordination. Disk/CPU are shared deployment
 resources; independent processes do not promise zero performance cost.
 Budget storage, memory, process supervision and read concurrency accordingly.
 
-Source apps normally use the default actor. Compiled/shared-entry deployments
-must wire `runLoggingActorIfRequested()` before app startup as described in the
-[configuration reference](../../backend/logging/configuration.md). Do not launch
-the main app in a logging child or inherit all production secrets into workers.
+PracticeIQ's bundled `dist/server.js` with retained source/dependencies uses an
+explicit source entry and empty environment:
 
-Start with a low-risk synthetic `basic` smoke test; then use the chosen activity
-families and `detailed` where view/copy/print observations are desired. Restart
-after configuration changes. Retention/holds/export access need an explicit
+```ts
+// server/logging/actor-entry.ts
+import { runLoggingActorIfRequested } from '@zero/framework/server';
+
+if (!await runLoggingActorIfRequested()) process.exit(64);
+```
+
+Set `logging.actors.launch` to `{ kind: 'source', entrypoint: actorEntry }`
+using the resolved retained entry, and `logging.actors.env` to `{}`.
+Build with the official Zero command so canonical logging migration identities
+match between bundle and actors. The linux/amd64 fixture qualifies that shape;
+the app agent must repeat it in PracticeIQ's actual image. Other shared-entry
+forms follow the [configuration reference](../../backend/logging/configuration.md).
+Never import the main server in a logging child or inherit provider/dotenv secrets.
+
+Use compliance in its isolated acceptance environment. A synthetic lower-preset
+smoke test can help diagnosis but is not PracticeIQ's release configuration.
+Restart after configuration changes. Retention/holds/export access need an explicit
 operator policy; do not substitute a guessed legal retention duration. Defaults
 retain data indefinitely, so capacity monitoring and a deliberate policy matter.
 
@@ -127,8 +151,11 @@ Clinical roles do not receive access merely because they can read patients.
 The workspace uses server cursor pages and authorized SSE projections. New
 arrivals do not blank/reload existing rows or fabricate an exact total; the user
 can request a new baseline. Browser observations upload through batched
-same-origin HTTPS POST, not SSE. Blocking/offline failures are reported, not
-hidden or misclassified as compliance enforcement.
+same-origin HTTPS POST, not SSE. Blocking/offline failures are reported.
+Under compliance, expired or interrupted delivery masks protected UI and blocks
+protected HTTP/Sync until a fresh durable acknowledgment; sign-in, health,
+handshake and same-origin empty recovery remain reachable. This neither
+identifies a particular extension nor proves the browser reported every action.
 
 ## Logging Acceptance Gate
 
@@ -150,9 +177,17 @@ In synthetic managed-app tests, prove all of the following:
    login/refresh and private Storage work on representative data/host settings.
    Record app latency and audit lag; do not mask contention with weakened auth
    or unbounded retries/queues. Source backpressure must not silently lose audit.
-7. Restart after stop and verify persistence, health and source backlog. Confirm
-   failed optional browser upload does not lock staff out under the ordinary
-   detailed profile. Strict enforcement is still a separate unshipped gate.
+7. Restart after stop and verify persistence, health, source backlog and signed
+   checkpoints. Test an unavailable source, disk-full rollback and loss of the
+   delivery worker: no old strict grant may silently become valid after recovery.
+8. Block observations, expire admission, reconnect, switch/revoke scope and hard
+   refresh. Verify fail-closed protected UI/SSR/HTTP/Sync with reachable recovery
+   and no session-restoration deadlock. Test nonadministrator logging denial too.
+9. Request a private export, restart during its lifecycle, then reauthorize its
+   download. Verify exact retained bytes/hash, expiration and cleanup retry.
+   A lost acknowledgment retains the same job/event identity, not a duplicate send.
+10. Review the dashboard with the user separately. Richer Filters and evidence
+    management UI are not implied by backend readiness.
 
 ## Related Guides and Next Steps
 
@@ -161,5 +196,5 @@ In synthetic managed-app tests, prove all of the following:
   [capture coverage](../../backend/logging/events-and-coverage.md) own exact contracts.
 - [Browser activity](../../backend/logging/browser.md) explains observation limits.
 - [Logging workspace](../../frontend/components/logging.md) describes the shared UI.
-- [Remaining logging gates](../../backend/logging/roadmap.md) must stay visible
-  in the app's acceptance record rather than being renamed complete compliance.
+- [Remaining work](../../backend/logging/roadmap.md) distinguishes UI/deferred
+  features from the app's mandatory acceptance and qualified archive boundary.

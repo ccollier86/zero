@@ -548,6 +548,10 @@ export interface SyncAuthConfig {
   invalidationPollIntervalMs?: number;
   /** Temporary migration escape hatch. Query-string bearer tokens are rejected by default. */
   allowLegacyQueryToken?: boolean;
+  /** Managed strict logging may durably admit non-browser work before access resolution. Never grants auth. */
+  admitDataAccess?: (context: SyncAuthContext | null, owner: object) => Promise<void>;
+  /** Synchronous final delivery/commit fence, independent of the auth authority proof. */
+  assertDataAdmission?: (context: SyncAuthContext | null, owner: object) => void;
 }
 
 /**

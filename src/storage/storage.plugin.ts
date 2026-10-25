@@ -155,7 +155,9 @@ export function createStoragePlugin(config: StoragePluginConfig) {
   let studioService: StorageStudioService | null = null;
   let studioIngressPolicy: StorageStudioIngressPolicy | null = null;
   let registration: ReturnType<typeof storageProviders.register> | null = null;
-  config.runtime?.addCleanup(() => registration?.unregister());
+  let disposed = false;
+  let stopTask: Promise<void> | null = null;
+  config.runtime?.addCleanup(() => stopService());
   const getAuthorizationKernel = config.authorization?.getAuthorizationKernel
     ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
   const getAuditService = config.getAuditService
@@ -273,109 +275,103 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     studioIngressPolicy?.assertObjectAccessAllowed(driveId);
   };
 
-  return new Elysia({ name: 'storage', prefix: '/storage' })
-
-    .use(createAuthMiddleware(getStorageTokenService, authorization))
-    .onRequest(createProtectedMultipartRequestGuard(getStorageTokenService, {
-      method: 'POST',
-      path: '/storage/drives/:driveId/upload',
-    }, authorization))
-
-    // ─── Lifecycle ─────────────────────────────────────
-    .onStart(() => {
-      let created: StorageService | null = null;
-      let createdStudio: StorageStudioService | null = null;
+  const initializeStorage = (): void => {
+    if (disposed) throw new StorageDomainError('STORAGE_INTERNAL', 'Storage is stopping.');
+    if (service) return;
+    let created: StorageService | null = null;
+    let createdStudio: StorageStudioService | null = null;
+    try {
       try {
-        try {
-          assertStorageAdapterSafety(adapter);
-          assertStorageAdapterIsolation(adapter, studioConfig);
-        } catch (error) {
-          const normalized = isStorageDomainError(error)
-            ? error
-            : new StorageDomainError('STORAGE_INTERNAL', 'Storage adapter admission failed.');
-          emitPlatformCode(OBS_CODES.STORAGE_ADAPTER_REJECTED, {
-            error: normalized,
-            metadata: {
-              code: normalized.code,
-              requestedIsolation: studioConfig.isolation,
-            },
-          });
-          throw normalized;
-        }
-        defineStorageTables(config.db);
-        if (studioConfig.enabled) defineStorageStudioTables(config.db);
-        const ingressPolicy = studioConfig.enabled
-          ? new StorageStudioIngressPolicy(config.db, studioConfig)
-          : null;
-        const quotaPolicy = studioConfig.enabled
-          ? new StorageStudioQuotaPolicy(config.db, studioConfig)
-          : undefined;
-        signingSecret = resolveStorageCapabilitySigningSecret(
-          config.db,
-          config.signingSecret,
-        );
-        created = new StorageService(config.db, adapter, {
-          uploadGrantSecret: signingSecret,
-          defaultPresignedTTL: defaultTTL,
-          isPolicyTrustedProperty,
-          tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
-          prepareCapability: ingressPolicy
-            ? (driveId, expiresIn) => ingressPolicy.capabilityForIssue(driveId, expiresIn)
-            : undefined,
-          uploadAdmission: quotaPolicy,
-          managedObjectPolicy: ingressPolicy ?? undefined,
-          aclAudit: getAuditService(),
-        });
-        createdStudio = studioConfig.enabled
-          ? new StorageStudioService({
-              db: config.db,
-              storage: created,
-              config: studioConfig,
-              tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
-              audit: getAuditService(),
-              lifecycleProvider: config.studioLifecycleProvider,
-              lifecycleProviderTimeoutMs: config.studioLifecycleProviderTimeoutMs,
-            })
-          : null;
-        if (createdStudio) created.attachStudioService(createdStudio);
-        service = created;
-        studioService = createdStudio;
-        studioIngressPolicy = ingressPolicy;
-        registration = storageProviders.register(owner, () => service);
-        config.runtime?.set(ZERO_STORAGE_SERVICE, created);
-        if (createdStudio) config.runtime?.set(ZERO_STORAGE_STUDIO_SERVICE, createdStudio);
-        config.onServiceCreated?.(created);
-        emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
-          metadata: { tablesDefined: true },
-        });
-        createdStudio?.startMaintenance();
+        assertStorageAdapterSafety(adapter);
+        assertStorageAdapterIsolation(adapter, studioConfig);
       } catch (error) {
-        void createdStudio?.stopMaintenance().catch(() => undefined);
-        if (created && createdStudio) created.detachStudioService(createdStudio);
-        config.runtime?.clear(ZERO_STORAGE_SERVICE, created ?? undefined);
-        config.runtime?.clear(ZERO_STORAGE_STUDIO_SERVICE, createdStudio ?? undefined);
-        registration?.unregister();
-        registration = null;
-        service = null;
-        studioService = null;
-        studioIngressPolicy = null;
-        signingSecret = null;
-        if (created) created.rollbackFailedStart();
-        else {
-          try {
-            const stopped = adapter.stop?.();
-            if (stopped && typeof stopped.then === 'function') {
-              void stopped.catch(() => undefined);
-            }
-          } catch {
-            // Preserve the original startup failure.
-          }
-        }
-        throw error;
+        const normalized = isStorageDomainError(error)
+          ? error
+          : new StorageDomainError('STORAGE_INTERNAL', 'Storage adapter admission failed.');
+        emitPlatformCode(OBS_CODES.STORAGE_ADAPTER_REJECTED, {
+          error: normalized,
+          metadata: {
+            code: normalized.code,
+            requestedIsolation: studioConfig.isolation,
+          },
+        });
+        throw normalized;
       }
-    })
-
-    .onStop(async () => {
+      defineStorageTables(config.db);
+      if (studioConfig.enabled) defineStorageStudioTables(config.db);
+      const ingressPolicy = studioConfig.enabled
+        ? new StorageStudioIngressPolicy(config.db, studioConfig)
+        : null;
+      const quotaPolicy = studioConfig.enabled
+        ? new StorageStudioQuotaPolicy(config.db, studioConfig)
+        : undefined;
+      signingSecret = resolveStorageCapabilitySigningSecret(
+        config.db,
+        config.signingSecret,
+      );
+      created = new StorageService(config.db, adapter, {
+        uploadGrantSecret: signingSecret,
+        defaultPresignedTTL: defaultTTL,
+        isPolicyTrustedProperty,
+        tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
+        prepareCapability: ingressPolicy
+          ? (driveId, expiresIn) => ingressPolicy.capabilityForIssue(driveId, expiresIn)
+          : undefined,
+        uploadAdmission: quotaPolicy,
+        managedObjectPolicy: ingressPolicy ?? undefined,
+        aclAudit: getAuditService(),
+      });
+      createdStudio = studioConfig.enabled
+        ? new StorageStudioService({
+            db: config.db,
+            storage: created,
+            config: studioConfig,
+            tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
+            audit: getAuditService(),
+            lifecycleProvider: config.studioLifecycleProvider,
+            lifecycleProviderTimeoutMs: config.studioLifecycleProviderTimeoutMs,
+          })
+        : null;
+      if (createdStudio) created.attachStudioService(createdStudio);
+      service = created;
+      studioService = createdStudio;
+      studioIngressPolicy = ingressPolicy;
+      registration = storageProviders.register(owner, () => service);
+      config.runtime?.set(ZERO_STORAGE_SERVICE, created);
+      if (createdStudio) config.runtime?.set(ZERO_STORAGE_STUDIO_SERVICE, createdStudio);
+      config.onServiceCreated?.(created);
+      emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
+        metadata: { tablesDefined: true },
+      });
+      createdStudio?.startMaintenance();
+    } catch (error) {
+      void createdStudio?.stopMaintenance().catch(() => undefined);
+      if (created && createdStudio) created.detachStudioService(createdStudio);
+      config.runtime?.clear(ZERO_STORAGE_SERVICE, created ?? undefined);
+      config.runtime?.clear(ZERO_STORAGE_STUDIO_SERVICE, createdStudio ?? undefined);
+      registration?.unregister();
+      registration = null;
+      service = null;
+      studioService = null;
+      studioIngressPolicy = null;
+      signingSecret = null;
+      if (created) created.rollbackFailedStart();
+      else {
+        try {
+          const stopped = adapter.stop?.();
+          if (stopped && typeof stopped.then === 'function') {
+            void stopped.catch(() => undefined);
+          }
+        } catch {
+          // Preserve the original startup failure.
+        }
+      }
+      throw error;
+    }
+  };
+  const stopService = (): Promise<void> => {
+    disposed = true;
+    stopTask ??= (async () => {
       const stoppingService = service;
       const stoppingStudio = studioService;
       const failures: unknown[] = [];
@@ -405,7 +401,23 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         emitPlatformCode(OBS_CODES.STORAGE_STOPPED);
       }
       if (failures.length > 0) throw failures[0];
-    })
+    })();
+    return stopTask;
+  };
+  config.onInitializerCreated?.(initializeStorage);
+
+  return new Elysia({ name: 'storage', prefix: '/storage' })
+
+    .use(createAuthMiddleware(getStorageTokenService, authorization))
+    .onRequest(createProtectedMultipartRequestGuard(getStorageTokenService, {
+      method: 'POST',
+      path: '/storage/drives/:driveId/upload',
+    }, authorization))
+
+    // ─── Lifecycle ─────────────────────────────────────
+    .onStart(initializeStorage)
+
+    .onStop(stopService)
 
     .derive({ as: 'global' }, () => ({
       storageService: service,

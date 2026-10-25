@@ -27,6 +27,8 @@ import type {
   StorageBlobWriteResult,
 } from './types';
 import { assertStorageAdapterSafety } from './storage-adapter-isolation';
+import { StoragePrivateObjects } from './storage-private-objects';
+import { STORAGE_PRIVATE_OBJECTS_DDL } from './storage-private-object-schema';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { ScopedStorageStudioApi } from './storage-studio-scoped-api';
@@ -266,6 +268,7 @@ export interface StorageServiceOptions {
  * Called once during plugin onStart — idempotent.
  */
 export function defineStorageTables(db: ReactiveDB): void {
+  db.exec(STORAGE_PRIVATE_OBJECTS_DDL);
   ensureNullableTenantColumn(db, 'storage_drives');
   ensureNullableTenantColumn(db, 'storage_objects');
   ensureNullableTenantColumn(db, '_storage_permissions');
@@ -366,6 +369,8 @@ export function defineStorageTables(db: ReactiveDB): void {
  * not depend on Elysia route context or transport details.
  */
 export class StorageService {
+  /** Privileged system artifacts, deliberately absent from request/workflow Storage projections. */
+  readonly privateObjects: StoragePrivateObjects;
   /** Narrow domain identity for consumers that atomically compose private metadata with Storage. */
   getTransactionDomain(): ReturnType<ReactiveDB['getTransactionDomain']> { return this.db.getTransactionDomain(); }
   private stmts!: ReturnType<typeof this.prepareStatements>;
@@ -478,6 +483,7 @@ export class StorageService {
     assertStorageAdapterSafety(adapter);
     this.stmts = this.prepareStatements();
     this.blobLifecycle = new StorageBlobLifecycle(db, adapter);
+    this.privateObjects = new StoragePrivateObjects(db, adapter, this.blobLifecycle, this.uploadOperations, value => this.settleBlobPublication(value));
     this.objectMutations = new StorageObjectMutationStore(
       db,
       this.blobLifecycle,

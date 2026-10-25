@@ -24,6 +24,7 @@ import { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   ZERO_EMAIL_RUNTIME,
   ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_LOGGING_RUNTIME,
 } from '../../runtime/service-keys';
 import {
   assertCanonicalSeparateDatabaseConfigs,
@@ -41,6 +42,8 @@ import { installManagedAppLogging } from './app-logging';
 import { assertManagedAppLoggingIsolation } from './app-logging-isolation';
 import { composeAppResources } from './app-resource-composition';
 import { mountAppSyncEngine } from './app-sync-mount';
+import { installManagedLoggingAdmission } from './app-logging-admission';
+import { createManagedEmailSendAudit } from '../../logging/logging-email-audit';
 import {
   installAppDatabaseAutomationDispatcher,
 } from './app-database-automation-dispatcher';
@@ -125,7 +128,7 @@ export async function createApp(userConfig: AppConfig) {
       system: controlSqlite,
     } = databaseBootstrap.openSQLiteServices();
     assertApplicationDatabaseHasNoLegacySystemLayout(sqlite);
-    const emailRuntime = createEmailRuntime(config.email, config.app, emitCode);
+    const emailRuntime = createEmailRuntime(config.email, config.app, emitCode, { audit: createManagedEmailSendAudit(() => runtime.get(ZERO_LOGGING_RUNTIME)) });
     runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
     runtime.addCleanup(() => emailRuntime.close?.());
     const emailRuntimeRegistration = registerEmailRuntime(runtime, emailRuntime);
@@ -181,6 +184,7 @@ export async function createApp(userConfig: AppConfig) {
 
     // ─── Assemble Elysia app ────────────────────────────────
     const app = new Elysia({ name: 'platform' });
+    installManagedLoggingAdmission(app, runtime);
 
     app.onStart(() => {
       openedDatabaseManager.start();
@@ -224,6 +228,7 @@ export async function createApp(userConfig: AppConfig) {
       serverExtensions,
       frontend,
     });
+    runtime.get(ZERO_LOGGING_RUNTIME)?.assertManagedReady();
     installAppDatabaseAutomationDispatcher({
       app: mounted.app,
       runtime,

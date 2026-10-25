@@ -36,3 +36,21 @@ test('offline collection remains bounded and reports loss instead of claiming du
   await collector.flush(); expect(collector.diagnostics().queued).toBe(128); expect(collector.diagnostics().dropped).toBeGreaterThan(0); expect(collector.diagnostics().failed).toBe(1);
   await collector.stop(); expect(collector.diagnostics().queued).toBe(0); expect(collector.diagnostics().stopped).toBe(true);
 });
+
+test('strict delivery heartbeats work with all optional browser capture disabled and report outages honestly', async () => {
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
+  const win = Object.assign(new EventTarget(), { location: { href: 'https://synthetic.invalid/private' } });
+  const received: unknown[] = [], acknowledged: unknown[] = []; let fail = false, errors = 0;
+  const policy: LoggingCollectionPolicy = { enabled: true, capture: Object.fromEntries(LOGGING_FAMILIES.map(f => [f, false])) as LoggingCollectionPolicy['capture'],
+    heartbeatMs: 30000, idleMs: 60000, delivery: { required: true, policyVersion: 'strict-policy', ttlMs: 60000 } };
+  const collector = createLoggingCollector({ bindObservations: () => ({ async observe(rows, options) {
+    received.push({ rows, options }); if (fail) throw new Error('Offline');
+    return { accepted: 0, admission: { policyVersion: 'strict-policy', expiresAt: Date.now() + 60000 } };
+  } }) }, policy, { document: doc as unknown as Document, window: win as unknown as Window,
+    onAcknowledgment: receipt => { acknowledged.push(receipt); }, onError: () => { errors++; } });
+  try {
+    await collector.flush(); expect(received).toEqual([{ rows: [], options: { policyVersion: 'strict-policy' } }]); expect(acknowledged).toHaveLength(1);
+    fail = true; await collector.flush(); expect(errors).toBe(1); expect(acknowledged).toHaveLength(1);
+    expect(collector.diagnostics()).toMatchObject({ queued: 0, failed: 1 });
+  } finally { await collector.stop(); }
+});

@@ -77,11 +77,14 @@ import { executeAIGenerateImage } from './ai-image-operations';
 import { executeAISpeech, executeAITranscription } from './ai-audio-operations';
 import { executeAIGenerateText, executeAIStreamText } from './ai-text-operations';
 import { createAIDecisionService, type AIDecisionService } from './ai-decision-service';
+import type { AIExecutionAudit } from './ai-execution-audit';
 
 /** Optional process-local dependencies for a standalone or managed AI service. */
 export interface AIServiceOptions {
   /** Managed apps bind this to their own observability runtime. */
   readonly emitCode?: AIEmitCode;
+  /** Managed provider-stage evidence; no prompts, responses or credentials enter this port. */
+  readonly audit?: AIExecutionAudit;
 }
 
 /** Internal AI runtime service created by the AI plugin or directly in tests. */
@@ -98,7 +101,7 @@ export class AIService {
   /** Create an AI service from fully resolved AI config. */
   constructor(private readonly config: ResolvedAIConfig, options: AIServiceOptions = {}) {
     this.emitCode = options.emitCode;
-    this.registry = createAIRegistry(config, options.emitCode);
+    this.registry = createAIRegistry(config, options.emitCode, options.audit);
     this.decisions = createAIDecisionService(this.registry, config.aliases);
     this.files = createAIHostedFilesService({
       registry: this.registry,

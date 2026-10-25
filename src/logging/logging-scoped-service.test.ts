@@ -6,6 +6,7 @@ import { createScopedLoggingService } from './logging-scoped-service';
 import type { LoggingRuntime } from './logging-runtime';
 import { resolveManagedLoggingConfig } from './logging-managed-config';
 import type { LoggingEvent } from './logging-contracts';
+import { AuthError } from '../auth/types';
 
 function fixture() {
   let valid = true, admin = true, gate: Promise<void> | undefined;
@@ -59,4 +60,27 @@ test('tenant-granted read/manage permissions cannot expose global backlog or int
   await expect(service.health()).rejects.toThrow('Platform authority required');
   await expect(service.verify('audit')).rejects.toThrow('Platform authority required');
   expect(inspected).toBe(false);
+});
+
+test('semantic read evidence distinguishes failed, denied and unknown operations without retaining exception content', async () => {
+  for (const [error, outcome] of [
+    [new Error('SYNTHETIC_PRIVATE_CONTENT'), 'failed'],
+    [new AuthError('SYNTHETIC_PRIVATE_CONTENT', 'FORBIDDEN', 403), 'denied'],
+    [Object.assign(new Error('SYNTHETIC_PRIVATE_CONTENT'), { outcome: 'unknown' }), 'unknown'],
+  ] as const) {
+    const f = fixture();
+    await expect(f.service.read({ type: 'record', id: 'opaque' }, () => { throw error; })).rejects.toBe(error);
+    expect(f.events.map(e => [e.action, e.outcome])).toEqual([['record.read.admitted', 'attempted'], ['record.read.' + outcome, outcome]]);
+    expect(JSON.stringify(f.events)).not.toContain('SYNTHETIC_PRIVATE_CONTENT');
+  }
+});
+
+test('semantic reads retain the admitted target and never release a result after authority changed', async () => {
+  const f = fixture(), target = { type: 'record', id: 'original' };
+  const result = await f.service.read(target, () => { target.id = 'changed'; return 42; });
+  expect(result).toBe(42); expect(f.events.map(e => e.target?.id)).toEqual(['original', 'original']);
+  expect(f.events.map(e => e.action)).toEqual(['record.read.admitted', 'record.read.prepared']);
+  const g = fixture();
+  await expect(g.service.read(target, () => { g.revoke(); return 'must-not-release'; })).rejects.toThrow('Authority changed');
+  expect(g.events.some(e => e.action === 'record.read.prepared')).toBe(false);
 });

@@ -20,6 +20,8 @@ test('classifies provider failures with stable retry policy codes', () => {
 
   expect(classifyAuthEmailFailure(new Error('network secret')))
     .toEqual({ code: 'EMAIL_SEND_FAILED', retryable: true });
+  expect(classifyAuthEmailFailure(new EmailError('Accepted but audit unresolved', 'EMAIL_SEND_OUTCOME_UNKNOWN', 409)))
+    .toEqual({ code: 'EMAIL_SEND_OUTCOME_UNKNOWN', retryable: false });
   expect(classifyAuthEmailFailure(
     new EmailError('stopping', 'EMAIL_DELIVERY_ABORTED', 503)
   )).toEqual({ code: 'EMAIL_DELIVERY_ABORTED', retryable: true });

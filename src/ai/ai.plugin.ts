@@ -18,8 +18,9 @@ import {
   type AIEmitCode,
 } from './ai-observability';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
-import { ZERO_AI_SERVICE, ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
+import { ZERO_AI_SERVICE, ZERO_OBSERVABILITY_RUNTIME, ZERO_LOGGING_RUNTIME } from '../runtime/service-keys';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import { createManagedAIExecutionAudit } from '../logging/logging-ai-audit';
 
 const aiProviders = new CompatibilityProviderRegistry<AIService>('AI service');
 
@@ -48,7 +49,9 @@ export function createAIPlugin(options: AIPluginConfig) {
         emitOptions,
       );
   const emitCode = boundEmitCode ?? emitPlatformCode;
-  const service = options.service ?? new AIService(options.config, { emitCode });
+  const service = options.service ?? new AIService(options.config, { emitCode,
+    ...(options.runtime ? { audit: createManagedAIExecutionAudit(() => options.runtime!.get(ZERO_LOGGING_RUNTIME)) } : {}),
+  });
   const owner = {};
   let started = false;
   const registration = aiProviders.register(owner, () => started ? service : null);

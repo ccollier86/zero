@@ -3,20 +3,20 @@ id: zero.frontend.components.logging
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: logging-workspace
 maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
-  snapshot: clean
-  date: "2026-10-24"
-  evidence_level: implementation-verified
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
+  date: "2026-10-25"
+  evidence_level: source-observed
 ---
 
 # Logging Workspace and Activity Hooks
@@ -102,7 +102,11 @@ there is no HTML execution or raw provider payload dump.
 The workspace is an investigation interface, not a green compliance badge.
 Browser copy/print/view signals remain observations. Review/hold/integrity
 services have typed APIs but do not yet have a full management organism.
-Strict required-browser-delivery gating remains a separate release gate.
+The completion branch adds strict required-browser-delivery gating through
+AppProvider and the managed server; ordinary lower presets stay optional.
+Durable exports retain their request ID across pending/uncertain states so
+checking a job does not create a second export. A fuller dashboard review and
+evidence-management UI will be planned with the user before application handoff.
 
 ## Related Guides and Next Steps
 

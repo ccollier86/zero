@@ -76,7 +76,7 @@ test('curated facades preserve every original ordered named/type/star source con
     && record.clause.every(item => item.name.startsWith('JsonDocument') || ['parseJsonDocument', 'diffJsonDocument', 'DocumentEditor', 'parseDocumentSource',
       'DocumentEditorProps', 'DocumentEditorHandle', 'DocumentFormat', 'DocumentSourceChange', 'DocumentParseResult'].includes(item.name));
   const documentAdditive = result.records.filter(documentPart);
-  const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts',
+  const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts', 'src/logging/logging-export-contracts', 'src/logging/logging-admission-contracts',
     'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
   const loggingAdditive = result.records.filter(record => loggingTargets.has(record.target));
   const domainPart = (record: ExportRecord) => !record.type && record.clause === null && ['src/components/email-inbox', 'src/components/messaging'].includes(record.target);
@@ -87,9 +87,9 @@ test('curated facades preserve every original ordered named/type/star source con
     'ControlledDrawer', 'ControlledDrawerProps', 'DrawerDescriptor', 'DrawerHandle', 'DrawerManager', 'DrawerOptions', 'DrawerResult', 'DrawerSide', 'DrawerWorkspace', 'drawers', 'useDrawers',
   ].sort());
   const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record) && !loggingTargets.has(record.target) && !domainPart(record) && !drawerPart(record));
-  expect(loggingAdditive).toHaveLength(7);
+  expect(loggingAdditive).toHaveLength(9);
   expect(loggingAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
-    'LoggingActivityProvider', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingExport', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
+    'LoggingActivityProvider', 'LoggingAdmissionReceipt', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingEvidenceCursor', 'LoggingEvidencePage', 'LoggingExport', 'LoggingExportJob', 'LoggingExportRequest', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
   ].sort());
   expect(additive).toHaveLength(2);
   expect(additive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([

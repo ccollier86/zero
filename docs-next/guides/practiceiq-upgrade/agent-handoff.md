@@ -3,17 +3,17 @@ id: zero.guides.practiceiq-upgrade.agent-handoff
 type: operations
 audience: [agent, developer, operator]
 owner: zero-documentation
-status: in-review
+status: draft
 visibility: internal
 system: cross-system
 feature: practiceiq-agent-upgrade-handoff
 maturity: planned
-applies_to: ["PracticeIQ 1.3.0-piq.1 to pinned Zero 2.6.0 main"]
+applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
 modes: [single-tenant, feature-branch, isolated-rehearsal]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
   snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
@@ -109,9 +109,15 @@ convert live patient data or deploy.
 > After isolated conversion and ordinary authorization pass, integrate logging
 > through the facade, existing AppProvider and LoggingWorkspace. Inventory raw
 > SQL, clinical reads, Storage/PDF/email/AI stages and background attribution.
-> Never log clinical content or raw tokens. detailed is available, but strict
-> compliance is still blocked by LOGGING_NOT_READY; do not bypass it or claim
-> certification. Session replay is not part of this task.
+> Never log clinical content or raw tokens. PracticeIQ requires the actual
+> compliance preset, not detailed or disabled logging. Use the completed
+> logging guide and exact qualified release: file-backed app/system FULL/EXTRA,
+> private logging/checkpoint files, private Storage exports, source actors with
+> env {}, and protected UI/HTTP/Sync admission with reachable recovery.
+> Package-only installation does not activate it. Rehearse the official bundled
+> linux/amd64 image and domain instrumentation separately; no certification
+> claim or session replay is part of this task. Review-dashboard polish will be
+> planned with the user before application handoff.
 >
 > Complete the acceptance matrix below with synthetic/local providers and
 > authorized isolated copies. Preserve identities, history, uncertain sends and
@@ -130,7 +136,7 @@ that its clinical data, access policy or recovery path survived.
 | Recoverability | Complete old private recovery bundle restored and exercised with the old pin in isolation; credentials/keys remain outside Git and reports. |
 | Conversion | Every legacy table classified, complete clinical IDs/values/history preserved, correct system authority/anchors/ledgers and interrupted-generation rejection. |
 | Ordinary app | Functional/security/realtime/workflow/Storage/public-site checks below pass before enabling logging. |
-| Logging | Independent Fabric files/worker, declared semantic coverage, honest evidence, denial/revocation, restart/backpressure and representative concurrent load. Strict gaps remain visible. |
+| Logging | Actual compliance policy, FULL/EXTRA source commits, independent Fabric files/workers/checkpoints, private exports, declared clinical coverage, strict admission/recovery, denial/revocation, restart/backpressure and representative load. |
 | Cutover | Operator approves exact target paths/artifacts, backup proof, downtime/write freeze, pending effects, go/no-go and restoration procedure. |
 
 ### Ordinary Application Checks

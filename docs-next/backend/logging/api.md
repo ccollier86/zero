@@ -3,20 +3,20 @@ id: zero.logging.api
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: scoped-api
 maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+applies_to: ["Unreleased logging completion branch based on 2.6.0"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
-  snapshot: clean
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: implementation-verified
+  evidence_level: source-observed
 ---
 
 # Logging Server and Client APIs
@@ -35,7 +35,10 @@ realm, writer or source-outbox classes into application routes.
 
 ## Declared Server Actions
 
-These are route-handler fragments after ordinary domain authorization:
+Use the request's `zero.logging` facade after ordinary domain authorization.
+It derives the actor, current application/tenant scope and policy on the server;
+an application event cannot supply a different user, tenant or database path.
+These are route-handler fragments, not a second logging service:
 
 ```ts
 const logging = zero.logging;
@@ -75,6 +78,49 @@ tasks cannot reuse the ended attribution lifetime.
 returns a commit receipt or null when capture policy filters it. On an unknown
 outcome, retain the original identity, time and context for reconciliation;
 do not generate a new event identity just because the acknowledgment was lost.
+
+### Choosing a custom logging operation
+
+| Operation | Use it for | What it does not establish |
+| --- | --- | --- |
+| `record(event)` | An app-defined semantic stage such as an approved export, clinical operation, or completed task | That a later external effect succeeded, or that a person read a response |
+| `read(target, callback)` | Preparing an explicitly authorized record for release | The user's permission to access it, transport delivery, or human attention |
+| `run(callback)` | Carrying trusted actor/scope attribution into ReactiveDB commits and managed service calls | A distributed transaction or automatic semantic success for the callback |
+
+Use `LoggingEventInput` from `@zero/framework/logging` to type custom events.
+Choose the matching existing family (`records`, `workflow`, `communications`,
+`ai`, `transfers`, and so on) and a stable namespaced action such as
+`clinical.plan.updated`. Custom action names do not require a new worker,
+database, plugin or schema migration. The configured family must be enabled;
+a null receipt means filtered, not retained.
+
+Event IDs and `occurredAt` belong to the logical stage. If a retry is needed,
+reuse the complete original event, not just its ID with a new timestamp.
+The trusted actor/session/scope context is part of those facts too: recording
+the same event after a new login is not an exact same-context replay.
+Reusing an identity with different facts is a conflict, not an update. A later
+confirmation is a new stage with its own ID. Do not catch required audit failures
+and then tell the caller that an operation was safely audited or safe to repeat.
+
+`read()` durably records `record.read.admitted` before invoking the callback.
+It records `record.read.prepared` before returning a successful result, or a
+`failed`, `denied`, or `unknown` terminal stage when the callback or authority
+fence fails. It retains no exception text. For a stream or an external side
+effect, declare the corresponding delivery/completion stage separately;
+preparing a stream does not prove its consumption.
+
+Application metadata is denied by default. Add only reviewed scalar keys to
+`logging.metadataKeys`; the common sensitive-content names remain prohibited.
+Use opaque target IDs and never clinical notes, patient contact information,
+credentials, tokens, raw URLs, document bodies, prompts or model responses.
+An allowlisted key is not permission to put sensitive content in its value.
+
+Browser code uses `client.logging.observe()` or the built-in collector, not
+`record()`. The server fixes those events to the browser-observed evidence class
+and an authenticated actor/scope. A browser cannot assert provider confirmation.
+Durable background work uses its authority-scoped service facade. Do not retain
+a request facade after its lifetime or import the private `LoggingRuntime` to
+invent a background identity.
 
 ## Queries and Permissions
 
@@ -151,7 +197,8 @@ Same-origin transport does not guarantee passage through an extension or proxy.
 
 The private authenticated prefix is `/api/_zero/logging`. POST operations are
 `/events`, `/platform/events`, `/stream`, `/observations`, `/evidence`,
-`/holds`, `/holds/release`, `/reviews`, `/export` and `/verify`.
+`/holds`, `/holds/release`, `/reviews`, `/export`, `/exports/create`,
+`/exports/status`, `/exports/download` and `/verify`.
 GET `/policy` returns collection settings; GET `/health` returns global readiness
 and counters only under platform-administrator, application-control and configured
 manage authority. Tenant-granted read/manage permissions cannot expose global
@@ -177,6 +224,14 @@ launch/environment settings.
 Domain errors distinguish invalid input, forbidden access, backpressure,
 unavailable capture, definite noncommit and unknown acknowledgment. Show safe
 errors; do not attach event bodies, raw SQL, credentials or private paths.
+
+Native logging routes and custom Zero endpoints return stable safe
+`{ code, outcome, error }` logging failures. Caller event/query validation is
+422, forbidden access 403, required acknowledgment 428, capacity pressure 429,
+and a conflicting event identity 409. Configuration, worker response and
+unresolved service failures are 503, not mislabeled bad input. An `unknown`
+outcome requires reconciliation of the original operation, never a blind repeat
+of a payment, email or other possibly completed external action.
 
 ## Related Guides and Next Steps
 

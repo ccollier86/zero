@@ -8,14 +8,14 @@ visibility: internal
 system: ai
 feature: single-batch-embeddings
 maturity: supported
-applies_to: ["2.1.1 source baseline"]
+applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
 modes: ["managed Bun server", "standalone Bun service", "Torrent-backed durable agent"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -63,7 +63,7 @@ Do not silently combine vectors from different models/dimensions in one index.
 
 Both default to the embedding alias. Common options are model, maxRetries,
 abortSignal, headers, providerOptions, metadata, runtimeContext, telemetry,
-onStart and onEnd. Batch adds maxParallelCalls: default 4, allowed1–32.
+onStart and onEnd. Batch adds maxParallelCalls: default 32, allowed1–32.
 The SDK batches according to the selected model's support; this limit bounds
 concurrent provider calls after batching, not the number of values in a call.
 
@@ -79,7 +79,7 @@ object is accepted by every AI method.
 | One value | String, at most 1 MiB UTF-8. |
 | Aggregate values | At most 16 MiB UTF-8. |
 | maxRetries when supplied | Integer0–10. |
-| maxParallelCalls | Integer1–32, default 4. |
+| maxParallelCalls | Integer1–32, default 32. Lower it for a provider quota or deployment budget. |
 
 Inputs are copied before asynchronous work. Headers/providerOptions use the
 common bounded snapshots in [generation controls](./generation-controls.md#bounded-mutable-inputs).

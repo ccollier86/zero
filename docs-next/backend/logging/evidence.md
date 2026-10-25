@@ -3,20 +3,20 @@ id: zero.logging.evidence
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: evidence-lifecycle
 maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+applies_to: ["Unreleased logging completion branch based on 2.6.0"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
-  snapshot: clean
-  date: "2026-10-24"
-  evidence_level: implementation-verified
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
+  date: "2026-10-25"
+  evidence_level: source-observed
 ---
 
 # Logging Retention Holds Reviews and Export
@@ -26,6 +26,9 @@ reviewed_against:
 Evidence lifecycle operations use the dedicated logging actor, not ad hoc
 deletion in an application database. Authorization is separate from transport:
 read, export, hold, review and management permissions are independently configured.
+Composite history, private export jobs and signed local custody described here
+are additions on the isolated completion branch. They are not yet a released
+strict preset; normal updater selection remains unchanged.
 
 ## Retention and Holds
 
@@ -80,13 +83,13 @@ reference, watermark and result in a separate record, alongside an atomic audit
 event. Original events are not marked up or overwritten. A future follow-up
 does not prove that an earlier investigation was complete.
 
-`client.logging.evidence(before?)` returns scoped hold/review records;
-the optional exclusive timestamp pages older reviews. Each list is bounded to
-100 records. `hasMoreHolds` and `hasMoreReviews` report additional records;
-`nextReviewBefore` supplies the next review timestamp when available. A true
-flag does not mean the response contains the entire catalog. This preview does
-not yet supply robust composite-cursor history pagination for equal timestamps
-or archived hold catalogs.
+`client.logging.evidence(before?)` returns scoped hold/review records, with at
+most 100 records per catalog. Continue using `page.nextCursor`, which keeps
+separate `(timestamp, id)` positions for holds and reviews and retires a finished
+catalog. Equal-time records are not skipped or returned again. `hasMoreHolds`
+and `hasMoreReviews` describe each list; neither flag proves a complete catalog.
+The legacy numeric timestamp argument and `nextReviewBefore` remain available
+for existing callers, but new callers should use the composite cursor.
 
 ## Integrity Verification
 
@@ -101,12 +104,15 @@ and the head/tail relationship. Continue from `throughOrdinal` while
 Compare an independently retained checkpoint to detect a rewritten/truncated
 tail relative to that checkpoint.
 
-A chain stored beside its data checks consistency; it cannot independently
-prove that a privileged operator did not rewrite the whole database. Independent
-custody, checkpoint signing/rotation, backups and restore verification are
-deployment/release prerequisites for stronger claims and are not automatically
-provided by this preview. Returned pages also check envelope/index/digest/proof
-consistency before releasing evidence.
+A chain stored beside its data checks consistency, not independent custody.
+The built-in [local custody owner](./configuration.md#self-contained-signing-and-checkpoints)
+retains signed checkpoints in a separate private Fabric database, rejects
+event/checkpoint edits through ordinary database operations, and verifies the
+history at startup. A database restored below its retained checkpoint is not
+silently accepted. Signing keys remain outside event/checkpoint databases.
+Local custody has a local-server trust boundary; off-host immutable storage is
+optional stronger deployment hardening, not an external-account requirement.
+Returned pages also check envelope/index/digest/proof consistency before release.
 
 ## Bounded Evidence Export
 
@@ -122,21 +128,52 @@ result is a segment, never a claim that every matching event was exported.
 Continue with its original high-water and `nextBeforeOrdinal`, or narrow
 the query. Server generation is logged before content is returned.
 
-For durable artifacts, compose the result with an explicitly authorized private
-Zero Storage drive; never put it in public build output or a public drive.
-Do not infer continuing download permission from the export permission at
-generation time. The preview does not yet own durable export jobs, artifact
-expiry, independently authorized download routes or cleanup/reconciliation.
-Those remain strict-profile gates, not simulated UI controls.
+The inline `export()` API remains compatible for lower presets. The strict
+completion implementation rejects inline export and requires a durable private
+job followed by a freshly authorized download:
+
+```ts
+const job = await client.logging.createExport({
+  id: crypto.randomUUID(),
+  stream: 'audit',
+  query,
+});
+const current = job.state === 'pending'
+  ? await client.logging.exportJob(job.id)
+  : job;
+if (current?.state === 'ready') {
+  const verifiedBlob = await client.logging.downloadExport(current.id);
+  // Offer the Blob through the application's download interaction.
+}
+```
+
+Keep the same request ID when retrying an uncertain create. A pending job is
+durable, not proof that generation completed. The built-in materializer runs at
+most four jobs concurrently and reconciles retained work after restart. Each
+artifact expires after one hour; at most 128 artifacts awaiting expiry/cleanup
+are admitted. Expiry retires download access before private Storage cleanup;
+capacity is released only after cleanup is recorded. Job transitions commit
+their audit evidence atomically, including the artifact checksum/state binding.
+
+Artifacts use Zero Storage's private system-object lifecycle. They create no
+public drive, ordinary file link or client-selectable provider path. Every
+status/download rechecks current scope and read/export authority. Downloads
+repeat those checks around each yielding read, enforce expiry, and check exact
+length/digest. The client discards scope-retired responses and verifies the full
+download checksum. A server-side stream completion is not proof of human receipt.
 
 NDJSON is the supplied format; no spreadsheet formula execution is introduced
-through CSV. The workspace downloads a manifest plus the segment. The digest
-covers the event NDJSON bytes, not that outer manifest line or the truth of
-unobserved source activity.
+through CSV. The durable artifact contains a manifest followed by event lines.
+Its job SHA-256 covers every downloadable byte, including the manifest line;
+`manifest.eventSha256` separately covers the event lines. The older inline
+result's SHA-256 still covers only its event NDJSON. Neither hash proves
+unobserved source activity. These are investigation exports, not a database
+backup or an implemented older-log archive/import format.
 
 ## Related Guides and Next Steps
 
 - [Configuration](./configuration.md) explains explicit retention policy.
 - [API reference](./api.md) lists exact authorization and failure semantics.
 - [Operations](./operations.md) covers backlog, checks and recovery.
-- [Roadmap](./roadmap.md) identifies the remaining strict-profile controls.
+- [Roadmap](./roadmap.md) identifies optional investigation UI, additional
+  deployment qualification and deferred backups/archive imports.

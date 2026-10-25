@@ -8,14 +8,14 @@ visibility: internal
 system: torrent
 feature: control-flow
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
 modes: ["authenticated single-tenant app", "Guardian multi-tenant app", "explicit trusted server composition"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -81,7 +81,10 @@ export const patients = flow(
 ```
 
 The activity receives item { value, index, key }. Source must be an array,
-maximum 10,000 items. concurrency defaults 1, maximum 100.
+maximum 10,000 items. Newly compiled definitions default to the maximum bounded
+concurrency of 100. Set `concurrency: 1` only when item ordering is intentional;
+set a lower explicit budget for provider quotas or deployment capacity.
+Previously pinned definitions/runs keep their recorded concurrency unchanged.
 itemSchema validates each snapshot, itemKey derives stable unique keys
 (default source-index identity). Duplicate keys reject admission.
 

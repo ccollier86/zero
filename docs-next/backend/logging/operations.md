@@ -3,27 +3,28 @@ id: zero.logging.operations
 type: operations
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: operations-and-upgrade
 maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+applies_to: ["Unreleased logging completion branch based on 2.6.0"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
-  snapshot: clean
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: implementation-verified
+  evidence_level: source-observed
 ---
 
 # Logging Operations and Adoption
 
 [Logging index](./index.md) · [Documentation index](../../index.md)
 
-Logging is an opt-in preview in main's saved update package. Do not interpret
+Logging remains opt-in. This completion branch is not yet selected for the
+normal updater. Do not interpret
 the unchanged framework version number as proof that an installed package
 includes it: check the selected release commit and archive checksum. The
 normal updater installs framework files, not application feature configuration.
@@ -59,6 +60,16 @@ commits. Outages use bounded retry backoff from one to thirty seconds and report
 safe failure signals. A required source backlog can eventually stop further
 captured mutations; investigate storage/worker availability rather than disabling
 audit or wiping queues.
+
+Strict startup rejects unqualified source durability before opening managed
+files: use file-backed `db` and `systemDb` with `synchronous: 'FULL'` or
+`'EXTRA'`, managed Guardian, and the private logging/Storage owners.
+The [configuration reference](./configuration.md#strict-source-durability)
+defines Fabric placement restrictions. `coverage.complianceReady` is a
+mechanical readiness signal for these required owners and current availability,
+not a legal certification or an inventory of every application semantic read.
+A source read failure invalidates existing strict grants; successful recovery
+requires a new durable acknowledgment.
 
 Operational diagnostics remain best effort and preserve the preexisting sink.
 Do not treat their in-memory batching queue as an origin durability guarantee.
@@ -106,8 +117,11 @@ distributed multi-server logging cluster.
    then test tenant replacement/revocation and stream cancellation.
 6. Verify rollback, source/sink restart and outages, source queue capacity,
    retention/holds, bounded exports and package actor launch for that app mode.
-7. Review [remaining strict-profile gates](./roadmap.md) before making compliance
-   claims or enabling any required-delivery workflow.
+7. For compliance, test blocked/expired acknowledgments across protected UI,
+   SSR, HTTP and Sync, then exercise sign-in and empty same-origin recovery.
+   Do not substitute `detailed` for an explicitly required compliance policy.
+8. Review the [coverage matrix](./events-and-coverage.md), current package
+   qualification and [remaining work](./roadmap.md) before deployment.
 
 Do not remove older audit APIs, compatibility documentation or app theme files
 as part of adopting logging. There is no migration that moves application
@@ -135,6 +149,21 @@ package. Source/compiled custom actor entries must call the public logging
 bootstrap before ordinary app startup. Existing apps without logging enabled
 do not acquire new log files or workers merely by updating.
 
+Use the official `zero build` pipeline for a bundled server with retained
+source actors. It preserves the framework logging realm's canonical migration
+checksums so the bundle and matching installed source agree on the complete
+realm fingerprint. It does not disable actor identity, schema or migration
+checks. Custom bundlers must establish the same contract before use.
+
+Existing source-created logging migration identities are retained. An older
+preview deployed with bundle-form function checksums is not automatically
+qualified for this change. Rehearse against an authorized copy of that logging
+state; do not rewrite its migration ledger or delete evidence to evade a
+fingerprint mismatch. PracticeIQ's never-activated logging starts a new private
+trail; its existing application/system legacy-state boundary remains separate.
+The additive core migration `045_private_storage_artifacts` registers private
+export object metadata; it does not migrate clinical or identity records.
+
 ## Verification
 
 Focused regression suites cover real managed createApp, Guardian compatibility,
@@ -144,6 +173,16 @@ semantics and actual Chromium rendering. Installed-package smoke tests exercise
 the packaged source actor, not just in-repository imports. See the sanitized
 [branch review](../../_work/logging-foundation-review.md) for exact commands,
 runs and known gates.
+
+The [strict qualification record](../../_work/logging-compliance-qualification.md)
+adds current managed-compliance, full-history custody, disk-full rollback,
+private-export, browser admission and deployment checks. Its official-build
+fixture installs the package into linux/amd64, launches `dist/server.js` with
+retained source actors and an empty child environment, kills/restarts the main
+owner, reconciles an exact event replay and downloads a retained private export.
+It verifies that the workers do not inherit provider/dotenv secrets or boot the
+main app. This is one explicit deployment shape, not qualification of arbitrary
+platforms or launch scripts.
 
 The compiled shared-entry regression builds a real Bun executable that launches
 its dedicated log actors, commits an event, and is then killed with SIGKILL.

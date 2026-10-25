@@ -71,6 +71,7 @@ const FROZEN_MIGRATION_DEFINITIONS: Readonly<Record<string, string>> = {
   '042_guardian_user_avatars.ts': 'c9a2366f00d68c99b04471d24c90cc0b8ef1ed92ed27a9f38bb94ff4db38e12f',
   '043_guardian_profile_completion.ts': 'ada92189315f3e791f7de22a44f2d03d35c89b59db7a388eeacc7d32041f92df',
   '044_workflow_actor_start_receipts.ts': '241688b02578b15648ef0a6417e23e2e68bd9ebb31dec88ccbd48a30f7d8cdaf',
+  '045_private_storage_artifacts.ts': '021afe11cd466af82a764d9ae594ce0e1ffeba4f54b2f3a3d9e001585cd6f176',
 };
 
 /**

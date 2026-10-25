@@ -1,8 +1,9 @@
 /** Scope-generation owned logging transport. Reuses authenticated SDK fetch; never exposes server persistence modules. */
-import { LOGGING_API, type LoggingClient, type LoggingCollectionPolicy } from '../../logging/logging-api-contracts';
+import { LOGGING_API, type LoggingClient, type LoggingCollectionPolicy, type LoggingObservationResult } from '../../logging/logging-api-contracts';
 import { LOGGING_FAMILIES, LOGGING_EVIDENCE, LOGGING_OUTCOMES } from '../../logging/logging-contracts';
 import type { LoggingPage } from '../../logging/logging-contracts';
 import type { FetchInit } from './sdk';
+import { readLoggingExportJob } from '../../logging/logging-export-result';
 
 export function createLoggingClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>): LoggingClient {
   let generation = 0, boundary = new AbortController();
@@ -37,23 +38,35 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
   };
   const page: LoggingClient['page'] = (stream, query, options) => readPage('/events', stream, query, options);
   const platformPage: LoggingClient['platformPage'] = (stream, query, options) => readPage('/platform/events', stream, query, options);
+  const observe: LoggingClient['observe'] = async (observations, options) => {
+    const result = await request<LoggingObservationResult>('/observations', { observations, ...(options?.policyVersion ? { policyVersion: options.policyVersion } : {}) }, options?.signal);
+    if (!result || !Number.isSafeInteger(result.accepted) || result.accepted < 0 || result.accepted > observations.length
+      || result.admission && (typeof result.admission.policyVersion !== 'string' || !Number.isSafeInteger(result.admission.expiresAt)
+        || result.admission.expiresAt <= Date.now() || result.admission.expiresAt > Date.now() + 120000
+        || result.admission.policyVersion !== options?.policyVersion)) throw new Error('Invalid logging observation acknowledgment.');
+    if (options?.policyVersion && !result.admission) throw new Error('Audit delivery acknowledgment is missing.');
+    return result;
+  };
   return Object.freeze({
     clear() { generation++; boundary.abort(); boundary = new AbortController(); },
     bindObservations() {
       const epoch = generation, signal = boundary.signal;
       return Object.freeze({ observe(observations, options) {
         if (epoch !== generation || signal.aborted) return Promise.reject(new DOMException('Logging scope changed.', 'AbortError'));
-        return request('/observations', { observations }, AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]));
+        return observe(observations, { ...options, signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]) });
       } } satisfies Pick<LoggingClient, 'observe'>);
     },
     page,
     platformPage,
-    observe: (observations, options) => request('/observations', { observations }, options?.signal),
+    observe,
     async collectionPolicy(options) {
       const value = await request<LoggingCollectionPolicy>('/policy', undefined, options?.signal);
       if (!value || typeof value.enabled !== 'boolean' || !value.capture || LOGGING_FAMILIES.some(f => typeof value.capture[f] !== 'boolean')
         || !Number.isSafeInteger(value.heartbeatMs) || value.heartbeatMs < 10000 || value.heartbeatMs > 60000
-        || !Number.isSafeInteger(value.idleMs) || value.idleMs < 1000 || value.idleMs > 300000) throw new Error('Invalid logging collection policy.');
+        || !Number.isSafeInteger(value.idleMs) || value.idleMs < 1000 || value.idleMs > 300000
+        || value.durableExports !== undefined && typeof value.durableExports !== 'boolean'
+        || value.delivery && (value.delivery.required !== true || typeof value.delivery.policyVersion !== 'string' || !value.delivery.policyVersion || value.delivery.policyVersion.length > 100 || !Number.isSafeInteger(value.delivery.ttlMs)
+          || value.delivery.ttlMs < 30000 || value.delivery.ttlMs > 120000 || value.heartbeatMs >= value.delivery.ttlMs)) throw new Error('Invalid logging collection policy.');
       return value;
     },
     health: options => request('/health', undefined, options?.signal),
@@ -62,6 +75,33 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     releaseHold: (id, options) => request('/holds/release', { id }, options?.signal),
     review: (input, options) => request('/reviews', input, options?.signal),
     export: (stream, query = {}, options) => request('/export', { stream, query }, options?.signal),
+    createExport: async (input, options) => readLoggingExportJob(await request('/exports/create', input, options?.signal)),
+    exportJob: async (id, options) => { const value = await request('/exports/status', { id }, options?.signal); return value === null ? null : readLoggingExportJob(value); },
+    async downloadExport(id, options) {
+      const epoch = generation, signal = AbortSignal.any([boundary.signal, ...(options?.signal ? [options.signal] : [])]);
+      const response = await fetch<Response>(LOGGING_API + '/exports/download', { method: 'POST', body: { id }, signal, json: false });
+      if (signal.aborted || epoch !== generation) { await response.body?.cancel().catch(() => {}); throw new DOMException('Logging scope changed.', 'AbortError'); }
+      const expected = response.headers.get('x-zero-logging-sha256');
+      if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('application/x-ndjson') || !expected || !/^[a-f0-9]{64}$/.test(expected)) {
+        await response.body?.cancel().catch(() => {}); throw new Error('Invalid private export download.');
+      }
+      const reader = response.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (signal.aborted || epoch !== generation) throw new DOMException('Logging scope changed.', 'AbortError');
+          if (next.done) break;
+          bytes += next.value.byteLength; if (bytes > 8 * 1024 * 1024 + 16384) throw new Error('Export download exceeds its byte budget.');
+          chunks.push(next.value);
+        }
+        const blob = new Blob(chunks as BlobPart[], { type: 'application/x-ndjson' });
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))].map(n => n.toString(16).padStart(2, '0')).join('');
+        if (hash !== expected) throw new Error('Export download failed integrity verification.');
+        if (signal.aborted || epoch !== generation) throw new DOMException('Logging scope changed.', 'AbortError');
+        return blob;
+      } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+      finally { try { reader.releaseLock(); } catch { /* A native cleanup failure must not mask the integrity/read result. */ } }
+    },
     verify: (stream, afterOrdinal = 0, checkpoint, options) => request('/verify', { stream, afterOrdinal, ...(checkpoint ? { checkpoint } : {}) }, options?.signal),
     watch(stream, query, listener, options = {}) {
       const epoch = generation, controller = new AbortController(), signal = AbortSignal.any([controller.signal, boundary.signal, ...(options.signal ? [options.signal] : [])]);

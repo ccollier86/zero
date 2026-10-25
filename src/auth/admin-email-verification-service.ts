@@ -67,6 +67,7 @@ export class AdminEmailVerificationService {
       const cleanupSucceeded = discardUndeliveredActionToken(
         this.tokens,
         prepared.created.rawToken,
+        error,
       );
       const failure = classifyAuthEmailFailure(error);
       this.emitCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFICATION_DELIVERY_FAILED, {

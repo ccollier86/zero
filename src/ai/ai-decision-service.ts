@@ -9,6 +9,7 @@ import { prepareDecisionRequest } from './ai-decision-validation';
 import { parseDecisionResponse, invalidDecisionResponse } from './ai-decision-response';
 import { AIDecision, type AIDecisionAnswers, type AIDecisionQuestions, type AIDecisionRequest, type AIDecisionResult } from './ai-decision-types';
 import type { NativeDecisionProvider } from './ai-decision-provider';
+import type { AIExecutionAuditSpan } from './ai-execution-audit';
 
 export interface AIDecisionService {
   /** Evaluate independent typed questions together, with inferred answer labels. */
@@ -39,6 +40,7 @@ export function createAIDecisionService(registry: AIRegistry, aliases: Record<st
       const telemetry = startAIRequestTelemetry(resolved, 'decisions', request.metadata);
       let deadline: ReturnType<typeof createDecisionDeadline> | undefined;
       let execution: AbortController | undefined;
+      let audit: AIExecutionAuditSpan | undefined, dispatched = false;
       const startedAt = Date.now();
       try {
         const prepared = prepareDecisionRequest(request, resolved.reference.modelId, resolved.provider.type as 'jev' | 'laya');
@@ -53,6 +55,9 @@ export function createAIDecisionService(registry: AIRegistry, aliases: Record<st
         deadline.assertCurrent();
         resolved.model.assertInputFits(prepared);
         deadline.assertCurrent();
+        audit = registry.audit?.prepare({ capability: 'decisions', providerId: resolved.provider.id, model: resolved.reference.resolved })?.();
+        if (audit) { await audit.admit(); audit.assertCurrent(); }
+        deadline.assertCurrent(); dispatched = true;
         const raw = await resolved.model.evaluate(prepared.body, prepared.maxRetries, deadline);
         const result = parseDecisionResponse(raw, prepared.questions);
         if (resolved.provider.type === 'jev' && result.usage === null) throw invalidDecisionResponse();
@@ -63,10 +68,12 @@ export function createAIDecisionService(registry: AIRegistry, aliases: Record<st
           durationMs: Math.max(0, Date.now() - startedAt),
         });
         deadline.assertCurrent();
+        await audit?.finish('completed'); audit?.assertCurrent(); deadline.assertCurrent();
         telemetry.complete({ usage: result.usage ?? undefined });
         return Object.freeze({ ...result, answers: result.answers as AIDecisionAnswers<Questions>, provenance,
           inputCoverage: result.inputCoverage as AIDecisionResult<Questions>['inputCoverage'] });
       } catch (error) {
+        if (dispatched) await audit?.finish('unknown');
         const normalized = error instanceof AIError ? error : new AIError('AI decision evaluation failed.', 'AI_REQUEST_FAILED', 502);
         telemetry.fail(normalized); throw normalized;
       } finally {

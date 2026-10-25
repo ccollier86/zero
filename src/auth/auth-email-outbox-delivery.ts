@@ -179,7 +179,7 @@ export class AuthEmailOutboxDelivery {
       await waitForAuthEmailDelivery(sending, signal);
       return { status: 'delivered', userId: user.userId };
     } catch (error) {
-      const cleaned = discardUndeliveredActionToken(this.deps.tokens, created.rawToken);
+      const cleaned = discardUndeliveredActionToken(this.deps.tokens, created.rawToken, error);
       throw failure(error, user.userId, cleaned);
     }
   }

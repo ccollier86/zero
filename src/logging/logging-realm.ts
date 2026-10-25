@@ -9,6 +9,8 @@ import { loggingPagePredicate, normalizeLoggingQuery } from './logging-query';
 import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingArray, loggingByteLength, loggingCanonical, loggingChoice, loggingRecord, normalizeLoggingEvent } from './logging-validation';
 import { LOGGING_EVENTS_TABLE, LOGGING_STATE_TABLE, LOGGING_TABLES, LOGGING_CHAIN_TABLE, LOGGING_PROOFS_TABLE } from './logging-schema';
 import { changeLoggingHold, recordLoggingReview, loggingPruneCandidates, pruneLoggingEvents, verifyLoggingEvidence, listLoggingEvidence, LOGGING_GENESIS_HASH, loggingChainHash } from './logging-evidence-realm';
+import { reserveLoggingExport, transitionLoggingExport, readLoggingExport, pendingLoggingExports } from './logging-export-realm';
+import { appendLocalLoggingCheckpoint, readLocalLoggingCheckpoint } from './logging-checkpoint-realm';
 
 const HEADS = LOGGING_STATE_TABLE;
 const HEAD_ID = 'head';
@@ -17,7 +19,7 @@ type EventRow = Row & { id: string; digest: string; envelope: string; ordinal: n
 
 /** Side-effect-free declaration. Both writer and reader actors import this exact realm/version. */
 export const loggingRealm = defineDatabaseRealm({
-  name: 'zero-logging', version: '3',
+  name: 'zero-logging', version: '5',
   tables: LOGGING_TABLES,
   migrations: [{
     version: '001', description: 'Index bounded scope, actor and resource investigations', safety: 'safe',
@@ -51,11 +53,39 @@ export const loggingRealm = defineDatabaseRealm({
       }
       database.run('INSERT INTO logging_chain(id,ordinal,hash) VALUES(?,?,?)', ['head', ordinal, previous]);
     },
+  }, {
+    version: '003', description: 'Composite evidence history pagination indexes', safety: 'safe',
+    up(database) {
+      database.run('CREATE INDEX IF NOT EXISTS logging_holds_history ON logging_holds(scope_kind,tenant_id,created_at DESC,id DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_reviews_history ON logging_reviews(scope_kind,tenant_id,reviewed_at DESC,id DESC)');
+    },
+  }, {
+    version: '004', description: 'Durable private artifact export jobs', safety: 'safe',
+    up(database) {
+      const columns = LOGGING_TABLES.logging_exports;
+      database.run('CREATE TABLE IF NOT EXISTS logging_exports (' + Object.entries(columns).map(([key, type]) => quoteSqlIdentifier(key) + ' ' + type).join(',') + ')');
+      database.run('CREATE INDEX IF NOT EXISTS logging_export_pending ON logging_exports(state,expires_at,created_at,id)');
+    },
+  }, {
+    version: '005', description: 'Append-only local checkpoint ledger and immutable event content', safety: 'safe',
+    up(database) {
+      database.run('CREATE TABLE IF NOT EXISTS logging_checkpoints (id TEXT PRIMARY KEY,ledger_id TEXT NOT NULL,stream TEXT NOT NULL,position INTEGER NOT NULL,ordinal INTEGER NOT NULL,hash TEXT NOT NULL,digest TEXT NOT NULL,envelope TEXT NOT NULL)');
+      database.run('CREATE UNIQUE INDEX IF NOT EXISTS logging_checkpoint_order ON logging_checkpoints(ledger_id,stream,position)');
+      database.run("CREATE TRIGGER IF NOT EXISTS logging_checkpoint_no_update BEFORE UPDATE ON logging_checkpoints BEGIN SELECT RAISE(ABORT,'Logging checkpoints are append-only'); END");
+      database.run("CREATE TRIGGER IF NOT EXISTS logging_checkpoint_no_delete BEFORE DELETE ON logging_checkpoints BEGIN SELECT RAISE(ABORT,'Logging checkpoints are append-only'); END");
+      database.run("CREATE TRIGGER IF NOT EXISTS logging_event_no_update BEFORE UPDATE ON logging_events BEGIN SELECT RAISE(ABORT,'Logging event content is immutable'); END");
+      database.run("CREATE TRIGGER IF NOT EXISTS logging_proof_no_delete BEFORE DELETE ON logging_proofs BEGIN SELECT RAISE(ABORT,'Logging replay proofs are retained'); END");
+      database.run("CREATE TRIGGER IF NOT EXISTS logging_proof_immutable BEFORE UPDATE ON logging_proofs WHEN NEW.id IS NOT OLD.id OR NEW.ordinal IS NOT OLD.ordinal OR NEW.digest IS NOT OLD.digest OR NEW.previous_hash IS NOT OLD.previous_hash OR NEW.chain_hash IS NOT OLD.chain_hash OR NEW.ingested_at IS NOT OLD.ingested_at OR NEW.expired IS NOT 1 OR OLD.expired IS NOT 0 BEGIN SELECT RAISE(ABORT,'Logging proof content is immutable'); END");
+    },
   }],
   commands: { 'logging.append': appendLoggingBatch,
     'logging.hold': (context, input) => changeLoggingHold(context, input, appendLoggingBatch),
-    'logging.review': (context, input) => recordLoggingReview(context, input, appendLoggingBatch), 'logging.prune': pruneLoggingEvents },
-  queries: { 'logging.page': readLoggingPage, 'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence },
+    'logging.review': (context, input) => recordLoggingReview(context, input, appendLoggingBatch), 'logging.prune': pruneLoggingEvents,
+    'logging.export.reserve': (context, input) => reserveLoggingExport(context, input, appendLoggingBatch),
+    'logging.export.transition': (context, input) => transitionLoggingExport(context, input, appendLoggingBatch),
+    'logging.checkpoint.append': appendLocalLoggingCheckpoint },
+  queries: { 'logging.page': readLoggingPage, 'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence,
+    'logging.export': readLoggingExport, 'logging.exports.pending': pendingLoggingExports, 'logging.checkpoint.read': readLocalLoggingCheckpoint },
 });
 
 function admitBatch(value: unknown): { stream: LoggingStream; events: readonly LoggingEvent[] } {

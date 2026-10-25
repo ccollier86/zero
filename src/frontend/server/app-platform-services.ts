@@ -30,6 +30,7 @@ import {
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_AI_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_LOGGING_RUNTIME,
 } from '../../runtime/service-keys';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { createSchedulerPlugin } from '../../scheduler';
@@ -240,7 +241,14 @@ export async function mountPlatformServices({
       db: systemDB,
       localDir: config.storageDir,
       signingSecret: config.storage.signingSecret,
-      onServiceCreated: avatars.onStorageCreated,
+      onInitializerCreated(initialize) {
+        managedInitializers.push(async () => { await managedStartup.auth!.start(); initialize(); });
+      },
+      onServiceCreated(storage) {
+        avatars.onStorageCreated(storage);
+        const logging = runtime.get(ZERO_LOGGING_RUNTIME);
+        if (logging) runtime.addCleanup(logging.attachExportStorage(storage.privateObjects));
+      },
       captureUploadGrantCommitFence: avatars.captureUploadGrantCommitFence,
       defaultPresignedTTL: config.storage.defaultPresignedTTL,
       studio: config.storage.studio,

@@ -7,7 +7,15 @@ export const LOGGING_PROOFS_TABLE = 'logging_proofs';
 export const LOGGING_CHAIN_TABLE = 'logging_chain';
 export const LOGGING_HOLDS_TABLE = 'logging_holds';
 export const LOGGING_REVIEWS_TABLE = 'logging_reviews';
+export const LOGGING_EXPORTS_TABLE = 'logging_exports';
+export const LOGGING_CHECKPOINTS_TABLE = 'logging_checkpoints';
 export const LOGGING_TABLES = Object.freeze({
+  [LOGGING_CHECKPOINTS_TABLE]: Object.freeze({ id: 'text primary key', ledger_id: 'text not null', stream: 'text not null',
+    position: 'integer not null', ordinal: 'integer not null', hash: 'text not null', digest: 'text not null', envelope: 'text not null' }),
+  [LOGGING_EXPORTS_TABLE]: Object.freeze({ id: 'text primary key', scope_kind: 'text not null', tenant_id: 'text', actor_id: 'text not null',
+    stream: 'text not null', query_json: 'text not null', request_event: 'text not null', state_event: 'text not null', state: 'text not null', created_at: 'integer not null',
+    expires_at: 'integer not null', completed_at: 'integer', high_water: 'integer not null', count: 'integer not null', complete: 'integer not null',
+    next_before: 'integer', sha256: 'text', artifact_removed: 'integer not null default 0' }),
   [LOGGING_CHAIN_TABLE]: Object.freeze({ id: 'text primary key', ordinal: 'integer not null', hash: 'text not null' }),
   [LOGGING_PROOFS_TABLE]: Object.freeze({ id: 'text primary key', ordinal: 'integer not null unique', digest: 'text not null', previous_hash: 'text not null', chain_hash: 'text not null', expired: 'integer not null default 0', ingested_at: 'integer not null' }),
   [LOGGING_HOLDS_TABLE]: Object.freeze({ id: 'text primary key', scope_kind: 'text not null', tenant_id: 'text', since: 'integer not null', until: 'integer not null', reason_ref: 'text not null', active: 'integer not null', created_at: 'integer not null', created_by: 'text not null', released_at: 'integer', released_by: 'text' }),

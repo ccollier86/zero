@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { configureEmail, MemoryEmailProvider, type EmailMessage,
+import { configureEmail, MemoryEmailProvider, EmailError, type EmailMessage,
   type EmailProvider } from '../email';
 import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { activeTokens, emailToken, fixture, terminalRecipient, user } from './auth-email-outbox-test-support';
@@ -7,6 +7,21 @@ import { activeTokens, emailToken, fixture, terminalRecipient, user } from './au
 afterEach(() => resetEmailCompatibilityRuntimeForTesting());
 
 describe('AuthEmailOutbox delivery', () => {
+  test('an unresolved audit receipt after provider acceptance neither resends nor revokes the possibly delivered link', async () => {
+    const messages: EmailMessage[] = [];
+    const runtime = fixture({ name: 'accepted-with-unknown-audit', async send(message) {
+      messages.push(message); throw new EmailError('Provider accepted; audit receipt unavailable', 'EMAIL_SEND_OUTCOME_UNKNOWN', 409);
+    } });
+    try {
+      await runtime.users.createUser(user('unknown-audit@test.com'));
+      runtime.outbox.start(false); runtime.outbox.enqueue({ kind: 'password_reset', recipient: 'unknown-audit@test.com' });
+      expect(await runtime.outbox.processDue()).toBe(1);
+      expect(runtime.outbox.count('dead')).toBe(1); expect(runtime.outbox.count('delivered')).toBe(0);
+      expect(activeTokens(runtime.db)).toBe(1);
+      expect(runtime.tokens.inspect(emailToken(messages[0]!)).user.email).toBe('unknown-audit@test.com');
+      expect(await runtime.outbox.processDue()).toBe(0); expect(messages).toHaveLength(1);
+    } finally { await runtime.outbox.stop(); runtime.db.dispose(); }
+  });
   test('defers lookup, token creation, and provider work until the worker runs', async () => {
     const provider = new MemoryEmailProvider();
     const runtime = fixture(provider);

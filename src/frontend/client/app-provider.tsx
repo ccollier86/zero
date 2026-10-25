@@ -84,6 +84,8 @@ interface BrowserPlatformConfig {
   presence?: boolean;
   vectorVisualization?: boolean;
   logging?: boolean;
+  loggingRequired?: boolean;
+  loggingPolicyVersion?: string;
   tableSyncModes?: Record<string, SyncMode>;
   /** Server-owned Sync-visible application table routing catalog. */
   tableSyncPlanes?: Record<string, SyncDataPlaneName>;
@@ -313,11 +315,16 @@ export function AppProvider({
       )
     : children;
 
-  const activityTree = platformConfig.logging && authEnabled ? createElement(LoggingActivityProvider, { children: guardedChildren }) : guardedChildren;
-  const modalTree = createElement(ModalManager, { children: activityTree });
+  const modalTree = createElement(ModalManager, { children: guardedChildren });
   const authorizationScopedTree = authEnabled
     ? createElement(AuthorizationScopeGuard, { client, children: modalTree })
     : modalTree;
+  // Delivery recovery must remain mounted while protected data is masked.
+  // Sync itself requires this acknowledgment; nesting the collector beneath
+  // the data-readiness guard could otherwise deadlock its own recovery.
+  const activityTree = platformConfig.logging && authEnabled
+    ? createElement(LoggingActivityProvider, { children: authorizationScopedTree, required: platformConfig.loggingRequired, policyVersion: platformConfig.loggingPolicyVersion })
+    : authorizationScopedTree;
 
   let tree: ReactNode = createElement(
     ClientProvider,
@@ -327,7 +334,7 @@ export function AppProvider({
         {
           client: internal._syncClient,
           stateClient: internal.state,
-          children: authorizationScopedTree,
+          children: activityTree,
         }
       )
     }

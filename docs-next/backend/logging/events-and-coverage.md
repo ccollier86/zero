@@ -3,20 +3,20 @@ id: zero.logging.events
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: in-review
+status: draft
 visibility: internal
 system: logging
 feature: events-and-coverage
 maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
-  snapshot: clean
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: implementation-verified
+  evidence_level: source-observed
 ---
 
 # Logging Events and Capture Coverage
@@ -54,15 +54,20 @@ confirmations retain their own identities rather than rewriting the original.
 | Request-owned source mutations | `zero.logging.run()` carries trusted actor/scope attribution during its operation. Without an attributed operation, automatic database capture honestly identifies a system actor. |
 | Semantic record reads | Use `zero.logging.read()` after domain authorization. A SQL SELECT alone does not identify what a person saw. |
 | Browser views, copy and print | The authenticated AppProvider collector follows configured families and explicit opaque view bindings. All signals remain browser observations. |
-| Storage, AI, payments, communications and custom tasks | Use declared service-stage instrumentation. Opening the log database does not automatically add complete domain-specific capture to every service. |
+| Strict managed HTTP | Automatic durable request admission, prepared response status and stream producer completion/interruption. No raw URL, request/response body or exception text. Transport preparation is not a semantic business success. |
+| Managed AI provider calls | Automatic admitted and completed/unknown provider stages through the managed AI service, including the native decision facade. SDK streams complete only after their finish part and stream completion. Provider/model selectors are opaque digests; no prompts, tools, results or chunks. A provider return is not proof that the app accepted or used it. |
+| Managed platform email sending | Automatic admitted and provider accepted/rejected/unknown stages with recipient counts, not addresses, subjects or bodies. Acceptance is not delivery to a recipient. Lost post-send evidence returns an unknown send outcome; auth mail does not blindly send it again. |
+| Custom AI service/provider instances and direct vendor SDKs | Explicit instrumentation. Supplying an already-built service does not magically wrap every SDK call, tool or provider callback. |
+| Storage, payments, receiving/inbox providers, workflow and messaging semantics | Partial automatic coverage through Guardian audit, committed metadata mutations and strict managed HTTP. Apps declare actual semantic read/release/provider/durable-task stages through the scoped facade. Do not infer file delivery, payment settlement, message delivery or job completion from a row mutation. |
 | Investigation reads | Durable admission evidence opens a five-minute window per actor/scope/query fingerprint. Repeated stream snapshots reuse that window; this is not a count of every physical database read. |
 | Holds and reviews | Their state and attributable activity event commit atomically in the private audit actor. |
-| Evidence export | Records generation before release. Generation is not proof of download or review. |
+| Evidence export | Automatic atomic request/state evidence, private artifact publication, separate download authorization, producer completion/interruption and expiry/cleanup stages. Generation or producer completion is not proof of human review. |
 
 The `basic`, `activity`, and `detailed` presets select families; they do not
 fill an uncovered surface. See [configuration](./configuration.md) and the
-[remaining qualification gates](./roadmap.md). The strict compliance preset
-still rejects with `LOGGING_NOT_READY`.
+[remaining qualification gates](./roadmap.md). Strict mode adds required
+delivery, custody and source-durability controls, not an assertion that every
+application semantic operation has been automatically discovered.
 
 ## Privacy and Attribution
 

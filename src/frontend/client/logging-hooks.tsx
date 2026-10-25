@@ -8,27 +8,68 @@ import type { LoggingPage, LoggingQuery, LoggingStream } from '../../logging/log
 import { emitFrontendCode } from './observability';
 import { OBS_CODES } from '../../observability/codes';
 import type { InternalClient } from './sdk';
+import { Button } from '../../components/ui/button';
+import { bootstrapLoggingDelivery } from './logging-bootstrap';
 
 const CollectorContext = createContext<LoggingCollector | null>(null);
 /** AppProvider mounts this only for configured logging. Collection starts after live session/scope admission. */
-export function LoggingActivityProvider({ children }: { children?: ReactNode }) {
+export function LoggingActivityProvider({ children, required = false, policyVersion }: { children?: ReactNode; required?: boolean; policyVersion?: string }) {
   const client = useClientMaybe(), scope = useAuthorizationScopeBoundary(client);
   const [value, setValue] = useState<{ key: string; collector: LoggingCollector } | null>(null);
+  const [confirmed, setConfirmed] = useState<{ key: string; expiresAt: number } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const auth = (client as InternalClient | null)?.auth;
+  // The write-only handshake proves live server authority itself. It must not
+  // wait for a Sync baseline which requires this very grant. All protected
+  // reads/UI remain under their unchanged authorization-data guards.
+  const canCollect = Boolean(auth?.isAuthenticated && !auth.isRestoring && scope.stable && (required || scope.ready));
   useEffect(() => {
-    if (!client || !(client as InternalClient).auth?.isAuthenticated || !scope.ready || !scope.stable) return;
+    // A committed sign-in/scope switch may be waiting for a Sync baseline.
+    // Recover only the fixed empty handshake through the HttpOnly page cookie;
+    // no event content, application read or general API request is admitted here.
+    if (!required || !policyVersion || !auth?.isAuthenticated || !['committed', 'reconciling', 'recovery-required'].includes(auth.sessionTransition.phase)) return;
+    const abort = new AbortController();
+    const family = auth.authorizationScopeKey, revision = auth.sessionTransition.revision;
+    void bootstrapLoggingDelivery(policyVersion, abort.signal).then(() => {
+      if (!abort.signal.aborted && auth.authorizationScopeKey === family && auth.sessionTransition.revision === revision) (client as InternalClient)._syncClient.reconnect();
+    }).catch(() => { if (!abort.signal.aborted) emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED); });
+    return () => abort.abort();
+  }, [client, auth, scope.key, policyVersion, required, retry]);
+  useEffect(() => {
+    if (!client || !canCollect) return;
     const abort = new AbortController(); let collector: LoggingCollector | undefined;
+    let expiry: ReturnType<typeof setTimeout> | undefined;
     // Pin before fetching policy, not after a possible identity replacement.
     const writer = client.logging.bindObservations();
     void client.logging.collectionPolicy({ signal: abort.signal }).then(policy => {
       if (abort.signal.aborted || !policy.enabled) return;
+      if (required && !policy.delivery?.required) throw new Error('Required audit delivery policy is unavailable.');
       collector = createLoggingCollector({ bindObservations: () => writer }, policy, {
-        onError: () => emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED),
+        onError: () => {
+          if (abort.signal.aborted) return;
+          setConfirmed(null); emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED);
+        },
+        onAcknowledgment: receipt => {
+          if (abort.signal.aborted) return;
+          clearTimeout(expiry);
+          setConfirmed({ key: scope.key, expiresAt: receipt.expiresAt });
+          expiry = setTimeout(() => { if (!abort.signal.aborted) setConfirmed(null); }, Math.max(0, receipt.expiresAt - Date.now()));
+        },
       });
       setValue({ key: scope.key, collector });
+      if (policy.delivery?.required) void collector.flush();
     }).catch(() => { if (!abort.signal.aborted) emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED); });
-    return () => { abort.abort(); void collector?.stop(); };
-  }, [client, scope.key, scope.ready, scope.stable]);
-  return createElement(CollectorContext.Provider, { value: scope.ready && scope.stable && value?.key === scope.key ? value.collector : null }, children);
+    return () => { abort.abort(); clearTimeout(expiry); void collector?.stop(); };
+  }, [client, scope.key, canCollect, required, retry]);
+  const pause = required && Boolean(auth?.isAuthenticated)
+    && (!scope.stable || confirmed?.key !== scope.key || confirmed.expiresAt <= Date.now());
+  return createElement(CollectorContext.Provider, { value: scope.ready && scope.stable && value?.key === scope.key ? value.collector : null }, pause
+    ? <section role="alert" aria-label="Audit delivery required" className="mx-auto my-8 max-w-lg rounded-xl border bg-card p-6 text-card-foreground">
+        <h1 className="text-lg font-semibold">Confirm audit delivery</h1>
+        <p className="my-3 text-sm text-muted-foreground">Protected work is paused until audit delivery is confirmed. Check your connection, service status, or extensions blocking requests to this site, then retry.</p>
+        <Button type="button" variant="outline" onClick={() => setRetry(n => n + 1)}>Retry audit delivery</Button>
+      </section>
+    : children);
 }
 
 /** Bind opaque record/document identity; no URL, label, text or clinical content is collected. */

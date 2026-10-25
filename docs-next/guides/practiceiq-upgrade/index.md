@@ -3,17 +3,17 @@ id: zero.guides.practiceiq-upgrade
 type: index
 audience: [developer, agent, operator]
 owner: zero-documentation
-status: in-review
+status: draft
 visibility: internal
 system: cross-system
 feature: practiceiq-upgrade-preparation
 maturity: planned
-applies_to: ["PracticeIQ 1.3.0-piq.1 to pinned Zero 2.6.0 main"]
+applies_to: ["Unreleased logging completion branch based on 2.6.0"]
 modes: [single-tenant, separate-system-database, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
   snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
@@ -119,12 +119,14 @@ are held intact for reviewed execution authority. Keep `workflows: false`
 during isolated conversion; a held generation is not approved for cutover.
 
 The attachment capability/helper is normal Zero functionality, not a new
-PracticeIQ-only patch. The logging subsystem is an **opt-in preview**. Its
-`basic`, `activity` and `detailed` profiles are available; strict `compliance`
-still rejects `LOGGING_NOT_READY`. A successful package update, a logging screen
-or enabled browser observations does not establish complete compliance coverage.
-Treat uncovered clinical actions and strict-mode requirements as acceptance
-work, not hidden assumptions.
+PracticeIQ-only patch. The logging subsystem remains **opt-in**. PracticeIQ
+requires the actual compliance preset: the completion branch supplies strict
+source/admission/custody/export controls, but must still pass final committed
+archive selection and app acceptance. Do not use the older preview or
+substitute detailed/disabled audit. A successful update, logging screen or
+browser observation does not establish clinical coverage or certification.
+Follow the [logging acceptance guide](./logging.md), and plan the dashboard
+review with the user before application handoff.
 
 ## Related Guides and Next Steps
 

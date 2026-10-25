@@ -22,6 +22,7 @@ import type {
   ResolvedAIConfig,
   ResolvedAIProviderConfig,
 } from './ai-types';
+import type { AIExecutionAudit } from './ai-execution-audit';
 
 type ProviderMap = Record<string, AIProviderAdapter>;
 
@@ -33,6 +34,7 @@ export interface AIRegistry {
   decisionProviders?: Record<string, NativeDecisionProvider>;
   registry: ProviderRegistryProvider<any, '/'>;
   emitCode?: AIEmitCode;
+  audit?: AIExecutionAudit;
 }
 
 /** Model resolution result with provider metadata used for observability. */
@@ -52,7 +54,7 @@ export interface ResolvedAIFilesProvider {
 }
 
 /** Create an AI SDK provider registry from active resolved providers. */
-export function createAIRegistry(config: ResolvedAIConfig, emitCode?: AIEmitCode): AIRegistry {
+export function createAIRegistry(config: ResolvedAIConfig, emitCode?: AIEmitCode, audit?: AIExecutionAudit): AIRegistry {
   const providerInstances: ProviderMap = {};
   const decisionProviders: Record<string, NativeDecisionProvider> = Object.create(null);
 
@@ -75,6 +77,7 @@ export function createAIRegistry(config: ResolvedAIConfig, emitCode?: AIEmitCode
     decisionProviders,
     registry: createProviderRegistry(providerInstances, { separator: '/' }),
     ...(emitCode === undefined ? {} : { emitCode }),
+    ...(audit === undefined ? {} : { audit }),
   };
 }
 

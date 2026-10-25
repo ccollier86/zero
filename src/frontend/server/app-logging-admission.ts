@@ -1,0 +1,87 @@
+/** Managed strict HTTP/document boundary. Recovery remains content-free and cannot relax Guardian authorization. */
+import type { Elysia } from 'elysia';
+import { resolveRequestAuthContext } from '../../auth/auth.middleware';
+import { resolvePageSessionAuth } from '../../auth/page-session';
+import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
+import { AuthError } from '../../auth/types';
+import { LoggingError } from '../../logging/logging-error';
+import { loggingAuthContext } from '../../logging/logging-auth-context';
+import { captureLoggingEvent } from '../../logging/logging-validation';
+import { loggingRecoveryPage } from '../../logging/logging-recovery-page';
+import { ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER, ZERO_AUTH_TOKEN_SERVICE, ZERO_AUTH_STORE, ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTHORIZATION_ROLE_SERVICE, ZERO_LOGGING_RUNTIME } from '../../runtime/service-keys';
+import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import { createAuthorityRevalidators } from './server-request-services/request-authority';
+import { getServerRouteServices } from './server-services';
+import type { LoggingAdmissionAuthority } from '../../logging/logging-admission';
+import type { LoggingContext } from '../../logging/logging-contracts';
+import { isLoggingRecoveryRequest } from '../../logging/logging-admission-paths';
+import { guardLoggingResponseStream } from './app-logging-response-stream';
+
+/** Install before any protected route mounts, including built-in services and file-router loaders. */
+export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRuntime): void {
+  const logging = runtime.get(ZERO_LOGGING_RUNTIME);
+  if (!logging?.admission.required) return;
+  const requests = new WeakMap<Request, { authority: LoggingAdmissionAuthority; context: LoggingContext; fence: () => void; revalidate: () => Promise<void>; id: string }>();
+  const headers = { 'Cache-Control': 'private, no-store', Vary: 'Authorization, Cookie' };
+  const failure = (error: unknown): Response => Response.json({
+    code: error instanceof LoggingError || error instanceof AuthError ? error.code : 'LOGGING_AUDIT_UNAVAILABLE',
+    error: error instanceof LoggingError || error instanceof AuthError ? error.message : 'Audit admission is unavailable.',
+  }, { status: error instanceof AuthError ? error.status : error instanceof LoggingError && error.code === 'LOGGING_ADMISSION_REQUIRED' ? 428 : 503, headers });
+  app.onBeforeHandle({ as: 'global' }, async ({ request }) => {
+    if (isLoggingRecoveryRequest(request)) return;
+    try {
+      const tokens = runtime.get(ZERO_AUTH_TOKEN_SERVICE);
+      const auth = await resolveRequestAuthContext(request, () => tokens, () => runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER))
+        ?? await resolvePageSessionAuth(request, tokens);
+      if (!auth) return; // Ordinary route authorization still rejects missing/invalid credentials.
+      const access = createRequestAuthorizationAccess({ authContext: auth, kernel: runtime.get(ZERO_AUTHORIZATION_KERNEL),
+        propertyStore: runtime.get(ZERO_AUTH_STORE), roleAssignments: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
+        assertCurrentProfile: () => tokens?.assertCurrentProfile() });
+      access.authorize({ user: 'required', credentials: ['session', 'api-key'] });
+      const fences = createAuthorityRevalidators(request, access, getServerRouteServices(runtime));
+      const authority = { auth, properties: runtime.get(ZERO_AUTH_STORE)?.getProperties(auth.userId) ?? {} };
+      const context = loggingAuthContext(auth, logging.config.policyVersion);
+      if (auth.credentialKind === 'api-key' || auth.sessionKind === 'native') {
+        await logging.admission.admitMachine(authority, context, fences.asynchronous, request);
+      } else logging.admission.assertCurrent(authority, request);
+      const id = crypto.randomUUID();
+      await logging.deliver(captureLoggingEvent(context, { id: id + ':admitted', family: 'records', action: 'access.http.admitted',
+        occurredAt: Date.now(), outcome: 'attempted', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' } }));
+      fences.synchronous(); logging.admission.assertCurrent(authority, request);
+      requests.set(request, { authority, context, fence: fences.synchronous, revalidate: fences.asynchronous, id });
+    } catch (error) {
+      if (error instanceof LoggingError && error.code === 'LOGGING_ADMISSION_REQUIRED' && !request.headers.has('authorization')
+        && (request.method === 'GET' || request.method === 'HEAD')) return loggingRecoveryPage(logging.config.policyVersion);
+      return failure(error);
+    }
+  });
+  app.onAfterHandle({ as: 'global' }, async ({ request, response, set }) => {
+    const current = requests.get(request); if (!current) return;
+    try {
+      current.fence(); logging.admission.assertCurrent(current.authority, request);
+      const status = response instanceof Response ? response.status : typeof set.status === 'number' ? set.status : 200;
+      await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':prepared', family: 'records', action: 'access.http.response.prepared',
+        occurredAt: Date.now(), outcome: 'succeeded', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' }, metadata: { httpStatus: status } }, ['httpStatus']));
+      current.fence(); logging.admission.assertCurrent(current.authority, request);
+      if (response instanceof Response) return guardLoggingResponseStream(response, request, logging, current.context, current.id, current.revalidate,
+        () => { current.fence(); logging.admission.assertCurrent(current.authority, request); });
+    } catch (error) {
+      if (response instanceof Response) await response.body?.cancel().catch(() => {});
+      // A handler may already have committed. Never tell a caller it is safe to
+      // repeat a write merely because response-release admission expired.
+      if (request.method !== 'GET' && request.method !== 'HEAD') return failure(new LoggingError('LOGGING_OUTCOME_UNKNOWN',
+        'Protected response could not be released; reconcile the operation before retrying.', 'unknown'));
+      return failure(error);
+    } finally { requests.delete(request); }
+  });
+  app.onError({ as: 'global' }, async ({ request }) => {
+    const current = requests.get(request); if (!current) return;
+    requests.delete(request);
+    // No exception bodies are admitted. A handler exception does not prove that
+    // every external effect rolled back; writes are deliberately unresolved.
+    try { await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':failed', family: 'records', action: 'access.http.failed',
+      occurredAt: Date.now(), outcome: request.method === 'GET' || request.method === 'HEAD' ? 'failed' : 'unknown', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' } })); }
+    catch { /* Existing fail-closed response remains; never recursively log sink failure. */ }
+  });
+}

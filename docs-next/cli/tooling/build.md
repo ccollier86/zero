@@ -3,19 +3,19 @@ id: zero.cli.tooling.build
 type: how-to
 audience: [developer, agent, operator]
 owner: cli-tooling
-status: verified
+status: draft
 visibility: internal
 system: cli-tooling
 feature: build
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["Unreleased logging completion branch based on 2.6.0"]
 modes: ["Bun package-mode applications", "trusted local builds"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
-  date: "2026-10-07"
+  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
+  snapshot: dirty
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -141,6 +141,16 @@ convention.** Deploy the app route modules and their app-owned dependencies.
 Do not infer that this command precompiles every file-router, provider, Fabric
 actor and API combination into one self-contained executable. The command does
 not erase existing pages or start a replacement app to mask missing modules.
+
+For strict logging with a bundled server and retained source actors, use this
+official build pipeline and the matching installed framework package. The
+completion branch preserves canonical framework logging migration checksums
+across the bundle/source boundary; realm/schema/actor checks stay enabled.
+The isolated linux/amd64 logging fixture qualifies JavaScript output with
+retained dependencies and an explicit source actor using an empty environment.
+It does not qualify a source-free logging executable or arbitrary custom
+bundlers. See [logging actor deployment](../../backend/logging/configuration.md)
+and [upgrade boundaries](../../backend/logging/operations.md#upgrade-procedure).
 
 Runtime launches resolve ordinary generated paths from the deployment cwd,
 unless the source config deliberately sets `projectRoot`. Database paths,

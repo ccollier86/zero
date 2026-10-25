@@ -43,6 +43,13 @@ import { WORKFLOW_SERVER_TABLE_NAMES, WORKFLOW_TABLES } from './types';
 const handler = async () => ({ ok: true });
 
 describe('workflow graph DSL and compiler', () => {
+  test('new each definitions default to maximum bounded concurrency and preserve explicit ordering', () => {
+    const defaults = compileFlow(flow(each('items', expr.input('items'), flow(step('item', 'noop')))));
+    expect(defaults.nodes.find(n => n.id === 'items')).toMatchObject({ concurrency: WORKFLOW_GRAPH_LIMITS.maxEachConcurrency });
+    const ordered = compileFlow(flow(each('items', expr.input('items'), flow(step('item', 'noop')), { concurrency: 1 })));
+    expect(ordered.nodes.find(n => n.id === 'items')).toMatchObject({ concurrency: 1 });
+  });
+
   test('exposes realtime-safe graph progress without private graph snapshots', () => {
     expect(WORKFLOW_TABLES.workflow_instances).toHaveProperty('definition_version');
     expect(WORKFLOW_TABLES.workflow_instances).toHaveProperty('graph_fingerprint');
