@@ -13,7 +13,7 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -64,7 +64,7 @@ controls are implemented and qualified. Review [coverage](./events-and-coverage.
 | `logging.queue.batchSize` | `min(256, maxEvents)`; integer 1–`min(256, maxEvents)`. The unchanged 512 KiB actor-batch byte limit can split it further. Sparse events flush on a microtask without waiting to fill a batch. |
 | `logging.sourceQueue.maxEvents` | 50000 admitted events per originating database; integer 1–100000. Independent of the in-memory writer queue. |
 | `logging.sourceQueue.maxBytes` | 64 MiB per originating database; integer 16384–268435456. Counts normalized event bytes, not an exact SQLite file or heap size. |
-| `logging.actors` | Default packaged source actor with empty child environment. Explicit `launch`, `env` and `executor` use Fabric's validated subprocess contract. Nothing implicitly inherits the parent's secrets or dotenv files. |
+| `logging.actors` | Default packaged source entry and empty child environment. The validated launch also starts the dedicated delivery subprocess through a distinct private marker. Explicit `launch`, `env` and `executor` configure the Fabric actors; delivery IPC has its own bounded deadlines. Nothing implicitly inherits the parent's secrets or dotenv files. |
 
 `basic` enables operational/security families. `activity` additionally enables
 records, transfers, workflow, communications, AI, investigations and navigation.
@@ -102,8 +102,10 @@ The default actor is a private package source file run through Bun with
 `--no-env-file`. A missing source actor fails startup with a safe configuration
 error. Shared-entry/compiled deployments can call the public
 `runLoggingActorIfRequested()` before app startup and point `logging.actors.launch`
-at that entry. This uses a separate private logging marker and fixed realm;
-never boot the app in an actor child. The owner and actors must use matching
+at that entry. The helper handles both the delivery process and fixed-realm
+database actors with distinct private markers; never boot the app in either
+child. A custom entry that handles only the older database marker is no longer
+sufficient. The owner and actors must use matching
 realm/build fingerprints; do not weaken the check to mix separately built
 implementations. The shared-entry pattern is:
 
@@ -127,9 +129,15 @@ if (!await runLoggingActorIfRequested()) {
 
 This example is for a compiled Bun executable, not a source invocation where
 `process.execPath` names the Bun runtime. Source apps normally retain the
-default packaged actor. Installed source launch and compiled shared-entry
-owner-SIGKILL recovery have focused tests; arbitrary wrappers, other target
+default packaged actor. Logging always uses the dedicated delivery process;
+there is no same-process performance fallback. Installed source launch and
+compiled shared-entry owner-SIGKILL recovery have focused tests; arbitrary wrappers, other target
 platforms and complete compliance release readiness remain separate gates.
+
+Budget memory and process supervision for the delivery child as well as the
+Fabric writers/readers. The worker channel is private parent/child IPC, not a
+new network listener. Host CPU, memory and disk isolation remain deployment
+responsibilities when one workload must have a hard resource reservation.
 
 Paths are checked lexically during configuration and through filesystem aliases
 before builds/startup mutate their owners. The log directory cannot overlap

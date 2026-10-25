@@ -13,7 +13,7 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -29,12 +29,29 @@ per-file writer ordering and read-only WAL workers; the files use FULL SQLite
 commit synchronization. Partial construction closes acquired writers/readers
 and releases root ownership before returning an error.
 
-These are dedicated Fabric worker processes, not SQLite writes performed by
-an HTTP handler. A lifecycle-owned delivery coordinator schedules bounded
-transfers in the app process. Validation, hashing, event/proof writes, retention
-and integrity operations on the log databases execute in their actors. The
-source still performs the small same-transaction admission described below;
-worker isolation is not a claim of zero capture or shared-disk cost.
+The delivery coordinator is also a dedicated subprocess. It owns event batching,
+source fairness, retry timers and backlog draining; these loops do not run on
+the application event loop. Database validation, hashing, event/proof writes,
+retention and integrity operations execute in the separate Fabric actors.
+
+| Owner | Work |
+| --- | --- |
+| Origin database | Small same-transaction metadata capture and durable source queue. |
+| Application facade and private broker | Live authorization, bounded immutable admissions, source-catalog ownership, fixed source/sink capabilities, commit hints and worker supervision. |
+| Delivery subprocess | Batching, up to three active source pages, fair draining, per-source retry backoff and source acknowledgment requests. |
+| Fabric log writers and read-only WAL actors | Actual log commits, indexed bounded investigation queries, integrity work and retention. |
+
+The broker does not accept SQL, physical paths or user-selected scope from the
+delivery process. Before removing a source entry, it requires an exact matching
+committed sink receipt. Sink batches can contain only exact envelopes admitted
+by the application or exposed by a registered source. At most three source
+pages can hold these grants at once, even if a child violates its scheduler.
+
+Investigation pages continue to use the log plane's read-only WAL workers;
+opening a viewer does not move a full log scan onto the application database.
+Response validation and transport remain bounded application work. Process
+isolation does not remove shared CPU/disk contention or the cost of durable
+source capture; qualify the application's actual read/write workload.
 
 ## Diagnostic Capture
 
@@ -90,6 +107,18 @@ default sink queue for other admissions. Per-source retry backoff prevents one
 unavailable source from delaying otherwise-ready sources. Commit/startup hints
 wake delivery; there is no continuous idle-source polling.
 
+The private worker channel is nonce-fenced, bounds message size and outstanding
+requests, and exposes only fixed operations. The child environment comes only
+from the explicit actor allowlist, without parent/dotenv inheritance. The
+delivery child starts in an owned empty directory,
+including compiled deployments, and exits when its parent disconnects.
+
+Worker death fails unresolved direct admissions with an unknown outcome; it
+does not automatically repeat application actions. Origin queues remain intact.
+The supervisor restarts the worker with bounded backoff and reconciles all
+registered sources using their original event identities. A lost receipt or a
+crash after sink commit but before source acknowledgment may replay safely.
+
 Source storage shares repeated attribution between events, without changing
 the public envelope or including row contents. Older full-envelope queue rows
 remain readable without a destructive rewrite. Unreferenced attribution is
@@ -127,6 +156,12 @@ Already-dispatched actor operations retain their own bounded deadlines; this
 is not a five-second cancellation of an unresolved commit. Remaining source
 evidence stays durable for restart. No application authority lease is held
 while waiting for delivery IPC or logging disk synchronization.
+
+Source capabilities stay alive until their admitted broker operations have
+settled. The delivery process then drains admitted direct events and exits
+before Fabric log owners close. An unresponsive child is terminated with
+bounded escalation. This path must not silently switch to an in-app batching
+or delivery loop.
 
 Internal investigation reads use bound scope predicates and source-local
 high-water/keyset pagination. New arrivals do not move an older page's boundary.

@@ -13,7 +13,7 @@ modes: [single tenancy, multi tenancy, browser, server, file, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -31,7 +31,7 @@ Healthcare and HIPAA audit use cases guide the strict configuration without
 turning ordinary applications into healthcare-specific products.
 
 All persistent Zero log streams use Fabric-managed dedicated databases, separate
-from application and Guardian data. A lifecycle-owned delivery coordinator and
+from application and Guardian data. A lifecycle-owned delivery subprocess and
 dedicated Fabric SQLite worker processes perform bounded batching and recovery.
 The investigation UI composes Zero's DataTable,
 filter builder, detail surfaces, tokens and motion rather than a second UI stack.
@@ -145,7 +145,7 @@ or periodic image that can disappear after acknowledgment. Fabric owns migration
 identity, actors, queues, readers, recovery and shutdown. Do not open an unrelated
 SQLite connection inside a logger or reuse the app's schema as the log realm.
 
-Use a lifecycle-owned ingestion worker alongside Fabric's existing database
+Use a lifecycle-owned ingestion subprocess alongside Fabric's existing database
 actors. It validates/redacts envelopes, batches independent records, admits
 idempotent writes, advances delivery receipts and schedules retention/export work.
 Heavy export, hashing and compression stay out of request and SQLite transaction

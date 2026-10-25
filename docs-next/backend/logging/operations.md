@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -44,6 +44,13 @@ This can affect large bulk transactions; qualify import batch sizes explicitly.
 Source discovery/reconciliation can temporarily make an exact pending-event
 total unknown. `sourceDiscoveryPending` reports those sources separately; a
 zero known-event count does not mean discovery has completed.
+
+When the supervised delivery process is unavailable, authorized health reports
+`state: 'recovering'` instead of a misleading ready state. Source delivery
+failures include worker failures. Direct admissions can reject with
+`LOGGING_NOT_READY`; unknown dispatched outcomes retain their original identity
+for reconciliation. Durable source capture remains active during recovery and
+can eventually apply backpressure at the configured origin budget.
 
 Healthy source delivery wakes after commit rather than continuously polling an
 idle database. It submits bounded batches and acknowledges only confirmed sink
@@ -122,6 +129,12 @@ and confirms that exact event replay is a duplicate rather than another row.
 This proves that tested owner-crash path; it does not establish arbitrary
 custom launchers, every child-death timing, cross-platform behavior, storage
 restore procedures or independent checkpoint custody.
+
+Separate fault tests kill the delivery subprocess after a sink commit but
+before the source acknowledgment, then verify automatic restart and deduplicated
+reconciliation. Burst tests check batched delivery, bounded intake and
+commit-before-ack. Adversarial protocol tests reject manufactured envelopes,
+uncommitted acknowledgments and stale/nonmatching transport responses.
 
 ## Related Guides and Next Steps
 

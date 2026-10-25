@@ -13,7 +13,7 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -51,7 +51,9 @@ see the explicit coverage and qualification requirements below.
 The two streams have independent physical files and writer queues: `operational`
 for diagnostics and `audit` for structured activity evidence. Their SQLite work
 runs in Fabric subprocesses, outside the application database and Guardian's
-authority lease. This does not change SQLite's per-file write serialization.
+authority lease. A separate supervised delivery subprocess owns batching,
+source scheduling and retries. Bounded investigation reads use the log plane's
+read-only WAL workers. This does not change SQLite's per-file write serialization.
 
 Existing Guardian audit and observability APIs remain intact. The broader log
 plane mirrors newly appended Guardian events rather than deleting or replacing

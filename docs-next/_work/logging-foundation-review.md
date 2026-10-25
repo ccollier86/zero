@@ -134,8 +134,8 @@ exports.
 Source commit `09d31583e6c4160aaf2843e2d40079080fdbf16d` adds actor-local
 same-commit capture in managed named/tenant writers, immutable scope/policy
 bindings, a required actor-readiness proof, a private source catalog and
-existing-only restart recovery. Delivery uses dedicated Fabric log actors;
-its app-local coordinator schedules at most three sources concurrently with
+existing-only restart recovery. Delivery at that milestone uses dedicated Fabric log actors;
+its then-app-local coordinator schedules at most three sources concurrently with
 per-source backoff. It does not hold Guardian authority across delivery IPC.
 
 Durable spool capacity is separately configurable. Defaults are 50000 events
@@ -205,6 +205,94 @@ no reported problems) pass after these changes.
 TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
   src/logging/logging-compiled.integration.test.ts \
   src/frontend/server/database-automation-torrent.package.test.ts
+bun --no-env-file x tsc --noEmit
+bun --no-env-file docs-next/_work/checks/check.ts
+```
+
+## Dedicated Delivery Process Verification
+
+Source commit `29a594f5a5e720d0b440a26a61a8385e4befbe5e` moves source scheduling,
+event batching, backoff and drain loops out of the application process. A
+separately supervised subprocess uses the same validated actor launch with a
+distinct private marker. The public shared-entry bootstrap handles both child
+roles; there is no same-process delivery fallback. The app retains only
+transactional capture, live authorization, bounded admission/capability brokering
+and process supervision. Fabric still owns log writers and read-only WAL actors.
+
+The broker fences nonce, request identity, capacity and exact admitted event
+bodies. At most three source pages hold acknowledgment grants. A child cannot
+manufacture a sink event, alter an exposed source envelope, select arbitrary SQL
+or paths, or acknowledge an event without its matching committed receipt.
+Worker death retains origin queues and triggers bounded-backoff restart and
+source reconciliation. Unresolved direct admissions fail with an unknown
+outcome; application actions are not blindly retried.
+
+The focused regression selection passes 139 tests across 25 files with 2709
+assertions, including real source/Fabric workers, compiled owner recovery,
+delivery-worker SIGKILL after sink commit, exact replay, source rollback,
+protocol corruption, manufactured admissions, queue pressure, scoped APIs,
+existing subprocess lifecycle/launch contracts and managed app shutdown.
+The earlier 22-test selection overlaps and is not an additional unique-test
+total.
+
+Follow-up `7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d` bounds closing sources to
+one page per pass, including a source already being delivered when shutdown
+starts. Shutdown budgets use a monotonic clock. A deterministic regression
+advances that clock past the deadline during the first commit and verifies
+that only that page is acknowledged; the remaining 400 synthetic entries stay
+queued. The seven-test worker/channel/shutdown selection passes, overlapping
+the broader selection above. Optional phase reports now survive an overall
+test deadline so a slow drain cannot hide which phase overran.
+
+An added load case runs 64 investigation-page reads alongside a 20267-event
+source backlog, ongoing ingestion and eight busy login/refresh cycles. The
+existing per-operation two-second auth assertion remains unchanged; background
+automation retains its separate 45-second completion allowance. A latency miss
+during development led to removing redundant app-side envelope reconstruction;
+exact canonical admission and database-boundary validation remain intact.
+The revised case passes, including protected reads and all 51 automation
+deliveries. This is a tested bounded workload, not a universal throughput or
+zero-shared-resource-impact guarantee. Remaining backlog is preserved at shutdown.
+
+The final run against `7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d` completes the
+load case in about 51 seconds, including shutdown; the test's 90-second overall
+deadline, two-second per-auth-operation limit and 45-second background-work
+allowance are unchanged. Source delivery has no recorded failures in that run.
+Its remaining 11051 source entries stay queued rather than being discarded to
+make shutdown appear drained.
+
+The installed-package/export selection passes 18 tests across five files with
+79 assertions, including the monotonic closing-source regression. It installs
+a fresh archive, exercises the public managed startup/actor/API path, builds
+public browser/server entries, and checks the original public symbol/type
+identities. Root TypeScript and the documentation authoring check pass. These
+selections overlap earlier checks and do not constitute a new unique total or
+qualification of the full strict profile.
+
+A final frozen-source selection against the same follow-up passes 11 tests
+across five files with 2072 assertions: dedicated-worker death/recovery,
+compiled-owner recovery, file/hot source recovery, exact broker admission,
+transport corruption and the monotonic closing-source deadline. The authoring
+check still reports 828 unique reachable pages and no problems.
+
+```sh
+TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
+  src/logging src/databases/database-actor-entry.test.ts \
+  src/databases/subprocess-database-executor.test.ts \
+  src/databases/subprocess-database-server.test.ts \
+  src/databases/subprocess-database-working-directory.test.ts \
+  src/frontend/server/app-logging.integration.test.ts \
+  src/frontend/server/app-logging-api.integration.test.ts \
+  src/doctor/platform-doctor-logging.test.ts \
+  src/frontend/client/logging-client.test.ts \
+  src/frontend/client/logging-collector.test.ts
+TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
+  src/frontend/server/auth-hot-admission.integration.test.ts
+TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file test \
+  src/frontend/server/database-automation-torrent.package.test.ts \
+  src/package-exports.test.ts src/package-ui-exports.test.ts \
+  src/frontend/frontend-exports.test.ts \
+  src/logging/logging-delivery-scheduler.test.ts
 bun --no-env-file x tsc --noEmit
 bun --no-env-file docs-next/_work/checks/check.ts
 ```

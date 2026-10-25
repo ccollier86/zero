@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -166,6 +166,13 @@ with pending or active reconciliation; their exact event count may not yet be
 known. Do not add the two pending event counts: a delivered but
 unacknowledged source event can appear in both. Failure counters include retry
 attempts and are not counts of distinct lost business events.
+
+`pendingEvents` includes direct admissions and the delivery worker's active
+source admissions. When that process is recovering, health reports
+`state: 'recovering'`; worker failures contribute to `sourceDeliveryFailures`.
+This is separate from the continued availability of the Fabric log databases.
+The browser health response does not expose the private worker PID or its
+launch/environment settings.
 
 Domain errors distinguish invalid input, forbidden access, backpressure,
 unavailable capture, definite noncommit and unknown acknowledgment. Show safe
