@@ -2,12 +2,17 @@
 import { expect, test } from 'bun:test';
 import { cp, mkdir, mkdtemp, rename } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import sharp from 'sharp';
 
 const repository = resolve(import.meta.dir, '../..');
 const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const artifactRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/docs-plugin';
-const image = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg=='), character => character.charCodeAt(0));
+const image = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWMwTpv5HwAENAIyeXoBdAAAAABJRU5ErkJggg=='), character => character.charCodeAt(0));
 interface DocsPackageManifest { version: string; peerDependencies: { '@zero/framework': string } }
+
+test('the attachment fixture is a decodable PNG, not merely an HTTP-served byte sequence', async () => {
+  expect([...await sharp(image).raw().toBuffer()]).toEqual([51, 102, 153, 255]);
+});
 
 test('docs preview manifest requires the framework release containing shared keyboard hints', async () => {
   const manifest = await Bun.file(join(repository, 'packages/docs/package.json')).json() as DocsPackageManifest;
