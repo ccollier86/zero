@@ -1,4 +1,4 @@
-/** Managed origin capture and bounded delivery. Never awaits a sink inside a transaction or authority lease. */
+/** Managed same-transaction origin capture and fixed source capabilities. Delivery scheduling lives only in the subprocess. */
 import type { ReactiveDB } from '../sync/reactive-db';
 import { registerReactiveDBMutationContribution } from '../sync/reactive-db-mutation-interceptor';
 import { registerAuthAuditCapture } from '../auth/auth-audit-capture';
@@ -13,16 +13,18 @@ import { currentLoggingAttribution } from './logging-attribution';
 export function installLoggingSourceCapture(logging: LoggingRuntime, application: ReactiveDB, system: ReactiveDB,
   tenantFields: Readonly<Record<string, string>> = {}, onFailure: () => void = () => {}) {
   const app = new LoggingSourceOutbox(application, logging.config.sourceQueue), auth = new LoggingSourceOutbox(system, logging.config.sourceQueue);
-  let closed = false, closing = false, task: Promise<void> | null = null, closeTask: Promise<void> | null = null, failed = 0;
-  let wakeup = false, retryTimer: ReturnType<typeof setTimeout> | null = null, consecutiveFailures = 0;
+  let closing = false, closeTask: Promise<void> | null = null;
+  const registrations = [app, auth].map(source => logging.registerDeliverySource({
+    page(acknowledge) {
+      if (acknowledge.length) source.acknowledge(acknowledge);
+      return { rows: source.page(), ...source.counts() };
+    },
+    failed: onFailure,
+  }));
   type SourceDiagnostics = Readonly<{ application: { queued: number; bytes: number }; guardian: { queued: number; bytes: number }; failed: number }>;
   let finalDiagnostics: SourceDiagnostics | null = null;
-  const diagnostics = (): SourceDiagnostics => finalDiagnostics ?? Object.freeze({ application: Object.freeze(app.counts()), guardian: Object.freeze(auth.counts()), failed });
-  const schedule = () => {
-    if (closed || closing || wakeup || retryTimer) return; wakeup = true;
-    queueMicrotask(() => { wakeup = false; if (!closed && !closing) void drain(); });
-  };
-  const committed = (db: ReactiveDB) => db.afterCommit(schedule);
+  const diagnostics = (): SourceDiagnostics => finalDiagnostics ?? Object.freeze({ application: Object.freeze(app.counts()), guardian: Object.freeze(auth.counts()), failed: registrations.reduce((n, r) => n + r.diagnostics().failed, 0) });
+  const committed = (db: ReactiveDB) => db.afterCommit(() => { if (!closing) registrations[db === application ? 0 : 1]!.wake(); });
   const context = (sourceId: string): LoggingContext => ({ sourceId, origin: 'system', scope: { kind: 'application', tenantId: null },
     actor: { kind: 'system', id: 'zero.database', sessionId: null, initiatorId: null }, requestId: null, correlationId: null, policyVersion: logging.config.policyVersion });
   const removeMutation = registerReactiveDBMutationContribution(application, ({ change }) => {
@@ -54,46 +56,15 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
     auth.enqueue(captureLoggingEvent(c, { id: event.eventId, family: 'security', action: event.action, outcome: event.outcome, evidence: 'server-confirmed', occurredAt: event.occurredAt }));
     committed(system);
   });
-  const drain = (): Promise<void> => {
-    if (task) return task;
-    task = (async () => {
-      for (const source of [app, auth]) for (let batch = 0; batch < 4; batch++) {
-        if (closed) return;
-        if (closing && batch > 0) break;
-        const rows = source.page(); if (!rows.length) break;
-        const results = await Promise.allSettled(rows.map(row => logging.deliver(row.event)));
-        const acknowledged = rows.filter((_, i) => results[i]!.status === 'fulfilled').map(row => row.id);
-        if (acknowledged.length) source.acknowledge(acknowledged);
-        const error = results.find((r): r is PromiseRejectedResult => r.status === 'rejected'); if (error) throw error.reason;
-      }
-      consecutiveFailures = 0;
-    })().catch(() => {
-      failed++; consecutiveFailures++;
-      if (consecutiveFailures === 1) try { onFailure(); } catch { /* Failure counters remain observable even if an external diagnostic sink fails. */ }
-      if (!closed && !closing && !retryTimer) { retryTimer = setTimeout(() => { retryTimer = null; void drain(); }, Math.min(30000, 1000 * 2 ** Math.min(5, consecutiveFailures - 1))); retryTimer.unref?.(); }
-    }).finally(() => {
-      task = null;
-      if (!closed && !closing && !retryTimer && (app.counts().queued || auth.counts().queued)) schedule();
-    });
-    return task;
-  };
-  schedule();
   return Object.freeze({
-    async flush() { await task; await drain(); },
+    flush() { return logging.flushDeliverySources(registrations); },
     diagnostics,
     close() {
       if (closeTask) return closeTask;
-      closing = true; removeMutation(); removeAuth(); if (retryTimer) clearTimeout(retryTimer);
+      closing = true; removeMutation(); removeAuth();
       closeTask = (async () => {
-        try {
-          await task;
-          // Admission is closed; drain bounded groups, preserving any remaining durable backlog.
-          // Drain that finite backlog, but never spin on an unavailable sink.
-          const deadline = Date.now() + 5000;
-          for (let pass = 0; pass < 80 && Date.now() < deadline && (app.counts().queued || auth.counts().queued); pass++) {
-            const failures = failed; await drain(); if (failed !== failures) break;
-          }
-        } finally { try { finalDiagnostics = diagnostics(); } finally { closed = true; } }
+        try { await logging.closeDeliverySources(registrations); }
+        finally { finalDiagnostics = diagnostics(); }
       })();
       return closeTask;
     },

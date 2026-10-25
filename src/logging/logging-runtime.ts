@@ -1,9 +1,11 @@
-/** App-local logging owner. Fabric owns SQLite execution; no application auth lease is held across delivery. */
+/** App-local facade and capability owner. A dedicated subprocess owns batching/source delivery; Fabric owns SQLite. */
 import { DatabaseCoordinator, type DatabaseCoordinatorLease } from '../databases/database-coordinator';
 import { createAsyncDatabaseClient } from '../databases/database-client';
 import type { AsyncDatabaseOperationExecutor } from '../databases/database-operations';
 import { createDatabaseObservability } from '../databases/database-observability';
 import type { PlatformObservabilityRuntime } from '../observability/types';
+import { emitPlatformCodeTo } from '../observability/sink';
+import { OBS_CODES } from '../observability/codes';
 import type { LoggingContext, LoggingEvent, LoggingEventInput, LoggingPage, LoggingQuery, LoggingReadScope, LoggingReceipt, LoggingStream } from './logging-contracts';
 import type { ResolvedManagedLoggingConfig } from './logging-managed-config';
 import { loggingCaptures } from './logging-config';
@@ -11,14 +13,16 @@ import { LoggingError } from './logging-error';
 import { LoggingFabricStore } from './logging-fabric-store';
 import { loggingRealm } from './logging-realm';
 import { captureLoggingEvent, normalizeLoggingEvent } from './logging-validation';
-import { LoggingWriter } from './logging-writer';
+import { LoggingDeliveryProcess } from './logging-delivery-process';
+import type { DeliverySourcePort, DeliverySourceRegistration } from './logging-delivery-protocol';
 import type { LoggingCheckpoint, LoggingEvidencePage, LoggingVerification } from './logging-evidence-contracts';
 
-interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store: LoggingFabricStore; readonly writer: LoggingWriter }
+interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store: LoggingFabricStore }
 
 /** Private composition service, not an authorization facade. Callers must supply trusted attribution and query scope. */
 export class LoggingRuntime {
   private readonly streams = new Map<LoggingStream, StreamOwner>();
+  private delivery: LoggingDeliveryProcess | null = null;
   private state: 'opening' | 'ready' | 'draining' | 'closed' | 'close-failed' = 'opening';
   private closeTask: Promise<void> | null = null;
   private source: { flush(): Promise<void>; diagnostics(): Readonly<{ application: { queued: number; bytes: number }; guardian: { queued: number; bytes: number }; failed: number }> } | null = null;
@@ -39,13 +43,18 @@ export class LoggingRuntime {
   }
   private committed(stream: LoggingStream): void { for (const listener of this.listeners.get(stream) ?? []) { try { listener(); } catch { /* Hints cannot fail a committed write. */ } } }
   private retained(event: LoggingEvent): Promise<LoggingReceipt> {
-    return this.streams.get(event.stream)!.writer.write(event).then(receipt => { this.committed(event.stream); return receipt; });
+    return this.delivery!.write(event);
   }
 
   /** @internal Same-commit source delivery is installed only by managed composition. */
   attachSource(source: NonNullable<LoggingRuntime['source']>): void { this.source = source; }
   /** @internal Independent managed actor sources are a separate discovery/delivery owner. */
   attachFabricSource(source: NonNullable<LoggingRuntime['fabricSource']>): void { this.fabricSource = source; }
+  /** @internal Register a fixed source capability with the separately supervised delivery worker. */
+  registerDeliverySource(source: DeliverySourcePort): DeliverySourceRegistration { this.assertReady(); return this.delivery!.registerSource(source); }
+  /** @internal Grouped lifecycle fences avoid one shutdown budget per tenant. */
+  flushDeliverySources(sources: readonly DeliverySourceRegistration[]): Promise<void> { return this.delivery!.flushSources(sources.map(source => source.id)); }
+  closeDeliverySources(sources: readonly DeliverySourceRegistration[]): Promise<void> { return this.delivery!.closeSources(sources.map(source => source.id)); }
 
   private constructor(readonly config: ResolvedManagedLoggingConfig, private readonly coordinator: DatabaseCoordinator) {}
 
@@ -68,9 +77,12 @@ export class LoggingRuntime {
       for (const stream of ['audit', 'operational'] as const) {
         const lease = await coordinator.acquire('logging:' + stream);
         const store = new LoggingFabricStore(createAsyncDatabaseClient({ executor: lease as AsyncDatabaseOperationExecutor }), stream);
-        owner.streams.set(stream, { lease, store, writer: new LoggingWriter(store, config.policy.queue) });
+        owner.streams.set(stream, { lease, store });
         await store.page({ kind: 'platform' }, { limit: 1 });
       }
+      owner.delivery = await LoggingDeliveryProcess.open(config.createExecutor, config.policy.queue, async (stream, events) => {
+        const result = await owner.streams.get(stream)!.store.append(events); owner.committed(stream); return result;
+      }, () => emitPlatformCodeTo(fallback, OBS_CODES.LOGGING_DELIVERY_FAILED));
       owner.state = 'ready';
       if (config.retention.auditDays !== null || config.retention.operationalDays !== null) {
         owner.maintenanceTimer = setInterval(() => { void owner.maintain().catch(() => { owner.maintenanceFailed++; }); }, 60000);
@@ -136,7 +148,7 @@ export class LoggingRuntime {
   }
 
   /** Join all currently admitted work, including failed batches, without closing intake. */
-  async flush(): Promise<void> { await joinOwned([this.source?.flush() ?? Promise.resolve(), this.fabricSource?.flush() ?? Promise.resolve()]); await joinOwned([...this.streams.values()].map(owner => owner.writer.flush())); }
+  async flush(): Promise<void> { await joinOwned([this.source?.flush() ?? Promise.resolve(), this.fabricSource?.flush() ?? Promise.resolve()]); await this.delivery?.flush(); }
 
   /** Close admission, drain both streams, release capabilities and join all actor shutdowns exactly once. */
   close(): Promise<void> {
@@ -159,7 +171,8 @@ export class LoggingRuntime {
       sources: this.source?.diagnostics() ?? null,
       fabricSources: this.fabricSource?.diagnostics() ?? null,
       maintenanceFailed: this.maintenanceFailed,
-      streams: Object.freeze(Object.fromEntries([...this.streams].map(([stream, owner]) => [stream, owner.writer.diagnostics()]))),
+      deliveryWorker: this.delivery?.workerDiagnostics() ?? null,
+      streams: Object.freeze(Object.fromEntries([...this.streams].map(([stream]) => [stream, this.delivery?.diagnostics(stream) ?? { pendingEvents: 0, failed: 0 }]))),
       databases: Object.freeze({ state: database.state, files: database.databaseFiles, activeOperations: database.activeOperations, heldAuthorityLeases: database.heldAuthorityLeases }),
     });
   }
@@ -171,7 +184,7 @@ export class LoggingRuntime {
   private async closeOwned(): Promise<void> {
     const failures: unknown[] = [];
     try { await this.maintenanceTask; } catch (error) { failures.push(error); }
-    try { await joinOwned([...this.streams.values()].map(owner => owner.writer.stop())); } catch (error) { failures.push(error); }
+    try { await this.delivery?.close(); } catch (error) { failures.push(error); }
     for (const owner of this.streams.values()) {
       try { owner.lease.release(); } catch (error) { failures.push(error); }
     }

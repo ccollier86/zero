@@ -56,6 +56,11 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       kind: 'command', name: 'proof.seed', output: { functions: 51, invocations: 768, history: 19_448 },
     });
     mark('seeded');
+    // Investigations use the separate log-plane WAL reader while ingestion
+    // continues. They must not make the source/auth authority wait on history.
+    const investigations = (async () => {
+      for (let i = 0; i < 64; i++) { await logger!.page('audit', { kind: 'platform' }, { limit: 100 }); await Bun.sleep(5); }
+    })().then(() => null, error => error);
 
     // Each real actor work item owns shared authority until its reply settles.
     // Release it only after a competing auth request has had time to queue.
@@ -87,6 +92,7 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       body: JSON.stringify({ username, password: 'wrong-password' }) });
     expect(denied.status).toBe(401);
     expect((await denied.json() as { code: string }).code).toBe('INVALID_CREDENTIALS');
+    const investigationError = await investigations; if (investigationError) throw investigationError; mark('investigation-reads-complete');
     // This case now also durably captures the 20,267 seeded mutations. Give
     // background disk work its own budget; auth above keeps a separate strict
     // latency assertion rather than inheriting the backlog-drain allowance.

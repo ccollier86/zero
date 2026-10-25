@@ -120,6 +120,15 @@ export type SubprocessDatabaseExecutorFactory = (
   context: DatabaseActorExecutorFactoryContext,
 ) => SubprocessDatabaseExecutor;
 
+const launchBindings = new WeakMap<SubprocessDatabaseExecutorFactory, Readonly<{
+  prefix: readonly [string, ...string[]]; env: Readonly<Record<string, string>>;
+}>>();
+
+/** @internal Reuse a validated, detached launch without exposing it through a request/client facade. */
+export function databaseActorFactoryLaunch(factory: SubprocessDatabaseExecutorFactory) {
+  return launchBindings.get(factory) ?? null;
+}
+
 /** Build one immutable, shell-free actor command with an exact private suffix. */
 export function buildDatabaseActorCommand(
   options: BuildDatabaseActorCommandOptions,
@@ -168,6 +177,7 @@ export function createSubprocessDatabaseExecutorFactory(
       ...executor,
     }, isolateWorkingDirectory);
   };
+  launchBindings.set(factory, Object.freeze({ prefix, env }));
   return Object.freeze(factory);
 }
 

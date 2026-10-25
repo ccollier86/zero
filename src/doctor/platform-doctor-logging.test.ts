@@ -9,5 +9,6 @@ test('disabled logging adds no logging findings; enabled capture reports declare
   expect(findings.some(f => f.code === 'logging.api.no_auth')).toBe(true);
   expect(findings.some(f => f.code === 'logging.retention.indefinite')).toBe(true);
   expect(findings.some(f => f.code === 'logging.coverage.declared')).toBe(true);
+  expect(findings.some(f => f.code === 'logging.delivery.process')).toBe(true);
   expect(findings.some(f => /compliance.*ready|certified/.test(f.code))).toBe(false);
 });

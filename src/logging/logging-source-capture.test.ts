@@ -10,15 +10,36 @@ import type { LoggingEvent } from './logging-contracts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { LoggingDeliveryProcess } from './logging-delivery-process';
+import type { ResolvedManagedLoggingConfig } from './logging-managed-config';
+import type { DeliverySourceRegistration } from './logging-delivery-protocol';
+
+async function sourceOwner(root: string, deliver: (event: LoggingEvent) => Promise<unknown>) {
+  const config = resolveManagedLoggingConfig({ preset: 'activity' }, root) as ResolvedManagedLoggingConfig;
+  const ordinals = new Map<string, number>();
+  const worker = await LoggingDeliveryProcess.open(config.createExecutor, config.policy.queue, async (_stream, events) => {
+    const receipts = [];
+    for (const event of events) {
+      await deliver(event); const key = event.sourceId + ':' + event.id, duplicate = ordinals.has(key);
+      if (!duplicate) ordinals.set(key, ordinals.size + 1);
+      receipts.push({ id: event.id, sourceId: event.sourceId, ordinal: ordinals.get(key)!, duplicate });
+    }
+    return { receipts, sequence: { seq: 0 } };
+  });
+  const logging = { config,
+    registerDeliverySource: worker.registerSource.bind(worker),
+    flushDeliverySources: (sources: readonly DeliverySourceRegistration[]) => worker.flushSources(sources.map(r => r.id)),
+    closeDeliverySources: (sources: readonly DeliverySourceRegistration[]) => worker.closeSources(sources.map(r => r.id)),
+  } as unknown as LoggingRuntime;
+  return { logging, worker };
+}
 
 test('capture joins the original commit, preserves automation hooks, excludes values and retries after a sink outage', async () => {
   const application = createReactiveDB({ mode: 'memory' }), system = createReactiveDB({ mode: 'memory' });
   application.defineTable('records', { id: 'text primary key', tenant_id: 'text', content: 'text' });
   let offline = true, automations = 0, failures = 0;
   const retained: LoggingEvent[] = [];
-  const logging = { config: resolveManagedLoggingConfig({ preset: 'activity' }, '/tmp'),
-    async deliver(event: LoggingEvent) { if (offline) throw new Error('Unavailable'); retained.push(event); return { id: event.id }; },
-  } as unknown as LoggingRuntime;
+  const { logging, worker } = await sourceOwner('/tmp', async event => { if (offline) throw new Error('Unavailable'); retained.push(event); });
   const detach = registerReactiveDBMutationInterceptor(application, () => { automations++; });
   const capture = installLoggingSourceCapture(logging, application, system, { records: 'tenant_id' }, () => { failures++; });
   try {
@@ -41,29 +62,27 @@ test('capture joins the original commit, preserves automation hooks, excludes va
     const outbox = new LoggingSourceOutbox(application);
     expect(outbox.sourceId).toBe(new LoggingSourceOutbox(application).sourceId);
     await Promise.all([capture.close(), capture.close()]);
-  } finally { detach(); await capture.close(); application.dispose(); system.dispose(); }
-});
+  } finally { detach(); await capture.close(); await worker.close(); application.dispose(); system.dispose(); }
+}, 30000);
 
 test('a required audit admission failure rolls back the mutation, not just its evidence', async () => {
   const application = createReactiveDB({ mode: 'memory' }), system = createReactiveDB({ mode: 'memory' });
   application.defineTable('records', { id: 'text primary key', tenant_id: 'text' });
-  const logging = { config: resolveManagedLoggingConfig({ preset: 'activity' }, '/tmp'), deliver: async () => ({}) } as unknown as LoggingRuntime;
+  const { logging, worker } = await sourceOwner('/tmp', async () => {});
   const capture = installLoggingSourceCapture(logging, application, system, { records: 'tenant_id' });
   try {
     expect(() => application.create('records', { id: 'bad' })).toThrow('Tenant audit attribution');
     expect(application.get('records', 'bad')).toBeNull();
     expect(capture.diagnostics().application.queued).toBe(0);
-  } finally { await capture.close(); application.dispose(); system.dispose(); }
-});
+  } finally { await capture.close(); await worker.close(); application.dispose(); system.dispose(); }
+}, 30000);
 
 test('an unresolved sink acknowledgment leaves a file-backed origin queue recoverable across source reopen', async () => {
   const root = await mkdtemp(join(tmpdir(), 'logging-origin-recovery-')), path = join(root, 'application.db');
   let application = createReactiveDB({ mode: 'file', path }), system = createReactiveDB({ mode: 'memory' });
   application.defineTable('records', { id: 'text primary key' });
   const committed = new Set<string>(); let fail = true;
-  const logging = { config: resolveManagedLoggingConfig({ preset: 'activity' }, root), async deliver(event: LoggingEvent) {
-    committed.add(event.sourceId + ':' + event.id); if (fail) throw new Error('Synthetic acknowledgment lost'); return { id: event.id };
-  } } as unknown as LoggingRuntime;
+  const { logging, worker } = await sourceOwner(root, async event => { committed.add(event.sourceId + ':' + event.id); if (fail) throw new Error('Synthetic acknowledgment lost'); });
   let capture = installLoggingSourceCapture(logging, application, system);
   try {
     application.create('records', { id: 'durable' }); await capture.flush();
@@ -74,5 +93,5 @@ test('an unresolved sink acknowledgment leaves a file-backed origin queue recove
     fail = false; capture = installLoggingSourceCapture(logging, application, system); await capture.flush();
     expect(new LoggingSourceOutbox(application).sourceId).toBe(sourceId);
     expect(application.get('records', 'durable')).not.toBeNull(); expect(capture.diagnostics().application.queued).toBe(0); expect(committed.size).toBe(1);
-  } finally { await capture.close(); application.dispose(); system.dispose(); await rm(root, { recursive: true, force: true }); }
-});
+  } finally { await capture.close(); await worker.close(); application.dispose(); system.dispose(); await rm(root, { recursive: true, force: true }); }
+}, 30000);

@@ -118,11 +118,11 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     async health() {
       await revalidate(); permitPlatformManagement(); const d = runtime.diagnostics();
       const streams = Object.values(d.streams) as { pendingEvents: number; failed: number }[];
-      return Object.freeze({ state: d.state, preset: d.preset, coverage: d.coverage,
+      return Object.freeze({ state: d.state === 'ready' && d.deliveryWorker?.state === 'recovering' ? 'recovering' : d.state, preset: d.preset, coverage: d.coverage,
         pendingEvents: streams.reduce((n, s) => n + s.pendingEvents, 0), failedEvents: streams.reduce((n, s) => n + s.failed, 0),
         sourcePendingEvents: (d.sources?.application.queued ?? 0) + (d.sources?.guardian.queued ?? 0) + (d.fabricSources?.queued ?? 0),
         sourceDiscoveryPending: d.fabricSources?.pendingSources ?? 0,
-        sourceDeliveryFailures: (d.sources?.failed ?? 0) + (d.fabricSources?.failed ?? 0), maintenanceFailures: d.maintenanceFailed });
+        sourceDeliveryFailures: (d.sources?.failed ?? 0) + (d.fabricSources?.failed ?? 0) + (d.deliveryWorker?.failures ?? 0), maintenanceFailures: d.maintenanceFailed });
     },
     async run(operation) {
       const captured = context('backend'); await revalidate(); assertCurrent();

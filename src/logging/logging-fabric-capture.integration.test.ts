@@ -23,6 +23,7 @@ import { DATABASE_FILE_PLACEMENT_POLICY, DATABASE_HOT_SHORTHAND_PLACEMENT_POLICY
 import { installDatabaseLoggingBinding, prepareDatabaseLoggingBinding } from '../databases/database-logging-binding';
 import { normalizeLoggingSourceLimits } from './logging-source-limits';
 import type { DatabaseExecutorValue } from '../databases/database-executor';
+import type { LoggingFabricStore } from './logging-fabric-store';
 
 test.each(['file', 'hot'] as const)('independent %s Fabric capture preserves tenant attribution, transaction rollback and restart recovery after sink acknowledgment loss', async placement => {
   const root = await mkdtemp(join(tmpdir(), 'logging-tenant-capture-'));
@@ -31,8 +32,12 @@ test.each(['file', 'hot'] as const)('independent %s Fabric capture preserves ten
     { sink: store, store, config: { console: false } });
   let manager: DatabaseManager | undefined, capture: ReturnType<typeof installLoggingFabricCapture> = null;
   let fail = true;
-  const delivered = new Set<string>(), realDeliver = logging.deliver.bind(logging);
-  logging.deliver = async (event: LoggingEvent) => { const result = await realDeliver(event); delivered.add(event.id); if (fail) throw new Error('Synthetic lost receipt'); return result; };
+  const delivered = new Set<string>();
+  // Fault the actual private sink after commit, not the public direct-event
+  // facade: source delivery now originates in the dedicated subprocess.
+  const sink = (logging as unknown as { streams: Map<string, { store: LoggingFabricStore }> }).streams.get('audit')!.store;
+  const append = sink.append.bind(sink);
+  sink.append = async events => { const result = await append(events); events.forEach(event => delivered.add(event.id)); if (fail) throw new Error('Synthetic lost receipt'); return result; };
   const open = () => {
     const systemRuntime = DatabaseRuntime.open({ id: 'system', role: 'system', sqlite: createPlatformSQLiteService({ mode: 'file', path: join(root, 'system.db') }), ownsSQLite: true });
     const appRuntime = DatabaseRuntime.open({ id: 'default', role: 'default', sqlite: createPlatformSQLiteService({ mode: 'file', path: join(root, 'application.db') }), ownsSQLite: true });
