@@ -18,6 +18,10 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Application data facade and PracticeIQ preparation](./application-data-facade.md):
+  shared primary/Fabric operations, authority/receipt/realtime tests and private
+  migration-map guards without a live app conversion.
+
 - [Payments follow-up review](./payments-review.md): 0.2.1 policy parity, exact
   retry parameters, concurrent ownership and canonical-response validation.
 

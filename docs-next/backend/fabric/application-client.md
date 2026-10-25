@@ -13,10 +13,10 @@ modes: [single-tenant, ephemeral, file, hot, tenant-database]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "8a3334ca71dd6bb291522447f8a07ef1fa98caf9"
-  snapshot: dirty
+  commit: "73022b37deacfdd33cbefb24f329d2656eaf4b76"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Use One Async Application Data API
