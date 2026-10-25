@@ -3,20 +3,24 @@ id: zero.configuration.sitemap
 type: how-to
 audience: [developer, agent, operator]
 owner: platform-configuration
-status: draft
+status: in-review
 visibility: internal
 system: platform-configuration
 feature: sitemap
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0 SEO extension on feature/seo-foundation; pin the qualified archive"]
 modes: [managed-server]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "e6a817b87e9f661af0b9a44b14caed3733993c96"
   snapshot: clean
-  date: "2026-10-05"
-  evidence_level: source-observed
+  date: "2026-10-25"
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "e6a817b87e9f661af0b9a44b14caed3733993c96"
+    sha256: "02e7ca3c2b1ea6da43ed45087674fea3c37c515d19d977b4457b37b8e1a3d97d"
 ---
 
 # Generate A Public Sitemap

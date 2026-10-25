@@ -13,10 +13,14 @@ modes: [managed-server, SSR, client-shell, native-plugin-pages]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "e6a817b87e9f661af0b9a44b14caed3733993c96"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "e6a817b87e9f661af0b9a44b14caed3733993c96"
+    sha256: "02e7ca3c2b1ea6da43ed45087674fea3c37c515d19d977b4457b37b8e1a3d97d"
 ---
 
 # Configure Site Metadata and Search Discovery
@@ -33,6 +37,25 @@ This extension belongs to the SEO feature branch. A historical `2.6.0` archive
 does not establish that these exports or options exist; pin the qualified source
 commit and archive before adopting them. The optional docs package must also
 contain its corresponding integration.
+
+## Qualified Feature Snapshot
+
+The clean source commit `e6a817b87e9f661af0b9a44b14caed3733993c96` was
+qualified with fresh framework **2.6.0** and optional docs **0.1.1** archives
+on Bun 1.3.14. The framework SHA-256 is recorded above; its paired docs archive
+SHA-256 is `53d353902d0787b5178fa5ce9260a128fdeb576a13e8ea237f5e05dde9e26179`.
+Pin both when using the documentation integration. Registry publication and
+selection as the stable main release are separate operations, not implied by
+this qualification.
+
+Qualification covered public package imports, the normal build CLI, relocated
+JavaScript and compiled source-free deployments, real browser hydration under
+nonce CSP, desktop/mobile themes and layouts, keyboard search/navigation,
+copy controls, no-JavaScript readability and private-publication exclusions.
+The package test and its provenance are maintained in
+`packages/docs/package-installed.integration.test.ts`. Source checks also cover
+metadata inheritance/escaping, preview policy, ISR headers and sitemap admission.
+No live application data was used or migrated.
 
 ## Start With Site Defaults
 
