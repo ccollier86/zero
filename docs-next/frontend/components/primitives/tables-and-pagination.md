@@ -59,6 +59,13 @@ PaginationLink accepts native anchor props, isActive and Button size (icon defau
 marking an active page with aria-current='page'. Previous/Next use labeled anchors.
 Ellipsis is presentation with visually hidden text.
 
+On `feature/blog-foundation`, Pagination additionally accepts
+`variant='default'|'editorial'`. default preserves the existing controls;
+editorial uses tokenized rounded page links for public content. This is a
+presentation variant, not a new pagination controller. The
+[BlogPagination wrapper](../public-pages/blog/parts.md#search-and-pagination)
+adds bounded page windows, known-count text and inert disabled edges.
+
 The app supplies href/click behavior and known page numbers. There is no implicit
 backend count, next-cursor, pending state or disabled-anchor enforcement. Do not
 invent total/last-page links for a cursor result with unknown totals. Use

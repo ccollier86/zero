@@ -74,3 +74,5 @@ export type {
   CollapsibleContentProps,
   CollapsibleContextType,
 } from '../../../components/collapsible';
+export { CommandPalette, CommandPaletteTrigger, filterCommandPaletteItems } from '../../../components/command-palette';
+export type { CommandPaletteProps, CommandPaletteItem, CommandPaletteGroup } from '../../../components/command-palette';

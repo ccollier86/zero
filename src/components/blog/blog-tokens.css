@@ -1,0 +1,81 @@
+/* Archive editorial proportions, Zero semantic paint/type/motion. Scoped aliases do not change app themes. */
+.zero-blog, .zero-blog-overlay {
+  --zero-blog-background: var(--public-background, var(--background));
+  --zero-blog-surface: var(--public-surface, var(--card));
+  --zero-blog-raised: var(--public-surface-raised, var(--popover));
+  --zero-blog-text: var(--public-foreground, var(--foreground));
+  --zero-blog-secondary: var(--public-muted-foreground, var(--muted-foreground));
+  --zero-blog-muted: var(--public-muted, var(--muted));
+  --zero-blog-border: var(--public-border, var(--border));
+  --zero-blog-accent: var(--public-accent, var(--primary));
+  --zero-blog-accent-foreground: var(--public-accent-foreground, var(--primary-foreground));
+  --zero-blog-accent-soft: var(--public-accent-soft, var(--accent));
+  --zero-blog-ring: var(--public-ring, var(--ring));
+  --zero-blog-success: var(--success);
+  --zero-blog-warning: var(--warning);
+  --zero-blog-danger: var(--destructive);
+  --zero-blog-font: var(--public-font-sans, var(--zero-theme-font-body, var(--font-platform-sans)));
+  --zero-blog-mono: var(--zero-theme-font-mono, var(--font-platform-mono));
+  --zero-blog-type-body: 1rem;
+  --zero-blog-type-prose: 1.125rem;
+  --zero-blog-type-small: var(--zero-type-label-size, .875rem);
+  --zero-blog-type-caption: var(--zero-type-caption-size, .75rem);
+  --zero-blog-type-label: .6875rem;
+  --zero-blog-type-title: clamp(2rem, 4vw, 3rem);
+  --zero-blog-type-article-title: clamp(2.25rem, 5vw, 3.75rem);
+  --zero-blog-type-heading: var(--zero-type-heading-size, 1.375rem);
+  --zero-blog-type-card-title: 1.25rem;
+  --zero-blog-leading-body: 1.6;
+  --zero-blog-leading-prose: 1.8;
+  --zero-blog-leading-heading: 1.2;
+  --zero-blog-weight-regular: var(--zero-type-body-weight, 400);
+  --zero-blog-weight-medium: var(--zero-type-label-weight, 500);
+  --zero-blog-weight-heading: var(--zero-type-heading-weight, 600);
+  --zero-blog-tracking-heading: -.025em;
+  --zero-blog-space-1: var(--zero-theme-space-1, .25rem);
+  --zero-blog-space-2: var(--zero-theme-space-2, .5rem);
+  --zero-blog-space-3: var(--zero-theme-space-3, .75rem);
+  --zero-blog-space-4: var(--zero-theme-space-4, 1rem);
+  --zero-blog-space-5: var(--zero-theme-space-5, 1.25rem);
+  --zero-blog-space-6: var(--zero-theme-space-6, 1.5rem);
+  --zero-blog-space-8: var(--zero-theme-space-8, 2rem);
+  --zero-blog-space-10: 2.5rem;
+  --zero-blog-space-12: 3rem;
+  --zero-blog-space-16: 4rem;
+  --zero-blog-page-width: 80rem;
+  --zero-blog-prose-width: 48rem;
+  --zero-blog-toc-width: 16rem;
+  --zero-blog-sidebar-top: 5rem;
+  --zero-blog-radius: var(--zero-theme-radius-panel, calc(var(--radius) + .5rem));
+  --zero-blog-radius-small: var(--zero-theme-radius-control, var(--radius));
+  --zero-blog-border-width: 1px;
+  --zero-blog-shadow: var(--public-shadow-floating, var(--shadow-lg));
+  --zero-blog-avatar-small: 1.75rem;
+  --zero-blog-avatar: 2.5rem;
+  --zero-blog-avatar-large: 4rem;
+  --zero-blog-icon: 1rem;
+  --zero-blog-control-height: 2.5rem;
+  --zero-blog-lightbox-height: 70dvh;
+  --zero-blog-player-seek-min-width: 6rem;
+  --zero-blog-waveform-height: 3rem;
+  --zero-blog-volume-width: 4rem;
+  --zero-blog-focus-width: 2px;
+  --zero-blog-media-aspect: 16 / 9;
+  --zero-blog-hero-aspect: 2 / 1;
+  --zero-blog-feature-aspect: 4 / 3;
+  --zero-blog-disabled-opacity: .5;
+  --zero-blog-duration-fast: var(--zero-theme-duration-fast, 160ms);
+  --zero-blog-duration-standard: var(--zero-theme-duration-standard, 240ms);
+  --zero-blog-duration-enter: var(--zero-theme-duration-considered, 480ms);
+  --zero-blog-ease: var(--zero-theme-ease-standard, cubic-bezier(.22,1,.36,1));
+  --zero-blog-hover-lift: var(--zero-theme-card-hover-lift, 2px);
+  --zero-blog-media-zoom: var(--zero-theme-card-media-zoom, 1.04);
+  --zero-blog-media-duration: var(--zero-theme-card-hover-in-duration, 960ms);
+  --zero-blog-enter-distance: var(--zero-theme-card-status-blur, 4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .zero-blog, .zero-blog-overlay {
+    --zero-blog-duration-fast: 0ms; --zero-blog-duration-standard: 0ms; --zero-blog-duration-enter: 0ms;
+    --zero-blog-media-duration: 0ms; --zero-blog-hover-lift: 0px; --zero-blog-media-zoom: 1; --zero-blog-enter-distance: 0px;
+  }
+}

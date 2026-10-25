@@ -42,6 +42,8 @@ use [Application UI development](../../../guides/application-ui-development.md).
 - [CodeBlock rendering](./code-block-rendering.md) covers highlights/metadata, safe SSR and Markdown adapters.
 - [CodeBlock examples](./code-block-examples.md) covers compact snippets and optional package-manager preferences.
 - [Collections](./collections.md) covers BentoGrid, AnimatedList and ExpandableCards.
+- [Blog UI](./blog/index.md) adds Magazine and sidebar article defaults, rich search,
+  cards, TOC, media and tokenized editorial parts; publishing remains a later phase.
 - [Configuration](./configuration.md) lists import/type/prop ownership.
 - [Roadmap](./roadmap.md) distinguishes known richer public/editor/plugin ideas.
 

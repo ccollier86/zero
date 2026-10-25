@@ -21,6 +21,10 @@ reviewed_against:
 
 # Command Palettes
 
+For a complete managed, two-panel search experience, use the additive
+[CommandPalette](../controls/command-palette.md) preview. The primitives below
+remain available for inline commands and deliberate custom composition.
+
 [Primitive index](./index.md) · [Frontend index](../../index.md) · [Documentation index](../../../index.md)
 
 The `@zero/framework/components/ui/command` module exports Command,

@@ -4,6 +4,16 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added the UI-only blog family under `@zero/framework/blog`, with Magazine
+  listing and contained-hero/right-TOC article defaults, scoped design tokens,
+  cards, author/category parts, typed content blocks and managed media previews.
+  Added a reusable rich CommandPalette built on the existing modal/command/
+  magnetic/scroll owners, awaited selection and explicit shortcut opt-in.
+  Editorial pagination is an additive shared variant; prior defaults and public
+  branding remain intact. Publishing, user-backed authors, a block editor and
+  automatic SEO integration are planned separately; no database migration,
+  independent theme switcher, tracking or blog backend is installed.
+
 - Keep CSS Tree's existing email CSS grammar validation intact in relocated
   server/compiled builds by bundling its public static-data entry instead of
   leaving runtime-relative JSON reads.

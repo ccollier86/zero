@@ -239,6 +239,18 @@
       "types": "./src/seo/index.ts",
       "import": "./src/seo/index.ts"
     },
+    "./blog": {
+      "types": "./src/components/blog/index.ts",
+      "import": "./src/components/blog/index.ts"
+    },
+    "./components/blog": {
+      "types": "./src/components/blog/index.ts",
+      "import": "./src/components/blog/index.ts"
+    },
+    "./components/command-palette": {
+      "types": "./src/components/command-palette/index.ts",
+      "import": "./src/components/command-palette/index.ts"
+    },
     "./logging": {
       "types": "./src/logging/index.ts",
       "import": "./src/logging/index.ts"

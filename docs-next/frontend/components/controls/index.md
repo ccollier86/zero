@@ -39,6 +39,7 @@ implementation or public import changes are implied by this index.
 | --- | --- | --- |
 | Single choice without search | [Select](./select.md): Root, trigger/value, content and option parts. | Native single-value/typeahead/form ownership with token-mapped morph presentation and rich noninteractive option slots. |
 | Searchable or multiple local choices | [Combobox](../primitives/choices.md#combobox). | Controlled single/multiple values and local Command filtering; caller owns any remote query. |
+| Rich grouped search or application commands | [CommandPalette](./command-palette.md). | Additive preview using the existing modal manager/cmdk owner, async selection, optional prefixes and explicit shortcut opt-in; no search backend. |
 | Hierarchical choice | [Cascader](../cascader.md). | Tree/path controller rather than another selection controller inside Select. |
 | Independent, exclusive or on/off choices | [Checkbox/RadioGroup](../primitives/choices.md#checkbox-and-radiogroup), [Switch](../primitives/choices.md#switch-unreleased-public-facade-addition). | Distinguish indeterminate checkbox state, exclusive radio values and boolean switches. |
 | Ordinary text or native numeric input | [Input/Textarea/Label](../primitives/inputs.md#input-textarea-and-label). | Native props, accessible labels and form ownership; no service persistence inferred. |

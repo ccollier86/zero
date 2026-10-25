@@ -4,13 +4,15 @@ import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
 import { cn } from "#zero/lib/utils"
 import { buttonVariants } from "#zero/components/ui/button"
 import type { VariantProps } from "class-variance-authority"
+import './pagination.css'
 
-function Pagination({ className, ...props }: React.ComponentProps<"nav">) {
+function Pagination({ className, variant = 'default', ...props }: React.ComponentProps<"nav"> & { variant?: 'default' | 'editorial' }) {
   return (
     <nav
       role="navigation"
       aria-label="pagination"
       data-slot="pagination"
+      data-variant={variant}
       className={cn("mx-auto flex w-full justify-center", className)}
       {...props}
     />
@@ -48,6 +50,7 @@ function PaginationLink({
   return (
     <a
       aria-current={isActive ? "page" : undefined}
+      data-selected={isActive || undefined}
       data-slot="pagination-link"
       className={cn(
         buttonVariants({

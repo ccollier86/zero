@@ -1,0 +1,79 @@
+---
+id: zero.frontend.components.blog.index
+type: index
+audience: [developer, agent]
+owner: frontend-components
+status: in-review
+visibility: internal
+system: frontend-components
+feature: blog-ui
+maturity: preview
+applies_to: ["2.6.0 UI source on feature/blog-foundation; not the selected main archive"]
+modes: [browser, SSR, public-pages]
+---
+
+# Blog UI Components
+
+[Public pages index](../index.md) · [Documentation index](../../../../index.md)
+
+Compose editorial pages from `@zero/framework/blog`. The default list is
+Magazine: a large recent article beside two stacked previews, followed by the
+article grid. The default article is the recovered demo's contained hero,
+centered reading column and right-hand sidebar TOC. Neither requires a variant
+setting. Author information, social links, sharing and newsletter content are
+optional; absent integration data does not become a placeholder control.
+
+This is a UI family, not an enabled blogging service. It installs no tables,
+profile fields, editor, HTTP endpoints, subscriptions, tracking or background
+jobs. The caller supplies display data, content, URLs and callbacks.
+
+## Start With The Defaults
+
+Use the app's normal Zero stylesheet and theme setup, then:
+
+```tsx
+import { BlogListPage, BlogPostPage, type BlogPost } from '@zero/framework/blog';
+
+const post: BlogPost = {
+  id: 'welcome', slug: 'welcome', title: 'Welcome',
+  excerpt: 'An introduction to our work.',
+  blocks: [
+    { type: 'heading', level: 2, text: 'Getting started' },
+    { type: 'paragraph', text: 'Useful content goes here.' },
+  ],
+};
+
+// Render on the list route:
+<BlogListPage posts={[post]} />;
+// Render on the article route:
+<BlogPostPage post={post} />;
+```
+
+`@zero/framework/components/blog` is the same focused family. The main React
+facade also exposes the Blog-prefixed layouts, cards, search and data types.
+Use the focused import for the complete smaller parts and their props.
+
+## Component Guides
+
+- [Layouts](./layouts.md) covers Magazine, sidebar/list alternatives, heroes,
+  article composition, TOC discovery and optional sections.
+- [Parts and media](./parts.md) covers cards, author/category presentation,
+  pagination, images, media players, links, citations and newsletter UI.
+- [Configuration and tokens](./configuration.md) documents presentation
+  defaults, optional routing adaptation, theme inheritance and motion.
+- [Content blocks](./content-blocks.md) defines the escaped, typed renderer
+  accepted by the UI; it is not the future editor or storage schema.
+- [Roadmap](./roadmap.md) records the requested user-backed author, block-editor
+  and automatic SEO integration for a later phase.
+
+Blog search uses the general [CommandPalette](../../controls/command-palette.md),
+not a separate blog modal, global state store or screenshot service. It keeps
+rich results and the two-panel group filters while the existing command controls,
+magnetic highlight, ScrollArea and modal manager retain their responsibilities.
+
+## Related Guides And Next Steps
+
+- [Public UI development](../../../../guides/public-ui-development.md) owns site assembly.
+- [SEO](../../../../backend/configuration/seo.md) describes the existing metadata foundation;
+  rendering a BlogPostPage does not itself publish head metadata or sitemap entries.
+- [Modal manager](../../../modals/index.md) owns image/palette focus, stack and dismissal.

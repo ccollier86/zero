@@ -31,6 +31,9 @@
 @import "react-easy-crop/react-easy-crop.css";
 @import "../../components/avatar-editor/avatar-editor.styles.css";
 @import "../../components/email-inbox/email-inbox.css";
+@import "../../components/blog/blog.css";
+@import "../../components/command-palette/command-palette.css";
+@import "../../components/ui/pagination.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 

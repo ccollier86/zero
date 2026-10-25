@@ -54,6 +54,30 @@ gaps; the installed Recharts source informs mathematics, not this visual languag
 
 ## Reference Scope
 
+The recovered editorial blog is an additional approved public-lane reference.
+Its UI import lives in [Blog UI](../frontend/components/public-pages/blog/index.md)
+on `feature/blog-foundation`, not in the old archived Next application. Preserve
+Magazine's asymmetric recent-post grid, contained article hero, centered reading
+column, right-hand TOC, quiet author/meta hierarchy and rich grouped search.
+Optional social/newsletter/profile fields omit cleanly. There is no imported
+night-mode switch, font loader, separate theme store or screenshot/tracking
+service.
+
+The scoped `--zero-blog-*` aliases map paint to the existing public/application
+semantic roles and expose editorial type, spacing, geometry, radii and media
+proportions. The shared Zero card/control/overlay motion remains the default;
+reduced motion removes decorative movement. The archive's typography scale and
+reading proportions inform the public lane without expanding dashboard spacing
+or replacing app-specific public branding. The full alias inventory is in
+`src/components/blog/blog-tokens.css` and its
+[configuration reference](../frontend/components/public-pages/blog/configuration.md).
+
+Rich search is generalized as
+[CommandPalette](../frontend/components/controls/command-palette.md), with shared
+modal/cmdk/ScrollArea/magnetic ownership and its own semantic geometry aliases.
+The editorial page-number treatment is an opt-in variant of the existing
+Pagination primitive. Existing application pagination visuals remain unchanged.
+
 The supplied **Ingestion Pipeline.html** and **Vector Search.html** provide the
 first detailed references. Preserve the character of both the animated scenes
 and their functional interface. Do not reduce the reference to the isometric map

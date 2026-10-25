@@ -1,5 +1,12 @@
 /** Code/JSON, marketing content and streamed text. Curated client-safe re-exports only; implementation/context ownership stays with the existing modules. */
 
+export { BlogProvider, BlogListPage, BlogListPageSidebar, BlogListPageList, BlogListPageMinimal,
+  BlogPostPage, BlogPostPageWithSidebar, BlogPostPageWide, BlogPostPageSplit,
+  BlogHero, BlogHeroContained, BlogHeroCompact, BlogCard, BlogCardGrid, RecentPostsHero, RelatedPosts,
+  BlogSearchPalette, BlogPagination, BlogImageLightbox } from '../../../components/blog';
+export type { BlogPost, BlogAuthor, BlogCategory, BlogTag, BlogTocItem, BlogContentBlock,
+  BlogListPageProps, BlogPostPageProps, BlogCardProps, BlogSearchPaletteProps } from '../../../components/blog';
+
 export * from '../../../components/code-block';
 export { JsonEditor } from '../../../components/json-editor';
 export type { JsonEditorProps, JsonEditorHandle, JsonEditorCommitResult } from '../../../components/json-editor';
