@@ -13,10 +13,18 @@ visibility: internal
 
 ## Scope And Release Boundary
 
-Work is isolated on `feature/blog-foundation`, following clean UI/documentation
-source `72bb87d55055b5b07776a1ad450040464729688d`. This record is being completed
-with the frozen backend source/archive and final focused results. It is not a
-main merge, selected stable package, registry publication or live-app upgrade.
+The frozen implementation is `c7011c7dd9dc8561b767752be51029a31ac327cf` on
+`feature/blog-foundation`, following UI/documentation source
+`72bb87d55055b5b07776a1ad450040464729688d`. This is not a main merge, selected
+stable package, registry publication or live-app upgrade.
+
+The retained development archive is `zero-framework-2.6.0-blog-authors.tgz` at
+`/Volumes/code-bank/artifacts/zero-platform/dev/2026-10-25-blog-authors/`.
+Its SHA-256 is
+`98d564817e4b659d7327d1e11f7206e88cf2c9eb4a25b60e251dde294e4e8b25`.
+It was packed from clean committed source with lifecycle scripts disabled.
+The following documentation/evidence commit does not change those archive
+bytes. Earlier UI archives retain their original identities.
 
 The implementation adds managed user-backed author enrollment, separate public
 drafts, scoped publication/withdrawal, optional public Guardian avatars, browser/
@@ -56,6 +64,34 @@ regression checks real credential rows, not a sanitized user projection that
 does not contain a password hash. New migration snapshots are additive and do
 not modify prior definitions/checksums.
 
-Detailed final source/package results will be recorded here after the frozen
-candidate has been checked. The retained earlier UI archive keeps its original
-hash and does not qualify these new backend APIs.
+## Final Checks
+
+| Check | Result and boundary |
+| --- | --- |
+| Backend/regression suite | 362 passed, 0 failed, 2964 assertions across 71 files: author/config/SDK, actual Guardian/private and public media, profile completion/disposal/policy, request service/authority fences, read-only Doctor, Storage streaming and migration/legacy preservation. |
+| Managed existing-project pipeline | Included above: persisted account ID/hash/role and old session preserved; app rows untouched; minimal profile expansion; actual Storage grant, normalized photo, explicit public publication, author projection and dedicated Logging delivery. Profile-only and migrate:false paths are separate regressions. |
+| Four Guardian profiles | Source tests cover single/multi simple and advanced management/isolation with current session authority. The installed consumer below uses single/simple, not a claim of a fully installed all-mode matrix. Native media/profile scope ceilings remain covered by their existing real integration suite. |
+| Frozen installed author package | 1 passed, 10 assertions: fresh consumer uses only public imports, normal managed boot, real SDK registration/private profile edit, role-preserving author operations, actual normalized photo upload/public delivery/withdrawal, public byline privacy/withdrawal, server request facade and browser bundle. |
+| Retained UI and installed package | 15 passed, 351 assertions: all 109 recovered export dispositions, Magazine/sidebar article defaults, safe optional sections/URLs, palette behavior, real public SSR/CSS/browser exports and packaged manuals. No new browser-visual pass is implied by this backend update; the prior UI browser qualification remains recorded separately. |
+| TypeScript | Root `tsc --noEmit` passed. |
+| Documentation | Structural/link/anchor/reachability check: 855 pages, 855 unique IDs, all reachable, no problems. Public-contract example and review-metadata checks: 8 passed, 0 failed, 116 assertions. |
+| Whitespace | `git diff --check` passed; repeated for the final documentation update. |
+
+Tests use Bun 1.3.14 and local host-native Sharp, with React/React DOM 19.2.4
+in fresh package consumers. These are focused framework/upgrade checks, not
+production deployment, a post CMS or universal application migration approval.
+
+The first broad run used the Mac's symlinked default temporary root for old
+offline-migration fixtures. Strict canonical-path admission correctly rejected
+it. Repeating with the required external canonical `PROJECT_SCRATCH_DIR` and
+`TMPDIR` passed; no migration safety check was relaxed. An old account-email
+TTL documentation fragment also needed its example test to wrap it as an
+AppConfig fragment rather than an invalid standalone expression. The runtime
+and TTL settings were not changed by that documentation/test correction.
+
+Sanitized diagnostics live under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/`: the final
+`blog-author-regressions-final`, `blog-author-package-final`, `blog-author-ui-final`,
+`blog-author-types-final`, `blog-author-docs-final` and
+`blog-author-doc-examples-final` logs. They contain synthetic fixture evidence,
+not live application data or provider credentials.

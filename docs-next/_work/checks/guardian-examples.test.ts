@@ -19,7 +19,15 @@ test('Guardian declarations and integration examples use public source contracts
     'invitations', 'verified-domains', 'api-keys', 'audit', 'identity-projection',
     'native-provider', 'integration', 'configuration', 'profile-completion',
   ]) {
-    for (const [index, source] of (await blocks(page)).entries()) add(`${page}-${index}`, source);
+    for (const [index, source] of (await blocks(page)).entries()) {
+      // The TTL example is an explicitly labelled AppConfig fragment, not a
+      // standalone expression or a second AuthBehaviorConfig declaration.
+      const example = page === 'configuration' && source.trimStart().startsWith('auth:')
+        ? "import type { AppConfig } from '@zero/framework/server';\n"
+          + "const config = { db: { mode: 'memory' }, tables: {},\n" + source + '\n} satisfies AppConfig;\n'
+        : source;
+      add(`${page}-${index}`, example);
+    }
   }
   const modes = await blocks('modes');
   add('modes-0', modes[0]!);

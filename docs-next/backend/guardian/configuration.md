@@ -218,7 +218,8 @@ See [password lifecycle](./password-recovery.md) and
 Account path normalization trims, falls back when empty and prefixes a slash.
 That does not replace managed safe-local-path/public-route validation.
 
-For a 48-hour account-setup invitation and a 1-hour password reset, configure:
+For a 48-hour account-setup invitation and a 1-hour password reset, merge this
+fragment into the existing managed app configuration:
 
 ```ts
 auth: {

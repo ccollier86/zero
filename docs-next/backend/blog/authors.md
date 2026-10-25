@@ -13,10 +13,14 @@ modes: [managed-server, single-simple, single-advanced, multi-simple, multi-adva
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "72bb87d55055b5b07776a1ad450040464729688d"
-  snapshot: dirty
+  commit: "c7011c7dd9dc8561b767752be51029a31ac327cf"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "c7011c7dd9dc8561b767752be51029a31ac327cf"
+    sha256: "98d564817e4b659d7327d1e11f7206e88cf2c9eb4a25b60e251dde294e4e8b25"
 ---
 
 # Author Enrollment And Public Bylines
