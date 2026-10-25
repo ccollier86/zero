@@ -19,7 +19,7 @@ test('packed blog and general command palette expose defaults, CSS and portable 
     }));
     await Bun.write(join(consumer, 'consumer.tsx'), CONSUMER);
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
-    await checked(['install', '--ignore-scripts'], consumer);
+    await checked(['install', '--ignore-scripts', '--backend=hardlink'], consumer, 180_000);
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim()) as {
       exported: number; browserBytes: number; css: string; html: string; docs: boolean;
     };
@@ -34,15 +34,15 @@ test('packed blog and general command palette expose defaults, CSS and portable 
     // Only the disposable consumer and archive allocated by this test are removed.
     await rm(root, { recursive: true, force: true });
   }
-}, 180_000);
+}, 300_000);
 
-async function checked(arguments_: string[], cwd: string): Promise<string> {
+async function checked(arguments_: string[], cwd: string, timeoutMs = 90_000): Promise<string> {
   const child = Bun.spawn([process.execPath, '--no-env-file', ...arguments_], {
     cwd, stdout: 'pipe', stderr: 'pipe',
     env: { PATH: process.env.PATH, TMPDIR: SCRATCH, BUN_INSTALL_CACHE_DIR: '/Volumes/code-bank/caches/bun/install-cache' },
   });
   let expired = false;
-  const timeout = setTimeout(() => { expired = true; child.kill(); }, 90_000);
+  const timeout = setTimeout(() => { expired = true; child.kill(); }, timeoutMs);
   try {
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,

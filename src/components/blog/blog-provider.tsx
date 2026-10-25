@@ -21,6 +21,6 @@ export function useBlogPostHref() {
 export function BlogLink({ href, children, ...props }: BlogLinkProps) {
   const { linkComponent: Link } = useBlogPresentation(), safe = safeBlogHref(href, true);
   if (!safe) return <span className={props.className}>{children}</span>;
-  const attributes = { ...props, href: safe, ...(props.target === '_blank' ? { rel: 'noopener noreferrer' } : {}) };
+  const attributes = { ...props, href: safe, ...(props.target === '_blank' ? { rel: [...new Set([...(props.rel?.split(/\s+/u).filter(Boolean) ?? []), 'noopener', 'noreferrer'])].join(' ') } : {}) };
   return Link ? <Link {...attributes}>{children}</Link> : <a {...attributes}>{children}</a>;
 }

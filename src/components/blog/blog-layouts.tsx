@@ -46,10 +46,11 @@ export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our
   showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, filterMode = 'local', search = 'palette', searchProps, headerActions, sidebar, children }: BlogListPageProps) {
   const scoped = useBlogScope();
   const [localFilters, setFilters] = React.useState<BlogFilterState>({}), [localPage, setPage] = React.useState(1);
-  const state = filters ?? localFilters, query = state.search ?? '', category = state.category ?? null;
+  const state = filters ?? localFilters, query = state.search ?? '', category = state.category ?? null, author = state.author, tag = state.tag;
   const size = Math.max(1, Math.min(100, Number.isFinite(pageSize) ? Math.floor(pageSize) : 9));
   const filtered = React.useMemo(() => filterMode === 'manual' ? posts : posts.filter(post => (!category || post.categories?.some(value => value.id === category))
-    && (!query || [post.title, post.excerpt, post.author?.name, ...(post.tags ?? []).map(value => value.name)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase()))), [posts, filterMode, category, query]);
+    && (!author || post.author?.id === author) && (!tag || post.tags?.some(value => value.id === tag))
+    && (!query || [post.title, post.excerpt, post.author?.name, ...(post.tags ?? []).map(value => value.name)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase()))), [posts, filterMode, category, author, tag, query]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / size)), page = Math.max(1, Math.min(totalPages, localPage));
   const visible = pagination || filterMode === 'manual' ? filtered : filtered.slice((page - 1) * size, page * size);
   const current = pagination ?? { currentPage: page, totalPages, totalItems: filtered.length, itemsPerPage: size };
@@ -64,7 +65,7 @@ export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our
       {search && <div className="zero-blog-list-search">{search === 'inline' ? <SearchBar value={query} onChange={changeSearch} isLoading={isLoading} /> : <BlogSearchPalette {...searchProps} baseUrl={baseUrl ?? searchProps?.baseUrl} posts={posts} categories={categories}
         onSelectCategory={searchProps?.onSelectCategory ?? (value => changeCategory(value.id))} />}</div>}
     </div>
-    {showRecentHero && variant !== 'minimal' && !query && !category && !!hero.length && <RecentPostsHero posts={hero} baseUrl={baseUrl} onCategoryClick={value => changeCategory(value.id)} />}
+    {showRecentHero && variant !== 'minimal' && !query && !category && !author && !tag && !!hero.length && <RecentPostsHero posts={hero} baseUrl={baseUrl} onCategoryClick={value => changeCategory(value.id)} />}
     <div className="zero-blog-list-body">{variant === 'sidebar' && <aside>{sidebar ?? <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}</aside>}
       <section className="zero-blog-all-posts"><div className="zero-blog-section-heading"><Typography variant="h2">{query ? `Results for “${query}”` : 'All blog posts'}</Typography><span className="zero-blog-muted">{current.totalItems ?? filtered.length} articles</span></div>
         {isLoading ? <div role="status" className="zero-blog-empty">Loading articles…</div> : <BlogCardGrid posts={visible} columns={columns} baseUrl={baseUrl} variant={variant === 'list' ? 'horizontal' : 'default'} onCategoryClick={value => changeCategory(value.id)} emptyMessage={query ? 'No matching articles' : undefined} />}

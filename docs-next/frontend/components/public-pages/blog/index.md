@@ -27,6 +27,12 @@ This is a UI family, not an enabled blogging service. It installs no tables,
 profile fields, editor, HTTP endpoints, subscriptions, tracking or background
 jobs. The caller supplies display data, content, URLs and callbacks.
 
+This is a Zero-native adaptation, not an import-compatible copy of the archived
+Next.js package. Shared buttons, inputs, menus, tooltips, avatars, cards and code
+rendering reuse Zero. Archived Connected wrappers and singleton stores are
+replaced by explicit props/callbacks; theme switching, fingerprinting and the
+screenshot proxy are not imported.
+
 ## Start With The Defaults
 
 Use the app's normal Zero stylesheet and theme setup, then:

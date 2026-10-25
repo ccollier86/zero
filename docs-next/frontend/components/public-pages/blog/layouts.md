@@ -30,7 +30,7 @@ alternative; do not configure those defaults again in every consuming app.
 | search | palette; inline selects the shared input presentation, false removes search. |
 | searchProps | BlogSearchPalette callbacks, supplied authors/tags, trigger and palette options. |
 | filterMode | local; filters and pages the supplied array. manual displays exactly supplied rows and makes no request. |
-| filters | Optional controlled search/category state. Omitted state stays instance-local. |
+| filters | Optional controlled search/category/author/tag state. Category, author and tag values match IDs. Omitted state stays instance-local; manual mode leaves filtering to the caller. |
 | pagination | Optional controlled page counts. Omitted counts derive from local data. |
 | pageSize | 9; finite values clamp to 1–100 in local mode. |
 | onSearchChange / onCategoryChange / onPageChange | Optional intent callbacks, not persistence or a query transport. |

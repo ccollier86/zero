@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { BlogProvider, BlogListPage, BlogPostPage, AuthorCard, NewsletterSignup, SocialShare, BlockRenderer, BlogPagination } from './index';
+import { BlogProvider, BlogLink, BlogListPage, BlogPostPage, AuthorCard, NewsletterSignup, SocialShare, BlockRenderer, BlogPagination } from './index';
 import { blogBlockToc, blogPageWindow, blogPostHref, safeBlogHref } from './blog-utils';
 import type { BlogPost } from './blog.types';
 const post: BlogPost = { id: 'one', slug: 'first-article', title: 'A real article', excerpt: 'A public excerpt', blocks: [{ type: 'heading', text: 'Introduction', level: 2 }, { type: 'paragraph', text: 'Readable without JavaScript.' }] };
@@ -42,4 +42,11 @@ test('link adaptation is optional and instance-local; nested layouts retain scop
   const two = renderToStaticMarkup(<BlogListPage posts={[post]} search={false} />);
   expect(one).toContain('data-app-link=""'); expect(one).toContain('/articles/first-article'); expect(one.match(/class="zero-blog /gu)).toHaveLength(1);
   expect(two).not.toContain('data-app-link'); expect(two).toContain('/blog/first-article');
+  expect(renderToStaticMarkup(<BlogLink href="https://example.test" target="_blank" rel="ugc nofollow">Source</BlogLink>)).toContain('rel="ugc nofollow noopener noreferrer"');
+});
+test('supplied author and tag filters narrow local rows without advertising unfiltered recent content', () => {
+  const selected = { ...post, author: { id: 'a', name: 'Avery' }, tags: [{ id: 'systems', slug: 'systems', name: 'Systems' }] };
+  const other = { ...post, id: 'two', title: 'Another author article', author: { id: 'b', name: 'Blair' } };
+  const html = renderToStaticMarkup(<BlogListPage posts={[selected, other]} filters={{ author: 'a', tag: 'systems' }} search={false} />);
+  expect(html).toContain('A real article'); expect(html).not.toContain('Another author article'); expect(html).not.toContain('Recent blog posts');
 });
