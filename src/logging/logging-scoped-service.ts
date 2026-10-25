@@ -25,6 +25,7 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     else access.requirePlatformAdmin();
     return user;
   };
+  const permitPlatformManagement = () => { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); permit('manage'); };
   const context = (origin: 'backend' | 'frontend', collector?: string): LoggingContext => {
     assertCurrent();
     if (systemActor && !access.context?.userId && origin === 'backend') return {
@@ -115,12 +116,13 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       return Object.freeze({ enabled: runtime.config.policy.enabled, capture: runtime.config.policy.capture, heartbeatMs: 30000, idleMs: 60000 });
     },
     async health() {
-      await revalidate(); permit('read'); const d = runtime.diagnostics();
+      await revalidate(); permitPlatformManagement(); const d = runtime.diagnostics();
       const streams = Object.values(d.streams) as { pendingEvents: number; failed: number }[];
       return Object.freeze({ state: d.state, preset: d.preset, coverage: d.coverage,
         pendingEvents: streams.reduce((n, s) => n + s.pendingEvents, 0), failedEvents: streams.reduce((n, s) => n + s.failed, 0),
-        sourcePendingEvents: (d.sources?.application.queued ?? 0) + (d.sources?.guardian.queued ?? 0),
-        sourceDeliveryFailures: d.sources?.failed ?? 0, maintenanceFailures: d.maintenanceFailed });
+        sourcePendingEvents: (d.sources?.application.queued ?? 0) + (d.sources?.guardian.queued ?? 0) + (d.fabricSources?.queued ?? 0),
+        sourceDiscoveryPending: d.fabricSources?.pendingSources ?? 0,
+        sourceDeliveryFailures: (d.sources?.failed ?? 0) + (d.fabricSources?.failed ?? 0), maintenanceFailures: d.maintenanceFailed });
     },
     async run(operation) {
       const captured = context('backend'); await revalidate(); assertCurrent();
@@ -192,8 +194,8 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
         if (r.version !== 1 || r.stream !== stream || typeof r.hash !== 'string' || !/^[a-f0-9]{64}$/.test(r.hash)) throw new LoggingError('LOGGING_EVENT_INVALID', 'Checkpoint is invalid.');
         cp = Object.freeze({ version: 1, stream, ordinal: loggingTime(r.ordinal), hash: r.hash });
       }
-      await revalidate(); access.requirePlatformAdmin(); permit('manage');
-      const result = await runtime.verify(stream, afterOrdinal, cp); await revalidate(); access.requirePlatformAdmin(); permit('manage'); return result;
+      await revalidate(); permitPlatformManagement();
+      const result = await runtime.verify(stream, afterOrdinal, cp); await revalidate(); permitPlatformManagement(); return result;
     },
   } satisfies ScopedLogging);
 }

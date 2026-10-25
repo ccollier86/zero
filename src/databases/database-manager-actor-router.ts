@@ -34,6 +34,8 @@ import {
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
 import { DatabaseError } from './database-error';
+import { prepareDatabaseLoggingBinding } from './database-logging-binding';
+import type { LoggingScope } from '../logging/logging-contracts';
 import { observeDatabaseCoordinatorCommits } from './database-coordinator-commit-notifications';
 import {
   createDatabaseRef,
@@ -77,6 +79,26 @@ export class DatabaseManagerActorRouter {
   readonly #automationSourceCatalog: DatabaseAutomationSourceCatalog | null;
   readonly #realmHasDurableFunctions: boolean;
   #presenceAdmission: ((tenantId: string) => Promise<void>) | null = null;
+  #loggingSource: ((id: string, scope: LoggingScope) => void) | null = null;
+
+  /** Install before admission. The hook catalogs scope without opening source files or awaiting a sink. */
+  installLoggingSources(prepare: (id: string, scope: LoggingScope) => void) {
+    if (this.#loggingSource) throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Database audit sources are already installed.');
+    this.#loggingSource = prepare;
+    return () => { if (this.#loggingSource === prepare) this.#loggingSource = null; };
+  }
+
+  private prepareLoggingSource(id: string, scope: LoggingScope): void {
+    this.#loggingSource?.(id, scope);
+    if (this.#coordinator) prepareDatabaseLoggingBinding(this.#coordinator, id, scope);
+  }
+
+  /** Narrow privileged recovery reads only cataloged existing files; it does not grant tenant data authority. */
+  async recoverLoggingSource(id: string, scope: LoggingScope): Promise<DatabaseCoordinatorLease | null> {
+    prepareDatabaseLoggingBinding(this.#requireCoordinator(), id, scope);
+    const commitAuthority = this.#tenantDatabases ? createDatabaseCommitAuthority(this.#requireAuthority(), id, () => undefined) : undefined;
+    return this.#requireCoordinator().acquireExisting(id, { ...(commitAuthority ? { commitAuthority } : {}) });
+  }
 
   constructor(options: DatabaseManagerActorRouterOptions) {
     this.#coordinator = options.coordinator;
@@ -124,6 +146,7 @@ export class DatabaseManagerActorRouter {
     const coordinator = this.#requireCoordinator();
     const physicalId = deriveNamedDatabaseId(input);
     const logicalSourceId = String(normalizeDatabaseId(input));
+    this.prepareLoggingSource(physicalId, { kind: 'application', tenantId: null });
     // A tenant-file coordinator may require authority for every write. Named
     // setup bindings are already privileged, so bind an internal live proof.
     const commitAuthority = this.#tenantDatabases
@@ -225,6 +248,7 @@ export class DatabaseManagerActorRouter {
     }
     this.#assertTenantDatabaseEligible(tenantId); assertCurrent();
     const physicalId = deriveTenantDatabaseId(tenantId);
+    this.prepareLoggingSource(physicalId, { kind: 'tenant', tenantId });
     const authority = createDatabaseCommitAuthority(this.#requireAuthority(), physicalId, () => {
       this.#assertTenantDatabaseEligible(tenantId); assertCurrent(); return undefined;
     });
@@ -240,6 +264,7 @@ export class DatabaseManagerActorRouter {
     if (!this.#identityProjection.enabled) return;
     this.#assertTenantDatabaseEligible(tenantId);
     const physicalId = deriveTenantDatabaseId(tenantId);
+    this.prepareLoggingSource(physicalId, { kind: 'tenant', tenantId });
     const logicalSourceId = String(normalizeDatabaseId(tenantId));
     const authority = createDatabaseCommitAuthority(
       this.#requireAuthority(),
@@ -267,6 +292,7 @@ export class DatabaseManagerActorRouter {
     if (!this.#identityProjection.enabled) return null;
     this.#assertTenantDatabaseEligible(tenantId);
     const physicalId = deriveTenantDatabaseId(tenantId);
+    this.prepareLoggingSource(physicalId, { kind: 'tenant', tenantId });
     const authority = createDatabaseCommitAuthority(
       this.#requireAuthority(),
       physicalId,
@@ -304,6 +330,7 @@ export class DatabaseManagerActorRouter {
     const physicalId = expected.sourceKind === 'named'
       ? deriveNamedDatabaseId(expected.logicalSourceId)
       : deriveTenantDatabaseId(expected.logicalSourceId);
+    this.prepareLoggingSource(physicalId, expected.sourceKind === 'tenant' ? { kind: 'tenant', tenantId: expected.logicalSourceId } : { kind: 'application', tenantId: null });
     if (createDatabaseRef(physicalId) !== expected.sourceRef) {
       throw automationSourceAuthorityChanged();
     }
@@ -424,6 +451,7 @@ export class DatabaseManagerActorRouter {
       createDatabaseRef(physicalId),
     );
     assertTenantReadAuthorityCurrent(options.assertCurrentReadAuthority);
+    this.prepareLoggingSource(physicalId, { kind: 'tenant', tenantId: options.tenantId });
     return Object.freeze({ physicalId, logicalSourceId, authority });
   }
 

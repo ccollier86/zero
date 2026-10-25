@@ -27,6 +27,18 @@ test('managed configuration rejects premature compliance, accessors, unknown fie
   expect(invoked).toBe(false);
 });
 
+test('durable-source budgets are independently configurable, detached, bounded and included in the capture policy version', () => {
+  const defaults = resolveManagedLoggingConfig(true, '/project');
+  expect(defaults && defaults.sourceQueue).toEqual({ maxEvents: 50000, maxBytes: 64 * 1024 * 1024 });
+  const limits = { maxEvents: 25000, maxBytes: 32 * 1024 * 1024 };
+  const custom = resolveManagedLoggingConfig({ sourceQueue: limits }, '/project'); limits.maxEvents = 1;
+  expect(custom && custom.sourceQueue.maxEvents).toBe(25000);
+  expect(defaults && custom && defaults.policyVersion).not.toBe(custom && custom.policyVersion);
+  for (const sourceQueue of [null, { maxEvents: null }, { maxBytes: null }, { maxEvents: 0 }, { maxEvents: 100001 }, { maxBytes: 16383 }, { maxBytes: 268435457 }, { maxEvents: 1.5 }, { extra: 1 }]) {
+    expect(() => resolveManagedLoggingConfig({ sourceQueue } as any, '/project')).toThrow(expect.objectContaining({ code: 'LOGGING_CONFIG_INVALID' }));
+  }
+});
+
 test('logging directory admission protects build, sources, private artifacts, application/control files and other Fabric roots', () => {
   const base = { rootDirectory: '/project/logs', outDir: '/project/build', storageDir: '/project/storage',
     generatedDir: '/project/generated', appDir: '/project/app', applicationFabricRoot: '/project/fabric', controlDatabasePaths: ['/project/data/app.db', '/project/control/system.db'] };

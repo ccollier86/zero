@@ -22,6 +22,7 @@ export class LoggingRuntime {
   private state: 'opening' | 'ready' | 'draining' | 'closed' | 'close-failed' = 'opening';
   private closeTask: Promise<void> | null = null;
   private source: { flush(): Promise<void>; diagnostics(): Readonly<{ application: { queued: number; bytes: number }; guardian: { queued: number; bytes: number }; failed: number }> } | null = null;
+  private fabricSource: { flush(): Promise<void>; diagnostics(): Readonly<{ sources: number; pendingSources: number; queued: number; bytes: number; failed: number }> } | null = null;
   private maintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceTask: Promise<void> | null = null;
   private maintenanceFailed = 0;
@@ -43,6 +44,8 @@ export class LoggingRuntime {
 
   /** @internal Same-commit source delivery is installed only by managed composition. */
   attachSource(source: NonNullable<LoggingRuntime['source']>): void { this.source = source; }
+  /** @internal Independent managed actor sources are a separate discovery/delivery owner. */
+  attachFabricSource(source: NonNullable<LoggingRuntime['fabricSource']>): void { this.fabricSource = source; }
 
   private constructor(readonly config: ResolvedManagedLoggingConfig, private readonly coordinator: DatabaseCoordinator) {}
 
@@ -133,7 +136,7 @@ export class LoggingRuntime {
   }
 
   /** Join all currently admitted work, including failed batches, without closing intake. */
-  async flush(): Promise<void> { await this.source?.flush(); await joinOwned([...this.streams.values()].map(owner => owner.writer.flush())); }
+  async flush(): Promise<void> { await joinOwned([this.source?.flush() ?? Promise.resolve(), this.fabricSource?.flush() ?? Promise.resolve()]); await joinOwned([...this.streams.values()].map(owner => owner.writer.flush())); }
 
   /** Close admission, drain both streams, release capabilities and join all actor shutdowns exactly once. */
   close(): Promise<void> {
@@ -152,8 +155,9 @@ export class LoggingRuntime {
       coverage: Object.freeze({ automaticAudit: Boolean(this.source),
         guardianAudit: Boolean(this.source && this.config.policy.capture.security), applicationMutations: Boolean(this.source && this.config.policy.capture.records),
         browserActivity: ['views', 'clipboard', 'printing', 'navigation'].some(f => this.config.policy.capture[f as keyof typeof this.config.policy.capture]) ? 'configured-observation-only' : 'disabled',
-        fabricTenantAudit: false, complianceReady: false }),
+        fabricTenantAudit: Boolean(this.fabricSource && this.config.policy.capture.records), complianceReady: false }),
       sources: this.source?.diagnostics() ?? null,
+      fabricSources: this.fabricSource?.diagnostics() ?? null,
       maintenanceFailed: this.maintenanceFailed,
       streams: Object.freeze(Object.fromEntries([...this.streams].map(([stream, owner]) => [stream, owner.writer.diagnostics()]))),
       databases: Object.freeze({ state: database.state, files: database.databaseFiles, activeOperations: database.activeOperations, heldAuthorityLeases: database.heldAuthorityLeases }),

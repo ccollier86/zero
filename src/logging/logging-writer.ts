@@ -3,7 +3,7 @@ import type { LoggingEvent, LoggingReceipt } from './logging-contracts';
 import type { LoggingBatchWriter } from './logging-fabric-store';
 import type { ResolvedLoggingConfig } from './logging-config';
 import { LoggingError } from './logging-error';
-import { LOGGING_MAX_BATCH_BYTES, loggingByteLength, loggingRecord, normalizeLoggingEvent } from './logging-validation';
+import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingByteLength, loggingRecord, normalizeLoggingEvent } from './logging-validation';
 
 interface Pending {
   event: LoggingEvent;
@@ -30,7 +30,7 @@ export class LoggingWriter {
     loggingRecord(limits, ['maxEvents', 'maxBytes', 'batchSize'], 'LOGGING_CONFIG_INVALID');
     if (!Number.isSafeInteger(limits.maxEvents) || limits.maxEvents < 1 || limits.maxEvents > 100000
       || !Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 16384 || limits.maxBytes > 64 * 1024 * 1024
-      || !Number.isSafeInteger(limits.batchSize) || limits.batchSize < 1 || limits.batchSize > Math.min(100, limits.maxEvents)) throw new LoggingError('LOGGING_CONFIG_INVALID', 'Logging writer limits are invalid.');
+      || !Number.isSafeInteger(limits.batchSize) || limits.batchSize < 1 || limits.batchSize > Math.min(LOGGING_MAX_BATCH, limits.maxEvents)) throw new LoggingError('LOGGING_CONFIG_INVALID', 'Logging writer limits are invalid.');
     this.limits = Object.freeze({ ...limits });
   }
 

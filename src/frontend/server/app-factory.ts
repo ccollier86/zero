@@ -176,7 +176,7 @@ export async function createApp(userConfig: AppConfig) {
     const identityProjectionRuntime = databasePlanes.identityProjection;
     const tenantDataPlane = databasePlanes.tenantDataPlane;
     await installManagedAppLogging(config, runtime, observabilityRuntime, {
-      application: openedDefaultRuntime.db, system: openedSystemRuntime.db, resources: resourceRegistry,
+      application: openedDefaultRuntime.db, system: openedSystemRuntime.db, resources: resourceRegistry, manager: openedDatabaseManager,
     });
 
     // ─── Assemble Elysia app ────────────────────────────────

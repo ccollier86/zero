@@ -27,6 +27,6 @@ test('logging configuration snapshots nested inputs and rejects accessors withou
   expect(() => resolveLoggingConfig({ get preset() { called = true; return 'basic' as const; } })).toThrow();
   expect(called).toBe(false);
 });
-for (const bad of [{ preset: 'verbose' }, { queue: { maxEvents: 0 } }, { queue: { maxBytes: Infinity } }, { queue: { batchSize: 101 } }, { capture: { magic: true } }, { unexpected: true }, { queue: { maxEvents: null } }]) test('invalid logging configuration is rejected: ' + JSON.stringify(bad), () => {
+for (const bad of [{ preset: 'verbose' }, { queue: { maxEvents: 0 } }, { queue: { maxBytes: Infinity } }, { queue: { batchSize: 257 } }, { capture: { magic: true } }, { unexpected: true }, { queue: { maxEvents: null } }]) test('invalid logging configuration is rejected: ' + JSON.stringify(bad), () => {
   expect(() => resolveLoggingConfig(bad as any)).toThrow(expect.objectContaining({ code: 'LOGGING_CONFIG_INVALID' }));
 });

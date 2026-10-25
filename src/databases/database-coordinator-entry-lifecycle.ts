@@ -26,6 +26,8 @@ import { DatabaseCoordinatorExecutorBinding } from './database-coordinator-execu
 import { compactExecutors } from './database-coordinator-runtime';
 import type { DatabaseCoordinatorSyncPublication } from './database-coordinator-sync-publication';
 import { DatabaseError } from './database-error';
+import type { LoggingActorSourceBinding } from '../logging/logging-actor-source';
+import { loggingDigest } from '../logging/logging-hash';
 import type { DatabaseExecutor, DatabaseExecutorValue } from './database-executor';
 import { openDatabaseFileIdentityGuard } from './database-file-identity';
 import { DatabaseHotDurabilitySupervisor } from './database-hot-durability-supervisor';
@@ -44,6 +46,7 @@ export type DatabaseBindingRetirementReason =
 export type DatabaseCloseReason = 'requested' | 'idle' | 'capacity' | 'shutdown';
 
 interface DatabaseCoordinatorEntryLifecycleOptions {
+  readonly loggingBinding?: (entry: DatabaseCoordinatorEntry) => LoggingActorSourceBinding | undefined;
   readonly realm: DatabaseRealm;
   readonly sqlite: DatabaseActorSQLiteConfig;
   readonly readersEnabled: boolean;
@@ -90,8 +93,10 @@ export class DatabaseCoordinatorEntryLifecycle {
   readonly #emit: DatabaseCoordinatorEntryLifecycleOptions['emit'];
   readonly #hotDurabilitySupervisor: DatabaseHotDurabilitySupervisor;
   readonly #executorBinding: DatabaseCoordinatorExecutorBinding;
+  readonly #loggingBinding: DatabaseCoordinatorEntryLifecycleOptions['loggingBinding'];
 
   constructor(options: DatabaseCoordinatorEntryLifecycleOptions) {
+    this.#loggingBinding = options.loggingBinding;
     this.#realm = options.realm;
     this.#sqlite = options.sqlite;
     this.#readersEnabled = options.readersEnabled;
@@ -160,6 +165,7 @@ export class DatabaseCoordinatorEntryLifecycle {
     const startedAt = this.#now();
     const previousSyncIdentity = entry.syncIdentity;
     try {
+      const logging = this.#loggingBinding?.(entry);
       const payload = validateDatabaseActorBindPayload({
         databaseRef: entry.databaseRef,
         filePath: entry.filePath,
@@ -169,6 +175,7 @@ export class DatabaseCoordinatorEntryLifecycle {
         placement: entry.placement,
         realmFingerprint: this.#realm.fingerprint,
         sqlite: this.#sqlite,
+        ...(logging ? { logging } : {}),
         ...(this.#authorityCommitFence
           ? { authorityCommitFence: this.#authorityCommitFence }
           : {}),
@@ -183,6 +190,7 @@ export class DatabaseCoordinatorEntryLifecycle {
         }, { timeoutMs: this.#operationTimeoutMs }),
       );
       this.#executorBinding.assertBindResult(entry, 'writer', writerResult);
+      if (logging && writerResult.loggingPolicyFingerprint !== loggingDigest(logging)) throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Database actor did not establish the required audit source.', { outcome: 'not-started' });
 
       if (this.#readersEnabled && entry.placement.mode === 'file') {
         entry.reader = this.#executorBinding.create(entry, 'reader');

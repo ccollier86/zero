@@ -48,3 +48,15 @@ test('browser batch validation is atomic and durations are observations with can
   await expect(f.service.observe([{ ...row, interval: { ...interval, elapsedMs: 10 } }])).rejects.toMatchObject({ code: 'LOGGING_EVENT_INVALID' });
   await expect(f.service.observe([{ ...row, interval: undefined }])).rejects.toMatchObject({ code: 'LOGGING_EVENT_INVALID' });
 });
+
+test('tenant-granted read/manage permissions cannot expose global backlog or integrity state', async () => {
+  let inspected = false;
+  const access = { requireUser: () => ({ userId: 'tenant-admin' }), requirePermission: () => {},
+    requirePlatformAdmin: () => { throw new Error('Platform authority required'); }, requireApplicationAuthorization: () => {} } as unknown as RequestAuthorizationAccess;
+  const runtime = { config: resolveManagedLoggingConfig({ preset: 'activity', access: { read: 'logs.read', manage: 'logs.manage' } }, '/tmp'),
+    diagnostics() { inspected = true; return {}; }, async verify() { inspected = true; return {}; } } as unknown as LoggingRuntime;
+  const service = createScopedLoggingService(runtime, access, { scopeKind: 'tenant', tenantId: 'tenant-a' } as ServiceDataScope, async () => {}, () => {});
+  await expect(service.health()).rejects.toThrow('Platform authority required');
+  await expect(service.verify('audit')).rejects.toThrow('Platform authority required');
+  expect(inspected).toBe(false);
+});

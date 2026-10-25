@@ -31,6 +31,8 @@ import { DatabaseRuntime } from './database-runtime';
 import { PinnedDatabaseRuntimes } from './pinned-database-runtimes';
 import type { IdentityAnchorState } from '../auth/identity-projection-types';
 import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
+import type { LoggingScope } from '../logging/logging-contracts';
+const loggingBindings = new WeakMap<object, { coordinator: DatabaseCoordinator; router: DatabaseManagerActorRouter }>();
 
 interface DatabaseAutomationRecoveryBinding {
   readonly router: DatabaseManagerActorRouter;
@@ -191,6 +193,7 @@ export class DatabaseManager implements AsyncDisposable {
       router: this.#actorRouter,
       assertStarted: () => this.#assertStarted(),
     }));
+    if (multiple) loggingBindings.set(this, { coordinator: multiple.coordinator, router: this.#actorRouter });
   }
 
   /** Start system before application services, then claim the actor database root. */
@@ -357,6 +360,15 @@ export function observeDatabaseAutomationSourceCommits(
   const binding = databaseAutomationRecoveryBindings.get(manager);
   if (!binding) throw configInvalid('Database automation recovery manager is invalid.');
   return binding.router.observeAutomationCommits(listener);
+}
+
+/** @internal Composition-only logging port, absent from public barrels and request facades. */
+export function databaseManagerLoggingPort(manager: DatabaseManager) {
+  const binding = loggingBindings.get(manager);
+  if (!binding) return null;
+  return Object.freeze({ coordinator: binding.coordinator,
+    install: (prepare: (id: string, scope: LoggingScope) => void) => binding.router.installLoggingSources(prepare),
+    recover: (id: string, scope: LoggingScope) => binding.router.recoverLoggingSource(id, scope) });
 }
 
 function runtimeSummary(

@@ -7,7 +7,7 @@ import {
 } from './logging-contracts';
 
 export const LOGGING_MAX_EVENT_BYTES = 16_384;
-export const LOGGING_MAX_BATCH = 100;
+export const LOGGING_MAX_BATCH = 256;
 /** Leave headroom for Fabric's 1 MiB operation/result boundary and envelope accounting. */
 export const LOGGING_MAX_BATCH_BYTES = 512 * 1024;
 export const LOGGING_MAX_PAGE = 100;

@@ -17,7 +17,7 @@ type EventRow = Row & { id: string; digest: string; envelope: string; ordinal: n
 
 /** Side-effect-free declaration. Both writer and reader actors import this exact realm/version. */
 export const loggingRealm = defineDatabaseRealm({
-  name: 'zero-logging', version: '2',
+  name: 'zero-logging', version: '3',
   tables: LOGGING_TABLES,
   migrations: [{
     version: '001', description: 'Index bounded scope, actor and resource investigations', safety: 'safe',

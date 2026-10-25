@@ -7,6 +7,9 @@
  */
 
 import { DatabaseError } from './database-error';
+import { LOGGING_ACTOR_SOURCE_OPERATION } from '../logging/logging-actor-source';
+import { loggingRecord } from '../logging/logging-validation';
+import { loggingDigest } from '../logging/logging-hash';
 import { hasGuardianPresenceRealm } from '../presence/presence-realm';
 import { PresenceProjectionStore } from '../presence/presence-projection-store';
 import { validateDatabasePresenceProjectionPayload } from './database-presence-projection-protocol';
@@ -184,6 +187,8 @@ export class DatabaseActorRuntime implements Disposable {
           return asExecutorValue(this.bind(request, 'reader'));
         case DATABASE_ACTOR_OPERATIONS.execute:
           return this.execute(request);
+        case LOGGING_ACTOR_SOURCE_OPERATION:
+          return this.loggingSource(request);
         case DATABASE_ACTOR_OPERATIONS.replay:
           return asExecutorValue(this.replay(request));
         case DATABASE_ACTOR_OPERATIONS.tenantSyncSnapshotBegin:
@@ -320,6 +325,7 @@ export class DatabaseActorRuntime implements Disposable {
         syncEpoch: candidate!.role === 'writer'
           ? candidate!.runtime.db.syncEpoch
           : null,
+        ...(candidate!.role === 'writer' && candidate!.loggingSource ? { loggingPolicyFingerprint: loggingDigest(candidate!.loggingSource.policy) } : {}),
       }));
       if (result.databaseRef !== payload.databaseRef
         || result.role !== this.role
@@ -382,12 +388,17 @@ export class DatabaseActorRuntime implements Disposable {
     const expectedKind = operationKind(payload.operation);
     requireOperationKind(request.kind, expectedKind);
 
-    const execute = () => binding.role === 'reader'
+    const executeRaw = () => binding.role === 'reader'
       ? binding.runtime.execute(payload.operation)
       : binding.engine.execute(
         payload.operation,
         payload.logicalReceiptFingerprint,
       );
+    if (payload.loggingContext && (binding.role !== 'writer' || !binding.loggingSource)) {
+      throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Actor logging attribution is not configured.', { outcome: 'not-started' });
+    }
+    const execute = () => binding.role === 'writer' && binding.loggingSource
+      ? binding.loggingSource.run(payload.loggingContext, executeRaw) : executeRaw();
     let value;
     if (isWriteOperation(payload.operation) && binding.role === 'writer') {
       if (binding.authorityCommitGuard) {
@@ -438,6 +449,21 @@ export class DatabaseActorRuntime implements Disposable {
         ? binding.engine.takeReceiptCompaction()
         : null,
     ));
+  }
+
+  /** Framework-only delivery metadata, authority-neutral and unable to read or mutate business rows. */
+  private loggingSource(request: DatabaseExecutorServerRequest): DatabaseExecutorValue {
+    const payload = loggingRecord(request.payload, ['databaseRef', 'acknowledge']);
+    const binding = this.requireBinding(payload.databaseRef as import('./database-file').DatabaseRef);
+    if (binding.role !== 'writer' || !binding.loggingSource) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Actor logging source is unavailable.', { outcome: 'not-started' });
+    const acknowledging = payload.acknowledge !== undefined;
+    requireOperationKind(request.kind, acknowledging ? 'write' : 'read');
+    const run = () => binding.loggingSource!.control(acknowledging ? { acknowledge: payload.acknowledge } : {});
+    const result = binding.authorityCommitGuard ? binding.authorityCommitGuard.runAuthorityNeutral(run) : run();
+    // A hot acknowledgment may replay after a crash. The sink's immutable
+    // event proofs make that harmless; the next business/close snapshot folds
+    // in these deletions. Never rewrite the complete hot image per audit page.
+    return asExecutorValue(result);
   }
 
   private replay(

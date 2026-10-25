@@ -11,19 +11,23 @@ import { assertManagedAppLoggingIsolation } from './app-logging-isolation';
 import { installLoggingSourceCapture } from '../../logging/logging-source-capture';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { ResourceRegistry } from '../../resources/resource-registry';
+import type { DatabaseManager } from '../../databases/database-manager';
+import { installLoggingFabricCapture } from '../../logging/logging-fabric-capture';
 
 /** Publish only after both actors are ready. Shutdown detaches diagnostics before draining/closing Fabric. */
 export async function installManagedAppLogging(config: ResolvedConfig, runtime: ZeroAppRuntime, observability: PlatformObservabilityRuntime,
-  sources?: { application: ReactiveDB; system: ReactiveDB; resources: ResourceRegistry }): Promise<void> {
+  sources?: { application: ReactiveDB; system: ReactiveDB; resources: ResourceRegistry; manager?: DatabaseManager }): Promise<void> {
   if (!config.logging) return;
   assertManagedAppLoggingIsolation(config, true);
   const fallback = { ...observability };
   const logging = await LoggingRuntime.open(config.logging, fallback);
   let bridge: ReturnType<typeof installLoggingObservabilityBridge> | null = null;
   let capture: ReturnType<typeof installLoggingSourceCapture> | null = null;
+  let fabric: ReturnType<typeof installLoggingFabricCapture> = null;
   let removeCleanup: (() => void) | null = null;
   const closeOwners = async () => {
     const failures: unknown[] = [];
+    try { await fabric?.close(); } catch (error) { failures.push(error); }
     try { await capture?.close(); } catch (error) { failures.push(error); }
     try { await logging.close(); } catch (error) { failures.push(error); }
     if (failures.length) throw new AggregateError(failures, 'Logging ownership cleanup failed.');
@@ -44,6 +48,11 @@ export async function installManagedAppLogging(config: ResolvedConfig, runtime: 
       capture = installLoggingSourceCapture(logging, sources.application, sources.system, fields,
         () => emitPlatformCodeTo(fallback, OBS_CODES.LOGGING_DELIVERY_FAILED));
       logging.attachSource(capture);
+      if (sources.manager && config.databaseTopology.mode === 'multiple') {
+        fabric = installLoggingFabricCapture(logging, sources.manager, sources.system, config.databaseTopology.rootDirectory,
+          () => emitPlatformCodeTo(fallback, OBS_CODES.LOGGING_DELIVERY_FAILED));
+        if (fabric) logging.attachFabricSource(fabric);
+      }
     }
     runtime.set(ZERO_LOGGING_RUNTIME, logging);
     bridge = installLoggingObservabilityBridge(logging, observability, logging.config.policyVersion);

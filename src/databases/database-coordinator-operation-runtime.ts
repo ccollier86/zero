@@ -67,8 +67,11 @@ import type {
   DatabaseWriterCommitValue,
   DatabaseWriterReceiptCompaction,
 } from './database-writer-engine';
+import { LOGGING_ACTOR_SOURCE_OPERATION, normalizeLoggingActorSourcePage, type LoggingActorSourcePage } from '../logging/logging-actor-source';
+import type { LoggingContext, LoggingScope } from '../logging/logging-contracts';
 
 interface DatabaseCoordinatorOperationRuntimeOptions {
+  readonly loggingContext?: () => LoggingContext | undefined;
   readonly operationCatalog: ReturnType<typeof createDatabaseRealmOperationCatalog>;
   readonly queueTimeoutMs: number;
   readonly operationTimeoutMs: number;
@@ -109,6 +112,25 @@ interface DatabaseCoordinatorOperationRuntimeOptions {
 
 export class DatabaseCoordinatorOperationRuntime {
   constructor(private readonly options: DatabaseCoordinatorOperationRuntimeOptions) {}
+
+  /** Delivery metadata uses the existing file FIFO without taking application/Guardian authority. */
+  executeLoggingSource(entry: DatabaseCoordinatorEntry, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {
+    this.options.assertStarted();
+    if (this.options.canAwaitOpening(entry)) return this.awaitReplacementOpening(entry, {}, 'query', () => this.executeLoggingSource(entry, scope, acknowledge));
+    this.options.assertUsableEntry(entry);
+    return this.enqueueLane(entry, acknowledge ? 'mutation' : 'query', {}, async () => {
+      const writer = this.options.requireWriter(entry);
+      try {
+        const raw = await writer.execute({ operation: LOGGING_ACTOR_SOURCE_OPERATION, kind: acknowledge ? 'write' : 'read',
+          payload: { databaseRef: entry.databaseRef, ...(acknowledge ? { acknowledge } : {}) } }, { timeoutMs: this.options.operationTimeoutMs });
+        return normalizeLoggingActorSourcePage(raw, scope);
+      } catch (caught) {
+        const error = safeCoordinatorError(caught);
+        if (error.outcome === 'unknown' || this.options.isTerminalFailure(writer, error)) await this.options.retire(entry, writer, error);
+        throw error;
+      }
+    });
+  }
 
   /** Framework-private publication shares the existing FIFO and final authority boundary. */
   executePresenceProjection(entry: DatabaseCoordinatorEntry, publication: PresencePublication,
@@ -610,6 +632,7 @@ export class DatabaseCoordinatorOperationRuntime {
     authorityRevision?: number,
   ): Promise<DatabaseReadResult | DatabaseCommitResult> {
     const kind = isWriteOperation(operation) ? 'write' : 'read';
+    const loggingContext = kind === 'write' ? this.options.loggingContext?.() : undefined;
     const startedAt = this.options.now();
     try {
       const value = await executor.execute({
@@ -618,6 +641,7 @@ export class DatabaseCoordinatorOperationRuntime {
         payload: {
           databaseRef: entry.databaseRef,
           operation,
+          ...(loggingContext ? { loggingContext } : {}),
           ...(logicalReceiptFingerprint === undefined
             ? {}
             : { logicalReceiptFingerprint }),

@@ -8,6 +8,7 @@
 
 import { createPlatformSQLiteService } from '../persistence';
 import { DatabaseError } from './database-error';
+import { LoggingActorSource } from '../logging/logging-actor-source';
 import { DatabaseActorAutomationSession } from './database-actor-automation-session';
 import { DatabaseActorAuthorityCommitGuard } from './database-actor-authority-commit-guard';
 import {
@@ -55,6 +56,7 @@ export interface DatabaseActorWriterBinding {
   readonly runtime: DatabaseRuntime;
   readonly engine: DatabaseWriterOperationEngine;
   readonly automationSession: DatabaseActorAutomationSession | null;
+  readonly loggingSource: LoggingActorSource | null;
   readonly authorityCommitGuard: DatabaseActorAuthorityCommitGuard | null;
   readonly snapshotSessions: DatabaseTenantSyncSnapshotSessionStore;
   readonly openedFileIdentity: DatabaseFileIdentityProof;
@@ -97,6 +99,7 @@ export function openWriterBinding(
   let runtime: DatabaseRuntime | null = null;
   let engine: DatabaseWriterOperationEngine | null = null;
   let automationSession: DatabaseActorAutomationSession | null = null;
+  let loggingSource: LoggingActorSource | null = null;
   let authorityCommitGuard: DatabaseActorAuthorityCommitGuard | null = null;
   let snapshotSessions: DatabaseTenantSyncSnapshotSessionStore | null = null;
   let livenessGuard: DatabaseActorLivenessGuard | null = null;
@@ -201,6 +204,7 @@ export function openWriterBinding(
     } else {
       fileGuard.assertCurrent();
     }
+    loggingSource = payload.logging ? new LoggingActorSource(runtime.db, payload.logging) : null;
     engine = new DatabaseWriterOperationEngine({ runtime, realm });
     snapshotSessions = new DatabaseTenantSyncSnapshotSessionStore({
       runtime,
@@ -238,6 +242,7 @@ export function openWriterBinding(
       runtime,
       engine,
       automationSession,
+      loggingSource,
       authorityCommitGuard,
       snapshotSessions,
       openedFileIdentity: openedFileIdentity,
@@ -247,6 +252,7 @@ export function openWriterBinding(
     };
   } catch (error) {
     const cleanupFailures: unknown[] = [];
+    if (loggingSource) attemptClose(() => loggingSource!.close(), cleanupFailures);
     // Remove request authority before framework-owned snapshot cleanup opens
     // its own maintenance transaction. No request revision may leak into or
     // be required by binding teardown.
@@ -472,6 +478,7 @@ export function closeActorBinding(binding: DatabaseActorBinding): void {
     if (binding.authorityCommitGuard) {
       attemptClose(() => binding.authorityCommitGuard!.close(), failures);
     }
+    if (binding.loggingSource) attemptClose(() => binding.loggingSource!.close(), failures);
     attemptClose(() => binding.snapshotSessions.close(), failures);
     if (binding.automationSession) {
       attemptClose(() => binding.automationSession!.close(), failures);

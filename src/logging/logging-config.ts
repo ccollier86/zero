@@ -1,6 +1,6 @@
 /** Core logging capture presets and bounded writer policy. No services start and no existing audit is disabled. */
 import { LOGGING_FAMILIES, LOGGING_LEVELS, LOGGING_PRESETS, type LoggingEvent, type LoggingFamily, type LoggingLevel, type LoggingPreset } from './logging-contracts';
-import { invalid, loggingChoice, loggingRecord } from './logging-validation';
+import { invalid, loggingChoice, loggingRecord, LOGGING_MAX_BATCH } from './logging-validation';
 
 export interface LoggingConfig {
   readonly preset?: LoggingPreset;
@@ -36,7 +36,7 @@ export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedL
     const queue = input.queue === undefined ? {} : loggingRecord(input.queue, ['maxEvents', 'maxBytes', 'batchSize'], 'LOGGING_CONFIG_INVALID');
     const maxEvents = bound(queue.maxEvents === undefined ? 1024 : queue.maxEvents, 1, 100_000);
     const maxBytes = bound(queue.maxBytes === undefined ? 8 * 1024 * 1024 : queue.maxBytes, 16_384, 64 * 1024 * 1024);
-    const batchSize = bound(queue.batchSize === undefined ? Math.min(64, maxEvents) : queue.batchSize, 1, Math.min(100, maxEvents));
+    const batchSize = bound(queue.batchSize === undefined ? Math.min(LOGGING_MAX_BATCH, maxEvents) : queue.batchSize, 1, Math.min(LOGGING_MAX_BATCH, maxEvents));
     return Object.freeze({ enabled: value !== undefined && value !== false, preset,
       minimumLevel: input.minimumLevel === undefined ? 'info' : loggingChoice(input.minimumLevel, LOGGING_LEVELS),
       capture: Object.freeze(capture), queue: Object.freeze({ maxEvents, maxBytes, batchSize }), complianceRequested: preset === 'compliance' });

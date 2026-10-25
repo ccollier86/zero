@@ -12,9 +12,12 @@ import { currentLoggingAttribution } from './logging-attribution';
 /** Install before source admission; invoke close before closing log/source owners. */
 export function installLoggingSourceCapture(logging: LoggingRuntime, application: ReactiveDB, system: ReactiveDB,
   tenantFields: Readonly<Record<string, string>> = {}, onFailure: () => void = () => {}) {
-  const app = new LoggingSourceOutbox(application), auth = new LoggingSourceOutbox(system);
+  const app = new LoggingSourceOutbox(application, logging.config.sourceQueue), auth = new LoggingSourceOutbox(system, logging.config.sourceQueue);
   let closed = false, closing = false, task: Promise<void> | null = null, closeTask: Promise<void> | null = null, failed = 0;
   let wakeup = false, retryTimer: ReturnType<typeof setTimeout> | null = null, consecutiveFailures = 0;
+  type SourceDiagnostics = Readonly<{ application: { queued: number; bytes: number }; guardian: { queued: number; bytes: number }; failed: number }>;
+  let finalDiagnostics: SourceDiagnostics | null = null;
+  const diagnostics = (): SourceDiagnostics => finalDiagnostics ?? Object.freeze({ application: Object.freeze(app.counts()), guardian: Object.freeze(auth.counts()), failed });
   const schedule = () => {
     if (closed || closing || wakeup || retryTimer) return; wakeup = true;
     queueMicrotask(() => { wakeup = false; if (!closed && !closing) void drain(); });
@@ -56,6 +59,7 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
     task = (async () => {
       for (const source of [app, auth]) for (let batch = 0; batch < 4; batch++) {
         if (closed) return;
+        if (closing && batch > 0) break;
         const rows = source.page(); if (!rows.length) break;
         const results = await Promise.allSettled(rows.map(row => logging.deliver(row.event)));
         const acknowledged = rows.filter((_, i) => results[i]!.status === 'fulfilled').map(row => row.id);
@@ -76,19 +80,20 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
   schedule();
   return Object.freeze({
     async flush() { await task; await drain(); },
-    diagnostics() { return Object.freeze({ application: app.counts(), guardian: auth.counts(), failed }); },
+    diagnostics,
     close() {
       if (closeTask) return closeTask;
       closing = true; removeMutation(); removeAuth(); if (retryTimer) clearTimeout(retryTimer);
       closeTask = (async () => {
         try {
           await task;
-          // Admission is closed; the source has a hard 10,000-row budget.
+          // Admission is closed; drain bounded groups, preserving any remaining durable backlog.
           // Drain that finite backlog, but never spin on an unavailable sink.
-          for (let pass = 0; pass < 80 && (app.counts().queued || auth.counts().queued); pass++) {
+          const deadline = Date.now() + 5000;
+          for (let pass = 0; pass < 80 && Date.now() < deadline && (app.counts().queued || auth.counts().queued); pass++) {
             const failures = failed; await drain(); if (failed !== failures) break;
           }
-        } finally { closed = true; }
+        } finally { try { finalDiagnostics = diagnostics(); } finally { closed = true; } }
       })();
       return closeTask;
     },

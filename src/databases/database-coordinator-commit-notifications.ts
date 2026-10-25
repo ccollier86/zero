@@ -3,6 +3,15 @@ import type { DatabaseRef } from './database-file';
 
 type Listener = (sourceRef: DatabaseRef) => void;
 const listeners = new WeakMap<object, Set<Listener>>();
+const startup = new WeakMap<object, Set<() => void>>();
+
+export function observeDatabaseCoordinatorStarted(owner: object, listener: () => void): () => void {
+  let entries = startup.get(owner); if (!entries) startup.set(owner, entries = new Set());
+  entries.add(listener); return () => { entries!.delete(listener); };
+}
+export function notifyDatabaseCoordinatorStarted(owner: object): void {
+  for (const listener of startup.get(owner) ?? []) try { listener(); } catch { /* Startup hints do not change database ownership. */ }
+}
 
 export function observeDatabaseCoordinatorCommits(owner: object, listener: Listener): () => void {
   let current = listeners.get(owner);

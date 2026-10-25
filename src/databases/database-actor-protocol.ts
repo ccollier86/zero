@@ -9,6 +9,9 @@
 import { isAbsolute, normalize, resolve } from 'node:path';
 
 import { DatabaseError } from './database-error';
+import { normalizeLoggingActorSourceBinding, type LoggingActorSourceBinding } from '../logging/logging-actor-source';
+import { captureLoggingEvent } from '../logging/logging-validation';
+import type { LoggingContext } from '../logging/logging-contracts';
 import type { DatabaseActorLivenessBinding } from './database-actor-liveness';
 import {
   normalizeDatabaseRef,
@@ -78,6 +81,7 @@ const BIND_FIELDS = new Set([
   'realmFingerprint',
   'sqlite',
   'authorityCommitFence',
+  'logging',
 ]);
 const REQUIRED_BIND_FIELDS = Object.freeze([
   'databaseRef',
@@ -181,10 +185,13 @@ export interface DatabaseActorBindPayload {
   readonly realmFingerprint: string;
   readonly sqlite: DatabaseActorSQLiteConfig;
   readonly authorityCommitFence?: DatabaseActorAuthorityCommitFenceConfig;
+  readonly logging?: LoggingActorSourceBinding;
 }
 
 /** Actor readiness proof returned after open/migration/schema validation. */
 export interface DatabaseActorBindResult {
+  /** Required by managed audit admission when the parent supplied a source policy. */
+  readonly loggingPolicyFingerprint?: string;
   readonly databaseRef: DatabaseRef;
   readonly role: DatabaseActorRole;
   readonly fileIdentity: DatabaseFileIdentityProof;
@@ -202,6 +209,7 @@ export interface DatabaseActorExecutePayload {
   readonly operation: DatabaseOperation;
   readonly logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint;
   readonly authorityRevision?: number;
+  readonly loggingContext?: LoggingContext;
 }
 
 /** Trusted writer-only lookup of one durable logical-request receipt. */
@@ -244,6 +252,7 @@ export function validateDatabaseActorBindPayload(
     placement: parsePlacementConfig(record.placement),
     realmFingerprint: parseRealmFingerprint(record.realmFingerprint),
     sqlite: normalizeDatabaseActorSQLiteConfig(record.sqlite),
+    ...(record.logging === undefined ? {} : { logging: validatedLoggingBinding(record.logging) }),
     ...(authorityCommitFence === undefined
       ? {}
       : { authorityCommitFence }),
@@ -266,7 +275,9 @@ export function validateDatabaseActorBindResult(
     'schemaChecksum',
     'sequence',
     'syncEpoch',
-  ]));
+    'loggingPolicyFingerprint',
+  ]), false);
+  if (record.loggingPolicyFingerprint !== undefined && (typeof record.loggingPolicyFingerprint !== 'string' || !SCHEMA_CHECKSUM_PATTERN.test(record.loggingPolicyFingerprint))) throw payloadInvalid('Invalid actor audit readiness proof.');
   if (record.role !== 'writer' && record.role !== 'reader') {
     throw payloadInvalid('Invalid database actor role.');
   }
@@ -299,6 +310,7 @@ export function validateDatabaseActorBindResult(
     schemaChecksum: record.schemaChecksum,
     sequence: parseSequenceToken(record.sequence),
     syncEpoch: record.syncEpoch,
+    ...(record.loggingPolicyFingerprint === undefined ? {} : { loggingPolicyFingerprint: record.loggingPolicyFingerprint as string }),
   });
 }
 
@@ -374,6 +386,7 @@ export function validateDatabaseActorExecutePayload(
       'operation',
       'logicalReceiptFingerprint',
       'authorityRevision',
+      'loggingContext',
     ]),
     false,
   );
@@ -408,11 +421,25 @@ export function validateDatabaseActorExecutePayload(
   return Object.freeze({
     databaseRef: parseDatabaseRef(record.databaseRef),
     operation,
+    ...(record.loggingContext === undefined ? {} : { loggingContext: validatedLoggingContext(record.loggingContext) }),
     ...(logicalReceiptFingerprint === undefined
       ? {}
       : { logicalReceiptFingerprint }),
     ...(authorityRevision === undefined ? {} : { authorityRevision }),
   });
+}
+
+function validatedLoggingContext(input: unknown): LoggingContext {
+  try {
+    const event = captureLoggingEvent(input as LoggingContext, { id: 'validation', family: 'records', action: 'record.validation', occurredAt: 0, outcome: 'attempted', evidence: 'server-confirmed' });
+    return Object.freeze({ sourceId: event.sourceId, origin: event.origin, scope: event.scope, actor: event.actor,
+      requestId: event.requestId, correlationId: event.correlationId, policyVersion: event.policyVersion });
+  } catch { throw payloadInvalid('Actor logging attribution is invalid.'); }
+}
+
+function validatedLoggingBinding(input: unknown): LoggingActorSourceBinding {
+  try { return normalizeLoggingActorSourceBinding(input); }
+  catch { throw payloadInvalid('Actor logging binding is invalid.'); }
 }
 
 function parseAuthorityCommitFence(

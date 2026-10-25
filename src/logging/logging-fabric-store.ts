@@ -41,7 +41,7 @@ export class LoggingFabricStore implements LoggingBatchWriter {
 
   async page(scope: LoggingReadScope, query: LoggingQuery = {}, options: DatabaseReadOptions = {}): Promise<LoggingPage> {
     const input = normalizeLoggingQuery(this.stream, scope, query);
-    const result = await this.data.query('logging.page', input as unknown as DatabaseSerializableValue, { consistency: { mode: 'strong' }, ...options });
+    const result = await this.data.query('logging.page', input as unknown as DatabaseSerializableValue, { consistency: { mode: 'snapshot' }, ...options });
     return readLoggingPage(result.value, input);
   }
 

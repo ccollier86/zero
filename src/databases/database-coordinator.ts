@@ -99,9 +99,12 @@ import { DatabaseCoordinatorSyncPublication } from './database-coordinator-sync-
 import { DatabaseCoordinatorEntryLifecycle } from './database-coordinator-entry-lifecycle';
 import { DatabaseCoordinatorEntryFactory } from './database-coordinator-entry-factory';
 import { createDatabaseCoordinatorDiagnostics } from './database-coordinator-diagnostics';
-import { notifyDatabaseCoordinatorCommit } from './database-coordinator-commit-notifications';
+import { notifyDatabaseCoordinatorCommit, notifyDatabaseCoordinatorStarted } from './database-coordinator-commit-notifications';
 import { DatabaseCoordinatorAdmission } from './database-coordinator-admission';
 import { DatabaseCoordinatorAuthority } from './database-coordinator-authority';
+import { databaseLoggingBinding, databaseLoggingContext } from './database-logging-binding';
+import type { LoggingActorSourcePage } from '../logging/logging-actor-source';
+import type { LoggingScope } from '../logging/logging-contracts';
 
 export type {
   DatabaseAcquireOptions,
@@ -211,6 +214,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       state: () => this.state,
       actorLiveness: () => this.requireActorLiveness(),
       authorityCommitFence: config.actorAuthorityContext?.actorBinding() ?? null,
+      loggingBinding: entry => databaseLoggingBinding(this, entry.id),
       assertOwnedRootCurrent: () => this.assertOwnedRootCurrent(),
       releaseSlot: (slot) => this.releaseSlot(slot),
       rememberBlockedDatabase: (entry, failure) => {
@@ -246,6 +250,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       emit: (event) => this.emit(event),
     });
     this.operationRuntime = new DatabaseCoordinatorOperationRuntime({
+      loggingContext: () => databaseLoggingContext(this),
       operationCatalog: this.operationCatalog,
       queueTimeoutMs: this.queueTimeoutMs,
       operationTimeoutMs: this.operationTimeoutMs,
@@ -504,6 +509,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       readerCount: 0,
       runtimeCount: 0,
     });
+    notifyDatabaseCoordinatorStarted(this);
   }
 
   /** Resolve a trusted logical ID into an unforgeable bound capability. */
@@ -822,6 +828,13 @@ export class DatabaseCoordinator implements AsyncDisposable {
   }
 
   /** Framework-private scoped presence writer path; absent from the public database operation catalog. */
+  /** @internal Private source acknowledgment; cannot select tables, row fields, or arbitrary commands. */
+  executeLoggingSource(entry: DatabaseEntry, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {
+    const binding = databaseLoggingBinding(this, entry.id);
+    if (!binding || binding.scope.kind !== scope.kind || binding.scope.tenantId !== scope.tenantId) throw new DatabaseError('DATABASE_AUTHORITY_CHANGED', 'Actor audit scope is unavailable.', { outcome: 'not-started' });
+    return this.operationRuntime.executeLoggingSource(entry, binding.scope, acknowledge);
+  }
+
   executePresenceProjection(entry: DatabaseEntry, publication: PresencePublication,
     options: DatabaseExecutionOptions = {}, commitAuthority: DatabaseCommitAuthority | null = null): Promise<PresenceProjectionReceipt> {
     return this.operationRuntime.executePresenceProjection(entry, publication, options, commitAuthority);

@@ -350,6 +350,11 @@ function prepareDatabaseFileInternal(
  * the ancestor's canonical location, and the normal no-symlink checks then
  * protect every component which Zero creates or owns.
  */
+/** @internal Read-only canonical owner identity; unlike prepareDatabaseRoot this never creates a directory. */
+export function canonicalDatabaseRootIdentity(input: string): string {
+  return canonicalizeDatabaseRoot(normalizeRootDirectory(input));
+}
+
 function canonicalizeDatabaseRoot(rootDirectory: string): string {
   const missingParts: string[] = [];
   let cursor = rootDirectory;

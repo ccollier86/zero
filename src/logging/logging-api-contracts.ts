@@ -32,6 +32,8 @@ export interface LoggingHealth {
   readonly pendingEvents: number;
   readonly failedEvents: number;
   readonly sourcePendingEvents: number;
+  /** Sources awaiting discovery/reconciliation; their exact pending event count is not yet known. */
+  readonly sourceDiscoveryPending: number;
   readonly sourceDeliveryFailures: number;
   readonly maintenanceFailures: number;
 }

@@ -48,6 +48,8 @@ import type {
   DatabaseCoordinatorAutomationDeliveryInput,
   DatabaseCoordinatorAutomationDeliveryResult,
 } from './database-coordinator-automation-delivery-runtime';
+import type { LoggingActorSourcePage } from '../logging/logging-actor-source';
+import type { LoggingScope } from '../logging/logging-contracts';
 
 export interface CoordinatorTenantSyncSnapshotStart {
   readonly databaseRef: DatabaseCoordinatorEntry['databaseRef'];
@@ -57,6 +59,7 @@ export interface CoordinatorTenantSyncSnapshotStart {
 
 /** Narrow host boundary implemented by DatabaseCoordinator. */
 export interface DatabaseCoordinatorCapabilityHost {
+  executeLoggingSource?(entry: DatabaseCoordinatorEntry, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage>;
   executePresenceProjection(entry: DatabaseCoordinatorEntry, publication: PresencePublication,
     options: DatabaseExecutionOptions | undefined, commitAuthority: DatabaseCommitAuthority | null): Promise<PresenceProjectionReceipt>;
   executeAutomationDelivery<
@@ -169,6 +172,13 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
     return this.#entry.databaseRef;
   }
   get trustedWriter(): DatabaseTrustedWriteExecutor { return this.#trustedWriter; }
+
+  /** @internal No raw source transport is projected into a request-owned data client. */
+  executeLoggingSource(scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {
+    this.assertActive();
+    if (!this.#coordinator.executeLoggingSource) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Actor audit source is unavailable.');
+    return this.#coordinator.executeLoggingSource(this.#entry, scope, acknowledge);
+  }
   get released(): boolean { return !this.#active; }
 
   tenantSyncReservedEntry(): DatabaseCoordinatorEntry {
@@ -282,6 +292,12 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
       throw new DatabaseError('DATABASE_CLOSED', 'Database capability was released.');
     }
   }
+}
+
+/** Invoke the private projection path only on a coordinator-owned lease. */
+export function executeCoordinatorLoggingSource(lease: DatabaseCoordinatorLease, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {
+  if (!(lease instanceof CoordinatorLease)) throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Audit delivery requires a coordinator-owned binding.');
+  return lease.executeLoggingSource(scope, acknowledge);
 }
 
 /** Invoke the private projection path only on a coordinator-owned lease. */

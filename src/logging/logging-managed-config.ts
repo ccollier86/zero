@@ -7,9 +7,12 @@ import { LoggingError } from './logging-error';
 import { loggingArray, loggingRecord } from './logging-validation';
 import { LOGGING_ACTOR_FLAG } from './logging-actor-contract';
 import { loggingDigest } from './logging-hash';
+import { normalizeLoggingSourceLimits, type LoggingSourceLimits } from './logging-source-limits';
 
 /** Branch-preview configuration. Core audit instrumentation and client collection remain separate readiness gates. */
 export interface ManagedLoggingConfig extends LoggingConfig {
+  /** Per-origin durable spool, independent of the in-memory writer queue. */
+  readonly sourceQueue?: Partial<LoggingSourceLimits>;
   /** Declared Guardian permissions. Omission restricts investigations/management to platform administrators. */
   readonly access?: Readonly<{ read?: string; manage?: string; export?: string; hold?: string; review?: string }>;
   /** Omission/null keeps the stream indefinitely. Pruning is explicit, bounded, and respects holds. */
@@ -23,6 +26,7 @@ export interface ManagedLoggingConfig extends LoggingConfig {
 }
 
 export interface ResolvedManagedLoggingConfig {
+  readonly sourceQueue: LoggingSourceLimits;
   readonly policyVersion: string;
   readonly access: Readonly<Record<'read' | 'manage' | 'export' | 'hold' | 'review', string | null>>;
   readonly retention: Readonly<{ auditDays: number | null; operationalDays: number | null }>;
@@ -38,8 +42,9 @@ export interface ResolvedManagedLoggingConfig {
 export function resolveManagedLoggingConfig(input: boolean | ManagedLoggingConfig | undefined, projectRoot: string): ResolvedManagedLoggingConfig | false {
   if (input === false || input === undefined) return false;
   try {
-    const record = input === true ? {} : loggingRecord(input, ['preset', 'minimumLevel', 'capture', 'queue', 'rootDirectory', 'actors', 'access', 'metadataKeys', 'retention'], 'LOGGING_CONFIG_INVALID');
-    const { rootDirectory, actors, access: rawAccess, metadataKeys: rawKeys, retention: rawRetention, ...capture } = record;
+    const record = input === true ? {} : loggingRecord(input, ['preset', 'minimumLevel', 'capture', 'queue', 'rootDirectory', 'actors', 'access', 'metadataKeys', 'retention', 'sourceQueue'], 'LOGGING_CONFIG_INVALID');
+    const { rootDirectory, actors, access: rawAccess, metadataKeys: rawKeys, retention: rawRetention, sourceQueue: rawSourceQueue, ...capture } = record;
+    const sourceQueue = normalizeLoggingSourceLimits(rawSourceQueue);
     const access = rawAccess === undefined ? {} : loggingRecord(rawAccess, ['read', 'manage', 'export', 'hold', 'review']);
     for (const value of Object.values(access)) if (typeof value !== 'string' || !/^[a-z][a-z0-9._:-]{0,119}$/.test(value)) throw new Error();
     const metadataKeys = rawKeys === undefined ? [] : loggingArray(rawKeys, 32);
@@ -52,7 +57,7 @@ export function resolveManagedLoggingConfig(input: boolean | ManagedLoggingConfi
     const actor = actors === undefined ? fileURLToPath(new URL('./logging-actor-entry.ts', import.meta.url)) : null;
     const launch = actors === undefined ? { launch: { kind: 'source' as const, entrypoint: actor! }, env: {} } : loggingRecord(actors, ['launch', 'env', 'executor'], 'LOGGING_CONFIG_INVALID');
     const createExecutor = createSubprocessDatabaseExecutorFactory({ ...launch, actorFlag: LOGGING_ACTOR_FLAG } as unknown as SubprocessDatabaseExecutorFactoryOptions);
-    return Object.freeze({ policy, policyVersion: 'logging-v1:' + loggingDigest({ policy, metadataKeys, retention }), access: Object.freeze({ read: access.read as string ?? null, manage: access.manage as string ?? null,
+    return Object.freeze({ policy, sourceQueue, policyVersion: 'logging-v1:' + loggingDigest({ policy, metadataKeys, retention, sourceQueue }), access: Object.freeze({ read: access.read as string ?? null, manage: access.manage as string ?? null,
       export: access.export as string ?? null, hold: access.hold as string ?? null, review: access.review as string ?? null }),
       retention: Object.freeze({ auditDays: retention.auditDays as number ?? null, operationalDays: retention.operationalDays as number ?? null }),
       metadataKeys: Object.freeze(metadataKeys as string[]), rootDirectory: resolve(projectRoot, typeof rootDirectory === 'string' ? rootDirectory : 'data/zero.logs'), createExecutor, defaultActorEntrypoint: actor });
