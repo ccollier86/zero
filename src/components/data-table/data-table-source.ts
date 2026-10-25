@@ -73,6 +73,8 @@ export type DataTableSource<T extends Row = Row> =
 
 export interface UseDataTableSourceOptions<T extends Row> {
   source?: DataTableSource<T>;
+  /** Out-of-band server-query invalidation, not a source identity or row-change event. */
+  refreshKey?: string | number;
   data?: T[];
   collection?: string;
   lazy?: boolean;
@@ -177,6 +179,7 @@ export function useDataTableSource<T extends Row = Row>(
   const server = useDataTableServerSource<T>({
     source: sourceType === 'server' ? resolved : null,
     query: options.query,
+    refreshKey: options.refreshKey,
     primaryKey: options.primaryKey,
     confirmLiveInsertions: options.confirmLiveInsertions,
     liveRevision: collection.data,

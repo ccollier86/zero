@@ -5,7 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createApp, defineEndpoint, defineTable, field } from '../../frontend/server';
 import { planLegacyStateMigration, stageLegacyStateMigration, verifyStagedLegacyStateMigration } from '../index';
-import { fixture, syntheticPassword, syntheticAction, syntheticResume, syntheticRefresh, digest } from './test-support';
+import { fixture, syntheticPassword, syntheticAction, syntheticResume, syntheticRefresh, syntheticMutation, digest } from './test-support';
 
 for (const mode of ['file', 'hot'] as const) {
   test(`staged legacy ${mode}: normal login/refresh, scoped Storage, tokens and unchanged pending work`, async () => {
@@ -69,6 +69,22 @@ for (const mode of ['file', 'hot'] as const) {
       expect(login.status, JSON.stringify(login.data)).toBe(200);
       expect(login.data.user).toMatchObject({ userId: 'legacy-user', role: 'admin', properties: { practice_role: 'clinician' } });
       const token = login.data.accessToken;
+      // Exercise the actual managed public Sync handshake, not a private SQL replay.
+      // Executing the old UPDATE again would replace the newer retained text.
+      const socket = await syncConnection(origin.replace('http:', 'ws:') + '/sync');
+      try {
+        socket.ws.send(JSON.stringify({ type: 'sync.auth', token }));
+        expect(await socket.next(message => message.type === 'sync.auth.ready')).toMatchObject({ authenticated: true });
+        for (let attempt = 2; attempt <= 3; attempt++) {
+          socket.ws.send(JSON.stringify({ ...syntheticMutation, epoch: 'before-offline-conversion', attempt }));
+          const ack = await socket.next(message => message.type === 'sync.ack' && message.ref === syntheticMutation.ref);
+          expect(ack).toMatchObject({ ok: true, change: { table: 'notes', rowId: 'legacy-note', row: { text: 'Synthetic retained text' } } });
+        }
+        socket.ws.send(JSON.stringify({ ...syntheticMutation, attempt: 2, row: { text: 'Conflicting new request' } }));
+        expect(await socket.next(message => message.type === 'sync.ack')).toMatchObject({ ok: false, error: 'Mutation reference conflict' });
+        socket.ws.send(JSON.stringify({ type: 'sync.subscribe', tables: ['notes'], snapshot: ['notes'], lastSeq: 0 }));
+        expect(await socket.next(message => message.type === 'sync.snapshot')).toMatchObject({ tables: { notes: { 'legacy-note': expect.objectContaining({ text: 'Synthetic retained text' }) } } });
+      } finally { socket.ws.close(); }
       const proof = await request('GET', '/proof', undefined, token);
       expect(proof.status, JSON.stringify(proof.data)).toBe(200);
       expect(proof.data).toMatchObject({ userId: 'legacy-user',
@@ -96,6 +112,23 @@ for (const mode of ['file', 'hot'] as const) {
       expect((await request('POST', '/auth/logout', { refreshToken: renewed.data.refreshToken }, renewed.data.accessToken)).status).toBe(200);
       expect((await request('POST', '/proof/consume', {}, renewed.data.accessToken)).status).toBe(401);
       await app.stop(true); app = undefined;
+      // Bindings are durable across a normal managed restart, not just retained
+      // in the receipt-store instance used by the first process.
+      app = await createApp(config);
+      app.listen({ hostname: '127.0.0.1', port: 0 });
+      const restartedOrigin = `http://127.0.0.1:${app.server!.port}`;
+      const restartedLogin = await fetch(restartedOrigin + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'legacy-owner', password: syntheticPassword }) });
+      expect(restartedLogin.status).toBe(200);
+      const restartedToken = (await restartedLogin.json() as any).accessToken;
+      const resumed = await syncConnection(restartedOrigin.replace('http:', 'ws:') + '/sync');
+      try {
+        resumed.ws.send(JSON.stringify({ type: 'sync.auth', token: restartedToken }));
+        await resumed.next(message => message.type === 'sync.auth.ready');
+        resumed.ws.send(JSON.stringify({ ...syntheticMutation, attempt: 4, epoch: 'before-offline-conversion' }));
+        expect(await resumed.next(message => message.type === 'sync.ack')).toMatchObject({ ok: true, change: { row: { text: 'Synthetic retained text' } } });
+      } finally { resumed.ws.close(); }
+      await app.stop(true); app = undefined;
       const pending = () => {
         const db = new Database(staged.systemDatabase.path, { readonly: true });
         try { return ['workflow_instances', 'workflow_steps', 'workflow_events'].map(table => db.query(`SELECT * FROM ${table}`).all()); }
@@ -112,4 +145,26 @@ for (const mode of ['file', 'hot'] as const) {
       expect(digest(new Uint8Array(await Bun.file(f.sourcePath).arrayBuffer()))).toBe(f.input.sourceSha256);
     } finally { try { await app?.stop(true); } finally { f.dispose(); } }
   }, 60_000);
+}
+
+async function syncConnection(url: string) {
+  const ws = new WebSocket(url), messages: any[] = [];
+  const waiters = new Set<() => void>();
+  ws.addEventListener('message', event => { messages.push(JSON.parse(String(event.data))); for (const waiter of waiters) waiter(); });
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Synthetic Sync connect timeout')), 5000);
+    ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Synthetic Sync connect failed')); }, { once: true });
+  });
+  return { ws, next(predicate: (message: any) => boolean) {
+    return new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => { waiters.delete(check); reject(new Error('Synthetic Sync message timeout')); }, 5000);
+      function check() {
+        const index = messages.findIndex(predicate);
+        if (index < 0) return;
+        clearTimeout(timer); waiters.delete(check); resolve(messages.splice(index, 1)[0]);
+      }
+      waiters.add(check); check();
+    });
+  } };
 }

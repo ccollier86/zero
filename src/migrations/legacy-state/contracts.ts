@@ -19,7 +19,7 @@ export interface LegacyTableEvidence {
   readonly rows: number;
   readonly schemaSha256: string;
   readonly rowsSha256: string;
-  readonly owner: 'system' | 'application' | 'ledger' | 'derived';
+  readonly owner: 'system' | 'application' | 'application-runtime' | 'ledger' | 'derived';
 }
 
 export interface LegacyStateMigrationPlan {

@@ -16,10 +16,13 @@ export const syntheticPassword = 'Synthetic-only-password-123';
 export const syntheticAction = 'synthetic-legacy-action-secret';
 export const syntheticResume = 'synthetic-legacy-resume-secret';
 export const syntheticRefresh = 'synthetic-legacy-refresh-secret';
+/** A completed historical mutation, deliberately older than the current row. */
+export const syntheticMutation = { type: 'sync.mutate' as const, ref: 'legacy-sync-ref', table: 'notes', op: 'UPDATE' as const,
+  rowId: 'legacy-note', row: { text: 'Synthetic original request' } };
 export const digest = (value: string | Uint8Array) => new Bun.CryptoHasher('sha256').update(value).digest('hex');
 export const fileSha256 = async (path: string) => digest(new Uint8Array(await Bun.file(path).arrayBuffer()));
 
-export async function fixture() {
+export async function fixture(options: { runtimeTables?: boolean; populatedReceipts?: boolean } = {}) {
   const root = mkdtempSync(join(process.env.PROJECT_SCRATCH_DIR ?? tmpdir(), 'legacy-state-'));
   const sourcePath = join(root, 'source.db'), workingPath = join(root, 'working.db');
   const runner = new Migrator({ dbPath: workingPath, migrations: [...migrations.slice(0, 7), appMigration], backupDir: join(root, 'backups'), log() {} });
@@ -42,6 +45,25 @@ export async function fixture() {
       FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
     )`);
     db.query('INSERT INTO _auth_user_generations VALUES (?,?)').run('legacy-user', 2);
+    if (options.runtimeTables !== false) {
+      // Frozen released runtime DDL, independently reproduced rather than imported from the converter.
+      db.exec(`CREATE TABLE _sync_mutation_receipts (
+        principal TEXT NOT NULL, ref TEXT NOT NULL, request_hash TEXT NOT NULL,
+        ack_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (principal, ref)
+      ); CREATE TABLE _zero_sync_table_modes (
+        table_name text primary key, mode text not null, source text not null, reason text not null,
+        row_count_at_decision integer not null, row_limit integer not null,
+        created_at integer not null, updated_at integer not null
+      )`);
+      db.query('INSERT INTO _zero_sync_table_modes VALUES (?,?,?,?,?,?,?,?)').run('patients', 'lazy', 'auto', 'row-limit', 25001, 25000, 100, 200);
+      db.query('INSERT INTO _zero_sync_table_modes VALUES (?,?,?,?,?,?,?,?)').run('notes', 'full', 'auto', 'within-limit', 1, 25000, 100, 200);
+      if (options.populatedReceipts !== false) {
+        const hash = digest(JSON.stringify([syntheticMutation.table, syntheticMutation.op, syntheticMutation.rowId, syntheticMutation.row]));
+        const ack = JSON.stringify({ table: 'notes', op: 'UPDATE', rowId: 'legacy-note' });
+        db.query('INSERT INTO _sync_mutation_receipts VALUES (?,?,?,?,?)').run('user:legacy-user', syntheticMutation.ref, hash, ack, Date.now());
+        db.query('INSERT INTO _sync_mutation_receipts VALUES (?,?,?,?,?)').run('anonymous:public', 'anonymous-ref', hash, ack, Date.now());
+      }
+    }
     db.query('INSERT INTO _refresh_tokens VALUES (?,?,?,?,?,?)').run('refresh-id', 'legacy-user', digest(syntheticRefresh), Date.now() + 1000000, 100, null);
     db.query('INSERT INTO _zero_action_tokens(token_id,purpose,token_hash,expires_at,created_at,metadata) VALUES (?,?,?,?,?,?)').run('action-id', 'clinical:review', digest(syntheticAction), Date.now() + 1000000, 100, '{"synthetic":true}');
     db.query('INSERT INTO _zero_resume_tokens(token_id,flow,token_hash,resource_type,resource_id,expires_at,created_at) VALUES (?,?,?,?,?,?,?)').run('resume-id', 'clinical:intake', digest(syntheticResume), 'assessment', 'legacy-assessment', Date.now() + 1000000, 100);

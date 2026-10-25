@@ -95,7 +95,10 @@ export async function handleDefaultSyncMutation(
 
   const principal = mutationPrincipal(socket);
   const requestHash = hashSyncMutation(message);
-  const receipt = receipts?.find(principal, ref, requestHash);
+  const currentReceipt = receipts?.find(principal, ref, requestHash);
+  const receipt = currentReceipt?.status === 'miss' && socket.data.authContext
+    ? receipts?.findLegacyUser(socket.data.authContext.userId, ref, requestHash)
+    : currentReceipt;
   if (receipt?.status === 'conflict') {
     sendAck(socket, ref, false, null, 'Mutation reference conflict');
     return;

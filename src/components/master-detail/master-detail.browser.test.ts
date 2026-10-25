@@ -1,6 +1,9 @@
 /** Exercises shared server-query controls and acknowledged detail writes with synthetic data. */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtemp, readdir, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Browser, Page } from 'playwright';
 import {
   acquirePlaywrightTestBrowser,
@@ -25,6 +28,9 @@ declare global {
       retain(): void;
       retainedUpdate(): Promise<string | null>;
       selected(): string | null;
+      refreshKey(value: number): void;
+      retainedRefresh(): Promise<void>;
+      completions: number;
     };
   }
 }
@@ -33,6 +39,7 @@ const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 let lease: PlaywrightTestBrowserLease | undefined;
 let browser: Browser | undefined;
 let bundle = '';
+let scratch: string | undefined;
 
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
@@ -49,7 +56,7 @@ beforeAll(async () => {
     const pending=new Map();
     let context,retained,accept,reject;
     const records=[{id:'record-1',name:'Before'}];
-    const harness=window.__masterDetailHarness={queries:[], errors:[], writes:0, customWrites:0,
+    const harness=window.__masterDetailHarness={queries:[], errors:[], writes:0, customWrites:0,completions:0,
       aborted:index=>pending.get(index)?.signal.aborted??false,
       settle(index,rows,hasMore=false){const query=harness.queries[index];pending.get(index)?.resolve({rows,page:query.pagination.mode==='cursor'
         ?{mode:'cursor',hasMore,nextCursor:hasMore?'next-'+query.pagination.pageIndex:null}
@@ -59,6 +66,7 @@ beforeAll(async () => {
       retain:()=>retained=context,
       async retainedUpdate(){try{await retained.update({name:'Stale context'});return null;}catch(error){return error.code??error.message;}},
       selected:()=>context?.selectedId??null
+      ,retainedRefresh:()=>retained.refresh()
     };
     const adapter={query(query,{signal}){const index=harness.queries.push(structuredClone(query))-1;return new Promise(resolve=>pending.set(index,{signal,resolve}));}};
     const numericId=row=>row.order_id;
@@ -66,34 +74,36 @@ beforeAll(async () => {
     const customWrite=()=>{harness.customWrites++;return write();};
     function Harness(){
       const [configuration,setConfiguration]=useState({mode:'server',table:'records'});
+      const [refreshKey,setRefreshKey]=useState(0);harness.refreshKey=setRefreshKey;
       harness.configure=(mode,table='records')=>setConfiguration({mode,table});
       const {mode,table}=configuration;
-      const source=['server','cursor','numeric'].includes(mode)
-        ?{type:'server',table,adapter,pagination:mode==='cursor'?'cursor':'offset',...(mode==='numeric'?{getRowId:numericId}:{})}
+      const source=['server','server-custom','cursor','numeric'].includes(mode)
+        ?{type:'server',table,adapter,prefetch:false,pagination:mode==='cursor'?'cursor':'offset',...(mode==='numeric'?{getRowId:numericId}:{})}
         :{type:'data',data:records,...(mode==='readonly'?{}:{actions:{update:write}})};
       return <MasterDetailPage schema={schema} listColumns={['name']} source={source}
+        refreshKey={refreshKey} tableToolbarSlots={{actions:next=><button onClick={async()=>{await next.refresh();harness.completions++;}}>Refresh list</button>}}
         searchable={{fields:['name'],ariaLabel:'Search records'}} paginated={{pageSize:2}}
-        onUpdate={mode==='custom'?customWrite:undefined} onUpdateError={error=>harness.errors.push(error)}
+        onUpdate={['custom','server-custom'].includes(mode)?customWrite:undefined} onUpdateError={error=>harness.errors.push(error)}
         detailFooter={(_item,next)=>{context=next;return <span data-testid='selected'>selected:{next.selectedId??'none'}</span>;}}/>;
     }
     createRoot(document.getElementById('root')).render(<Harness/>);
   `;
-  const result = await Bun.build({
-    entrypoints: ['master-detail-test:fixture'], target: 'browser', format: 'iife',
-    define: { 'process.env.NODE_ENV': JSON.stringify('test') },
-    plugins: [{
-      name: 'in-memory-master-detail-fixture',
-      setup(build) {
-        build.onResolve({ filter: /^master-detail-test:/ }, () => ({ path: 'fixture', namespace: 'master-detail-test' }));
-        build.onLoad({ filter: /.*/, namespace: 'master-detail-test' }, () => ({ contents, loader: 'tsx', resolveDir: process.cwd() }));
-      },
-    }],
-  });
-  if (!result.success) throw new Error(result.logs.map((entry) => entry.message).join('\n'));
-  bundle = await result.outputs[0]!.text();
+  // A real entry and isolated compiler prevent the virtual namespace from leaking
+  // into relative imports in the generated detail form's dependency tree.
+  scratch = await mkdtemp(join(process.env.ZERO_TEST_SCRATCH_ROOT ?? tmpdir(), 'master-detail-browser-'));
+  await symlink(join(process.cwd(), 'node_modules'), join(scratch, 'node_modules'), 'dir');
+  const entry = join(scratch, 'entry.tsx');
+  await Bun.write(entry, contents);
+  const child = Bun.spawn([process.execPath, '--no-env-file', 'build', entry, '--target=browser', '--format=iife',
+    '--define', 'process.env.NODE_ENV="test"', '--outdir', scratch, '--entry-naming', 'bundle-[hash].[ext]'], { stdout: 'pipe', stderr: 'pipe' });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  if (code !== 0) throw new Error(`MasterDetail fixture build failed (${code}): ${stderr || stdout}`);
+  const output = (await readdir(scratch)).find(file => file.startsWith('bundle-') && file.endsWith('.js'));
+  if (!output) throw new Error('MasterDetail fixture bundle missing');
+  bundle = await Bun.file(join(scratch, output)).text();
 }, 60_000);
 
-afterAll(() => lease?.release());
+afterAll(async () => { try { if (scratch) await rm(scratch, { recursive: true, force: true }); } finally { lease?.release(); } });
 
 async function mount(): Promise<Page> {
   if (!browser) throw new Error('Browser unavailable');
@@ -114,6 +124,57 @@ async function settle(page: Page, rows: TestRow[], hasMore = false): Promise<voi
 }
 
 describe('MasterDetail query and acceptance contracts', () => {
+  browserTest('public refresh key and list toolbar preserve selected details and retire retained callbacks on source change', async () => {
+    const page = await mount();
+    try {
+      await settle(page, [{ id: '1', name: 'Selected record' }]);
+      await page.waitForFunction(() => window.__masterDetailHarness.selected() === '1');
+      const before = await page.evaluate(() => window.__masterDetailHarness.queries.length);
+      await page.getByRole('button', { name: 'Refresh list', exact: true }).click();
+      await page.waitForFunction(count => window.__masterDetailHarness.queries.length === count + 1, before);
+      expect(await page.evaluate(() => window.__masterDetailHarness.completions)).toBe(0);
+      expect(await page.locator('tbody').getByText('Selected record', { exact: true }).isVisible()).toBe(true);
+      expect(await page.evaluate(() => window.__masterDetailHarness.selected())).toBe('1');
+      await settle(page, [{ id: '1', name: 'Claimed record' }]);
+      await page.waitForFunction(() => window.__masterDetailHarness.completions === 1);
+      await page.evaluate(() => window.__masterDetailHarness.refreshKey(1));
+      await page.waitForFunction(count => window.__masterDetailHarness.queries.length === count + 2, before);
+      expect(await page.evaluate(() => window.__masterDetailHarness.selected())).toBe('1');
+      await settle(page, [{ id: '1', name: 'Joined record' }]);
+      await page.evaluate(() => window.__masterDetailHarness.retain());
+      await page.evaluate(() => window.__masterDetailHarness.configure('server', 'another-list'));
+      await page.waitForFunction(() => window.__masterDetailHarness.selected() === null);
+      await settle(page, [{ id: '2', name: 'Other list' }]);
+      const after = await page.evaluate(() => window.__masterDetailHarness.queries.length);
+      await page.evaluate(() => window.__masterDetailHarness.retainedRefresh());
+      expect(await page.evaluate(() => window.__masterDetailHarness.queries.length)).toBe(after);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  browserTest('an accepted custom server detail update refreshes joined rows but a rejected write never does', async () => {
+    const page = await mount();
+    try {
+      await page.evaluate(() => window.__masterDetailHarness.configure('server-custom'));
+      await settle(page, [{ id: '1', name: 'Before save' }]);
+      const input = page.locator('input[name="name"]'); await input.waitFor(); await input.fill('Edited');
+      const before = await page.evaluate(() => window.__masterDetailHarness.queries.length);
+      await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+      await page.waitForFunction(() => window.__masterDetailHarness.customWrites === 1);
+      await page.evaluate(() => window.__masterDetailHarness.reject());
+      await page.waitForFunction(() => window.__masterDetailHarness.errors.length === 1);
+      expect(await page.evaluate(() => window.__masterDetailHarness.queries.length)).toBe(before);
+      await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+      await page.waitForFunction(() => window.__masterDetailHarness.customWrites === 2);
+      await page.evaluate(() => window.__masterDetailHarness.accept());
+      await page.waitForFunction(count => window.__masterDetailHarness.queries.length === count + 1, before);
+      expect(await page.getByRole('button', { name: 'Save Changes', exact: true }).isDisabled()).toBe(true);
+      expect(await page.locator('tbody').getByText('Before save', { exact: true }).isVisible()).toBe(true);
+      await settle(page, [{ id: '1', name: 'Server joined save' }]);
+      await page.waitForFunction(() => !document.querySelector('button[type="submit"]')?.hasAttribute('disabled'));
+      expect(await page.evaluate(() => window.__masterDetailHarness.customWrites)).toBe(2);
+      expect(await page.evaluate(() => window.__masterDetailHarness.selected())).toBe('1');
+    } finally { await page.close(); }
+  }, 60_000);
   browserTest('connects search to the server while loading and does not filter accepted pages again', async () => {
     const page = await mount();
     try {

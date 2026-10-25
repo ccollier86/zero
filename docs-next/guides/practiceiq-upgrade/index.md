@@ -13,7 +13,7 @@ modes: [single-tenant, separate-system-database, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
   snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
@@ -76,6 +76,12 @@ for both Resend and SMTP (historical reference, **not** the facade upgrade targe
 For this upgrade select a newer qualified normal main archive containing the
 [application-client extension](../../backend/fabric/application-client.md).
 It must also contain the [legacy-state exports](../../backend/migrations/legacy-state.md).
+For real-source rehearsal it must include the subsequent runtime-table extension
+for `_sync_mutation_receipts` and `_zero_sync_table_modes`; `054941b` alone lacks
+that admission. The table upgrade also needs public stable-source refresh on
+DataTable/DataTableView and MasterDetail. The corrected package must pass both
+checks; a previous synthetic conversion pass does not establish real-source
+profile completeness.
 Record its full commit and SHA-256 from the release handoff and
 `zero-release --status`; verify the archive before using it. Those exact values
 become `PIQ_TARGET_COMMIT` and `PIQ_TARGET_SHA256` in the preparation commands.

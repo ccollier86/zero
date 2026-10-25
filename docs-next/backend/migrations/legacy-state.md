@@ -13,7 +13,7 @@ modes: [offline, legacy-single-tenant, separate-system-database]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
   snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
@@ -39,7 +39,12 @@ copying their state does not authorize their execution.
 
 The only current `sourceFormat` is `zero-1.3-single-combined`. It admits the
 known framework schema and checksums for migrations `001` through `007`, plus
-the optional historical auth-generation table. The PracticeIQ source pin
+the optional historical runtime tables `_auth_user_generations`,
+`_sync_mutation_receipts` and `_zero_sync_table_modes`. A runtime table may be
+absent on an installation that never created it, or present with no rows.
+Present tables must match their frozen column, primary-key and constraint
+contracts. They are framework-owned; do not list them in `applicationTables`,
+rename them, empty them or mark them disposable to pass admission. The PracticeIQ source pin
 `4ef1f85982eea038f1c193b7fc7e487d800ef415` has the same seven immutable
 framework checksums. Other source schemas require a separately supported
 profile; do not modify historical checksums or loosen admission to force one in.
@@ -141,6 +146,8 @@ or runtime boot: legitimate later writes also invalidate the original receipt.
 | Storage drive/object/blob identities and grants | System metadata, unchanged. Private object bytes and provider configuration remain an independent copy/verification obligation. |
 | Workflow definitions, runs, steps, events, waits and pending state | System, unchanged in all original columns. Normal system migrations add current derived version pins where provable. Nonterminal imports receive a recovery hold, not invented execution authority. |
 | Application tables, row identities, foreign keys, values, indexes and triggers | Application, unchanged. A minimal `users(user_id)` anchor preserves the original complete user ID set without credentials, roles or profile copies. Declare current Guardian references during app adaptation. |
+| `_sync_mutation_receipts` | Framework-owned application runtime. Preserve every original receipt unchanged in the application file, not the system file. The plan labels this owner `application-runtime`; it is not a clinical application table. |
+| `_zero_sync_table_modes` | System metadata, preserving every existing decision and timestamp. The normal managed resolver uses this metadata store on boot; current explicit sync configuration still takes precedence. |
 | `_migrations`, `_zero_migrations`, `_zero_schema_history`, `_zero_migration_artifacts` | Partition by approved framework/app version and checksum. Preserve original IDs and records; never clone the mixed ledger into both files. |
 | Old `_changes` and `_change_sequence` | Reset explicitly in both new planes. The retained source keeps the original mixed stream. Clients need a fresh snapshot/cursor; old sync cursors must not be reused. |
 
@@ -159,6 +166,25 @@ remain exact except for classified removal and ID-only anchors.
 Preserved identities are declared column values, not SQLite's implicit physical
 `rowid`; applications must not use a vacuum-sensitive internal rowid as an
 external business identity.
+
+### Historical Mutation Replay
+
+The old receipt key was `user:<userId>`; the current receipt key also includes
+the authorization scope. Staging adds source-bound replay bindings for imported
+authenticated-user receipts without rewriting their keys, hashes, timestamps or
+stored acknowledgements. A matching user, reference and semantic request hash
+can acknowledge already completed work without executing it again, even though
+the reactive stream was reset. A reused reference with different contents fails
+with `Mutation reference conflict`.
+
+The acknowledgement reloads the current row through current table visibility,
+row filters, projection and the final authority check. It never returns a saved
+historical row body or grants the old permissions. Anonymous receipts are
+preserved but are not rebound to a newly authenticated user. An unmarked old
+receipt in an ordinary current database is not implicitly adopted. The existing
+bounded receipt-retention policy still applies after normal runtime starts;
+unknown/pruned retry outcomes remain rejected rather than repeated automatically.
+Do not delete these receipts together with `_changes` or `_change_sequence`.
 
 ## Pending Workflow Recovery Requires a Separate Decision
 
@@ -207,7 +233,10 @@ Source tests cover preservation, wrong checksums/schema, orphaned FKs,
 unknown ownership, repeat execution, partial generations and tampering.
 Managed synthetic file/hot tests exercise existing-password login, original-ID
 legacy refresh adoption, scoped Storage, generic token use/replay protection and
-non-mutating rejection of unapproved workflow recovery. Exact installed-archive
+non-mutating rejection of unapproved workflow recovery. Runtime-table tests cover
+absent/empty/populated receipts, exact sync-mode preservation, mismatched schemas,
+replay-binding tampering, repeated managed Sync acknowledgement without a second
+write, conflicting references, and current visibility/authority fences. Exact installed-archive
 qualification is recorded separately by commit and archive SHA-256; a matching
 `2.6.0` version string is insufficient.
 

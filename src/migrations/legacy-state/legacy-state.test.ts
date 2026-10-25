@@ -8,7 +8,7 @@ import { fixture as makeFixture, appMigration, digest, syntheticAction, syntheti
 
 const fixtures: Awaited<ReturnType<typeof makeFixture>>[] = [];
 afterEach(() => { for (const f of fixtures.splice(0)) f.dispose(); });
-async function fixture() { const f = await makeFixture(); fixtures.push(f); return f; }
+async function fixture(options?: Parameters<typeof makeFixture>[0]) { const f = await makeFixture(options); fixtures.push(f); return f; }
 
 test('stages lossless canonical identities, credentials, trusted roles, tokens, Storage and pending workflows', async () => {
   const f = await fixture();
@@ -16,6 +16,10 @@ test('stages lossless canonical identities, credentials, trusted roles, tokens, 
   const plan = await planLegacyStateMigration(f.input);
   expect(plan.systemMigrationVersions).toHaveLength(7);
   expect(plan.applicationMigrationVersions).toEqual([appMigration.version]);
+  expect(plan.tables).toEqual(expect.arrayContaining([
+    expect.objectContaining({ table: '_sync_mutation_receipts', owner: 'application-runtime', rows: 2 }),
+    expect.objectContaining({ table: '_zero_sync_table_modes', owner: 'system', rows: 2 }),
+  ]));
   expect(JSON.stringify(plan)).not.toContain(f.passwordHash);
   expect(JSON.stringify(plan)).not.toContain(digest(syntheticAction));
   const outputDirectory = join(f.root, 'generation');
@@ -45,6 +49,17 @@ test('stages lossless canonical identities, credentials, trusted roles, tokens, 
     expect(app.query('SELECT counter,body FROM patients').get()).toEqual({ counter: 9007199254740993n, body: new Uint8Array([0, 255, 0]) });
     expect(app.query("SELECT name FROM sqlite_schema WHERE name='_credentials' OR name='_changes'").all()).toEqual([]);
     expect(app.query('SELECT id FROM clinical_note_index').get()).toEqual({ id: 'legacy-note' });
+    const source = new Database(f.sourcePath, { readonly: true, safeIntegers: true });
+    try {
+      expect(app.query('SELECT * FROM _sync_mutation_receipts ORDER BY principal,ref').all()).toEqual(source.query('SELECT * FROM _sync_mutation_receipts ORDER BY principal,ref').all());
+      expect(system.query('SELECT * FROM _zero_sync_table_modes ORDER BY table_name').all()).toEqual(
+        source.query('SELECT * FROM _zero_sync_table_modes ORDER BY table_name').all().map((row: any) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]))));
+    } finally { source.close(); }
+    expect(app.query('SELECT principal,ref,source_sha256 FROM _sync_legacy_mutation_receipt_bindings').all()).toEqual([
+      { principal: 'user:legacy-user', ref: 'legacy-sync-ref', source_sha256: f.input.sourceSha256 },
+    ]);
+    expect(system.query("SELECT name FROM sqlite_schema WHERE name='_sync_mutation_receipts'").get()).toBeNull();
+    expect(app.query("SELECT name FROM sqlite_schema WHERE name='_zero_sync_table_modes'").get()).toBeNull();
   } finally { system.close(); app.close(); }
   expect(staged.workflowRecovery).toBe('requires-reviewed-authority');
   expect(statSync(outputDirectory).mode & 0o777).toBe(0o700);
@@ -57,6 +72,8 @@ test('rejects stale backup bytes, missing/unknown tables, unapproved checksums a
   const f = await fixture();
   for (const invalid of [{ sourceSha256: 'a'.repeat(64) }, { applicationTables: ['patients'] },
     { applicationTables: ['patients', 'notes', 'unknown'] }, { applicationTables: ['patients', 'notes', 'users'] },
+    { applicationTables: ['patients', 'notes', '_sync_mutation_receipts'] },
+    { applicationTables: ['patients', 'notes', '_zero_sync_table_modes'] },
     { applicationMigrationChecksums: {} }, { applicationMigrationChecksums: { [appMigration.version]: 'a'.repeat(64) } },
     { offlineSource: false }]) await expect(planLegacyStateMigration({ ...f.input, ...invalid } as LegacyStateMigrationInput)).rejects.toBeDefined();
   const alias = join(f.root, 'alias.db'); symlinkSync(f.sourcePath, alias);
@@ -87,6 +104,10 @@ test('rejects changed canonical shapes, triggers, orphaned FKs and cross-owned l
   const corruptions = [
     { sql: 'ALTER TABLE users ADD COLUMN unreviewed_authority TEXT', code: 'LEGACY_STATE_SOURCE_UNSUPPORTED' },
     { sql: 'CREATE TRIGGER custom_authority AFTER UPDATE ON users BEGIN SELECT 1; END', code: 'LEGACY_STATE_SOURCE_UNSUPPORTED' },
+    { sql: 'ALTER TABLE _sync_mutation_receipts ADD COLUMN unexpected TEXT', code: 'LEGACY_STATE_SOURCE_UNSUPPORTED' },
+    { sql: 'CREATE TRIGGER custom_receipt AFTER INSERT ON _sync_mutation_receipts BEGIN SELECT 1; END', code: 'LEGACY_STATE_SOURCE_UNSUPPORTED' },
+    { sql: 'ALTER TABLE _zero_sync_table_modes ADD COLUMN unexpected TEXT', code: 'LEGACY_STATE_SOURCE_UNSUPPORTED' },
+    { sql: 'DROP TABLE _sync_mutation_receipts; CREATE TABLE _sync_mutation_receipts (principal TEXT NOT NULL, ref TEXT NOT NULL, request_hash TEXT NOT NULL, ack_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(ref,principal))', code: 'LEGACY_STATE_SOURCE_UNSUPPORTED' },
     { sql: "INSERT INTO notes VALUES ('orphan','missing','synthetic-only')", code: 'LEGACY_STATE_INTEGRITY_FAILED' },
     { sql: "UPDATE _migrations SET checksum='" + 'f'.repeat(64) + "' WHERE version='001'", code: 'LEGACY_STATE_LEDGER_INVALID' },
     { sql: "UPDATE _zero_schema_history SET migration_version='unapproved' WHERE migration_version='2026072901'", code: 'LEGACY_STATE_LEDGER_INVALID' },
@@ -100,6 +121,30 @@ test('rejects changed canonical shapes, triggers, orphaned FKs and cross-owned l
     expect(await fileSha256(sourcePath)).toBe(sourceSha256);
   }
 });
+
+test('admits optional never-created runtime tables and the real-source empty-receipt shape without relabeling', async () => {
+  for (const options of [{ runtimeTables: false }, { populatedReceipts: false }]) {
+    const f = await fixture(options), plan = await planLegacyStateMigration(f.input);
+    const receipt = plan.tables.find(table => table.table === '_sync_mutation_receipts');
+    expect(receipt?.owner).toBe(options.runtimeTables === false ? undefined : 'application-runtime');
+    expect(receipt?.rows).toBe(options.runtimeTables === false ? undefined : 0);
+    const operation = { ...f.input, expectedPlanFingerprint: plan.fingerprint, outputDirectory: join(f.root, 'empty-runtime'), resetReactiveHistory: true as const };
+    const staged = await stageLegacyStateMigration(operation);
+    expect(await verifyStagedLegacyStateMigration(operation)).toEqual(staged);
+  }
+}, 60_000);
+
+test('tampered legacy replay bindings cannot pass verification even if the archive receipt is rehashed', async () => {
+  const f = await fixture(), plan = await planLegacyStateMigration(f.input);
+  const operation = { ...f.input, expectedPlanFingerprint: plan.fingerprint, outputDirectory: join(f.root, 'bindings'), resetReactiveHistory: true as const };
+  const staged = await stageLegacyStateMigration(operation);
+  const db = new Database(staged.applicationDatabase.path);
+  try { db.query('UPDATE _sync_legacy_mutation_receipt_bindings SET source_sha256=?').run('f'.repeat(64)); } finally { db.close(); }
+  const path = join(operation.outputDirectory, 'staged.json'), receipt = JSON.parse(readFileSync(path, 'utf8'));
+  receipt.applicationDatabase.sha256 = await fileSha256(staged.applicationDatabase.path);
+  writeFileSync(path, JSON.stringify(receipt));
+  await expect(verifyStagedLegacyStateMigration(operation)).rejects.toMatchObject({ code: 'LEGACY_STATE_PRESERVATION_FAILED' });
+}, 60_000);
 
 test('failed app-view conversion retains a private rejected generation and cannot be resumed or accepted', async () => {
   const f = await fixture(), db = new Database(f.sourcePath);

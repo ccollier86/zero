@@ -10,6 +10,7 @@ import { assertLegacyIntegrity, closeLegacyRead, legacyRowsEvidence, legacySchem
 import { canonicalDirectory, copyPrivateFile, createGeneration, exists, fileSha256, readPrivateJson, sourceFile, syncPrivatePath, writePrivateJson } from './files';
 import { planLegacyStateMigration } from './inspect';
 import { hasTable, partitionLegacyLedgers } from './ledger';
+import { bindLegacyMutationReceipts, verifyLegacyMutationReceiptBindings } from './runtime-state';
 
 export async function stageLegacyStateMigration(input: StageLegacyStateMigrationInput): Promise<StagedLegacyStateMigration> {
   let created = false;
@@ -92,11 +93,13 @@ function partitionGeneration(path: string, plan: LegacyStateMigrationPlan, plane
       if (plane === 'system') for (const view of plan.applicationViews) db.exec(`DROP VIEW ${q(view)}`);
       else db.exec('CREATE TEMP TABLE legacy_user_ids AS SELECT user_id FROM users');
       for (const table of plan.tables) {
-        if (table.owner === 'derived' || (table.owner !== 'ledger' && table.owner !== plane)) db.exec(`DROP TABLE ${q(table.table)}`);
+        const belongs = table.owner === plane || (plane === 'application' && table.owner === 'application-runtime');
+        if (table.owner === 'derived' || (table.owner !== 'ledger' && !belongs)) db.exec(`DROP TABLE ${q(table.table)}`);
       }
       partitionLegacyLedgers(db, plane === 'system' ? plan.systemMigrationVersions : plan.applicationMigrationVersions);
       if (plane === 'application') {
         db.exec('CREATE TABLE users (user_id TEXT PRIMARY KEY); INSERT INTO users(user_id) SELECT user_id FROM temp.legacy_user_ids; DROP TABLE temp.legacy_user_ids;');
+        bindLegacyMutationReceipts(db, plan);
       }
     })();
     // Purge removed canonical/clinical bytes from output free pages; the exact
@@ -146,7 +149,7 @@ function verifyPartition(sourcePath: string, targetPath: string, plan: LegacySta
     target = openLegacyRead(targetPath);
     assertLegacyIntegrity(target);
     for (const table of plan.tables) {
-      if (table.owner === plane) {
+      if (table.owner === plane || (plane === 'application' && table.owner === 'application-runtime')) {
         const after = legacyRowsEvidence(target, table.table, [...table.columns]);
         if (after.rows !== table.rows || after.rowsSha256 !== table.rowsSha256
           || (exactSchema && legacySchemaSha256(target, table.table) !== table.schemaSha256)) failLegacyState('LEGACY_STATE_PRESERVATION_FAILED');
@@ -160,6 +163,7 @@ function verifyPartition(sourcePath: string, targetPath: string, plan: LegacySta
       } else if (!(plane === 'application' && table.table === 'users') && hasTable(target, table.table)) failLegacyState('LEGACY_STATE_PRESERVATION_FAILED');
     }
     if (plane === 'application') {
+      verifyLegacyMutationReceiptBindings(source, target, plan);
       if (JSON.stringify(target.query('PRAGMA table_info(users)').all().map(row => (row as { name: string }).name)) !== '["user_id"]') failLegacyState('LEGACY_STATE_PRESERVATION_FAILED');
       const before = legacyRowsEvidence(source, 'users', ['user_id']), after = legacyRowsEvidence(target, 'users', ['user_id']);
       if (before.rows !== after.rows || before.rowsSha256 !== after.rowsSha256) failLegacyState('LEGACY_STATE_PRESERVATION_FAILED');

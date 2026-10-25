@@ -160,6 +160,7 @@ export function DataTableContent<T extends Row = Row>({
         ariaLabel={toolbarLabel}
         className={toolbarClassName}
         queryPending={resolved.isPreviousData}
+        refresh={resolved.refresh}
       />}
       {bulkActions?.length && selectionRows.length > 0 ? <DataTableBulkActions
         actions={bulkActions}

@@ -28,3 +28,15 @@ test('rejects duplicate, guessed, unowned and destructive mapping shortcuts', ()
   expect(() => checkTableMap(evidence, plan([rebuild]))).not.toThrow();
   expect(() => checkTableMap({ ...evidence, kind: 'forged' }, plan([mapping]))).toThrow('UPGRADE_SQLITE_EVIDENCE_INVALID');
 });
+
+test('runtime receipts and sync-mode decisions have explicit non-disposable framework ownership', () => {
+  for (const [name, owner, targetPlane] of [['_sync_mutation_receipts', 'application-runtime', 'application'], ['_zero_sync_table_modes', 'system', 'system']]) {
+    const source = { ...evidence, tables: [{ ...table, table: name }] };
+    const entry = { ...mapping, table: name, targetTable: name, owner, targetPlane };
+    expect(() => checkTableMap(source, plan([entry]))).not.toThrow();
+    for (const invalid of [{ owner: 'application' }, { owner: 'ephemeral', action: 'rebuild', targetPlane: undefined, targetTable: undefined },
+      { targetPlane: targetPlane === 'system' ? 'application' : 'system' }, { targetTable: 'renamed_runtime' }]) {
+      expect(() => checkTableMap(source, plan([{ ...entry, ...invalid }]))).toThrow('UPGRADE_TABLE_MAP_INVALID');
+    }
+  }
+});

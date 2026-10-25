@@ -13,7 +13,7 @@ modes: [single-tenant, feature-branch, isolated-rehearsal]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
   snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
@@ -91,6 +91,14 @@ convert live patient data or deploy.
 > Keep clinical app adaptation separate and prove old-state restoration.
 > Unknown source profiles remain a framework gap, not a bypass opportunity.
 >
+> Require the archive's explicit runtime-table extension too. The `054941b`
+> boundary alone omits historical `_sync_mutation_receipts` and
+> `_zero_sync_table_modes`. The corrected profile preserves receipts as
+> framework-owned application runtime (`application-runtime`) and moves sync-mode
+> decisions to system metadata. Do not drop, relabel or reset them, even when the
+> receipt ledger is empty. Rerun the read-only plan against the unchanged approved
+> backup and review its new fingerprint before any staging.
+>
 > Keep workflows false while pending imports await execution-authority review.
 > A requires-reviewed-authority receipt preserves the rows but does not grant
 > execution permission. WORKFLOW_LEGACY_MIGRATION_REQUIRED is a deliberate
@@ -157,6 +165,12 @@ that its clinical data, access policy or recovery path survived.
 - **Realtime/tables:** authorized pages get live changes and revoked clients
   stop. New rows must not blank the table or replay initial-load animation;
   pagination uses directional motion. Keep component keys/data sources stable.
+  For custom joined server sources, use the public `refreshKey` or await the
+  toolbar/detail context's `refresh()` after an accepted external create/edit/claim
+  action. Do not replace adapters, remount the table or synthesize row events.
+  MasterDetail's accepted server `onUpdate` refreshes its shared query automatically.
+  [Server sources](../../frontend/data-controls/data-table/server-sources.md#refresh-stable-server-sources)
+  specifies the complete contract.
 - **Staff UI:** test public modal/select/popover/chart facades, scroll behavior,
   keyboard/focus, mobile and reduced motion. Preserve approved shell behavior.
   Do not assume the planned TanStack/SSR/server-action switch shipped.

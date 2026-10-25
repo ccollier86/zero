@@ -57,6 +57,50 @@ async function settle(page: Page, rows: { id: string; name: string }[], hasMore 
 }
 
 describe('DataTable complete server interaction', () => {
+  browserTest('refreshes joined results through a stable public key or toolbar context without remounting or losing selection', async () => {
+    const page = await mount();
+    try {
+      await settle(page, [{ id: '1', name: 'same-selected-row' }], true);
+      await page.getByLabel('Next page').click();
+      await page.waitForFunction(() => window.__fullTableHarness.queries().at(-1)?.pagination.pageIndex === 1);
+      await settle(page, [{ id: '3', name: 'second-page-selected' }]);
+      await page.getByLabel('Select row', { exact: true }).click();
+      await page.waitForFunction(() => window.__fullTableHarness.selection()[0] === '3');
+      const input = await page.getByRole('searchbox', { name: 'Search records' }).elementHandle();
+      const before = await page.evaluate(() => window.__fullTableHarness.queries().length);
+      await page.getByRole('button', { name: 'Refresh joined results' }).click();
+      await page.waitForFunction(count => window.__fullTableHarness.queries().length === count + 1, before);
+      expect(await page.evaluate(() => window.__fullTableHarness.refreshCompletions())).toBe(0);
+      expect(await page.getByText('second-page-selected', { exact: true }).isVisible()).toBe(true);
+      expect(await page.evaluate(() => window.__fullTableHarness.queries().at(-1)?.pagination.pageIndex)).toBe(1);
+      await settle(page, [{ id: '3', name: 'joined-after-claim' }]);
+      await page.waitForFunction(() => window.__fullTableHarness.refreshCompletions() === 1);
+      expect(await page.evaluate(() => window.__fullTableHarness.selection())).toEqual(['3']);
+      expect(await input!.evaluate(element => element.isConnected)).toBe(true);
+      await page.evaluate(() => window.__fullTableHarness.refreshKey(1));
+      await page.waitForFunction(count => window.__fullTableHarness.queries().length === count + 2, before);
+      expect(await page.getByText('joined-after-claim', { exact: true }).isVisible()).toBe(true);
+      await settle(page, [{ id: '3', name: 'joined-after-create' }]);
+      expect(await page.evaluate(() => window.__fullTableHarness.selection())).toEqual(['3']);
+      expect(await input!.evaluate(element => element.isConnected)).toBe(true);
+      expect(await page.getByText(/new records/i).count()).toBe(0);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  browserTest('retired toolbar refresh callbacks cannot refresh a replacement source', async () => {
+    const page = await mount();
+    try {
+      await settle(page, [{ id: '1', name: 'source-a' }]);
+      await page.evaluate(() => window.__fullTableHarness.retainToolbar());
+      await page.evaluate(() => window.__fullTableHarness.table('source-b'));
+      await page.waitForFunction(() => window.__fullTableHarness.queries().length >= 2);
+      await settle(page, [{ id: '1', name: 'source-b' }]);
+      const before = await page.evaluate(() => window.__fullTableHarness.queries().length);
+      await page.evaluate(() => window.__fullTableHarness.retainedToolbarRefresh());
+      expect(await page.evaluate(() => window.__fullTableHarness.queries().length)).toBe(before);
+      expect(await page.getByText('source-b', { exact: true }).isVisible()).toBe(true);
+    } finally { await page.close(); }
+  }, 60_000);
   browserTest('keeps controls usable while loading and fences superseded search replies', async () => {
     const page = await mount();
     try {

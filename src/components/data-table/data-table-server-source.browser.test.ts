@@ -157,6 +157,54 @@ browserTest('refresh/live invalidation retire caches and expose truthful accepte
   } finally { await page.close(); }
 }, 60_000);
 
+browserTest('refreshKey invalidates a stable adapter exactly once and retains current criteria and accepted rows', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => window.__serverSource.prefetchEnabled(false));
+    await accept(page, 0, 'accepted-in-place');
+    await page.evaluate(() => window.__serverSource.criteria({ search: 'joined-query', sorting: [{ id: 'name', desc: true }], filters: [{ id: 'name', value: 'contains' }] }));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2);
+    await accept(page, 1, 'joined-results');
+    await page.evaluate(() => window.__serverSource.page(1));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3);
+    await accept(page, 2, 'second-page');
+    const criteria = await page.evaluate(() => window.__serverSource.queries()[2]);
+    await page.evaluate(() => window.__serverSource.refreshKey(1));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 4);
+    expect(await page.evaluate(() => window.__serverSource.queries()[3])).toEqual(criteria);
+    expect(await page.getByText('second-page', { exact: true }).isVisible()).toBe(true);
+    expect(await page.evaluate(() => window.__serverSource.state().isLoading)).toBe(true);
+    await page.evaluate(() => { window.__serverSource.rerender(); window.__serverSource.refreshKey(1); });
+    await page.locator('main[data-render="1"]').waitFor();
+    expect(await page.evaluate(() => window.__serverSource.queries().length)).toBe(4);
+    await accept(page, 3, 'new-joined-results');
+    expect(await page.evaluate(() => window.__serverSource.state().changeReason)).toBe('refresh');
+    expect(await page.evaluate(() => window.__serverSource.state().liveInsertedRowIds)).toEqual([]);
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('rapid refreshKey changes retire slow responses, and refresh failure retains rows with the normal error state', async () => {
+  const page = await mount();
+  try {
+    await accept(page, 0, 'baseline');
+    await page.evaluate(() => window.__serverSource.refreshKey(1));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2);
+    await page.evaluate(() => window.__serverSource.refreshKey(2));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3);
+    expect(await page.evaluate(() => window.__serverSource.aborted(1))).toBe(true);
+    await accept(page, 2, 'latest-refresh');
+    await page.evaluate(() => window.__serverSource.resolve(1, [{ id: 'stale', name: 'stale-refresh' }]));
+    expect(await page.getByText('stale-refresh', { exact: true }).count()).toBe(0);
+    await page.evaluate(() => window.__serverSource.refreshKey(3));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 4);
+    await page.evaluate(() => window.__serverSource.reject(3));
+    await page.waitForFunction(() => window.__serverSource.state().error !== null);
+    expect(await page.getByText('latest-refresh', { exact: true }).isVisible()).toBe(true);
+    expect(await page.evaluate(() => window.__serverSource.state().isLoading)).toBe(false);
+    expect(await page.evaluate(() => window.__serverSource.state().liveInsertedRowIds)).toEqual([]);
+  } finally { await page.close(); }
+}, 60_000);
+
 browserTest('cursor prefetch only requests an admitted next cursor; opt-out cancels speculation and unknown pages do nothing', async () => {
   const page = await mount();
   try {

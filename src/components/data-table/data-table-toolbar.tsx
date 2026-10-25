@@ -61,6 +61,8 @@ export interface DataTableToolbarContext<TData> {
   selectedRows: readonly TData[];
   /** Number of currently selected rows. */
   selectedRowCount: number;
+  /** Refetch current source criteria after accepted out-of-band work; does not manufacture live INSERT evidence. */
+  refresh: () => Promise<void>;
 }
 
 export type DataTableToolbarSlot<TData> =
@@ -95,6 +97,8 @@ export interface DataTableToolbarProps<TData> {
   className?: string;
   /** Retained previous-query rows are read presentation, not export targets. */
   queryPending?: boolean;
+  /** DataTable supplies a stable, source/authorization-fenced callback. Standalone toolbars may supply their own. */
+  refresh?: () => void | Promise<void>;
 }
 
 /** Render a responsive, composable control plane for a DataTable. */
@@ -113,6 +117,7 @@ export function DataTableToolbar<TData>({
   ariaLabel = 'Table controls',
   className,
   queryPending = false,
+  refresh,
 }: DataTableToolbarProps<TData>) {
   const searchDraft = useDataTableSearchDraft(globalFilter, onGlobalFilterChange);
   const activeFilters = table.getState().columnFilters;
@@ -129,6 +134,7 @@ export function DataTableToolbar<TData>({
     searchDraft.change('');
   }, [searchDraft.change, table]);
   const selectedRows = selectedDataTablePageRows(table);
+  const refreshSource = React.useCallback(async (): Promise<void> => { await refresh?.(); }, [refresh]);
   const context = React.useMemo<DataTableToolbarContext<TData>>(() => ({
     table,
     query: globalFilter,
@@ -141,7 +147,8 @@ export function DataTableToolbar<TData>({
     selectedRowIds: selectedRows.map((row) => row.id),
     selectedRows: selectedRows.map((row) => row.original),
     selectedRowCount: selectedRows.length,
-  }), [activeFilters, clearAll, globalFilter, onGlobalFilterChange, selectedRows, table]);
+    refresh: refreshSource,
+  }), [activeFilters, clearAll, globalFilter, onGlobalFilterChange, selectedRows, table, refreshSource]);
   const controlsSlot = resolveToolbarSlot(slots?.controls, context);
   const actionsSlot = resolveToolbarSlot(slots?.actions, context);
   const legacyActions = resolveToolbarSlot(actions, context);

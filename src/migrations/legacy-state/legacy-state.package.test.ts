@@ -26,12 +26,15 @@ test('installed legacy-state archive preserves the admitted profile using public
       await Bun.write(join(consumer, file), source);
     }
     await checked(['install', '--ignore-scripts'], consumer);
-    const output = await checked(['test', 'legacy-state.test.ts', 'legacy-state-runtime.integration.test.ts'], consumer);
-    expect(output).toContain('8 pass'); expect(output).toContain('0 fail');
+    const output = await checked(['test', '--timeout', '60000', 'legacy-state.test.ts', 'legacy-state-runtime.integration.test.ts'], consumer);
+    expect(output).toContain('10 pass'); expect(output).toContain('0 fail');
     const docs = await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/backend/migrations/legacy-state.md')).text();
     expect(docs).toContain('@zero/framework/migrations');
     expect(docs).toContain('WORKFLOW_LEGACY_MIGRATION_REQUIRED');
     expect(docs).toContain('requiresApplicationAcceptance: true');
+    expect(docs).toContain('_sync_mutation_receipts');
+    expect(docs).toContain('_zero_sync_table_modes');
+    expect(docs).toContain('application-runtime');
     const handoff = await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/guides/practiceiq-upgrade/agent-handoff.md')).text();
     expect(handoff).toContain('verifyStagedLegacyStateMigration');
   } finally { await rm(root, { recursive: true, force: true }); }

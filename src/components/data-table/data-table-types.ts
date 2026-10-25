@@ -17,6 +17,8 @@ export interface DataTableProps<T extends Row = Row> {
   schema: SchemaDescriptor;
   /** Overrides legacy data/collection props. Server sources own query execution. */
   source?: DataTableSource<T>;
+  /** Changing this value invalidates stable server queries without resetting table state or proving an INSERT. */
+  refreshKey?: string | number;
   data?: T[];
   collection?: string;
   lazy?: boolean;

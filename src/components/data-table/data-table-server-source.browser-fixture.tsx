@@ -86,6 +86,7 @@ const harness = {
   criteria: (_value: { search: string; filters: DataTableServerQuery['filters']; sorting: DataTableServerQuery['sorting'] }) => {},
   primaryKey: (_value: string | undefined) => {}, confirmEnabled: (_value: boolean) => {}, pageSize: (_value: number) => {},
   live: () => {}, rerender: () => {},
+  refreshKey: (_value: number) => {},
   prefetch(index: number) { return latest.prefetchPage(index); }, refresh() { return latest.refresh(); },
   scope(value: string, publish = true) { scope = value; auth.activeTenant = { tenantId: value }; if (publish) notify(); },
   notify,
@@ -107,18 +108,20 @@ function Fixture() {
   const [filters, setFilters] = useState<DataTableServerQuery['filters']>([]), [sorting, setSorting] = useState<DataTableServerQuery['sorting']>([]);
   const [primaryKey, setPrimaryKey] = useState<string | undefined>(), [confirmEnabled, setConfirmEnabled] = useState(true);
   const [live, setLive] = useState<Item[]>([]), [render, setRender] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
   harness.search = value => { setSearch(value); setPagination(current => ({ ...current, pageIndex: 0, ...(current.mode === 'cursor' ? { cursor: null } : {}) })); };
   harness.page = (pageIndex, cursor) => setPagination(current => ({ ...current, pageIndex, ...(cursor === undefined ? {} : { cursor }) }));
   harness.mode = mode => setPagination({ mode, pageIndex: 0, pageSize: 2, ...(mode === 'cursor' ? { cursor: null } : {}) });
   harness.source = value => { setAdapterIndex(value); setPagination(current => ({ ...current, pageIndex: 0, ...(current.mode === 'cursor' ? { cursor: null } : {}) })); };
   harness.prefetchEnabled = setPrefetch; harness.live = () => setLive([]); harness.rerender = () => setRender(current => current + 1);
+  harness.refreshKey = setRefreshKey;
   harness.criteria = value => { setSearch(value.search); setFilters(value.filters); setSorting(value.sorting); };
   harness.primaryKey = setPrimaryKey; harness.confirmEnabled = setConfirmEnabled;
   harness.pageSize = pageSize => setPagination(current => ({ ...current, pageSize }));
   const source: DataTableServerSource<Item> = { type: 'server', table: adapterIndex === 2 ? 'other_records' : 'records',
     adapter: adapters[adapterIndex], pagination: pagination.mode, prefetch };
   latest = useDataTableServerSource({ source, query: { search, sorting, filters, pagination, searchFields: ['name'] },
-    primaryKey, confirmLiveInsertions: confirmEnabled, liveRevision: live });
+    primaryKey, confirmLiveInsertions: confirmEnabled, liveRevision: live, refreshKey });
   return <main data-render={render} data-confirm-enabled={confirmEnabled ? 'true' : 'false'}>
     <button type="button" onPointerEnter={() => { void latest.prefetchPage(1); }} onFocus={() => { void latest.prefetchPage(1); }}>Prefetch next</button>
     <output aria-label="Source state">{JSON.stringify(harness.state())}</output>

@@ -79,9 +79,16 @@ The expansion spring, controlled callback and focus/clear behavior are unchanged
 
 A slot is ReactNode or a function of DataTableToolbarContext<T>. Context exposes
 table, query, setQuery, columnFilters, activeFilterCount, hasActiveFilters,
-hasActiveSearch, clearAll, selectedRowIds, selectedRows and selectedRowCount.
+hasActiveSearch, clearAll, selectedRowIds, selectedRows, selectedRowCount and
+`refresh(): Promise<void>`.
 The selected values are projected from the current rendered page, never every
 controlled ID or cached result. clearAll clears global search and column filters.
+Await `refresh()` after an accepted external action to refetch the current source
+without remounting. It uses current criteria in the same mounted source/authority
+partition; a retained callback from a replaced partition does nothing. For a
+standalone DataTableToolbar, supply its optional `refresh` prop to provide this
+behavior; omitted means an asynchronous no-op. See
+[stable server refresh](./server-sources.md#refresh-stable-server-sources).
 
 toolbarActions is the legacy trailing outlet and remains supported alongside
 slots.actions. slots.controls precedes the built-in action group; slots.actions
@@ -90,7 +97,7 @@ slots to replacing routine controls.
 
 DataTableToolbar takes required table/globalFilter/onGlobalFilterChange and
 optional searchable, filterable, filterColumns, showColumnVisibility, showExport,
-exportFilename, actions, slots, ariaLabel and className. Standalone defaults:
+exportFilename, actions, slots, ariaLabel, className and refresh. Standalone defaults:
 searchable=true, filterable=false, visibility/export=true,
 filename="export.csv", ariaLabel="Table controls".
 DataTable itself defaults searchable=false; do not infer the toolbar default.

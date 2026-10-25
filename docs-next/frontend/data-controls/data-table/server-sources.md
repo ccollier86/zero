@@ -13,9 +13,9 @@ modes: [browser, server offset, custom cursor, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
   snapshot: dirty
-  date: "2026-10-08"
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -133,6 +133,63 @@ The app endpoint interprets the cursor, enforces authority and returns the decla
 result; this example does not create such a route. Retain a stable adapter identity
 (module constant or deliberate memo). Replacing it means a different source and
 retires old requests/cursors/selection even when table name is unchanged.
+
+## Refresh Stable Server Sources
+
+DataTable, its DataTableView alias and MasterDetailPage/MasterDetailView accept
+`refreshKey?: string | number`. Change this value after an accepted external
+create, edit or claim to invalidate cached/speculative pages and refetch the
+current search, filters, sorting, page size and page/cursor. This is an ordinary
+React prop, not a new backend permission, source identity or component key.
+Its initial value does not add another initial fetch, and an unchanged value
+does not refetch. Non-server sources ignore this key.
+
+```tsx
+import { useMemo, useState } from 'react';
+import { DataTableView, type DataTableServerAdapter } from '@zero/framework/components/data-table';
+
+// Fragment inside a configured application. client, schema and claimRecord are app-owned.
+const [revision, setRevision] = useState(0);
+const adapter = useMemo<DataTableServerAdapter<Task>>(() => ({
+  query: (query, { signal }) => client.fetch('/api/joined-task-page', {
+    method: 'POST', body: query, signal,
+  }),
+}), [client]);
+
+<DataTableView schema={schema}
+  source={{ type: 'server', table: 'tasks', adapter }}
+  refreshKey={revision}
+  toolbarSlots={{ actions: ({ selectedRowIds, refresh }) => (
+    <button type="button" disabled={!selectedRowIds.length} onClick={async () => {
+      await claimRecord(selectedRowIds); // Resolve only after the server accepts the change.
+      await refresh();
+    }}>Claim selected</button>
+  ) }}
+/>;
+
+// A separate dialog/action can instead call setRevision(value => value + 1)
+// after its accepted write. Use one invalidation path per action, not both.
+```
+
+Toolbar `refresh(): Promise<void>` and the public `useDataTableSource().refresh`
+wait for the owned foreground query to settle. Normalized query failures appear
+through the source's existing error/retry presentation; they do not reject an
+already accepted write or automatically execute it again. Superseded/retired
+requests settle without admitting stale data. A callback retained from a replaced
+source or authorization partition cannot refetch the replacement partition.
+
+Same-partition refresh retains accepted rows and mounted controls while pending,
+preserves interaction state and selection for surviving identities, and marks
+the accepted result as `changeReason: 'refresh'`. Normal changed-result membership
+and pagination rules still apply: it cannot keep a deleted selected row alive or
+invent an opaque cursor if a server invalidates one. Current authority fencing,
+abort handling and last-query-wins behavior remain in force. Refresh does not
+manufacture live INSERT evidence or a new-record count.
+
+Do not replace the adapter, add a React `key`, unmount/remount, or publish fake
+INSERT/UPDATE events just to refresh a joined query. MasterDetail's generated
+server detail-update path already refreshes after acceptance; its context and
+list toolbar also expose refresh for other actions.
 
 ## Result And Pagination
 

@@ -32,6 +32,7 @@ export type MasterDetailLiveActions<T extends Row> = DataTableSourceActions<T>;
 export interface UseMasterDetailStateOptions<T extends Row> {
   /** Explicit data source contract shared with DataTableView. */
   source?: DataTableSource<T>;
+  refreshKey?: string | number;
   /** Static rows used when `source` and `collection` are omitted. */
   data?: T[];
   /** Live collection name. Prefer `source` for new generic data-source code. */
@@ -66,7 +67,7 @@ export interface UseMasterDetailStateReturn<T extends Row> {
   sourceType: DataTableSourceState<T>['sourceType'];
   isLoading: boolean;
   error: Error | string | null;
-  refresh: () => void;
+  refresh: () => void | Promise<void>;
 }
 
 /**
@@ -77,6 +78,7 @@ export interface UseMasterDetailStateReturn<T extends Row> {
  */
 export function useMasterDetailState<T extends Row>({
   source,
+  refreshKey,
   data: dataProp,
   collection,
   lazy,
@@ -91,6 +93,7 @@ export function useMasterDetailState<T extends Row>({
 }: UseMasterDetailStateOptions<T>): UseMasterDetailStateReturn<T> {
   const resolvedSource = useDataTableSource<T>({
     source,
+    refreshKey,
     data: dataProp,
     collection,
     lazy,

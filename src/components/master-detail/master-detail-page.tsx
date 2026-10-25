@@ -61,7 +61,7 @@ export interface MasterDetailRenderContext<T extends Row = Row> {
   sourceType: DataTableSourceState<T>['sourceType'];
   isLoading: boolean;
   error: Error | string | null;
-  refresh: () => void;
+  refresh: () => void | Promise<void>;
 }
 
 export interface MasterDetailPageProps<T extends Row = Row> {
@@ -78,6 +78,8 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   // ── Data source ─────────────────────────────────────────────────
   /** Explicit data source config shared with DataTableView. */
   source?: DataTableSource<T>;
+  /** Invalidate a stable server source after accepted external create/edit/claim actions. */
+  refreshKey?: string | number;
   /** Static data array. */
   data?: T[];
   /**
@@ -181,6 +183,7 @@ function MasterDetailPage<T extends Row = Row>({
   primaryKey: primaryKeyOverride,
   editableFields,
   source,
+  refreshKey,
   data: dataProp,
   collection,
   lazy,
@@ -225,6 +228,7 @@ function MasterDetailPage<T extends Row = Row>({
     data: dataProp,
     collection,
     source,
+    refreshKey,
     lazy,
     filters,
     lazyOptions,
@@ -319,8 +323,9 @@ function MasterDetailPage<T extends Row = Row>({
       if (partitionRef.current !== tableController.partition) {
         await invokeDataTableSourceWrite('update', false);
       }
+      if (sourceType === 'server') await refresh();
     },
-    [data, getRowId, liveActions, onUpdate, primaryKey, tableController.partition],
+    [data, getRowId, liveActions, onUpdate, primaryKey, tableController.partition, sourceType, refresh],
   );
 
   const renderContext = useMemo<MasterDetailRenderContext<T>>(

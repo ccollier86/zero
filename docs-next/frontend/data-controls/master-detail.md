@@ -3,7 +3,7 @@ id: zero.frontend.data-controls.master-detail
 type: reference
 audience: [developer, agent]
 owner: frontend-data-controls
-status: verified
+status: in-review
 visibility: internal
 system: frontend-data-controls
 feature: master-detail
@@ -13,9 +13,9 @@ modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7ee11611534e6b88ed4041d561c102c8299591ec"
+  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
   snapshot: dirty
-  date: "2026-10-13"
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -53,6 +53,8 @@ provision a database or alter Guardian configuration.
 schema/listColumns are required. primaryKey overrides the schema key.
 editableFields limits generated detail fields; omission selects all schema fields.
 source/data/collection/lazy/filters/lazyOptions have the shared source semantics.
+`refreshKey?: string | number` forwards stable server-query invalidation to the
+same shared controller, without a second fetch owner or a source replacement.
 
 selectedId controls selection (null forces none); defaultSelectedId initializes
 uncontrolled selection. autoSelectFirst defaults true for uncontrolled usage.
@@ -170,7 +172,12 @@ widening the page.
 MasterDetailRenderContext exposes primaryKey, selectedId/selectedItem,
 selectedIndex/totalCount, previous/next availability, selectId/selectItem/
 selectPrevious/selectNext, update, liveActions, sourceType, isLoading, error and
-refresh. totalCount is the accepted source row count for record navigation, not an
+refresh. Await `context.refresh()` to refetch the current list after an accepted
+external action. Server refresh returns a complete promise; a retained context
+cannot refresh a replacement source/authorization partition. `tableToolbarSlots`
+receives the same public toolbar `refresh()` contract. See
+[stable server refresh](./data-table/server-sources.md#refresh-stable-server-sources).
+totalCount is the accepted source row count for record navigation, not an
 invented serverwide matching total.
 
 context.update(changes) uses onUpdate(id, changes) when supplied, otherwise
@@ -181,6 +188,13 @@ A retained/mid-flight replaced source rejects DATA_TABLE_MUTATION_SCOPE_UNAVAILA
 Late completion cannot finish a replacement scope's form. When no selected item
 exists context.update returns without initiating a write; disable custom actions
 accordingly.
+
+With a server source, a successfully accepted generated form or
+`context.update(changes)` automatically awaits a refresh of its joined result.
+A rejected write does not refetch; a failed subsequent query follows the normal
+list error/retry path and never repeats the accepted write. Custom actions that
+write outside `context.update` should either increment `refreshKey` after
+acceptance or await `context.refresh()`, not both.
 
 The app-owned onUpdate must return/await its accepted writer. Primary keys and
 read-only projected identities are not editable authority. Mobile list/detail

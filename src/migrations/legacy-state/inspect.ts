@@ -4,6 +4,7 @@ import { fileSha256, sourceFile } from './files';
 import { assertLegacyIntegrity, closeLegacyRead, legacyRowsEvidence, legacySchemaSha256, legacyTableColumns, openLegacyRead, sha256, validLegacyIdentifier } from './evidence';
 import { assertLegacySystemSchema, LEGACY_DERIVED_TABLES, LEGACY_LEDGER_TABLES, LEGACY_SYSTEM_VERSIONS, legacySystemTables, targetMigrationRegistrySha256 } from './catalog';
 import { admitLegacyLedgers } from './ledger';
+import { LEGACY_APPLICATION_RUNTIME_TABLES, LEGACY_OPTIONAL_RUNTIME_TABLES } from './runtime-state';
 
 export async function planLegacyStateMigration(input: LegacyStateMigrationInput): Promise<LegacyStateMigrationPlan> {
   try { return await inspect(input); } catch (error) {
@@ -27,19 +28,20 @@ async function inspect(input: LegacyStateMigrationInput): Promise<LegacyStateMig
   try {
     assertLegacyIntegrity(db);
     const system = new Set(legacySystemTables()), app = new Set(input.applicationTables);
+    const runtime = new Set<string>(LEGACY_APPLICATION_RUNTIME_TABLES);
     const ledger = new Set<string>(LEGACY_LEDGER_TABLES), derived = new Set<string>(LEGACY_DERIVED_TABLES);
-    if ([...app].some(table => system.has(table) || ledger.has(table) || derived.has(table) || table.startsWith('_auth_') || table.startsWith('_zero_'))) failLegacyState('LEGACY_STATE_INPUT_INVALID');
+    if ([...app].some(table => system.has(table) || runtime.has(table) || ledger.has(table) || derived.has(table) || table.startsWith('_auth_') || table.startsWith('_zero_'))) failLegacyState('LEGACY_STATE_INPUT_INVALID');
     const schemas = db.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name").all();
     const found = new Set(schemas.map(table => table.name));
     if ([...app].some(table => !found.has(table))) failLegacyState('LEGACY_STATE_UNKNOWN_TABLE');
     // Mandatory baseline tables exist; runtime generations are optional on never-used installs.
-    if ([...system].some(table => table !== '_auth_user_generations' && !found.has(table))) failLegacyState('LEGACY_STATE_SOURCE_UNSUPPORTED');
+    if ([...system].some(table => !(LEGACY_OPTIONAL_RUNTIME_TABLES as readonly string[]).includes(table) && !found.has(table))) failLegacyState('LEGACY_STATE_SOURCE_UNSUPPORTED');
     const tables: LegacyTableEvidence[] = [];
     for (const { name, sql } of schemas) {
       if (!validLegacyIdentifier(name) || /^CREATE\s+VIRTUAL\s+TABLE/i.test(sql)) failLegacyState('LEGACY_STATE_SOURCE_UNSUPPORTED');
-      const owner = system.has(name) ? 'system' : app.has(name) ? 'application' : ledger.has(name) ? 'ledger' : derived.has(name) ? 'derived' : null;
+      const owner = system.has(name) ? 'system' : runtime.has(name) ? 'application-runtime' : app.has(name) ? 'application' : ledger.has(name) ? 'ledger' : derived.has(name) ? 'derived' : null;
       if (!owner) failLegacyState('LEGACY_STATE_UNKNOWN_TABLE');
-      if (owner === 'system') assertLegacySystemSchema(db, name);
+      if (owner === 'system' || owner === 'application-runtime') assertLegacySystemSchema(db, name);
       if ((owner === 'ledger' || owner === 'derived') && db.query("SELECT 1 FROM sqlite_schema WHERE type='trigger' AND tbl_name=?").get(name)) failLegacyState('LEGACY_STATE_SOURCE_UNSUPPORTED');
       tables.push({ table: name, owner, columns: legacyTableColumns(db, name), schemaSha256: legacySchemaSha256(db, name), ...legacyRowsEvidence(db, name) });
     }

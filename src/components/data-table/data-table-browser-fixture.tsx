@@ -5,6 +5,7 @@ import { defineSchema, field } from '../../schema';
 import { DataTable } from './data-table';
 import type { DataTableServerQuery, DataTableServerResult } from './data-table-server-types';
 import type { DataTableState } from './data-table-state';
+import type { DataTableToolbarContext } from './data-table-toolbar';
 
 type FixtureRow = { id: string; name: string; value?: string };
 const schema = defineSchema({ name: field.text(), value: field.text() });
@@ -30,6 +31,9 @@ let refreshes = 0;
 let acceptWrite: () => void;
 let acceptRefresh: () => void;
 let rejectRefresh: () => void;
+let latestToolbar: DataTableToolbarContext<FixtureRow>, retainedToolbar: DataTableToolbarContext<FixtureRow>;
+let updateRefreshKey: (value: number) => void;
+let refreshCompletions = 0;
 
 function LayoutValue() {
   const [revealed, setRevealed] = React.useState(false);
@@ -41,6 +45,8 @@ function Fixture() {
   const [mode, updateMode] = React.useState<FixtureMode>('offset');
   const [controls, updateControls] = React.useState<Partial<DataTableState>>({});
   const [alternate, updateAlternate] = React.useState(false);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  updateRefreshKey = setRefreshKey;
   const [editedValue, updateEditedValue] = React.useState('before-edit');
   const [, updateSelection] = React.useState<string[]>([]);
   setTable = updateTable;
@@ -60,6 +66,8 @@ function Fixture() {
           acceptWrite = () => { updateEditedValue(String(value)); resolve(); };
         }); }} />
       : <DataTable<FixtureRow> schema={schema} source={{ type: 'server', table, pagination: mode, adapter: alternate ? alternativeAdapter : adapter, prefetch: false }}
+        refreshKey={refreshKey}
+        toolbarSlots={{ actions: (context) => { latestToolbar = context; return <button type="button" onClick={async () => { await context.refresh(); refreshCompletions++; }}>Refresh joined results</button>; } }}
         columns={['name']} searchable={{ fields: ['name'], ariaLabel: 'Search records' }} paginated={{ pageSize: 2 }}
         selectable state={controls} onStateChange={updateControls}
         onSelectionChange={(ids) => { selectionChanges++; lastSelection = ids; updateSelection(ids); }}
@@ -83,6 +91,10 @@ declare global {
       acceptWrite(): void;
       acceptRefresh(): void;
       rejectRefresh(): void;
+      refreshKey(value: number): void;
+      retainToolbar(): void;
+      retainedToolbarRefresh(): Promise<void>;
+      refreshCompletions(): number;
     };
   }
 }
@@ -101,5 +113,9 @@ window.__fullTableHarness = {
   acceptWrite: () => acceptWrite(),
   acceptRefresh: () => acceptRefresh(),
   rejectRefresh: () => rejectRefresh(),
+  refreshKey: value => updateRefreshKey(value),
+  retainToolbar: () => { retainedToolbar = latestToolbar; },
+  retainedToolbarRefresh: () => retainedToolbar.refresh(),
+  refreshCompletions: () => refreshCompletions,
 };
 createRoot(document.getElementById('root')!).render(<React.StrictMode><Fixture /></React.StrictMode>);

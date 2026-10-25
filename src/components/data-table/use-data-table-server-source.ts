@@ -33,6 +33,8 @@ interface Accepted<T extends Row> {
 interface Failure { boundaryKey: string; signature: string; error: Error }
 export interface UseDataTableServerSourceOptions<T extends Row> {
   source: DataTableServerSource<T> | null;
+  /** A changed key refetches current criteria, retiring cached/speculative pages without remounting. */
+  refreshKey?: string | number;
   query?: DataTableServerQuery;
   primaryKey?: string;
   /** Collection changes invalidate caches; this snapshot alone does not prove a live insertion. */
@@ -203,7 +205,9 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
       if (active) setLoadingKey(null);
     }
   }, [cache, coordinator, prefetchPage, insertEvidence, leading]);
-  const refresh = useCallback(() => load('refresh', true), [load]);
+  const refresh = useCallback(() => current.current.partition === partition
+    ? load('refresh', true) : Promise.resolve(), [load, partition]);
+  const refreshDependency = useRef<{ partition: string; value: string | number | undefined } | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; cache.invalidate(); coordinator.cancel(); insertEvidence.clear(); membership.cancel(); leading.clear(); }; }, [cache, coordinator, insertEvidence, membership, leading]);
   useLayout(() => {
     const captured = current.current, source = captured.options.source, query = captured.resolution.query;
@@ -245,7 +249,13 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     leading.require(!!source && source.live !== false && captured.options.confirmLiveInsertions !== false && needsLeading());
   }, [signature, membershipKey, options.source?.live, options.source?.adapter?.confirmInsertedRows,
     options.source?.adapter?.getLeadingRowId, options.confirmLiveInsertions, authorization.ready, membership, leading]);
-  useEffect(() => { void load('query', false); return () => coordinator.cancel(); }, [signature, authorization.ready, load, coordinator]);
+  useEffect(() => {
+    const previous = refreshDependency.current;
+    const invalidated = previous?.partition === partition && !Object.is(previous.value, options.refreshKey);
+    refreshDependency.current = { partition, value: options.refreshKey };
+    void load(invalidated ? 'refresh' : 'query', invalidated);
+    return () => coordinator.cancel();
+  }, [signature, partition, authorization.ready, options.refreshKey, load, coordinator]);
   useEffect(() => { if (options.source?.prefetch === false) cache.retireSpeculationExcept(); }, [options.source?.prefetch, cache]);
   useEffect(() => {
     const captured = current.current, source = captured.options.source, query = captured.resolution.query;

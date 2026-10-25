@@ -62,8 +62,9 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
         const type = schema.fields.get(name)?.type;
         return type === 'text' || type === 'email' || type === 'phone' || type === 'url' || type === 'textarea';
       });
-  const resolved = useDataTableSource<T>({
+  const sourceState = useDataTableSource<T>({
     source, data: options.data, collection, lazy: options.lazy,
+    refreshKey: options.refreshKey,
     filters: options.filters, lazyOptions: options.lazyOptions, primaryKey,
     confirmLiveInsertions: options.liveUpdates !== false,
     query: {
@@ -77,6 +78,15 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
       searchFields,
     },
   });
+  const refreshOwner = React.useRef({ partition, ready: boundary.ready, refresh: sourceState.refresh });
+  refreshOwner.current = { partition, ready: boundary.ready, refresh: sourceState.refresh };
+  const mounted = React.useRef(false);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const refresh = React.useCallback(async (): Promise<void> => {
+    const owner = refreshOwner.current;
+    if (mounted.current && owner.ready && owner.partition === partition) await owner.refresh();
+  }, [partition]);
+  const resolved = { ...sourceState, refresh };
   useDataTableAcceptedCursors(cursors, current.pagination.pageIndex, resolved.page);
   const collectionInserts = useDataTableCollectionInserts(client as InternalClient | null,
     resolved.sourceType === 'collection' ? resolved.table : null, boundary.key, boundary.ready, queryShape);

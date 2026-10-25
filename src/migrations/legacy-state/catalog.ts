@@ -4,6 +4,7 @@ import { migrations } from '../index';
 import { hashMigration } from '../schema-snapshot';
 import { failLegacyState } from './contracts';
 import { quoteLegacyIdentifier as q, sha256 } from './evidence';
+import { defineLegacyRuntimeReference, LEGACY_APPLICATION_RUNTIME_TABLES } from './runtime-state';
 
 export const LEGACY_LEDGER_TABLES = ['_migrations', '_zero_migrations', '_zero_schema_history', '_zero_migration_artifacts'] as const;
 export const LEGACY_DERIVED_TABLES = ['_changes', '_change_sequence'] as const;
@@ -33,13 +34,15 @@ function referenceSchema(): Database {
       user_id TEXT PRIMARY KEY, generation INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
     )`);
+    defineLegacyRuntimeReference(db);
     reference = db;
     return db;
   } catch (error) { db.close(); throw error; }
 }
 
 export function legacySystemTables(): readonly string[] {
-  return referenceSchema().query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name").all().map(row => row.name);
+  return referenceSchema().query<{ name: string }, []>("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name").all().map(row => row.name)
+    .filter(name => !(LEGACY_APPLICATION_RUNTIME_TABLES as readonly string[]).includes(name));
 }
 
 /** Exact old column/FK contracts; extra lookup indexes do not change row ownership. */

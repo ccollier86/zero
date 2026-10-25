@@ -214,12 +214,20 @@ instead of relabeling a selected report as complete.
 
 The application agent must author and review a private JSON plan under
 `evidence/`, with `schema: 1`, `kind: 'practiceiq-table-map'` and a `tables` array.
+For the admitted 1.3 runtime tables, use owner `application-runtime`, target
+plane `application` and unchanged target name for `_sync_mutation_receipts`;
+use owner/target plane `system` and unchanged target name for
+`_zero_sync_table_modes`. Both require action `preserve`, including an empty
+ledger. The table-map gate rejects relabeling these as app data, rebuilding them
+as caches, or moving them to the wrong plane. The public legacy-state boundary
+owns their actual schema validation, reconciliation and preservation.
+
 Each entry contains these fields:
 
 | Field | Required value |
 | --- | --- |
 | `table`, `schemaSha256`, `rowsSha256`, `rows` | Exact name and source evidence from the full report; no patient content. |
-| `owner` | `application`, `system`, `storage`, `workflow`, `audit`, `migration` or `ephemeral`, determined from actual service ownership. |
+| `owner` | `application`, `application-runtime`, `system`, `storage`, `workflow`, `audit`, `migration` or `ephemeral`, determined from actual service ownership. |
 | `action` | `preserve`, `convert` or `rebuild`. Only explicitly ephemeral state may use `rebuild`. |
 | `targetPlane`, `targetTable` | Required for preserve/convert: a declared application/system/logging-audit/logging-operational/storage/kv plane and an explicit table. Omit both for rebuild. |
 | `rule` | Stable versioned reconciliation rule ID, such as `clinical-notes.identity-v1`; not SQL or executable code. |

@@ -2,7 +2,7 @@
 import { readSQLiteEvidence, tableNames, type SQLiteEvidence } from './offline-sqlite';
 import { fail } from './safety';
 
-const OWNERS = ['application', 'system', 'storage', 'workflow', 'audit', 'migration', 'ephemeral'];
+const OWNERS = ['application', 'application-runtime', 'system', 'storage', 'workflow', 'audit', 'migration', 'ephemeral'];
 const PLANES = ['application', 'system', 'logging-audit', 'logging-operational', 'storage', 'kv'];
 const FIELDS = ['table', 'schemaSha256', 'rowsSha256', 'rows', 'owner', 'action', 'targetPlane', 'targetTable', 'rule'];
 
@@ -28,6 +28,12 @@ export function checkTableMap(evidence: unknown, plan: unknown): void {
       || !['preserve', 'convert', 'rebuild'].includes(entry.action as string)
       || typeof entry.rule !== 'string' || !/^[a-zA-Z][a-zA-Z0-9._@-]{0,127}$/.test(entry.rule)) fail('UPGRADE_TABLE_MAP_INVALID');
     tableNames([entry.table]);
+    // Frozen 1.3 runtime tables are not domain data or disposable caches, even empty.
+    const runtimeOwner = entry.table === '_sync_mutation_receipts' ? 'application-runtime'
+      : entry.table === '_zero_sync_table_modes' ? 'system' : null;
+    if (runtimeOwner && (entry.owner !== runtimeOwner || entry.action !== 'preserve'
+      || entry.targetPlane !== (runtimeOwner === 'system' ? 'system' : 'application')
+      || entry.targetTable !== entry.table)) fail('UPGRADE_TABLE_MAP_INVALID');
     const before = source.get(entry.table);
     if (!before) fail('UPGRADE_TABLE_MAP_UNKNOWN_SOURCE');
     if (entry.schemaSha256 !== before.schemaSha256 || entry.rowsSha256 !== before.rowsSha256

@@ -13,9 +13,9 @@ modes: [browser, SSR, array, collection, lazy, server query]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "5aa2a34a47c7bc05b0c6f01849fdbf477dc01ea8"
+  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
   snapshot: dirty
-  date: "2026-10-07"
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -33,6 +33,7 @@ Column metadata is shared with [schema](../../../backend/schema/ui-metadata.md).
 | --- | --- | --- |
 | schema | required SchemaDescriptor | field order/meta/codecs/key |
 | source | DataTableSource<T> | explicit source wins all legacy data/collection props |
+| refreshKey | string or number; a changed value invalidates a stable server source's current query | omitted; initial render does not add a second fetch; ignored by non-server sources |
 | data | caller row array | empty array when no source/collection/data |
 | collection | table name | normal reactive source unless lazy=true |
 | lazy | boolean | false; only affects legacy collection resolution |
