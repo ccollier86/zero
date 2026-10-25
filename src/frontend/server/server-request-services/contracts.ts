@@ -33,7 +33,7 @@ export interface ServerRequestServices extends Omit<
   readonly logging: ScopedLogging | null;
   /** Validated data boundary, or null for a multi-tenant selection/anonymous session. */
   readonly scope: ServiceDataScope | null;
-  /** Tenant-file data client, or null outside tenant-database isolation. */
+  /** Async app-data client: single-tenant primary or committed tenant file; otherwise null. */
   readonly data: AsyncDatabaseClient | null;
   /** Guardian services; multi-tenant runtime projections hide raw stores. */
   readonly auth: ServerAuthServices;
@@ -105,7 +105,7 @@ export interface AuthorityScopedServerServices {
   readonly payments: ScopedPayments | null;
   readonly access: RequestAuthorizationAccess;
   readonly scope: ServiceDataScope;
-  /** Tenant-file data client, or null outside tenant-database isolation. */
+  /** Async app-data client: single-tenant primary or committed tenant file; otherwise null. */
   readonly data: AsyncDatabaseClient | null;
   readonly auth: AuthorityScopedAuthServices;
   readonly storage: ScopedStorageService | null;

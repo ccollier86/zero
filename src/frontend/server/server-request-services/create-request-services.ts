@@ -218,7 +218,7 @@ export function createInternalAuthorityScopedServerServices(
         strict,
       )
     : services.observability;
-  // Tenant-file operations require an explicit durable synchronous fence.
+  // App-data operations require an explicit durable synchronous fence.
   // The no-op compatibility default used by older scoped service adapters is
   // not sufficient authority to mint a database capability.
   const requestData = databaseAuthoritySync

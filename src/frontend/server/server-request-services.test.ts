@@ -827,6 +827,8 @@ function createFixture(
   const databases = {
     fixture: true,
     diagnostics: () => ({ tenantDatabasesEnabled: false }),
+    // This service-projection fixture deliberately declares no app-data registry.
+    bindApplication: () => null,
   } as unknown as DatabaseManager;
   defineStorageTables(db);
   defineNotificationTables(db);

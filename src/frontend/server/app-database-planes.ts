@@ -189,6 +189,8 @@ export function createManagedAppDatabasePlanes({
     openedManager = new DatabaseManager({
       systemRuntime,
       appRuntime: applicationRuntime,
+      applicationTables: config.tables,
+      applicationRealm: config.dataRealm,
       ...(authorityCommitCoordinator ? { authorityCommitCoordinator } : {}),
       ...(automations.catalog
         ? { automationSourceCatalog: automations.catalog }

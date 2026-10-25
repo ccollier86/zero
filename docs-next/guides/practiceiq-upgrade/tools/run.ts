@@ -2,6 +2,7 @@
 import { captureSource, compareSource, sourceBaseline } from './source-guard';
 import { compareTables, inspectOfflineSQLite, tableNames } from './offline-sqlite';
 import { directory, fail, initializeRehearsal, readReport, rehearsal, writeReport } from './safety';
+import { checkTableMap } from './table-map';
 
 /** Parse a closed command/option surface; duplicate or unknown options fail. */
 export async function run(args: readonly string[]): Promise<void> {
@@ -14,6 +15,7 @@ export async function run(args: readonly string[]): Promise<void> {
     'check-protected': ['project', 'rehearsal', 'before', 'expect-commit', 'expect-sha256'],
     'sqlite-snapshot': ['project', 'rehearsal', 'database', 'tables', 'out'],
     'compare-tables': ['project', 'rehearsal', 'before', 'after', 'tables'],
+    'check-table-map': ['project', 'rehearsal', 'before', 'plan'],
   };
   if (!command || !Object.hasOwn(allowed, command)) fail('UPGRADE_COMMAND_INVALID');
   for (let index = 1; index < args.length; index += 2) {
@@ -35,6 +37,8 @@ export async function run(args: readonly string[]): Promise<void> {
   } else if (command === 'sqlite-snapshot') {
     const selected = options.has('tables') ? tableNames(required('tables').split(',')) : undefined;
     writeReport(root, required('out'), inspectOfflineSQLite(root, required('database'), selected));
+  } else if (command === 'check-table-map') {
+    checkTableMap(readReport(root, required('before')), readReport(root, required('plan')));
   } else {
     compareTables(readReport(root, required('before')), readReport(root, required('after')), required('tables').split(','));
   }

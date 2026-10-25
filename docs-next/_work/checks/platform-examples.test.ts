@@ -37,6 +37,7 @@ test('Schema, runtime and configuration Markdown examples use valid public sourc
     'backend/fabric/database-identities.md': [0],
     'backend/fabric/realms.md': [0],
     'backend/fabric/realm-composition.md': [0],
+    'backend/fabric/application-client.md': [0, 1],
     'backend/fabric/operations.md': [0, 2],
     'backend/fabric/idempotency.md': [0],
     'backend/fabric/placement.md': [0],

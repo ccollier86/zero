@@ -32,6 +32,23 @@ prefetch/native behavior, auth inheritance and sitemap already have detailed hom
 Confirmed defects in those contracts are corrected/tested before publication;
 they are not repackaged as roadmap limitations.
 
+## Built In SEO Metadata
+
+Requested priority: extend the existing SEO feature set so applications do not
+need a custom head-rendering plugin for ordinary launch settings. The current
+renderer emits page title and description, while sitemap generation has its own
+configuration. Generic metadata keys do not make additional head tags render.
+
+Plan a typed site-default/page-override contract for canonical URLs, Open Graph
+and social cards, structured data and crawler/indexing controls. Resolve it
+consistently for initial HTML and client navigation, with safe escaping,
+deterministic merging/deduplication, absolute URL validation and an explicit
+preview/noindex launch policy. Coordinate sitemap and robots output rather than
+implying that omission from a sitemap prevents indexing. Keep supplied demo copy
+and placeholder contacts/prices unchanged until the app owner approves launch.
+
+This is a framework backlog item, not implemented by the data-facade branch.
+
 ## Related Guides And Next Steps
 
 - [File routes](./file-routes.md) owns existing conventions.

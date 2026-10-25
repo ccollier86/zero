@@ -57,8 +57,8 @@ Source observed in PracticeIQ's `zero-release.json` on October 25, 2026:
 | Commit | `4ef1f85982eea038f1c193b7fc7e487d800ef415` |
 | Archive SHA-256 | `00c9d8ca6a025786f57898e77f9248f60bfa418f47e78512f0d948151e07d515` |
 
-The reviewed normal main destination, containing logging and the standardized
-attachment fix for both Resend and SMTP:
+Earlier qualified main baseline for logging and the standardized attachment fix
+for both Resend and SMTP (historical reference, **not** the facade upgrade target):
 
 | Field | Reviewed destination |
 | --- | --- |
@@ -67,9 +67,14 @@ attachment fix for both Resend and SMTP:
 | Commit | `202b9f7f35c761192ce9089e7ea84c4fbe9c58c3` |
 | Archive SHA-256 | `e6d9e170e9878ca9dece4369ecbef157a9d057e4d53972bd129e337dcf82560e` |
 
-These are exact artifacts, not permission to follow a moving `main`. If the
-application or destination changes, record and review the new identities before
-using these instructions. Keep the old archive, lockfile and private restore
+For this upgrade select a newer qualified normal main archive containing the
+[application-client extension](../../backend/fabric/application-client.md).
+Record its full commit and SHA-256 from the release handoff and
+`zero-release --status`; verify the archive before using it. Those exact values
+become `PIQ_TARGET_COMMIT` and `PIQ_TARGET_SHA256` in the preparation commands.
+Do not substitute the historical baseline or assume a moving main/version
+string identifies the approved bytes. Recheck if source/destination changes.
+Keep the old archive, lockfile and private restore
 bundle until the upgraded application is accepted. Do not commit patient data,
 backups, credentials or verification evidence to either repository.
 
@@ -90,6 +95,10 @@ named actor calls as an incidental migration. A broader business-data Fabric
 conversion needs its own explicit composition and acceptance work.
 
 ## Current Release Boundaries
+
+The [application data facade](../../backend/fabric/application-client.md) removes
+the need for a PracticeIQ-owned primary/Fabric adapter. It is not in the
+historical archive above; qualify the exact newer destination before adopting it.
 
 The attachment capability/helper is normal Zero functionality, not a new
 PracticeIQ-only patch. The logging subsystem is an **opt-in preview**. Its

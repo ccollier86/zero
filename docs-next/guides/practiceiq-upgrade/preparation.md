@@ -87,6 +87,13 @@ tracked state/secret paths before use. Hashes and counts remain private evidence
 
 ## Verify the Package Update Boundary
 
+Before adopting the [primary async facade extension](../../backend/fabric/application-client.md),
+record its qualified exact main commit/archive as `PIQ_TARGET_COMMIT` and
+`PIQ_TARGET_SHA256` from the release handoff and saved release status. Do not use
+the older historical baseline in the index as the target for this extension.
+The guards intentionally reject a feature-branch package as an ordinary main
+update. Never weaken that check or infer capability from `2.6.0` alone.
+
 First inspect the [saved update](../../cli/tooling/zero-update.md) dry run.
 The application agent may later execute the approved package update on the
 feature worktree, with no app-defined checks/migrations selected implicitly.
@@ -99,8 +106,8 @@ After that deliberate package-only step, before editing application code:
 bun --no-env-file "$PIQ_UPGRADE_TOOL" check-package \
   --project "$PIQ_PROJECT" --rehearsal "$PIQ_REHEARSAL" \
   --before sources-before.json \
-  --expect-commit 202b9f7f35c761192ce9089e7ea84c4fbe9c58c3 \
-  --expect-sha256 e6d9e170e9878ca9dece4369ecbef157a9d057e4d53972bd129e337dcf82560e
+  --expect-commit "$PIQ_TARGET_COMMIT" \
+  --expect-sha256 "$PIQ_TARGET_SHA256"
 ```
 
 This permits only the managed archive, manifest and lockfile to change. It
@@ -192,10 +199,44 @@ mapping assertions and tests; counts alone or an empty selected list cannot
 pass. The tools do not validate storage bytes, new permission semantics,
 workflow replay or UI rendering: those have separate acceptance gates.
 
+## Validate the Complete Table Map
+
+Use the full `sqlite-snapshot` report made without `--tables` for this gate.
+New reports carry `inventory: 'all'` or `'selected'`; a selected-table report
+cannot establish a complete conversion map. If unsupported virtual tables
+prevent a full inventory, stop for a separately reviewed inventory/verifier
+instead of relabeling a selected report as complete.
+
+The application agent must author and review a private JSON plan under
+`evidence/`, with `schema: 1`, `kind: 'practiceiq-table-map'` and a `tables` array.
+Each entry contains these fields:
+
+| Field | Required value |
+| --- | --- |
+| `table`, `schemaSha256`, `rowsSha256`, `rows` | Exact name and source evidence from the full report; no patient content. |
+| `owner` | `application`, `system`, `storage`, `workflow`, `audit`, `migration` or `ephemeral`, determined from actual service ownership. |
+| `action` | `preserve`, `convert` or `rebuild`. Only explicitly ephemeral state may use `rebuild`. |
+| `targetPlane`, `targetTable` | Required for preserve/convert: a declared application/system/logging-audit/logging-operational/storage/kv plane and an explicit table. Omit both for rebuild. |
+| `rule` | Stable versioned reconciliation rule ID, such as `clinical-notes.identity-v1`; not SQL or executable code. |
+
+```sh
+bun --no-env-file "$PIQ_UPGRADE_TOOL" check-table-map \
+  --project "$PIQ_PROJECT" --rehearsal "$PIQ_REHEARSAL" \
+  --before legacy-tables.json --plan source-table-map.json
+```
+
+This command rejects missing, duplicate, unknown or stale source entries and
+unclassified destinations. It reads reports only; it cannot convert, discard,
+rebuild or approve anything. A green result proves map completeness against the
+supplied evidence, **not** ownership correctness, field transforms, canonical
+import support, live-source freshness, target reconciliation or cutover safety.
+The app-owned converter and acceptance matrix must prove those separately.
+
 ## Verify the Toolkit
 
 ```sh
 bun --no-env-file test docs-next/guides/practiceiq-upgrade/tools/preparation.test.ts
+bun --no-env-file test docs-next/guides/practiceiq-upgrade/tools/table-map.test.ts
 ```
 
 These tests use synthetic Git repositories and temporary SQLite only. The

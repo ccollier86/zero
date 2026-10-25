@@ -29,6 +29,13 @@ loading an untrusted config module.
 
 ## Minimal Multiple Topology
 
+The [application-client extension](./application-client.md) also supports
+single-tenant primary data without enabling multiple topology. Its optional
+root `dataRealm` setting registers named reads/atomic commands on app-declared
+tables; it is independent of an unrelated named-database realm. In tenant-file
+mode both declarations must match. It does not install primary migrations or
+automations. See that guide for defaults, availability and execution limits.
+
 This fragment assumes `appRealm` is the shared admitted realm:
 
 ```ts

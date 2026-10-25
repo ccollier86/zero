@@ -10,7 +10,7 @@ export interface TableEvidence {
   schemaSha256: string;
   rowsSha256: string;
 }
-export interface SQLiteEvidence { schema: 1; kind: 'practiceiq-offline-sqlite'; tables: TableEvidence[] }
+export interface SQLiteEvidence { schema: 1; kind: 'practiceiq-offline-sqlite'; inventory: 'all' | 'selected'; tables: TableEvidence[] }
 
 /**
  * Open only an existing consolidated file under source/ or candidate/. WAL,
@@ -66,7 +66,7 @@ export function inspectOfflineSQLite(root: string, path: string, required?: read
       tables.push({ table: name, rows, columns, schemaSha256, rowsSha256: hash.digest('hex') });
     }
     db.exec('ROLLBACK');
-    return { schema: 1, kind: 'practiceiq-offline-sqlite', tables };
+    return { schema: 1, kind: 'practiceiq-offline-sqlite', inventory: required === undefined ? 'all' : 'selected', tables };
   } finally { db.close(); }
 }
 
@@ -79,25 +79,27 @@ export function tableNames(input: readonly string[]): string[] {
 
 /** Require explicit unchanged tables to have identical schema, row count and typed value checksums. */
 export function compareTables(before: unknown, after: unknown, selected: readonly string[]): void {
-  const read = (value: unknown): Map<string, TableEvidence> => {
-    const input = value as SQLiteEvidence;
-    if (!input || input.schema !== 1 || input.kind !== 'practiceiq-offline-sqlite' || !Array.isArray(input.tables)) fail('UPGRADE_SQLITE_EVIDENCE_INVALID');
-    const entries = new Map<string, TableEvidence>();
-    for (const table of input.tables) {
-      if (!table || typeof table.table !== 'string' || !Number.isSafeInteger(table.rows) || table.rows < 0
-        || !Array.isArray(table.columns) || !table.columns.length || table.columns.some(column => typeof column !== 'string')
-        || !/^[a-f0-9]{64}$/.test(table.schemaSha256) || !/^[a-f0-9]{64}$/.test(table.rowsSha256)
-        || entries.has(table.table)) fail('UPGRADE_SQLITE_EVIDENCE_INVALID');
-      entries.set(table.table, table);
-    }
-    return entries;
-  };
-  const old = read(before), current = read(after);
+  const old = readSQLiteEvidence(before), current = readSQLiteEvidence(after);
   for (const name of tableNames(selected)) {
     const a = old.get(name), b = current.get(name);
     if (!a || !b || a.rows !== b.rows || a.rowsSha256 !== b.rowsSha256 || a.schemaSha256 !== b.schemaSha256
       || JSON.stringify(a.columns) !== JSON.stringify(b.columns)) fail('UPGRADE_PRESERVED_TABLE_CHANGED');
   }
+}
+
+/** Validate private evidence before any comparison or plan admission. */
+export function readSQLiteEvidence(value: unknown): Map<string, TableEvidence> {
+  const input = value as SQLiteEvidence;
+  if (!input || input.schema !== 1 || input.kind !== 'practiceiq-offline-sqlite' || !Array.isArray(input.tables)) fail('UPGRADE_SQLITE_EVIDENCE_INVALID');
+  const entries = new Map<string, TableEvidence>();
+  for (const table of input.tables) {
+    if (!table || typeof table.table !== 'string' || !Number.isSafeInteger(table.rows) || table.rows < 0
+      || !Array.isArray(table.columns) || !table.columns.length || table.columns.some(column => typeof column !== 'string')
+      || !/^[a-f0-9]{64}$/.test(table.schemaSha256) || !/^[a-f0-9]{64}$/.test(table.rowsSha256)
+      || entries.has(table.table)) fail('UPGRADE_SQLITE_EVIDENCE_INVALID');
+    entries.set(table.table, table);
+  }
+  return entries;
 }
 
 function quote(identifier: string): string { return `"${identifier.replaceAll('"', '""')}"`; }

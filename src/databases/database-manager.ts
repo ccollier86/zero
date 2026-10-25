@@ -29,6 +29,8 @@ import type {
 } from './database-manager-contract';
 import { DatabaseRuntime } from './database-runtime';
 import { PinnedDatabaseRuntimes } from './pinned-database-runtimes';
+import { ApplicationDatabaseClients } from './application-database-client';
+import type { AsyncDatabaseClient } from './database-operations';
 import type { IdentityAnchorState } from '../auth/identity-projection-types';
 import type { PresencePublication, PresenceProjectionReceipt } from '../presence/presence-publication';
 import type { LoggingScope } from '../logging/logging-contracts';
@@ -66,6 +68,7 @@ export class DatabaseManager implements AsyncDisposable {
   readonly defaultRuntime: DatabaseRuntime;
 
   readonly #pinnedRuntimes: PinnedDatabaseRuntimes;
+  readonly #applicationClients: ApplicationDatabaseClients | null;
   readonly #actorRouter: DatabaseManagerActorRouter;
   readonly #authority: AuthorityCommitCoordinator | null;
   readonly #automationSourceCatalog: DatabaseAutomationSourceCatalog | null;
@@ -180,6 +183,12 @@ export class DatabaseManager implements AsyncDisposable {
     this.#authority = options.authorityCommitCoordinator
       ?? multiple?.authorityCommitCoordinator
       ?? null;
+    this.#applicationClients = options.applicationTables ? new ApplicationDatabaseClients({
+      runtime: options.appRuntime,
+      tables: options.applicationTables,
+      realm: options.applicationRealm,
+      assertStarted: () => this.#assertStarted(),
+    }) : null;
     this.#automationSourceCatalog = options.automationSourceCatalog ?? null;
     this.#actorRouter = new DatabaseManagerActorRouter({
       coordinator: multiple?.coordinator ?? null,
@@ -217,6 +226,11 @@ export class DatabaseManager implements AsyncDisposable {
   async acquireNamed(input: string): Promise<DatabaseCoordinatorLease> {
     this.#assertStarted();
     return await this.#actorRouter.acquireNamed(input);
+  }
+
+  /** Privileged composition seam; only application-scoped requests may receive it. */
+  bindApplication(assertCurrentAuthoritySync: () => undefined): AsyncDatabaseClient | null {
+    return this.#applicationClients?.bind(assertCurrentAuthoritySync) ?? null;
   }
 
   /** Bind one request/background capability from trusted tenant authority. */
@@ -295,6 +309,7 @@ export class DatabaseManager implements AsyncDisposable {
   async #closeOnce(): Promise<void> {
     this.#state = 'draining';
     try {
+      await this.#applicationClients?.close();
       await this.#actorRouter.close();
       if ((this.#actorRouter.diagnostics()?.heldAuthorityLeases ?? 0) > 0) {
         // Settlement proof failed closed. Begin gate drain to reject new work,

@@ -32,6 +32,18 @@ reviewed_against:
   workloads, without exposing physical paths or weakening authority.
 - [ ] Intentional legacy app migration assistance where a safe conversion can be
   demonstrated; no universal automatic splitter is promised today.
+- [ ] Extend native Fabric execution to system/auth and other service planes,
+  while preserving exact authorization, commit admission, identity projection
+  and recovery semantics. Current system/application runtimes already share
+  DatabaseManager ownership but remain process-pinned; separate files alone
+  do not give Guardian actor-backed execution. Deferred from PracticeIQ's
+  upgrade; do not turn it into an incidental auth-storage migration.
+- [ ] Cross-mode performance qualification for populated reads, writes and live
+  ReactiveDB delivery: throughput, p50/p95/p99 latency, event-loop delay, memory,
+  auth contention and multi-file overlap. Include cold/warm, hot/file, primary
+  and actor modes with fixed data/index/durability profiles. Reuse query plans
+  and avoid whole-image copying, N+1 access and global serialization. “Leading
+  performance” is a measurement target, not an established benchmark result.
 
 These are recorded user directions, not scheduled features or supported APIs.
 Hybrid file/hot placement is already implemented; it belongs in the

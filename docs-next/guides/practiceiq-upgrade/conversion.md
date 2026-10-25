@@ -58,6 +58,11 @@ classified, including migration history, platform tokens, storage metadata and
 pending work. Unknown tables block conversion. Table-name prefixes alone are
 not an ownership map.
 
+Use the preparation toolkit's [complete table-map gate](./preparation.md#validate-the-complete-table-map)
+to reject omissions and stale source fingerprints before implementing or running
+the conversion. It verifies declared dispositions, not whether the proposed
+canonical import/field mapping is semantically correct.
+
 | Source responsibility | Target and required proof |
 | --- | --- |
 | Patients, intake responses, assessments, consents, notes, care plans, TCM, psychotherapy, tasks and reporting | Application. Preserve stable IDs, relationships, versions, status/history and exact existing values unless a separately approved transform says otherwise. Compare complete table checksums, not a sample of rows. |
@@ -138,21 +143,22 @@ not a per-database automation queue that blocks unrelated deliveries.
 
 ## Classify Query Portability Before Rewriting
 
-Zero already supplies data facades, but they are not currently interchangeable:
-`zero.db` is the synchronous primary ReactiveDB surface; request `zero.data`
-is an asynchronous Fabric client and is null outside tenant-database isolation.
-The supported [request service contract](../../backend/runtime/server-services.md)
-owns that distinction. Do not change PracticeIQ to multi-tenancy merely to make
-`zero.data` non-null, or claim a universal single/Fabric adapter already exists.
+The [application-client extension](../../backend/fabric/application-client.md)
+provides request `zero.data` for the single-tenant primary database as well as
+tenant-file Fabric. PracticeIQ can keep single tenancy and use the same async
+repository calls. `zero.db` remains the synchronous compatibility surface.
+The older main archive pinned in this guide does not contain this extension:
+qualify and record a newer exact commit/archive before using it. Do not assume
+matching version strings prove capability availability.
 
 Classify each touched repository operation before implementation:
 
 | Operation | Appropriate direction |
 | --- | --- |
-| Simple primary-key read or tracked create/update/delete | Prefer existing Zero table methods where their semantics match. Preserve domain/resource authorization and validation. |
-| Filtered/sorted single-table page and total | Use the applicable structured query/page surface; do not load whole tables and filter/count in JavaScript. Availability still depends on the selected data mode. |
+| Simple primary-key read or tracked create/update/delete | Prefer request `zero.data.get`/`mutate` after qualifying the extension. Existing tracked `zero.db` calls can remain where their synchronous semantics are required. Preserve domain/resource authorization and validation. |
+| Filtered/sorted single-table page and total | Use `findPage` for rows plus exact matching total. Do not load whole tables and filter/count in JavaScript. |
 | Joined reads, CTEs, correlated subqueries or reporting aggregates | A versioned registered realm query can retain efficient SQL inside the selected read capability. General structured find is not a full relational query builder. Do not replace a join with N+1 remote calls. |
-| Atomic transition with revision guards/multiple writes | Preserve one transaction through a supported named command/batch when converting to actors. Do not split it into separate awaited reads/writes or send closures over IPC. Confirm required read/assertion semantics; record a framework gap if they cannot be represented. |
+| Atomic transition with revision guards/multiple writes | Preserve one transaction through a named command/batch in either mode. Do not split it into separate awaited reads/writes or send closures over IPC. Confirm required assertions; record a framework gap if they cannot be represented. |
 | Direct access to canonical users, auth properties or workflow internals | Use the owning Guardian/Torrent service facade. Do not point an app-data client at system tables or copy full system rows back into the clinical DB. |
 | Needed behavior without a supported public contract | Record an explicit Zero facade gap before adding app-specific engine coupling. Extend the existing abstraction deliberately rather than building another ORM or silently using unsafe internals. |
 
@@ -161,7 +167,8 @@ reporting-flag lookup and an exact total. Its letter repositories combine
 tracked writes with synchronous revision-checked transactions. Those are
 meaningful semantics, not evidence that every SQL call was poor agent work.
 Some primary-key SQL reads can be simplified; complex operations need a
-compatible declared query/command or a framework improvement. Distinguish
+compatible declared query/command. Register primary handlers through `dataRealm`
+without changing physical topology; see the linked facade guide. Distinguish
 production calls from raw assertions in tests.
 
 For this single-tenant split, clinical-only SQL can remain valid in the same app

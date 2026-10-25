@@ -59,6 +59,8 @@ import {
   type RouteAuthMode,
 } from '../router/auth-policy';
 import { resolveAppDatabaseTopology } from './database-topology-config';
+import { resolveAppDataRealm } from './app-data-realm';
+import type { DatabaseRealm } from '../../databases/database-realm';
 import type {
   AppDatabaseTopologyConfig,
   ResolvedAppDatabaseTopologyConfig,
@@ -296,6 +298,14 @@ export interface AppConfig {
    * without changing which database backs existing platform services.
    */
   databaseTopology?: AppDatabaseTopologyConfig;
+
+  /**
+   * Optional app-data realm for zero.data named queries and atomic commands.
+   * Uses schema-identical app tables; does not run migrations or automations.
+   * Tenant-file apps use databaseTopology.realm (both must match if supplied).
+   * Omit for built-in CRUD on the single-tenant primary app tables.
+   */
+  dataRealm?: DatabaseRealm;
 
   /** Branch-preview dedicated log storage and backend diagnostics. Automatic activity/audit capture is not yet available. */
   logging?: boolean | ManagedLoggingConfig;
@@ -585,6 +595,7 @@ export interface ResolvedConfig {
   db: ReactiveDBConfig;
   systemDb: ReactiveDBConfig;
   databaseTopology: ResolvedAppDatabaseTopologyConfig;
+  dataRealm?: DatabaseRealm;
   logging: ResolvedManagedLoggingConfig | false;
   tables: Record<string, TableSchema>;
   /** Schema-admitted functions/triggers for the pinned application database. */
@@ -750,6 +761,7 @@ export function resolveConfig(
     normalized,
   );
   const systemDb = resolveSystemDatabaseConfig(config.db, config.systemDb);
+  const dataRealm = resolveAppDataRealm(config.dataRealm, normalized, databaseTopology);
   const durableDatabaseAutomations = registryHasDurableFunctions(databaseAutomations)
     || (databaseTopology.mode === 'multiple'
       && registryHasDurableFunctions(databaseTopology.realm.automations));
@@ -825,6 +837,7 @@ export function resolveConfig(
     db: config.db,
     systemDb,
     databaseTopology,
+    ...(dataRealm === undefined ? {} : { dataRealm }),
     logging,
     tables: normalized,
     ...(databaseAutomations === undefined ? {} : { databaseAutomations }),

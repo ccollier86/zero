@@ -1,5 +1,5 @@
 /**
- * Scope-bound ergonomic client for actor-backed databases.
+ * Scope-bound ergonomic client for primary and actor-backed databases.
  *
  * Routing lives in the injected executor capability. No method accepts a
  * database id, tenant id, path, raw SQL string, callback, or database handle.

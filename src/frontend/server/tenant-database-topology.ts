@@ -45,12 +45,13 @@ export interface TenantDatabaseResourceTopology {
 export function assertTenantDatabaseRealmSchemaSubset(
   realm: Pick<DatabaseRealm, 'tables' | 'schemaChecksum'>,
   appTables: Readonly<Record<string, TableSchema>>,
+  label = 'databaseTopology tenant realm',
 ): void {
   const realmNames = Object.keys(realm.tables);
   const unknown = realmNames.filter((table) => !Object.hasOwn(appTables, table));
   if (unknown.length > 0) {
     throw tenantTopologyError(
-      '[app] databaseTopology tenant realm contains tables not declared by '
+      `[app] ${label} contains tables not declared by `
       + `createApp({ tables }): ${unknown.sort(compareText).join(', ')}.`,
       'DATABASE_CONFIG_INVALID',
     );
@@ -61,7 +62,7 @@ export function assertTenantDatabaseRealmSchemaSubset(
   const checksum = hashSchemaSnapshot(snapshotDeclaredTables(expected));
   if (realm.schemaChecksum !== checksum) {
     throw tenantTopologyError(
-      '[app] databaseTopology tenant realm table schemas must match the '
+      `[app] ${label} table schemas must match the `
       + 'corresponding createApp({ tables }) declarations.',
       'DATABASE_SCHEMA_MISMATCH',
     );

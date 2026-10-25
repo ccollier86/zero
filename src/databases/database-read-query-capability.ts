@@ -80,11 +80,12 @@ export function createDatabaseReadQuerySession(
  */
 export function openDatabaseWriterReadQuerySession(
   runtime: DatabaseRuntime,
+  options?: { readonly reusePinnedHandle?: boolean },
 ): DatabaseReadQuerySession {
   let database: Database | null = null;
   let primaryFailure: unknown | null = null;
   try {
-    if (runtime.sqlite.mode === 'file') {
+    if (runtime.sqlite.mode === 'file' || options?.reusePinnedHandle === true) {
       assertWriterQueryOnly(runtime.sqlite.raw);
       // Never reopen the canonical pathname here. The actor binding has already
       // proved this exact native handle's physical and logical identity, while a

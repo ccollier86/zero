@@ -51,7 +51,7 @@ not an organization data capability.
 
 | Member | Behavior |
 | --- | --- |
-| `data` | bound asynchronous tenant-file client; null outside Fabric tenant-database isolation |
+| `data` | bound async app-data client: single-tenant primary or committed Fabric tenant file; see the [application-client extension](../fabric/application-client.md) and exact-archive/mode restrictions |
 | `storage` | scoped drive/object/permission/upload facade; null when unavailable or no data scope |
 | `notifications`, `rooms` | current-actor/scope facades; null when unavailable or no scope |
 | `workflows` | scoped run operations; privileged registration/lifecycle methods are not here |
@@ -69,9 +69,10 @@ a raw service is allowed at runtime.
 
 `zero.data` exposes bounded `get`, `list`, `find`, named `query`,
 `mutate`, `batch` and named `command` operations. It closes over a trusted
-tenant; it accepts neither a tenant ID nor a path. Each operation takes a
-short-lived coordinator binding, applies the live authority fence and releases
-the binding afterward.
+application/tenant scope; it accepts neither a tenant ID nor a path. Tenant-file
+operations take a short-lived coordinator binding and release it afterward.
+The primary client uses the managed app runtime directly. Both apply live
+authority fences. Shared-row tenants do not receive an unfiltered primary client.
 
 That protects physical selection and stale authority. It does **not** invent
 your app's resource permissions, ownership rules or field visibility. Use

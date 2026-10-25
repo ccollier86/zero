@@ -42,6 +42,7 @@ choices. The canonical system database remains separate in every managed mode.
 
 ## Use The Data Plane
 
+- [Application data facade](./application-client.md): one async API for primary app data and tenant-file Fabric, with explicit mode boundaries.
 - [Operations](./operations.md): the bound async client and structured reads/writes.
 - [Concurrency](./concurrency.md): file-level overlap and writer ordering.
 - [Consistency](./consistency.md): snapshot, read-your-writes and strong reads.

@@ -193,7 +193,9 @@ projection is immutable and revocable; its scope is derived from the admitted
 source, not a tenant ID inside `parameters`. In tenant-database mode,
 `zero.data` addresses that organization's physical Fabric database. It has no
 method for switching to another organization's file. On a pinned application
-source, `zero.data` is null; do not invent a tenant client from an argument.
+source, the [application-client extension](../fabric/application-client.md) binds
+`zero.data` to the primary runtime when an application-scoped facade is admitted.
+Older archives return null there. Never invent a tenant client from an argument.
 
 An automation is trusted source-bound system work, not the human who last
 edited the row. Its authorization facade cannot fabricate that user's login

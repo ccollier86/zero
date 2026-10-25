@@ -144,6 +144,8 @@ export class DatabaseWriterOperationEngine {
   execute(
     value: unknown,
     logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint,
+    /** @internal Synchronous live-authority fence inside the write transaction. */
+    beforeCommit?: () => undefined,
   ): DatabaseWriterOperationResult {
     this.assertOpen();
     this.pendingReceiptCompaction = null;
@@ -164,7 +166,7 @@ export class DatabaseWriterOperationEngine {
         this.catalog,
         operation,
       )
-      : this.executeWrite(operation, receiptFingerprint);
+      : this.executeWrite(operation, receiptFingerprint, beforeCommit);
   }
 
   /** @internal Consume one privacy-safe compaction summary after execute(). */
@@ -223,6 +225,7 @@ export class DatabaseWriterOperationEngine {
   private executeWrite(
     operation: DatabaseWriteOperation,
     logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint,
+    beforeCommit?: () => undefined,
   ): DatabaseCommitResult<DatabaseWriterCommitValue> {
     const fingerprint = logicalReceiptFingerprint === undefined
       ? fingerprintDatabaseWriterOperation(this.realm.fingerprint, operation)
@@ -240,6 +243,7 @@ export class DatabaseWriterOperationEngine {
           throw databaseWriterReceiptExpired();
         }
         if (receipt.status === 'retained') {
+          assertBeforeCommit(beforeCommit);
           return {
             result: validateDatabaseCommitResult({
               ...receipt.result,
@@ -276,6 +280,7 @@ export class DatabaseWriterOperationEngine {
           result,
           result.sequence.seq,
         );
+        assertBeforeCommit(beforeCommit);
         return { result, receiptCompaction };
       });
 
@@ -307,6 +312,15 @@ export class DatabaseWriterOperationEngine {
         'Database writer engine is closed.',
       );
     }
+  }
+}
+
+function assertBeforeCommit(check: (() => undefined) | undefined): void {
+  if (!check) return;
+  const value = check();
+  if (value !== undefined) {
+    void Promise.resolve(value).catch(() => undefined);
+    throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Database commit checks must be synchronous.');
   }
 }
 

@@ -8,6 +8,8 @@ import type {
   DatabaseCoordinatorDiagnostics,
 } from './database-coordinator';
 import type { AsyncDatabaseClient } from './database-operations';
+import type { DatabaseRealm } from './database-realm';
+import type { TableSchema } from '../sync/types';
 import type { DatabaseRuntime, DatabaseRuntimeRole } from './database-runtime';
 import type { DatabaseTenantSyncBinding } from './database-tenant-sync';
 import type { DatabaseTrustedWriteExecutor } from './database-trusted-writer';
@@ -55,6 +57,10 @@ export interface DatabaseManagerOptions {
   readonly systemRuntime: DatabaseRuntime;
   /** Application runtime used by zero.db and zero.sql. */
   readonly appRuntime: DatabaseRuntime;
+  /** App-only declarations enabling the pinned async data facade. */
+  readonly applicationTables?: Readonly<Record<string, TableSchema>>;
+  /** Optional named query/command registry for the pinned application plane. */
+  readonly applicationRealm?: DatabaseRealm;
   /** Optional process-pinned service planes, started after the app plane. */
   readonly serviceRuntimes?: readonly PinnedDatabaseRuntimeBinding[];
   /** Shared/exclusive fence between the pinned system and application planes. */

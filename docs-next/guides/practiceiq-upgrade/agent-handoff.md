@@ -48,6 +48,15 @@ convert live patient data or deploy.
 > The result must use normal Zero, without local framework patch reapplication or
 > node_modules edits. Verify every old custom behavior before removing its patch.
 >
+> Record the actual deployed app revision and compare it with the source branch.
+> Obtain an operator-authorized consistent backup of current live DB/storage and
+> recovery dependencies into private offline scratch, not Git. Hot mode requires
+> the old runtime's current-image snapshot or a quiescent supported backup, not
+> blindly downloading a possibly stale snapshot/main file. Rehearsal paths must
+> be explicit and independent. Disable outbound providers, schedulers and pending
+> external effects until their isolated test adapters are installed. No source
+> branch or package update is permission to mutate the live state.
+>
 > Keep single tenancy. Separate system/auth from clinical state through supported
 > systemDb and Guardian contracts. Logging needs its own dedicated Fabric audit
 > and operational files and supervised worker, not patient tables, the auth file
@@ -65,8 +74,11 @@ convert live patient data or deploy.
 >
 > Classify query changes before rewriting repositories: reuse existing Zero
 > operations, retain complex SQL in compatible registered queries, preserve atomic
-> command semantics, and report genuine facade gaps. The current single-tenant
-> split is not a mandate to rewrite all clinical queries or enable tenant mode.
+> command semantics, and report genuine facade gaps. Read the application-client
+> extension guide; qualify an exact archive containing it before using zero.data
+> on the primary database. Register primary queries/commands through dataRealm.
+> The current single-tenant split is not a mandate to rewrite all clinical queries
+> or enable tenant mode.
 >
 > The supplied tools verify source and deliberately staged offline copies; they
 > are not a converter. Produce a complete table/ownership map and a fail-closed,

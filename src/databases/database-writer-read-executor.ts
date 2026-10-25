@@ -34,6 +34,7 @@ export function executeDatabaseWriterRead(
   realm: DatabaseRealm,
   catalog: DatabaseOperationCatalog,
   operation: DatabaseReadOperation,
+  options?: { readonly reusePinnedHandle?: boolean },
 ): DatabaseReadResult {
   try {
     const previousQueryOnly = readQueryOnly(runtime);
@@ -52,7 +53,7 @@ export function executeDatabaseWriterRead(
               return runDatabaseFindPage(runtime.sqlite.raw, operation, catalog);
             case 'query':
               return withDatabaseReadQuerySession(
-                openDatabaseWriterReadQuerySession(runtime),
+                openDatabaseWriterReadQuerySession(runtime, options),
                 (context) => runDatabaseRealmQuery(
                   realm,
                   context,

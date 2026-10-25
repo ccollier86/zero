@@ -1,5 +1,5 @@
 /**
- * Request/background projection for an actor-backed tenant database.
+ * Request/background projection for primary app or actor-backed tenant data.
  *
  * The physical binding is derived exclusively from a framework-owned service
  * scope. Each public operation owns one short-lived coordinator lease so an
@@ -38,16 +38,16 @@ export interface CreateRequestDatabaseClientOptions {
 }
 
 /**
- * Project the tenant file for a committed scope, or null when this app/scope
- * does not use tenant-database isolation.
+ * Project the primary app runtime for application scope, or the committed
+ * tenant file. Shared-row tenant scopes deliberately receive no unfiltered
+ * primary client: their Resource policies remain the isolation boundary.
  */
 export function createRequestDatabaseClient(
   options: CreateRequestDatabaseClientOptions,
 ): AsyncDatabaseClient | null {
   const { manager, scope, assertCurrentAuthoritySync } = options;
-  if (!manager
-    || scope.scopeKind !== 'tenant'
-    || !manager.diagnostics().tenantDatabasesEnabled) return null;
+  if (!manager) return null;
+  const tenantDatabases = manager.diagnostics().tenantDatabasesEnabled;
 
   // Preserve the runtime return value. DatabaseManager/AsyncDatabaseClient
   // deliberately reject promises and other non-undefined values even when a
@@ -55,6 +55,13 @@ export function createRequestDatabaseClient(
   const assertCurrentAuthority = (): undefined => (
     assertCurrentAuthoritySync() as undefined
   );
+
+  if (scope.scopeKind === 'application') {
+    if (tenantDatabases) return null;
+    const primary = manager.bindApplication(assertCurrentAuthority);
+    return primary ? new RequestDatabaseClient(manager, null, assertCurrentAuthority, primary) : null;
+  }
+  if (!tenantDatabases) return null;
 
   return new RequestDatabaseClient(
     manager,
@@ -101,17 +108,20 @@ export async function createResourceTenantDatabaseAccess(
 
 class RequestDatabaseClient implements AsyncDatabaseClient {
   readonly #manager: DatabaseManager;
-  readonly #tenantId: string;
+  readonly #tenantId: string | null;
+  readonly #primary: AsyncDatabaseClient | null;
   readonly #assertCurrentAuthority: () => undefined;
 
   constructor(
     manager: DatabaseManager,
-    tenantId: string,
+    tenantId: string | null,
     assertCurrentAuthority: () => undefined,
+    primary: AsyncDatabaseClient | null = null,
   ) {
     this.#manager = manager;
     this.#tenantId = tenantId;
     this.#assertCurrentAuthority = assertCurrentAuthority;
+    this.#primary = primary;
     Object.freeze(this);
   }
 
@@ -181,8 +191,13 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
   async #withBinding<T>(
     operation: (client: AsyncDatabaseClient) => Promise<T>,
   ): Promise<T> {
+    if (this.#primary) {
+      const result = await operation(this.#primary);
+      this.#assertFinalAuthority();
+      return result;
+    }
     const binding = await this.#manager.bindTenant({
-      tenantId: this.#tenantId,
+      tenantId: this.#tenantId!,
       assertCurrentAuthoritySync: this.#assertCurrentAuthority,
       assertCurrentReadAuthority: this.#assertCurrentAuthority,
     });
@@ -206,7 +221,7 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     } catch {
       throw new DatabaseError(
         'DATABASE_AUTHORITY_CHANGED',
-        'Tenant database authority changed before result delivery.',
+        'Database authority changed before result delivery.',
         { retryable: false, outcome: null },
       );
     }

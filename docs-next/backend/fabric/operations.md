@@ -23,7 +23,8 @@ reviewed_against:
 
 [Fabric index](./index.md) · [Documentation index](../../index.md)
 
-Normal tenant-bound server requests use `zero.data`. Its
+Normal scoped server requests use `zero.data`. The [application-client extension](./application-client.md)
+adds the same methods for single-tenant primary data without enabling tenant files. Its
 `AsyncDatabaseClient` shape is exported as a type from
 `@zero/framework/server`; app code does not construct it from a browser-supplied
 tenant ID. It accepts no physical path, raw SQL or arbitrary callback.
