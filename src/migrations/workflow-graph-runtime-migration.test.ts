@@ -16,6 +16,7 @@ import { migration as graphRuntime } from './definitions/030_workflow_graph_runt
 import { migration as graphTenantIntegrity } from './definitions/031_workflow_graph_tenant_integrity';
 import { migration as runtimeOwnership } from './definitions/032_workflow_runtime_ownership';
 import { migration as systemStartReceipts } from './definitions/038_workflow_system_start_receipts';
+import { migration as actorStartReceipts } from './definitions/044_workflow_actor_start_receipts';
 import { normalizeSql } from './schema-snapshot';
 
 const NEW_TABLES = [
@@ -142,7 +143,7 @@ describe('workflow graph runtime migration 030', () => {
     }
   });
 
-  test('032 plus appended 038 upgrade matches current runtime repair for every graph table and column', () => {
+  test('032 plus appended 038/044 upgrades match current runtime repair for every graph table and column', () => {
     const migrated = new Database(':memory:');
     const runtimeRaw = new Database(':memory:');
     const schemaRaw = new Database(':memory:');
@@ -151,9 +152,10 @@ describe('workflow graph runtime migration 030', () => {
     graphRuntime.up(migrated);
     graphTenantIntegrity.up(migrated);
     runtimeOwnership.up(migrated);
-    // Current runtime repair includes the append-only 038 parent-delete fence.
+    // Current runtime repair includes the append-only 038/044 parent-delete fences.
     // Keep historical 030/031 checks above separate from this current-schema gate.
     systemStartReceipts.up(migrated);
+    actorStartReceipts.up(migrated);
     const runtime = createReactiveDB({ database: runtimeRaw, clearChangesOnStart: false });
     try {
       defineWorkflowTables(runtime);

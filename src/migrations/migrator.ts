@@ -395,13 +395,17 @@ export class Migrator {
    */
   checkpoint(): void {
     let result: { busy: number; checkpointed: number; log: number } | null;
+    let statement: ReturnType<Database['prepare']> | undefined;
     try {
-      result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+      statement = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)');
+      result = statement.get() as
         | { busy: number; checkpointed: number; log: number }
         | null;
     } catch {
       this.log('[migrator] WAL checkpoint skipped for non-WAL database');
       return;
+    } finally {
+      statement?.finalize();
     }
 
     if (result && result.busy > 0) {

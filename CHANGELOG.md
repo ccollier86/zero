@@ -4,6 +4,17 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added an offline-only legacy-state boundary under `@zero/framework/migrations`
+  for the admitted Zero 1.3 combined schema: approved plans, fresh private
+  generations, original identity/credential/token/Storage/workflow preservation,
+  typed row verification, ID-only app anchors and correct system/app ledger
+  partitioning. Unknown schemas/checksums fail closed; normal app startup does
+  not migrate live state. Pending imported workflows retain their state under
+  recovery holds rather than acquiring guessed authority or silently failing.
+  Their resumption still requires a separately reviewed authority contract;
+  isolated app/UI work can continue with workflows disabled. Updated the
+  PracticeIQ handoff and added installed-archive qualification.
+
 - Restored public `EmailAttachment`, explicit provider attachment capabilities
   and `isEmailAttachmentDeliveryReady()` for both Resend and SMTP. Shared
   admission preserves exact owned bytes/MIME/inline IDs, rejects unsafe inputs

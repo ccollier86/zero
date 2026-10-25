@@ -21,6 +21,7 @@ export const FRAMEWORK_INSTALLED_CONSUMER_FILES = [
   'src/modals/modal-system.package.test.ts',
   'src/components/tooltip/tooltip-system.package.test.ts',
   'src/frontend/server/style-foundation.package.test.ts',
+  'src/migrations/legacy-state/legacy-state.package.test.ts',
 ] as const;
 
 /** Match only the reviewed full-framework installed consumers, not arbitrary package tests. */

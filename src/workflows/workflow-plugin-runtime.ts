@@ -43,6 +43,7 @@ import {
 } from './workflow-runtime-owner-store';
 import { createWorkflowSchedulerOwner } from './workflow-scheduler-owner';
 import { defineWorkflowTables } from './workflow-schema';
+import { assertNoLegacyWorkflowMigrationHold } from './workflow-legacy-migration-boundary';
 import { WorkflowService } from './workflow-service';
 import {
   createWorkflowObservability,
@@ -279,6 +280,7 @@ export function createWorkflowPluginRuntimeOwner(
       assertStarting();
 
       const tokens = getWorkflowTokenService();
+      assertNoLegacyWorkflowMigrationHold(config.db);
       const kernel = getKernel();
       const properties = getProperties();
       const authorityStore = new WorkflowExecutionAuthorityStore(config.db);
@@ -500,6 +502,7 @@ function workflowStartupError(error?: unknown): WorkflowError {
     && (error.code === 'WORKFLOW_STARTUP_FAILED'
       || error.code === 'WORKFLOW_NOT_READY'
       || error.code === 'WORKFLOW_RUNTIME_OWNED'
+      || error.code === 'WORKFLOW_LEGACY_MIGRATION_REQUIRED'
       || error.code === 'WORKFLOW_RUNTIME_LEASE_LOST')) {
     return error;
   }

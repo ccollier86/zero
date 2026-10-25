@@ -8,14 +8,14 @@ visibility: internal
 system: platform-runtime
 feature: system-application-separation
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.6.0 with the legacy-state staging extension"]
 modes: [managed-server]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: clean
-  date: "2026-10-05"
+  version: "2.6.0"
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  snapshot: dirty
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -74,6 +74,11 @@ When upgrading an older combined-layout app, take a recoverable backup and
 plan/verify its migration separately. Do not point a new app at live data just
 to see whether a docs example boots. This page does not claim a universal
 automatic split migrator exists.
+
+For an admitted Zero 1.3 combined backup, use the public
+[offline legacy-state staging boundary](../migrations/legacy-state.md). It keeps
+canonical identity out of application SQL and partitions immutable ledgers;
+it does not run at ordinary app startup or authorize pending workflow effects.
 
 ## Verification
 

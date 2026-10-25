@@ -115,6 +115,44 @@ Existing single-file system tables are not silently migrated to split data plane
 
 ## Known Future Plans
 
+### Legacy State Boundary Review October 25 2026
+
+The `feature/legacy-state-migration` extension adds the public
+[offline legacy-state boundary](../../../backend/migrations/legacy-state.md)
+for the known single-tenant 1.3 combined schema. The exact old PracticeIQ
+framework registry at `4ef1f85982eea038f1c193b7fc7e487d800ef415` was compared
+read-only with current frozen migrations: all seven checksums match. No live
+app, PHI, credentials or provider configuration was opened.
+
+The canonical split uses explicit application table/checksum inventories,
+typed row evidence, fresh private generations and normal system migration
+backup gates. It retains user IDs/password hashes/trusted properties, token
+state, Storage identities/grants and workflow rows; partitions the four
+combined ledgers; creates ID-only app anchors; and explicitly resets old mixed
+reactive history. The application must still preserve object bytes, external
+cryptographic dependencies, clinical policy and its public design.
+
+Managed synthetic file/hot checks exercise existing-password login, legacy
+refresh adoption/replay rejection, generic tokens and scoped Storage. They
+also revealed that ordinary modern workflow recovery would invalidate an
+unbound imported run. The extension preserves pending rows under explicit
+holds and rejects recovery before changing their statuses or calling handlers.
+Reviewed resumption authority remains a cutover blocker; it is not inferred
+from an old `started_by` ID or a copied row.
+
+Repeat staging exposed retained explicit SQLite read snapshots; those are now
+rolled back before the offline verifier closes each handle. The migrator's
+one-shot checkpoint statement is finalized as well. The broader regression
+run also found a stale current-schema parity fixture: it applied 038 but
+compared against runtime repair containing 044's parent-delete trigger. The
+fixture now applies both appended migrations, without changing historical DDL
+or filtering away the trigger assertion.
+
+Focused source, documentation-example and exact installed-archive results
+belong to the release qualification receipt under external diagnostics. This
+dated section does not turn the original inventory's unexecuted baseline
+checks into a whole-platform qualification claim.
+
 User is open to clean automatic legacy migrator later; currently not required product commitment. Migration guide should point to data-plane upgrade task and exact supported migration tools.
 
 ## Navigation And Cross-Link Plan

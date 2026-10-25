@@ -8,14 +8,14 @@ visibility: internal
 system: migrations
 feature: overview
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased handler/planning corrections"]
+applies_to: ["2.6.0 with the legacy-state staging extension"]
 modes: [system, application, Fabric-realm]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -42,8 +42,9 @@ planning explain drift; they do not authorize destructive SQL automatically.
 - [Planning](./planning.md): reviewable draft SQL, not a complete rollback.
 - [Backups](./backups.md): live-handle snapshots and explicit restore responsibility.
 - [Data planes](./data-planes.md): system versus application/Fabric targets.
+- [Legacy state staging](./legacy-state.md): supported offline identity-preserving 1.3 split, ledger partition and pending-work recovery holds.
 - [CLI](./cli.md): exact managed/inspection commands.
-- [Roadmap](./roadmap.md): future conversion help, not a current universal migrator.
+- [Roadmap](./roadmap.md): further source profiles and recovery support, not a universal migrator.
 
 ## Principles And Integration
 

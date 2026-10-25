@@ -36,6 +36,7 @@ import {
 } from './workflow-execution-authority';
 import { WorkflowExecutionAuthorityGate } from './workflow-execution-authority-gate';
 import { WorkflowError } from './workflow-error';
+import { assertNoLegacyWorkflowMigrationHold } from './workflow-legacy-migration-boundary';
 import {
   WorkflowEventCoordinator,
   type WorkflowEventMutationOptions,
@@ -166,6 +167,7 @@ export class WorkflowService {
     modeOrOptions: 'single' | 'multi' | WorkflowServiceOptions = {},
     legacyOptions: WorkflowServiceOptions = {},
   ) {
+    assertNoLegacyWorkflowMigrationHold(db);
     const options = typeof modeOrOptions === 'string' ? legacyOptions : modeOrOptions;
     const tenancyMode = typeof modeOrOptions === 'string'
       ? modeOrOptions
@@ -588,6 +590,7 @@ export class WorkflowService {
     // operation started; it must still reject disposed or stale ownership
     // before reading or validating any durable run.
     this.assertAvailable();
+    assertNoLegacyWorkflowMigrationHold(this.db);
     this.idempotentStarts.validateRecovery();
     for (const instance of this.repository.listNonterminalInstances()) {
       this.authority.validateRecoveryInstance(instance.instance_id);

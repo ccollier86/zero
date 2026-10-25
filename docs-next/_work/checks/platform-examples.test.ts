@@ -52,6 +52,7 @@ test('Schema, runtime and configuration Markdown examples use valid public sourc
     'backend/migrations/declarations.md': [0],
     'backend/migrations/registries.md': [0],
     'backend/migrations/apply.md': [0],
+    'backend/migrations/legacy-state.md': [0],
     'backend/email/attachments.md': [0],
     'guides/practiceiq-upgrade/logging.md': [0],
     'backend/storage/permissions.md': [0],

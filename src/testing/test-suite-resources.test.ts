@@ -3,8 +3,8 @@ import { expect, test } from 'bun:test';
 import { FRAMEWORK_INSTALLED_CONSUMER_FILES, isFrameworkInstalledConsumer } from './test-suite-resources';
 
 test('the resource catalog contains only reviewed existing full-framework pack/install consumers', async () => {
-  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES).toHaveLength(16);
-  expect(new Set(FRAMEWORK_INSTALLED_CONSUMER_FILES).size).toBe(16);
+  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES).toHaveLength(17);
+  expect(new Set(FRAMEWORK_INSTALLED_CONSUMER_FILES).size).toBe(17);
   // Keep the original admission list/order; qualify the reviewed additive consumers independently.
   expect(FRAMEWORK_INSTALLED_CONSUMER_FILES.slice(0, 10)).toEqual([
     'packages/docs/package-installed.integration.test.ts',
@@ -25,6 +25,7 @@ test('the resource catalog contains only reviewed existing full-framework pack/i
     'src/modals/modal-system.package.test.ts',
     'src/components/tooltip/tooltip-system.package.test.ts',
     'src/frontend/server/style-foundation.package.test.ts',
+    'src/migrations/legacy-state/legacy-state.package.test.ts',
   ]);
   for (const file of FRAMEWORK_INSTALLED_CONSUMER_FILES) {
     const source = await Bun.file(new URL(`../../${file}`, import.meta.url)).text();

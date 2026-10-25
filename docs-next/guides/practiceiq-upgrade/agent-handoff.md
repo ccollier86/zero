@@ -13,8 +13,8 @@ modes: [single-tenant, feature-branch, isolated-rehearsal]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "202b9f7f35c761192ce9089e7ea84c4fbe9c58c3"
-  snapshot: clean
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
 ---
@@ -80,12 +80,23 @@ convert live patient data or deploy.
 > The current single-tenant split is not a mandate to rewrite all clinical queries
 > or enable tenant mode.
 >
-> The supplied tools verify source and deliberately staged offline copies; they
-> are not a converter. Produce a complete table/ownership map and a fail-closed,
-> resumable conversion slice with synthetic fixtures and exact source/target
-> identities. Prove old-state restoration. If a canonical import/validation
-> contract is missing, report the Zero gap rather than using private internals,
-> guessed SQL, disabled constraints or a fabricated user/tenant.
+> The preparation tools verify source and deliberately staged offline copies.
+> For the canonical 1.3 split read backend/migrations/legacy-state.md and use
+> planLegacyStateMigration, stageLegacyStateMigration and
+> verifyStagedLegacyStateMigration from @zero/framework/migrations. Pin an
+> archive qualified for those exports. Supply the complete app table inventory,
+> independently approved migration checksums, exact source SHA-256 and reviewed
+> plan fingerprint. Do not recreate accounts or import private framework SQL.
+> Stage only into a new private generation; do not resume a failed generation.
+> Keep clinical app adaptation separate and prove old-state restoration.
+> Unknown source profiles remain a framework gap, not a bypass opportunity.
+>
+> Keep workflows false while pending imports await execution-authority review.
+> A requires-reviewed-authority receipt preserves the rows but does not grant
+> execution permission. WORKFLOW_LEGACY_MIGRATION_REQUIRED is a deliberate
+> non-mutating recovery gate. Do not delete holds, mint private seals, discard
+> pending work or replay external effects. This is a cutover blocker, not an
+> obstacle to continuing the isolated app/UI upgrade.
 >
 > After isolated conversion and ordinary authorization pass, integrate logging
 > through the facade, existing AppProvider and LoggingWorkspace. Inventory raw
@@ -140,7 +151,9 @@ that its clinical data, access policy or recovery path survived.
   convert queued link deliveries to document email.
 - **Durable work:** register exact retained handlers before recovery; exercise
   waits, retries, interruptions, cancellation and duplicate callbacks. No lost
-  history or duplicate AI/PDF/email effects.
+  history or duplicate AI/PDF/email effects. Imported nonterminal work needs a
+  separately reviewed supported authority-admission contract before enabling
+  recovery; preserving rows alone does not satisfy this acceptance gate.
 - **Realtime/tables:** authorized pages get live changes and revoked clients
   stop. New rows must not blank the table or replay initial-load animation;
   pagination uses directional motion. Keep component keys/data sources stable.

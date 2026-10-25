@@ -13,8 +13,8 @@ modes: [single-tenant, isolated-rehearsal]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "202b9f7f35c761192ce9089e7ea84c4fbe9c58c3"
-  snapshot: clean
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
 ---
@@ -25,9 +25,12 @@ reviewed_against:
 
 Installing Zero 2.6.0 does not split a legacy combined database. The managed
 layout guard rejects prohibited system state in the application file instead
-of moving credentials at startup. The PracticeIQ agent must implement and test
-an explicit converter against its actual old schema and an isolated copy.
-The supplied verification tools do not contain that converter.
+of moving credentials at startup. The public
+[legacy state boundary](../../backend/migrations/legacy-state.md) now handles
+the admitted 1.3 canonical split without account recreation or app-written
+private system SQL. The PracticeIQ agent still owns actual-schema admission,
+clinical compatibility and isolated application acceptance. The preparation
+toolkit itself remains read-only; it is not the staging operation.
 
 ## Preserve the Application Profile
 
@@ -80,10 +83,44 @@ canonical import/field mapping is semantically correct.
 Use an app-owned, versioned conversion slice outside historical migration
 bodies, for example `db/upgrades/zero-2/`. Keep command parsing, schema mapping,
 copy/transform, evidence and verification separate. Do not edit installed
-framework source or import Zero's private implementation files. If preserving
-canonical authority requires a public import/validation contract that Zero
-does not expose, stop and request that framework capability rather than bypass
-its invariants with guessed SQL.
+framework source or import Zero's private implementation files. Use
+`planLegacyStateMigration`, `stageLegacyStateMigration` and
+`verifyStagedLegacyStateMigration` from `@zero/framework/migrations` for the
+admitted framework-owned state. Qualify the exact archive containing that
+boundary first; it was not present in the older facade-only archive. Unknown
+source profiles still require a Zero capability, not guessed private SQL.
+
+### Canonical Staging Sequence
+
+1. Take the approved consolidated backup and complete the table map. Derive
+   approved app migration checksums from the retained immutable registry, not
+   only from the live ledger. No app migration functions are passed to staging.
+2. Call `planLegacyStateMigration` with the known source format, offline
+   attestation, exact source SHA-256 and complete application table/checksum
+   inventory. Save and review the plan privately. Unknown schemas or versions
+   are hard stops, not permission to edit old tables/checksums.
+3. Call `stageLegacyStateMigration` against a new directory under a private
+   canonical parent, with the approved `expectedPlanFingerprint` and explicit
+   `resetReactiveHistory: true`. It writes independent system/application
+   snapshots, keeps original IDs/hashes/values, partitions the four ledgers and
+   runs only pending built-in system migrations with normal backup gates.
+4. Call `verifyStagedLegacyStateMigration` before app-owned conversion or boot.
+   Record the successful receipt and output hashes. Reuse verify, not stage,
+   for a read-only repeat check; partial/failed generations require a new path.
+5. Adapt app-owned schema, queries, Guardian FK declarations and provider setup
+   on the candidate only. Preserve external Storage bytes and cryptographic
+   dependencies. Boot with outbound effects and `workflows: false` until their
+   separate acceptance gates pass. Fresh reactive snapshots/cursors are required.
+
+If the receipt reports `workflowRecovery: 'requires-reviewed-authority'`,
+pending runs and their history remain preserved under recovery holds. Normal
+recovery rejects `WORKFLOW_LEGACY_MIGRATION_REQUIRED` before mutating them.
+Do not delete the holds or mint private authority rows. Fresh actor approval
+versus explicit administrator-approved system execution is a separate decision
+and contract; it remains a cutover blocker until resolved and qualified.
+The isolated app/UI work can proceed with workflows disabled.
+
+### Application Acceptance Requirements
 
 The converter must:
 
@@ -147,8 +184,9 @@ The [application-client extension](../../backend/fabric/application-client.md)
 provides request `zero.data` for the single-tenant primary database as well as
 tenant-file Fabric. PracticeIQ can keep single tenancy and use the same async
 repository calls. `zero.db` remains the synchronous compatibility surface.
-The older main archive pinned in this guide does not contain this extension:
-qualify and record a newer exact commit/archive before using it. Do not assume
+The older main archive pinned in this guide does not contain this extension
+or the legacy-state boundary: qualify and record a newer exact commit/archive
+containing both before using them. Do not assume
 matching version strings prove capability availability.
 
 Classify each touched repository operation before implementation:

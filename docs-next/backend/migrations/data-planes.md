@@ -8,14 +8,14 @@ visibility: internal
 system: migrations
 feature: planes
 maturity: supported
-applies_to: ["2.1.1 baseline with unreleased handler/planning corrections"]
+applies_to: ["2.6.0 with the legacy-state staging extension"]
 modes: [system, application, Fabric-realm]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.6.0"
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-10-25"
   evidence_level: source-observed
 ---
 
@@ -61,9 +61,12 @@ The new layout guard rejects incompatible combined targets.
 No universal zero migrate command converts every old app into Guardian/Fabric
 or copies tenants/ownership safely by inference.
 
-Back up, pin old versions where needed, and plan an app-specific conversion with
-exact source/target ownership. A future automated migrator is a separate product
-direction, not a current promised migration mode.
+The [legacy state boundary](./legacy-state.md) provides a narrow public offline
+staging path for the known Zero 1.3 combined schema. It preserves identities and
+canonical values, partitions approved ledgers and advances only the new system
+plane. It is not startup migration or a converter for arbitrary old schemas.
+Application compatibility and pending-work execution authority remain explicit
+acceptance gates; retain the old bundle and verified restore path.
 
 See [CLI](./cli.md), [runtime planes](../runtime/data-planes.md),
 [backups](./backups.md) and [roadmap](./roadmap.md).

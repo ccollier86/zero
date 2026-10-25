@@ -13,8 +13,8 @@ modes: [single-tenant, separate-system-database, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "202b9f7f35c761192ce9089e7ea84c4fbe9c58c3"
-  snapshot: clean
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
 ---
@@ -27,6 +27,12 @@ Prepare PracticeIQ's application agent to upgrade on its own feature branch.
 This is a runbook and tested verification toolkit, **not an executed migration,
 automatic data converter or deployment approval**. The toolkit cannot install
 Zero, start the application, move records, restore backups or change configuration.
+
+The separate public [legacy state staging boundary](../../backend/migrations/legacy-state.md)
+now handles the admitted 1.3 canonical split. It is not a live migration or a
+permission grant for pending work. Use the qualified archive containing both
+this boundary and the primary data facade; the historical archive below does
+not contain them.
 
 The target remains one PracticeIQ installation with one business tenant. Keep
 the public Better Behavioral website's custom colors, Montserrat typography,
@@ -69,6 +75,7 @@ for both Resend and SMTP (historical reference, **not** the facade upgrade targe
 
 For this upgrade select a newer qualified normal main archive containing the
 [application-client extension](../../backend/fabric/application-client.md).
+It must also contain the [legacy-state exports](../../backend/migrations/legacy-state.md).
 Record its full commit and SHA-256 from the release handoff and
 `zero-release --status`; verify the archive before using it. Those exact values
 become `PIQ_TARGET_COMMIT` and `PIQ_TARGET_SHA256` in the preparation commands.
@@ -99,6 +106,11 @@ conversion needs its own explicit composition and acceptance work.
 The [application data facade](../../backend/fabric/application-client.md) removes
 the need for a PracticeIQ-owned primary/Fabric adapter. It is not in the
 historical archive above; qualify the exact newer destination before adopting it.
+
+Canonical rows and immutable migration ledgers can now be staged through the
+public offline boundary rather than app-private SQL. Pending workflow imports
+are held intact for reviewed execution authority. Keep `workflows: false`
+during isolated conversion; a held generation is not approved for cutover.
 
 The attachment capability/helper is normal Zero functionality, not a new
 PracticeIQ-only patch. The logging subsystem is an **opt-in preview**. Its

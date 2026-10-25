@@ -87,6 +87,15 @@ export {
 export { diffSchemaSnapshots } from './schema-diff';
 export { createMigrationPlan, renderMigrationPlan } from './migration-planner';
 export { runMigrationDoctor } from './migration-doctor';
+export {
+  planLegacyStateMigration, stageLegacyStateMigration, verifyStagedLegacyStateMigration,
+  LegacyStateMigrationError, LEGACY_STATE_MIGRATION_CODES,
+} from './legacy-state';
+export type {
+  LegacyStateMigrationCode, LegacyStateMigrationPhase, LegacyStateMigrationInput, LegacyStateMigrationPlan,
+  LegacyTableEvidence, StageLegacyStateMigrationInput, StagedLegacyStateMigration,
+  LegacyStateMigrationInputForVerification,
+} from './legacy-state';
 
 /**
  * All migrations in order. Append new migrations at the end.

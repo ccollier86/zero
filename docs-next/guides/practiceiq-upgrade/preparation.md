@@ -13,8 +13,8 @@ modes: [read-only-source-inspection, explicit-offline-copies]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "202b9f7f35c761192ce9089e7ea84c4fbe9c58c3"
-  snapshot: clean
+  commit: "66035d0dad75ea2276ce2f888499e2292b1ee995"
+  snapshot: dirty
   date: "2026-10-25"
   evidence_level: source-observed
 ---
@@ -29,6 +29,11 @@ loads dotenv files, starts providers, installs packages or runs app scripts.
 `init` creates an empty private workspace; the other commands create evidence
 files or perform read-only checks. There is no apply, migrate, restore, deploy,
 force or cleanup command.
+
+The framework's separate [legacy state boundary](../../backend/migrations/legacy-state.md)
+provides the supported offline staging operations. Complete these source and
+backup checks first, then follow the [conversion sequence](./conversion.md#canonical-staging-sequence).
+Do not add private canonical SQL to this verification toolkit.
 
 ## Prepare the Application Branch
 
