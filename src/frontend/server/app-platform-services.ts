@@ -49,6 +49,7 @@ import { PresenceService, ZERO_GUARDIAN_PRESENCE } from '../../presence/presence
 import { ManagedPresencePublisher } from '../../presence/presence-managed-publisher';
 import { createPresencePlugin } from '../../presence/presence.plugin';
 import { composeManagedUserAvatars } from './app-user-avatars';
+import { mountManagedBlog } from './app-blog';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import { ZERO_DATABASE_MANAGER } from '../../runtime/service-keys';
 import { createAuthPlatformCodeEmitter } from '../../auth/auth-observability';
@@ -273,6 +274,7 @@ export async function mountPlatformServices({
   // the app is published. Elysia's Bun adapter does not await onStart promises;
   // the plugin reuses this same single-flight initializer when listen() runs.
   await Promise.all(managedInitializers.map((initialize) => initialize()));
+  await mountManagedBlog({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
 }
 
 interface WorkflowMountInput {

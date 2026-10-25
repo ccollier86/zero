@@ -34,6 +34,16 @@ export function createAuthUserAvatarPlugin(config: AuthUserAvatarPluginConfig) {
       return { error: getPublicAuthErrorMessage(error), code: error.code };
     })
     .get('', async ({ request, set }) => { applyAuthPrivateNoStore(set); const { service, auth } = await actor(request); return service.read(auth); })
+    .post('/publication', async ({ request, body }) => { const { service, auth } = await actor(request); return service.publish(auth, publicationRevision(body, request)); },
+      { body: t.Object({ expectedRevision: revision }, { additionalProperties: true }) })
+    .delete('/publication', async ({ request, body }) => { const { service, auth } = await actor(request); return service.withdraw(auth, publicationRevision(body, request)); },
+      { body: t.Object({ expectedRevision: revision }, { additionalProperties: true }) })
+    .get('/public/:publicationId', async ({ params }) => {
+      const service = config.getService(); if (!service) throw new AuthError('Avatar services are unavailable', 'AUTH_AVATAR_NOT_READY', 503);
+      const delivered = await service.downloadPublic(params.publicationId);
+      return new Response(delivered.stream, { headers: { 'Content-Type': 'image/webp', 'Content-Length': String(delivered.size),
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin' } });
+    }, { params: t.Object({ publicationId: t.String({ pattern: '^avp_[a-f0-9-]{36}$' }) }) })
     .get('/users/:userId', async ({ request, params, set }) => {
       applyAuthPrivateNoStore(set); const { service, auth } = await actor(request); return service.directory(auth, params.userId);
     }, { params: t.Object({ userId: t.String({ minLength: 1, maxLength: 256 }) }) })
@@ -52,4 +62,10 @@ export function createAuthUserAvatarPlugin(config: AuthUserAvatarPluginConfig) {
     }, { params: stageParams, body: proof })
     .delete('', async ({ request, body, set }) => { applyAuthPrivateNoStore(set); const { service, auth } = await actor(request); return service.remove(auth, body.expectedRevision); },
       { body: t.Object({ expectedRevision: revision }, { additionalProperties: false }) });
+}
+function publicationRevision(body: { expectedRevision: number }, request: Request): number {
+  if (Object.keys(body).some(key => key !== 'expectedRevision') || new URL(request.url).search) {
+    throw new AuthError('Invalid avatar publication request', 'AUTH_AVATAR_VALIDATION_FAILED', 422);
+  }
+  return body.expectedRevision;
 }

@@ -121,6 +121,18 @@ Fresh optional presence rings follow the configured shape. No image upload
 means initials by default, with configured username/email fallback when names
 are absent. A directory avatar is not a public download URL.
 
+The [author-foundation preview](../../backend/blog/index.md) can enable omitted
+expanded private fields in an existing project; the current organism adapts to
+those capabilities without recreating an account screen. Profile-only apps can
+enable the same fields independently. Explicitly hidden UI sections remain
+hidden until the app removes that restriction.
+
+Public author drafts/publication are separate from this private editor. The new
+`client.blog` facade supports them, but an author-management section is not
+automatically inserted by this backend slice. Public photos also need explicit
+owner choice using the [public-avatar API](../../backend/guardian/avatars.md#optional-public-avatar-publication);
+uploading/cropping in AvatarEditor never publishes a private image automatically.
+
 ## Availability And Other Reusable Settings
 
 `UserPresenceSettings` observes the existing SDK tracker and offers only its

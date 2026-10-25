@@ -120,6 +120,64 @@ organization; other organizations are not a global address book. Single-mode
 web callers see active account identities. Native directory access is currently
 self-only and respects profile/read/write scopes. API keys cannot edit avatars.
 
+## Optional Public Avatar Publication
+
+The `feature/blog-foundation` preview adds optional public photos. This section
+is a new branch contract; the older private-avatar baseline above alone does
+not identify an archive containing it. See the [candidate qualification](../../_work/audits/blog-author-foundation.md).
+
+Add `publicAccess: true` to the existing `auth.userProfile.avatars` object.
+The default is false; `avatars: true` alone still means private media. SYSTEM
+migration 045 adds explicit publication pointers without publishing existing
+images or changing the private Storage drive.
+
+The existing SDK gains two own-account methods:
+
+```ts
+const current = await client.userAvatar.get();
+// Deliberate owner action after a real image has been attached:
+const published = await client.userAvatar.publish(current.revision);
+const publicPhoto = published.publicAsset;
+// Deliberate withdrawal, using the latest shared profile revision:
+await client.userAvatar.withdraw(published.revision);
+```
+
+`client.auth.avatars` is the same authority-bound owner. The existing hook's
+`mutate((api, signal) => api.publish(revision, signal))` can compose this ceremony;
+the standard AvatarEditor does not silently publish uploads or add a public
+toggle. An application must present the public/private choice deliberately.
+
+Capabilities add `publicAccess` and `publicState` (ready/blocked/disabled).
+Snapshots add nullable `publicAsset`. That allowlisted descriptor contains only
+opaque publication ID, width/height/byteLength, WebP MIME and exact public
+`deliveryPath`; it is distinct from the private asset/Storage identity. No
+account ID, directory query, email or provider URL is exposed by the public
+image endpoint. POST/DELETE `/auth/profile/avatar/publication` accept only
+`{ expectedRevision }`. GET `/auth/profile/avatar/public/:publicationId` serves
+the explicitly published current image anonymously, with no-store/nosniff and
+cross-origin image resource policy for use on a public site.
+
+Publication shares Guardian's profile CAS and live session/native writer checks.
+A stale revision is rejected. Publishing the already-published current photo
+does not advance that revision or allocate a new URL. A missing public migration
+blocks public actions separately while valid private-avatar operations remain
+available. Managers cannot publish another person's private photo through the
+blog-author API.
+
+Replacement/removal invalidates the old public URL; replacement **does not
+automatically publish the new image**. Suspension/deletion, withdrawal, disabled
+public policy, changed installed policy or runtime teardown also prevents new
+delivery. Provider reads are bounded and rechecked before bytes are released.
+The [author foundation](../blog/authors.md) reuses only this intentionally public
+descriptor. Its public-photo requirement is not satisfied by initials or a
+private image.
+
+Public means downloadable by anyone who has the URL. No-store/withdrawal cannot
+recall copies already downloaded by visitors or third-party caches. Disabling
+the policy retains publication metadata; re-enabling can restore a still-current
+retained publication. Use explicit withdrawal for removal, rather than relying
+on a temporary configuration switch as a consent-erasure operation.
+
 ## Drain, Recovery And Privacy
 
 Pending assets and cleanup claims are durable. Replacing/removing an avatar

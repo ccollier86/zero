@@ -34,9 +34,14 @@ centered reading column and right-hand sidebar TOC. Neither requires a variant
 setting. Author information, social links, sharing and newsletter content are
 optional; absent integration data does not become a placeholder control.
 
-This is a UI family, not an enabled blogging service. It installs no tables,
+This import is a UI family, not an enabled blogging service. It installs no tables,
 profile fields, editor, HTTP endpoints, subscriptions, tracking or background
 jobs. The caller supplies display data, content, URLs and callbacks.
+
+The separate opt-in [author backend](../../../../backend/blog/index.md) now
+provides user-backed enrollment, explicit public bylines and optional public
+photos on this feature branch. Enabling it does not yet assemble post routes,
+an editor or a CMS. UI imports and backend enablement stay independently useful.
 
 This is a Zero-native adaptation, not an import-compatible copy of the archived
 Next.js package. Shared buttons, inputs, menus, tooltips, avatars, cards and code
@@ -89,8 +94,8 @@ readiness does not select it as the main package or enable publishing.
   defaults, optional routing adaptation, theme inheritance and motion.
 - [Content blocks](./content-blocks.md) defines the escaped, typed renderer
   accepted by the UI; it is not the future editor or storage schema.
-- [Roadmap](./roadmap.md) records the requested user-backed author, block-editor
-  and automatic SEO integration for a later phase.
+- [Roadmap](./roadmap.md) distinguishes the author foundation from the future
+  block-editor, publishing and automatic SEO integration.
 
 Blog search uses the general [CommandPalette](../../controls/command-palette.md),
 not a separate blog modal, global state store or screenshot service. It keeps

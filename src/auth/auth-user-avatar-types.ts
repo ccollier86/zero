@@ -1,6 +1,8 @@
 /** Global avatar identity and presentation policy; image possession is not authorization. */
 export interface AuthUserAvatarConfig {
   enabled?: boolean;
+  /** Permit explicit publication; existing photos are never made public implicitly. */
+  publicAccess?: boolean;
   editable?: boolean;
   shape?: 'circle' | 'rounded' | 'square';
   size?: 'sm' | 'default' | 'lg';
@@ -11,6 +13,7 @@ export interface AuthUserAvatarConfig {
 }
 export interface ResolvedAuthUserAvatarConfig {
   enabled: boolean;
+  publicAccess: boolean;
   editable: boolean;
   shape: 'circle' | 'rounded' | 'square';
   size: 'sm' | 'default' | 'lg';
@@ -21,6 +24,7 @@ export interface ResolvedAuthUserAvatarConfig {
 }
 export interface UserAvatarCapabilities extends ResolvedAuthUserAvatarConfig {
   state: 'ready' | 'blocked' | 'disabled';
+  publicState?: 'ready' | 'blocked' | 'disabled';
 }
 export interface UserAvatarAsset {
   id: string;
@@ -36,7 +40,13 @@ export interface UserAvatarSnapshot {
   /** Shared profile revision: avatar and profile edits cannot silently overwrite one another. */
   revision: number;
   asset: UserAvatarAsset | null;
+  /** Separately admitted public representation, never the private delivery URL. */
+  publicAsset?: UserPublicAvatarAsset | null;
   capabilities: UserAvatarCapabilities;
+}
+export interface UserPublicAvatarAsset {
+  id: string; width: number; height: number; byteLength: number;
+  mimeType: 'image/webp'; deliveryPath: string;
 }
 export interface UserAvatarStage {
   id: string;

@@ -26,6 +26,7 @@ import {
   defineRouter,
 } from './server-extensions';
 import { createServerRoute } from './server-route';
+import { ZERO_BLOG, type BlogService } from '../../blog/service';
 
 describe('server extension authorization kernel integration', () => {
   test('rejects malformed precompiled policy objects at the public route compiler', async () => {
@@ -153,6 +154,10 @@ describe('server extension authorization kernel integration', () => {
       roles: { clinician: { permissions: ['documents:read'] } },
       tokenRole: 'clinician',
     });
+    fixture.runtime.set(ZERO_BLOG, { forAuthority(authority: any) {
+      if (authority.access.context?.credentialKind === 'api-key') throw new Error('An account-only optional service must not intercept unrelated machine routes.');
+      return {};
+    } } as unknown as BlogService);
     const app = await createServerExtensionApp({
       runtime: fixture.runtime,
       extensions: [

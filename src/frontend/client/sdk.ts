@@ -143,6 +143,8 @@ import {
 } from './storage-studio-client';
 import { createEmailInboxSource, type EmailInboxSdkSurface } from './email-inbox-source';
 import { createLoggingClient } from './logging-client';
+import { createBlogClient } from './blog-client';
+import type { BlogClient } from '../../blog/client-contracts';
 import type { LoggingClient } from '../../logging/logging-api-contracts';
 
 /**
@@ -761,6 +763,7 @@ export interface Client extends AuthAdminSdkSurface {
   /** Current-subject billing facade; unavailable server plugins fail closed with a route error. */
   readonly payments: PaymentsClient;
   readonly logging: LoggingClient;
+  readonly blog: BlogClient;
 
   // ─── Data ────────────────────────────────────────────────────────
 
@@ -955,6 +958,7 @@ export function createClient(config: ClientConfig): Client {
   let storageStudio!: StorageStudioSdkSurface;
   let emailInbox!: EmailInboxSdkSurface;
   let logging!: LoggingClient;
+  let blog!: BlogClient;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -978,6 +982,7 @@ export function createClient(config: ClientConfig): Client {
     storageStudio?.clear();
     emailInbox?.clear();
     logging?.clear();
+    blog?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -998,6 +1003,7 @@ export function createClient(config: ClientConfig): Client {
     storageStudio?.clear();
     emailInbox?.clear();
     logging?.clear();
+    blog?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();
@@ -1222,6 +1228,7 @@ export function createClient(config: ClientConfig): Client {
   storageStudio = createStorageStudioSdkSurface(clientFetch);
   emailInbox = createEmailInboxSource(clientFetch);
   logging = createLoggingClient(clientFetch);
+  blog = createBlogClient(clientFetch);
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();
@@ -1246,6 +1253,7 @@ export function createClient(config: ClientConfig): Client {
       storageStudio.clear();
       emailInbox.clear();
       logging.clear();
+      blog.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1382,6 +1390,7 @@ export function createClient(config: ClientConfig): Client {
     get storageStudio() { return storageStudio; },
     get emailInbox() { return emailInbox; },
     get logging() { return logging; },
+    get blog() { return blog; },
     get presence() { return presenceClient; },
     vectorVisualization,
     vectorVisualizationFor,
@@ -1629,6 +1638,7 @@ export function createClient(config: ClientConfig): Client {
       storageStudio.clear();
       emailInbox.clear();
       logging.clear();
+      blog.clear();
       _instance = null;
     },
   };

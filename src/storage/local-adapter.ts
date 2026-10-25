@@ -402,7 +402,13 @@ async function* readableStreamChunks(
         // Source cancellation is best-effort after a more useful write/input error.
       }
     }
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {
+      // Some Bun native readers throw during lock release after exhaustion.
+      // Reads and cancellation above already own the source lifetime. Cleanup
+      // must neither discard valid exhausted bytes nor mask a source failure.
+    }
   }
 }
 

@@ -37,6 +37,8 @@ interchangeable proofs of permission.
 ## Choose And Integrate
 
 - [Configuration reference](./configuration.md): exact accepted fields, defaults, read time, secrets and mode interactions.
+- [Blog author integration](../blog/index.md): feature-branch optional enrollment
+  and explicitly public bylines/photos, separate from private identity and login.
 - [Choose a profile](./modes.md): single/multi tenancy and simple/advanced
   authorization are separate choices; understand their scopes before configuring
   a new application or changing an existing one.

@@ -4,6 +4,17 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added an opt-in managed blog author foundation with additive SYSTEM metadata,
+  scoped author enrollment that preserves existing roles, separate draft/public
+  profiles, Guardian-fenced server/browser facades, authorized live projections
+  and transactional audit capture. Expanded own-profile fields can be enabled
+  independently in existing projects. Added explicit optional public avatar
+  publication without changing private Storage visibility or publishing existing
+  images. Doctor and upgrade guides explain migration/privacy readiness. This
+  remains a feature-branch preview; post storage/editor/automatic SEO are not
+  enabled. Also corrected native Storage-reader cleanup so an exhausted upload
+  is not rejected solely by a lock-release failure.
+
 - Completed the recovered blog UI parity inventory: configurable inline search,
   rich author/category previews, floating TOC, real reading indicators, spotlight,
   retained gallery zoom/lens/thumbnails, composable native audio/video controls,

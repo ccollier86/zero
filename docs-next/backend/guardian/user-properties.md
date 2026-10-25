@@ -109,13 +109,15 @@ Properties do not replace tenant membership, role assignments, account status
 or billing-domain records. A user can belong to multiple organizations while
 the account's properties remain canonical account data.
 
-## Avatars Are App-Owned
+## Use Dedicated Profiles And Avatars
 
-There is no dedicated Guardian avatar-storage/management feature in the
-inspected auth exports. If your application needs avatars, compose its storage
-service with an app-owned reference or declared profile property and the
-appropriate resource policy. Do not invent an `auth.setAvatar()` SDK method
-or copy credentials/profile rows into each tenant database.
+Guardian now provides [typed private profiles](./user-profiles.md) and a
+[normalized avatar pipeline](./avatars.md). Use those supported facades instead
+of an arbitrary avatar URL property. The optional blog author foundation has
+its own [public byline](../blog/authors.md), not a trusted role/property mutation.
+Do not invent an `auth.setAvatar()` method or copy canonical identity rows into
+each tenant database. Custom app-specific properties still follow this page's
+editor and policy-trust rules.
 
 ## Verification And Errors
 

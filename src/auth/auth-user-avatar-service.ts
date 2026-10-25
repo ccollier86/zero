@@ -16,6 +16,9 @@ import { inspectUserAvatarSchema, reconcileUserAvatarSchema } from './auth-user-
 import { normalizeUserAvatarImage } from './auth-user-avatar-image';
 import { normalizeStoragePath } from '../storage/storage-input';
 import { isUserProfilePolicyReady } from './auth-user-profile-policy';
+import { AuthUserAvatarPublications, inspectPublicAvatarSchema, reconcilePublicAvatarSchema, type PublishedAvatarRow } from './auth-user-avatar-publications';
+import type { UserPublicAvatarAsset } from './auth-user-avatar-types';
+import { authAuditActorFromContext, type AuthAuditService } from './auth-audit-service';
 import type { ResolvedAuthUserAvatarConfig, UserAvatarCapabilities, UserAvatarSnapshot, UserAvatarStage } from './auth-user-avatar-types';
 
 const STAGE_TTL = 5 * 60_000;
@@ -23,12 +26,14 @@ const GLOBAL_MEDIA_SCOPE = trustedSystemServiceDataScope({ scopeKind: 'applicati
 export const ZERO_GUARDIAN_AVATARS = createZeroRuntimeServiceKey<AuthUserAvatarService>('Guardian user avatars');
 
 export interface AuthUserAvatarDependencies {
+  audit?: AuthAuditService;
   db: ReactiveDB; users: UserStore; tokens: TokenService; storage: StorageService;
   tenancy?: TenancyService | null; policy: ResolvedAuthUserAvatarConfig; installAllowed: boolean;
   emitCode?: AuthPlatformCodeEmitter; now?: () => number;
 }
 export class AuthUserAvatarService {
   private readonly store: AuthUserAvatarStore;
+  private readonly publications: AuthUserAvatarPublications;
   private readonly now: () => number;
   private readonly emit: AuthPlatformCodeEmitter;
   private stopping = false;
@@ -40,12 +45,14 @@ export class AuthUserAvatarService {
     if (deps.db.getTransactionDomain() !== deps.storage.getTransactionDomain()) throw new AuthError('Avatar storage must share the SYSTEM transaction domain', 'AUTH_STATE_INVARIANT_FAILED', 500);
     this.now = deps.now ?? Date.now; this.emit = deps.emitCode ?? emitPlatformCode;
     this.store = new AuthUserAvatarStore(deps.db, deps.users, this.now);
+    this.publications = new AuthUserAvatarPublications(deps.db, deps.users, this.now);
   }
   /** Called after the existing Storage provider starts; disabling does not delete retained assets. */
   initialize(): void {
     if (!this.deps.policy.enabled || this.stopping) return;
     if (!isUserProfilePolicyReady(this.deps.users)) return;
     if (reconcileUserAvatarSchema(this.deps.db, this.deps.installAllowed) !== 'ready') return;
+    if (this.deps.policy.publicAccess) reconcilePublicAvatarSchema(this.deps.db, this.deps.installAllowed);
     this.deps.users.transaction(() => {
       if (this.store.namespace()) return;
       if (!this.deps.installAllowed) return;
@@ -64,12 +71,43 @@ export class AuthUserAvatarService {
     const state = !policy.enabled || this.stopping ? 'disabled'
       : isUserProfilePolicyReady(this.deps.users) && inspectUserAvatarSchema(this.deps.db) === 'ready'
         && this.namespaceIsPrivate() ? 'ready' : 'blocked';
-    return { ...policy, state, editable: state === 'ready' && policy.editable
+    return { ...policy, state, publicState: !policy.publicAccess ? 'disabled' : state === 'ready' && inspectPublicAvatarSchema(this.deps.db) === 'ready' ? 'ready' : 'blocked', editable: state === 'ready' && policy.editable
       && (!auth || auth.sessionKind !== 'native' || Boolean(auth.scope?.includes('profile:write'))) };
   }
   read(auth: AuthContext): UserAvatarSnapshot {
     const admit = this.capture(auth, false); admit(); this.assertReady();
     return this.snapshot(auth.userId, auth);
+  }
+  /** Explicit publication uses the shared profile revision and never changes Storage visibility. */
+  publish(auth: AuthContext, expectedRevision: number): UserAvatarSnapshot { return this.changePublication(auth, expectedRevision, true); }
+  withdraw(auth: AuthContext, expectedRevision: number): UserAvatarSnapshot { return this.changePublication(auth, expectedRevision, false); }
+  /** Trusted composition read of an already public descriptor, not a private profile/directory endpoint. */
+  publicDescriptorFor(userId: string): UserPublicAvatarAsset | null {
+    this.assertPublicReady(); return this.publicProjection(this.publications.current(userId));
+  }
+  private changePublication(auth: AuthContext, expectedRevision: number, publish: boolean): UserAvatarSnapshot {
+    validRevision(expectedRevision); const admit = this.capture(auth, true); admit(); this.assertPublicReady();
+    this.deps.users.transaction(() => {
+      this.publications.change(auth.userId, expectedRevision, publish, () => { admit(); this.assertPublicReady(); });
+      this.deps.audit?.append({ action: publish ? 'profile.avatar.published' : 'profile.avatar.withdrawn', outcome: 'succeeded',
+        scope: { kind: 'application' }, actor: authAuditActorFromContext(auth), target: { type: 'profile.avatar' } });
+      admit();
+    });
+    this.emit(OBS_CODES.AUTH_USER_AVATAR_UPDATED, { metadata: { operation: publish ? 'publish' : 'withdraw' } });
+    return this.snapshot(auth.userId, auth);
+  }
+  /** Anonymous image delivery admits an opaque publication, never a user/directory or private asset selector. */
+  downloadPublic(publicationId: string): Promise<{ stream: ReadableStream<Uint8Array>; size: number }> {
+    return this.track(async () => {
+      if (!/^avp_[a-f0-9-]{36}$/.test(publicationId)) throw imageUnavailable();
+      this.assertPublicReady(); const asset = this.publications.find(publicationId); if (!asset) throw imageUnavailable();
+      const fence = () => { this.assertPublicReady(); if (this.publications.find(publicationId)?.asset_id !== asset.asset_id) throw imageUnavailable(); };
+      fence(); const delivered = await this.deps.storage.objects.download(this.namespace(), asset.path, fence); fence();
+      if (!delivered || delivered.info.isPublic || delivered.info.checksum !== asset.checksum || delivered.info.sizeBytes !== asset.byte_length
+        || delivered.info.mimeType !== 'image/webp') throw imageUnavailable();
+      const bytes = await this.readBounded(delivered.stream, this.deps.policy.maxUploadBytes, fence); fence();
+      return { stream: new Blob([Uint8Array.from(bytes).buffer]).stream(), size: bytes.byteLength };
+    });
   }
   /** Minimal same-organization directory entry, never global private profile/contact fields. */
   directory(auth: AuthContext, userId: string): { userId: string; displayName: string; asset: UserAvatarSnapshot['asset'] } {
@@ -252,7 +290,19 @@ export class AuthUserAvatarService {
     }
   }
   private snapshot(userId: string, auth: AuthContext): UserAvatarSnapshot {
-    return { userId, revision: this.store.revision(userId), capabilities: this.capabilities(auth), asset: this.assetProjection(this.store.current(userId)) };
+    return { userId, revision: this.store.revision(userId), capabilities: this.capabilities(auth), asset: this.assetProjection(this.store.current(userId)),
+      publicAsset: this.deps.policy.publicAccess ? this.publicProjection(this.publications.current(userId)) : null };
+  }
+  private publicProjection(row: PublishedAvatarRow | null): UserPublicAvatarAsset | null {
+    if (!row) return null;
+    const privateAsset = this.assetProjection(row)!;
+    return { id: row.publication_id, width: privateAsset.width, height: privateAsset.height, byteLength: privateAsset.byteLength,
+      mimeType: 'image/webp', deliveryPath: `/auth/profile/avatar/public/${row.publication_id}` };
+  }
+  private assertPublicReady(): void {
+    this.assertReady();
+    if (!this.deps.policy.publicAccess) throw new AuthError('Public avatars are disabled', 'AUTH_AVATAR_PUBLIC_DISABLED', 403);
+    if (inspectPublicAvatarSchema(this.deps.db) !== 'ready') throw new AuthError('Public avatars need a SYSTEM migration', 'AUTH_AVATAR_PUBLIC_NOT_READY', 503);
   }
   private assetProjection(row: AvatarAssetRow | null): UserAvatarSnapshot['asset'] {
     if (!row) return null;

@@ -51,6 +51,8 @@ than importing implementation files or reconstructing authentication in routes.
   live credential/membership authority and account administration.
 - [Native authentication SDKs](./native-auth/index.md): framework IPC broker,
   Rust/Tauri and Chrome-extension clients with independently versioned boundaries.
+- [Blog authors](./blog/index.md): opt-in user-backed enrollment, draft/public
+  bylines and explicit public-avatar support; feature-branch preview, not a post CMS.
 - [Platform tokens](./tokens/index.md): opaque consume-once actions and reusable
   resource continuations, separate from Guardian session/API-key credentials.
 

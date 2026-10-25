@@ -230,6 +230,8 @@ export function createInternalAuthorityScopedServerServices(
     : null;
 
   const overrides: Record<PropertyKey, unknown> = {
+    blog: services.blog && access.context && access.context.credentialKind !== 'api-key'
+      ? services.blog.forAuthority({ access: projectedAccess, scope, assertCurrentAuthoritySync }) : null,
     [REQUEST_SERVICES]: true,
     logging: services.logging ? createScopedLoggingService(services.logging, projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync,
       auditProvenance === 'system' && privilegedSystem ? 'zero.durable-work' : undefined) : null,
@@ -293,6 +295,7 @@ function createUncommittedRequestServices(
 ): ServerRequestServices {
   const authority = createAuthorityRevalidators(request, access, services);
   const overrides: Record<PropertyKey, unknown> = {
+    blog: null,
     logging: null,
     [REQUEST_SERVICES]: true,
     payments: null,

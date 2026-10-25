@@ -13,12 +13,14 @@ import type { ScopedRoomService } from './scoped-room-service';
 import type { ScopedStorageService } from './scoped-storage-service';
 import type { ScopedWorkflowService } from './scoped-workflow-service';
 import type { ScopedLogging } from '../../../logging/logging-api-contracts';
+import type { ScopedBlog } from '../../../blog/types';
 
 /** App services projected into one request's immutable authorization scope. */
 export interface ServerRequestServices extends Omit<
   ServerRouteServices,
   | 'auth'
   | 'logging'
+  | 'blog'
   | 'payments'
   | 'notifications'
   | 'observability'
@@ -29,6 +31,7 @@ export interface ServerRequestServices extends Omit<
 > {
   /** The same live authorization facade exposed on the Elysia request. */
   readonly access: RequestAuthorizationAccess;
+  readonly blog: ScopedBlog | null;
   readonly payments: ScopedPayments | null;
   readonly logging: ScopedLogging | null;
   /** Validated data boundary, or null for a multi-tenant selection/anonymous session. */
@@ -101,6 +104,7 @@ export type AuthorityScopedObservabilityServices = Pick<
  * absent from this public contract because strict projections reject them.
  */
 export interface AuthorityScopedServerServices {
+  readonly blog: ScopedBlog | null;
   readonly logging: ScopedLogging | null;
   readonly payments: ScopedPayments | null;
   readonly access: RequestAuthorizationAccess;

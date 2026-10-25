@@ -109,6 +109,14 @@ enable a blocked backend or expand native scopes.
 
 ## Provisioning And Safe Rollout
 
+Previously minimal projects can enable additional fields in place. Keep the
+existing `auth` declaration and add only the selected `userProfile` field/media
+policies; the adaptive settings UI follows actual capabilities. There is no
+need to recreate users, reset passwords or rewrite customer tables. The
+[profile-only and blog rollout guide](../blog/upgrade.md) covers the new branch
+preview and its independent explicit public-photo option. A private biography
+does not become a public author biography automatically.
+
 Migration 039 installs the fixed SYSTEM profile table and shared user revision.
 Enabling extra fields after initial provisioning uses that fixed representation;
 it does not create application-config-driven SQL columns in every tenant.

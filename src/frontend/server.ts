@@ -1297,3 +1297,4 @@ export type * from '../auth/auth-user-contact-types';
 export type * from '../auth/auth-user-avatar-types';
 export type * from '../auth/auth-user-profile-completion-types';
 export { guardianPresenceRealmContribution } from '../presence/presence-realm';
+export type * from '../blog/types';

@@ -12,19 +12,20 @@ maturity: planned
 
 [Blog UI index](./index.md) · [Documentation index](../../../../index.md)
 
-The approved current phase imports UI only. The following user-requested
-direction is recorded for discussion before implementing a publishing backend.
-No option, method or schema below is a shipped contract.
+The UI migration is complete on the feature branch. The separately approved
+[author foundation](../../../../backend/blog/index.md) now implements enrollment,
+draft/public profiles, explicit public photos, Guardian and audit integration.
+The remaining publishing/editor/automatic SEO work below is planned, not a
+shipped CMS contract.
 
 ## User Backed Authors
 
-When blogging is enabled, extend the existing user/profile system with the
-public properties needed for an author: display/byline information, biography,
-avatar and optional links. Preserve user identity rather than making a parallel
-account system. Author eligibility and publication rights require explicit
-permissions; enabling the feature must not make every user's profile public.
-Define an allowlisted public author projection, tenant ownership and removal/
-deactivation behavior before adding profile fields or endpoints.
+The [current backend contract](../../../../backend/blog/authors.md) preserves
+account identity and roles, adds explicit scoped author enrollment and publishes
+only allowlisted public fields. Omitted expanded private profile options can be
+enabled safely in existing projects; public author drafts remain separate from
+private account data. Required names/photos gate byline publication, not login.
+Author management/editor UI and post publication permissions remain later slices.
 
 ## Block Editing
 

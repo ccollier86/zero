@@ -17,6 +17,12 @@ export class AuthUserAvatarTransport {
   private readonly stages = new WeakMap<UserAvatarStage, { assertCurrent(): void; deadline: number }>();
   constructor(private readonly options: AuthUserAvatarTransportOptions) {}
   get(signal?: AbortSignal) { return this.options.runScoped(scope => this.snapshot('', { signal: scope.signal }, scope), signal); }
+  publish(expectedRevision: number, signal?: AbortSignal) {
+    return this.options.runScoped(scope => this.snapshot('/publication', this.body('POST', { expectedRevision }, scope.signal), scope), signal);
+  }
+  withdraw(expectedRevision: number, signal?: AbortSignal) {
+    return this.options.runScoped(scope => this.snapshot('/publication', this.body('DELETE', { expectedRevision }, scope.signal), scope), signal);
+  }
   directory(userId: string, signal?: AbortSignal) {
     return this.options.runScoped(async scope => {
       if (!userId || userId.length > 256) throw invalidAvatar();

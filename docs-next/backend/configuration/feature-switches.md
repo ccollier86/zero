@@ -32,6 +32,7 @@ permissions.
 | Feature | Omitted | false | true | object |
 | --- | --- | --- | --- | --- |
 | Guardian auth | off | off | defaults | behavior plus app token TTLs |
+| Blog author foundation (branch preview) | off | off | author/profile defaults | requirements/site name/management policy |
 | Torrent workflows | on when auth on | off | not an accepted typed form | registration/lifecycle options |
 | email | off | off | default Resend config | provider/config options |
 | AI | off | off | environment detection | providers/aliases/controls |
@@ -43,6 +44,11 @@ permissions.
 
 `storage`, `db` and `databaseTopology` have their own contracts, not this
 universal switch shape. Null is not a supported substitute for every off value.
+
+The [blog author preview](../blog/configuration.md) uses Guardian defaults when
+auth is omitted, but rejects explicit auth:false. Existing Guardian settings
+stay authoritative. Profile-only expansion uses `auth.userProfile` independently
+of blog; it is not an all-or-nothing CMS migration.
 
 KV defaults to everysec journal/checkpoint persistence, not memory-only tests.
 Email defaults to noop when disabled. A disabled email runtime still offers a

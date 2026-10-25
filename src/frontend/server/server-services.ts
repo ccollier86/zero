@@ -65,6 +65,7 @@ import type { PdfService } from '../../pdf';
 import { getPdfService } from '../../pdf';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import type { LoggingRuntime } from '../../logging/logging-runtime';
+import { ZERO_BLOG, type BlogService } from '../../blog/service';
 import type { PaymentsBackend } from '../../payments/contracts';
 import { getPaymentsBackend } from '../../payments/registry';
 import {
@@ -167,6 +168,8 @@ export interface ServerSystemDatabaseServices {
 
 /** Platform services exposed under `zero` in app-owned server route handlers. */
 export interface ServerRouteServices {
+  /** Privileged setup owner; admitted handlers receive a scope-closed author facade. */
+  readonly blog: BlogService | null;
   /** Privileged composition owner; request code receives a separately scoped logging facade. */
   readonly logging: LoggingRuntime | null;
   /** Optional payments plugin. Requests receive only the current billing subject. */
@@ -252,6 +255,7 @@ export function createLazyServerRouteServices(runtime?: ZeroAppRuntime): ServerR
 
 function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
   return {
+    get blog() { return runtime?.get(ZERO_BLOG) ?? null; },
     get logging() { return runtime?.get(ZERO_LOGGING_RUNTIME) ?? null; },
     get payments() { const owner = runtime ? runtime.get(ZERO_SYNC_DB) : getSyncDB(); return owner ? getPaymentsBackend(owner) : null; },
     get db() {

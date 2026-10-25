@@ -12,6 +12,8 @@ import { reconcileUserProfilePolicy } from '../auth/auth-user-profile-policy';
 import { UserStore } from '../auth/user-store';
 import { reconcilePresenceSystemSchema } from '../presence/presence-schema';
 import { admitPinnedPresenceProjection } from '../presence/presence-projection-schema';
+import { reconcilePublicAvatarSchema } from '../auth/auth-user-avatar-publications';
+import { reconcileBlogSchema } from '../blog/schema';
 import { guardianPresenceRealmContribution } from '../presence/presence-realm';
 import { composeDatabaseRealm, defineDatabaseRealm } from '../databases';
 import type { AuthBehaviorConfig } from '../auth/types';
@@ -35,6 +37,28 @@ function snapshot(db: Database) { return { schema: db.query('SELECT type,name,sq
   changes: db.query('SELECT total_changes() AS count').get() }; }
 
 describe('read-only desired/installed Guardian feature diagnostics', () => {
+  test('public photo and blog enablement report additive migration gaps without publishing or enrolling anyone', () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      defineAuthTables(db); reconcileUserAvatarSchema(db, true);
+      const run = () => runPlatformDoctor({ db: { mode: 'memory' }, systemDb: { sqlite: db.getSQLiteService()! }, tables: {},
+        auth: { bootstrap: 'public' }, blog: true, migrate: false, email: false },
+        { env: {}, projectRoot: '/synthetic-unused-doctor-root', usageAudit: false });
+      let before = snapshot(db.getRawDatabase());
+      expect(codes(run())).toContain('auth.user_profile.public_avatars.schema_missing');
+      expect(codes(run())).toContain('blog.authors.schema_missing');
+      expect(snapshot(db.getRawDatabase())).toEqual(before);
+      reconcilePublicAvatarSchema(db, true); reconcileBlogSchema(db, true);
+      before = snapshot(db.getRawDatabase());
+      const installed = run();
+      expect(codes(installed)).toContain('auth.user_profile.public_avatars.schema_ready');
+      expect(codes(installed)).toContain('blog.authors.schema_ready');
+      expect(codes(installed)).toContain('blog.authors.policy_pending');
+      expect(snapshot(db.getRawDatabase())).toEqual(before);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_avatar_publications').get()).toEqual({ count: 0 });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM _blog_authors').get()).toEqual({ count: 0 });
+    } finally { db.dispose(); }
+  });
   test('enabled missing SYSTEM substrates are reported without installing tables or a policy marker', () => {
     const sql = createPlatformSQLiteService({ mode: 'ephemeral', emitTelemetry: false });
     const system = sql.raw, app = new Database(':memory:');

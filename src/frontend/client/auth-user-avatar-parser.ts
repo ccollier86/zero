@@ -1,5 +1,5 @@
 /** Bounded Guardian avatar metadata admission; delivery is an exact private path, never an arbitrary URL. */
-import type { UserAvatarAsset, UserAvatarCapabilities, UserAvatarSnapshot, UserAvatarStage } from '../../auth/auth-user-avatar-types';
+import type { UserAvatarAsset, UserAvatarCapabilities, UserAvatarSnapshot, UserAvatarStage, UserPublicAvatarAsset } from '../../auth/auth-user-avatar-types';
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown, min: number, max: number): value is number => Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
@@ -10,6 +10,9 @@ const id = (value: unknown, prefix: string) => typeof value === 'string' && new 
 export function isUserAvatarCapabilities(value: unknown): value is UserAvatarCapabilities {
   return record(value) && typeof value.state === 'string' && ['ready', 'blocked', 'disabled'].includes(value.state)
     && typeof value.enabled === 'boolean' && typeof value.editable === 'boolean'
+    && (value.publicAccess === undefined || typeof value.publicAccess === 'boolean')
+    && (value.publicState === undefined || typeof value.publicState === 'string' && ['ready', 'blocked', 'disabled'].includes(value.publicState))
+    && (value.publicState !== 'ready' || value.publicAccess === true && value.state === 'ready')
     && (value.state === 'ready' ? value.enabled : value.editable === false)
     && (value.state !== 'disabled' || !value.enabled)
     && typeof value.shape === 'string' && ['circle', 'rounded', 'square'].includes(value.shape)
@@ -27,7 +30,15 @@ export function isUserAvatarAsset(value: unknown): value is UserAvatarAsset {
 }
 export function isUserAvatarSnapshot(value: unknown): value is UserAvatarSnapshot {
   return record(value) && boundedString(value.userId, 512) && integer(value.revision, 1, Number.MAX_SAFE_INTEGER - 1)
-    && isUserAvatarCapabilities(value.capabilities) && (value.asset === null || isUserAvatarAsset(value.asset));
+    && isUserAvatarCapabilities(value.capabilities) && (value.asset === null || isUserAvatarAsset(value.asset))
+    && (value.publicAsset === undefined || value.publicAsset === null || value.capabilities.publicAccess === true
+      && value.capabilities.publicState === 'ready' && value.asset !== null && isUserPublicAvatarAsset(value.publicAsset));
+}
+export function isUserPublicAvatarAsset(value: unknown): value is UserPublicAvatarAsset {
+  return record(value) && id(value.id, 'avp') && value.mimeType === 'image/webp'
+    && Object.keys(value).every(key => ['id','width','height','byteLength','mimeType','deliveryPath'].includes(key))
+    && integer(value.width, 1, 1024) && value.width === value.height && integer(value.byteLength, 1, 20 * 1024 * 1024)
+    && value.deliveryPath === `/auth/profile/avatar/public/${value.id}`;
 }
 /** A stage binds one immutable private storage grant to the exact avatar receipt and target path. */
 export function isUserAvatarStage(value: unknown): value is UserAvatarStage {

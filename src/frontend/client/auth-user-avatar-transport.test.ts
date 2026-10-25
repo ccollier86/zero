@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { AuthClient } from './auth-client';
 import { AuthUserAvatarTransport, type UserAvatarRequestScope } from './auth-user-avatar-transport';
-import { isUserAvatarAsset, isUserAvatarCapabilities, isUserAvatarSnapshot, isUserAvatarStage } from './auth-user-avatar-parser';
+import { isUserAvatarAsset, isUserAvatarCapabilities, isUserAvatarSnapshot, isUserAvatarStage, isUserPublicAvatarAsset } from './auth-user-avatar-parser';
 import type { UserAvatarAsset, UserAvatarSnapshot, UserAvatarStage } from '../../auth/auth-user-avatar-types';
 import { normalizeAuthUserAvatar } from '../../auth/auth-config-user-avatar';
 const originalFetch = globalThis.fetch, clients: AuthClient[] = [];
@@ -38,6 +38,21 @@ test('strict avatar metadata accepts private exact paths and rejects malformed, 
   expect(isUserAvatarStage(stage())).toBe(true);
   expect(isUserAvatarStage({ ...stage(), upload: { ...stage().upload, public: true } })).toBe(false);
   expect(isUserAvatarStage({ ...stage(), upload: { ...stage().upload, resource: { type: 'guardian-avatar-stage', id: 'another-stage' } } })).toBe(false);
+});
+test('publication and withdrawal use the existing own-profile authority and admit only opaque exact public delivery paths', async () => {
+  const publicAsset = { ...asset(), id: `avp_${uuid}`, deliveryPath: `/auth/profile/avatar/public/avp_${uuid}` };
+  expect(isUserPublicAvatarAsset(publicAsset)).toBe(true);
+  expect(isUserPublicAvatarAsset({ ...publicAsset, deliveryPath: 'https://external.test/photo' })).toBe(false);
+  expect(isUserPublicAvatarAsset({ ...publicAsset, id: 'private-user-id' })).toBe(false);
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const owner = api(async (url, init) => { calls.push({ url, init }); return Response.json({ ...snapshot(), asset: asset(),
+    capabilities: { ...snapshot().capabilities, publicAccess: true, publicState: 'ready' }, publicAsset: init?.method === 'DELETE' ? null : publicAsset }); });
+  expect((await owner.transport.publish(2)).publicAsset?.id).toBe(publicAsset.id);
+  expect((await owner.transport.withdraw(3)).publicAsset).toBeNull();
+  expect(calls.map(call => [call.url, call.init?.method, JSON.parse(String(call.init?.body))])).toEqual([
+    ['http://avatar.test/auth/profile/avatar/publication', 'POST', { expectedRevision: 2 }],
+    ['http://avatar.test/auth/profile/avatar/publication', 'DELETE', { expectedRevision: 3 }],
+  ]);
 });
 test('avatar capability enums admit actual strings only and never invoke object coercion', () => {
   let coercions = 0;

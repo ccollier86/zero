@@ -22,14 +22,75 @@ import { prepareNativeSession } from './oidc/native-session-factory';
 import { NativeTenantAuthorityService } from './oidc/native-tenant-authority';
 
 const cleanup: Array<() => Promise<void>> = [];
+describe('explicit public Guardian avatars', () => {
+  const prepare = async (f: Awaited<ReturnType<typeof fixture>>, token: string, revision: number) => {
+    const stage = (await f.request('POST', '/auth/profile/avatar/stages', { expectedRevision: revision }, token)).body;
+    await f.upload(stage); return f.request('POST', `/auth/profile/avatar/stages/${stage.id}/finalize`, { receipt: stage.receipt }, token);
+  };
+  test('public delivery requires opt-in and an explicit own-account publication, never a drive visibility change', async () => {
+    const disabled = await fixture(), privateUser = await disabled.register();
+    expect((await disabled.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 1 }, privateUser.accessToken)).body.code).toBe('AUTH_AVATAR_PUBLIC_DISABLED');
+    const f = await fixture(true, 'single', true), user = await f.register(), token = user.accessToken;
+    const uploaded = await prepare(f, token, 1); expect(uploaded.body.publicAsset).toBeNull();
+    const published = await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 2 }, token);
+    expect(published.status).toBe(200); expect(published.body.revision).toBe(3);
+    const image = published.body.publicAsset; expect(image.deliveryPath).toContain('/public/avp_');
+    expect(image.deliveryPath).not.toContain(uploaded.body.asset.id);
+    const response = await f.app.handle(new Request(`http://localhost${image.deliveryPath}`));
+    expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toContain('no-store');
+    expect((await sharp(new Uint8Array(await response.arrayBuffer())).metadata()).format).toBe('webp');
+    expect((f.db.prepare('SELECT public FROM storage_drives WHERE name=?').get('Guardian profile media') as { public: number }).public).toBe(0);
+    const duplicate = await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 3 }, token);
+    expect(duplicate.body.revision).toBe(3); expect(duplicate.body.publicAsset.id).toBe(image.id);
+    expect((await f.request('DELETE', '/auth/profile/avatar/publication', { expectedRevision: 3 }, token)).body.revision).toBe(4);
+    expect((await f.app.handle(new Request(`http://localhost${image.deliveryPath}`))).status).toBe(404);
+  });
+  test('replacement and removal cannot retain public delivery or auto-publish a new photo', async () => {
+    const f = await fixture(true, 'single', true), user = await f.register(), token = user.accessToken;
+    await prepare(f, token, 1);
+    const original = (await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 2 }, token)).body.publicAsset;
+    expect((await prepare(f, token, 3)).body.publicAsset).toBeNull();
+    expect((await f.app.handle(new Request(`http://localhost${original.deliveryPath}`))).status).toBe(404);
+    const next = (await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 4 }, token)).body.publicAsset;
+    expect(next.id).not.toBe(original.id);
+    await f.request('DELETE', '/auth/profile/avatar', { expectedRevision: 5 }, token);
+    expect((await f.app.handle(new Request(`http://localhost${next.deliveryPath}`))).status).toBe(404);
+  });
+  test('withdrawing publication or suspending the subject during a provider read releases no public bytes', async () => {
+    for (const operation of ['withdraw', 'suspend'] as const) {
+      const f = await fixture(true, 'single', true), user = await f.register(), token = user.accessToken;
+      await prepare(f, token, 1);
+      const image = (await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 2 }, token)).body.publicAsset;
+      const gate = f.blockRead(), pending = f.app.handle(new Request(`http://localhost${image.deliveryPath}`));
+      await gate.started;
+      if (operation === 'withdraw') expect((await f.request('DELETE', '/auth/profile/avatar/publication', { expectedRevision: 3 }, token)).status).toBe(200);
+      else f.auth.getStore()!.updateUser(user.user.userId, { status: 'suspended' });
+      gate.release();
+      const response = await pending;
+      expect(response.status).toBe(404); expect(response.headers.get('content-type')).not.toBe('image/webp');
+    }
+  });
+  test('stale revisions, foreign targets and missing publication schema fail closed without request-time DDL', async () => {
+    const f = await fixture(true, 'single', true), user = await f.register(), other = await f.register('unpublished-peer');
+    await prepare(f, user.accessToken, 1);
+    expect((await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 1 }, user.accessToken)).status).toBe(409);
+    expect((await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 2, userId: user.user.userId }, other.accessToken)).status).toBe(422);
+    expect((await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 1 }, other.accessToken)).status).toBe(422);
+    f.db.exec('DROP TABLE _auth_avatar_publications');
+    expect((await f.request('POST', '/auth/profile/avatar/publication', { expectedRevision: 2 }, user.accessToken)).status).toBe(503);
+    expect(f.db.prepare("SELECT name FROM sqlite_master WHERE name='_auth_avatar_publications'").get()).toBeNull();
+    expect((await f.request('GET', '/auth/profile/avatar', undefined, user.accessToken)).body.capabilities.state).toBe('ready');
+  });
+});
 afterEach(async () => { for (const operation of cleanup.splice(0).reverse()) await operation(); });
-async function fixture(allowed = true, mode: 'single' | 'multi' = 'single') {
+async function fixture(allowed = true, mode: 'single' | 'multi' = 'single', publicAccess = false) {
   const db = createReactiveDB({ mode: 'memory' }), owner = new ZeroAppRuntime();
   const events = new MemoryEventStore({ maxEvents: 100 });
   owner.set(ZERO_OBSERVABILITY_RUNTIME, { sink: events, store: events, config: { console: false } });
   let auth!: AuthRuntime, storage!: StorageService, avatars!: AuthUserAvatarService;
   const blobs = new Map<string, Uint8Array>();
   let hold: { wait: Promise<void>; started(): void } | null = null;
+  let holdRead: { wait: Promise<void>; started(): void } | null = null;
   const adapter: StorageAdapter = { writeShutdownSafety: 'cooperative',
     async writeBlob(input) {
       const bytes = input instanceof Uint8Array ? Uint8Array.from(input) : new Uint8Array(await new Response(input).arrayBuffer());
@@ -37,7 +98,8 @@ async function fixture(allowed = true, mode: 'single' | 'multi' = 'single') {
       if (hold) { const gate = hold; hold = null; gate.started(); await gate.wait; }
       return { checksum, size: bytes.byteLength, headBytes: bytes.slice(0, 512) };
     },
-    async readBlob(checksum) { const bytes = blobs.get(checksum); return bytes ? new Blob([Uint8Array.from(bytes).buffer]).stream() : null; },
+    async readBlob(checksum) { if (holdRead) { const gate = holdRead; holdRead = null; gate.started(); await gate.wait; }
+      const bytes = blobs.get(checksum); return bytes ? new Blob([Uint8Array.from(bytes).buffer]).stream() : null; },
     async readBlobRange(checksum, start, end) { const bytes = blobs.get(checksum); return bytes ? new Blob([bytes.slice(start, end + 1).buffer]).stream() : null; },
     async removeBlob(checksum) { blobs.delete(checksum); }, removeBlobSync(checksum) { blobs.delete(checksum); },
     async blobExists(checksum) { return blobs.has(checksum); }, async blobSize(checksum) { return blobs.get(checksum)?.length ?? 0; } };
@@ -45,7 +107,7 @@ async function fixture(allowed = true, mode: 'single' | 'multi' = 'single') {
     nativeIssuer: 'http://localhost/auth', nativeAudience: 'http://localhost',
     nativeApps: { clients: [{ clientId: 'avatar-native', name: 'Avatar Native',
       redirectUris: ['com.example.avatar:/callback'], scopes: ['openid', 'profile', 'profile:write'] }] },
-    userProfile: { avatars: true }, onRuntimeCreated: created => { auth = created; } }));
+    userProfile: { avatars: { enabled: true, publicAccess } }, onRuntimeCreated: created => { auth = created; } }));
   await auth.start();
   app.use(createAuthUserAvatarPlugin({ getService: () => avatars ?? null, getTokenService: () => auth.getTokenService() }));
   app.use(createStoragePlugin({ db, runtime: owner, adapter, getTokenService: () => auth.getTokenService(),
@@ -53,8 +115,9 @@ async function fixture(allowed = true, mode: 'single' | 'multi' = 'single') {
     onServiceCreated(created) {
       storage = created;
       avatars = new AuthUserAvatarService({ db, storage, users: auth.getStore()!, tokens: auth.getTokenService()!,
+        audit: auth.getAuditService()!,
         tenancy: auth.getTenancyService(),
-        policy: normalizeAuthUserAvatar({ enabled: true, outputSize: 64 }), installAllowed: allowed, emitCode: createAuthPlatformCodeEmitter(owner) });
+        policy: normalizeAuthUserAvatar({ enabled: true, publicAccess, outputSize: 64 }), installAllowed: allowed, emitCode: createAuthPlatformCodeEmitter(owner) });
       owner.set(ZERO_GUARDIAN_AVATARS, avatars); owner.addCleanup(() => avatars.close()); avatars.initialize();
     } }));
   installAppStopBarrier(app, () => owner.dispose()); app.listen(0);
@@ -80,6 +143,9 @@ async function fixture(allowed = true, mode: 'single' | 'multi' = 'single') {
   const blockWrite = () => { let release!: () => void, started!: () => void;
     const wait = new Promise<void>(resolve => { release = resolve; }), began = new Promise<void>(resolve => { started = resolve; });
     hold = { wait, started }; return { release, started: began }; };
+  const blockRead = () => { let release!: () => void, started!: () => void;
+    const wait = new Promise<void>(resolve => { release = resolve; }), began = new Promise<void>(resolve => { started = resolve; });
+    holdRead = { wait, started }; return { release, started: began }; };
   const nativeToken = async (accessToken: string, scope: string) => {
     const tokens = auth.getTokenService()!, pageAuth = await tokens.resolveAuthContext(accessToken);
     if (!pageAuth) throw new Error('Expected a live web session.');
@@ -92,7 +158,7 @@ async function fixture(allowed = true, mode: 'single' | 'multi' = 'single') {
     expect(new NativeSessionStore(db).consumeCodeAndInsert(() => true, prepared.session)).toBe(true);
     return tokens.signNativeAccessToken(user, 'avatar-native', scope, generation, prepared.session.familyId);
   };
-  return { db, owner, auth, storage, avatars, request, register, upload, picture, blockWrite, app, blobs, nativeToken };
+  return { db, owner, auth, storage, avatars, request, register, upload, picture, blockWrite, blockRead, app, blobs, nativeToken };
 }
 describe('Guardian avatars through actual Storage grants and Elysia', () => {
   test('stage/upload/finalize proves raster identity, private delivery, consume-once and shared revision', async () => {

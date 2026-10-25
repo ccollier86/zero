@@ -243,6 +243,14 @@
       "types": "./src/components/blog/index.ts",
       "import": "./src/components/blog/index.ts"
     },
+    "./blog/server": {
+      "types": "./src/blog/index.ts",
+      "import": "./src/blog/index.ts"
+    },
+    "./blog/client": {
+      "types": "./src/blog/client-contracts.ts",
+      "import": "./src/blog/client-contracts.ts"
+    },
     "./components/blog": {
       "types": "./src/components/blog/index.ts",
       "import": "./src/components/blog/index.ts"

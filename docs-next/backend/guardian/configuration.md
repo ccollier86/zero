@@ -281,6 +281,13 @@ browser-editable provider selector. See [contacts](./contacts.md).
 It requires the existing Storage service and private SYSTEM provisioning, and
 shares the account profile revision. See [avatars](./avatars.md).
 
+The feature/blog-foundation preview adds `userProfile.avatars.publicAccess`
+(boolean, default false). This allows explicit own-account photo publication;
+it never flips a drive public or publishes an existing photo by configuration.
+The [blog configuration](../blog/configuration.md) can fill omitted expanded
+profile/media defaults, while preserving explicit private/read-only policies.
+These settings can also be enabled independently without blogging.
+
 `presence` is independently disabled by default. It configures activity/lease
 timings, semantic statuses and optional On call/custom intent. One SDK tracker
 and one SYSTEM owner supply fresh, live-scoped observations. Fabric actors need

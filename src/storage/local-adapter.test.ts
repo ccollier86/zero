@@ -36,6 +36,22 @@ afterEach(async () => {
 });
 
 describe('LocalStorageAdapter streamed writes', () => {
+  test('native-reader lock cleanup cannot invalidate exhausted bytes or mask a read failure', async () => {
+    const baseDir = await createTestDirectory(), adapter = new LocalStorageAdapter(baseDir), expected = bytes(0x19, 300);
+    const source = (failure?: Error) => {
+      let count = 0;
+      return { getReader() { return {
+        async read() { if (count++ === 0) return { done: false, value: expected };
+          if (failure) throw failure; return { done: true, value: undefined }; },
+        async cancel() {}, releaseLock() { throw new TypeError('Synthetic native lock-release failure'); },
+      }; } } as unknown as ReadableStream<Uint8Array>;
+    };
+    const saved = await adapter.writeBlob(source());
+    expect(saved.size).toBe(expected.length); expect(await readStoredBlob(baseDir, saved.checksum)).toEqual(expected);
+    const failure = new Error('Synthetic original read failure');
+    await expect(adapter.writeBlob(source(failure))).rejects.toBe(failure);
+    expect(await uploadFiles(baseDir)).toEqual([]);
+  });
   test('writes a Web ReadableStream incrementally while retaining only head bytes', async () => {
     const baseDir = await createTestDirectory();
     const adapter = new LocalStorageAdapter(baseDir);

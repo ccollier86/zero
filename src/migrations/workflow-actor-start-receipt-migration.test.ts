@@ -10,7 +10,7 @@ test('044 installs the same private actor receipt ledger and usage accounting as
   try {
     const prior = new Migrator({ database, dbPath: ':memory:', migrations: migrations.filter(m => m.version <= '043'), createBackups: false, log: () => {} });
     prior.run(); prior.dispose();
-    const next = new Migrator({ database, dbPath: ':memory:', migrations, createBackups: false, log: () => {} });
+    const next = new Migrator({ database, dbPath: ':memory:', migrations: migrations.filter(m => m.version <= '044'), createBackups: false, log: () => {} });
     try { expect(next.run()).toEqual(['044']); } finally { next.dispose(); }
     const schema = (db: Database) => (db.query(`SELECT name, sql FROM sqlite_master WHERE (name LIKE '%workflow_actor_start%' OR tbl_name LIKE '%workflow_actor_start%') AND sql IS NOT NULL ORDER BY name`).all() as Array<{ name: string; sql: string }>).map(row => ({ name: row.name, sql: row.sql.replace(/\s+/g, ' ').trim() }));
     expect(schema(database)).toEqual(schema(fixture.db.getRawDatabase()));

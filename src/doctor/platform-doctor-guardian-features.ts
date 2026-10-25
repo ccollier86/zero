@@ -7,6 +7,10 @@ import type { ResolvedAuthUserProfileConfig } from '../auth/auth-user-profile-ty
 import { inspectUserProfileSchema } from '../auth/auth-user-profile-schema';
 import { inspectUserContactSchema } from '../auth/auth-user-contact-schema';
 import { inspectUserAvatarSchema } from '../auth/auth-user-avatar-schema';
+import { inspectPublicAvatarSchema } from '../auth/auth-user-avatar-publications';
+import { inspectBlogSchema } from '../blog/schema';
+import { blogPolicyFingerprint } from '../blog/config';
+import type { ResolvedBlogConfig } from '../blog/types';
 import { inspectProfileCompletionSchema } from '../auth/auth-user-profile-completion-schema';
 import { profileCompletionPolicyFingerprint } from '../auth/auth-user-profile-completion-policy';
 import { inspectInstalledUserProfilePolicy, userProfilePolicyFingerprint } from '../auth/auth-user-profile-policy';
@@ -24,6 +28,7 @@ export interface DoctorGuardianProfileFeatures {
   readonly presenceEnabled: boolean;
   readonly pinnedPresence: boolean;
   readonly phoneAdapterId: string | null;
+  readonly blog?: ResolvedBlogConfig;
 }
 
 /** Configuration-only prerequisites; trusted adapter callbacks are deliberately not invoked. */
@@ -57,7 +62,8 @@ export function checkGuardianProfileFeatureConfiguration(resolved: ResolvedConfi
     }
   }
   return Object.freeze({ profile, presenceEnabled, pinnedPresence: presenceEnabled && !physicalTenants,
-    phoneAdapterId: resolved.auth.phoneVerificationAdapter?.id ?? null });
+    phoneAdapterId: resolved.auth.phoneVerificationAdapter?.id ?? null,
+    ...(resolved.blog.enabled ? { blog: resolved.blog } : {}) });
 }
 
 /** Reuse each feature's exact native schema admission without constructing its mutable store. */
@@ -72,9 +78,12 @@ export function checkGuardianProfileFeatureState(database: Database, features: D
       'auth.userProfile.contacts', 'contacts.md', findings);
     if (profile.avatars.enabled && reportSchema(inspectUserAvatarSchema(db), 'avatars', '042',
       'auth.userProfile.avatars', 'avatars.md', findings)) checkAvatarNamespace(database, findings);
+    if (profile.avatars.enabled && profile.avatars.publicAccess) reportSchema(inspectPublicAvatarSchema(db), 'public_avatars', '045',
+      'auth.userProfile.avatars.publicAccess', 'avatars.md', findings);
     if (profile.completion.enabled && reportSchema(inspectProfileCompletionSchema(db), 'completion', '043',
       'auth.userProfile.completion', 'profile-completion.md', findings)) checkCompletionPolicy(database, profile, findings);
   }
+  if (features.blog) checkBlogState(db, features.blog, findings);
   if (features.presenceEnabled) {
     const ready = presenceSystemSchemaReady(db);
     addFinding(findings, { severity: ready ? 'info' : 'error', code: ready ? 'auth.presence.schema_ready' : 'auth.presence.schema_unready',
@@ -84,6 +93,23 @@ export function checkGuardianProfileFeatureState(database: Database, features: D
         : 'Use the reviewed SYSTEM migration 040. Doctor does not create tables, reclaim presence owners or publish projections.',
       docs: `${GUARDIAN_DOCS}/presence.md` });
   }
+}
+
+function checkBlogState(db: Pick<ReactiveDB, 'prepare'>, config: ResolvedBlogConfig, findings: PlatformDoctorFindingSink): void {
+  const state = inspectBlogSchema(db), docs = './docs-next/backend/blog/upgrade.md';
+  addFinding(findings, { severity: state === 'ready' ? 'info' : 'error', code: `blog.authors.schema_${state}`,
+    path: 'blog', message: state === 'ready' ? 'The installed SYSTEM author foundation matches its exact schema contract.'
+      : 'Enabled blog authors have missing or incompatible SYSTEM metadata.',
+    hint: state === 'ready' ? 'This does not prove live Guardian, Storage or public profile readiness.'
+      : 'Apply the reviewed additive SYSTEM migration 046; do not rewrite existing users, roles or application tables.', docs });
+  if (state !== 'ready') return;
+  const row = db.prepare('SELECT fingerprint,generation FROM _blog_policy WHERE singleton=1').get() as { fingerprint: string; generation: number } | null;
+  const valid = !row || /^[a-f0-9]{64}$/.test(row.fingerprint) && Number.isSafeInteger(row.generation) && row.generation > 0 && row.generation < Number.MAX_SAFE_INTEGER;
+  const ready = valid && row?.fingerprint === blogPolicyFingerprint(config);
+  addFinding(findings, { severity: !valid ? 'error' : ready ? 'info' : 'warning',
+    code: `blog.authors.policy_${!valid ? 'invalid' : ready ? 'ready' : 'pending'}`, path: 'blog',
+    message: !valid ? 'The retained blog policy clock is invalid.' : ready ? 'The retained author policy matches the desired configuration.' : 'The author policy awaits adoption by normal managed startup.',
+    hint: !valid ? 'Investigate the retained state; Doctor will not reset it.' : 'Doctor inspects state only; it does not enroll authors, publish photos or start services.', docs });
 }
 
 /** Pinned applications need their own readonly projection; physical tenants stay behind Fabric before-use admission. */

@@ -63,6 +63,8 @@ against code, public exports, runtime composition and actual checks.
 - [Guardian profile-upgrade qualification](./guardian-profile-qualification.md):
   current session-recovery correction, focused SDK/server/browser evidence and
   the boundary between completed source changes and upcoming profile/presence work.
+- [Blog author foundation](./blog-author-foundation.md): additive existing-project
+  profiles/author backend, opt-in public avatars and candidate package qualification.
 - [Informal naming candidates](./naming.md): approved aliases and unapproved
   suggestions, explicitly separate from API/import/config names.
 

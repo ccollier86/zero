@@ -54,6 +54,7 @@ runtime database editor or global environment binding is implied.
 | Option | Accepted form / omitted behavior | Dependency |
 | --- | --- | --- |
 | `auth` | false/true/Guardian object; disabled | true enables defaults; object adds app token TTLs |
+| `blog` | false/true/BlogConfig; disabled | [Author foundation preview](../blog/configuration.md); adds omitted profile defaults, requires Guardian, preserves explicit policies; does not enable a post CMS |
 | `workflows` | false/AppWorkflowsConfig; {} with auth, disabled without | enabled form requires auth |
 | `email` | false/true/EmailConfig; disabled | true selects default Resend configuration, not guaranteed delivery readiness |
 | `ai` | false/true/AIConfig; disabled | true enables environment-based provider detection |

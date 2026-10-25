@@ -14,6 +14,8 @@ import { resolveAppOwnedPath, resolveAppProjectRoot } from './app-project-root';
 import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foundation';
 import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
 import type { SeoConfig } from '../../seo';
+import { resolveBlogConfig, withBlogProfileDefaults, blogEnabled } from '../../blog/config';
+import type { BlogConfig, ResolvedBlogConfig } from '../../blog/types';
 import { resolveSeoConfig } from '../../seo/runtime';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
@@ -270,6 +272,8 @@ export interface AppWorkflowsConfig {
  * building a full-stack app with the platform.
  */
 export interface AppConfig {
+  /** Optional Guardian-backed author directory and public profiles. Does not enable a post editor. */
+  blog?: boolean | BlogConfig;
   /** Immutable configuration origin for file/build inputs; defaults to the ordinary launch root. */
   projectRoot?: string | URL;
   /** Explicit native declarations in addition to optional directory discovery. */
@@ -590,6 +594,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
+  blog: ResolvedBlogConfig;
   readonly projectRoot: string;
   readonly serverExtensions: readonly ZeroServerExtensionMountable[];
   readonly frontendBuild?: AppFrontendBuildManifest;
@@ -666,12 +671,15 @@ export function resolveConfig(
   const themeFoundation = resolveAppThemeFoundation(config.themeFoundation);
   const projectRoot = resolveAppProjectRoot(config);
   const logging = resolveManagedLoggingConfig(config.logging, projectRoot);
-  const auth = config.auth === true
+  const inputAuth = config.auth === undefined && blogEnabled(config.blog) ? true : config.auth;
+  const originalAuth = inputAuth === true
     ? {}
-    : config.auth === false || config.auth === undefined
+    : inputAuth === false || inputAuth === undefined
       ? false
-      : config.auth;
+      : inputAuth;
+  const auth = originalAuth === false ? false : withBlogProfileDefaults(originalAuth, config.blog);
   const authBehavior = auth === false ? null : validateAppAuthConfig(auth);
+  const blog = resolveBlogConfig(config.blog, authBehavior);
   if (logging) for (const permission of Object.values(logging.access)) {
     if (permission && (!authBehavior || !Object.hasOwn(authBehavior.authorization.permissions, permission))) {
       throw new Error('[app] logging permissions must be declared in Guardian authorization.permissions.');
@@ -845,6 +853,7 @@ export function resolveConfig(
     databaseTopology,
     ...(dataRealm === undefined ? {} : { dataRealm }),
     logging,
+    blog,
     tables: normalized,
     ...(databaseAutomations === undefined ? {} : { databaseAutomations }),
     mutationValidators,
