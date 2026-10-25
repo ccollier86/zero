@@ -13,10 +13,10 @@ modes: [managed-server, standalone-server, Resend, SMTP]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "d378ed19c420556481795c4d5d070ee8e603f2cb"
-  snapshot: dirty
+  commit: "69fbfe8875f24003de6bcde9d3bcd7bd640b94f4"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Email Attachments and Delivery Readiness

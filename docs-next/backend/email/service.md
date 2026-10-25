@@ -8,15 +8,15 @@ visibility: internal
 system: email
 feature: send-contract
 maturity: supported
-applies_to: ["2.6.0 main source with SMTP/IMAP; identify saved packages by commit and hash"]
+applies_to: ["2.6.0 builds containing the attachment capability compatibility fix; identify saved packages by commit and hash"]
 modes: [managed-server, standalone-server]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "8850d12a24f1744818ab17fa37bb3dbf235229da"
-  snapshot: dirty
-  date: "2026-10-22"
-  evidence_level: source-observed
+  commit: "69fbfe8875f24003de6bcde9d3bcd7bd640b94f4"
+  snapshot: clean
+  date: "2026-10-25"
+  evidence_level: implementation-verified
 ---
 
 # Sending Email
