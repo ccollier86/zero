@@ -57,15 +57,33 @@ as passing evidence.
 | Disk/source recovery selection | Six passed, zero failed / 37 assertions. Actual SQLite FULL failure rolls back the whole batch, proofs and sequence; source failure invalidates admission and cannot silently recover an old grant. |
 | Canonical build identity | One passed / five assertions. A real Bun bundle and retained source resolve the same complete logging realm/schema/migration fingerprint. |
 | Error/recovery protocol selection | 14 passed, zero failed / 144 assertions. Privacy-safe custom endpoint status/outcome, complete worker error vocabulary, bounded HTTPS custody and fixed empty browser bootstrap validation. |
+| Final admission/error polish | Seven passed, zero failed, four files / 135 assertions. Includes an explicit unknown outcome after a protected write's response cannot be released. |
+| Package distribution | One passed, zero failed / 185 assertions after updating the stale 043-only test registry to 001–045. Exercises packed installation, generated consumer typechecks/SSR, all clean migrations and private artifact table creation. The old registry failure was a test finding, not a reason to omit 045. |
+| Installed public legacy boundary | The exact candidate archive passes the package test / nine assertions, which requires all ten inner synthetic conversion/runtime cases to pass. User IDs, trusted state and admitted runtime-table preservation remain under the existing public boundary. |
+| Final scope browser checks | Three passed, zero failed / 37 assertions in addition to the strict AppProvider case. Anonymous recovery stays usable; authenticated scope replacement/revocation remains masked. |
 
 Root TypeScript checking passes with no diagnostics. The documentation
 structural check passes all 838 pages, IDs and reachability checks.
 
 Detailed diagnostics remain under the external project artifacts
-`diagnostics/` directory, not in Git. Final installed-package legacy acceptance
-and a fresh official-build deployment
-are final artifact gates and must be recorded when rerun, not assumed from this
-table.
+`diagnostics/` directory, not in Git. The installed public legacy boundary and
+fresh official-build deployment both passed against the exact committed
+candidate below. The earlier export/facade checks also passed; no public
+contract was rebaselined to hide a missing symbol.
+
+### Qualified Backend Candidate
+
+| Field | Value |
+| --- | --- |
+| Source commit | `ccfc038483eb9ba007ad5947067104e5a0faeae8` |
+| Package version | `2.6.0` |
+| Archive under the external project artifact root | `dev/logging-compliance-ccfc038483eb9ba007ad5947067104e5a0faeae8.tgz` |
+| Archive SHA-256 | `26e82d8b27746bc92549523b049b8032dbd38d4a5f94c0a3e34241e6dbd44acb` |
+| Normal updater selection | Unchanged; main remains `fc61dcc4cd107c6467bff498d3a772e8f5bdea9d`. This is a qualified feature-branch candidate, not an activated app update. |
+
+This documentation follow-up records the candidate's evidence; it does not
+alter its runtime. If the joint dashboard pass changes runtime/component code,
+qualify the resulting final archive before normal release selection.
 
 ### Integrated Recovery And Privacy
 
@@ -97,8 +115,8 @@ table.
 The checked-in `src/logging/test-support/managed-deployment/` fixture installs
 the package, invokes the normal Zero build command, then starts bundled
 `dist/server.js` with retained source/dependencies and explicit source actors
-using `env: {}`. The intermediate source pack passed on Bun 1.3.14 in
-linux/amd64, including:
+using `env: {}`. The committed backend candidate identified above passed on
+Bun 1.3.14 in linux/amd64, including:
 
 - Two main boots and 14 worker launches across SIGKILL/restart.
 - No inherited synthetic provider/dotenv secret and no main-app boot in actors.
@@ -108,7 +126,8 @@ linux/amd64, including:
 
 The image manifest is
 `oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04`.
-The final committed pack still needs its own fresh run. No claim is made about
+The earlier intermediate source pack also passed, but is not substituted for
+this committed-candidate run. No claim is made about
 arbitrary launchers, every operating system, sustained production load or
 power-loss guarantees beyond the admitted filesystem/SQLite contract.
 
@@ -172,8 +191,9 @@ that work never encounters resource limits.
 
 ## Release Boundary
 
-Commit and review this branch without allowing a hook to select an intermediate
-source pack. Qualify the exact committed artifact, then deliberately merge and
-select normal main through Zero's release tooling. Return its exact source
+The implementation is committed on the feature branch and the exact candidate
+is qualified. Keep hook-driven selection disabled while saving review evidence.
+Complete the agreed joint dashboard review, then deliberately merge and select
+the final qualified main archive through Zero's release tooling. Return its exact source
 commit, archive path and SHA-256 only after selection verifies. No app update,
 live conversion or deployment is performed by this framework task.
