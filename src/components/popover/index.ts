@@ -2,6 +2,7 @@
 
 export {
   Popover,
+  PopoverAnchor,
   PopoverClose,
   PopoverContent,
   PopoverTrigger,
@@ -11,6 +12,7 @@ export type {
   PopoverCloseProps,
   PopoverContentProps,
   PopoverProps,
+  PopoverAnchorProps,
   PopoverTriggerProps,
   PopoverViewportProps,
 } from '../surfaces/popover';

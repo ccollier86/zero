@@ -56,6 +56,7 @@ export type {
 } from '../../../components/dropdown-menu';
 export {
   Popover,
+  PopoverAnchor,
   PopoverClose,
   PopoverContent,
   PopoverViewport,
@@ -66,6 +67,7 @@ export type {
   PopoverContentProps,
   PopoverViewportProps,
   PopoverProps,
+  PopoverAnchorProps,
   PopoverTriggerProps,
 } from '../../../components/popover';
 export type {
@@ -74,5 +76,6 @@ export type {
   CollapsibleContentProps,
   CollapsibleContextType,
 } from '../../../components/collapsible';
-export { CommandPalette, CommandPaletteTrigger, filterCommandPaletteItems } from '../../../components/command-palette';
+export { CommandPalette, CommandPaletteTrigger, filterCommandPaletteItems, CommandPaletteProvider, useCommandPalette } from '../../../components/command-palette';
+export type { CommandPaletteProviderProps, CommandPaletteController } from '../../../components/command-palette';
 export type { CommandPaletteProps, CommandPaletteItem, CommandPaletteGroup } from '../../../components/command-palette';

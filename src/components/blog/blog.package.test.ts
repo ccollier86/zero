@@ -23,12 +23,15 @@ test('packed blog and general command palette expose defaults, CSS and portable 
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim()) as {
       exported: number; browserBytes: number; css: string; html: string; docs: boolean;
     };
-    expect(result.exported).toBe(12); expect(result.browserBytes).toBeGreaterThan(0);
+    expect(result.exported).toBeGreaterThan(90); expect(result.browserBytes).toBeGreaterThan(0);
     expect(result.css).toContain('--zero-blog-type-prose'); expect(result.css).toContain('--zero-command-palette-width');
     expect(result.css).toContain('[data-variant="editorial"]');
+    expect(result.css).toContain('--zero-blog-lens-size'); expect(result.css).toContain('--zero-blog-player-synthwave-from');
     expect(result.html).toContain('data-variant="magazine"'); expect(result.html).toContain('data-variant="with-sidebar"');
     expect(result.html).toContain('href="/journal/welcome"'); expect(result.html).toContain('Readable without JavaScript.');
     expect(result.html).toContain('href="#introduction-1"'); expect(result.html).not.toContain('Share this article');
+    expect(result.html).toContain('data-overlay="true"'); expect(result.html).toContain('controls=""');
+    expect(result.html).toContain('aria-valuenow="45"');
     expect(result.docs).toBe(true);
   } finally {
     // Only the disposable consumer and archive allocated by this test are removed.
@@ -58,23 +61,29 @@ import * as Root from '@zero/framework';
 import * as Blog from '@zero/framework/blog';
 import * as Alias from '@zero/framework/components/blog';
 import * as Commands from '@zero/framework/components/command-palette';
-import type { BlogPost } from '@zero/framework/blog';
+import * as Popovers from '@zero/framework/components/popover';
+import type { BlogPost, AudioPlayerPlayButtonProps, LightboxProviderProps, BlogProviderProps } from '@zero/framework/blog';
 const exported = ['BlogProvider', 'BlogListPage', 'BlogPostPage', 'BlogHero',
   'BlogCard', 'BlogCardGrid', 'BlogSearchPalette', 'BlogPagination', 'BlogImageLightbox'] as const;
 for (const name of exported) {
   if (typeof Blog[name] !== 'function' || Blog[name] !== Root[name] || Blog[name] !== Alias[name]) throw new Error('Missing Blog export: ' + name);
 }
-for (const name of ['CommandPalette', 'CommandPaletteTrigger', 'filterCommandPaletteItems'] as const) {
+for (const name of ['CommandPalette', 'CommandPaletteTrigger', 'filterCommandPaletteItems', 'CommandPaletteProvider', 'useCommandPalette'] as const) {
   if (typeof Commands[name] !== 'function' || Commands[name] !== Root[name]) throw new Error('Missing command export: ' + name);
 }
-export const exportedCount = exported.length + 3;
-const post: BlogPost = { id: 'welcome', slug: 'welcome', title: 'Welcome', blocks: [
+if (typeof Popovers.PopoverAnchor !== 'function' || Popovers.PopoverAnchor !== Root.PopoverAnchor) throw new Error('Missing anchored input facade');
+const focusedParts = ["Typography","Prose","BlogCard","BlogCardGrid","SearchBar","SearchWithResults","SearchBarWithDropdown","BlogPagination","CategoryFilter","CategoryBadges","CategoryTooltip","BlogHero","BlogHeroCompact","BlogHeroContained","SocialShare","TableOfContents","TableOfContentsSidebar","TableOfContentsFloating","AuthorCard","AuthorCardInline","AuthorCardFeatured","AuthorAvatar","AuthorAvatarGroup","AuthorTooltip","RelatedPosts","RecentPostsHero","EmptyBlogHero","EmptySearchResults","EmptyCategoryResults","EmptyState","BlogListPage","BlogListPageMinimal","BlogListPageSidebar","BlogListPageList","BlogPostPage","BlogPostPageWide","BlogPostPageWithSidebar","BlogPostPageSplit","ContentImage","ContentImageFull","ContentImageFloatLeft","ContentImageFloatRight","ImageGallery","ImageCarousel","ImageStack","CodeBlock","CodeBlockFiles","CodeBlockInline","VideoPlayer","VideoPlayerContent","VideoPlayerControlBar","VideoPlayerPlayButton","VideoPlayerSeekBackwardButton","VideoPlayerSeekForwardButton","VideoPlayerTimeRange","VideoPlayerTimeDisplay","VideoPlayerMuteButton","VideoPlayerVolumeRange","VideoPlayerFullscreenButton","VideoPlayerDefault","InlineLink","InlineLinkPreview","DemoLink","CitationProvider","CitationRef","CitationsList","Glimpse","LightboxProvider","LightboxContext","useLightbox","AudioPlayer","AudioPlayerPlayButton","AudioPlayerSkipBackwardButton","AudioPlayerSkipForwardButton","AudioPlayerMuteButton","AudioPlayerLoopButton","AudioPlayerVolumeSlider","AudioPlayerTimeDisplay","AudioPlayerWaveform","AudioPlayerProgress","AudioPlayerMinimal","AudioPlayerSynthwave","CommandPaletteProvider","CommandPaletteTrigger","useCommandPalette","NewsletterSignup","NewsletterSignupCompact","BlogProvider","SpotlightBorder","BlogSearchPalette","BlogImageLightbox","LightboxImageTrigger","LightboxGalleryTrigger","NewsletterModal","NewsletterTrigger","ReadingProgressBar","ReadingProgressCircle","BlockRenderer"] as const;
+for (const name of focusedParts) if (!Blog[name] || Blog[name] !== Alias[name]) throw new Error('Missing focused part: ' + name);
+export const exportedCount = focusedParts.length + 6;
+const post: BlogPost = { id: 'welcome', slug: 'welcome', title: 'Welcome', featuredImage: '/cover.svg', blocks: [
   { type: 'heading', text: 'Introduction', level: 2 }, { type: 'paragraph', text: 'Readable without JavaScript.' },
 ] };
 export function Consumer() {
   return <Blog.BlogProvider baseUrl="/journal"><Blog.BlogListPage posts={[post]} />
     <Blog.BlogPostPage post={post} /><Blog.BlogPagination currentPage={1} totalPages={4} />
-    <Commands.CommandPalette title="Commands" items={[]} />
+    <Blog.AudioPlayerSynthwave src="/tone.wav" /><Blog.VideoPlayer src="/video.webm" />
+    <Blog.ReadingProgressCircle value={45} /><Blog.SearchWithResults posts={[post]} />
+    <Commands.CommandPaletteProvider title="Commands" items={[]}><Commands.CommandPaletteTrigger>Commands</Commands.CommandPaletteTrigger></Commands.CommandPaletteProvider>
   </Blog.BlogProvider>;
 }
 `;
@@ -87,6 +96,9 @@ if (!build.success) throw new Error(build.logs.map(log => log.message).join('\\n
 const css = (await Promise.all(build.outputs.filter(item => item.path.endsWith('.css')).map(item => item.text()))).join('\\n');
 const docsRoot = './node_modules/@zero/framework/docs-next/';
 const docs = await Bun.file(docsRoot + 'frontend/components/public-pages/blog/index.md').exists()
-  && await Bun.file(docsRoot + 'frontend/components/controls/command-palette.md').exists();
+  && await Bun.file(docsRoot + 'frontend/components/controls/command-palette.md').exists()
+  && await Bun.file(docsRoot + 'frontend/components/public-pages/blog/media.md').exists()
+  && await Bun.file(docsRoot + 'frontend/components/public-pages/blog/migration.md').exists()
+  && await Bun.file(docsRoot + 'frontend/components/public-pages/blog/images-and-previews.md').exists();
 console.log(JSON.stringify({ exported: exportedCount, browserBytes: build.outputs.reduce((sum, item) => sum + item.size, 0), css, docs, html: renderToString(React.createElement(Consumer)) }));
 `;

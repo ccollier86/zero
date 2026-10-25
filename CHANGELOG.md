@@ -4,6 +4,15 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Completed the recovered blog UI parity inventory: configurable inline search,
+  rich author/category previews, floating TOC, real reading indicators, spotlight,
+  retained gallery zoom/lens/thumbnails, composable native audio/video controls,
+  managed newsletter openings and a scoped general command-palette controller.
+  Restored the reference's title-over-image contained hero as the article default;
+  the prior above-image treatment is an explicit editorial option. All use scoped
+  Zero semantic tokens and existing overlay/scroll/focus owners. No blog backend,
+  user schema, editor, telemetry or automatic publication is enabled.
+
 - Added the UI-only blog family under `@zero/framework/blog`, with Magazine
   listing and contained-hero/right-TOC article defaults, scoped design tokens,
   cards, author/category parts, typed content blocks and managed media previews.

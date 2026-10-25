@@ -1,4 +1,5 @@
 @import './blog-tokens.css';
+@import './blog-extended.css';
 .zero-blog { color: var(--zero-blog-text); font-family: var(--zero-blog-font); font-size: var(--zero-blog-type-body); line-height: var(--zero-blog-leading-body); min-width: 0; }
 .zero-blog *, .zero-blog-overlay * { box-sizing: border-box; }
 .zero-blog a { color: inherit; text-decoration: none; }
@@ -172,7 +173,7 @@
 .zero-blog-callout[data-tone="success"] { border-color: var(--zero-blog-success); }
 @keyframes zero-blog-enter { from { opacity: 0; transform: translateY(var(--zero-blog-enter-distance)); } to { opacity: 1; transform: none; } }
 .zero-blog-list-header, .zero-blog-hero-copy, .zero-blog-card { animation: zero-blog-enter var(--zero-blog-duration-enter) var(--zero-blog-ease) both; }
-@media (max-width: 70rem) {
+@media (max-width: 80rem) {
   .zero-blog-article-body[data-sidebar] { display: block; }
   .zero-blog-article-sidebar, .zero-blog-article-spacer { display: none; }
   .zero-blog-inline-toc { display: block; }

@@ -13,14 +13,10 @@ modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-  snapshot: clean
+  commit: "ac857766bc10c8a0643622bf95bb541159592c31"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
+  evidence_level: source-observed
 ---
 
 # Blog Presentation And Design Tokens
@@ -85,6 +81,11 @@ named override points in the canonical
 | radius / radius-small / border-width / shadow / focus-width | Shared material and focus treatment. |
 | avatar* / icon / control-height / disabled-opacity | Compact identity/control geometry. |
 | media-aspect / hero-aspect / feature-aspect / lightbox-height / player-seek-min-width / waveform-height / volume-width | Media and player geometry. |
+| hero-width / hero-height / hero-small-height / hero-medium-height / hero-title-size / hero-mobile-title-size / hero-foreground / hero-secondary / hero-scrim* | Contained image/title-overlay treatment, responsive heights and accessible on-image material. |
+| preview-* / search-* | Rich preview width/tilt/perspective and inline search/result-preview dimensions. |
+| lens-size / lens-magnification / thumbnail-size | Optional lens and bounded gallery thumbnails. |
+| progress-* / floating-layer | Reading progress geometry and non-modal floating placement. |
+| player-radius-* / player-overlay* / player-synthwave-* / player-waveform-glow | Composable media material, radii and opt-in synthwave decoration using current semantic colors. |
 | duration-fast / duration-standard / duration-enter / ease / hover-lift / media-zoom / media-duration / enter-distance | Zero task-motion aliases, not the archive's timing presets. |
 
 Category tone is accent, success, warning, danger or neutral. Arbitrary archive
@@ -102,6 +103,9 @@ Popover and ScrollArea. Image expansion and rich search use ControlledModal and
 the existing manager: origin when a trigger exists, rise fallback and its normal
 reverse exit/backdrop/focus/stack behavior. The family's optional local modal host
 is used only when the application has not already supplied one.
+Optional preview tilt/spotlight paint do not replace those positioning owners.
+Reading progress observes the real viewport, and media follows native events;
+neither installs an idle animation loop or fake progress timer.
 
 The app remains the only theme owner. No theme switch, theme storage key,
 dark-mode state, global blog store or automatic telemetry is installed.

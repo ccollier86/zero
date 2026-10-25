@@ -1,45 +1,64 @@
 'use client';
 
-/** Tokenized controls over actual media events. Waveforms require caller-supplied measurements, never random decoration. */
 import * as React from 'react';
-import { Play, Pause, Volume2, VolumeX, Repeat, Maximize } from 'lucide-react';
-import { Button } from '../ui/button';
 import { safeBlogHref } from './blog-utils';
 import { cn } from '../../lib/utils';
+import { BlogMediaContext, useMediaController, useBlogMedia, type BlogMediaOptions } from './blog-media-controller';
+import { AudioPlayerPlayButton, AudioPlayerProgress, AudioPlayerTimeDisplay, AudioPlayerMuteButton, AudioPlayerVolumeSlider, AudioPlayerLoopButton,
+  AudioPlayerSkipBackwardButton, AudioPlayerSkipForwardButton, AudioPlayerWaveform, VideoPlayerFullscreenButton, VideoPlayerContent, VideoPlayerControlBar } from './blog-media-controls';
 
-export interface BlogMediaPlayerProps {
-  src: string; title?: string; artist?: string; poster?: string; coverArt?: string; className?: string;
-  peaks?: readonly number[]; loop?: boolean; onPlay?: () => void; onPause?: () => void; onError?: () => void;
+export interface BlogMediaPlayerProps extends BlogMediaOptions {
+  src: string; title?: string; artist?: string; poster?: string; coverArt?: string; className?: string; style?: React.CSSProperties; children?: React.ReactNode;
+  peaks?: readonly number[]; autoPlay?: boolean; preload?: 'none' | 'metadata' | 'auto'; variant?: 'default' | 'minimal' | 'synthwave';
+  aspectRatio?: 'video' | 'square' | '4/3' | '21/9'; rounded?: 'none' | 'sm' | 'md' | 'lg' | 'xl';
+  controlsLayout?: 'overlay' | 'below'; controlsAutoHideMs?: number; skipSeconds?: number;
+  showSkip?: boolean; showVolume?: boolean; showLoop?: boolean; showWaveform?: boolean; showFullscreen?: boolean;
+  tracks?: readonly { src: string; kind?: 'subtitles' | 'captions' | 'descriptions'; srcLang: string; label: string; default?: boolean }[];
 }
-const clock = (seconds: number) => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds)) % 60).padStart(2, '0')}`;
-function MediaPlayer({ kind, src, title, artist, poster, coverArt, peaks, className, loop = false, onPlay, onPause, onError }: BlogMediaPlayerProps & { kind: 'audio' | 'video' }) {
-  const ref = React.useRef<HTMLMediaElement | null>(null), [ready, setReady] = React.useState(false), [playing, setPlaying] = React.useState(false), [time, setTime] = React.useState(0), [duration, setDuration] = React.useState(0), [muted, setMuted] = React.useState(false), [volume, setVolume] = React.useState(1), [repeating, setRepeating] = React.useState(loop), [failed, setFailed] = React.useState(false);
-  React.useEffect(() => { setReady(true); }, []);
-  React.useEffect(() => { setTime(0); setDuration(0); setFailed(false); setPlaying(false); }, [src]);
-  const safe = safeBlogHref(src); if (!safe) return null;
-  const events = { onTimeUpdate: () => setTime(ref.current?.currentTime ?? 0), onLoadedMetadata: () => setDuration(Number.isFinite(ref.current?.duration) ? ref.current!.duration : 0),
-    onPlay: () => { setPlaying(true); onPlay?.(); }, onPause: () => { setPlaying(false); onPause?.(); }, onEnded: () => setPlaying(false), onError: () => { setFailed(true); onError?.(); } };
-  const toggle = async () => { if (!ref.current) return; if (playing) ref.current.pause(); else { try { await ref.current.play(); setFailed(false); } catch { setFailed(true); } } };
-  return <figure className={cn('zero-blog-player', className)} data-kind={kind}>
-    {kind === 'video' ? <video ref={element => { ref.current = element; }} src={safe} poster={safeBlogHref(poster)} preload="none" controls={!ready} playsInline loop={repeating} {...events} />
-      : <audio ref={element => { ref.current = element; }} src={safe} preload="none" controls={!ready} loop={repeating} {...events} />}
-    {(title || artist || coverArt) && <figcaption className="zero-blog-player-caption">{safeBlogHref(coverArt) && <img src={safeBlogHref(coverArt)} alt="" />}<span>{title && <strong>{title}</strong>}{artist && <span>{artist}</span>}</span></figcaption>}
-    {ready && <div className="zero-blog-player-controls">
-      <Button type="button" variant="ghost" size="icon-sm" aria-label={playing ? 'Pause' : 'Play'} onClick={() => { void toggle(); }}>{playing ? <Pause /> : <Play />}</Button>
-      <div className="zero-blog-player-seek">{!!peaks?.length && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{peaks.slice(0, 256).map((peak, index, all) => {
-        const height = Math.max(0, Math.min(1, Number.isFinite(peak) ? peak : 0)) * 100;
-        return <rect key={index} x={index / all.length * 100} y={(100 - height) / 2} width={80 / all.length} height={height} data-played={index / all.length <= time / (duration || 1) || undefined} />;
-      })}</svg>}
-        <input type="range" aria-label="Playback position" min={0} max={duration || 0} step="any" value={Math.min(time, duration)} disabled={!duration} onChange={event => { if (ref.current) { ref.current.currentTime = Number(event.currentTarget.value); setTime(ref.current.currentTime); } }} />
-      </div>
-      <output aria-label="Playback time">{clock(time)} / {clock(duration)}</output>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label={muted ? 'Unmute' : 'Mute'} onClick={() => { if (ref.current) { ref.current.muted = !muted; setMuted(!muted); } }}>{muted ? <VolumeX /> : <Volume2 />}</Button>
-      <input type="range" className="zero-blog-player-volume" aria-label="Volume" min={0} max={1} step={.05} value={volume} onChange={event => { const value = Number(event.currentTarget.value); if (ref.current) { ref.current.volume = value; setVolume(value); } }} />
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="Loop playback" aria-pressed={repeating} onClick={() => setRepeating(value => !value)}><Repeat /></Button>
-      {kind === 'video' && <Button type="button" variant="ghost" size="icon-sm" aria-label="Fullscreen video" onClick={() => { if (ref.current instanceof HTMLVideoElement) void ref.current.requestFullscreen?.().catch(() => setFailed(true)); }}><Maximize /></Button>}
-    </div>}
-    {failed && <p role="alert">This media could not be played.</p>}
-  </figure>;
+export type AudioPlayerProps = BlogMediaPlayerProps;
+export type VideoPlayerProps = BlogMediaPlayerProps;
+function Defaults({ kind, variant, skipSeconds, showSkip = true, showVolume = true, showLoop = true, showWaveform = true, showFullscreen = true }: BlogMediaPlayerProps & { kind: 'audio' | 'video' }) {
+  const media = useBlogMedia(), small = variant === 'minimal';
+  return <>
+    {kind === 'audio' && showWaveform && !!media.peaks.length && !small && <AudioPlayerWaveform />}
+    <VideoPlayerControlBar><AudioPlayerPlayButton />{showSkip && !small && <><AudioPlayerSkipBackwardButton seconds={skipSeconds} /><AudioPlayerSkipForwardButton seconds={skipSeconds} /></>}
+      <AudioPlayerProgress /><AudioPlayerTimeDisplay /><AudioPlayerMuteButton />{showVolume && !small && <AudioPlayerVolumeSlider />}
+      {showLoop && !small && <AudioPlayerLoopButton />}{kind === 'video' && showFullscreen && <VideoPlayerFullscreenButton />}
+    </VideoPlayerControlBar>
+  </>;
+}
+function MediaPlayer({ kind, ...props }: BlogMediaPlayerProps & { kind: 'audio' | 'video' }) {
+  const media = useMediaController(kind, props, props.peaks), [visible, setVisible] = React.useState(true), [focused, setFocused] = React.useState(false);
+  const source = safeBlogHref(props.src), overlay = kind === 'video' && (props.controlsLayout ?? 'overlay') === 'overlay';
+  const [activity, setActivity] = React.useState(0);
+  const lastPointer = React.useRef(0);
+  React.useEffect(() => {
+    setVisible(true); if (!overlay || !media.playing || focused || props.controlsAutoHideMs === 0) return;
+    const delay = Number.isFinite(props.controlsAutoHideMs) ? props.controlsAutoHideMs! : 2500;
+    const timer = setTimeout(() => setVisible(false), Math.max(500, Math.min(30000, delay))); return () => clearTimeout(timer);
+  }, [overlay, media.playing, activity, focused, props.controlsAutoHideMs]);
+  if (!source) return null;
+  const controls = props.children ?? <Defaults {...props} kind={kind} />;
+  return <BlogMediaContext.Provider value={media}><figure ref={media.attachFrame} className={cn('zero-blog-player', props.className)} data-kind={kind} data-variant={props.variant ?? 'default'}
+    data-layout={overlay ? 'overlay' : 'below'} data-rounded={props.rounded ?? 'xl'} data-aspect={props.aspectRatio ?? 'video'} style={props.style}
+    role="group" aria-label={props.title ?? `${kind === 'video' ? 'Video' : 'Audio'} player`} tabIndex={kind === 'video' ? 0 : undefined}
+    onPointerMove={() => { if (!visible) setVisible(true); const now = Date.now(); if (media.playing && now - lastPointer.current >= 250) { lastPointer.current = now; setActivity(value => value + 1); } }}
+    onFocusCapture={() => { setFocused(true); setVisible(true); }} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}
+    onKeyDown={event => { if (event.target !== event.currentTarget) return; if (event.key === ' ' || event.key === 'k') { event.preventDefault(); media.togglePlay(); } else if (event.key === 'ArrowRight') { event.preventDefault(); media.seek(media.time + (props.skipSeconds ?? 10)); } else if (event.key === 'ArrowLeft') { event.preventDefault(); media.seek(media.time - (props.skipSeconds ?? 10)); } }}>
+    {kind === 'video' ? <video key={source} ref={media.attach} src={source} poster={safeBlogHref(props.poster)} autoPlay={props.autoPlay ?? false} preload={props.preload ?? 'none'} controls={!media.ready} playsInline muted={props.muted ?? false} loop={media.loop}>
+      {props.tracks?.flatMap((track, index) => safeBlogHref(track.src) ? [<track key={index} {...track} src={safeBlogHref(track.src)} />] : [])}
+    </video> : <audio key={source} ref={media.attach} src={source} autoPlay={props.autoPlay ?? false} preload={props.preload ?? 'none'} controls={!media.ready} muted={props.muted ?? false} loop={media.loop} />}
+    {(props.title || props.artist || safeBlogHref(props.coverArt)) && <figcaption className="zero-blog-player-caption">{safeBlogHref(props.coverArt) && <img src={safeBlogHref(props.coverArt)} alt="" />}<span>{props.title && <strong>{props.title}</strong>}{props.artist && <span>{props.artist}</span>}</span></figcaption>}
+    {media.ready && <div className="zero-blog-player-custom" data-visible={visible || !overlay || undefined} inert={overlay && !visible || undefined}>{overlay && props.children === undefined ? <VideoPlayerContent>{controls}</VideoPlayerContent> : controls}</div>}
+    {media.failed && <p role="alert">This media could not be played.</p>}
+  </figure></BlogMediaContext.Provider>;
 }
 export function AudioPlayer(props: BlogMediaPlayerProps) { return <MediaPlayer {...props} kind="audio" />; }
 export function VideoPlayer(props: BlogMediaPlayerProps) { return <MediaPlayer {...props} kind="video" />; }
+export function AudioPlayerMinimal(props: Omit<BlogMediaPlayerProps, 'variant'>) { return <AudioPlayer {...props} variant="minimal" />; }
+export function AudioPlayerSynthwave(props: Omit<BlogMediaPlayerProps, 'variant'>) { return <AudioPlayer {...props} variant="synthwave" />; }
+export { VideoPlayer as VideoPlayerDefault };
+export function useAudioPlayer() { return useBlogMedia('audio'); }
+export function useVideoPlayer() { return useBlogMedia('video'); }
+export * from './blog-media-controls';
+export { formatMediaTime } from './blog-media-controller';

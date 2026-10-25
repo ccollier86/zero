@@ -13,14 +13,10 @@ modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-  snapshot: clean
+  commit: "ac857766bc10c8a0643622bf95bb541159592c31"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
+  evidence_level: source-observed
 ---
 
 # Rich Command Palette
@@ -104,8 +100,27 @@ a subscription, persists history or fabricates recent results.
 | onSelect / onSelectionError | Awaited selection and optional diagnostic observer; see the lifecycle below. |
 
 CommandPaletteTrigger also accepts normal Zero Button props, children and an
-optional shortcut display flag. Used alone, it is only a trigger button; it does
-not register a keyboard handler or open a palette by itself.
+optional shortcut display flag. Outside a provider it is only a trigger button.
+Inside CommandPaletteProvider it opens that scoped palette automatically when
+no explicit onClick is supplied. An explicit onClick owns the action, so nested
+palette triggers do not accidentally open two dialogs. It never registers its
+own keyboard handler.
+
+## Scoped Provider And Controller
+
+CommandPaletteProvider accepts the normal palette props except trigger/origin,
+plus children and clearOnClose (true). It renders one palette with no built-in
+trigger. Put CommandPaletteTrigger instances in its children or call
+useCommandPalette() there. The hook exposes isOpen/query, open(origin?), close,
+toggle(origin?) and setQuery. Supplying the actual originating element preserves
+manager origin motion; an absent origin uses the manager fallback.
+
+The provider supports the same controlled open/query callbacks. A completed
+open-to-closed transition clears query by default, including externally controlled
+closure; clearOnClose=false preserves it. State belongs to this React instance,
+not a process-wide store. Custom result renderers retain this provider context
+even though the manager owns their portal. Existing standalone CommandPalette
+usage is unchanged.
 
 ## Selection And Modal Lifecycle
 

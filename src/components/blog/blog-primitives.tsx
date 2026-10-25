@@ -11,6 +11,7 @@ import { cn } from '../../lib/utils';
 import { BlogLink, useBlogPresentation } from './blog-provider';
 import { blogDate, safeBlogHref } from './blog-utils';
 import type { BlogAuthor, BlogCategory, BlogPost, BlogSocialLink } from './blog.types';
+import { AuthorTooltip, CategoryTooltip, type AuthorTooltipProps } from './blog-hover-previews';
 
 export interface TypographyProps extends React.HTMLAttributes<HTMLElement> {
   variant?: HeadingElement | 'p' | 'lead' | 'small' | 'caption' | 'label'; color?: 'primary' | 'secondary' | 'tertiary';
@@ -34,17 +35,18 @@ export function BlogPostMeta({ post, showAuthor = true, showReadingTime = true }
     {showReadingTime && post.readingTime && <span>{post.readingTime}</span>}
   </div>;
 }
-export function AuthorAvatar({ author, size = 'default', showTooltip = false, className }: { author: BlogAuthor; size?: 'xs' | 'sm' | 'default' | 'lg'; showTooltip?: boolean; className?: string }) {
+export function AuthorAvatar({ author, size = 'default', showTooltip = false, tooltip = 'rich', tooltipOptions, className }: { author: BlogAuthor; size?: 'xs' | 'sm' | 'default' | 'lg'; showTooltip?: boolean; tooltip?: 'simple' | 'rich'; tooltipOptions?: Omit<AuthorTooltipProps, 'author' | 'children'>; className?: string }) {
   const image = <Avatar className={cn('zero-blog-avatar', className)} data-size={size}>
     {safeBlogHref(author.avatar) && <AvatarImage src={safeBlogHref(author.avatar)} alt="" />}
     <AvatarFallback>{author.name.trim().split(/\s+/u).slice(0, 2).map(part => [...part][0]).join('')}</AvatarFallback>
   </Avatar>;
   if (!showTooltip) return <span aria-label={author.name}>{image}</span>;
+  if (tooltip === 'rich') return <AuthorTooltip {...tooltipOptions} author={author}><button className="zero-blog-avatar-button" type="button" aria-label={`About ${author.name}`}>{image}</button></AuthorTooltip>;
   return <Tooltip><TooltipTrigger asChild><button className="zero-blog-avatar-button" type="button" aria-label={`About ${author.name}`}>{image}</button></TooltipTrigger>
     <TooltipContent title={author.name} description={author.bio ?? author.role} /></Tooltip>;
 }
 export function AuthorAvatarGroup({ authors, max = 4 }: { authors: readonly BlogAuthor[]; max?: number }) {
-  const limit = Math.max(1, Math.floor(max));
+  const limit = Math.max(1, Math.min(100, Number.isFinite(max) ? Math.floor(max) : 4));
   return <div className="zero-blog-avatar-group">{authors.slice(0, limit).map(author => <AuthorAvatar key={author.id} author={author} showTooltip />)}{authors.length > limit && <span>+{authors.length - limit}</span>}</div>;
 }
 export interface AuthorCardProps { author: BlogAuthor; showSocial?: boolean; showBio?: boolean; postsLink?: string; className?: string; variant?: 'default' | 'inline' | 'featured' }
@@ -62,12 +64,18 @@ export function AuthorCard({ author, showSocial = true, showBio = true, postsLin
 }
 export function AuthorCardInline(props: Omit<AuthorCardProps, 'variant'>) { return <AuthorCard {...props} variant="inline" />; }
 export function AuthorCardFeatured(props: Omit<AuthorCardProps, 'variant'>) { return <AuthorCard {...props} variant="featured" />; }
-export function CategoryBadges({ categories = [], maxVisible = 2, onCategoryClick, className }: { categories?: readonly BlogCategory[]; maxVisible?: number; onCategoryClick?: (category: BlogCategory) => void; className?: string }) {
-  const count = Math.max(1, Math.floor(maxVisible));
+export function CategoryBadges({ categories = [], maxVisible = 2, onCategoryClick, tooltip = 'rich', className }: { categories?: readonly BlogCategory[]; maxVisible?: number; onCategoryClick?: (category: BlogCategory) => void; tooltip?: 'simple' | 'rich' | 'none'; className?: string }) {
+  const count = Math.max(1, Math.min(100, Number.isFinite(maxVisible) ? Math.floor(maxVisible) : 2));
   if (!categories.length) return null;
   return <div className={cn('zero-blog-badges', className)}>{categories.slice(0, count).map(category => <Badge key={category.id} variant="secondary" className="zero-blog-category" data-tone={category.tone ?? 'accent'}>
     {onCategoryClick ? <button type="button" onClick={() => onCategoryClick(category)}>{category.name}</button> : category.href ? <BlogLink href={category.href}>{category.name}</BlogLink> : category.name}
-  </Badge>)}{categories.length > count && <Tooltip><TooltipTrigger asChild><button className="zero-blog-overflow-badge" type="button" aria-label={`${categories.length - count} more categories`}>+{categories.length - count}</button></TooltipTrigger><TooltipContent>{categories.slice(count).map(category => category.name).join(', ')}</TooltipContent></Tooltip>}</div>;
+  </Badge>)}{categories.length > count && (tooltip === 'rich' ? <CategoryTooltip categories={categories.slice(count)} count={categories.length - count} onCategoryClick={onCategoryClick}><button className="zero-blog-overflow-badge" type="button" aria-label={`${categories.length - count} more categories`}>+{categories.length - count}</button></CategoryTooltip>
+    : tooltip === 'simple' ? <Tooltip><TooltipTrigger asChild><button className="zero-blog-overflow-badge" type="button" aria-label={`${categories.length - count} more categories`}>+{categories.length - count}</button></TooltipTrigger><TooltipContent>{categories.slice(count).map(category => category.name).join(', ')}</TooltipContent></Tooltip>
+    : <span>+{categories.length - count}</span>)}</div>;
+}
+export function EmptyBlogHero(props: React.ComponentProps<typeof EmptyState>) { return <EmptyState title="Your story starts here" description="Articles will appear here when they are available." {...props} />; }
+export function EmptyCategoryResults({ category, onClear, ...props }: React.ComponentProps<typeof EmptyState> & { category?: string; onClear?: () => void }) {
+  return <EmptyState title={category ? `No articles in ${category}` : 'No articles in this category'} action={onClear && <Button type="button" variant="outline" onClick={onClear}>Show all articles</Button>} {...props} />;
 }
 export function EmptyState({ title = 'No articles yet', description, action, className }: { title?: string; description?: string; action?: React.ReactNode; className?: string }) {
   return <div role="status" className={cn('zero-blog-empty', className)}><Typography variant="h3">{title}</Typography>{description && <Typography color="secondary">{description}</Typography>}{action}</div>;

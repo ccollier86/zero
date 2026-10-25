@@ -13,14 +13,10 @@ modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-  snapshot: clean
+  commit: "ac857766bc10c8a0643622bf95bb541159592c31"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
+  evidence_level: source-observed
 ---
 
 # Blog Parts And Media
@@ -42,7 +38,9 @@ the existing [Zero code family](../code-block.md), not archived highlighter copi
 
 AuthorAvatar accepts author, xs/sm/default/lg size, showTooltip and className.
 AuthorAvatarGroup accepts authors and maximum count. Avatars use Zero's avatar
-fallback and tooltip behavior; absence of an image does not create a broken URL.
+fallback; rich preview is the default when showTooltip is enabled. tooltip='simple'
+keeps the shared Grow tooltip; tooltipOptions configures the interactive preview.
+Absence of an image does not create a broken URL.
 BlogPostMeta shows only provided author/date/reading-time values.
 
 AuthorCard accepts author, showSocial/showBio (true), postsLink, className and
@@ -52,7 +50,8 @@ links and generic `{id,label,href,icon?}` socialLinks are optional. Missing soci
 links remove that navigation, and no contact/email field is inferred from a user.
 
 CategoryBadges accepts categories, maxVisible (2), onCategoryClick and className;
-overflow uses the shared tooltip. Categories have id/name/slug, optional
+overflow uses rich CategoryTooltip by default (tooltip='simple'/'none' available).
+Rich preview controls use Popover semantics. Categories have id/name/slug, optional
 description/count/href and a semantic tone. EmptyState accepts title,
 description/action/className. EmptySearchResults accepts query and onClear.
 
@@ -72,6 +71,9 @@ SearchBar is the shared Zero input with value/onChange, optional loading state
 and native input props. CategoryFilter accepts categories, selectedCategory,
 onCategoryChange and allLabel. Omitted selection is local; supplied selection is
 controlled. Both filtering and pagination callbacks report intent only.
+SearchWithResults/SearchBarWithDropdown adds an optional inline dropdown with
+preview, weighted local/manual matching and awaited selection. Its full contract
+is in [images, search and previews](./images-and-previews.md#inline-search).
 
 BlogPagination accepts currentPage/totalPages, optional totalItems/itemsPerPage,
 onPageChange, hrefForPage, showPageInfo (true) and className. It reuses the shared
@@ -85,6 +87,7 @@ showNumbers, className, contentRoot and onItemClick. TableOfContentsSidebar is
 its sticky variant. Item IDs address real content headings; levels affect
 indentation, not authorization or a route. TOC items are presentation input,
 not a source of executable selectors.
+TableOfContentsFloating uses that same owner with left/right placement.
 
 ## Images And Galleries
 
@@ -92,7 +95,8 @@ ContentImage accepts src/alt, caption, width/height, full/float-left/float-right
 variant, expandable (true), loading (lazy) and className. Full/FloatLeft/
 FloatRight convenience wrappers and ExpandableImage use that same implementation.
 Expansion uses the existing modal manager and restores focus to the image trigger.
-BlogImageLightbox exposes controlled open/image/trigger/onOpenChange.
+BlogImageLightbox exposes controlled open/image(s)/activeIndex/trigger/onOpenChange,
+retained gallery navigation, optional zoom/lens/thumbnails/download and manager options.
 
 ImageGallery accepts images, 2/3/4 columns, grid/stack layout and className.
 ImageStack selects stack. ImageCarousel accepts images, label and className;
@@ -100,6 +104,7 @@ its previous/next controls and announced position describe real caller images.
 LightboxProvider shares an instance-local image opening across a composition;
 standalone ContentImage works without a required provider. Nothing loads a
 shared archived singleton or modifies document.body overflow itself.
+See [images and previews](./images-and-previews.md) for all defaults and triggers.
 
 ## Audio And Video
 
@@ -115,6 +120,8 @@ Waveforms use supplied normalized peaks, at most 256 drawn bars, not generated
 random values or an invented audio analysis. Native controls remain the
 no-JavaScript fallback. Playback failures are displayed without exposing the URL
 or exception contents.
+Every recovered audio/video control part is available for explicit composition;
+see [composable media](./media.md) for exact options, controller lifecycle and examples.
 
 ## Links Citations And Optional Forms
 
@@ -137,6 +144,10 @@ composition. Without onSubscribe it renders nothing. The callback must resolve
 only when the app considers subscription accepted; rejection leaves a safe retry
 state. The UI has native email validation and prevents duplicate pending submits,
 but it is not a newsletter provider, storage contract or consent policy.
+NewsletterModal/NewsletterTrigger reuse the same form inside the shared manager,
+holding busy state until accepted success. ReadingProgressBar/Circle and
+SpotlightBorder are optional independent parts; see
+[images and previews](./images-and-previews.md#reading-and-spotlight).
 
 ## Related Guides And Next Steps
 

@@ -6,11 +6,13 @@ import {
   PopoverContent as PopoverContentPrimitive,
   PopoverPortal as PopoverPortalPrimitive,
   PopoverClose as PopoverClosePrimitive,
+  PopoverAnchor as PopoverAnchorPrimitive,
   usePopover,
   type PopoverProps as PopoverPrimitiveProps,
   type PopoverTriggerProps as PopoverTriggerPrimitiveProps,
   type PopoverContentProps as PopoverContentPrimitiveProps,
   type PopoverCloseProps as PopoverClosePrimitiveProps,
+  type PopoverAnchorProps,
 } from './popover-primitive';
 import { cn } from '#zero/lib/utils';
 import { useOwnedFloatingOverlay, useOverlayTheme, composeOverlayRefs } from '../../_internal/overlay-scope/overlay-scope';
@@ -29,6 +31,9 @@ type PopoverTriggerProps = PopoverTriggerPrimitiveProps;
 function PopoverTrigger(props: PopoverTriggerProps) {
   return <PopoverTriggerPrimitive {...props} />;
 }
+
+/** Position an input-driven surface without giving the input button semantics. */
+function PopoverAnchor(props: PopoverAnchorProps) { return <PopoverAnchorPrimitive {...props} />; }
 
 type PopoverContentProps = PopoverContentPrimitiveProps & { portalContainer?: HTMLElement | null };
 
@@ -93,11 +98,13 @@ function PopoverClose(props: PopoverCloseProps) {
 
 export {
   Popover,
+  PopoverAnchor,
   PopoverTrigger,
   PopoverContent,
   PopoverViewport,
   PopoverClose,
   type PopoverProps,
+  type PopoverAnchorProps,
   type PopoverTriggerProps,
   type PopoverContentProps,
   type PopoverViewportProps,

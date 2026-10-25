@@ -12,8 +12,8 @@ import { anchoredSurfacePresence, hasAnchoredSurfaceMotionOverride, useAnchoredS
 type PopoverContextType = {
   isOpen: boolean;
   setIsOpen: (isOpen: boolean) => void;
-  trigger: HTMLButtonElement | null;
-  setTrigger: React.Dispatch<React.SetStateAction<HTMLButtonElement | null>>;
+  trigger: HTMLElement | null;
+  setTrigger: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
 };
 
 const [PopoverProvider, usePopover] =
@@ -27,7 +27,7 @@ function Popover(props: PopoverProps) {
     defaultValue: props?.defaultOpen,
     onChange: props?.onOpenChange,
   });
-  const [trigger, setTrigger] = React.useState<HTMLButtonElement | null>(null);
+  const [trigger, setTrigger] = React.useState<HTMLElement | null>(null);
 
   return (
     <PopoverProvider value={{ isOpen, setIsOpen, trigger, setTrigger }}>
@@ -142,8 +142,10 @@ function PopoverContent({
 
 type PopoverAnchorProps = React.ComponentProps<typeof PopoverPrimitive.Anchor>;
 
-function PopoverAnchor({ ...props }: PopoverAnchorProps) {
-  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />;
+function PopoverAnchor({ ref, ...props }: PopoverAnchorProps) {
+  const { setTrigger } = usePopover();
+  const anchorRef = React.useMemo(() => composeOverlayRefs<HTMLDivElement>(setTrigger, ref), [setTrigger, ref]);
+  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} ref={anchorRef} />;
 }
 
 type PopoverArrowProps = React.ComponentProps<typeof PopoverPrimitive.Arrow>;

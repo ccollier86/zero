@@ -13,14 +13,10 @@ modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-  snapshot: clean
+  commit: "ac857766bc10c8a0643622bf95bb541159592c31"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
+  evidence_level: source-observed
 ---
 
 # Blog Layouts And Defaults
@@ -43,14 +39,16 @@ alternative; do not configure those defaults again in every consuming app.
 | categories | Empty; category controls appear only when supplied. |
 | columns | 3; accepts 2, 3 or 4, collapsing responsively. List mode uses horizontal rows. |
 | baseUrl | Provider default, otherwise /blog. Explicit post hrefs or provider postHref take precedence. |
-| search | palette; inline selects the shared input presentation, false removes search. |
+| search | palette; inline selects the shared input, dropdown selects rich anchored results, false removes search. |
 | searchProps | BlogSearchPalette callbacks, supplied authors/tags, trigger and palette options. |
+| searchResultProps | SearchWithResults options when search='dropdown'; caller selection/query/source options. |
 | filterMode | local; filters and pages the supplied array. manual displays exactly supplied rows and makes no request. |
 | filters | Optional controlled search/category/author/tag state. Category, author and tag values match IDs. Omitted state stays instance-local; manual mode leaves filtering to the caller. |
 | pagination | Optional controlled page counts. Omitted counts derive from local data. |
 | pageSize | 9; finite values clamp to 1–100 in local mode. |
 | onSearchChange / onCategoryChange / onPageChange | Optional intent callbacks, not persistence or a query transport. |
 | isLoading | false; shows an accessible loading state instead of the grid. |
+| empty | Optional React node replacing the grid's default empty presentation. |
 | headerActions / sidebar / children | Optional application-owned presentation slots. No theme switch is inserted. |
 | className | Additional outer layout classes. |
 
@@ -71,12 +69,14 @@ treated as raw HTML or automatically parsed Markdown.
 | Input | Default and behavior |
 | --- | --- |
 | variant | with-sidebar; alternatives default, wide and split. |
-| heroStyle | contained; fullwidth changes the media treatment. Split uses its own two-column hero. |
+| heroStyle | contained image with title/meta overlaid at the bottom. fullwidth widens it; editorial puts the heading above the image. Split uses its two-column hero. |
+| heroProps | Optional height, showGradient and showShare overrides; inherited hero defaults otherwise. |
 | tocItems | Explicit items, then post.toc, then block headings when rendering blocks. |
 | showHero / showToc / showAuthor / showRelated | true; each section still requires its relevant data. |
 | shareUrl | Omitted; no sharing section or floating copy control appears without a URL. |
 | showFloatingShare | true when a share URL exists; hidden on narrow screens. |
 | relatedPosts / recentPosts | Empty; related wins when populated, otherwise recent is a fallback. |
+| relatedPlacement | content (inside the reading column); wide opts into full-width related content. |
 | baseUrl | Related-post link prefix, subject to provider/post overrides. |
 | headerActions / sidebar / newsletter / footer | Application-owned nodes; absent slots create no placeholder feature. |
 | className | Additional outer classes. |
@@ -99,13 +99,19 @@ corresponding variant. None chooses an app route or fetches a post.
 
 BlogHero accepts title, excerpt, image/alt, author, publication date, reading
 time, categories and shareUrl. Its default is contained; BlogHeroCompact and
-BlogHeroContained are explicit wrappers. Missing media yields a compact hero.
+BlogHeroContained are explicit wrappers. Variants are contained, fullwidth,
+compact, split and editorial. height defaults lg (sm/md/full available),
+showGradient/showShare default true. Image-backed contained/fullwidth variants
+overlay text on a tokenized scrim; editorial preserves the above-image option.
+Missing media yields a compact hero.
 Invalid dates are omitted rather than throwing or inventing a publication date.
 
 BlogCard accepts post, default/featured/compact/horizontal/editorial variant,
 baseUrl, showCategory/showReadingTime/showAuthor, onCategoryClick, onClick and
 className. BlogCardGrid adds posts, 2/3/4 columns and emptyMessage.
 RecentPostsHero uses up to three articles in the asymmetrical Magazine layout;
+one article is centered and two use equal editorial cards. maxCategories
+defaults 2; showEmptyState defaults true with an optional empty node.
 RelatedPosts accepts an article list, title and baseUrl. Empty hero/related lists
 do not invent articles.
 

@@ -6,6 +6,7 @@ import { Typography, Prose, AuthorCardFeatured, BlogPostMeta, CategoryBadges, Em
 import { BlogCardGrid, RecentPostsHero, RelatedPosts } from './blog-cards';
 import { CategoryFilter, BlogPagination, TableOfContents, TableOfContentsSidebar, SocialShare, SearchBar } from './blog-navigation';
 import { BlogSearchPalette, type BlogSearchPaletteProps } from './blog-search';
+import { SearchWithResults, type SearchWithResultsProps } from './blog-search-results';
 import { BlogLink, useBlogScope } from './blog-provider';
 import { safeBlogHref, blogBlockToc, blogHeadingId, blogDate } from './blog-utils';
 import { BlockRenderer } from './blog-blocks';
@@ -14,18 +15,21 @@ import type { BlogPost, BlogCategory, BlogFilterState, BlogPaginationState, Blog
 export interface BlogHeroProps {
   title: string; excerpt?: string; featuredImage?: string; featuredImageAlt?: string;
   author?: BlogPost['author']; publishedAt?: string; readingTime?: string; categories?: readonly BlogCategory[];
-  shareUrl?: string; className?: string; variant?: 'contained' | 'fullwidth' | 'compact' | 'split';
+  shareUrl?: string; className?: string; variant?: 'contained' | 'fullwidth' | 'compact' | 'split' | 'editorial';
+  height?: 'sm' | 'md' | 'lg' | 'full'; showGradient?: boolean; showShare?: boolean;
 }
-export function BlogHero({ title, excerpt, featuredImage, featuredImageAlt, author, publishedAt, readingTime, categories, shareUrl, className, variant = 'contained' }: BlogHeroProps) {
+export function BlogHero({ title, excerpt, featuredImage, featuredImageAlt, author, publishedAt, readingTime, categories, shareUrl, className, variant = 'contained', height = 'lg', showGradient = true, showShare = true }: BlogHeroProps) {
   const source = safeBlogHref(featuredImage);
-  const share = safeBlogHref(shareUrl), canShare = share && /^https?:/u.test(share);
+  const share = safeBlogHref(shareUrl), canShare = showShare && share && /^https?:/u.test(share);
   const hasMeta = author || blogDate(publishedAt) || readingTime || canShare;
-  return <header className={cn('zero-blog-hero', className)} data-variant={source ? variant : 'compact'}>
-    <div className="zero-blog-hero-copy"><CategoryBadges categories={categories} /><Typography variant="h1" balance>{title}</Typography>
+  const overlay = !!source && (variant === 'contained' || variant === 'fullwidth');
+  const copy = <div className="zero-blog-hero-copy"><CategoryBadges categories={categories} /><Typography variant="h1" balance>{title}</Typography>
       {excerpt && <Typography variant="lead" color="secondary">{excerpt}</Typography>}
       {hasMeta && <div className="zero-blog-hero-meta"><BlogPostMeta post={{ id: '', slug: '', title, author, publishedAt, readingTime }} />{canShare && <SocialShare url={share} title={title} />}</div>}
-    </div>
-    {source && variant !== 'compact' && <img className="zero-blog-hero-image" src={source} alt={featuredImageAlt ?? ''} fetchPriority="high" decoding="async" />}
+    </div>;
+  const picture = source && variant !== 'compact' ? <img className="zero-blog-hero-image" src={source} alt={featuredImageAlt ?? ''} fetchPriority="high" decoding="async" /> : null;
+  return <header className={cn('zero-blog-hero', className)} data-variant={source ? variant : 'compact'} data-height={height} data-overlay={overlay || undefined}>
+    {overlay ? <div className="zero-blog-hero-frame">{picture}{showGradient && <div className="zero-blog-hero-scrim" aria-hidden="true" />}{copy}</div> : <>{copy}{picture}</>}
   </header>;
 }
 export function BlogHeroCompact(props: BlogHeroProps) { return <BlogHero {...props} variant="compact" />; }
@@ -38,12 +42,14 @@ export interface BlogListPageProps {
   pagination?: BlogPaginationState; pageSize?: number; filters?: BlogFilterState; isLoading?: boolean;
   onSearchChange?: (query: string) => void; onCategoryChange?: (id: string | null) => void; onPageChange?: (page: number) => void;
   /** Manual mode displays exactly the passed posts; it never issues a request. */
-  filterMode?: 'local' | 'manual'; search?: false | 'palette' | 'inline';
+  filterMode?: 'local' | 'manual'; search?: false | 'palette' | 'inline' | 'dropdown';
+  searchResultProps?: Omit<SearchWithResultsProps, 'posts'>;
   searchProps?: Omit<BlogSearchPaletteProps, 'posts' | 'categories'>;
   headerActions?: React.ReactNode; sidebar?: React.ReactNode; children?: React.ReactNode;
+  empty?: React.ReactNode;
 }
 export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our blog', description, variant = 'magazine', columns = 3, baseUrl, className,
-  showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, filterMode = 'local', search = 'palette', searchProps, headerActions, sidebar, children }: BlogListPageProps) {
+  showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, filterMode = 'local', search = 'palette', searchProps, searchResultProps, headerActions, sidebar, children, empty }: BlogListPageProps) {
   const scoped = useBlogScope();
   const [localFilters, setFilters] = React.useState<BlogFilterState>({}), [localPage, setPage] = React.useState(1);
   const state = filters ?? localFilters, query = state.search ?? '', category = state.category ?? null, author = state.author, tag = state.tag;
@@ -62,13 +68,13 @@ export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our
     <header className="zero-blog-list-header"><div><Typography variant="h1" balance>{title}</Typography>{description && <Typography variant="lead" color="secondary">{description}</Typography>}</div>{headerActions}</header>
     <div className="zero-blog-list-toolbar">
       {!!categories.length && <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}
-      {search && <div className="zero-blog-list-search">{search === 'inline' ? <SearchBar value={query} onChange={changeSearch} isLoading={isLoading} /> : <BlogSearchPalette {...searchProps} baseUrl={baseUrl ?? searchProps?.baseUrl} posts={posts} categories={categories}
+      {search && <div className="zero-blog-list-search">{search === 'inline' ? <SearchBar value={query} onChange={changeSearch} isLoading={isLoading} /> : search === 'dropdown' ? <SearchWithResults {...searchResultProps} posts={posts} baseUrl={baseUrl ?? searchResultProps?.baseUrl} /> : <BlogSearchPalette {...searchProps} baseUrl={baseUrl ?? searchProps?.baseUrl} posts={posts} categories={categories}
         onSelectCategory={searchProps?.onSelectCategory ?? (value => changeCategory(value.id))} />}</div>}
     </div>
     {showRecentHero && variant !== 'minimal' && !query && !category && !author && !tag && !!hero.length && <RecentPostsHero posts={hero} baseUrl={baseUrl} onCategoryClick={value => changeCategory(value.id)} />}
     <div className="zero-blog-list-body">{variant === 'sidebar' && <aside>{sidebar ?? <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}</aside>}
       <section className="zero-blog-all-posts"><div className="zero-blog-section-heading"><Typography variant="h2">{query ? `Results for “${query}”` : 'All blog posts'}</Typography><span className="zero-blog-muted">{current.totalItems ?? filtered.length} articles</span></div>
-        {isLoading ? <div role="status" className="zero-blog-empty">Loading articles…</div> : <BlogCardGrid posts={visible} columns={columns} baseUrl={baseUrl} variant={variant === 'list' ? 'horizontal' : 'default'} onCategoryClick={value => changeCategory(value.id)} emptyMessage={query ? 'No matching articles' : undefined} />}
+        {isLoading ? <div role="status" className="zero-blog-empty">Loading articles…</div> : <BlogCardGrid posts={visible} columns={columns} baseUrl={baseUrl} variant={variant === 'list' ? 'horizontal' : 'default'} onCategoryClick={value => changeCategory(value.id)} empty={empty} emptyMessage={query ? 'No matching articles' : undefined} />}
         <BlogPagination {...current} onPageChange={changePage} />
       </section>
     </div>{children}
@@ -80,11 +86,12 @@ export function BlogListPageMinimal(props: Omit<BlogListPageProps, 'variant'>) {
 
 export interface BlogPostPageProps {
   post: BlogPost; content?: React.ReactNode; tocItems?: readonly BlogTocItem[]; relatedPosts?: readonly BlogPost[]; recentPosts?: readonly BlogPost[];
-  variant?: 'with-sidebar' | 'default' | 'wide' | 'split'; heroStyle?: 'contained' | 'fullwidth'; shareUrl?: string; baseUrl?: string;
+  variant?: 'with-sidebar' | 'default' | 'wide' | 'split'; heroStyle?: 'contained' | 'fullwidth' | 'editorial'; shareUrl?: string; baseUrl?: string;
+  heroProps?: Pick<BlogHeroProps, 'height' | 'showGradient' | 'showShare'>; relatedPlacement?: 'content' | 'wide';
   showHero?: boolean; showToc?: boolean; showAuthor?: boolean; showRelated?: boolean; showFloatingShare?: boolean;
   className?: string; headerActions?: React.ReactNode; sidebar?: React.ReactNode; newsletter?: React.ReactNode; footer?: React.ReactNode;
 }
-export function BlogPostPage({ post, content, tocItems, relatedPosts = [], recentPosts = [], variant = 'with-sidebar', heroStyle = 'contained', shareUrl, baseUrl,
+export function BlogPostPage({ post, content, tocItems, relatedPosts = [], recentPosts = [], variant = 'with-sidebar', heroStyle = 'contained', heroProps, relatedPlacement = 'content', shareUrl, baseUrl,
   showHero = true, showToc = true, showAuthor = true, showRelated = true, showFloatingShare = true, className, headerActions, sidebar, newsletter, footer }: BlogPostPageProps) {
   const scoped = useBlogScope();
   const [contentRoot, setContentRoot] = React.useState<HTMLDivElement | null>(null), [autoToc, setAutoToc] = React.useState<BlogTocItem[]>([]);
@@ -106,7 +113,7 @@ export function BlogPostPage({ post, content, tocItems, relatedPosts = [], recen
   const entries = suppliedToc ?? autoToc, withSidebar = variant === 'with-sidebar', related = relatedPosts.length ? relatedPosts : recentPosts;
   return <article className={cn(!scoped && 'zero-blog', 'zero-public zero-blog-post', className)} data-variant={variant}>
     {headerActions && <div className="zero-blog-header-actions">{headerActions}</div>}
-    {showHero && <BlogHero title={post.title} excerpt={post.excerpt} featuredImage={post.featuredImage} featuredImageAlt={post.featuredImageAlt}
+    {showHero && <BlogHero {...heroProps} title={post.title} excerpt={post.excerpt} featuredImage={post.featuredImage} featuredImageAlt={post.featuredImageAlt}
       author={post.author} publishedAt={post.publishedAt} readingTime={post.readingTime} categories={post.categories} shareUrl={shareUrl}
       variant={variant === 'split' ? 'split' : heroStyle} />}
     <div className="zero-blog-article-body" data-sidebar={withSidebar || undefined}>
@@ -118,10 +125,11 @@ export function BlogPostPage({ post, content, tocItems, relatedPosts = [], recen
         {canShare && <section className="zero-blog-share-section"><Typography variant="label">Share this article</Typography><SocialShare url={share} title={post.title} /></section>}
         {showAuthor && post.author && <AuthorCardFeatured author={post.author} />}
         {newsletter}
+        {showRelated && relatedPlacement === 'content' && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={relatedPosts.length ? 'Related articles' : 'Recent articles'} />}
       </div>
       {withSidebar && <aside className="zero-blog-article-sidebar">{showToc && <TableOfContentsSidebar items={entries} contentRoot={contentRoot} />}{sidebar}</aside>}
     </div>
-    {showRelated && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={relatedPosts.length ? 'Related articles' : 'Recent articles'} />}
+    {showRelated && relatedPlacement === 'wide' && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={relatedPosts.length ? 'Related articles' : 'Recent articles'} />}
     {showFloatingShare && canShare && <aside className="zero-blog-floating-share" aria-label="Article sharing"><SocialShare url={share} title={post.title} platforms={[]} /></aside>}
     {footer}
   </article>;

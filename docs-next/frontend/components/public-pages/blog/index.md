@@ -13,14 +13,10 @@ modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-  snapshot: clean
+  commit: "ac857766bc10c8a0643622bf95bb541159592c31"
+  snapshot: dirty
   date: "2026-10-25"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
-    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
+  evidence_level: source-observed
 ---
 
 # Blog UI Components
@@ -80,6 +76,11 @@ readiness does not select it as the main package or enable publishing.
   article composition, TOC discovery and optional sections.
 - [Parts and media](./parts.md) covers cards, author/category presentation,
   pagination, images, media players, links, citations and newsletter UI.
+- [Images, search and previews](./images-and-previews.md) covers gallery zoom/lens,
+  rich hover cards, inline search, reading indicators and managed newsletter openings.
+- [Composable media](./media.md) lists every audio/video control and player option.
+- [Complete migration inventory](./migration.md) maps every recovered export,
+  including shared replacements and deliberate exclusions.
 - [Configuration and tokens](./configuration.md) documents presentation
   defaults, optional routing adaptation, theme inheritance and motion.
 - [Content blocks](./content-blocks.md) defines the escaped, typed renderer

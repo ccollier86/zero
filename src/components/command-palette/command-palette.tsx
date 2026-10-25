@@ -14,6 +14,9 @@ import { cn } from '../../lib/utils';
 import './command-palette.css';
 
 export interface CommandPaletteGroup { id: string; label: string; icon?: React.ReactNode; prefix?: string }
+export interface CommandPaletteController { isOpen: boolean; query: string; open: (origin?: Element | null) => void; close: () => void; toggle: (origin?: Element | null) => void; setQuery: (query: string) => void }
+const PaletteContext = React.createContext<CommandPaletteController | null>(null);
+export function useCommandPalette() { const controller = React.useContext(PaletteContext); if (!controller) throw new Error('useCommandPalette requires a CommandPaletteProvider.'); return controller; }
 export interface CommandPaletteItem<T = unknown> {
   id: string; label: string; description?: string; group?: string; keywords?: readonly string[];
   icon?: React.ReactNode; image?: React.ReactNode; trailing?: React.ReactNode; disabled?: boolean; data?: T;
@@ -45,12 +48,14 @@ export function filterCommandPaletteItems<T>(items: readonly CommandPaletteItem<
   }
   return matches;
 }
-export function CommandPaletteTrigger({ children, className, shortcut = false, ...props }: ButtonProps & { shortcut?: boolean }) {
-  return <Button type="button" variant="outline" {...props} className={cn('zero-command-palette-trigger', className)}>
+export function CommandPaletteTrigger({ children, className, shortcut = false, onClick, ...props }: ButtonProps & { shortcut?: boolean }) {
+  const controller = React.useContext(PaletteContext);
+  return <Button type="button" variant="outline" {...props} onClick={event => { onClick?.(event); if (!event.defaultPrevented && !onClick) controller?.open(event.currentTarget); }} className={cn('zero-command-palette-trigger', className)}>
     {children ?? <><Search aria-hidden="true" /><span>Search…</span>{shortcut && <KbdGroup><Kbd>⌘</Kbd><Kbd>K</Kbd></KbdGroup>}</>}
   </Button>;
 }
 export function CommandPalette<T = unknown>(props: CommandPaletteProps<T>) {
+  const inheritedController = React.useContext(PaletteContext);
   const [localOpen, setLocalOpen] = React.useState(props.defaultOpen ?? false), [trigger, setTrigger] = React.useState<HTMLElement | null>(null);
   const open = props.open ?? localOpen;
   const changeOpen = React.useCallback((next: boolean) => { if (props.open === undefined) setLocalOpen(next); props.onOpenChange?.(next); }, [props.open, props.onOpenChange]);
@@ -70,8 +75,20 @@ export function CommandPalette<T = unknown>(props: CommandPaletteProps<T>) {
     <ControlledModal open={open} onOpenChange={changeOpen} descriptor={{ title: props.title ?? 'Search', description: props.description,
       trigger: props.origin ?? trigger, size: 'lg', customSize: { width: String((props.style as Record<string, unknown> | undefined)?.['--zero-command-palette-width'] ?? 'var(--zero-command-palette-width,48rem)') },
       initialFocus: '[cmdk-input]', className: cn('zero-command-palette', props.className),
-      body: context => <div style={props.style}><CommandPaletteSurface {...props} context={context} /></div> }} />
+      body: context => <PaletteContext.Provider value={inheritedController}><div style={props.style}><CommandPaletteSurface {...props} context={context} /></div></PaletteContext.Provider> }} />
   </>;
+}
+export interface CommandPaletteProviderProps<T = unknown> extends Omit<CommandPaletteProps<T>, 'trigger' | 'origin'> { children: React.ReactNode; clearOnClose?: boolean }
+/** Optional application-owned controller, never a process/global command store. */
+export function CommandPaletteProvider<T = unknown>({ children, clearOnClose = true, ...props }: CommandPaletteProviderProps<T>) {
+  const [localOpen, setOpen] = React.useState(props.defaultOpen ?? false), [localQuery, setQuery] = React.useState(''), [origin, setOrigin] = React.useState<Element | null>(null);
+  const open = props.open ?? localOpen, query = props.query ?? localQuery;
+  const changeQuery = (value: string) => { const bounded = value.slice(0, 256); if (props.query === undefined) setQuery(bounded); props.onQueryChange?.(bounded); };
+  const changeOpen = (value: boolean) => { if (props.open === undefined) setOpen(value); props.onOpenChange?.(value); };
+  const previousOpen = React.useRef(open);
+  React.useEffect(() => { if (previousOpen.current && !open && clearOnClose) changeQuery(''); previousOpen.current = open; }, [open, clearOnClose]);
+  const controller: CommandPaletteController = { isOpen: open, query, setQuery: changeQuery, open: element => { setOrigin(element ?? null); changeOpen(true); }, close: () => changeOpen(false), toggle: element => { setOrigin(element ?? null); changeOpen(!open); } };
+  return <PaletteContext.Provider value={controller}>{children}<CommandPalette {...props} trigger={false} origin={origin} open={open} onOpenChange={changeOpen} query={query} onQueryChange={changeQuery} /></PaletteContext.Provider>;
 }
 function CommandPaletteSurface<T>({ context, ...props }: CommandPaletteProps<T> & { context: ModalContext }) {
   const [localQuery, setQuery] = React.useState(''), [selectedGroup, setGroup] = React.useState<string | undefined>(), [pending, setPending] = React.useState(false), [error, setError] = React.useState(false);

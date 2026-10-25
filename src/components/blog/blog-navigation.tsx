@@ -66,6 +66,9 @@ export function TableOfContents({ items, title = 'On this page', collapsible = f
   </section>;
 }
 export function TableOfContentsSidebar(props: TableOfContentsProps) { return <TableOfContents {...props} className={cn('zero-blog-toc-sidebar', props.className)} />; }
+export function TableOfContentsFloating({ placement = 'right', ...props }: TableOfContentsProps & { placement?: 'left' | 'right' }) {
+  return <div className="zero-blog-toc-floating" data-placement={placement}><TableOfContents {...props} /></div>;
+}
 export interface SocialShareProps { url?: string; title?: string; platforms?: readonly ('x' | 'linkedin' | 'facebook' | 'email')[]; showCopyLink?: boolean; className?: string; onCopyError?: (error: unknown) => void }
 export function SocialShare({ url, title = '', platforms = ['x', 'linkedin', 'facebook', 'email'], showCopyLink = true, className, onCopyError }: SocialShareProps) {
   const [copied, setCopied] = React.useState<string | null>(null), [error, setError] = React.useState(false), timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined), alive = React.useRef(true), pending = React.useRef(false);

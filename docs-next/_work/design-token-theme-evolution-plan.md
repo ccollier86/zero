@@ -78,6 +78,15 @@ modal/cmdk/ScrollArea/magnetic ownership and its own semantic geometry aliases.
 The editorial page-number treatment is an opt-in variant of the existing
 Pagination primitive. Existing application pagination visuals remain unchanged.
 
+The completed UI parity slice additionally records contained-hero on-image text/
+scrim and responsive height tokens, rich author/category preview geometry and
+optional inner tilt, inline search preview dimensions, bounded image lens/zoom/
+thumbnail geometry, real reading-progress indicators and pointer spotlight paint.
+Composable audio/video retain one native controller and semantic-token minimal/
+synthwave variants; no duplicate palette, theme registry or idle animation engine
+is imported. [Migration inventory](../frontend/components/public-pages/blog/migration.md)
+maps every original export, shared replacement and deliberate exclusion.
+
 The supplied **Ingestion Pipeline.html** and **Vector Search.html** provide the
 first detailed references. Preserve the character of both the animated scenes
 and their functional interface. Do not reduce the reference to the isometric map

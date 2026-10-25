@@ -25,7 +25,7 @@ reviewed_against:
 
 Popover is appropriate for a filter panel or short local editor. Public root/
 react and /components/popover export Popover, PopoverTrigger, PopoverContent,
-PopoverClose, optional PopoverViewport and their matching Props types. The wrapper owns its portal.
+PopoverClose, optional PopoverAnchor/PopoverViewport and their matching Props types. The wrapper owns its portal.
 
 The canonical implementation lives in `components/surfaces/popover`; supported
 public imports and former Animate UI paths remain forwards to that same owner.
@@ -60,7 +60,12 @@ Default align=center, sideOffset4, width w-72 and tokenized popover surface.
 Positioning/collision options and focus/open/close/outside/Escape callbacks are
 forwarded to the Radix layer; animation/Motion props style the owned div.
 The wrapper supplies an animated portal with enter/exit. Public composition
-does not expose private Anchor/Arrow/Portal/usePopover APIs.
+does not expose private Arrow/Portal/usePopover APIs. PopoverAnchor is public
+for non-toggle positioning, such as an input whose focus/query controls the
+opening. It accepts Radix Anchor props/ref/asChild and supplies the same live
+theme/motion origin reference as a trigger, without button or toggle semantics.
+Use PopoverTrigger for actual toggle buttons; keep focus ownership deliberate
+when anchoring a combobox. The blog inline search is a tested composition.
 
 ## Anchored Motion
 
