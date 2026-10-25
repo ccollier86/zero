@@ -235,6 +235,10 @@
       "types": "./src/schema/index.ts",
       "import": "./src/schema/index.ts"
     },
+    "./seo": {
+      "types": "./src/seo/index.ts",
+      "import": "./src/seo/index.ts"
+    },
     "./logging": {
       "types": "./src/logging/index.ts",
       "import": "./src/logging/index.ts"

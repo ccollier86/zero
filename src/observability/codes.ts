@@ -26,6 +26,7 @@ function code(
 
 /** Stable platform observability codes. */
 export const OBS_CODES = {
+  SEO_DISCOVERY_FAILED: code('seo', 'discovery.failed', 'warn', 'Public SEO discovery is temporarily unavailable.'),
   PAYMENTS_JOB_RETRY: code('payments', 'job.retry', 'warn', 'Billing background work will retry.'),
   PAYMENTS_JOB_QUARANTINED: code('payments', 'job.quarantined', 'error', 'Billing background work needs operator recovery.'),
   PAYMENTS_WORKER_FAILED: code('payments', 'worker.failed', 'error', 'Billing worker could not access its durable queue.'),

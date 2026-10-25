@@ -27,7 +27,7 @@ async function write(root: string, name: string, contents: string | Uint8Array):
 }
 function configModule(kind: 'default' | 'named'): string {
   return ['import {defineZeroConfig} from "@zero/framework/server";', 'export const retainedNamedExport="retained-package-entry";',
-    'const selected=defineZeroConfig({app:{name:"Installed Zero Reader",publicUrl:"https://docs.example.test"},db:{mode:"ephemeral"},tables:{},auth:false,email:false,migrate:false,observability:false,ai:false,vector:false,kv:false,serverMiddlewareDir:false,serverEndpointsDir:false,serverRoutesDir:false,serverResourcesDir:false});',
+    'const selected=defineZeroConfig({app:{name:"Installed Zero Reader",publicUrl:"https://docs.example.test"},seo:{title:"Installed Zero Reader",openGraph:{images:["/social.png"]}},db:{mode:"ephemeral"},tables:{},auth:false,email:false,migrate:false,observability:false,ai:false,vector:false,kv:false,serverMiddlewareDir:false,serverEndpointsDir:false,serverRoutesDir:false,serverResourcesDir:false});',
     kind === 'default' ? 'export default selected; export const config=selected; export const appConfig=selected;' : 'export const zeroConfig=selected; export const appConfig=selected; export default "the named object is deliberately authoritative";',
   ].join('\n');
 }
@@ -66,6 +66,8 @@ async function createConsumer(root: string, framework: string, docs: string): Pr
     'import {CodeBlock,CodeBlockRoot,CodeBlockFiles,CodeBlockInline,Kbd,KbdGroup} from "@zero/framework/react"; import {prepareCodeBlock} from "@zero/framework/components/code-block/server";',
     'import {Kbd as FocusedKbd,KbdGroup as FocusedKbdGroup} from "@zero/framework/components/kbd"; import {createElement} from "react"; import {renderToStaticMarkup} from "react-dom/server";',
     'import {readCodeBlockMetadata} from "@zero/framework/components/code-block/metadata";',
+    'import {renderSeoMetadata} from "@zero/framework/seo";',
+    'if(renderSeoMetadata({canonical:"/docs"},{requestUrl:"https://untrusted.test/docs",siteUrl:"https://docs.example.test"}).canonical!=="https://docs.example.test/docs")throw new Error("Public SEO facade failed");',
     'if([docs,compileDocsContent,DocsContentError,DocsApp,defineZeroPlugin,prepareAppBuild,renderServerPage,isReservedAppRoutePath,CodeBlock,CodeBlockRoot,CodeBlockFiles,CodeBlockInline,Kbd,KbdGroup,prepareCodeBlock,readCodeBlockMetadata].some(value=>value===undefined)) throw new Error("Public package export is missing");',
     'if(Kbd!==FocusedKbd||KbdGroup!==FocusedKbdGroup) throw new Error("Keyboard hints must share the public framework facade");',
     'const keyboardHtml=renderToStaticMarkup(createElement(KbdGroup,null,createElement(Kbd,null,"Ctrl"),createElement(Kbd,null,"K")));',
@@ -99,6 +101,10 @@ async function verifyDeployment(url: string) {
   expect(html).toContain('data-slot="kbd"');
   expect(html).not.toContain('PRIVATE_INSTALLED_SOURCE_SENTINEL'); expect(html).not.toContain('PRIVATE_INSTALLED_WORK_SENTINEL'); expect(html).not.toContain('Restoring your secure session');
   expect(response.headers.get('content-security-policy')).toContain("script-src 'self' 'nonce-"); expect(response.headers.get('link')).toBe('<https://docs.example.test/docs>; rel="canonical"');
+  expect(html).toContain('rel="canonical" href="https://docs.example.test/docs"');
+  expect(html).toContain('property="og:image" content="https://docs.example.test/social.png"');
+  expect(html).toContain('name="twitter:card" content="summary_large_image"'); expect(html).toContain('type="application/ld+json" nonce="');
+  expect(response.headers.get('X-Robots-Tag')).toBe('index, follow');
   const head = await fetch(url + '/docs', { method: 'HEAD' }); expect(head.status).toBe(200); expect(await head.text()).toBe('');
   expect(await (await fetch(url + '/entry-hook')).json()).toEqual({ retained: 'retained-package-entry', same: true, compiled: true });
   const search = await (await fetch(url + '/docs/_api/search?q=Details')).json(); expect(search.results.some((result: { route: string }) => result.route === '/docs/guides/start#details')).toBe(true);
@@ -112,6 +118,8 @@ async function verifyDeployment(url: string) {
   for (const path of new Set(publicUrls)) { const result = await fetch(url + path); expect(result.status).toBe(200); const body = await result.text(); expect(body.length).toBeGreaterThan(0); expect(body).not.toContain('PRIVATE_INSTALLED'); }
   expect((await fetch(url + '/_build/frontend-build.json')).status).toBe(404); expect((await fetch(url + '/_build/documentation/private.md')).status).toBe(404);
   const sitemap = await (await fetch(url + '/docs/sitemap.xml')).text(); expect(sitemap).toContain('https://docs.example.test/docs/guides/start'); expect(sitemap).not.toContain('PRIVATE_INSTALLED');
+  const combined = await (await fetch(url + '/sitemap.xml')).text(); expect(combined).toContain('https://docs.example.test/docs/guides/start'); expect(combined).not.toContain('/docs/private');
+  expect(await (await fetch(url + '/robots.txt')).text()).toContain('Sitemap: https://docs.example.test/sitemap.xml');
   return { publicUrls: [...new Set(publicUrls)], assetRoute };
 }
 

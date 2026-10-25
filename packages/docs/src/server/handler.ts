@@ -32,7 +32,8 @@ export function createDocsRequestHandler(runtime: DocsSnapshotRuntime, options: 
         return page ? readText(page.markdown, 'text/markdown; charset=utf-8') : errorResponse(404, 'DOCS_NOT_FOUND');
       }
       if (route === prefix + '/llms.txt') return readText(docsAgentIndex(manifest, options.title), 'text/plain; charset=utf-8');
-      if (route === prefix + '/sitemap.xml') return options.siteUrl ? readText(docsSitemap(manifest, options.siteUrl), 'application/xml; charset=utf-8') : errorResponse(404, 'DOCS_NOT_FOUND');
+      if (route === prefix + '/sitemap.xml') return options.siteUrl ? readText(docsSitemap(context.seo?.indexingEnabled === false
+        ? { ...manifest, pages: [] } : manifest, options.siteUrl), 'application/xml; charset=utf-8') : errorResponse(404, 'DOCS_NOT_FOUND');
       const asset = manifest.assets.find(item => item.route === route);
       if (asset) { const bytes = snapshot.assets.get(asset.id); return bytes ? docsAssetResponse(request, asset, bytes) : errorResponse(503, 'DOCS_ASSET_UNAVAILABLE'); }
       const redirect = manifest.redirects.find(item => item.from === route);

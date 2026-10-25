@@ -39,6 +39,12 @@ For the default `/docs` mount, GET and HEAD are read-only:
 | `/docs/_api/markdown?path=%2Fdocs%2Fguide` | Frontmatter-free published Markdown for one canonical page |
 | `/docs/llms.txt` | Public page index intended for agent discovery |
 | `/docs/sitemap.xml` | Public canonical URLs, with `siteUrl` or trusted app `publicUrl` |
+
+The [SEO extension](../../backend/configuration/seo.md) also registers published
+docs with the app `/sitemap.xml`, retains per-page canonical headers, and emits
+canonical/social/JSON-LD metadata in HTML. Global noindex policy applies to HTML,
+HEAD and sitemap page lists. Excluded/private files never enter either sitemap;
+an old publication snapshot is not retained during development withdrawal.
 | Manifest-owned `/_assets/...` routes under the mount | Referenced admitted passive attachments |
 
 Search accepts queries of at most 200 UTF-16 code units without U+0000–U+001F

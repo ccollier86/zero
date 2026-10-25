@@ -241,6 +241,8 @@ export interface ZeroMiddlewareDefinition<
 
 /** Context passed to defineZeroPlugin setup callbacks. */
 export interface ZeroPluginSetupContext {
+  /** Shared app SEO policy and deliberate public sitemap registration. Optional for standalone composition. */
+  readonly seo?: import('../../seo/runtime').SeoRuntime;
   app: ReturnType<typeof createServerRoute>;
   zero: ServerRouteServices;
   /** Immutable application/configuration origin captured before plugin compilation. */
@@ -289,6 +291,7 @@ export type ZeroServerExtensionMountable = ZeroServerExtension | ServerRoutePlug
 
 /** Build artifacts supplied once to a server-extension composition boundary. */
 export interface ServerExtensionFrontendContext {
+  readonly seo?: import('../../seo/runtime').SeoRuntime;
   readonly projectRoot: string;
   readonly appDir?: string;
   readonly appIdentity?: Readonly<AppIdentityConfig>;
@@ -637,6 +640,7 @@ async function applyPlugin(
       ? emitPlatformCodeTo.bind(null, observability)
       : emitPlatformCode,
     frontend: frontendContext?.frontend ?? Object.freeze({ plugins: Object.freeze({}) }),
+    seo: frontendContext?.seo,
   }));
 
   return usePlugin(app, result ?? child);

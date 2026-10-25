@@ -46,6 +46,7 @@ import { createServerExtensionApp, type ZeroServerExtensionMountable } from './s
 import type { ResolvedAppFrontendAssets } from './server-plugin-build-types';
 import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 import type { ResolvedConfig } from './types';
+import { createSeoRuntime } from '../../seo/runtime';
 
 interface MountPlatformRoutesInput {
   readonly app: Elysia;
@@ -85,6 +86,7 @@ export async function mountPlatformRoutes({
   serverExtensions,
   frontend,
 }: MountPlatformRoutesInput): Promise<readonly AppStopHook[]> {
+  const seo = createSeoRuntime(config.seo, config.app.publicUrl);
   const getAuthStore = () => runtime.get(ZERO_AUTH_STORE);
   const getTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
   const getRequestCredentialResolver = () => (
@@ -188,8 +190,10 @@ export async function mountPlatformRoutes({
     }) as any);
   }
 
+  const frontendContext = { seo, projectRoot: config.projectRoot, appDir: config.appDir, appIdentity: config.app, generatedDir: config.generatedDir, pluginBuildFiles: config.pluginBuildFiles, frontend: frontend ?? Object.freeze({ plugins: Object.freeze({}) }) };
   const serverRoutePlugins = serverExtensions === undefined ? await loadServerRoutePlugins({
     runtime,
+    frontendContext,
     extensionDirs: [
       { kind: 'plugins', dir: config.serverPluginsDir },
       { kind: 'middleware', dir: config.serverMiddlewareDir },
@@ -198,7 +202,7 @@ export async function mountPlatformRoutes({
     ],
   }) : serverExtensions.length === 0 ? [] : [await createServerExtensionApp({
     extensions: [...serverExtensions], runtime,
-    frontendContext: { projectRoot: config.projectRoot, appDir: config.appDir, appIdentity: config.app, generatedDir: config.generatedDir, pluginBuildFiles: config.pluginBuildFiles, frontend: frontend ?? Object.freeze({ plugins: Object.freeze({}) }) },
+    frontendContext,
   })];
   const hooksBeforeAppExtensions = new Set(getAppStopHooks(app));
   for (const serverRoutePlugin of serverRoutePlugins) {
@@ -213,6 +217,7 @@ export async function mountPlatformRoutes({
   // The file router is the final catch-all. Request URLs remain derived at
   // runtime so this composition is independent of its eventual listener.
   app.use(createRouterPlugin({
+    seo,
     observability: observabilityRuntime,
     appDir: config.appDir,
     outDir: config.outDir,

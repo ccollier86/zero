@@ -6,8 +6,42 @@ import { setupDocs } from './setup';
 import { readDocsCompiledSnapshot, admitDocsBuildData } from './artifact';
 import { searchDocs } from './search';
 import { docsRuntimeFixture } from './test-fixture';
+import { createSeoRuntime } from '@zero/framework/server';
 
 describe('public documentation runtime', () => {
+  test('shared SEO emits full HTML metadata and contributes only currently published docs to the app sitemap', async () => {
+    const fixture = await docsRuntimeFixture({ 'index.md': '# Public home', 'guide.md': '# Public guide',
+      'private.md': '---\nvisibility: private\n---\n# PRIVATE_SEO_SENTINEL' }, { title: 'Docs', siteUrl: 'https://public.example' });
+    try {
+      const context = fixture.context(), seo = createSeoRuntime({ openGraph: {}, twitter: {} }, 'https://public.example');
+      const scoped = { ...context, seo }; await setupDocs(scoped, fixture.options);
+      expect(await seo.sitemapEntries()).toEqual(expect.arrayContaining([{ href: 'https://public.example/docs' }, { href: 'https://public.example/docs/guide' }]));
+      expect(JSON.stringify(await seo.sitemapEntries())).not.toContain('private');
+      const response = await scoped.app.handle(new Request('https://spoofed.example/docs/guide?tracking=discarded'));
+      const html = await response.text(); expect(response.status).toBe(200);
+      expect(html).toContain('rel="canonical" href="https://public.example/docs/guide"');
+      expect(html).toContain('property="og:title"'); expect(html).toContain('name="twitter:card"');
+      expect(html).toContain('application/ld+json'); expect(html).not.toContain('spoofed.example'); expect(html).not.toContain('tracking=');
+      const missing = await scoped.app.handle(new Request('https://request.example/docs/private'));
+      expect(missing.status).toBe(404); expect(missing.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+      expect(await missing.text()).not.toContain('rel="canonical"');
+    } finally { await fixture.close(); }
+  });
+
+  test('app preview policy also covers docs HTML, HEAD and its independent sitemap', async () => {
+    const fixture = await docsRuntimeFixture({ 'index.md': '# Preview' }, { siteUrl: 'https://public.example' });
+    try {
+      const context = { ...fixture.context(), seo: createSeoRuntime({ indexing: false }, 'https://public.example') };
+      await setupDocs(context, fixture.options);
+      const response = await context.app.handle(new Request('https://request.example/docs'));
+      expect(response.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+      expect(await response.text()).toContain('content="noindex, nofollow"');
+      const head = await context.app.handle(new Request('https://request.example/docs', { method: 'HEAD' }));
+      expect(head.headers.get('X-Robots-Tag')).toBe('noindex, nofollow'); expect(await head.text()).toBe('');
+      expect(await (await context.app.handle(new Request('https://request.example/docs/sitemap.xml'))).text()).not.toContain('<loc>');
+      expect(await context.seo.sitemapEntries()).toEqual([]);
+    } finally { await fixture.close(); }
+  });
   test('SSR, search, manifest, agent index, sitemap, raw Markdown and attachments share admitted content', async () => {
     const fixture = await docsRuntimeFixture({ 'index.md': '# Welcome\n\nRead this public guide.\n\n[Download](report.pdf)\n\n## Configuration\n\nUse these settings.\n\n<script>BODY_SENTINEL</script>',
       'guide.md': '# Guide\n\n## Configuration\n\nDetailed settings.', 'private.md': '---\nvisibility: private\n---\n# PRIVATE_SENTINEL', '_work/notes.md': '# WORK_SENTINEL', 'report.pdf': '%PDF-1.7\nPUBLIC_ATTACHMENT' },

@@ -19,6 +19,7 @@ import {
   isZeroServerExtension,
   type ServerRoutePlugin,
   type ZeroServerExtensionMountable,
+  type ServerExtensionFrontendContext,
 } from './server-extensions';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { ZERO_OBSERVABILITY_RUNTIME } from '../../runtime/service-keys';
@@ -48,6 +49,7 @@ export interface ServerRouteExtensionDirectory {
 
 /** Options for loading app-owned Elysia server route modules. */
 export interface ServerRouteLoaderOptions {
+  frontendContext?: ServerExtensionFrontendContext;
   /** Backwards-compatible route directory. Defaults to `./server/routes`. */
   routesDir?: string;
   /** Ordered extension directories. When provided, routesDir is ignored. */
@@ -77,7 +79,7 @@ export async function loadServerRoutePlugins(
   const extensions = await loadServerRouteExtensions(options);
   return extensions.length === 0
     ? []
-    : [await createServerExtensionApp({ extensions: [...extensions], runtime: options.runtime })];
+    : [await createServerExtensionApp({ extensions: [...extensions], runtime: options.runtime, frontendContext: options.frontendContext })];
 }
 
 /**

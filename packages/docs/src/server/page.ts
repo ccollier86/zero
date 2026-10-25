@@ -28,12 +28,17 @@ export async function renderDocsPage(request: Request, page: DocsPage, snapshot:
   // renderer's early HEAD return would otherwise omit CSP/render failure metadata.
   const renderRequest = request.method === 'HEAD' ? new Request(request, { method: 'GET' }) : request;
   const response = await renderServerPage({ component: DocsApp, props, request: renderRequest, appDir: context.appDir, frontend: context.frontend,
-    pluginName: options.name, rootId: 'zero-docs-root', nonce, status, meta: { title: `${page.title} · ${options.title}`, description: page.description }, emitCode: context.emitCode });
+    pluginName: options.name, rootId: 'zero-docs-root', nonce, status, seo: context.seo,
+    meta: { title: `${page.title} · ${options.title}`, description: page.description,
+      ...(options.siteUrl && status < 400 ? { canonical: options.siteUrl + page.route,
+        openGraph: { type: 'article', siteName: options.title }, twitter: {},
+        jsonLd: { '@context': 'https://schema.org', '@type': 'WebPage', name: page.title, description: page.description, url: options.siteUrl + page.route } } : {}) }, emitCode: context.emitCode });
   const bytes = new Uint8Array(await response.arrayBuffer());
   const headers = docsHeaders(response.headers.get('Content-Type') ?? 'text/html; charset=utf-8', '"' + docsHash(bytes) + '"');
   // A 304 with a fresh nonce could replace the cached CSP while retaining old
   // nonce-bearing markup. Request-local HTML is never shared or revalidated.
   headers.set('Cache-Control', 'private, no-store');
+  if (response.headers.has('X-Robots-Tag')) headers.set('X-Robots-Tag', response.headers.get('X-Robots-Tag')!);
   headers.set('Content-Length', String(bytes.byteLength));
   headers.set('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' https: http: data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'`);
   if (options.siteUrl && status < 400) headers.set('Link', `<${options.siteUrl + page.route}>; rel="canonical"`);

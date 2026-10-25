@@ -7,7 +7,7 @@ import type { ZeroPluginDefinition } from './server-extensions';
 import { AppPluginBuildError } from './server-plugin-build-error';
 
 /** Core namespaces that content page mounts must not reinterpret as documentation. */
-export const RESERVED_APP_ROUTE_PREFIXES: readonly string[] = Object.freeze(['/_build', '/api', '/auth', '/sync', '/storage', '/workflows', '/rooms', '/notifications', '/scheduler', '/.well-known']);
+export const RESERVED_APP_ROUTE_PREFIXES: readonly string[] = Object.freeze(['/_build', '/api', '/auth', '/sync', '/storage', '/workflows', '/rooms', '/notifications', '/scheduler', '/.well-known', '/robots.txt', '/sitemap.xml']);
 
 /** Check a canonical route against the same reserved namespace registry used by build admission. */
 export function isReservedAppRoutePath(path: string): boolean {

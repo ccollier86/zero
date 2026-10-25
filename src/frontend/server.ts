@@ -24,6 +24,9 @@ export { prepareAppBuild } from './server/app-build';
 export type { PreparedAppBuild } from './server/app-build';
 export { renderServerPage } from './server/server-page-renderer';
 export type { RenderServerPageOptions } from './server/server-page-renderer';
+export { createSeoRuntime } from '../seo/runtime';
+export type { SeoRuntime, SeoSitemapProvider } from '../seo/runtime';
+export type { SeoConfig, PageMetadata, OpenGraphMeta, TwitterMeta, RobotsMeta, SeoJson } from '../seo';
 export { AppPluginBuildError } from './server/server-plugin-build-error';
 export { isReservedAppRoutePath, RESERVED_APP_ROUTE_PREFIXES } from './server/server-plugin-build-route-ownership';
 export type {

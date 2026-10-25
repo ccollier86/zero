@@ -46,6 +46,14 @@ The root is relative to Zero's captured application project root, not the
 request's current working directory. Production must use the declared app-build
 workflow and its compiled manifest; it does not silently rescan source files.
 
+The SEO feature-branch integration uses the framework's shared HTML metadata
+renderer and contributes the current public manifest to the application's
+sitemap. Trusted site URLs supply canonical/social/WebPage metadata; global
+preview noindex policy also covers the reader and its sitemap. Use matching
+framework and docs archives containing this extension, not only matching
+2.6.0/0.1.1 version strings. A normal framework update does not replace this
+separate optional package.
+
 ## Configuration
 
 ```ts

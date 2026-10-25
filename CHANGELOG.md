@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added the opt-in SEO foundation: typed site/layout/page metadata, canonical
+  URLs, Open Graph/Twitter cards, bounded safe JSON-LD, language alternates,
+  robots directives and robots.txt. File and native-plugin HTML share one
+  serializer; preview noindex policy also covers docs and sitemap discovery.
+  Published docs automatically contribute to the app-local sitemap. Manual
+  entries no longer bypass known file-route auth/noindex requirements, and ISR
+  retains SEO headers. No database migration, theme change or router rewrite.
+
 - Added an offline-only legacy-state boundary under `@zero/framework/migrations`
   for the admitted Zero 1.3 combined schema: approved plans, fresh private
   generations, original identity/credential/token/Storage/workflow preservation,

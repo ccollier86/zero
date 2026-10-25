@@ -18,9 +18,14 @@ export async function setupDocs(context: ZeroPluginSetupContext, options: Resolv
     ...(watching ? { watchRoot: docsContentRoot(context.projectRoot, options),
       compile: () => compileDocsSnapshot(context.projectRoot, options, 'development', context.emitCode), failed: () => emit(OBS_CODES.DOCS_REBUILD_FAILED) } : {}) });
   const handler = createDocsRequestHandler(runtime, options, context);
+  const unregisterSitemap = context.seo?.registerSitemap(options.name, () => {
+    const current = runtime.current();
+    if (!current) throw new Error('Documentation publication is pending.');
+    return current.data.manifest.pages.map(page => ({ href: options.siteUrl ? options.siteUrl + page.route : page.route }));
+  });
   const mount = options.basePath, nested = options.basePath === '/' ? '/*' : options.basePath + '/*';
   context.app.get(mount, ({ request }) => handler(request)).head(mount, ({ request }) => handler(request))
     .get(nested, ({ request }) => handler(request)).head(nested, ({ request }) => handler(request))
-    .onStop(async () => { await runtime.dispose(); emit(OBS_CODES.DOCS_STOPPED); });
+    .onStop(async () => { unregisterSitemap?.(); await runtime.dispose(); emit(OBS_CODES.DOCS_STOPPED); });
   emit(OBS_CODES.DOCS_STARTED);
 }

@@ -39,6 +39,7 @@ Browser navigation and prefetched modules are not authorization.
 - [Rendering and hydration](./rendering-and-hydration.md): server/client boundaries.
 - [Revalidation](./revalidation.md): deliberate anonymous cache behavior.
 - [Sitemap](./sitemap.md): public discovery and explicit dynamic entries.
+- [SEO metadata](../../backend/configuration/seo.md): shared page/layout metadata, canonical URLs, cards, structured data and crawler settings.
 - [Roadmap](./roadmap.md): known ideas separate from current route contracts.
 
 The inspected philosophy is convention-based structure with explicit, monotonic

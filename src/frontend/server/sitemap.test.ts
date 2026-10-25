@@ -13,7 +13,8 @@ import { describe, expect, test } from 'bun:test';
 import { buildRouteTree } from '../router/route-tree';
 import { scanRoutes } from '../router/scanner';
 import { createRouterPlugin } from './router-plugin';
-import { collectSitemapEntries, generateSitemapXml } from './sitemap';
+import { collectSitemapEntries, generateSitemapXml, renderSitemapXml } from './sitemap';
+import { createSeoRuntime, resolveSeoConfig } from '../../seo/runtime';
 import type { ResolvedSitemapConfig } from './types';
 
 const sitemapConfig: ResolvedSitemapConfig = {
@@ -167,6 +168,38 @@ describe('sitemap generation', () => {
       expect(response.headers.get('content-type')).toContain('application/xml');
       expect(await response.text()).toContain('<loc>https://zero.example/</loc>');
     });
+  });
+
+  test('applies base-path admission and exclusions to absolute entries without duplicating canonicals', async () => {
+    await withTempApp(async (appDir) => {
+      await writeRoute(appDir, 'page.ts', 'export default function Page() { return null; }');
+      await writeRoute(appDir, 'visible/page.ts', 'export default function Page() { return null; }');
+      await writeRoute(appDir, 'private/page.ts', 'export default function Page() { return null; }');
+      await writeRoute(appDir, 'hidden/page.ts', 'export const meta={robots:{index:false}}; export default function Page() { return null; }');
+      await writeRoute(appDir, 'external/page.ts', 'export const meta={canonical:"https://other.example/original"}; export default function Page() { return null; }');
+      await writeRoute(appDir, 'guides/[slug]/page.ts', 'export const meta=p=>({canonical:"/guides/"+p.slug}); export default function Page() { return null; }');
+      const publicUrl = 'https://zero.example/base';
+      const xml = await generateSitemapXml({
+        routeTree: buildRouteTree(scanRoutes(appDir)),
+        config: { ...sitemapConfig, entries: [
+          { href: publicUrl + '/visible', priority: 0.9 }, { href: publicUrl + '/private' }, { href: publicUrl + '/hidden' },
+          { href: publicUrl + '/excluded/item' }, { href: '/excluded-other' }, { href: publicUrl + '/guides/allowed' },
+        ], exclude: ['/excluded'] },
+        requestUrl: 'https://untrusted.example/sitemap.xml', publicUrl,
+        routeAuth: 'protected-by-default', publicPaths: ['/', '/visible', '/hidden', '/external', '/guides'],
+        seo: createSeoRuntime(resolveSeoConfig({}, publicUrl), publicUrl),
+      });
+      expect(getLocs(xml)).toEqual([publicUrl + '/', publicUrl + '/excluded-other', publicUrl + '/guides/allowed', publicUrl + '/visible']);
+      expect(xml).toContain('<priority>0.9</priority>');
+      expect(xml).not.toContain('/base/base'); expect(xml).not.toContain('other.example');
+      expect(xml).not.toContain('/private'); expect(xml).not.toContain('/hidden'); expect(xml).not.toContain('/excluded/item');
+    });
+  });
+
+  test('bounds XML entry count and rejects cross-origin or unsafe URLs', () => {
+    expect(() => renderSitemapXml(Array.from({ length: 50001 }, () => ({ href: '/page' })), sitemapConfig, 'https://zero.example')).toThrow('Invalid SEO metadata: sitemap.entries.');
+    expect(() => renderSitemapXml([{ href: 'https://other.example/page' }], sitemapConfig, 'https://zero.example')).toThrow('Invalid SEO metadata: sitemap.origin.');
+    expect(() => renderSitemapXml([{ href: 'javascript:alert(1)' }], sitemapConfig, 'https://zero.example')).toThrow('Invalid SEO metadata: url.');
   });
 });
 

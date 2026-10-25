@@ -3,6 +3,7 @@ import type { GenericSchema } from 'valibot';
 import type { RequestAuthorizationAccess } from '../../auth/authorization-access';
 import type { AccessRequirement } from '../../auth/authorization-kernel';
 import type { AuthContext } from '../../auth/types';
+import type { PageMetadata } from '../../seo';
 
 // ─── Route Definition ──────────────────────────────────────────────────────
 
@@ -20,7 +21,7 @@ export interface RouteModule {
   /** Data loader — runs on server before render */
   loader?: (ctx: LoaderContext) => unknown | Promise<unknown>;
   /** Page metadata */
-  meta?: PageMeta | ((params: Record<string, string>) => PageMeta);
+  meta?: PageMeta | ((params: Record<string, string>) => PageMeta | Promise<PageMeta>);
   /** Runtime validation applied before loaders and page rendering. */
   validate?: RouteValidation;
   /** API route handlers */
@@ -107,9 +108,7 @@ export interface LoaderContext {
 export type ApiHandler = (ctx: LoaderContext) => Response | Promise<Response>;
 
 /** Page metadata for <head>. */
-export interface PageMeta {
-  title?: string;
-  description?: string;
+export interface PageMeta extends PageMetadata {
   [key: string]: unknown;
 }
 

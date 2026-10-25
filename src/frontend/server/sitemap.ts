@@ -13,6 +13,11 @@ import {
   type RouteAuthRequirement,
 } from '../router/auth-policy';
 import type { RouteConfig, RouteNode } from '../router/types';
+import type { RouteModule } from '../router/types';
+import { matchRoute } from '../router/matcher';
+import { mergePageMetadata, renderSeoMetadata, SeoError } from '../../seo';
+import { seoUrl } from '../../seo/validation';
+import type { SeoRuntime } from '../../seo/runtime';
 import type { ResolvedSitemapConfig, SitemapEntry } from './types';
 
 /** Options required to generate a sitemap for the current request. */
@@ -23,6 +28,8 @@ export interface GenerateSitemapXmlOptions {
   publicUrl?: string;
   routeAuth: RouteAuthMode;
   publicPaths: readonly string[];
+  seo?: SeoRuntime;
+  additionalEntries?: readonly SitemapEntry[];
 }
 
 interface RouteWalkState {
@@ -35,9 +42,10 @@ interface SitemapRouteCandidate {
   href: string;
   layoutPaths: string[];
   pagePath: string;
+  params?: Record<string, string>;
 }
 
-type RouteConfigCache = Map<string, Promise<RouteConfig | undefined>>;
+type RouteConfigCache = Map<string, Promise<(RouteModule & { config?: RouteConfig }) | undefined>>;
 
 /**
  * Generate sitemap XML for public static page routes plus explicit config
@@ -61,23 +69,37 @@ export async function collectSitemapEntries(
     layouts: [],
     hasDynamicSegment: false,
   });
-  const excluded = createExcludeMatcher(options.config.exclude);
+  const base = getBaseUrl(options.publicUrl, options.requestUrl);
+  const excluded = createExcludeMatcher(options.config.exclude, base);
   const entries = new Map<string, SitemapEntry>();
+  if (options.seo?.indexingEnabled === false) return [];
+  const add = (entry: SitemapEntry) => {
+    if (excluded(entry.href)) return;
+    const absolute = seoUrl(entry.href, base);
+    // A canonical on another host belongs in that host's sitemap, never this one.
+    if (new URL(absolute).origin !== new URL(base).origin) return;
+    entries.set(absolute, entry);
+    if (entries.size > 50000) throw new SeoError('sitemap.entries');
+  };
 
   for (const candidate of candidates) {
     if (excluded(candidate.href)) continue;
-    if (await shouldIncludeRouteCandidate(candidate, options, configCache)) {
-      entries.set(candidate.href, { href: candidate.href });
-    }
+    const entry = await resolveRouteCandidate(candidate, options, configCache);
+    if (entry) add(entry);
   }
 
-  for (const manualEntry of options.config.entries) {
+  for (const manualEntry of [...(options.additionalEntries ?? []), ...options.config.entries]) {
     const href = normalizeHref(manualEntry.href);
     if (excluded(href)) continue;
-    entries.set(href, { ...manualEntry, href });
+    const route = matchRoute(options.routeTree, sitemapPath(href, base));
+    if (route.apiRoutePath && !route.pagePath) continue;
+    if (route.pagePath) {
+      const entry = await resolveRouteCandidate({ href, pagePath: route.pagePath, layoutPaths: route.layouts, params: route.params }, options, configCache);
+      if (entry) add({ ...manualEntry, href: entry.href });
+    } else add({ ...manualEntry, href });
   }
 
-  return [...entries.values()].sort((a, b) => a.href.localeCompare(b.href));
+  return [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([, entry]) => entry);
 }
 
 /** Render an XML response body for sitemap consumers and crawlers. */
@@ -86,8 +108,10 @@ export function renderSitemapXml(
   config: ResolvedSitemapConfig,
   baseUrl: string,
 ): string {
+  if (entries.length > 50000) throw new SeoError('sitemap.entries');
+  for (const entry of entries) if (new URL(seoUrl(entry.href, baseUrl)).origin !== new URL(baseUrl).origin) throw new SeoError('sitemap.origin');
   const urls = entries.map((entry) => renderUrlEntry(entry, config, baseUrl)).join('\n');
-  return [
+  const xml = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     urls,
@@ -95,6 +119,8 @@ export function renderSitemapXml(
   ]
     .filter(Boolean)
     .join('\n');
+  if (new TextEncoder().encode(xml).byteLength > 50 * 1024 * 1024) throw new SeoError('sitemap.bytes');
+  return xml;
 }
 
 function collectRouteCandidates(node: RouteNode, state: RouteWalkState): SitemapRouteCandidate[] {
@@ -122,38 +148,45 @@ function collectRouteCandidates(node: RouteNode, state: RouteWalkState): Sitemap
   return candidates;
 }
 
-async function shouldIncludeRouteCandidate(
+async function resolveRouteCandidate(
   candidate: SitemapRouteCandidate,
   options: GenerateSitemapXmlOptions,
   configCache: RouteConfigCache,
-): Promise<boolean> {
-  const configs = await Promise.all(
+): Promise<SitemapEntry | null> {
+  const modules = await Promise.all(
     [...candidate.layoutPaths, candidate.pagePath].map((filePath) =>
       loadRouteConfig(filePath, configCache)
     )
   );
   const routeRequirement = mergeRouteAuthRequirements(
-    configs.map((config) => config?.auth as RouteAuthRequirement),
+    modules.map((module) => module?.config?.auth as RouteAuthRequirement),
   );
 
-  return !shouldRequireAuthForRoute({
+  if (modules.some(module => !module) || shouldRequireAuthForRoute({
     routeAuth: options.routeAuth,
-    pathname: candidate.href,
+    pathname: sitemapPath(candidate.href, getBaseUrl(options.publicUrl, options.requestUrl)),
     publicPaths: options.publicPaths,
     routeRequirement,
-  });
+  })) return null;
+  // Metadata is evaluated without running page loaders or request/data services.
+  const meta = mergePageMetadata(...await Promise.all(modules.map(module => typeof module?.meta === 'function'
+    ? module.meta(candidate.params ?? {}) : module?.meta)));
+  const base = getBaseUrl(options.publicUrl, options.requestUrl);
+  const result = renderSeoMetadata(meta, { requestUrl: new URL(sitemapPath(candidate.href, base), options.requestUrl).href,
+    siteUrl: options.publicUrl, defaults: options.seo?.defaults });
+  return result.indexable ? { href: result.canonical ?? candidate.href } : null;
 }
 
 function loadRouteConfig(
   filePath: string,
   cache: RouteConfigCache,
-): Promise<RouteConfig | undefined> {
+): Promise<(RouteModule & { config?: RouteConfig }) | undefined> {
   const existing = cache.get(filePath);
   if (existing) return existing;
 
   const promise = import(pathToFileURL(filePath).href)
-    .then((module) => (module as { config?: RouteConfig }).config)
-    .catch(() => ({ auth: true }));
+    .then((module) => module as RouteModule & { config?: RouteConfig })
+    .catch(() => undefined);
   cache.set(filePath, promise);
   return promise;
 }
@@ -173,16 +206,25 @@ function routeSegmentsToPath(segments: readonly string[]): string {
 }
 
 function normalizeHref(href: string): string {
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/u.test(href) && !isAbsoluteUrl(href)) throw new SeoError('sitemap.href');
   if (isAbsoluteUrl(href)) return href;
   const path = href.startsWith('/') ? href : `/${href}`;
   return path.length > 1 ? path.replace(/\/+$/, '') : path;
 }
 
-function createExcludeMatcher(patterns: readonly string[]): (href: string) => boolean {
-  const normalized = patterns.map(normalizeHref);
-  return (href) => normalized.some((pattern) =>
-    href === pattern || (!isAbsoluteUrl(href) && href.startsWith(`${pattern}/`))
-  );
+function createExcludeMatcher(patterns: readonly string[], base: string): (href: string) => boolean {
+  const normalized = patterns.map(pattern => ({ origin: new URL(seoUrl(normalizeHref(pattern), base)).origin, path: sitemapPath(pattern, base) }));
+  return href => {
+    const origin = new URL(seoUrl(href, base)).origin, path = sitemapPath(href, base);
+    return normalized.some(pattern => pattern.origin === origin && (path === pattern.path || pattern.path === '/' || path.startsWith(pattern.path + '/')));
+  };
+}
+
+/** Absolute entries include the deployment prefix; file-router matching does not. */
+function sitemapPath(href: string, base: string): string {
+  const pathname = new URL(seoUrl(normalizeHref(href), base)).pathname;
+  const prefix = new URL(base).pathname.replace(/\/+$/, '');
+  return prefix && (pathname === prefix || pathname.startsWith(prefix + '/')) ? pathname.slice(prefix.length) || '/' : pathname;
 }
 
 function getBaseUrl(publicUrl: string | undefined, requestUrl: string): string {
@@ -211,8 +253,7 @@ function renderUrlEntry(
 }
 
 function toAbsoluteUrl(href: string, baseUrl: string): string {
-  if (isAbsoluteUrl(href)) return href;
-  return `${baseUrl}${href === '/' ? '/' : href}`;
+  return seoUrl(href, baseUrl);
 }
 
 function formatLastmod(value: SitemapEntry['lastmod']): string | undefined {

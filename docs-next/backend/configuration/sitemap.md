@@ -23,9 +23,10 @@ reviewed_against:
 
 [Configuration index](./index.md) · [Documentation index](../../index.md)
 
-Sitemap support is opt-in. `sitemap:true` mounts `/sitemap.xml`;
-false/omitted disables it. An object can change defaults and supply deliberate
-dynamic entries.
+Sitemap support is opt-in. `sitemap:true` mounts `/sitemap.xml`; an SEO object
+with trusted app.publicUrl also enables it when omitted. Explicit false disables
+it. An object can change defaults and supply deliberate dynamic entries. The
+[SEO extension](./seo.md) describes the feature-branch/archive applicability.
 
 ```ts
 // AppConfig fragment
@@ -65,14 +66,27 @@ requirements. Protected routes are excluded. Dynamic/catch-all routes require
 manual entries because the file tree cannot enumerate valid parameters.
 
 Route config imports execute code; an import failure is treated as protected.
-Manual entries are deliberate overrides and are not passed through the discovered
-route authorization test—review them explicitly. Exclusions apply to discovered
-and manual entries, with exact/boundary-prefix path matching.
+Manual entries that match a file page must pass its inherited authorization and
+metadata test too; they cannot reintroduce protected or noindex routes. Dynamic
+metadata receives that entry's matched params. Explicit plugin/CMS URLs with no
+file page remain an application publication declaration, not inferred authority.
+Exclusions apply to discovered, contributed and manual entries, including
+absolute URLs on the same site, with exact/boundary-prefix path matching.
+
+The SEO-enabled docs plugin contributes only its current admitted public page
+manifest. Metadata canonicals determine the final URL; noindex pages and foreign
+origins are omitted. Sitemap generation does not run page loaders. A page or
+layout metadata function may execute trusted app code and should remain public,
+bounded and side-effect-free.
 
 Entries are deduplicated by normalized href and sorted. Manual entries replace
 the discovered entry for the same href. URLs use app.publicUrl when supplied,
-otherwise the request origin; deployment configuration should set a trusted
-public URL. XML values are escaped.
+otherwise the legacy explicit-sitemap request-origin fallback; production should
+always set a trusted public URL. XML values are escaped. A single sitemap is
+bounded to 50,000 URLs and 50 MiB of uncompressed XML, following the
+[sitemap protocol](https://www.sitemaps.org/protocol.html). Generation/publication
+failures return a safe 503 and ZERO_SEO_DISCOVERY_FAILED rather than stale or
+partial XML. SEO indexing=false yields an empty page list.
 
 ## Verification
 

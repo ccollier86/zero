@@ -39,6 +39,13 @@ settings store, environment-variable parser or tenant override hierarchy.
 Unknown options are rejected. Protected mounts, versions and executable previews
 are [roadmap features](./roadmap.md), not flags that quietly do nothing.
 
+With the matching [SEO extension](../../backend/configuration/seo.md), trusted
+siteUrl/publicUrl also supplies HTML canonical/social metadata and WebPage JSON-LD.
+The plugin contributes its current published page list to the app sitemap without
+a second scan or manual entries. Global indexing=false covers HTML/HEAD and both
+sitemaps. Use framework and optional-plugin archives containing this integration;
+the 2.6.0/0.1.1 version strings alone do not identify the feature-branch changes.
+
 ## A Configured Mount
 
 ```ts

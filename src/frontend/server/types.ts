@@ -13,6 +13,8 @@ import type { ZeroServerExtensionMountable } from './server-extensions';
 import { resolveAppOwnedPath, resolveAppProjectRoot } from './app-project-root';
 import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foundation';
 import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
+import type { SeoConfig } from '../../seo';
+import { resolveSeoConfig } from '../../seo/runtime';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
 import { resolveManagedLoggingConfig, type ManagedLoggingConfig, type ResolvedManagedLoggingConfig } from '../../logging/logging-managed-config';
@@ -551,6 +553,8 @@ export interface AppConfig {
    * Default: false.
    */
   sitemap?: boolean | SitemapConfig;
+  /** Opt-in shared metadata/social defaults, canonical URLs, robots and public sitemap discovery. */
+  seo?: SeoConfig | false;
 
   /**
    * Redirect target for unauthenticated users.
@@ -636,6 +640,7 @@ export interface ResolvedConfig {
   publicPaths: string[];
   routeAuth: RouteAuthMode;
   sitemap: false | ResolvedSitemapConfig;
+  seo: false | SeoConfig;
   loginPath: string;
   registrationPath: string;
   postLoginPath: string;
@@ -695,7 +700,8 @@ export function resolveConfig(
   const syncAuth = config.syncAuth ?? (auth === false ? 'public' : 'required');
   const syncAuthDefaulted = auth !== false && config.syncAuth === undefined;
   const routeAuth = resolveRouteAuthMode(config.routeAuth, auth !== false);
-  const sitemap = resolveSitemapConfig(config.sitemap);
+  const seo = resolveSeoConfig(config.seo, config.app?.publicUrl);
+  const sitemap = resolveSitemapConfig(config.sitemap ?? (seo !== false && !!config.app?.publicUrl));
   const loginPath = normalizeConfiguredAuthPath(
     config.loginPath ?? '/login',
     'loginPath',
@@ -879,6 +885,7 @@ export function resolveConfig(
     publicPaths,
     routeAuth,
     sitemap,
+    seo,
     loginPath,
     registrationPath,
     postLoginPath,

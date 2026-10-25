@@ -10,6 +10,8 @@ import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
 import type { RouteAuthMode } from './auth-policy';
 import { safeParse } from 'valibot';
+import { mergePageMetadata, renderSeoMetadata } from '../../seo';
+import type { SeoRuntime } from '../../seo/runtime';
 import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
 import {
   createRouteAuthorizationBoundary,
@@ -122,6 +124,8 @@ export interface PlatformConfig {
 }
 
 export interface RenderOptions {
+  seo?: SeoRuntime;
+  indexable?: boolean;
   /** Matched route info */
   match: MatchResult;
   /** Original request */
@@ -156,7 +160,7 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
   if (!pagePath) {
     return new Response(notFoundHtml(), {
       status: 404,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' },
     });
   }
 
@@ -189,7 +193,7 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
 
         return new Response(notFoundHtml(), {
           status: 404,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' },
         });
       }
     }
@@ -213,8 +217,11 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       loaderData = result;
     }
 
-    // Resolve page meta
-    const meta = resolveMeta(pageModule.meta, match.params);
+    // The same ordered metadata inheritance applies to SSR and client shells.
+    const layoutModules = await Promise.all(match.layouts.map(loadModule));
+    const meta = mergePageMetadata(...await Promise.all([...layoutModules, pageModule].map(module => resolveMeta(module.meta, match.params))));
+    const seo = options.seo?.render(meta, request, { status: isNotFound ? 404 : 200, indexable: options.indexable })
+      ?? renderSeoMetadata(meta, { requestUrl: request.url, status: isNotFound ? 404 : 200, indexable: options.indexable });
 
     // Build the page element
     const PageComponent = pageModule.default;
@@ -226,12 +233,12 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       });
       return new Response(serverErrorHtml(err, isDev), {
         status: 500,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' },
       });
     }
 
     const htmlHead = buildHtmlHead(
-      meta,
+      seo.head,
       cssPath,
       isClientRoute ? match : undefined,
       isClientRoute ? loaderData : undefined,
@@ -244,11 +251,10 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
     );
 
     if (isClientRoute) {
-      return htmlShellResponse('', htmlHead, isNotFound ? 404 : 200);
+      return htmlShellResponse('', htmlHead, isNotFound ? 404 : 200, seo.headers);
     }
 
     const { createElement, renderToReadableStream } = await loadSsrReactRuntime(appDir);
-    const layoutModules = await Promise.all(match.layouts.map(loadModule));
 
     let element: ReactNode = createElement(PageComponent, {
       params: match.params,
@@ -282,6 +288,7 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Transfer-Encoding': 'chunked',
+        ...seo.headers,
       },
     });
   } catch (err) {
@@ -293,17 +300,17 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
     });
     return new Response(serverErrorHtml(error, isDev), {
       status: 500,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' },
     });
   }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function resolveMeta(
+async function resolveMeta(
   meta: RouteModule['meta'],
   params: Record<string, string>
-): PageMeta {
+): Promise<PageMeta> {
   if (!meta) return {};
   if (typeof meta === 'function') return meta(params);
   return meta;
@@ -320,7 +327,7 @@ function serializeForScript(data: unknown): string {
 }
 
 function buildHtmlHead(
-  meta: PageMeta,
+  metadataHead: string,
   cssPath?: string,
   match?: MatchResult,
   loaderData?: unknown,
@@ -334,12 +341,7 @@ function buildHtmlHead(
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
   ];
 
-  if (meta.title) {
-    parts.push(`<title>${escapeHtml(meta.title)}</title>`);
-  }
-  if (meta.description) {
-    parts.push(`<meta name="description" content="${escapeHtml(meta.description)}">`);
-  }
+  if (metadataHead) parts.push(metadataHead);
   if (cssPath) {
     parts.push(`<link rel="stylesheet" href="${cssPath}">`);
   }
@@ -380,7 +382,7 @@ function escapeHtml(str: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function htmlShellResponse(body: string, headContent: string, status: number): Response {
+function htmlShellResponse(body: string, headContent: string, status: number, headers: Readonly<Record<string, string>> = {}): Response {
   return new Response(`<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -391,7 +393,7 @@ function htmlShellResponse(body: string, headContent: string, status: number): R
   </body>
 </html>`, {
     status,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: { 'Content-Type': 'text/html; charset=utf-8', ...headers },
   });
 }
 

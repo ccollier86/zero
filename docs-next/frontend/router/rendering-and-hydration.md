@@ -49,6 +49,12 @@ Custom fallback UI must avoid private error details. Production bundler settings
 and artifact verification matter before asserting stack stripping. Use client
 components for interactive hooks, not side effects during server rendering.
 
+The SEO extension resolves site/layout/page `meta` before emitting either an SSR
+document or a client shell. It supports typed canonical/social/robots/JSON-LD
+metadata and shares the native plugin renderer. This is server document metadata,
+not a new client-routing protocol. See [SEO configuration](../../backend/configuration/seo.md)
+for supported fields, precedence, preview controls and archive applicability.
+
 ## Related Guides And Next Steps
 
 - [Runtime hydration](../runtime/hydration.md) owns the advanced entry/manifest.

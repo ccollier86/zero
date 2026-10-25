@@ -18,6 +18,7 @@ import { emitPlatformCode, emitPlatformCodeTo } from '../../observability/sink';
 import type { PlatformObservabilityRuntime } from '../../observability/types';
 import { generateSitemapXml } from './sitemap';
 import type { ResolvedSitemapConfig } from './types';
+import type { SeoRuntime } from '../../seo/runtime';
 import {
   createRequestAuthorizationAccess,
   type AuthorizationPropertyStore,
@@ -37,6 +38,7 @@ import { AuthError, type AuthContext } from '../../auth/types';
 // ─── ISR Cache ────────────────────────────────────────────────────────────
 
 interface CacheEntry {
+  headers: [string, string][];
   body: string;
   status: number;
   timestamp: number;
@@ -46,6 +48,7 @@ interface CacheEntry {
 // ─── Router Plugin ─────────────────────────────────────────────────────────
 
 export interface RouterPluginOptions {
+  seo?: SeoRuntime;
   /** App-owned observability target supplied by managed createApp(). */
   observability?: PlatformObservabilityRuntime;
   /** Route tree root (pre-built, or we build from appDir) */
@@ -153,21 +156,32 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
   if (options.sitemap) {
     router.get(options.sitemap.config.path, async ({ request }) => {
-      const body = await generateSitemapXml({
-        routeTree,
-        config: options.sitemap!.config,
-        requestUrl: request.url,
-        publicUrl: options.sitemap!.publicUrl,
-        routeAuth: options.sitemap!.routeAuth,
-        publicPaths: options.sitemap!.publicPaths,
-      });
+      try {
+        const body = await generateSitemapXml({
+          routeTree,
+          config: options.sitemap!.config,
+          requestUrl: request.url,
+          publicUrl: options.sitemap!.publicUrl,
+          routeAuth: options.sitemap!.routeAuth,
+          publicPaths: options.sitemap!.publicPaths,
+          seo: options.seo,
+          additionalEntries: await options.seo?.sitemapEntries(),
+        });
 
-      return new Response(body, {
-        headers: {
-          'Content-Type': 'application/xml; charset=utf-8',
-        },
-      });
+        return new Response(body, {
+          headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+        });
+      } catch {
+        emit(OBS_CODES.SEO_DISCOVERY_FAILED, { metadata: { surface: 'sitemap' } });
+        return new Response('Sitemap unavailable.', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+      }
     });
+  }
+
+  if (options.seo?.defaults && options.seo.defaults.robotsTxt !== false) {
+    router.get('/robots.txt', () => new Response(options.seo!.robotsTxt(options.sitemap?.config.path), {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    }));
   }
 
   return router
@@ -454,6 +468,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
               return new Response(cached.body, {
                 status: cached.status,
                 headers: {
+                  ...Object.fromEntries(cached.headers),
                   'Content-Type': 'text/html; charset=utf-8',
                   'X-Cache': 'HIT',
                   'Cache-Control': `s-maxage=${cached.maxAge}, stale-while-revalidate`,
@@ -467,6 +482,8 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         const derivedConfig = options.platformConfig
           ? { ...options.platformConfig, url: url.origin }
           : undefined;
+        const globallyProtected = !!options.authGuard && options.authGuard.routeAuth !== 'explicit'
+          && !isPublicPath(pathname, options.authGuard.publicPaths ?? ['/login']);
 
         const response = await renderRoute({
           match,
@@ -476,6 +493,8 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           platformConfig: derivedConfig,
           loaderContext: loaderCtx,
           appDir,
+          seo: options.seo,
+          indexable: pageAccess.user !== 'required' && !globallyProtected,
         });
 
         // ISR: cache the response
@@ -491,6 +510,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           isrCache.set(isrCacheKey, {
             body,
             status: response.status,
+            headers: [...response.headers.entries()].filter(([key]) => !['transfer-encoding', 'content-length'].includes(key.toLowerCase())),
             timestamp: Date.now(),
             maxAge: routeConfig.revalidate,
           });
@@ -514,6 +534,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         platformConfig: derivedConfig,
         loaderContext: loaderCtx,
         appDir,
+        seo: options.seo,
       });
       return privatePageRequest
         ? withPrivatePageHeaders(response)

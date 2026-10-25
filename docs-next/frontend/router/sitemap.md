@@ -23,7 +23,9 @@ reviewed_against:
 
 [Router index](./index.md) · [Documentation index](../../index.md)
 
-createApp sitemap is opt-in: omitted/false or enabled=false disables it.
+createApp sitemap is opt-in: false or enabled=false disables it. Omitted normally
+disables it; the [SEO extension](../../backend/configuration/seo.md) enables it
+automatically when SEO and a trusted public URL are configured.
 true uses '/sitemap.xml'. An object can set enabled/path/changefreq/priority/
 entries/exclude. The server [sitemap configuration](../../backend/configuration/sitemap.md)
 owns exact settings.
@@ -42,8 +44,10 @@ and inherited auth considered. Dynamic/catch-all instances require explicit entr
 the scanner does not inspect all app data to invent IDs.
 
 An entry has href and optional lastmod(string|Date), changefreq and priority.
-Manual entries can deliberately override discovered ones, but operators must ensure
-they are intended for publication. exclude applies to discovered/manual paths.
+Manual entries can deliberately override discovered ones, but known file pages
+still pass inherited auth/noindex admission. Native docs mounts contribute their
+current public manifest through the app-local SEO service. Operators must review
+explicit non-file URLs as publication declarations. exclude applies to all sources.
 publicUrl or request origin establishes absolute URLs; entries are normalized and
 XML-escaped. A module-policy import failure excludes the candidate rather than
 weakening protection.

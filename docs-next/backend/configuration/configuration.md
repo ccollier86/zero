@@ -89,7 +89,8 @@ No universal null-disable convention exists.
 | `loginPath` | safe configured local path; `/login` | unauthenticated page destination |
 | `registrationPath` | safe configured local path; `/register` | native authorization registration link |
 | `postLoginPath` | safe configured local path; `/` | authenticated login fallback; safe return path wins |
-| `sitemap` | false/true/SitemapConfig; disabled | public static routes plus deliberate entries |
+| `sitemap` | false/true/SitemapConfig; disabled unless SEO opts in with a trusted publicUrl | public static routes plus deliberate entries |
+| `seo` | false/SeoConfig; disabled | [shared metadata](./seo.md), canonical/social/JSON-LD, robots and public docs discovery |
 | `doctor` | AppDoctorConfig; {} | trusted config/index hints |
 
 ## Resolution And Security

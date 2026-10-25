@@ -43,6 +43,7 @@ needed, and use each subsystem's exact resolver rules. There is no universal
 - [Routing](./routing.md): protected pages, safe return targets and authenticated login redirection.
 - [Directories](./directories.md): trusted module discovery, generated/build output and listener port.
 - [Sitemap](./sitemap.md): public static route discovery and deliberate dynamic entries.
+- [SEO metadata](./seo.md): shared canonical/social/structured metadata, crawler controls and automatic docs discovery.
 - [Diagnostics](./diagnostics.md): trusted config loading and indexed-field hints for Doctor.
 - [Roadmap](./roadmap.md): proposed ergonomics, not an implemented settings control plane.
 
