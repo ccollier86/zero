@@ -4,6 +4,10 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Keep CSS Tree's existing email CSS grammar validation intact in relocated
+  server/compiled builds by bundling its public static-data entry instead of
+  leaving runtime-relative JSON reads.
+
 - Added the opt-in SEO foundation: typed site/layout/page metadata, canonical
   URLs, Open Graph/Twitter cards, bounded safe JSON-LD, language alternates,
   robots directives and robots.txt. File and native-plugin HTML share one

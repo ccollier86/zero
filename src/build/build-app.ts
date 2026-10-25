@@ -9,6 +9,7 @@ import { createBuildConfigAdapter, type EmbeddedBuildAsset, type EmbeddedPrivate
 import type { ZeroBuildOptions, ZeroBuildResult } from './build-types';
 import { createSharpNativeBuildPlugin } from './sharp-native-build-plugin';
 import { finalizeMacExecutableSignature } from './mac-executable-signing';
+import { createCssTreeBuildPlugin } from './css-tree-build-plugin';
 
 /** Execute the normal build without starting the app, invoking runtime setup or opening databases. */
 export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuildResult> {
@@ -38,7 +39,7 @@ export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuild
     naming: { entry: options.compile ? `${serverName}.[ext]` : 'server.[ext]', asset: '[name].[hash].[ext]' },
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     ...(options.compile ? { compile: { outfile: join(outDir, serverName) } } : {}),
-    plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir), createSharpNativeBuildPlugin(outDir, options.compile === true)],
+    plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir), createSharpNativeBuildPlugin(outDir, options.compile === true), createCssTreeBuildPlugin()],
   });
   if (!result.success) throw new Error(`Zero server build failed: ${result.logs.map((log) => log.message).join('\n')}`);
   const entry = result.outputs.find((output) => output.kind === 'entry-point');
