@@ -5,6 +5,22 @@ audience: [developer, agent]
 owner: frontend-components
 status: in-review
 visibility: internal
+system: frontend-components
+feature: blog-ui
+maturity: preview
+applies_to: ["2.6.0 UI feature snapshot; not the selected main archive"]
+modes: [browser, SSR, public-pages]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.6.0"
+  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
+  snapshot: clean
+  date: "2026-10-25"
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
+    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
 ---
 
 # Blog Presentation And Design Tokens

@@ -233,6 +233,9 @@ does not promise a search feature or ranking improvement.
 
 ## Related Guides and Next Steps
 
+- [Blog publishing roadmap](../../frontend/components/public-pages/blog/roadmap.md#automatic-seo-integration)
+  defines the requested automatic publication integration. The current blog UI
+  does not yet publish metadata or register content with the sitemap service.
 - [Sitemap configuration](./sitemap.md) owns route admission, dynamic entries and XML bounds.
 - [Page rendering](../../frontend/router/rendering-and-hydration.md) explains server/client document boundaries.
 - [Docs configuration](../../plugins/docs/configuration.md) selects the published folder and trusted URL.

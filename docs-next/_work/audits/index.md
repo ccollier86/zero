@@ -18,6 +18,10 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Blog UI and command-palette qualification](./blog-ui-qualification.md): UI-only
+  defaults, shared component ownership, token/motion/browser checks and frozen
+  public-package imports; publishing and automatic blog SEO remain planned.
+
 - [Application data facade and PracticeIQ preparation](./application-data-facade.md):
   shared primary/Fabric operations, authority/receipt/realtime tests and private
   migration-map guards without a live app conversion.

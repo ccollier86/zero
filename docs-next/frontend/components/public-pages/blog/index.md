@@ -10,6 +10,17 @@ feature: blog-ui
 maturity: preview
 applies_to: ["2.6.0 UI source on feature/blog-foundation; not the selected main archive"]
 modes: [browser, SSR, public-pages]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.6.0"
+  commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
+  snapshot: clean
+  date: "2026-10-25"
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "b7fb829919d0e55e6a43d54835f7d69ee2b98da8"
+    sha256: "9c6ae4f0b13c032169c8e2f8fefdcfba9582009f4d6f9121b1ad09362cee6101"
 ---
 
 # Blog UI Components
@@ -58,6 +69,10 @@ const post: BlogPost = {
 `@zero/framework/components/blog` is the same focused family. The main React
 facade also exposes the Blog-prefixed layouts, cards, search and data types.
 Use the focused import for the complete smaller parts and their props.
+
+The [qualification record](../../../../_work/audits/blog-ui-qualification.md)
+identifies the frozen UI source/archive and the focused checks. Feature-branch
+readiness does not select it as the main package or enable publishing.
 
 ## Component Guides
 
