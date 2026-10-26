@@ -147,6 +147,8 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       expect(responses.some(row => row.route === '/auth/profile/avatar/assets/:assetId' && row.status === 200)).toBe(true);
       await page.reload(); await page.getByTestId('protected-account').waitFor();
       expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
+      await page.locator('[data-slot="avatar-editor"]').getByRole('button', { name: 'Change photo', exact: true }).waitFor();
+      await until(() => page.locator('[data-slot="avatar-editor"] img').evaluate(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0));
       report.avatarRefresh = true;
       await page.screenshot({ path: join(artifacts, 'integration-repair-' + run + '-avatar-ready.png') });
       const privateBytes = await fetch(base + snapshot.asset.deliveryPath, { headers: { Authorization: 'Bearer ' + registered.accessToken } });
@@ -164,6 +166,8 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
         await until(async () => { try { return (await fetch(base + '/api/health')).status === 200; } catch { return false; } }, 60000);
         await page.reload(); await page.getByTestId('protected-account').waitFor();
         expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
+        await page.locator('[data-slot="avatar-editor"]').getByRole('button', { name: 'Change photo', exact: true }).waitFor();
+        await until(() => page.locator('[data-slot="avatar-editor"] img').evaluate(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0));
         // The host inspection client has a different legitimate session from
         // the browser. Restart correctly retires its old admission too; acquire
         // its own fresh empty handshake, not a fabricated browser receipt.
