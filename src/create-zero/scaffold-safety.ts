@@ -23,6 +23,8 @@ export interface TargetSnapshot {
   exists: boolean;
   ino?: bigint;
   mtimeNs?: bigint;
+  /** Keep the caller's current directory inode so its shell remains usable. */
+  preserveDirectory?: boolean;
 }
 
 /** Resolve symlinked ancestors, validate the template, and reject unsafe targets. */
@@ -41,13 +43,14 @@ export async function resolveSafeScaffoldPaths(
   const templateDir = await realpath(unresolvedTemplate);
   await assertTargetIsNarrow(targetDir);
   assertPathsDoNotOverlap(targetDir, templateDir);
+  const preserveDirectory = targetDir === await realpath(process.cwd());
 
   const targetDetails = await pathDetails(targetDir);
   if (targetDetails) {
     const rootGit = await pathDetails(join(targetDir, '.git'));
     if (rootGit || force) await assertTargetContainsNoGitRepositories(targetDir);
     const entries = (await readdir(targetDir)).filter((entry) => entry !== '.DS_Store');
-    if (entries.length > 0 && !force) {
+    if (entries.length > 0 && (!force || preserveDirectory)) {
       throw new Error(`[create-zero] Target directory is not empty: ${targetDir}`);
     }
   }
@@ -58,6 +61,7 @@ export async function resolveSafeScaffoldPaths(
         exists: true,
         ino: targetDetails.ino,
         mtimeNs: targetDetails.mtimeNs,
+        preserveDirectory,
       }
     : { exists: false };
   return { targetDir, targetSnapshot, templateDir };

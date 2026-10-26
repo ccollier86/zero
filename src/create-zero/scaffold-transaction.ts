@@ -1,11 +1,12 @@
 /** Recoverable same-filesystem commit for a fully generated scaffold. */
 
-import { lstat, rename, rm } from 'node:fs/promises';
+import { lstat, readdir, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
 import type { TargetSnapshot } from './scaffold-safety';
 import { assertTargetContainsNoGitRepositories } from './scaffold-safety';
+import { pathDetails } from './scaffold-path-safety';
 
 export interface ScaffoldCommitOperations {
   rename(source: string, destination: string): Promise<void>;
@@ -35,6 +36,11 @@ export async function commitStagedScaffold(
     return;
   }
 
+  if (snapshot.preserveDirectory) {
+    await populateCurrentDirectory(stagingDir, targetDir, operations);
+    return;
+  }
+
   const backupDir = join(
     dirname(targetDir),
     `.${basename(targetDir)}.zero-backup-${randomUUID()}`
@@ -55,6 +61,42 @@ export async function commitStagedScaffold(
   }
 
   await operations.remove(backupDir);
+}
+
+/** Publish prepared entries without renaming the directory held by the caller's shell. */
+async function populateCurrentDirectory(
+  stagingDir: string,
+  targetDir: string,
+  operations: ScaffoldCommitOperations
+): Promise<void> {
+  const moved: string[] = [];
+  try {
+    for (const entry of await readdir(stagingDir)) {
+      const destination = join(targetDir, entry);
+      if (await pathDetails(destination)) {
+        throw new Error(`[create-zero] Target changed during generation; refusing to replace: ${destination}`);
+      }
+      await operations.rename(join(stagingDir, entry), destination);
+      moved.push(entry);
+    }
+  } catch (installError) {
+    const rollbackErrors: unknown[] = [];
+    for (const entry of moved.reverse()) {
+      try {
+        await operations.rename(join(targetDir, entry), join(stagingDir, entry));
+      } catch (error) {
+        rollbackErrors.push(error);
+      }
+    }
+    if (rollbackErrors.length) {
+      throw new AggregateError(
+        [installError, ...rollbackErrors],
+        `[create-zero] Install and rollback failed; inspect generated entries in ${targetDir}`
+      );
+    }
+    throw installError;
+  }
+  await operations.remove(stagingDir);
 }
 
 async function assertTargetUnchanged(targetDir: string, snapshot: TargetSnapshot): Promise<void> {
