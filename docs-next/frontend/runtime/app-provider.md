@@ -13,9 +13,9 @@ modes: [browser, SSR, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "554caea1e5570ab4f52d3f4f82b2d75e004fbf7e"
+  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
   snapshot: clean
-  date: "2026-10-07"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 
@@ -67,8 +67,18 @@ In the browser it creates or reuses the one integrated SDK client and composes:
 1. ErrorBoundary and a RouterProvider when needed.
 2. ClientProvider exposing that same client.
 3. SyncProvider exposing its existing SyncClient and StateClient.
-4. Authorization-scope display protection when auth is enabled.
-5. ModalManager around route-guarded children.
+4. The configured audit collector and authorization recovery controller as
+   persistent owners, not children of a gate that can hide them.
+5. Required-audit and authorization-scope display gates, when enabled.
+6. ModalManager around route-guarded children beneath both gates.
+
+Pausing required audit delivery masks protected content, not the session
+recovery controller. Likewise, masking an unstable authorization scope does not
+remove the collector/empty handshake needed to unlock Sync. Recovery can finish
+its bounded document reload while both display restrictions remain enforced.
+The public standalone `LoggingActivityProvider` still guards its children by
+default; applications using AppProvider must not add a duplicate collector or
+import internal owner/gate components.
 
 Collection hooks and low-level Sync hooks share the underlying transport/store;
 do not create another client merely to use both. The integrated client owns its
@@ -110,6 +120,12 @@ loader authority reloads directly without unnecessary credential rotation.
 First automatic page repair uses a neutral status, with an explicit recovery
 alert only for failed or persistent disagreement. These behaviors require no
 new application prop; use the normal packaged provider.
+
+Use the native LoginForm without a navigation-only `onSuccess` callback.
+AppProvider owns safe return navigation. With required logging, successful
+login/refresh/authorization/audit HTTP responses alone are not a completed
+browser transition: verify the generated route actually reaches current
+protected content and can recover through the native retry controls.
 
 ## Verification And Troubleshooting
 

@@ -13,9 +13,9 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 
@@ -129,6 +129,15 @@ for general APIs. The browser collector then uses the normal authenticated
 SDK. This avoids making audit recovery wait on the protected Sync baseline that
 it must itself unlock. Existing authorization and modal/data scope guards stay
 in place.
+
+The collector and session-recovery controller remain mounted independently of
+both display gates. A restore intentionally invalidates the current UI audit
+acknowledgment; showing the audit retry panel must not retire the restore's
+pending final document reload. Protected application content and modal hosts
+remain beneath both gates. Actual app unmount or a replacement session still
+retires stale recovery callbacks, and the same-document attempt marker still
+bounds reloads. No additional app provider, navigation callback, or logging
+configuration is needed for this lifecycle correction.
 
 The server grant expires after 60 seconds; the collector renews every 30 seconds.
 Session/scope/role/property changes, worker/source failure or invalidation retire

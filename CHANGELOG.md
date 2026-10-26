@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Fixed required-audit UI masking retiring the session recovery controller
+  before its final hydrated-document reload. Persistent recovery/collector
+  ownership is separate from protected display gates; bounded attempts,
+  current-scope checks and real-unmount retirement remain intact. Generated
+  file-router browser regressions cover native sign-in/retry, protected SSR,
+  new tabs, real audit SSE/table interactions and revocation. No database
+  migration, weaker audit preset or application navigation workaround is needed.
+
 - Corrected managed AI/email terminal audit provenance: provider-confirmed
   success now uses a trusted provider-origin envelope while retaining the
   caller's actor, scope, correlation and invocation identity. Admission and

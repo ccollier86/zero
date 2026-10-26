@@ -13,9 +13,9 @@ modes: [single-tenant, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 
@@ -158,6 +158,28 @@ Under compliance, expired or interrupted delivery masks protected UI and blocks
 protected HTTP/Sync until a fresh durable acknowledgment; sign-in, health,
 handshake and same-origin empty recovery remain reachable. This neither
 identifies a particular extension nor proves the browser reported every action.
+
+### Generated-route browser acceptance
+
+Rebuild the browser assets after installing the pinned correction; do not reuse
+an older generated bundle merely because the package version still says 2.6.0.
+Keep the normal root AppProvider and native LoginForm without a duplicate
+navigation-only `onSuccess`. The framework now keeps session recovery alive
+while audit delivery masks its output. No app-local auth/logging workaround or
+new provider prop is required.
+
+Repeat the application's fresh unblocked sign-in and initially blocked audit
+delivery fixture modes. Verify native audit/session retries, protected SSR hard
+refresh, a real new tab sharing the existing browser session, and bounded reload
+behavior. A separate profile with a copied page cookie but no browser proof is
+not that new-tab case and must not be promoted into API authentication.
+Successful HTTP statuses alone do not satisfy the gate. After reaching the
+workspace, exercise real SSE inserts/bursts, retained rows, cursor pagination
+and the native incoming-record control, actor/resource filters, evidence
+dialogs and current-role revocation masking. Keep patient state and real
+provider effects absent from the fixture; live cutover remains separately
+authorized. The independent email-delivery receipt migration is not part of
+this browser lifecycle fix.
 
 ## Logging Acceptance Gate
 
