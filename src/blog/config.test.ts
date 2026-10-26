@@ -81,7 +81,9 @@ test('management always needs a Guardian authority condition and unknown blog op
     true,
     resolveAuthBehaviorConfig({ tenancy: 'multi' }),
   );
-  expect(multi.manageAuthors).toEqual({ permission: 'tenant.members:manage' });
+  expect(multi.scope).toBe('application');
+  expect(multi.manageAuthors).toBe('admin');
+  expect(resolveBlogConfig({ scope: 'organization' }, resolveAuthBehaviorConfig({ tenancy: 'multi' })).manageAuthors).toEqual({ permission: 'tenant.members:manage' });
   const requirement = { platformRole: ['admin'] },
     copy = resolveBlogConfig({ manageAuthors: requirement }, auth);
   requirement.platformRole.push('user');

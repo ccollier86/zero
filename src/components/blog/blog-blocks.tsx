@@ -9,16 +9,17 @@ import { AudioPlayer, VideoPlayer } from './blog-media';
 import { InlineLink, InlineLinkPreview } from './blog-content';
 import { blogHeadingId } from './blog-utils';
 import type { BlogContentBlock } from './blog.types';
+import { BlogRichText } from './blog-rich-text';
 
 export function BlockRenderer({ blocks }: { blocks: readonly BlogContentBlock[] }) {
   return <>{blocks.map((block, index) => {
     const key = block.id ?? index;
     switch (block.type) {
-      case 'paragraph': return <Typography key={key}>{block.text}</Typography>;
-      case 'heading': return <Typography key={key} variant={`h${block.level}`} id={block.anchor ?? blogHeadingId(block.text, index)}>{block.text}</Typography>;
-      case 'quote': return <blockquote key={key}><p>{block.text}</p>{(block.author || block.source) && <footer>{block.author}{block.author && block.source ? ' — ' : ''}{block.source}</footer>}</blockquote>;
-      case 'callout': return <aside key={key} className="zero-blog-callout" data-tone={block.variant}>{block.title && <strong>{block.title}</strong>}<p>{block.text}</p></aside>;
-      case 'list': return block.style === 'numbered' ? <ol key={key}>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ol> : <ul key={key}>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ul>;
+      case 'paragraph': return <Typography key={key}>{block.inline ? <BlogRichText content={block.inline} /> : block.text}</Typography>;
+      case 'heading': return <Typography key={key} variant={`h${block.level}`} id={block.anchor ?? blogHeadingId(block.text, index)}>{block.inline ? <BlogRichText content={block.inline} /> : block.text}</Typography>;
+      case 'quote': return <blockquote key={key}><p>{block.inline ? <BlogRichText content={block.inline} /> : block.text}</p>{(block.author || block.source) && <footer>{block.author}{block.author && block.source ? ' — ' : ''}{block.source}</footer>}</blockquote>;
+      case 'callout': return <aside key={key} className="zero-blog-callout" data-tone={block.variant}>{block.title && <strong>{block.title}</strong>}<p>{block.inline ? <BlogRichText content={block.inline} /> : block.text}</p></aside>;
+      case 'list': { const children = block.items.map((item, i) => <li key={i}>{block.inlineItems?.[i] ? <BlogRichText content={block.inlineItems[i]!} /> : item}</li>); return block.style === 'numbered' ? <ol key={key}>{children}</ol> : <ul key={key}>{children}</ul>; }
       case 'code': return <CodeBlock key={key} code={block.code} language={block.language ?? 'text'} filename={block.filename} showLineNumbers={block.showLineNumbers} highlightLines={block.highlightLines} />;
       case 'image': return <ContentImage key={key} {...block} />;
       case 'image-gallery': return block.layout === 'carousel' ? <ImageCarousel key={key} images={block.images} /> : block.layout === 'stack' ? <ImageStack key={key} images={block.images} columns={block.columns} /> : <ImageGallery key={key} images={block.images} columns={block.columns} />;

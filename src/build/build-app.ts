@@ -12,6 +12,7 @@ import { finalizeMacExecutableSignature } from './mac-executable-signing';
 import { createCssTreeBuildPlugin } from './css-tree-build-plugin';
 import { createLoggingRealmBuildPlugin } from './logging-realm-build-plugin';
 import { createCoreMigrationsBuildPlugin } from './core-migrations-build-plugin';
+import { createBlogRealmBuildPlugin } from './blog-realm-build-plugin';
 
 /** Execute the normal build without starting the app, invoking runtime setup or opening databases. */
 export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuildResult> {
@@ -42,7 +43,7 @@ export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuild
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     ...(options.compile ? { compile: { outfile: join(outDir, serverName) } } : {}),
     plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir),
-      await createCoreMigrationsBuildPlugin(), await createLoggingRealmBuildPlugin(), createSharpNativeBuildPlugin(outDir, options.compile === true), createCssTreeBuildPlugin()],
+      await createCoreMigrationsBuildPlugin(), await createLoggingRealmBuildPlugin(), await createBlogRealmBuildPlugin(), createSharpNativeBuildPlugin(outDir, options.compile === true), createCssTreeBuildPlugin()],
   });
   if (!result.success) throw new Error(`Zero server build failed: ${result.logs.map((log) => log.message).join('\n')}`);
   const entry = result.outputs.find((output) => output.kind === 'entry-point');

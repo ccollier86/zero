@@ -15,8 +15,10 @@ maturity: planned
 The UI migration is complete on the feature branch. The separately approved
 [author foundation](../../../../backend/blog/index.md) now implements enrollment,
 draft/public profiles, explicit public photos, Guardian and audit integration.
-The remaining publishing/editor/automatic SEO work below is planned, not a
-shipped CMS contract.
+The new working branch implements the [native workspace/reader](./publishing-workspace.md)
+and [publishing API](../../../../backend/blog/publishing-api.md). Final archive/Linux
+qualification is still required. The sections below preserve the design requirements;
+they are not evidence that the old UI-only or author-only archives contain the new work.
 
 ## User Backed Authors
 
@@ -25,24 +27,25 @@ account identity and roles, adds explicit scoped author enrollment and publishes
 only allowlisted public fields. Omitted expanded private profile options can be
 enabled safely in existing projects; public author drafts remain separate from
 private account data. Required names/photos gate byline publication, not login.
-Author management/editor UI and post publication permissions remain later slices.
+The working native workspace now composes author management/profile editing and
+the separate post permissions. It does not insert arbitrary protected app routes.
 
 ## Block Editing
 
-Build a Gutenberg-style block editor that produces a versioned, validated
-document and reuses these presentation parts. Decide editing ownership,
-draft/published revisions, autosave/conflicts, media selection through Storage,
-accessibility and extension boundaries together. The current BlockRenderer is
-not that editor or a promise of Gutenberg format compatibility.
+The working block editor produces the versioned validated document and reuses
+the presentation parts. Draft/publication separation, conditional saves,
+uncertain-outcome retry, media selection and Save/Discard/Stay guards are part of
+the new source. BlockRenderer remains presentation-only, and neither renderer nor
+editor promises Gutenberg interchange or WordPress plugin compatibility.
 
 ## Automatic SEO Integration
 
-The requested product behavior is automatic integration when the future blog
-service is enabled, not an extra SEO plugin or repeated per-post head wiring.
+The implemented working-source behavior is automatic integration in managed blog
+pages, not an extra SEO plugin or repeated per-post head wiring.
 Use the existing [SEO facade](../../../../backend/configuration/seo.md) for
 rendering and app-local sitemap contributions. Site indexing controls and
-explicit opt-outs still win. Current UI rendering changes neither head metadata
-nor sitemaps; these are acceptance requirements for the publishing phase.
+explicit opt-outs still win. Standalone display components still change neither
+head metadata nor sitemaps; the managed page controller owns that integration.
 
 One admitted public revision must supply both the visible article and its SEO
 projection. Do not separately read a newer draft for metadata or derive public

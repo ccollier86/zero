@@ -14,11 +14,42 @@ maturity: planned
 
 [Blog index](./index.md) · [Current authors](./authors.md) · [Roadmap](./roadmap.md)
 
-This is the next-layer design, **not an implemented post API or CMS**. The
-resumed author foundation is usable independently. Its current `blog: true`
-contract does not yet create post storage, an editor, public article routes or
-automatic article SEO. No existing app should copy speculative method names
-out of this plan and implement a second blog backend around them.
+This is the complete delivery plan, not a claim that all CMS work is released.
+The [publishing API](./publishing-api.md) describes the working backend on
+`feature/blog-publishing-backend`; public assembly/editor and final qualification
+remain in progress. Do not build a second app-specific backend around these
+owned framework contracts.
+
+## Current Delivery Scope (2026-10-26)
+
+The approved next work is backend-first. Finish the managed Fabric content
+plane, application-wide ownership in both tenancy modes, author admission,
+versioned drafts and published snapshots, taxonomy management, private media
+admission/public references, indexed published-content search, optional bounded
+metrics, the server/browser facades, and additive enable/disable/restart checks.
+Retain explicit organization-scoped author compatibility; it is not the default
+ownership model for an application's public blog. An organization administrator
+must not inherit platform-blog management authority.
+
+Keep SEO limited to useful defaults and ordinary overrides: title/description,
+canonical/social data, image alternatives and discovery. Rank-Math-style scores,
+keyword dashboards and an elaborate optimization product are out of scope.
+The editor, floating selection-formatting toolbar and management UI follow
+backend qualification. Paragraphs/headings are normal writing blocks; galleries,
+audio, video and the migrated rich components must have a versioned document
+contract and searchable text without accepting executable HTML.
+
+Execution gates:
+
+- [x] Merge the qualified main navigation/audit/avatar fixes into this branch.
+- [ ] Implement and qualify one private Fabric content database and final-edge
+  Guardian authority (including application-wide multi-tenant admission).
+- [ ] Validate rich documents, revisions, taxonomy and publication atomically.
+- [ ] Admit private Storage media and derive only published delivery references.
+- [ ] Implement indexed public/private search, metrics and accepted live changes.
+- [ ] Extend public request/browser facades and managed HTTP composition.
+- [ ] Add focused and installed/bundled Linux regression evidence and update
+  configuration/API/upgrade documentation before selecting any new archive.
 
 ## Preserve What Is Already Working
 

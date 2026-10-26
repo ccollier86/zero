@@ -2,6 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { resolveNativeAuthConfig } from './config';
 
 describe('resolveNativeAuthConfig', () => {
+  test('blog scopes form explicit read/write/publication ceilings without changing default consent', () => {
+    const client = { clientId: 'blog-client', name: 'Blog', redirectUris: ['com.example.blog:/callback'] };
+    expect(resolveNativeAuthConfig({ clients: [client] }).clients[0]!.scopes).toEqual(['openid', 'profile', 'email']);
+    for (const scopes of [['openid', 'blog:read'], ['openid', 'profile', 'blog:write'], ['openid', 'profile', 'blog:read', 'blog:publish']])
+      expect(() => resolveNativeAuthConfig({ clients: [{ ...client, scopes: scopes as never }] })).toThrow();
+    expect(resolveNativeAuthConfig({ clients: [{ ...client, scopes: ['openid', 'profile', 'blog:read', 'blog:write', 'blog:publish'] }] }).clients[0]!.scopes).toContain('blog:publish');
+  });
   test('phone/contact write scopes are separately opt-in, with unchanged default consent', () => {
     const client = { clientId: 'contacts', name: 'Contacts', redirectUris: ['com.example.contacts:/callback'] };
     expect(resolveNativeAuthConfig({ clients: [client] }).clients[0]!.scopes).toEqual(['openid', 'profile', 'email']);

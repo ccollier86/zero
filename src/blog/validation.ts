@@ -31,6 +31,7 @@ export function blogRecord(
     if (!('value' in property)) return blogInvalid();
     result[key] = property.value;
   }
+  if (Reflect.ownKeys(input).length !== Object.keys(result).length) return blogInvalid();
   return result;
 }
 export function blogRevision(value: unknown, allowZero = false): number {

@@ -177,6 +177,12 @@ function safeActorDetails(
   }
   if (code === 'DATABASE_CONFLICT') {
     const result: Record<string, string | number> = {};
+    // A registered realm may declare a small numeric domain rejection. It is
+    // interpreted only by that realm's owning facade, never as raw error text,
+    // HTTP status, SQL, authority or a reason to change the commit outcome.
+    if (Number.isSafeInteger(details.domainCode) && Number(details.domainCode) >= 1 && Number(details.domainCode) <= 4095) {
+      result.domainCode = Number(details.domainCode);
+    }
     if (details.conflictType === 'cas'
       || details.conflictType === 'idempotency-key-reused'
       || details.conflictType === 'primary-key'

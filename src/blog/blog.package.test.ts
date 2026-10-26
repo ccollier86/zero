@@ -118,7 +118,7 @@ import { createPublicBlogClient } from '@zero/framework/blog/client';
 import { resolveBlogConfig, type BlogConfig } from '@zero/framework/blog/server';
 import { mkdir } from 'node:fs/promises';
 const root = process.cwd(); await mkdir(root + '/app');
-const blog: BlogConfig = {};
+const blog: BlogConfig = { content: false };
 if (typeof resolveBlogConfig !== 'function') throw new Error('Missing public config resolver');
 const app = await createApp({ db: { mode: 'memory' }, systemDb: { mode: 'memory' }, tables: {}, auth: { bootstrap: 'public' }, blog,
   appDir: root + '/app', outDir: root + '/out', generatedDir: root + '/generated', storageDir: root + '/storage',

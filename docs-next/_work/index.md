@@ -17,6 +17,10 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Blog publishing implementation](./blog-publishing-implementation.md): private Fabric
+  content, publication snapshots, media, metrics and the remaining presentation,
+  editing and release qualification gates. Unreleased feature work is not the
+  selected main archive.
 - [PracticeIQ navigation, audit and avatar repair](./practiceiq-integration-repair.md):
   main-based isolated repair, exact installed baseline, framework/app ownership,
   real document-request/retention/native upload checks and release gates. Blog

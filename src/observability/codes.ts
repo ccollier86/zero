@@ -26,6 +26,7 @@ function code(
 
 /** Stable platform observability codes. */
 export const OBS_CODES = {
+  BLOG_MEDIA_CLEANUP_RETRY: code('blog', 'media.cleanup_retry', 'warn', 'Retained blog media work needs a cleanup retry.'),
   SEO_DISCOVERY_FAILED: code('seo', 'discovery.failed', 'warn', 'Public SEO discovery is temporarily unavailable.'),
   PAYMENTS_JOB_RETRY: code('payments', 'job.retry', 'warn', 'Billing background work will retry.'),
   PAYMENTS_JOB_QUARANTINED: code('payments', 'job.quarantined', 'error', 'Billing background work needs operator recovery.'),

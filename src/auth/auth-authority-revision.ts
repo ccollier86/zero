@@ -108,6 +108,11 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
     updateColumns: [],
     updateTriggerVersion: 2,
   },
+  // Blog author eligibility/publication and ownership policy participate in
+  // the same final-edge admission as Guardian. No content/network work runs
+  // in these short SYSTEM transactions.
+  { table: '_blog_authors', updateColumns: ['user_id', 'status', 'revision', 'published_slug', 'published_json'] },
+  { table: '_blog_policy', updateColumns: ['fingerprint', 'generation'] },
 ] as const;
 
 /** Install the shared revision clock and versioned authority triggers. */

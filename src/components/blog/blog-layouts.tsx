@@ -41,6 +41,7 @@ export interface BlogListPageProps {
   columns?: 2 | 3 | 4; baseUrl?: string; className?: string; showRecentHero?: boolean;
   pagination?: BlogPaginationState; pageSize?: number; filters?: BlogFilterState; isLoading?: boolean;
   onSearchChange?: (query: string) => void; onCategoryChange?: (id: string | null) => void; onPageChange?: (page: number) => void;
+  hrefForPage?: (page: number) => string;
   /** Manual mode displays exactly the passed posts; it never issues a request. */
   filterMode?: 'local' | 'manual'; search?: false | 'palette' | 'inline' | 'dropdown';
   searchResultProps?: Omit<SearchWithResultsProps, 'posts'>;
@@ -49,7 +50,7 @@ export interface BlogListPageProps {
   empty?: React.ReactNode;
 }
 export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our blog', description, variant = 'magazine', columns = 3, baseUrl, className,
-  showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, filterMode = 'local', search = 'palette', searchProps, searchResultProps, headerActions, sidebar, children, empty }: BlogListPageProps) {
+  showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, hrefForPage, filterMode = 'local', search = 'palette', searchProps, searchResultProps, headerActions, sidebar, children, empty }: BlogListPageProps) {
   const scoped = useBlogScope();
   const [localFilters, setFilters] = React.useState<BlogFilterState>({}), [localPage, setPage] = React.useState(1);
   const state = filters ?? localFilters, query = state.search ?? '', category = state.category ?? null, author = state.author, tag = state.tag;
@@ -75,7 +76,7 @@ export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our
     <div className="zero-blog-list-body">{variant === 'sidebar' && <aside>{sidebar ?? <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}</aside>}
       <section className="zero-blog-all-posts"><div className="zero-blog-section-heading"><Typography variant="h2">{query ? `Results for “${query}”` : 'All blog posts'}</Typography><span className="zero-blog-muted">{current.totalItems ?? filtered.length} articles</span></div>
         {isLoading ? <div role="status" className="zero-blog-empty">Loading articles…</div> : <BlogCardGrid posts={visible} columns={columns} baseUrl={baseUrl} variant={variant === 'list' ? 'horizontal' : 'default'} onCategoryClick={value => changeCategory(value.id)} empty={empty} emptyMessage={query ? 'No matching articles' : undefined} />}
-        <BlogPagination {...current} onPageChange={changePage} />
+        <BlogPagination {...current} onPageChange={changePage} hrefForPage={hrefForPage} />
       </section>
     </div>{children}
   </div>;

@@ -7,27 +7,16 @@ status: in-review
 visibility: internal
 system: blog
 feature: configuration
-maturity: preview
-applies_to: ["2.6.0 feature/blog-foundation-current preview; not the selected main archive"]
+maturity: experimental
+applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
-reviewed_against:
-  package: "@zero/framework"
-  version: "2.6.0"
-  commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-  snapshot: clean
-  date: "2026-10-26"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-    sha256: "1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f"
 ---
 
-# Enable Authors Or Just Expanded Profiles
+# Enable Blogging Or Just Expanded Profiles
 
 [Blog index](./index.md) · [Existing-project upgrade](./upgrade.md)
 
-## Enable Blogging's Author Foundation
+## Enable Blogging
 
 Add this property to the project's existing `defineZeroConfig` declaration:
 
@@ -46,6 +35,9 @@ registration/bootstrap ceremony or convert single tenancy to multi tenancy.
 ```ts
 blog: {
   siteName: 'Journal',
+  scope: 'application',
+  basePath: '/blog',
+  pages: true,
   authors: { requireAvatar: true, requireBio: false },
   // Optional: a narrower existing Guardian requirement.
   manageAuthors: 'admin',
@@ -55,9 +47,15 @@ blog: {
 | Setting | Default | Behavior |
 | --- | --- | --- |
 | `siteName` | Blog | Nonempty, at most 160 characters. Names a newly created scoped directory; changing config does not rename existing records. |
+| `scope` | application | One app-owned blog independent of customer tenancy. Explicit organization ownership requires multi tenancy and custom/headless pages. |
+| `content` | true | Managed private Fabric publishing. false retains authors/profiles only and starts no content actor. See the publishing API for media, actors, roots and metrics. |
+| `pages` | true for application-owned content | Managed Magazine and sidebar-TOC article routes. false for custom routing/headless use; existing app routes are never overwritten. |
+| `basePath` | /blog | Canonical local page prefix, admitted through the normal plugin build route-ownership check. |
 | `authors.requireAvatar` | true | A real explicitly published normalized photo is required to publish a byline. Initials/private photos do not satisfy it. |
 | `authors.requireBio` | false | When true, publication requires a nonempty public biography. |
-| `manageAuthors` | Single: admin; multi: `tenant.members:manage` | Existing Guardian role/permission/trusted-property requirement; must contain an actual authority restriction. Plain true/user/public is rejected. |
+| `manageAuthors` | admin | Existing platform Guardian restriction. Explicit organization ownership defaults to tenant.members:manage. Plain true/user/public is rejected. |
+| `posts.manage` | manageAuthors | Existing Guardian restriction for all-post administration. Active authors otherwise manage their own created posts. |
+| `posts.publish` | active author or post manager | Optional additional Guardian restriction; explicit native publication consent is still required. |
 
 A nonempty public display name is always required. These are **author
 publication checks**, not new login requirements. They do not enroll existing
@@ -66,8 +64,8 @@ users into first-sign-in completion or block unrelated app access.
 For advanced RBAC, declare the intended management permission/role in the normal
 Guardian registry, assign it through its supported control plane, then reference
 it here. Blog does not bump registry versions, grant roles or replace custom
-templates. Multi-tenancy's default lets a permitted organization manager manage
-that organization's authors; it does not grant cross-organization access.
+templates. Application-owned multi-tenant blog requirements must use platform
+roles, application permissions or trusted properties, not customer-org authority.
 
 ## Additive Profile Defaults
 
@@ -84,10 +82,10 @@ photos also rejects. Either deliberately enable public-photo support or set
 
 The adaptive `UserProfileSettings` exposes newly enabled **private** fields
 through its existing capability-driven editor. An app that explicitly hides a
-section with UI props must also remove that local restriction. This slice does
-not insert an author-management screen or public-profile editor into arbitrary
-app navigation. Use the [author facade](./authors.md) for those actions until
-the author UI is added.
+section with UI props must also remove that local restriction. Enabling the
+service does not insert protected admin navigation into an existing app.
+Mount the native [BlogWorkspace](../../frontend/components/public-pages/blog/publishing-workspace.md)
+inside the existing AppProvider/AppShell for author profiles and publishing.
 
 ## Enable Only Profile Features
 
@@ -122,7 +120,7 @@ These are server startup settings, not browser-supplied policy. Restart/recompos
 after changes. The installed policy clock retires old writers; configuration
 A→B→A does not reactivate the original A handle.
 
-Turning blog off removes its managed API/facade but retains author records.
+Turning blog off removes its managed API/pages/facade but retains author and content records.
 Turning public avatars off stops public delivery without deleting private
 images. Turning profile fields off hides their editor without deleting values.
 None of these is a data-erasure operation. Restoration of retained published
@@ -134,3 +132,4 @@ the distinction from permanently withdrawing it.
 - [Guardian configuration](../guardian/configuration.md) owns profile field policies.
 - [Public avatars](../guardian/avatars.md#optional-public-avatar-publication) owns consent and image URLs.
 - [Author operations](./authors.md) documents actual SDK and route calls.
+- [Publishing API](./publishing-api.md) owns the managed content, media and analytics settings.

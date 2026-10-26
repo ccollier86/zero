@@ -1,7 +1,13 @@
 @import './blog-tokens.css';
 @import './blog-extended.css';
+@import './blog-editor.css';
 .zero-blog { color: var(--zero-blog-text); font-family: var(--zero-blog-font); font-size: var(--zero-blog-type-body); line-height: var(--zero-blog-leading-body); min-width: 0; }
 .zero-blog *, .zero-blog-overlay * { box-sizing: border-box; }
+.zero-blog-public-header, .zero-blog-public-search-form { max-width: var(--zero-blog-page-width); margin-inline: auto; padding: var(--zero-blog-space-6); display: flex; align-items: center; justify-content: space-between; gap: var(--zero-blog-space-4); }
+.zero-blog-public-header > a { font-weight: var(--zero-blog-weight-heading); flex: none; }
+.zero-blog-public-header > button { width: min(60%, var(--zero-blog-toc-width)); flex: none; }
+.zero-blog-public-search-form { justify-content: center; align-items: end; flex-wrap: wrap; }
+.zero-blog-public-search-form label { display: grid; gap: var(--zero-blog-space-2); }
 .zero-blog a { color: inherit; text-decoration: none; }
 .zero-blog svg { width: var(--zero-blog-icon); height: var(--zero-blog-icon); flex-shrink: 0; }
 .zero-blog :is(button,a,input,summary):focus-visible { outline: var(--zero-blog-focus-width) solid var(--zero-blog-ring); outline-offset: var(--zero-blog-space-1); }

@@ -6,6 +6,10 @@ import type {
   PublicBlogClient,
 } from '../../blog/client-contracts';
 import type { FetchInit } from './sdk';
+import { createBlogContentClient, blogQueryString } from './blog-content-client';
+import { watchBlogPosts, watchBlogPost, watchBlogMetrics } from './blog-content-watch';
+import { createBlogMediaClient, type BlogBinaryTransport } from './blog-media-client';
+import type { BlogMetricsApi } from '../../blog/metrics-types';
 import {
   assertBlogAuthor,
   assertBlogCapabilities,
@@ -14,6 +18,7 @@ import {
 } from './blog-parser';
 export function createBlogClient(
   fetch: <T>(path: string, init?: FetchInit) => Promise<T>,
+  raw?: BlogBinaryTransport,
 ): BlogClient {
   let generation = 0,
     boundary = new AbortController();
@@ -22,6 +27,7 @@ export function createBlogClient(
     method: string,
     body: unknown,
     signal?: AbortSignal,
+    requestId?: string,
   ): Promise<T> => {
     const epoch = generation,
       active = AbortSignal.any([
@@ -33,6 +39,7 @@ export function createBlogClient(
     const value = await abortable(
       fetch<T>(BLOG_API + path, {
         method,
+        ...(requestId ? { headers: { 'Idempotency-Key': requestId } } : {}),
         ...(body === undefined ? {} : { body: structuredClone(body) }),
         signal: active,
       }),
@@ -54,6 +61,25 @@ export function createBlogClient(
     return value;
   };
   return Object.freeze({
+    ...createBlogContentClient(call),
+    media: createBlogMediaClient(call, raw ? (path, init) => raw(BLOG_API + path, init) : undefined, () => boundary.signal),
+    metrics: Object.freeze<BlogMetricsApi>({
+      capabilities: () => call('/metrics/config', 'GET', undefined),
+      page: (query = {}, options) => {
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+        return call('/metrics' + (params.size ? '?' + params : ''), 'GET', undefined, options?.signal);
+      },
+    }),
+    watchPosts(listener, options) {
+      return watchBlogPosts((path, signal) => fetch<Response>(BLOG_API + path, { signal, json: false }), boundary.signal, listener, options);
+    },
+    watchPost(id, listener, options) {
+      return watchBlogPost((path, signal) => fetch<Response>(BLOG_API + path, { signal, json: false }), boundary.signal, id, listener, options);
+    },
+    watchMetrics(listener, options) {
+      return watchBlogMetrics((path, signal) => fetch<Response>(BLOG_API + path, { signal, json: false }), boundary.signal, listener, options);
+    },
     clear() {
       generation++;
       boundary.abort();
@@ -242,6 +268,12 @@ export function createPublicBlogClient(
   )
     throw new Error('Invalid blog base URL.');
   return Object.freeze<PublicBlogClient>({
+    metricTicket: (siteSlug, slug, options) => publicContent('posts/' + encodeURIComponent(slug) + '/metrics-ticket', siteSlug, options?.signal),
+    observe: (siteSlug, slug, ticket, observation, options) => publicContent('posts/' + encodeURIComponent(slug) + '/observations', siteSlug, options?.signal, { ticket, observation }),
+    posts: (siteSlug, query = {}, options) => publicContent('posts' + blogQueryString(query), siteSlug, options?.signal),
+    post: (siteSlug, slug, options) => publicContent('posts/' + encodeURIComponent(slug), siteSlug, options?.signal),
+    taxonomies: (siteSlug, query = {}, options) => publicContent('taxonomies' + blogQueryString(query), siteSlug, options?.signal),
+    taxonomy: (siteSlug, id, options) => publicContent('taxonomies/' + encodeURIComponent(id), siteSlug, options?.signal),
     async author(siteSlug, authorSlug, options) {
       const signal = AbortSignal.any([
         AbortSignal.timeout(30000),
@@ -299,6 +331,29 @@ export function createPublicBlogClient(
       }
     },
   });
+  /** Anonymous public snapshots use no cookies; cap decoding independently of arbitrary server response sizes. */
+  async function publicContent<T>(path: string, siteSlug: string, inputSignal?: AbortSignal, body?: unknown): Promise<T> {
+    const signal = AbortSignal.any([AbortSignal.timeout(30000), ...(inputSignal ? [inputSignal] : [])]);
+    const response = await abortable(fetcher(base.href.replace(/\/$/, '') + BLOG_API + '/public/' + encodeURIComponent(siteSlug) + '/' + path,
+      { signal, credentials: 'omit', cache: 'no-store', ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) }), signal);
+    if (!response.ok || !response.body) throw new Error('The public blog content is unavailable.');
+    const reader = response.body.getReader(), decoder = new TextDecoder('utf-8', { fatal: true });
+    const cancel = () => { void reader.cancel().catch(() => {}); }; let text = '', bytes = 0;
+    signal.addEventListener('abort', cancel, { once: true });
+    try {
+      for (;;) {
+        signal.throwIfAborted(); const chunk = await reader.read(); signal.throwIfAborted();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > 1536 * 1024) throw new Error('Public blog response is too large.');
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      return JSON.parse(text + decoder.decode()) as T;
+    } finally {
+      signal.removeEventListener('abort', cancel); await reader.cancel().catch(() => {});
+      try { reader.releaseLock(); } catch { /* Native-reader cleanup is best effort. */ }
+    }
+  }
 }
 
 /** Retire promptly even when an application-supplied transport ignores abort. */

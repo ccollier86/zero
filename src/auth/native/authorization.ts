@@ -6,7 +6,7 @@ import type { NativeAuthorizationRequest, NativeIdentityScope } from './types';
 const TRANSACTION_VALUE = /^[A-Za-z0-9._~-]{32,512}$/;
 const CLIENT_ID = /^[A-Za-z0-9._~-]{1,128}$/;
 const SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
-const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write']);
+const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write', 'blog:read', 'blog:write', 'blog:publish']);
 
 export function parseNativeAuthorizationRequest(
   input: URL | URLSearchParams
@@ -33,6 +33,9 @@ export function parseNativeAuthorizationRequest(
   if (!scopes.includes('openid')) fail('invalid_scope', 'openid scope is required.');
   if ((scopes.includes('profile:write') || scopes.includes('contacts:write')) && !scopes.includes('profile')) {
     fail('invalid_scope', 'profile:write requires profile scope.');
+  }
+  if (scopes.includes('blog:read') && !scopes.includes('profile') || scopes.includes('blog:write') && !scopes.includes('blog:read') || scopes.includes('blog:publish') && !scopes.includes('blog:write')) {
+    fail('invalid_scope', 'Blog scopes require profile, blog:read and blog:write dependencies.');
   }
   const nonce = transaction(params, 'nonce');
   const responseMode = optional(params, 'response_mode');

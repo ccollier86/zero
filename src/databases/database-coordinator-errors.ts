@@ -94,6 +94,11 @@ export function safeCoordinatorError(value: unknown): DatabaseError {
     details.capacityLimit = source.details.capacityLimit as number;
   }
   for (const [key, detail] of Object.entries(source.details)) {
+    if (source.code === 'DATABASE_CONFLICT' && key === 'domainCode'
+      && Number.isSafeInteger(detail) && Number(detail) >= 1 && Number(detail) <= 4095) {
+      details.domainCode = Number(detail);
+      continue;
+    }
     if (key === 'conflictType'
       && typeof detail === 'string'
       && SAFE_COORDINATOR_CONFLICT_TYPES.has(detail)) {

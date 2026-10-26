@@ -6,6 +6,9 @@
  */
 export const FRAMEWORK_INSTALLED_CONSUMER_FILES = [
   'packages/docs/package-installed.integration.test.ts',
+  'src/blog/blog.package.test.ts',
+  'src/blog/blog-publishing.package.test.ts',
+  'src/components/blog/blog.package.test.ts',
   'src/components/button-group/button-group-context-menu.package.test.ts',
   'src/components/cascader/cascader.package.test.ts',
   'src/components/data-studio/data-studio-storage-editors.package.test.ts',

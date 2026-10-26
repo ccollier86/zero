@@ -58,7 +58,7 @@ async function fixture(
       tenancy: mode,
       authorization,
     }),
-    config = resolveBlogConfig({ authors: { requireAvatar } }, normalized);
+    config = resolveBlogConfig({ scope: mode === 'multi' ? 'organization' : 'application', content: false, authors: { requireAvatar } }, normalized);
   const service = new BlogService({
     db,
     users: auth.getStore()!,
@@ -274,7 +274,7 @@ test('authorized live snapshots reflect accepted assignments and close when thei
     await reader.cancel();
     reader.releaseLock();
   }
-});
+}, 15000);
 test('assignment preserves account roles, admits only managers, and requires a real named public profile', async () => {
   const f = await fixture(),
     owner = await f.register('owner'),

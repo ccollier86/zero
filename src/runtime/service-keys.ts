@@ -27,6 +27,8 @@ import type { AuthAuditService } from '../auth/auth-audit-service';
 import type { AuthApiKeyService } from '../auth/auth-api-key-service';
 import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import type { LoggingRuntime } from '../logging/logging-runtime';
+import type { AuthorityCommitCoordinator } from '../databases/authority-commit-coordinator';
+import type { DatabaseActorAuthorityContext } from '../databases/database-actor-authority-context';
 import { createZeroRuntimeServiceKey } from './zero-app-runtime';
 
 export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
@@ -48,6 +50,11 @@ export const ZERO_SYSTEM_SQLITE_SERVICE = createZeroRuntimeServiceKey<PlatformSQ
 export const ZERO_DATABASE_MANAGER = createZeroRuntimeServiceKey<DatabaseManager>(
   'Database manager',
 );
+/** Internal shared final-edge authority for separately managed private Fabric services. Never exposed to request facades. */
+export const ZERO_DATABASE_COMMIT_AUTHORITY = createZeroRuntimeServiceKey<Readonly<{
+  coordinator: AuthorityCommitCoordinator;
+  actorContext: DatabaseActorAuthorityContext | null;
+}>>('Managed database commit authority');
 
 export const ZERO_AUTH_STORE = createZeroRuntimeServiceKey<UserStore>('Auth user store');
 export const ZERO_AUTH_TOKEN_SERVICE = createZeroRuntimeServiceKey<TokenService>(

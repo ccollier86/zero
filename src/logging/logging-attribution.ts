@@ -3,6 +3,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { LoggingContext } from './logging-contracts';
 const local = new AsyncLocalStorage<{ owner: object; context: LoggingContext; assertCurrent: () => void; active: boolean }>();
 
+/** @internal Framework-owned recovery work must not inherit a retired request's actor or authority lifetime. */
+export function withoutLoggingAttribution<T>(operation: () => T): T {
+  return local.exit(operation);
+}
+
 /** @internal Retained child tasks cannot keep using authority after the owned operation settles. */
 export async function runWithLoggingAttribution<T>(owner: object, context: LoggingContext, assertCurrent: () => void, operation: () => T | Promise<T>): Promise<T> {
   const binding = { owner, context, assertCurrent, active: true };

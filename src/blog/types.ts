@@ -1,10 +1,23 @@
-/** Managed author foundation. Publishing posts/editor is a separate blog feature slice. */
+/** Managed blog configuration and Guardian-backed author/profile contracts. */
 import type { AccessRequirement } from '../auth/authorization-kernel';
 import type { UserPublicAvatarAsset } from '../auth/auth-user-avatar-types';
+import type { BlogContentConfig } from './content-config';
+import type { BlogPostsApi, BlogTaxonomiesApi } from './content-types';
+import type { BlogMediaApi } from './media-types';
+import type { BlogMetricsApi } from './metrics-types';
 export interface BlogConfig {
+  /** One application-owned public blog by default, independent of customer tenancy. */
+  scope?: 'application' | 'organization';
+  /** Managed private Fabric content plane; false retains author/profile-only composition. */
+  content?: boolean | BlogContentConfig;
+  /** Public presentation address; does not overwrite an existing application route. */
+  basePath?: string;
+  /** Install the Magazine and sidebar-TOC reader at basePath. false enables headless/custom page composition. */
+  pages?: boolean;
   authors?: { requireAvatar?: boolean; requireBio?: boolean };
   /** Existing Guardian requirement; no role template or current assignment is rewritten. */
   manageAuthors?: AccessRequirement;
+  posts?: { manage?: AccessRequirement; publish?: AccessRequirement };
   /** Name for a newly created scoped author directory. */
   siteName?: string;
 }
@@ -13,7 +26,13 @@ export interface ResolvedBlogConfig {
   readonly requireAvatar: boolean;
   readonly requireBio: boolean;
   readonly manageAuthors: AccessRequirement;
+  readonly managePosts: AccessRequirement;
+  readonly publishPosts: AccessRequirement | null;
   readonly siteName: string;
+  readonly scope: 'application' | 'organization';
+  readonly content: boolean | BlogContentConfig;
+  readonly basePath: string;
+  readonly pages: boolean;
 }
 export type BlogAuthorStatus = 'active' | 'suspended' | 'revoked';
 export interface BlogAuthorProfile {
@@ -79,7 +98,7 @@ export interface UpdateBlogAuthorProfileInput {
   expectedRevision: number;
   changes: Partial<BlogAuthorProfile>;
 }
-export interface ScopedBlog {
+export interface ScopedBlogAuthors {
   capabilities(): BlogCapabilities;
   authors: {
     list(options?: { limit?: number; after?: string }): BlogAuthorPage;
@@ -92,4 +111,11 @@ export interface ScopedBlog {
     publishProfile(userId: string, expectedRevision: number): BlogAuthorRecord;
     withdrawProfile(userId: string, expectedRevision: number): BlogAuthorRecord;
   };
+}
+/** The request facade has a stable shape even when content publishing is disabled. */
+export interface ScopedBlog extends ScopedBlogAuthors {
+  posts: BlogPostsApi;
+  taxonomies: BlogTaxonomiesApi;
+  media: BlogMediaApi;
+  metrics: BlogMetricsApi;
 }

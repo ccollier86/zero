@@ -4,13 +4,14 @@ import type { UserStore } from '../auth/user-store';
 import type { TenancyService } from '../auth/tenancy/tenancy-service';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import type { ServiceDataScope } from '../auth/service-data-scope';
-import { serviceDataScopeKey } from '../auth/service-data-scope';
+import { applicationServiceDataScope, serviceDataScopeKey } from '../auth/service-data-scope';
 import { AuthError } from '../auth/types';
 import {
   authAuditActorFromContext,
   type AuthAuditService,
 } from '../auth/auth-audit-service';
 import { invokeSynchronousAuthCallback } from '../auth/auth-synchronous-callback';
+import { installAuthAuthorityRevision } from '../auth/auth-authority-revision';
 import { createZeroRuntimeServiceKey } from '../runtime/zero-app-runtime';
 import type { UserPublicAvatarAsset } from '../auth/auth-user-avatar-types';
 import { inspectBlogSchema, reconcileBlogSchema } from './schema';
@@ -32,6 +33,8 @@ import type {
   ResolvedBlogConfig,
   ScopedBlog,
 } from './types';
+import type { BlogContentService } from './content-service';
+import { unavailableBlogContent } from './content-unavailable';
 
 export const ZERO_BLOG = createZeroRuntimeServiceKey<BlogService>(
   'Managed blog authors',
@@ -78,6 +81,7 @@ export class BlogService {
   private readonly listeners = new Set<() => void>();
   private unsubscribe: (() => void) | null = null;
   private readonly now: () => number;
+  private content: BlogContentService | null = null;
   constructor(private readonly deps: BlogDependencies) {
     if (deps.db.getTransactionDomain() !== deps.users.getTransactionDomain())
       throw new AuthError(
@@ -92,6 +96,7 @@ export class BlogService {
     const { db, users, config } = this.deps;
     if (config.enabled) reconcileBlogSchema(db, this.deps.installAllowed);
     if (inspectBlogSchema(db) !== 'ready') return;
+    installAuthAuthorityRevision(db);
     users.transaction(() => {
       users.assertCurrentProfile();
       const old = db
@@ -114,9 +119,16 @@ export class BlogService {
         'INSERT INTO _blog_policy(singleton,fingerprint,generation) VALUES (1,?,?) ON CONFLICT(singleton) DO UPDATE SET fingerprint=excluded.fingerprint,generation=excluded.generation',
       ).run(this.fingerprint, generation);
       this.generation = generation;
+      if (config.enabled && config.scope === 'application') this.ensureSite(applicationServiceDataScope());
     });
     if (config.enabled) this.unsubscribe = db.onChange(() => this.notify());
   }
+  /** @internal Managed startup publishes content only after its isolated Fabric owner is ready. */
+  attachContent(content: BlogContentService): void { if (this.content) throw invalidState(); this.content = content; }
+  /** @internal Explicit application ownership is independent of the session's selected customer organization. */
+  get ownership() { return this.deps.config.scope; }
+  /** @internal Used by native HTTP mutation controllers to wait outside SQLite, never around async content/provider work. */
+  get transactionDomain() { return this.deps.db; }
   close(): void {
     this.stopped = true;
     this.unsubscribe?.();
@@ -142,7 +154,7 @@ export class BlogService {
     };
   }
   forAuthority(authority: BlogAuthority): ScopedBlog {
-    const { access, scope } = authority,
+    const { access } = authority, scope = this.deps.config.scope === 'application' ? applicationServiceDataScope() : authority.scope,
       actor = access.requireUser();
     if (actor.credentialKind === 'api-key') throw forbidden();
     const admit = (write = false) => {
@@ -199,7 +211,7 @@ export class BlogService {
         admit(true);
         return result;
       });
-    return Object.freeze({
+    const authorFacade: Pick<ScopedBlog, 'capabilities' | 'authors'> = Object.freeze({
       capabilities: (): BlogCapabilities => {
         try {
           admit();
@@ -411,6 +423,31 @@ export class BlogService {
           }),
       }),
     });
+    return Object.freeze({ ...authorFacade, ...(this.content ? this.content.forAuthority(authority, authorFacade) : unavailableBlogContent(this.deps.config.basePath)) });
+  }
+  /** Public controllers receive the managed publishing service, never a database selector. */
+  get publishing(): BlogContentService {
+    this.assertReady();
+    if (!this.content) throw new AuthError('Blog content publishing is not enabled.', 'BLOG_CONTENT_DISABLED', 503);
+    return this.content;
+  }
+  /** @internal Public selector resolves only an intentionally public site under the installed ownership policy. */
+  publicSite(siteSlug: string): BlogSite {
+    this.assertReady();
+    const row = this.deps.db.prepare('SELECT * FROM _blog_sites WHERE slug=?').get(blogText(siteSlug, 100)) as SiteRow | null;
+    if (!row || this.deps.config.scope === 'application' && row.scope_key !== 'application' || this.deps.config.scope === 'organization' && !row.scope_key.startsWith('tenant:')) throw notFound();
+    if (row.scope_key.startsWith('tenant:') && this.deps.tenancy?.getTenant(row.scope_key.slice(7))?.status !== 'active') throw notFound();
+    return { id: row.site_id, name: row.name, slug: row.slug, revision: row.revision };
+  }
+  /** @internal Resolve an enrolled author by opaque author identity; never select a private account by display data. */
+  contentAuthor(authority: BlogAuthority, authorId: string, manage: boolean): { record: BlogAuthorRecord; publication: BlogPublicAuthor | null } {
+    const capabilities = this.forAuthority(authority).capabilities(), site = capabilities.site;
+    const row = site ? this.deps.db.prepare('SELECT * FROM _blog_authors WHERE author_id=? AND site_id=?').get(authorId, site.id) as AuthorRow | null : null;
+    const scope = this.deps.config.scope === 'application' ? applicationServiceDataScope() : authority.scope;
+    if (!row || !row.user_id || row.status !== 'active' || !this.eligible(scope, row.user_id) || !manage && row.user_id !== authority.access.requireUser().userId) throw forbidden();
+    let publication = null;
+    if (row.published_slug) try { publication = this.publicAuthor(site!.slug, row.published_slug); } catch (error) { if (!(error instanceof AuthError) || error.status !== 404) throw error; }
+    return { record: this.record(row), publication };
   }
   publicAuthor(siteSlug: string, authorSlug: string): BlogPublicAuthor {
     this.assertReady();
@@ -424,6 +461,7 @@ export class BlogService {
     const site = this.deps.db
       .prepare('SELECT * FROM _blog_sites WHERE slug=?')
       .get(siteSlug) as SiteRow | null;
+    if (site) this.publicSite(siteSlug);
     const row = site
       ? (this.deps.db
           .prepare(
@@ -456,6 +494,15 @@ export class BlogService {
       ...(avatar ? { avatar } : {}),
     };
   }
+  /** Resolve only the currently published byline; never fall back to private account profile data. */
+  publicAuthorById(siteSlug: string, authorId: string): BlogPublicAuthor | null {
+    const site = this.publicSite(siteSlug);
+    const row = this.deps.db.prepare('SELECT published_slug FROM _blog_authors WHERE site_id=? AND author_id=?')
+      .get(site.id, authorId) as { published_slug: string | null } | null;
+    if (!row?.published_slug) return null;
+    try { return this.publicAuthor(siteSlug, row.published_slug); }
+    catch (error) { if (error instanceof AuthError && error.status === 404) return null; throw error; }
+  }
   private site(scope: ServiceDataScope) {
     return this.deps.db
       .prepare('SELECT * FROM _blog_sites WHERE scope_key=?')
@@ -486,7 +533,7 @@ export class BlogService {
   }
   private eligibleKey(key: string, userId: string) {
     if (this.deps.users.getUserById(userId)?.status !== 'active') return false;
-    if (key === 'application') return !this.deps.tenancy;
+    if (key === 'application') return this.deps.config.scope === 'application';
     const tenantId = key.startsWith('tenant:') ? key.slice(7) : '';
     return (
       !!tenantId &&
@@ -577,7 +624,7 @@ export class BlogService {
       action: 'blog.' + operation,
       outcome: 'succeeded',
       scope:
-        authority.scope.scopeKind === 'tenant'
+        this.deps.config.scope === 'organization' && authority.scope.scopeKind === 'tenant'
           ? { kind: 'tenant', tenantId: authority.scope.tenantId }
           : { kind: 'application' },
       actor: authAuditActorFromContext(authority.access.requireUser()),

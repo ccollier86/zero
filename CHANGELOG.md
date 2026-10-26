@@ -4,6 +4,15 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Added the working opt-in publishing implementation on the blog feature branch:
+  one application-owned private Fabric database, Guardian-fenced draft/public
+  snapshots, immutable history, CAS/idempotent writes, taxonomy and indexed search,
+  private Storage media, optional bounded aggregate observations and managed SEO/
+  sitemap-backed Magazine/sidebar-TOC public pages. The native workspace reuses
+  Zero's DataTable, save/recovery guards, owned dialogs and selection-formatting
+  controls. Historical author/UI-only preview notes below describe earlier slices,
+  not a claim that the current publishing candidate is already selected for updates.
+
 - Resumed the blog/author preview on current main without replacing the selected
   stable update. Preserved released migration 045, appended public avatars and
   author metadata as 046/047, retained all canonical migration/CSS build adapters,

@@ -17,6 +17,7 @@ import type { PlatformObservabilityRuntime } from '../../observability/types';
 import type { PlatformSQLiteService } from '../../persistence';
 import {
   ZERO_DATABASE_MANAGER,
+  ZERO_DATABASE_COMMIT_AUTHORITY,
   ZERO_SYSTEM_DB,
   ZERO_SYSTEM_SQLITE_SERVICE,
 } from '../../runtime/service-keys';
@@ -117,6 +118,9 @@ export function createManagedAppDatabasePlanes({
   );
 
   if (authorityCommitCoordinator) {
+    const authority = Object.freeze({ coordinator: authorityCommitCoordinator, actorContext: actorAuthorityContext ?? null });
+    runtime.set(ZERO_DATABASE_COMMIT_AUTHORITY, authority);
+    runtime.addCleanup(() => { runtime.clear(ZERO_DATABASE_COMMIT_AUTHORITY, authority); });
     runtime.addCleanup(() => authorityCommitCoordinator.close());
     if (authorityCommitFileFence) {
       runtime.addCleanup(() => authorityCommitFileFence.close());

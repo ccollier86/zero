@@ -7,29 +7,30 @@ status: in-review
 visibility: internal
 system: blog
 feature: author-foundation
-maturity: preview
-applies_to: ["2.6.0 feature/blog-foundation-current preview; not the selected main archive"]
+maturity: experimental
+applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
-reviewed_against:
-  package: "@zero/framework"
-  version: "2.6.0"
-  commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-  snapshot: clean
-  date: "2026-10-26"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-    sha256: "1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f"
 ---
 
-# Blog Author Foundation
+# Blogging And Publishing
 
 [Backend index](../index.md) · [Blog UI](../../frontend/components/public-pages/blog/index.md)
 
-Work has resumed on `feature/blog-foundation-current`, integrated with main's
-released fixes. The frontmatter identifies the current qualified development
-archive. See the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
+## Publishing Work In Progress
+
+The `feature/blog-publishing-backend` implementation includes private Fabric
+posts, revisions, explicit publication, taxonomy, Storage media, indexed search,
+optional aggregate observations, managed Magazine/article routes and a native
+authoring workspace. See the [publishing API](./publishing-api.md),
+[workspace and reader](../../frontend/components/public-pages/blog/publishing-workspace.md)
+and [execution checkpoint](../../_work/blog-publishing-implementation.md).
+Source and real-browser checks are not an installed Linux release qualification.
+The normal updater remains on qualified main until the final candidate is admitted.
+
+## Earlier Qualified Author Foundation
+
+The retained author-only preview and its package evidence remain historical.
+See the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
 and [preview migration boundary](./upgrade.md#earlier-feature-branch-preview).
 The normal updater still selects main, not this blog branch.
 
@@ -39,10 +40,11 @@ reuses the accounts, permissions, profile editor, Storage and audit capture that
 the app already has. It does not replace an existing account role with an
 "author" role or make every account a public profile.
 
-This feature-branch preview is the **author foundation**, not a post CMS.
-Post storage, block editing, publication scheduling, automatic article SEO and
-automatic route assembly are separate [next steps](./roadmap.md). The existing
-`@zero/framework/blog` presentation components remain usable without this backend.
+One application-owned blog is the default for both single- and multi-tenant
+apps; customer organization management does not grant platform-blog access.
+The existing `@zero/framework/blog` presentation parts remain usable without
+enabling persistence or routes. Scheduled publication, translations and
+Gutenberg interchange are not implemented or implied by the block editor.
 
 ## Choose An Entry Point
 
@@ -52,9 +54,9 @@ automatic route assembly are separate [next steps](./roadmap.md). The existing
   publication, permissions, organization isolation, realtime and audit behavior.
 - [Existing-project upgrade](./upgrade.md): additive migrations, safe rollout,
   Doctor findings, preservation checks and disabling without deleting data.
-- [Roadmap](./roadmap.md): the boundary between this foundation and the future CMS.
-- [Publishing implementation plan](./publishing-plan.md): the next backend/UI
-  slices, storage/authority boundaries and acceptance gates (not implemented).
+- [Publishing API](./publishing-api.md): posts, media, taxonomy, search, observations and worker ownership.
+- [Roadmap](./roadmap.md): remaining release gates and optional later extensions.
+- [Publishing implementation plan](./publishing-plan.md): design rationale and the retained safety/acceptance requirements.
 
 ## What Zero Handles
 

@@ -15,6 +15,8 @@ import { resolveAppThemeFoundation, type AppThemeFoundation } from './style-foun
 import { getDeclaredTableSyncMode } from '../../schema/table-sync-metadata';
 import type { SeoConfig } from '../../seo';
 import { resolveBlogConfig, withBlogProfileDefaults, blogEnabled } from '../../blog/config';
+import { resolveBlogContentConfig, type ResolvedBlogContentConfig } from '../../blog/content-config';
+import { assertBlogContentDirectoryIsolation } from '../../blog/content-isolation';
 import type { BlogConfig, ResolvedBlogConfig } from '../../blog/types';
 import { resolveSeoConfig } from '../../seo/runtime';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
@@ -596,6 +598,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
   blog: ResolvedBlogConfig;
+  readonly blogContent: ResolvedBlogContentConfig | false;
   readonly projectRoot: string;
   readonly serverExtensions: readonly ZeroServerExtensionMountable[];
   readonly frontendBuild?: AppFrontendBuildManifest;
@@ -681,6 +684,7 @@ export function resolveConfig(
   const auth = originalAuth === false ? false : withBlogProfileDefaults(originalAuth, config.blog);
   const authBehavior = auth === false ? null : validateAppAuthConfig(auth);
   const blog = resolveBlogConfig(config.blog, authBehavior);
+  const blogContent = blog.enabled ? resolveBlogContentConfig(blog.content, projectRoot) : false;
   if (logging) for (const permission of Object.values(logging.access)) {
     if (permission && (!authBehavior || !Object.hasOwn(authBehavior.authorization.permissions, permission))) {
       throw new Error('[app] logging permissions must be declared in Guardian authorization.permissions.');
@@ -798,6 +802,12 @@ export function resolveConfig(
   const outDir = resolveAppOwnedPath(projectRoot, config.outDir ?? './.build');
   const generatedDir = resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated');
   const appDir = resolveAppOwnedPath(projectRoot, config.appDir ?? './app');
+  if (blogContent) assertBlogContentDirectoryIsolation({
+    rootDirectory: blogContent.rootDirectory, outDir, storageDir, generatedDir, appDir,
+    controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
+    ...(logging ? { loggingRoot: logging.rootDirectory } : {}),
+    ...(databaseTopology.mode === 'multiple' ? { applicationFabricRoot: databaseTopology.rootDirectory } : {}),
+  });
   if (logging) assertLoggingDirectoryIsolation({
     rootDirectory: logging.rootDirectory, outDir, storageDir, generatedDir, appDir,
     controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
@@ -856,6 +866,7 @@ export function resolveConfig(
     ...(dataRealm === undefined ? {} : { dataRealm }),
     logging,
     blog,
+    blogContent,
     tables: normalized,
     ...(databaseAutomations === undefined ? {} : { databaseAutomations }),
     mutationValidators,

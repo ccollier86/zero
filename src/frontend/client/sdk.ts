@@ -1228,7 +1228,7 @@ export function createClient(config: ClientConfig): Client {
   storageStudio = createStorageStudioSdkSurface(clientFetch);
   emailInbox = createEmailInboxSource(clientFetch);
   logging = createLoggingClient(clientFetch);
-  blog = createBlogClient(clientFetch);
+  blog = createBlogClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();

@@ -7,20 +7,9 @@ status: in-review
 visibility: internal
 system: blog
 feature: author-profiles
-maturity: preview
-applies_to: ["2.6.0 feature/blog-foundation-current preview; not the selected main archive"]
+maturity: experimental
+applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced, native]
-reviewed_against:
-  package: "@zero/framework"
-  version: "2.6.0"
-  commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-  snapshot: clean
-  date: "2026-10-26"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-    sha256: "1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f"
 ---
 
 # Author Enrollment And Public Bylines
@@ -47,8 +36,8 @@ is unnecessary.
 | `authors.withdrawProfile(userId, expectedRevision)` | Clears publication; a manager can withdraw a suspended author's retained data without reactivating the account. |
 
 Browser calls additionally accept a final `{ signal }` options object. Do not
-use these profile methods as proof of post publication rights; a post CMS is
-not part of this foundation.
+use these profile methods as proof of post publication rights; the separate
+[publishing facade](./publishing-api.md) checks publication permissions and native scopes.
 
 ```ts
 // In a permitted signed-in browser context:
@@ -100,8 +89,9 @@ that snapshot; withdraw removes it. Draft and retained public slugs are reserved
 within their site to avoid another author taking the live URL before a draft
 rename is published. A rename does not yet create an automatic redirect.
 
-Public reads require an active canonical user, active scoped assignment and,
-in multi mode, current active membership in an active organization. Required
+Public reads require an active canonical user and active scoped assignment.
+Explicit organization-owned blogs additionally require current active membership
+in an active organization; application-owned blogs do not inherit customer scope. Required
 public-photo withdrawal/replacement also makes the byline unavailable until
 the requirement is satisfied again. Account deletion retains historical author
 identity with a null user reference, but does not serve it publicly. This is not
@@ -122,7 +112,7 @@ an optional explicitly public avatar descriptor. It excludes user IDs, account
 emails/usernames, roles, private profile data, organization membership and
 drafts. Public responses and photos are no-store.
 
-Single-mode sites use public selector `blog`. Multi-mode sites get a retained
+Application-owned sites use public selector `blog` in both tenancy modes. Explicit organization-owned sites get a retained
 opaque `site-…` slug on first enrollment; obtain it from admitted capabilities.
 It identifies intentionally public content, not a tenant DB or grant. The
 current foundation does not add a public all-authors/org directory, custom-domain

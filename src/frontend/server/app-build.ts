@@ -12,6 +12,7 @@ import { assertManagedAppLoggingIsolation } from './app-logging-isolation';
 import { assertPluginBuildRouteOwnership } from './server-plugin-build-route-ownership';
 import type { AppFrontendBuildManifest, ResolvedAppFrontendAssets } from './server-plugin-build-types';
 import { resolveConfig, type AppConfig, type ResolvedConfig } from './types';
+import { blogPagesPlugin } from '../../blog/public-pages-plugin';
 
 /** Immutable build result consumed by generated production entries and app setup. */
 export interface PreparedAppBuild {
@@ -43,7 +44,7 @@ export async function discoverAppServerExtensionDeclarations(config: ResolvedCon
     { kind: 'plugins', dir: config.serverPluginsDir }, { kind: 'middleware', dir: config.serverMiddlewareDir },
     { kind: 'endpoints', dir: config.serverEndpointsDir }, { kind: 'routes', dir: config.serverRoutesDir },
   ] });
-  return Object.freeze({ extensions: Object.freeze([...config.serverExtensions, ...discovered.extensions]), modulePaths: discovered.modulePaths });
+  return Object.freeze({ extensions: Object.freeze([...config.serverExtensions, ...discovered.extensions, ...(config.blog.pages ? [blogPagesPlugin(config.blog)] : [])]), modulePaths: discovered.modulePaths });
 }
 
 /** Compile a previously discovered list so managed startup cannot import/mount declarations twice. */

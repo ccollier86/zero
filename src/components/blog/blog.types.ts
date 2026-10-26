@@ -1,5 +1,6 @@
 /** Public presentation data. No account, publication, transport or persistence ownership. */
 import type { AnchorHTMLAttributes, ComponentType, ReactNode } from 'react';
+import type { BlogInlineText } from '../../blog/content-types';
 
 export interface BlogSocialLink { id: string; label: string; href: string; icon?: ReactNode }
 export interface BlogAuthor {
@@ -20,11 +21,11 @@ export interface BlogPost {
 }
 export interface BlogImage { src: string; alt: string; caption?: string; width?: number; height?: number }
 export type BlogContentBlock = { id?: string } & (
-  | { type: 'paragraph'; text: string }
-  | { type: 'heading'; level: 2 | 3 | 4 | 5 | 6; text: string; anchor?: string }
-  | { type: 'quote'; text: string; author?: string; source?: string }
-  | { type: 'callout'; variant: 'info' | 'warning' | 'error' | 'success' | 'tip'; title?: string; text: string }
-  | { type: 'list'; style: 'bullet' | 'numbered'; items: readonly string[] }
+  | { type: 'paragraph'; text: string; inline?: readonly BlogInlineText[] }
+  | { type: 'heading'; level: 2 | 3 | 4 | 5 | 6; text: string; anchor?: string; inline?: readonly BlogInlineText[] }
+  | { type: 'quote'; text: string; author?: string; source?: string; inline?: readonly BlogInlineText[] }
+  | { type: 'callout'; variant: 'info' | 'warning' | 'error' | 'success' | 'tip'; title?: string; text: string; inline?: readonly BlogInlineText[] }
+  | { type: 'list'; style: 'bullet' | 'numbered'; items: readonly string[]; inlineItems?: readonly (readonly BlogInlineText[])[] }
   | { type: 'code'; code: string; language?: string; filename?: string; showLineNumbers?: boolean; highlightLines?: readonly number[] }
   | ({ type: 'image' } & BlogImage)
   | { type: 'image-gallery'; images: readonly BlogImage[]; layout?: 'grid' | 'carousel' | 'stack'; columns?: 2 | 3 | 4 }

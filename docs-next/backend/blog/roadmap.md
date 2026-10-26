@@ -14,36 +14,36 @@ maturity: planned
 
 [Blog index](./index.md) · [Presentation and editor roadmap](../../frontend/components/public-pages/blog/roadmap.md)
 
-The current preview implements user-backed author enrollment, draft/public
-profiles, optional explicitly public avatars, Guardian admission, audit capture
-and scoped reactive projections. It deliberately stops before post publishing.
+The working publishing branch now implements user-backed authors, isolated
+Fabric content, immutable revisions, conditional drafts/publication, taxonomy,
+private Storage media, indexed search, optional aggregate observations and
+managed public rendering. The native workspace uses these APIs and existing Zero
+controls/save/modal machinery. See [publishing APIs](./publishing-api.md) and the
+[workspace manual](../../frontend/components/public-pages/blog/publishing-workspace.md).
 
-The resumed `feature/blog-foundation-current` continuation incorporates released
-main fixes without changing that boundary. See the
+The earlier `feature/blog-foundation-current` preview remains historical. See the
 [qualification record](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
-for the retained checkpoint, migration overlap and current regression results.
+for its retained checkpoint and migration overlap. It does not qualify the newer
+publishing implementation.
 
-The [next implementation boundary](./publishing-plan.md) expands the remaining
-work into vertical slices with explicit ownership, safety and qualification
-gates. It is a plan, not an available post API or editor configuration.
+The [implementation checkpoint](../../_work/blog-publishing-implementation.md)
+tracks actual source/browser results and the remaining final package/Linux
+qualification. No focused passing test substitutes for a qualified release.
 
-## Next Backend Slices
+## Implemented Working-Source Slices
 
-1. Decide site/content ownership and post storage with supported ReactiveDB/
-   Fabric APIs, preserving public UI prop/callback composition.
-2. Define a versioned block document and draft/published revision boundary,
-   autosave/conflict handling and a Gutenberg-style editor contract. The current
-   display BlockRenderer is not an editor or Gutenberg format compatibility.
-3. Define actual writing/review/publishing permissions, author lifecycle and
-   retained attribution. Author enrollment does not itself grant arbitrary post
-   administration.
-4. Integrate Storage media and explicit public publication, actual alt text,
-   dimensions, removal and safe embedding rules.
-5. Assemble the default Magazine and sidebar-TOC article routes, author archives,
-   slug redirects, optional search and safe preview/noindex behavior.
-6. Use one admitted public revision for visible content and automatic existing
-   SEO/canonical/social/BlogPosting/sitemap integration. No private draft or
-   scheduled future post may leak into discovery.
+1. One app-owned private Fabric file by default in either tenancy mode; explicit
+   organization ownership for custom/headless composition.
+2. Versioned canonical blocks, inline marks, CAS, stable command identities,
+   separate published snapshots, immutable history and draft-only restoration.
+3. Existing Guardian author/post restrictions, separate native scope ceilings,
+   explicit public profiles/photos and retained approved historical names.
+4. Private media allocation/normalization, bounded processing, per-placement alt,
+   current-publication delivery and safe retained cleanup/refusal of referenced deletion.
+5. Magazine/sidebar-TOC pages, real public search, category/tag filters, slug
+   redirects and authorized private preview.
+6. Metadata and structured data from the accepted public revision, trusted app
+   origin and the existing SEO/sitemap lifecycle; explicit indexing controls win.
 
 Each slice needs existing-project additive upgrade support, organization/site
 isolation, accepted revision semantics, background lifecycle and public-package
@@ -52,9 +52,9 @@ work boundaries, not process-local animation timers.
 
 ## Author Foundation Extensions
 
-An author-management/profile UI, custom site slugs/domain bindings, public
-directory pagination, previews, profile redirects, account-deletion retention
-tools and transfer/erasure policies remain future work. Do not invent these
+Custom site slugs/domain bindings, public all-author directories, author-profile
+redirects, translations, scheduled publication, review assignments,
+account-deletion retention tools and transfer/erasure policies remain future work. Do not invent these
 APIs in app code because the metadata schema exists.
 
 No engagement fingerprinting, screenshot collection or session replay is

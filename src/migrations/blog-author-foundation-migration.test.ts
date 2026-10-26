@@ -48,10 +48,10 @@ test(`${prior} to 047 is additive, repeatable and preserves existing identities,
         "SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
       )
       .all() as Array<{ name: string; sql: string | null }>;
-    expect(migrator.run()).toEqual(prior === '044' ? ['045', '046', '047'] : ['046', '047']);
+    expect(migrator.run('047')).toEqual(prior === '044' ? ['045', '046', '047'] : ['046', '047']);
     publicAvatars.up(raw);
     authors.up(raw);
-    expect(migrator.run()).toEqual([]);
+    expect(migrator.run('047')).toEqual([]);
     expect(raw.query('SELECT * FROM users').all()).toEqual(before);
     expect(raw.query('SELECT * FROM _credentials').all()).toEqual(credentials);
     expect(raw.query('SELECT * FROM _storage_private_objects').all()).toEqual(retainedArtifacts);

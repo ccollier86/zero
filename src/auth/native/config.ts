@@ -13,7 +13,7 @@ import type {
 } from './types';
 
 const CLIENT_ID = /^[A-Za-z0-9._~-]{1,128}$/;
-const IDENTITY_SCOPES = new Set(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write']);
+const IDENTITY_SCOPES = new Set(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write', 'blog:read', 'blog:write', 'blog:publish']);
 const NATIVE_TTL_MAX = {
   requestTTL: 3_600_000,
   codeTTL: 600_000,
@@ -94,6 +94,9 @@ function resolveClient(client: NativeAuthClientConfig): ResolvedNativeAuthClient
   if ((scopes.includes('profile:write') || scopes.includes('contacts:write')) && !scopes.includes('profile')) {
     fail('profile:write requires profile scope.');
   }
+  if (scopes.includes('blog:read') && !scopes.includes('profile')) fail('blog:read requires profile scope.');
+  if (scopes.includes('blog:write') && !scopes.includes('blog:read')) fail('blog:write requires blog:read scope.');
+  if (scopes.includes('blog:publish') && !scopes.includes('blog:write')) fail('blog:publish requires blog:write scope.');
   return { clientId: client.clientId, name: client.name, redirectUris, scopes };
 }
 

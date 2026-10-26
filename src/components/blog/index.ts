@@ -36,6 +36,14 @@ export type { BlogCitation, NewsletterSignupProps } from './blog-content';
 export { NewsletterModal, NewsletterTrigger } from './blog-newsletter-modal';
 export type { NewsletterModalProps } from './blog-newsletter-modal';
 export { BlockRenderer } from './blog-blocks';
+export { BlogRichText } from './blog-rich-text';
+export { BlogWorkspace, type BlogWorkspaceProps } from './blog-workspace';
+export { BlogPostEditor, type BlogPostEditorProps } from './blog-post-editor';
+export { BlogPostFields, type BlogPostFieldsProps } from './blog-post-fields';
+export { BlogDocumentEditor, BlogImageFields, type BlogDocumentEditorProps } from './blog-document-editor';
+export { BlogInlineInput, type BlogInlineInputProps } from './blog-inline-input';
+export { BlogMediaPicker, type BlogMediaPickerProps } from './blog-media-picker';
+export { presentBlogDocument, presentPublishedBlogPost, blogPublicMediaHref } from '../../blog/presentation';
 export { blogPostHref, blogBlockToc } from './blog-utils';
 /** The existing Zero highlighter replaces the archive's separate code implementation. */
 export { CodeBlock, CodeBlockFiles, CodeBlockInline } from '../code-block';

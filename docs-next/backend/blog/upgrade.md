@@ -7,23 +7,12 @@ status: in-review
 visibility: internal
 system: blog
 feature: existing-project-upgrade
-maturity: preview
-applies_to: ["2.6.0 feature/blog-foundation-current preview; not the selected main archive"]
+maturity: experimental
+applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
-reviewed_against:
-  package: "@zero/framework"
-  version: "2.6.0"
-  commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-  snapshot: clean
-  date: "2026-10-26"
-  evidence_level: package-qualified
-  artifact:
-    version: "2.6.0"
-    commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
-    sha256: "1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f"
 ---
 
-# Add Authors To An Existing Project Safely
+# Add Blogging To An Existing Project Safely
 
 [Blog index](./index.md) · [Configuration](./configuration.md) · [Migration procedures](../migrations/index.md)
 
@@ -34,10 +23,10 @@ existing project. Enabling profile fields alone is also supported.
 
 ## Prepare A Rehearsal
 
-1. Use an application feature branch and the exact candidate Zero source/archive
-   in the [qualification record](../../_work/audits/blog-author-foundation.md).
-   The version string alone does not identify this preview. Do not select it as
-   production just because a UI test passes.
+1. Use an application feature branch and the exact qualified candidate commit
+   and archive recorded in the [implementation checkpoint](../../_work/blog-publishing-implementation.md).
+   The historical author-only preview does not qualify the new publishing code.
+   The version string alone does not identify an update.
 2. Back up SYSTEM, the app DB, any Fabric files and Storage with the project's
    normal consistent-backup procedure. Rehearse on isolated copies, using
    separate paths and local delivery/provider settings. Never let the rehearsal
@@ -59,6 +48,7 @@ existing project. Enabling profile fields alone is also supported.
 | 045, if not already present | Released private Storage artifact references, including logging evidence. | Does not move or replace existing Storage objects or logging files. |
 | 046 | Explicit public-avatar publication pointers to current normalized private assets. | Does not publish existing images, rewrite Storage grants or copy photo bytes. |
 | 047 | Scoped blog site/author metadata and installed policy clock in SYSTEM. | Does not enroll users, change roles, add post tables or modify customer/Fabric schemas. |
+| 048 | Private blog Fabric owner, media namespace/leases and optional metrics signing metadata. | Does not put article bodies in SYSTEM, move an existing content root or recreate lost retained content. |
 
 These are append-only framework migrations. Previous migration definitions and
 checksums stay unchanged. The normal full upgrade can include other intervening
@@ -95,7 +85,7 @@ their own admitted bootstrap path; that does not authorize production repair.
 Normal startup adopts the resolved feature policy and provisions the existing
 private Guardian media namespace when permitted. A name collision fails closed
 instead of overwriting an app table. Doctor is read-only: `blog.authors.schema_*`,
-`blog.authors.policy_*` and `auth.user_profile.public_avatars.schema_*` distinguish
+`blog.authors.policy_*`, `blog.content.*` and `auth.user_profile.public_avatars.schema_*` distinguish
 missing/invalid schema from policy awaiting startup. A schema-ready finding is
 not proof of provider, authorization or public-photo readiness.
 
@@ -119,9 +109,15 @@ not proof of provider, authorization or public-photo readiness.
 - Conflicting edits return CAS conflicts; a final authority failure leaves no
   accepted row or audit event. Configured Logging receives accepted events
   through its normal durable bridge.
-- The application is not yet relying on a nonexistent CMS/editor, automatic
-  article routes or blog sitemap provider. [UI components](../../frontend/components/public-pages/blog/index.md)
-  still need explicit content and routing.
+- Use the normal Zero build after enabling managed blog pages. A conflicting
+  app-owned blog route must be deliberately preserved with pages:false or moved
+  by the application; the build will not replace it. Mount the protected
+  [BlogWorkspace](../../frontend/components/public-pages/blog/publishing-workspace.md)
+  separately inside existing navigation. Test no-JS public rendering, media,
+  draft privacy, search, redirects, SEO and sitemap withdrawal on the candidate.
+- Retain and consistently back up the new private blog Fabric root together
+  with its SYSTEM owner receipts and private Storage namespace. Never restore
+  just a newly empty blog file against old ownership metadata.
 
 Framework qualification uses disposable loopback/SQLite/Storage fixtures. The
 application agent still needs to rehearse the project's actual backup and

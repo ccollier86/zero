@@ -20,6 +20,7 @@ import type { LoggingContext } from '../../logging/logging-contracts';
 import { isLoggingRecoveryRequest } from '../../logging/logging-admission-paths';
 import { guardLoggingResponseStream } from './app-logging-response-stream';
 import { LOGGING_API } from '../../logging/logging-api-contracts';
+import { isPublicLoggingRequest } from '../../logging/logging-public-request';
 
 const LOGGING_PROJECTION_READS = new Set([LOGGING_API + '/events', LOGGING_API + '/platform/events', LOGGING_API + '/stream']);
 
@@ -38,7 +39,7 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
     return Response.json({ code: 'LOGGING_AUDIT_UNAVAILABLE', error: 'Audit admission is unavailable.' }, { status: 503, headers });
   };
   app.onBeforeHandle({ as: 'global' }, async ({ request }) => {
-    if (isLoggingRecoveryRequest(request)) return;
+    if (isLoggingRecoveryRequest(request) || isPublicLoggingRequest(request)) return;
     try {
       const tokens = runtime.get(ZERO_AUTH_TOKEN_SERVICE);
       const auth = await resolveRequestAuthContext(request, () => tokens, () => runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER))
