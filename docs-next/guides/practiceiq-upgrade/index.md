@@ -3,20 +3,20 @@ id: zero.guides.practiceiq-upgrade
 type: index
 audience: [developer, agent, operator]
 owner: zero-documentation
-status: draft
+status: in-review
 visibility: internal
 system: cross-system
 feature: practiceiq-upgrade-preparation
 maturity: planned
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [single-tenant, separate-system-database, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # PracticeIQ Upgrade Preparation
@@ -120,13 +120,13 @@ during isolated conversion; a held generation is not approved for cutover.
 
 The attachment capability/helper is normal Zero functionality, not a new
 PracticeIQ-only patch. The logging subsystem remains **opt-in**. PracticeIQ
-requires the actual compliance preset: the completion branch supplies strict
-source/admission/custody/export controls, but must still pass final committed
-archive selection and app acceptance. Do not use the older preview or
+requires the actual compliance preset: the completion release supplies strict
+source/admission/custody/export controls. Verify the qualified committed main
+archive, then complete isolated app acceptance. Do not use the older preview or
 substitute detailed/disabled audit. A successful update, logging screen or
 browser observation does not establish clinical coverage or certification.
-Follow the [logging acceptance guide](./logging.md), and plan the dashboard
-review with the user before application handoff.
+Follow the [logging acceptance guide](./logging.md), including the agreed native
+DataTable, server filters, live updates and individual-user audit view.
 
 ## Related Guides and Next Steps
 

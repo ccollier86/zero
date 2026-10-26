@@ -43,7 +43,7 @@ than importing implementation files or reconstructing authentication in routes.
   endpoints, routers, middleware and plugin lifecycle.
 - [Core logging](./logging/index.md): branch-preview Fabric log workers, durable
   application/Guardian capture, scoped SSE/SDK, browser observations and investigation UI;
-  the completion branch adds strict admission, signed custody and private exports,
+  managed compliance adds strict admission, signed custody and private exports,
   with final qualified archive selection and app acceptance tracked explicitly.
 
 ## Identity And Authority

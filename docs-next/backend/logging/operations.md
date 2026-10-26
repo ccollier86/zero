@@ -3,27 +3,27 @@ id: zero.logging.operations
 type: operations
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: operations-and-upgrade
-maturity: preview
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Operations and Adoption
 
 [Logging index](./index.md) · [Documentation index](../../index.md)
 
-Logging remains opt-in. This completion branch is not yet selected for the
+Logging remains opt-in. Select the qualified saved main archive through the
 normal updater. Do not interpret
 the unchanged framework version number as proof that an installed package
 includes it: check the selected release commit and archive checksum. The

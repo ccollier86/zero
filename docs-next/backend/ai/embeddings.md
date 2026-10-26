@@ -3,20 +3,20 @@ id: zero.ai.embeddings
 type: how-to
 audience: [developer, agent, operator]
 owner: ai
-status: draft
+status: in-review
 visibility: internal
 system: ai
 feature: single-batch-embeddings
 maturity: supported
-applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
+applies_to: ["2.6.0 builds with bounded maximum AI/job concurrency"]
 modes: ["managed Bun server", "standalone Bun service", "Torrent-backed durable agent"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.1.1"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Single And Batch Embeddings

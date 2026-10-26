@@ -3,20 +3,20 @@ id: zero.logging
 type: index
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: integrated-logging-preview
-maturity: preview
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Core Logging
@@ -27,10 +27,11 @@ Core logging is an optional managed Zero subsystem with dedicated Fabric audit
 and diagnostic databases, durable source capture, Guardian-scoped APIs,
 authenticated SSE, browser observations and a reusable investigation workspace.
 Existing apps keep logging disabled until configured; updating Zero does not
-silently enable collection. This completion branch adds the strict compliance
+silently enable collection. Managed logging includes the strict compliance
 preset with real admission, source-durability, signing and private-export checks.
-It is not yet selected for the normal updater. Use the exact qualified archive
-identified by the release handoff, not the unchanged version number.
+Use the exact qualified archive identified by the release handoff and
+`zero-release --status`, not the unchanged version number; older preview
+archives do not contain these controls.
 
 - [Configuration](./configuration.md): presets, permissions, metadata, retention,
   queue defaults, path isolation and actor launch.

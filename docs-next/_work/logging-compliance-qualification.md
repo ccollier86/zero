@@ -14,9 +14,10 @@ visibility: internal
 This work starts from main `fc61dcc4cd107c6467bff498d3a772e8f5bdea9d`
 on `fix/logging-compliance-qualified`. Blog author/profile work is excluded.
 PracticeIQ is an integration reference only; its files, data and deployment
-have not been modified. No archive from this branch is selected for the normal
-updater yet. The final committed artifact must pass package checks before
-selection; an intermediate source pack is not a release.
+have not been modified. The earlier staging identity below is historical;
+normal updater selection is established by `zero-release --status` and its
+verified release metadata. Final package checks precede selection; an
+intermediate source pack is not a release.
 
 ## Required Controls And Actual Boundaries
 
@@ -71,7 +72,7 @@ fresh official-build deployment both passed against the exact committed
 candidate below. The earlier export/facade checks also passed; no public
 contract was rebaselined to hide a missing symbol.
 
-### Qualified Backend Candidate
+### Earlier Qualified Backend Candidate
 
 | Field | Value |
 | --- | --- |
@@ -79,11 +80,11 @@ contract was rebaselined to hide a missing symbol.
 | Package version | `2.6.0` |
 | Archive under the external project artifact root | `dev/logging-compliance-ccfc038483eb9ba007ad5947067104e5a0faeae8.tgz` |
 | Archive SHA-256 | `26e82d8b27746bc92549523b049b8032dbd38d4a5f94c0a3e34241e6dbd44acb` |
-| Normal updater selection | Unchanged; main remains `fc61dcc4cd107c6467bff498d3a772e8f5bdea9d`. This is a qualified feature-branch candidate, not an activated app update. |
+| Selection at this earlier checkpoint | Main remained `fc61dcc4cd107c6467bff498d3a772e8f5bdea9d`; this feature-branch archive predates the native live-DataTable correction and is not the final update target. |
 
-This documentation follow-up records the candidate's evidence; it does not
-alter its runtime. If the joint dashboard pass changes runtime/component code,
-qualify the resulting final archive before normal release selection.
+This earlier evidence is retained for provenance. The subsequent native live
+DataTable correction is recorded below and requires its own final packaged
+qualification before normal main archive selection.
 
 ### Integrated Recovery And Privacy
 

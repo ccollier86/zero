@@ -3,20 +3,20 @@ id: zero.guides.practiceiq-upgrade.logging
 type: how-to
 audience: [developer, agent, operator]
 owner: zero-documentation
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: practiceiq-logging-rollout
-maturity: preview
-applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [single-tenant, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Integrate PracticeIQ Logging Deliberately
@@ -27,9 +27,9 @@ Enable logging only after the isolated data conversion and ordinary app
 authorization pass. Logging is core but optional; updating Zero alone creates
 no new log files, workers or browser collection. PracticeIQ requires the actual
 `preset: 'compliance'`, not a `detailed` substitution or disabled audit.
-This completion branch implements it with strict source/admission/custody/export
-checks. Select the final qualified archive before application acceptance;
-the feature branch is not yet the normal updater selection.
+The managed completion release implements it with strict source/admission/
+custody/export checks. Select the final qualified normal main archive before
+application acceptance, verifying its source commit and checksum.
 
 ## Configure Separate Storage
 
@@ -188,8 +188,8 @@ In synthetic managed-app tests, prove all of the following:
 9. Request a private export, restart during its lifecycle, then reauthorize its
    download. Verify exact retained bytes/hash, expiration and cleanup retry.
    A lost acknowledgment retains the same job/event identity, not a duplicate send.
-10. Review the dashboard with the user separately. Richer Filters and evidence
-    management UI are not implied by backend readiness.
+10. Validate the agreed native DataTable, user/activity filters and live insertion
+    behavior. Richer saved Filters/evidence-management UI remain optional future work.
 
 ## Related Guides and Next Steps
 

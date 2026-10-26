@@ -3,20 +3,20 @@ id: zero.logging.configuration
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: managed-configuration-preview
-maturity: preview
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Configuration Preview
@@ -45,12 +45,12 @@ This opens dedicated storage, attaches backend diagnostics and installs the
 configured managed source contributions, including managed tenant/named
 Fabric ReactiveDB writers. It does not promise every raw SQL, semantic read
 or external service outcome is automatically audited.
-The completion branch implements `compliance` as a distinct strict policy, not
+Managed logging implements `compliance` as a distinct strict policy, not
 an alias for `detailed`. It requires managed Guardian, durable source commits,
 signed checkpoints, protected delivery admission and private export storage.
 Review [coverage](./events-and-coverage.md) for the operations an app must declare.
-The branch is not yet selected for the normal updater; use the final qualified
-archive identified in the release handoff, not an intermediate source pack.
+Use the final qualified archive identified in the release handoff and normal
+updater status, not an older preview or intermediate source pack.
 
 | Option | Default and behavior |
 | --- | --- |

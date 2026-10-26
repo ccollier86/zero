@@ -3,20 +3,20 @@ id: zero.logging.events
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: events-and-coverage
-maturity: preview
-applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Events and Capture Coverage

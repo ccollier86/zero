@@ -3,20 +3,20 @@ id: zero.cli.tooling.build
 type: how-to
 audience: [developer, agent, operator]
 owner: cli-tooling
-status: draft
+status: in-review
 visibility: internal
 system: cli-tooling
 feature: build
 maturity: supported
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: ["Bun package-mode applications", "trusted local builds"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Build The Existing App Entry
@@ -144,7 +144,7 @@ not erase existing pages or start a replacement app to mask missing modules.
 
 For strict logging with a bundled server and retained source actors, use this
 official build pipeline and the matching installed framework package. The
-completion branch preserves canonical framework logging migration checksums
+managed completion release preserves canonical framework logging migration checksums
 across the bundle/source boundary; realm/schema/actor checks stay enabled.
 The isolated linux/amd64 logging fixture qualifies JavaScript output with
 retained dependencies and an explicit source actor using an empty environment.

@@ -3,20 +3,20 @@ id: zero.cli.tooling.update
 type: how-to
 audience: [developer, agent, operator]
 owner: cli-tooling
-status: draft
+status: in-review
 visibility: internal
 system: cli-tooling
 feature: update
 maturity: supported
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: ["Bun package-mode applications", "trusted local development"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Update Zero Without Regenerating The App
@@ -87,7 +87,7 @@ The update does not enable logging or rewrite application configuration. Use
 the [logging adoption guide](../../backend/logging/operations.md#upgrade-procedure)
 after installation. Compare release commit/archive checksum rather than the
 reused `2.6.0` version alone. Older preview archives reject compliance; the
-completion branch adds its real strict controls. Check the qualified release
+completion release adds its real strict controls. Check the qualified release
 handoff before enabling it, rather than bypassing a guard in an older package.
 
 ### Local Archive Rollback Binding

@@ -3,20 +3,20 @@ id: zero.guides.practiceiq-upgrade.agent-handoff
 type: operations
 audience: [agent, developer, operator]
 owner: zero-documentation
-status: draft
+status: in-review
 visibility: internal
 system: cross-system
 feature: practiceiq-agent-upgrade-handoff
 maturity: planned
-applies_to: ["Unreleased logging/AI completion branch based on 2.6.0"]
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [single-tenant, feature-branch, isolated-rehearsal]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # PracticeIQ Agent Handoff and Acceptance Gates
@@ -116,8 +116,9 @@ convert live patient data or deploy.
 > env {}, and protected UI/HTTP/Sync admission with reachable recovery.
 > Package-only installation does not activate it. Rehearse the official bundled
 > linux/amd64 image and domain instrumentation separately; no certification
-> claim or session replay is part of this task. Review-dashboard polish will be
-> planned with the user before application handoff.
+> claim or session replay is part of this task. The agreed logging UI is native
+> DataTable with server filters, live batched arrivals and individual-user audit
+> history; do not hold the upgrade for an unrequested dashboard redesign.
 >
 > Complete the acceptance matrix below with synthetic/local providers and
 > authorized isolated copies. Preserve identities, history, uncertain sends and

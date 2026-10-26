@@ -3,20 +3,20 @@ id: zero.logging.evidence
 type: reference
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: evidence-lifecycle
-maturity: preview
-applies_to: ["Unreleased logging completion branch based on 2.6.0"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Retention Holds Reviews and Export
@@ -26,9 +26,9 @@ reviewed_against:
 Evidence lifecycle operations use the dedicated logging actor, not ad hoc
 deletion in an application database. Authorization is separate from transport:
 read, export, hold, review and management permissions are independently configured.
-Composite history, private export jobs and signed local custody described here
-are additions on the isolated completion branch. They are not yet a released
-strict preset; normal updater selection remains unchanged.
+Composite history, private export jobs and signed local custody are part of
+the managed completion release. Older preview archives lack these controls;
+verify the exact source commit and archive checksum before enabling compliance.
 
 ## Retention and Holds
 

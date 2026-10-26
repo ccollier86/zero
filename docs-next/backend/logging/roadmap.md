@@ -3,27 +3,27 @@ id: zero.logging.roadmap
 type: roadmap
 audience: [developer, agent, operator, maintainer]
 owner: observability
-status: draft
+status: in-review
 visibility: internal
 system: logging
 feature: integrated-logging-roadmap
 maturity: planned
-applies_to: ["Follow-ups after the unreleased 2.6.0 logging completion branch"]
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "fc61dcc4cd107c6467bff498d3a772e8f5bdea9d"
-  snapshot: dirty
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  snapshot: clean
   date: "2026-10-25"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Roadmap
 
 [Logging index](./index.md) · [Backend index](../index.md)
 
-The completion branch implements strict expiring admission, source-durability
+The managed completion release implements strict expiring admission, source-durability
 preflight, local signed checkpoint custody/rotation, private durable export
 jobs and composite-key history pagination. Managed AI/email stages and strict
 HTTP release evidence supplement existing Guardian and ReactiveDB capture.
@@ -31,15 +31,16 @@ The [coverage matrix](./events-and-coverage.md) is the current contract; the
 older [implementation plan](../../_work/logging-system-plan.md) is historical
 planning, not proof that every proposed integration exists.
 
-This branch still requires final committed-package selection before ordinary
-app upgrades. The [qualification record](../../_work/logging-compliance-qualification.md)
-tracks that boundary separately from implementation checks.
+Ordinary app upgrades must use the exact qualified committed main package.
+The [qualification record](../../_work/logging-compliance-qualification.md)
+tracks package checks separately from application acceptance.
 
 ## Follow-ups, Not Hidden Preset Requirements
 
-1. Review the investigation dashboard with the user before the PracticeIQ
-   handoff. Advanced/saved nested Filters and richer hold/review management are
-   optional UI work; no decorative controls should pretend to execute.
+1. The agreed minimal investigation UI is native DataTable, server filters,
+   live batched arrivals and individual-user history. Advanced/saved nested
+   Filters and richer hold/review management remain optional future UI work;
+   no decorative controls should pretend to execute.
 2. Expand automatic service-specific semantic evidence where a reliable owner
    exists. Raw SQL and clinical reads remain explicitly instrumented by the app;
    a generic record mutation must never be relabeled successful file delivery,
