@@ -20,8 +20,8 @@ beforeAll(async () => {
   lease = await acquirePlaywrightTestBrowser(); await mkdir(scratch, { recursive: true });
   buildDirectory = await mkdtemp(join(scratch, 'persisted-session-restart-build-'));
   const output = join(buildDirectory, 'fixture.js');
-  const build = Bun.spawn([process.execPath, 'build', join(import.meta.dir, 'test-fixtures/session-recovery-app-provider.tsx'),
-    '--target=browser', '--format=iife', '--outfile', output], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+  const build = Bun.spawn([process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'test-fixtures/session-recovery-app-provider.tsx'),
+    '--target=browser', '--format=iife', '--outdir', buildDirectory, '--entry-naming', 'fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
   if (code !== 0) throw new Error(`Persisted restart fixture build failed (${code}): ${stderr || stdout}`);
   bundle = await Bun.file(output).text();
