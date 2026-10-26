@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Corrected managed AI/email terminal audit provenance: provider-confirmed
+  success now uses a trusted provider-origin envelope while retaining the
+  caller's actor, scope, correlation and invocation identity. Admission and
+  uncertain/rejected stages retain their original provenance; validation and
+  authorization remain strict. Added real compliance createApp/SDK/Fabric
+  regression coverage plus SMTP/Resend shared-path outcome and no-resend tests.
+  No database migration or application workaround is required.
+
 - Added an offline-only legacy-state boundary under `@zero/framework/migrations`
   for the admitted Zero 1.3 combined schema: approved plans, fresh private
   generations, original identity/credential/token/Storage/workflow preservation,

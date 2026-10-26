@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  commit: "6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -121,6 +121,12 @@ and an authenticated actor/scope. A browser cannot assert provider confirmation.
 Durable background work uses its authority-scoped service facade. Do not retain
 a request facade after its lifetime or import the private `LoggingRuntime` to
 invent a background identity.
+
+Managed AI and email already own their trusted provider-stage logging. Do not
+add a duplicate `record({ evidence: 'provider-confirmed', ... })` afterward:
+`record()` intentionally derives a backend/system origin and rejects that
+claim. The managed integration changes only the confirmation stage's origin
+to `provider`, retaining the initiating actor, scope and invocation identity.
 
 ## Queries and Permissions
 

@@ -207,6 +207,36 @@ that work never encounters resource limits.
 
 ## Release Boundary
 
+### Corrective provider-provenance regression
+
+The initial managed release missed a composition defect: the shared AI/email
+stage helper selected `provider-confirmed` evidence but kept backend/system
+origin. The unchanged validator correctly rejected that pair. Isolated
+`createApp` reproduction returned HTTP 502 after synthetic AI success; existing
+SDK/email port tests had not exercised the real managed stage helper/validator.
+
+Code commit `6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6` corrects the trusted
+helper's confirmation origin, retaining all initiating attribution. No schema,
+authorization, general-purpose validation or public API relaxation is involved.
+The new real compliance createApp/Fabric regression covers generation,
+streaming, Jev/Laya decisions, user and background calls, and rejected forged
+provider evidence. Additional real-worker cases cover tenant/API-key attribution,
+embedding/reranking, incomplete/error/cancelled streams, SMTP/Resend shared-path
+acceptance/partial/rejection/uncertainty, and post-send logging loss without a
+duplicate send. Only synthetic adapters/private disposable files are used.
+
+The logging/managed-service regression selection passes 138 tests / 3113
+assertions; the final focused/native-decision selection passes 57 tests / 388
+assertions. These selections overlap and are not an aggregate test count.
+Neither result qualifies a different archive or substitutes for the application
+agent's own acceptance. Select the corrective artifact only after exact-package
+checks; `zero-release --status` supplies its authoritative commit/path/hash.
+
+Old uncertain sends still require reconciliation. Installing the correction
+does not create missing confirmation evidence or replay earlier external work.
+
+### Publication
+
 The implementation is committed on the feature branch and the exact candidate
 is qualified. Keep hook-driven selection disabled while saving review evidence.
 The agreed minimal UI pass is implemented and tested. Deliberately merge and select

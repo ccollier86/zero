@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  commit: "6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -41,6 +41,23 @@ scalar metadata. The log database assigns ingestion time and its own ordinal.
 Outcomes are `attempted`, `succeeded`, `denied`, `failed`, or `unknown`.
 A timeout must not become a successful operation. Separate attempts and later
 confirmations retain their own identities rather than rewriting the original.
+
+Managed AI and outbound email record admission under the initiating `backend`
+or `system` origin. Only an actual provider-confirmed terminal stage uses
+`origin: 'provider'`. The transition preserves the original source, actor,
+API-key initiator, application/tenant scope, request/correlation references,
+policy version and invocation target. It does not replace the actor with the
+provider or change which tenant owns the evidence. Rejected or uncertain
+stages keep their original origin and matching server-confirmed/incomplete
+evidence. The ordinary `record()` facade cannot make this transition.
+
+If required post-send logging genuinely fails after email acceptance, the
+caller receives `EMAIL_SEND_OUTCOME_UNKNOWN`, not permission to resend. This
+requires reconciliation; acceptance is never downgraded to a definite provider
+rejection. SMTP and Resend share this behavior through the managed email service.
+Installing a provenance correction does not retroactively confirm old uncertain
+calls or replay their side effects. Reconcile any affected prior sends before
+deciding whether a new attempt is appropriate.
 
 ## Automatic and Declared Capture
 
