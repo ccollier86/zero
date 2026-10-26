@@ -67,7 +67,9 @@ test('installed adaptive profile facades browser/server-build, typecheck and ren
     // Only this freshly allocated fixture is disposable; no app data is opened.
     await rm(root, { recursive: true, force: true });
   }
-}, 120_000);
+// Packing, installation, two full facade builds and an installed type program
+// have separate bounded child budgets; allow their total on slower CI/storage.
+}, 180_000);
 
 async function checked(arguments_: string[], cwd: string): Promise<string> {
   const child = Bun.spawn([process.execPath, '--no-env-file', ...arguments_], {
@@ -214,8 +216,12 @@ const notice = await Bun.file(base + 'THIRD_PARTY_NOTICES.md').text();
 const notices = ['c-avatar-29.json', 'react-easy-crop', 'sharp', 'react-phone-number-input', 'libphonenumber-js']
   .every(name => notice.includes(name));
 const globals = await Bun.file(new URL(import.meta.resolve('@zero/framework/styles.css'))).text();
+// The default entry composes the retained base plus the next foundation. Check
+// the imported base, not an obsolete assumption that every recipe is inlined.
+const foundationStyles = globals.includes('@import "./globals.css"')
+  ? await Bun.file(new URL('./globals.css', import.meta.resolve('@zero/framework/styles.css'))).text() : globals;
 const styles = (await Promise.all(['form-save', 'profile-settings', 'avatar-editor', 'kbd'].map(async name =>
-  globals.includes('../../components/' + name + '/' + name + '.styles.css')
+  foundationStyles.includes('../../components/' + name + '/' + name + '.styles.css')
     && await Bun.file(base + 'src/components/' + name + '/' + name + '.styles.css').exists()))).every(Boolean);
 console.log(JSON.stringify({ exports: exportsMatch, recovery, sdk, schema, config, realm, guides, notices, styles, queryHelpers, authorizationHelpers,
   html: renderToString(React.createElement(Consumer)),
@@ -259,7 +265,11 @@ import type { NativeIdentityScope } from '@zero/framework/native';
 import type { KbdProps, KbdGroupProps } from '@zero/framework/components/kbd';
 import type { DataFilterExpression, DataPageInfo } from '@zero/framework/react/query-params';
 import type { AuthorizationScopeBoundary } from '@zero/framework/react/authorization-scope';
+import { Link, type AppShellLinkProps } from '@zero/framework/react';
+import type { AppShellProps } from '@zero/framework/components/app-shell';
 import { field } from '@zero/framework/schema';
+export const shellLink: NonNullable<AppShellProps['linkComponent']> = Link;
+export const shellAnchor: AppShellLinkProps = { href: '/account', children: 'Account', target: '_blank', rel: 'noopener', ref: () => {} };
 export const nativeScopes: NativeIdentityScope[] = ['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write'];
 // @ts-expect-error Application RBAC grants are not native identity/own-account scopes.
 const forbiddenScope: NativeIdentityScope = 'application.manage';

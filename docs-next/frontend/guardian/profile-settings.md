@@ -13,9 +13,9 @@ modes: [browser, SSR, full, compact, read-only, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
   snapshot: clean
-  date: "2026-10-07"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 

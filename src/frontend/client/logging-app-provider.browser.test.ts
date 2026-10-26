@@ -15,9 +15,14 @@ import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable } from '..
   const lease = await acquirePlaywrightTestBrowser(), context = await lease.browser.newContext();
   try {
     await mkdir(join(root, 'app'));
-    const built = await Bun.build({ entrypoints: [join(import.meta.dir, 'test-fixtures/logging-app-provider.tsx')], target: 'browser', format: 'iife' });
-    if (!built.success) throw new Error(built.logs.map(log => log.message).join('\n'));
-    const bundle = await built.outputs[0]!.text();
+    // Other managed-app tests can install server TSX hooks in this process.
+    // Compile in the normal CLI's clean process shape, not through those hooks.
+    const compiler = Bun.spawn([process.execPath, '--no-env-file', '-e',
+      `const built = await Bun.build({ entrypoints: [${JSON.stringify(join(import.meta.dir, 'test-fixtures/logging-app-provider.tsx'))}], target: 'browser', format: 'iife' });
+       if (!built.success) throw new Error(built.logs.map(log => log.message).join('\\n'));
+       process.stdout.write(await built.outputs[0].text());`], { stdout: 'pipe', stderr: 'pipe' });
+    const [compiled, bundle, buildError] = await Promise.all([compiler.exited, new Response(compiler.stdout).text(), new Response(compiler.stderr).text()]);
+    if (compiled !== 0) throw new Error('Logging browser fixture build failed: ' + buildError);
     const html = () => '<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div>'
       + '<script>window.__PLATFORM_CONFIG__=' + JSON.stringify({ auth: true, logging: true, loggingRequired: true,
         loggingPolicyVersion: services!.logging!.config.policyVersion, stateSync: false, presence: false })

@@ -3,7 +3,7 @@ id: zero.frontend.app-shell.navigation
 type: reference
 audience: [developer, agent]
 owner: frontend-app-shell
-status: draft
+status: in-review
 visibility: internal
 system: frontend-components
 feature: app-shell-navigation
@@ -12,11 +12,11 @@ applies_to: ["2.6.0 builds with AppShell linkComponent"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.4.3"
-  commit: "8327e4498f52b12b43759bbc4618973601191039"
-  snapshot: dirty
-  date: "2026-10-06"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
+  snapshot: clean
+  date: "2026-10-26"
+  evidence_level: implementation-verified
 ---
 
 # Navigation, Icons And Menus

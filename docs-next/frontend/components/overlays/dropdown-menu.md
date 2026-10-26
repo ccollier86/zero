@@ -71,6 +71,14 @@ Shortcut displays hint text only; it does not register a keyboard command.
 Item variant is default/destructive; inset aligns labels. disabled prevents
 selection/presentation but does not change backend permission.
 
+`DropdownMenuItem asChild` composes one real anchor-compatible child, for example
+`<DropdownMenuItem asChild><Link href="/account">Account</Link></DropdownMenuItem>`.
+Use Zero `Link` under the existing router for client navigation and native
+modified/new-tab behavior. The child must forward its DOM props and ref; Radix
+still owns keyboard selection/dismissal and the existing magnetic highlight
+remains on the same item. Do not nest an anchor inside the default motion div
+or combine an active href with a second imperative navigation callback.
+
 Sub/SubTrigger/SubContent compose a submenu with independent controlled/default
 open state. Subtrigger adds a chevron and supports inset/disabled. Content owns
 Motion element, position/collision/focus callbacks and submenu portal.

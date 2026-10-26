@@ -3,7 +3,7 @@ import { cp } from 'node:fs/promises';
 for (const path of ['package.json', 'tsconfig.json', 'zero.config.ts', 'prepare-source-state.ts', 'app', 'server']) {
   await cp('/fixture/' + path, './' + path, { recursive: true });
 }
-const installed = Bun.spawn([process.execPath, 'install'], { stdout: 'inherit', stderr: 'inherit' });
+const installed = Bun.spawn([process.execPath, '--no-env-file', 'install'], { stdout: 'inherit', stderr: 'inherit' });
 if (await installed.exited !== 0) process.exit(1);
 await Bun.write('./.env', 'ZERO_SYNTHETIC_DOTENV_SECRET=fixture-only\n');
 if (!await Bun.file('./state/application.db').exists()) {

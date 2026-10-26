@@ -13,9 +13,9 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 

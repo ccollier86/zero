@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
   snapshot: clean
   date: "2026-10-26"
   evidence_level: implementation-verified

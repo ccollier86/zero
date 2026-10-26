@@ -189,6 +189,30 @@ qualification have already passed.
   A broader, unchanged service-document checker already has seven SMTP/mailbox
   fragment examples outside its historical 53-fence inventory; it is not claimed
   green and unrelated email documentation is not rewritten as part of this repair.
-- Committed-archive qualification, fresh source-to-bundle/native restart checks,
-  final review and normal main release selection remain pending. Preflight is
-  not represented as an already selected updater archive.
+- The committed implementation `1bc732ba4375e87621f1be093ef257a7e11ff9e5`
+  was installed/officially bundled on Linux/amd64 (Bun 1.3.14). Full Chromium
+  lifecycle including private byte-hash preservation across restart, current
+  browser/new-tab admission and blocked-delivery Retry passes. Every one of
+  5442 installed package files matches its committed archive, SHA-256
+  `7dee756ef38276aa6b35053457266815951239c1b411e2bb30dd478d8198c1ea`.
+  This is implementation qualification, not the final main updater identity.
+- Verification includes 85 focused source tests (12 files); installed public
+  facades build/typecheck/render with the default stylesheet's real import chain;
+  core source/bundle migration checksum checks; generated native sign-in,
+  expired/blocked delivery, session Retry, revocation, profile/CAS/crop/320px,
+  native link/prefetch and collapsed sidebar regressions. The build-only browser
+  fixtures run in clean subprocesses like the CLI, avoiding unrelated server
+  TSX hooks installed by another test in the same Bun process.
+- Test-only probes use the explicit fixture path, never a worker's protected
+  empty launch cwd. Native owners correctly reject unknown files there; that
+  control was not weakened to accommodate a probe. Host inspection uses its own
+  legitimately authenticated session and renews its required admission after
+  restart. Operational retention is awaited rather than treating a best-effort
+  diagnostic emission as a synchronous durable receipt.
+- The updater archive also includes the documentation/test-harness corrections.
+  Its final identity is distinct from the implementation archive above: require
+  a fresh clean source-to-bundle/native-restart run before main selection, then
+  record the exact normal `zero-release --status` commit/path/SHA in the release
+  handoff and retained diagnostic report. Do not substitute preflight bytes or
+  the unchanged semantic version. No app production deployment/health check is
+  claimed by this framework qualification.

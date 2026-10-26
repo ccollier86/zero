@@ -114,6 +114,7 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       const prior = await api('/api/_zero/logging/events', navigationQuery);
       await page.locator('[data-sidebar="content"]').getByRole('link', { name: 'Audit', exact: true }).click();
       await page.getByRole('button', { name: 'Stay', exact: true }).click();
+      await page.getByRole('button', { name: 'Stay', exact: true }).waitFor({ state: 'detached' });
       expect(new URL(page.url()).pathname).toBe('/account');
       const after = await api('/api/_zero/logging/events', navigationQuery);
       expect(after.events.length).toBe(prior.events.length); report.canceledNavigation = true;
@@ -147,6 +148,7 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       await page.reload(); await page.getByTestId('protected-account').waitFor();
       expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
       report.avatarRefresh = true;
+      await page.screenshot({ path: join(artifacts, 'integration-repair-' + run + '-avatar-ready.png') });
       const privateBytes = await fetch(base + snapshot.asset.deliveryPath, { headers: { Authorization: 'Bearer ' + registered.accessToken } });
       expect(privateBytes.status).toBe(200);
       const hash = new Bun.CryptoHasher('sha256').update(new Uint8Array(await privateBytes.arrayBuffer())).digest('hex');
@@ -162,6 +164,11 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
         await until(async () => { try { return (await fetch(base + '/api/health')).status === 200; } catch { return false; } }, 60000);
         await page.reload(); await page.getByTestId('protected-account').waitFor();
         expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
+        // The host inspection client has a different legitimate session from
+        // the browser. Restart correctly retires its old admission too; acquire
+        // its own fresh empty handshake, not a fabricated browser receipt.
+        const renewedPolicy = await api('/api/_zero/logging/policy');
+        await api('/api/_zero/logging/observations', { observations: [], policyVersion: renewedPolicy.delivery.policyVersion });
         const restored = await api('/auth/profile/avatar'); expect(restored.asset.id).toBe(snapshot.asset.id);
         const delivered = await fetch(base + restored.asset.deliveryPath, { headers: { Authorization: 'Bearer ' + registered.accessToken } });
         expect(delivered.status).toBe(200);
@@ -170,11 +177,13 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       }
     }
     if (!baseline) {
-      const tab = await context.newPage();
+      const currentUrl = page.url();
+      const [tab] = await Promise.all([context.waitForEvent('page'),
+        page.locator('[data-sidebar="content"]').getByRole('link', { name: 'Audit', exact: true }).click({ modifiers: ['ControlOrMeta'] })]);
       try {
-        await tab.goto(base + '/audit'); await tab.getByTestId('protected-audit').waitFor();
+        await tab.getByTestId('protected-audit').waitFor();
         expect(await tab.getByRole('alert', { name: 'Audit delivery required', exact: true }).count()).toBe(0);
-        report.newTabAdmission = true;
+        expect(page.url()).toBe(currentUrl); report.newTabAdmission = true; report.modifiedLink = true;
       } finally { await tab.close(); }
       blocked = true;
       await page.locator('[data-sidebar="content"]').getByRole('link', { name: 'Audit', exact: true }).click();
@@ -185,8 +194,14 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
     }
     const beforeOperational = await api('/api/_zero/logging/events', { stream: 'operational', query: { action: 'app_biopsych_workflow_registered' } });
     await api('/proof/diagnostics', {});
+    let operational = await api('/api/_zero/logging/events', { stream: 'operational', query: { action: 'app_biopsych_workflow_registered' } });
+    // Diagnostic emission is intentionally best effort/async, not a false
+    // synchronous provider receipt. Wait for actual retained evidence.
+    if (!baseline) await until(async () => {
+      operational = await api('/api/_zero/logging/events', { stream: 'operational', query: { action: 'app_biopsych_workflow_registered' } });
+      return operational.events.length === beforeOperational.events.length + 1;
+    });
     const health = await api('/api/_zero/logging/health');
-    const operational = await api('/api/_zero/logging/events', { stream: 'operational', query: { action: 'app_biopsych_workflow_registered' } });
     const navigation = await api('/api/_zero/logging/events', { stream: 'audit', query: { action: 'navigation.changed', actorId: registered.user.userId } });
     report.retained = { operational: operational.events.length, navigation: navigation.events.length };
     report.health = health;

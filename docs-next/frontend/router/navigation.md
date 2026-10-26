@@ -8,15 +8,15 @@ visibility: internal
 system: frontend-router
 feature: navigation
 maturity: supported
-applies_to: ["2.1.1 source with audited corrections; package qualification pending"]
+applies_to: ["2.6.0 builds with router-aware AppShell composition"]
 modes: [browser, SSR, Guardian single, Guardian multi, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
-  evidence_level: source-observed
+  version: "2.6.0"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
+  snapshot: clean
+  date: "2026-10-26"
+  evidence_level: implementation-verified
 ---
 
 # Link, Native Behavior And Route Prefetch
