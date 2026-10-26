@@ -8,19 +8,19 @@ visibility: internal
 system: blog
 feature: existing-project-upgrade
 maturity: preview
-applies_to: ["2.6.0 feature/blog-foundation preview; not the selected main archive"]
+applies_to: ["2.6.0 feature/blog-foundation-current preview; not the selected main archive"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c7011c7dd9dc8561b767752be51029a31ac327cf"
+  commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-26"
   evidence_level: package-qualified
   artifact:
     version: "2.6.0"
-    commit: "c7011c7dd9dc8561b767752be51029a31ac327cf"
-    sha256: "98d564817e4b659d7327d1e11f7206e88cf2c9eb4a25b60e251dde294e4e8b25"
+    commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
+    sha256: "1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f"
 ---
 
 # Add Authors To An Existing Project Safely
@@ -82,8 +82,8 @@ consistent backup pinned. Use a fresh disposable database for a new rehearsal,
 or request an explicitly reviewed preview-state conversion before carrying
 valuable preview writes forward. There is no automatic preview-ledger repair.
 
-The older qualification/archive cited above remains historical evidence, not
-qualification of this merged continuation. Review the updated
+The older preview archive remains historical evidence, not qualification of
+this merged continuation. Review the updated
 [qualification record](../../_work/audits/blog-author-foundation.md) for the
 current source/test boundary before installing it.
 

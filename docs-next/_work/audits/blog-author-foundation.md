@@ -60,8 +60,39 @@ Fresh continuation checks use disposable synthetic data only:
   permitted writes and revocation. The final focused author/config/SDK/managed
   upgrade run passes 18 tests and 257 assertions across four files.
 - Root TypeScript and the documentation structure/link checker pass. Additional
-  installed-archive evidence must identify the continuation's own source and
-  bytes; the older archive below is not a substitute.
+  installed-archive evidence below identifies the continuation's own source
+  and bytes; the older archive is not a substitute.
+
+### Continuation Archive
+
+The clean implementation source is
+`120e6fb2e4a170f087ba3920c6f9a2882d77cf31`, following merge checkpoint
+`8dd6229ec868ae02a87bb2cdb4ecd086b065a465`. It was packed with lifecycle scripts
+disabled into this development-only archive:
+
+```text
+/Volumes/code-bank/artifacts/zero-platform/dev/2026-10-26-blog-current-120e6fb.jmFlfp/zero-framework-2.6.0-blog-current.tgz
+SHA-256: 1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f
+```
+
+Fresh consumers installed those exact bytes: 2 passed, 0 failed, 27 assertions.
+The author consumer exercises managed startup, private profile edits, real
+normalized photo upload, explicit public publication/delivery/withdrawal,
+role-preserving author operations, public-field isolation, request facade and
+browser-safe imports. The UI consumer checks Magazine/sidebar-TOC defaults,
+general command palette, CSS, SSR/browser imports and packaged documentation.
+The installed author consumer is single/simple; the four-mode native scope
+matrix is source integration evidence, not an installed all-mode claim.
+
+No new Linux/amd64 blog deployment qualification is claimed. The core build test
+checks canonical identity for all 47 migrations; main's separately recorded
+Linux qualification remains evidence for its released archive, not a full
+blog-enabled deployment. This documentation/plan follow-up does not change the
+frozen archive bytes or select them as the normal update.
+
+Final documentation checks cover 857 pages/unique IDs, all reachable with no
+structural/link/anchor problems. Public platform examples and review-evidence
+validation pass 7 tests and 114 assertions. `git diff --check` is clean.
 
 Diagnostics use the `blog-current-*` prefix under
 `/Volumes/code-bank/artifacts/zero-platform/diagnostics/`. These checks qualify
@@ -69,7 +100,7 @@ the resumed foundation, not a new post CMS. Author-management UI, post storage,
 block editing, publication and automatic article SEO remain the explicitly
 planned layers in the [roadmap](../../backend/blog/roadmap.md).
 
-## Scope And Release Boundary
+## Original Preview Scope And Release Boundary
 
 The frozen implementation is `c7011c7dd9dc8561b767752be51029a31ac327cf` on
 `feature/blog-foundation`, following UI/documentation source

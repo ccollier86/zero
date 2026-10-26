@@ -8,19 +8,19 @@ visibility: internal
 system: blog
 feature: author-foundation
 maturity: preview
-applies_to: ["2.6.0 feature/blog-foundation preview; not the selected main archive"]
+applies_to: ["2.6.0 feature/blog-foundation-current preview; not the selected main archive"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c7011c7dd9dc8561b767752be51029a31ac327cf"
+  commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-26"
   evidence_level: package-qualified
   artifact:
     version: "2.6.0"
-    commit: "c7011c7dd9dc8561b767752be51029a31ac327cf"
-    sha256: "98d564817e4b659d7327d1e11f7206e88cf2c9eb4a25b60e251dde294e4e8b25"
+    commit: "120e6fb2e4a170f087ba3920c6f9a2882d77cf31"
+    sha256: "1c0832a9c25976a953d4741a88b4da4a322d90e7b3f53ceda5ab4853c61f5e8f"
 ---
 
 # Blog Author Foundation
@@ -28,9 +28,8 @@ reviewed_against:
 [Backend index](../index.md) · [Blog UI](../../frontend/components/public-pages/blog/index.md)
 
 Work has resumed on `feature/blog-foundation-current`, integrated with main's
-released fixes. The frontmatter archive identifies the **earlier** author
-preview; it is historical evidence, not the current continuation package. See
-the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
+released fixes. The frontmatter identifies the current qualified development
+archive. See the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
 and [preview migration boundary](./upgrade.md#earlier-feature-branch-preview).
 The normal updater still selects main, not this blog branch.
 
@@ -54,6 +53,8 @@ automatic route assembly are separate [next steps](./roadmap.md). The existing
 - [Existing-project upgrade](./upgrade.md): additive migrations, safe rollout,
   Doctor findings, preservation checks and disabling without deleting data.
 - [Roadmap](./roadmap.md): the boundary between this foundation and the future CMS.
+- [Publishing implementation plan](./publishing-plan.md): the next backend/UI
+  slices, storage/authority boundaries and acceptance gates (not implemented).
 
 ## What Zero Handles
 

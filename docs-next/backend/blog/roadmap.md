@@ -23,6 +23,10 @@ main fixes without changing that boundary. See the
 [qualification record](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
 for the retained checkpoint, migration overlap and current regression results.
 
+The [next implementation boundary](./publishing-plan.md) expands the remaining
+work into vertical slices with explicit ownership, safety and qualification
+gates. It is a plan, not an available post API or editor configuration.
+
 ## Next Backend Slices
 
 1. Decide site/content ownership and post storage with supported ReactiveDB/
