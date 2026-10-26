@@ -27,7 +27,10 @@ test('browser observations cannot impersonate server or provider confirmation', 
   const { version, stream, sourceId, origin, scope, actor, requestId, correlationId, policyVersion, ...input } = loggingEvent();
   expect(() => captureLoggingEvent(context, input)).toThrow();
   expect(captureLoggingEvent(context, { ...input, evidence: 'browser-observed' }).evidence).toBe('browser-observed');
-  expect(() => captureLoggingEvent(loggingContext(), { ...input, evidence: 'provider-confirmed' })).toThrow();
+  for (const origin of ['frontend', 'backend', 'system'] as const) {
+    expect(() => captureLoggingEvent({ ...loggingContext(), origin }, { ...input, evidence: 'provider-confirmed' })).toThrow();
+    expect(() => normalizeLoggingEvent({ ...loggingEvent(), origin, evidence: 'provider-confirmed' })).toThrow();
+  }
 });
 test('getters, proxies and sparse/accessor arrays are rejected without evaluating application code', () => {
   let called = false;

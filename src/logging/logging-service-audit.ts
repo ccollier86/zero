@@ -21,11 +21,16 @@ export function prepareManagedServiceAudit(logging: LoggingRuntime | null, famil
     actor: { kind: 'system', id: 'zero.' + family, sessionId: null, initiatorId: null },
     requestId: null, correlationId: null, policyVersion: logging.config.policyVersion,
   };
+  // This helper is owned only by managed provider adapters. Confirmation comes
+  // from that trusted boundary, not the initiating backend/system actor. Keep
+  // the caller's identity, scope and correlation intact; public record() and
+  // browser observations must still reject forged provider confirmations.
+  const providerContext: LoggingContext = { ...context, origin: 'provider' };
   return () => {
     const id = crypto.randomUUID(); let admitted: Promise<void> | null = null, terminal: Promise<void> | null = null;
     const event = (result: StageResult) => {
       const values = { ...safeMetadata, ...result.metadata };
-      return captureLoggingEvent(context, { id: id + ':' + result.stage, family, action: action + '.' + result.stage,
+      return captureLoggingEvent(result.evidence === 'provider-confirmed' ? providerContext : context, { id: id + ':' + result.stage, family, action: action + '.' + result.stage,
         occurredAt: Date.now(), outcome: result.outcome, evidence: result.evidence, target: { type: 'service.invocation', id }, metadata: values }, Object.keys(values));
     };
     return Object.freeze({
