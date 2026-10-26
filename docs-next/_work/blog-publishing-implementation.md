@@ -85,6 +85,19 @@ It is excluded from the framework archive. Initial full-suite preflight was
 stopped after failures; it is not a full-suite pass. Exact final candidate
 qualification must be rerun with the declared prerequisites and scratch root.
 
+The subsequent dependency audit rejected the older baseline's Zod 4.2.1,
+Undici 7.30.0 and Vite 7.3.6. The minimal compatible source-graph update uses
+Zod 4.6.6, Undici 7.30.1 and Vite 7.3.7; `bun audit --json` then returned `{}`
+and zero exit status. Schema/decision/audit/limits/blog follow-ups passed all
+12 selected files and typecheck passed. Earlier archive/browser/Linux evidence
+does not by itself qualify this changed dependency graph; repeat final installed
+and complete-suite gates. An app's independent lock/overrides still need their
+own audit; framework-root overrides are not an application security certificate.
+
+Primary advisory references: [Zod collection validation](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5),
+[Undici content encodings](https://github.com/advisories/GHSA-xjj6-f33q-929c),
+[Vite middleware](https://github.com/advisories/GHSA-9jrq-w75r-8gcw).
+
 These are focused checks, not a complete release claim. Exact candidate archive,
 installed Linux/bundle qualification and final review remain required.
 

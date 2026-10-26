@@ -4,6 +4,11 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Updated Zod to 4.6.6 and the source qualification graph to patched Undici
+  7.30.1/Vite 7.3.7 after the release audit reported upstream security advisories.
+  No AI features, application schemas or historic migrations were changed.
+  Consuming apps still own their complete dependency audit and deployment gates.
+
 - Added the working opt-in publishing implementation on the blog feature branch:
   one application-owned private Fabric database, Guardian-fenced draft/public
   snapshots, immutable history, CAS/idempotent writes, taxonomy and indexed search,
