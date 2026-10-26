@@ -128,7 +128,7 @@ not identify an archive containing it. See the [candidate qualification](../../_
 
 Add `publicAccess: true` to the existing `auth.userProfile.avatars` object.
 The default is false; `avatars: true` alone still means private media. SYSTEM
-migration 045 adds explicit publication pointers without publishing existing
+migration 046 adds explicit publication pointers without publishing existing
 images or changing the private Storage drive.
 
 The existing SDK gains two own-account methods:

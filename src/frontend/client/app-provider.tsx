@@ -17,7 +17,7 @@ import type {
 import type { Client, InternalClient } from './sdk';
 import { createClient, getClient } from './sdk';
 import { useAuth } from './auth-hooks';
-import { LoggingActivityProvider } from './logging-hooks';
+import { LoggingActivityOwner, LoggingDeliveryGuard } from './logging-hooks';
 import { useAuthorization } from './authorization-hooks';
 import { ClientProvider } from './client-context';
 import { RouterProvider, useHasRouter, usePathname, useRouter } from './router-context';
@@ -84,6 +84,8 @@ interface BrowserPlatformConfig {
   presence?: boolean;
   vectorVisualization?: boolean;
   logging?: boolean;
+  loggingRequired?: boolean;
+  loggingPolicyVersion?: string;
   tableSyncModes?: Record<string, SyncMode>;
   /** Server-owned Sync-visible application table routing catalog. */
   tableSyncPlanes?: Record<string, SyncDataPlaneName>;
@@ -188,7 +190,8 @@ export interface AppProviderProps {
  * 2. RouterProvider — client-side navigation (works in SSR via initialPathname)
  * 3. ClientProvider — SDK client (auth, collections, state) [client only]
  * 4. SyncProvider — wired to the same SyncClient [client only]
- * 5. ModalManager — renders modal stack, provides portal for `modals.*` API [client only]
+ * 5. Persistent audit/session owners with separate display gates [client only]
+ * 6. ModalManager — scoped modal stack and `modals.*` portal beneath both gates [client only]
  *
  * @example
  * ```tsx
@@ -291,7 +294,7 @@ export function AppProvider({
   }
   const client = clientRef.current;
 
-  // Innermost: Client > Sync > ModalManager > children
+  // Client > Sync > persistent recovery owners > display gates > scoped modals/routes.
   //
   // SyncProvider receives the same SyncClient the SDK client owns.
   // This means collection hooks and lower-level SyncProvider hooks operate on
@@ -313,11 +316,19 @@ export function AppProvider({
       )
     : children;
 
-  const activityTree = platformConfig.logging && authEnabled ? createElement(LoggingActivityProvider, { children: guardedChildren }) : guardedChildren;
-  const modalTree = createElement(ModalManager, { children: activityTree });
+  const modalTree = createElement(ModalManager, { children: guardedChildren });
+  const loggingEnabled = Boolean(platformConfig.logging && authEnabled);
   const authorizationScopedTree = authEnabled
-    ? createElement(AuthorizationScopeGuard, { client, children: modalTree })
+    ? createElement(AuthorizationScopeGuard, { client, children: modalTree,
+        ...(loggingEnabled ? { renderBoundary: renderLoggingDeliveryBoundary } : {}) })
     : modalTree;
+  // Both control-plane owners must stay mounted while either gate masks data.
+  // Sync requires the collector's acknowledgment, while a restore temporarily
+  // pauses delivery. The display gate must not retire the recovery which owns
+  // the final hydrated-document reload.
+  const activityTree = loggingEnabled
+    ? createElement(LoggingActivityOwner, { children: authorizationScopedTree, required: platformConfig.loggingRequired, policyVersion: platformConfig.loggingPolicyVersion })
+    : authorizationScopedTree;
 
   let tree: ReactNode = createElement(
     ClientProvider,
@@ -327,7 +338,7 @@ export function AppProvider({
         {
           client: internal._syncClient,
           stateClient: internal.state,
-          children: authorizationScopedTree,
+          children: activityTree,
         }
       )
     }
@@ -342,6 +353,10 @@ export function AppProvider({
   return createElement(ErrorBoundary, { fallback: errorFallback }, tree);
 }
 
+function renderLoggingDeliveryBoundary(children: ReactNode): ReactNode {
+  return createElement(LoggingDeliveryGuard, { children });
+}
+
 /**
  * Prevent app component state and server loader data from crossing an auth
  * scope replacement. The subtree is synchronously hidden at transition start.
@@ -351,9 +366,11 @@ export function AppProvider({
 function AuthorizationScopeGuard({
   client,
   children,
+  renderBoundary = (content: ReactNode) => content,
 }: {
   client: Client;
   children?: ReactNode;
+  renderBoundary?: (content: ReactNode) => ReactNode;
 }) {
   const boundary = useAuthorizationScopeBoundary(client);
   const internal = client as InternalClient;
@@ -550,14 +567,14 @@ function AuthorizationScopeGuard({
     routeData?.authorizationBoundary?.userId, runScopeRecovery]);
 
   if (hintRecoveryScopeRef.current === hintRecoveryKey && auth && !recoveryPending && !currentRecovery) {
-    return createElement(AuthorizationHintRecovery, {
+    return renderBoundary(createElement(AuthorizationHintRecovery, {
       key: hintRecoveryKey, auth, dataBoundary: authorizationDataBoundary,
       checking: auth.authorizationState.status === 'loading' || auth.authorizationState.status === 'refreshing',
-    });
+    }));
   }
   if (currentRecovery && (currentRecovery.operation === null || currentRecovery.explicit)) {
     const pending = currentRecovery.operation !== null;
-    return createElement(
+    return renderBoundary(createElement(
       'main',
       {
         role: 'alert', 'data-zero-auth-recovery': true,
@@ -585,10 +602,10 @@ function AuthorizationScopeGuard({
       pending && createElement('p', {
         role: 'status', 'aria-live': 'polite', className: 'text-sm text-muted-foreground',
       }, currentRecovery.operation === 'sign-out' ? 'Signing out securely…' : 'Refreshing your secure session…'),
-    );
+    ));
   }
   if (!display.render || needsRecovery || recoveryPending || currentRecovery) {
-    return createElement(
+    return renderBoundary(createElement(
       'main',
       {
         role: 'status',
@@ -601,9 +618,9 @@ function AuthorizationScopeGuard({
       currentRecovery?.operation === 'recover' ? 'Refreshing your secure session…'
         : currentRecovery?.operation === 'sign-out' ? 'Signing out securely…'
           : authorizationScopeTransitionMessage(auth?.sessionTransition.operation ?? null),
-    );
+    ));
   }
-  return createElement(Fragment, { key: display.displayedScopeKey }, children);
+  return renderBoundary(createElement(Fragment, { key: display.displayedScopeKey }, children));
 }
 
 function isPlainHistoryState(value: unknown): value is Record<string, unknown> {

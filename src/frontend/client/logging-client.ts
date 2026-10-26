@@ -1,8 +1,9 @@
 /** Scope-generation owned logging transport. Reuses authenticated SDK fetch; never exposes server persistence modules. */
-import { LOGGING_API, type LoggingClient, type LoggingCollectionPolicy } from '../../logging/logging-api-contracts';
+import { LOGGING_API, type LoggingClient, type LoggingCollectionPolicy, type LoggingObservationResult } from '../../logging/logging-api-contracts';
 import { LOGGING_FAMILIES, LOGGING_EVIDENCE, LOGGING_OUTCOMES } from '../../logging/logging-contracts';
-import type { LoggingPage } from '../../logging/logging-contracts';
+import type { LoggingChangePage, LoggingPage } from '../../logging/logging-contracts';
 import type { FetchInit } from './sdk';
+import { readLoggingExportJob } from '../../logging/logging-export-result';
 
 export function createLoggingClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>): LoggingClient {
   let generation = 0, boundary = new AbortController();
@@ -37,23 +38,35 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
   };
   const page: LoggingClient['page'] = (stream, query, options) => readPage('/events', stream, query, options);
   const platformPage: LoggingClient['platformPage'] = (stream, query, options) => readPage('/platform/events', stream, query, options);
+  const observe: LoggingClient['observe'] = async (observations, options) => {
+    const result = await request<LoggingObservationResult>('/observations', { observations, ...(options?.policyVersion ? { policyVersion: options.policyVersion } : {}) }, options?.signal);
+    if (!result || !Number.isSafeInteger(result.accepted) || result.accepted < 0 || result.accepted > observations.length
+      || result.admission && (typeof result.admission.policyVersion !== 'string' || !Number.isSafeInteger(result.admission.expiresAt)
+        || result.admission.expiresAt <= Date.now() || result.admission.expiresAt > Date.now() + 120000
+        || result.admission.policyVersion !== options?.policyVersion)) throw new Error('Invalid logging observation acknowledgment.');
+    if (options?.policyVersion && !result.admission) throw new Error('Audit delivery acknowledgment is missing.');
+    return result;
+  };
   return Object.freeze({
     clear() { generation++; boundary.abort(); boundary = new AbortController(); },
     bindObservations() {
       const epoch = generation, signal = boundary.signal;
       return Object.freeze({ observe(observations, options) {
         if (epoch !== generation || signal.aborted) return Promise.reject(new DOMException('Logging scope changed.', 'AbortError'));
-        return request('/observations', { observations }, AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]));
+        return observe(observations, { ...options, signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]) });
       } } satisfies Pick<LoggingClient, 'observe'>);
     },
     page,
     platformPage,
-    observe: (observations, options) => request('/observations', { observations }, options?.signal),
+    observe,
     async collectionPolicy(options) {
       const value = await request<LoggingCollectionPolicy>('/policy', undefined, options?.signal);
       if (!value || typeof value.enabled !== 'boolean' || !value.capture || LOGGING_FAMILIES.some(f => typeof value.capture[f] !== 'boolean')
         || !Number.isSafeInteger(value.heartbeatMs) || value.heartbeatMs < 10000 || value.heartbeatMs > 60000
-        || !Number.isSafeInteger(value.idleMs) || value.idleMs < 1000 || value.idleMs > 300000) throw new Error('Invalid logging collection policy.');
+        || !Number.isSafeInteger(value.idleMs) || value.idleMs < 1000 || value.idleMs > 300000
+        || value.durableExports !== undefined && typeof value.durableExports !== 'boolean'
+        || value.delivery && (value.delivery.required !== true || typeof value.delivery.policyVersion !== 'string' || !value.delivery.policyVersion || value.delivery.policyVersion.length > 100 || !Number.isSafeInteger(value.delivery.ttlMs)
+          || value.delivery.ttlMs < 30000 || value.delivery.ttlMs > 120000 || value.heartbeatMs >= value.delivery.ttlMs)) throw new Error('Invalid logging collection policy.');
       return value;
     },
     health: options => request('/health', undefined, options?.signal),
@@ -62,13 +75,43 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     releaseHold: (id, options) => request('/holds/release', { id }, options?.signal),
     review: (input, options) => request('/reviews', input, options?.signal),
     export: (stream, query = {}, options) => request('/export', { stream, query }, options?.signal),
+    createExport: async (input, options) => readLoggingExportJob(await request('/exports/create', input, options?.signal)),
+    exportJob: async (id, options) => { const value = await request('/exports/status', { id }, options?.signal); return value === null ? null : readLoggingExportJob(value); },
+    async downloadExport(id, options) {
+      const epoch = generation, signal = AbortSignal.any([boundary.signal, ...(options?.signal ? [options.signal] : [])]);
+      const response = await fetch<Response>(LOGGING_API + '/exports/download', { method: 'POST', body: { id }, signal, json: false });
+      if (signal.aborted || epoch !== generation) { await response.body?.cancel().catch(() => {}); throw new DOMException('Logging scope changed.', 'AbortError'); }
+      const expected = response.headers.get('x-zero-logging-sha256');
+      if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('application/x-ndjson') || !expected || !/^[a-f0-9]{64}$/.test(expected)) {
+        await response.body?.cancel().catch(() => {}); throw new Error('Invalid private export download.');
+      }
+      const reader = response.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (signal.aborted || epoch !== generation) throw new DOMException('Logging scope changed.', 'AbortError');
+          if (next.done) break;
+          bytes += next.value.byteLength; if (bytes > 8 * 1024 * 1024 + 16384) throw new Error('Export download exceeds its byte budget.');
+          chunks.push(next.value);
+        }
+        const blob = new Blob(chunks as BlobPart[], { type: 'application/x-ndjson' });
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))].map(n => n.toString(16).padStart(2, '0')).join('');
+        if (hash !== expected) throw new Error('Export download failed integrity verification.');
+        if (signal.aborted || epoch !== generation) throw new DOMException('Logging scope changed.', 'AbortError');
+        return blob;
+      } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+      finally { try { reader.releaseLock(); } catch { /* A native cleanup failure must not mask the integrity/read result. */ } }
+    },
     verify: (stream, afterOrdinal = 0, checkpoint, options) => request('/verify', { stream, afterOrdinal, ...(checkpoint ? { checkpoint } : {}) }, options?.signal),
     watch(stream, query, listener, options = {}) {
+      if (options.onChanges && (!Number.isSafeInteger(options.afterOrdinal) || Number(options.afterOrdinal) < 0 || options.transport === 'poll')) {
+        throw new Error('Live INSERT delivery requires a committed cursor and stream transport.');
+      }
       const epoch = generation, controller = new AbortController(), signal = AbortSignal.any([controller.signal, boundary.signal, ...(options.signal ? [options.signal] : [])]);
       const detached = structuredClone(query);
       const intervalMs = options.intervalMs ?? 3000;
       if (!Number.isSafeInteger(intervalMs) || intervalMs < 1000 || intervalMs > 60000) throw new Error('Invalid logging refresh interval.');
-      let timer: ReturnType<typeof setTimeout> | undefined, highWater = -1;
+      let timer: ReturnType<typeof setTimeout> | undefined, highWater = -1, afterOrdinal = options.afterOrdinal;
       const poll = async () => {
         try {
           const result = await (options.platform ? platformPage : page)(stream, detached, { signal });
@@ -83,7 +126,8 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let failed = false;
         try {
-          const response = await fetch<Response>(LOGGING_API + '/stream', { method: 'POST', body: { stream, query: detached, platform: options.platform ?? false }, signal, json: false });
+          const response = await fetch<Response>(LOGGING_API + '/stream', { method: 'POST', body: { stream, query: detached, platform: options.platform ?? false,
+            ...(options.onChanges ? { afterOrdinal } : {}) }, signal, json: false });
           if (signal.aborted || epoch !== generation) { await response.body?.cancel(); return; }
           if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Invalid logging stream response.');
           reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '', eventData = '';
@@ -98,6 +142,23 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
               if (line !== '' || !eventData) continue;
               const packet = JSON.parse(eventData); eventData = '';
               if (packet.version !== 1 || packet.error) throw new Error('Logging subscription ended; authority must be rechecked.');
+              if (packet.changes !== undefined) {
+                const change = packet.changes as LoggingChangePage;
+                if (!options.onChanges || afterOrdinal === undefined || !change || change.afterOrdinal !== afterOrdinal
+                  || !Number.isSafeInteger(change.throughOrdinal) || change.throughOrdinal < afterOrdinal
+                  || !Number.isSafeInteger(change.highWaterOrdinal) || change.highWaterOrdinal < change.throughOrdinal
+                  || typeof change.hasMore !== 'boolean' || !Array.isArray(change.events)) throw new Error('Invalid logging change cursor.');
+                validatePage({ events: [...change.events].reverse(), highWaterOrdinal: change.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null });
+                if (change.events.some(row => row.ordinal <= afterOrdinal! || row.ordinal > change.throughOrdinal)
+                  || (change.hasMore ? !change.events.length || change.throughOrdinal !== change.events.at(-1)!.ordinal : change.throughOrdinal !== change.highWaterOrdinal)) {
+                  throw new Error('Invalid logging change delivery.');
+                }
+                if (!signal.aborted && epoch === generation) {
+                  options.onStatus?.('live'); options.onChanges(change); afterOrdinal = change.throughOrdinal;
+                }
+                continue;
+              }
+              if (options.onChanges && packet.afterOrdinal !== afterOrdinal) throw new Error('Logging server did not confirm the requested live cursor.');
               const page = validatePage(packet.page);
               if (!signal.aborted && epoch === generation) options.onStatus?.('live');
               if (!signal.aborted && epoch === generation && page.highWaterOrdinal !== highWater) { highWater = page.highWaterOrdinal; listener(page); }

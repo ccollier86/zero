@@ -101,7 +101,7 @@ describe('executeAIEmbedMany', () => {
     });
 
     expect(calls).toHaveLength(5);
-    expect(peakActive).toBe(4);
+    expect(peakActive).toBe(5);
     expect(calls[0].headers?.['x-test']).toBe('present');
     expect(calls[0].headers?.['x-omit']).toBeUndefined();
     expect(calls[0].providerOptions).toEqual({ test: { mode: 'fast' } });

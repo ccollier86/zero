@@ -3,20 +3,20 @@ id: zero.cli.tooling.build
 type: how-to
 audience: [developer, agent, operator]
 owner: cli-tooling
-status: verified
+status: in-review
 visibility: internal
 system: cli-tooling
 feature: build
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: ["Bun package-mode applications", "trusted local builds"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "0875dd874046871b7678745e5853b2491bfc7395"
   snapshot: clean
-  date: "2026-10-07"
-  evidence_level: source-observed
+  date: "2026-10-26"
+  evidence_level: implementation-verified
 ---
 
 # Build The Existing App Entry
@@ -141,6 +141,35 @@ convention.** Deploy the app route modules and their app-owned dependencies.
 Do not infer that this command precompiles every file-router, provider, Fabric
 actor and API combination into one self-contained executable. The command does
 not erase existing pages or start a replacement app to mask missing modules.
+
+For strict logging with a bundled server and retained source actors, use this
+official build pipeline and the matching installed framework package. The
+official pipeline preserves canonical **core and logging** migration identities
+across the bundle/source boundary; registry, checksum, realm/schema and actor
+checks stay enabled. Setup/provisioning may have already applied system
+migrations through source before the bundled server starts. The bundle must
+recognize that unchanged history rather than hash Bun's reformatted functions
+as different migrations. This preservation is build-owned; neither stored
+checksums nor numbered migration definitions are rewritten.
+The isolated linux/amd64 logging fixture qualifies JavaScript output with
+retained dependencies and an explicit source actor using an empty environment.
+It does not qualify a source-free logging executable or arbitrary custom
+bundlers. See [logging actor deployment](../../backend/logging/configuration.md)
+and [upgrade boundaries](../../backend/logging/operations.md#upgrade-procedure).
+
+Use `zero build`, not a bare `bun build`, when a source-prepared system database
+will be opened by the resulting server. Rebuild the artifact after updating the
+framework. Custom app migration registries and custom Fabric realms still need
+their own stable build/source contract; this correction covers framework-owned
+core and logging definitions. A prior noncanonical bundle ledger or genuinely
+changed migration must remain rejected pending an explicitly qualified recovery
+boundary, not be accepted by clearing or editing history.
+
+The managed Linux qualification now first boots the source runtime against fresh
+private files and records source evidence, then builds and boots the compiled
+server over those same files. It also tests restart/replay and retained private
+exports. An empty bundle-first boot alone does not qualify source-to-bundle
+migration compatibility.
 
 Runtime launches resolve ordinary generated paths from the deployment cwd,
 unless the source config deliberately sets `projectRoot`. Database paths,

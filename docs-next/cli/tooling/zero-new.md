@@ -38,6 +38,12 @@ explicit default. Name, force and help pass through the strict create parser.
 `--local`, `--zero` and `--template` overrides are rejected, including inline
 forms: saved archive and template are the command's invariant.
 
+`zero-new .` works inside an empty current directory and preserves that directory
+so the invoking shell can continue using it. A directory containing only
+`.DS_Store` also counts as empty. Existing work in the current directory is
+protected even with `--force`; home directories, filesystem roots and workspace
+ancestors remain prohibited targets.
+
 The launcher extracts the validated saved package to owned scratch space,
 scaffolds from its template, copies its archive to
 `.zero/framework/zero-framework.tgz`, records `zero-release.json`, and installs

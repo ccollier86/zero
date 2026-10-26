@@ -7,13 +7,13 @@ status: in-review
 visibility: internal
 system: logging
 feature: scoped-api
-maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
+  commit: "6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -35,7 +35,10 @@ realm, writer or source-outbox classes into application routes.
 
 ## Declared Server Actions
 
-These are route-handler fragments after ordinary domain authorization:
+Use the request's `zero.logging` facade after ordinary domain authorization.
+It derives the actor, current application/tenant scope and policy on the server;
+an application event cannot supply a different user, tenant or database path.
+These are route-handler fragments, not a second logging service:
 
 ```ts
 const logging = zero.logging;
@@ -76,6 +79,55 @@ returns a commit receipt or null when capture policy filters it. On an unknown
 outcome, retain the original identity, time and context for reconciliation;
 do not generate a new event identity just because the acknowledgment was lost.
 
+### Choosing a custom logging operation
+
+| Operation | Use it for | What it does not establish |
+| --- | --- | --- |
+| `record(event)` | An app-defined semantic stage such as an approved export, clinical operation, or completed task | That a later external effect succeeded, or that a person read a response |
+| `read(target, callback)` | Preparing an explicitly authorized record for release | The user's permission to access it, transport delivery, or human attention |
+| `run(callback)` | Carrying trusted actor/scope attribution into ReactiveDB commits and managed service calls | A distributed transaction or automatic semantic success for the callback |
+
+Use `LoggingEventInput` from `@zero/framework/logging` to type custom events.
+Choose the matching existing family (`records`, `workflow`, `communications`,
+`ai`, `transfers`, and so on) and a stable namespaced action such as
+`clinical.plan.updated`. Custom action names do not require a new worker,
+database, plugin or schema migration. The configured family must be enabled;
+a null receipt means filtered, not retained.
+
+Event IDs and `occurredAt` belong to the logical stage. If a retry is needed,
+reuse the complete original event, not just its ID with a new timestamp.
+The trusted actor/session/scope context is part of those facts too: recording
+the same event after a new login is not an exact same-context replay.
+Reusing an identity with different facts is a conflict, not an update. A later
+confirmation is a new stage with its own ID. Do not catch required audit failures
+and then tell the caller that an operation was safely audited or safe to repeat.
+
+`read()` durably records `record.read.admitted` before invoking the callback.
+It records `record.read.prepared` before returning a successful result, or a
+`failed`, `denied`, or `unknown` terminal stage when the callback or authority
+fence fails. It retains no exception text. For a stream or an external side
+effect, declare the corresponding delivery/completion stage separately;
+preparing a stream does not prove its consumption.
+
+Application metadata is denied by default. Add only reviewed scalar keys to
+`logging.metadataKeys`; the common sensitive-content names remain prohibited.
+Use opaque target IDs and never clinical notes, patient contact information,
+credentials, tokens, raw URLs, document bodies, prompts or model responses.
+An allowlisted key is not permission to put sensitive content in its value.
+
+Browser code uses `client.logging.observe()` or the built-in collector, not
+`record()`. The server fixes those events to the browser-observed evidence class
+and an authenticated actor/scope. A browser cannot assert provider confirmation.
+Durable background work uses its authority-scoped service facade. Do not retain
+a request facade after its lifetime or import the private `LoggingRuntime` to
+invent a background identity.
+
+Managed AI and email already own their trusted provider-stage logging. Do not
+add a duplicate `record({ evidence: 'provider-confirmed', ... })` afterward:
+`record()` intentionally derives a backend/system origin and rejects that
+claim. The managed integration changes only the confirmation stage's origin
+to `provider`, retaining the initiating actor, scope and invocation identity.
+
 ## Queries and Permissions
 
 ```ts
@@ -97,7 +149,10 @@ reading snapshot. New arrivals do not move an older page boundary.
 Query fields are `limit` (1–100, default 50), `since` (inclusive),
 `until` (exclusive), `beforeOrdinal`, `highWaterOrdinal`, `family`,
 `action`, `actorId`, `sessionId`, `targetType`, `targetId`,
-`outcome`, and `level`. Scalar criteria combine with AND. There is no
+`outcome`, `level`, and `eventIds`. Exact `eventIds` are at most 100
+JSON-encoded `[sourceId, eventId]` identities; they narrow the same authorized
+query and never select a different scope. An empty list matches nothing.
+Scalar criteria combine with AND. There is no
 free-text scan, raw SQL or advanced nested filter grammar in this version.
 
 Ordinary `page()` is permanently bound to the live application/tenant scope.
@@ -141,6 +196,28 @@ poll intervals are integers from 1000 to 60000 milliseconds. `platform: true`
 selects the separately authorized platform read. A snapshot/reconnect is not a
 new business event or an exact count of new records.
 
+For DataTable, use `createLoggingTableSource(client.logging, stream, criteria)`
+from `@zero/framework/components/logging`. Its adapter supplies the standard
+`subscribeChanges`, `confirmInsertedRows` and `getLeadingRowId` capabilities;
+it does not create a second table, shared public collection or reveal button.
+The live first page updates normally while older pages retain ordinal cursors.
+
+The underlying `watch()` options `afterOrdinal` and `onChanges` opt into the
+authorized append cursor. A change batch contains ascending retained `events`,
+`afterOrdinal`, `throughOrdinal`, `highWaterOrdinal` and `hasMore`.
+The SDK resumes from the last validated `throughOrdinal` across reconnects.
+It never turns an initial/reconnect snapshot into INSERT evidence. Bursts drain
+in bounded pages rather than losing events beyond the latest snapshot window.
+These options require stream transport; polling does not pretend to prove inserts.
+
+The component groups visual INSERTs for roughly 250 ms and bounds pending
+presentation identities to the latest 1000. This is UI batching, not delayed
+durable logging. Every retained record remains queryable. Native DataTable
+owns insertion motion, pagination and its existing incoming-record control.
+Page and membership reads share the semantic investigation window, preventing
+their refreshes from recursively appending audit events. Authorization,
+required delivery and final stream fences remain enforced.
+
 Browser-to-server observations use batched HTTPS POST requests. SSE is one-way,
 server to browser; it cannot upload observations. Both routes stay on the
 application's own API, with no third-party tracker or credential in a URL.
@@ -151,7 +228,8 @@ Same-origin transport does not guarantee passage through an extension or proxy.
 
 The private authenticated prefix is `/api/_zero/logging`. POST operations are
 `/events`, `/platform/events`, `/stream`, `/observations`, `/evidence`,
-`/holds`, `/holds/release`, `/reviews`, `/export` and `/verify`.
+`/holds`, `/holds/release`, `/reviews`, `/export`, `/exports/create`,
+`/exports/status`, `/exports/download` and `/verify`.
 GET `/policy` returns collection settings; GET `/health` returns global readiness
 and counters only under platform-administrator, application-control and configured
 manage authority. Tenant-granted read/manage permissions cannot expose global
@@ -177,6 +255,14 @@ launch/environment settings.
 Domain errors distinguish invalid input, forbidden access, backpressure,
 unavailable capture, definite noncommit and unknown acknowledgment. Show safe
 errors; do not attach event bodies, raw SQL, credentials or private paths.
+
+Native logging routes and custom Zero endpoints return stable safe
+`{ code, outcome, error }` logging failures. Caller event/query validation is
+422, forbidden access 403, required acknowledgment 428, capacity pressure 429,
+and a conflicting event identity 409. Configuration, worker response and
+unresolved service failures are 503, not mislabeled bad input. An `unknown`
+outcome requires reconciliation of the original operation, never a blind repeat
+of a payment, email or other possibly completed external action.
 
 ## Related Guides and Next Steps
 

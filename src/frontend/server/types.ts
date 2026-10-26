@@ -21,6 +21,7 @@ import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
 import { resolveManagedLoggingConfig, type ManagedLoggingConfig, type ResolvedManagedLoggingConfig } from '../../logging/logging-managed-config';
 import { assertLoggingDirectoryIsolation } from '../../logging/logging-directory-isolation';
+import { assertManagedLoggingDurability } from './app-logging-durability';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import type {
   AuthBehaviorConfig,
@@ -793,6 +794,7 @@ export function resolveConfig(
     );
   }
   const storageDir = config.storageDir ?? '.storage';
+  assertManagedLoggingDurability({ logging, auth: config.auth === false ? false : {}, db: config.db, systemDb, databaseTopology });
   const outDir = resolveAppOwnedPath(projectRoot, config.outDir ?? './.build');
   const generatedDir = resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated');
   const appDir = resolveAppOwnedPath(projectRoot, config.appDir ?? './app');

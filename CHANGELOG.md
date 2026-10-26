@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Resumed the blog/author preview on current main without replacing the selected
+  stable update. Preserved released migration 045, appended public avatars and
+  author metadata as 046/047, retained all canonical migration/CSS build adapters,
+  and added upgrade/preview-ledger preservation checks. The original preview
+  remains available; conflicting preview receipts are never silently relabeled.
+  Reconciled exact blog/palette/anchor frontend export additions without changing
+  the original frozen public contract.
+
 - Added an opt-in managed blog author foundation with additive SYSTEM metadata,
   scoped author enrollment that preserves existing roles, separate draft/public
   profiles, Guardian-fenced server/browser facades, authorized live projections
@@ -45,6 +53,28 @@ All notable Zero Platform changes are tracked here.
   Published docs automatically contribute to the app-local sitemap. Manual
   entries no longer bypass known file-route auth/noindex requirements, and ISR
   retains SEO headers. No database migration, theme change or router rewrite.
+- Fixed false core migration checksum changes between source setup and the
+  official bundled server. The build retains trusted canonical source function
+  identities for all core migrations, as it already did for logging migrations.
+  Checks remain strict, existing definitions/ledgers are unchanged, and genuine
+  migration edits still fail. Linux deployment qualification now seeds source
+  state before compiled startup instead of testing only an empty bundle-first DB.
+
+- Fixed required-audit UI masking retiring the session recovery controller
+  before its final hydrated-document reload. Persistent recovery/collector
+  ownership is separate from protected display gates; bounded attempts,
+  current-scope checks and real-unmount retirement remain intact. Generated
+  file-router browser regressions cover native sign-in/retry, protected SSR,
+  new tabs, real audit SSE/table interactions and revocation. No database
+  migration, weaker audit preset or application navigation workaround is needed.
+
+- Corrected managed AI/email terminal audit provenance: provider-confirmed
+  success now uses a trusted provider-origin envelope while retaining the
+  caller's actor, scope, correlation and invocation identity. Admission and
+  uncertain/rejected stages retain their original provenance; validation and
+  authorization remain strict. Added real compliance createApp/SDK/Fabric
+  regression coverage plus SMTP/Resend shared-path outcome and no-resend tests.
+  No database migration or application workaround is required.
 
 - Added an offline-only legacy-state boundary under `@zero/framework/migrations`
   for the admitted Zero 1.3 combined schema: approved plans, fresh private
@@ -70,8 +100,18 @@ All notable Zero Platform changes are tracked here.
   optional browser observations and LoggingWorkspace. Worker restart/replay,
   bounded ingestion/reads, queue pressure and joined shutdown preserve source
   evidence. Existing Guardian audit remains intact and logging stays off by
-  default. Strict compliance mode still rejects until its remaining controls
-  are implemented and qualified; this is not a compliance certification.
+  default. Managed compliance now enforces durable source admission, expiring
+  delivery grants across UI/HTTP/Sync, signed checkpoint custody and private
+  durable exports. App/system sources require file mode with FULL/EXTRA.
+  The logging view uses DataTable's native live INSERT/motion/pagination paths,
+  batches visual arrivals for 250 ms, and retains server-side user/activity
+  filters without a separate reveal button or recursive refresh auditing.
+  Additive core migration 045 registers private export metadata; existing
+  migration definitions and the legacy-state boundary are preserved.
+  This is not a compliance certification or automatic clinical instrumentation.
+- Independent AI calls/jobs remain concurrent; new workflow fan-outs default to
+  the supported bound of 100 and embedding batches to 32 parallel calls.
+  Explicit ordering, pinned graphs, quotas and capacity limits remain honored.
 - Added commit-acknowledged Torrent enqueue handoffs so short durable database
   handlers can schedule long AI/provider work without awaiting its activities.
   Existing eager start/event behavior, live authority and idempotent receipts

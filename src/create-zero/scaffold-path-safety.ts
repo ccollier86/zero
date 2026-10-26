@@ -1,6 +1,6 @@
 /** Canonical path comparison and broad-target protections for create-zero. */
 
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, parse, relative, resolve } from 'node:path';
 
@@ -17,14 +17,18 @@ export async function resolveProspectivePath(path: string): Promise<string> {
   return resolve(await realpath(cursor), ...missing);
 }
 
-/** Reject targets capable of replacing a filesystem, home, or current workspace tree. */
+/** Protect broad paths and existing work while allowing an empty current directory. */
 export async function assertTargetIsNarrow(target: string): Promise<void> {
   const filesystemRoot = parse(target).root;
-  const protectedPaths = [await realpath(process.cwd()), await realpath(homedir())];
+  const workspace = await realpath(process.cwd());
+  const home = await realpath(homedir());
   if (target === filesystemRoot || dirname(target) === filesystemRoot) {
     throw new Error(`[create-zero] Refusing dangerous broad target: ${target}`);
   }
-  if (protectedPaths.some((path) => isSameOrInside(path, target))) {
+  const emptyWorkspace = target === workspace
+    && (await readdir(target)).every((entry) => entry === '.DS_Store');
+  if (isSameOrInside(home, target)
+    || (isSameOrInside(workspace, target) && !emptyWorkspace)) {
     throw new Error(`[create-zero] Refusing to replace a workspace, home directory, or its ancestor: ${target}`);
   }
 }

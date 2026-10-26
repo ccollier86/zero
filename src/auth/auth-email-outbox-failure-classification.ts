@@ -24,6 +24,7 @@ export function classifyAuthEmailFailure(
   if (!(error instanceof EmailError)) {
     return { code: 'EMAIL_SEND_FAILED', retryable: true };
   }
+  if (error.code === 'EMAIL_SEND_OUTCOME_UNKNOWN') return { code: error.code, retryable: false };
   if (error.code === 'EMAIL_DELIVERY_ABORTED'
     || error.code === 'EMAIL_DELIVERY_LEASE_LOST'
     || error.code === 'EMAIL_DELIVERY_TIMEOUT') {

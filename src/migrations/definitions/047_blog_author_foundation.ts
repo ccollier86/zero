@@ -23,7 +23,7 @@ const objects = [
   },
 ] as const;
 export const migration: Migration = {
-  version: '046',
+  version: '047',
   description: 'Managed scoped blog author directories',
   safety: 'safe',
   up(db) {

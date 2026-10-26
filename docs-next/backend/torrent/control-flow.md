@@ -3,20 +3,20 @@ id: zero.torrent.control-flow
 type: reference
 audience: [developer, agent, operator]
 owner: torrent
-status: draft
+status: in-review
 visibility: internal
 system: torrent
 feature: control-flow
 maturity: supported
-applies_to: ["2.1.1 source baseline; not installed-package qualification"]
+applies_to: ["2.6.0 builds with bounded maximum AI/job concurrency"]
 modes: ["authenticated single-tenant app", "Guardian multi-tenant app", "explicit trusted server composition"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
   snapshot: clean
-  date: "2026-10-05"
-  evidence_level: source-observed
+  date: "2026-10-25"
+  evidence_level: implementation-verified
 ---
 
 # Choices, Parallel Branches And Array Items
@@ -81,7 +81,10 @@ export const patients = flow(
 ```
 
 The activity receives item { value, index, key }. Source must be an array,
-maximum 10,000 items. concurrency defaults 1, maximum 100.
+maximum 10,000 items. Newly compiled definitions default to the maximum bounded
+concurrency of 100. Set `concurrency: 1` only when item ordering is intentional;
+set a lower explicit budget for provider quotas or deployment capacity.
+Previously pinned definitions/runs keep their recorded concurrency unchanged.
 itemSchema validates each snapshot, itemKey derives stable unique keys
 (default source-index identity). Duplicate keys reject admission.
 

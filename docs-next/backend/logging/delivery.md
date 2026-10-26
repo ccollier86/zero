@@ -7,13 +7,13 @@ status: in-review
 visibility: internal
 system: logging
 feature: managed-delivery-preview
-maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -40,6 +40,8 @@ retention and integrity operations execute in the separate Fabric actors.
 | Application facade and private broker | Live authorization, bounded immutable admissions, source-catalog ownership, fixed source/sink capabilities, commit hints and worker supervision. |
 | Delivery subprocess | Batching, up to three active source pages, fair draining, per-source retry backoff and source acknowledgment requests. |
 | Fabric log writers and read-only WAL actors | Actual log commits, indexed bounded investigation queries, integrity work and retention. |
+| Built-in custody owner | Parent-owned signing key; signed checkpoints commit in a third private Fabric file. No key is passed to child environment variables. |
+| Private export pool | At most four materializations, each capped at 1000 records / 8 MiB; bounded serialization and Storage orchestration stay on the application side, while queries/transitions use the logging actors. |
 
 The broker does not accept SQL, physical paths or user-selected scope from the
 delivery process. Before removing a source entry, it requires an exact matching
@@ -52,6 +54,15 @@ opening a viewer does not move a full log scan onto the application database.
 Response validation and transport remain bounded application work. Process
 isolation does not remove shared CPU/disk contention or the cost of durable
 source capture; qualify the application's actual read/write workload.
+The export scheduler visits the entire bounded set of 128 live reservations;
+repeated failure of older artifacts cannot starve later jobs.
+
+Strict publication verifies that source capture, custody, private Storage exports
+and delivery workers exist. Storage initializes before managed publication and
+its startup/stop boundaries are idempotent, including failed app construction.
+Source availability failure invalidates strict grants. Recovery requires a fresh
+durable acknowledgment; restoring connectivity alone does not resurrect an old
+grant.
 
 ## Diagnostic Capture
 

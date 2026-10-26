@@ -19,6 +19,10 @@ export type { ScopedLogging, LoggingObservation, LoggingHoldInput, LoggingReview
 export type { LoggingContext, LoggingEventInput, LoggingQuery, LoggingReceipt, LoggingStream } from '../logging/logging-contracts';
 export { runLoggingActorIfRequested } from '../logging/logging-actor-bootstrap';
 export { LoggingError, type LoggingErrorCode } from '../logging/logging-error';
+export { createLoggingCheckpointSigner } from '../logging/logging-checkpoint-signer';
+export { createHttpLoggingCustodyStore } from '../logging/logging-http-custody';
+export type { LocalLoggingCustodyConfig, LoggingCustodyConfig, LoggingCustodyStore, LoggingCheckpointSigner, SignedLoggingCheckpoint } from '../logging/logging-custody-contracts';
+export type { LoggingExportJob, LoggingExportRequest } from '../logging/logging-export-contracts';
 export type { VectorVisualizationConfig, VectorVisualizationIndexConfig, ResolvedVectorVisualizationConfig } from '../vector/visualization-config';
 export { prepareAppBuild } from './server/app-build';
 export type { PreparedAppBuild } from './server/app-build';

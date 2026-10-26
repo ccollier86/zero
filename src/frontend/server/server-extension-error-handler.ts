@@ -5,6 +5,8 @@ import { ValidationError, type AnyElysia } from 'elysia';
 import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import { AuthError } from '../../auth/types';
 import { WorkflowError } from '../../workflows/workflow-error';
+import { LoggingError } from '../../logging/logging-error';
+import { projectLoggingHttpFailure } from '../../logging/logging-http-error';
 
 export const ZERO_REQUEST_VALIDATION_FAILED = 'ZERO_REQUEST_VALIDATION_FAILED';
 export const ZERO_REQUEST_PARSE_FAILED = 'ZERO_REQUEST_PARSE_FAILED';
@@ -28,6 +30,12 @@ export function applyServerExtensionErrorHandler(app: AnyElysia): AnyElysia {
         error: getPublicAuthErrorMessage(error),
         code: error.code,
       };
+    }
+
+    if (error instanceof LoggingError) {
+      const failure = projectLoggingHttpFailure(error);
+      set.status = failure.status;
+      return failure.body;
     }
 
     // App-owned HTTP/MCP adapters use the same public Torrent contracts as

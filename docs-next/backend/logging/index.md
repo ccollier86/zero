@@ -7,13 +7,13 @@ status: in-review
 visibility: internal
 system: logging
 feature: integrated-logging-preview
-maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7f1383a7ea7483abab04d57aebbde8b0f9fe2d8d"
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -26,10 +26,12 @@ reviewed_against:
 Core logging is an optional managed Zero subsystem with dedicated Fabric audit
 and diagnostic databases, durable source capture, Guardian-scoped APIs,
 authenticated SSE, browser observations and a reusable investigation workspace.
-The implementation is available as an opt-in preview in main's saved update
-package. Existing apps keep logging disabled until configured; updating Zero
-does not silently enable collection. The strict compliance preset is still gated;
-see the explicit coverage and qualification requirements below.
+Existing apps keep logging disabled until configured; updating Zero does not
+silently enable collection. Managed logging includes the strict compliance
+preset with real admission, source-durability, signing and private-export checks.
+Use the exact qualified archive identified by the release handoff and
+`zero-release --status`, not the unchanged version number; older preview
+archives do not contain these controls.
 
 - [Configuration](./configuration.md): presets, permissions, metadata, retention,
   queue defaults, path isolation and actor launch.
@@ -45,7 +47,8 @@ see the explicit coverage and qualification requirements below.
   retained replay proofs, verification and bounded export.
 - [Operations and adoption](./operations.md): health, Doctor, recovery, branch
   upgrade procedure and qualification.
-- [Roadmap](./roadmap.md): remaining full-compliance and deployment gates.
+- [Roadmap](./roadmap.md): optional UI improvements, stronger deployment custody,
+  deferred backups and additional qualification targets.
 - [Logging workspace](../../frontend/components/logging.md): self-wired shared
   DataTable, filters, evidence dialogs and activity hooks.
 
@@ -54,13 +57,16 @@ for diagnostics and `audit` for structured activity evidence. Their SQLite work
 runs in Fabric subprocesses, outside the application database and Guardian's
 authority lease. A separate supervised delivery subprocess owns batching,
 source scheduling and retries. Bounded investigation reads use the log plane's
-read-only WAL workers. This does not change SQLite's per-file write serialization.
+read-only WAL workers. Strict local custody adds a third private Fabric database
+for signed checkpoints, not another event stream. This does not change SQLite's
+per-file write serialization or remove shared CPU/disk costs.
 
 Existing Guardian audit and observability APIs remain intact. The broader log
 plane mirrors newly appended Guardian events rather than deleting or replacing
 the old trail. Automatic ReactiveDB record capture covers the pinned application
-database and managed tenant/named Fabric writers; complete service-stage
-instrumentation remains an explicit gate. A selected preset is not proof of complete coverage,
+database and managed tenant/named Fabric writers. Managed AI/email and strict HTTP
+stages are explicit in the coverage matrix; app semantics still require declared
+instrumentation. A selected preset is not proof of complete coverage,
 independent evidence custody, uncompromised browser behavior or legal compliance.
 
 ## Related Guides And Next Steps
@@ -71,4 +77,5 @@ independent evidence custody, uncompromised browser behavior or legal compliance
   unchanged during this development.
 - [Complete implementation plan](../../_work/logging-system-plan.md) defines the
   intended full subsystem; [branch verification](../../_work/logging-foundation-review.md)
-  records implemented milestones and remaining release gates.
+  records the earlier preview. The [strict qualification record](../../_work/logging-compliance-qualification.md)
+  separates current checks from final package selection and app acceptance.

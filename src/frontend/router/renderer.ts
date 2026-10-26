@@ -108,6 +108,8 @@ export async function loadSsrReactRuntime(appDir = './app', selection: 'app' | '
 
 export interface PlatformConfig {
   logging?: boolean;
+  loggingRequired?: boolean;
+  loggingPolicyVersion?: string;
   vectorVisualization?: boolean;
   url: string;
   auth?: boolean;

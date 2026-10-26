@@ -1,0 +1,15 @@
+/** Content-free SSR recovery. No app module, loader, patient content, URL or credential is embedded. */
+export function loggingRecoveryPage(policyVersion: string): Response {
+  const nonce = crypto.randomUUID().replaceAll('-', '');
+  const policy = JSON.stringify(policyVersion).replaceAll('<', '\\u003c');
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Confirm audit delivery</title>
+<style nonce="${nonce}">:root{color-scheme:light dark;font:14px/1.6 system-ui,sans-serif}body{margin:0;min-height:100svh;display:grid;place-items:center;background:light-dark(#f5f5f6,#0a0d12);color:light-dark(#18181b,#e6e9ef)}main{max-width:32rem;margin:24px;padding:24px;border:1px solid light-dark(#dcdce0,#2e3644);border-radius:14px;background:light-dark(#fff,#0e1218)}h1{font-size:18px;margin:0 0 12px}button{font:inherit;padding:7px 16px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}p{margin:12px 0}button:focus-visible{outline:2px solid #7aa5ff;outline-offset:3px}</style></head><body><main><h1>Confirm audit delivery</h1>
+<p>This protected page is paused until the application can confirm audit delivery. No protected page data has been loaded.</p>
+<p id="status" role="status">Checking the secure connection…</p><button id="retry" type="button">Retry</button>
+<p>If this continues, check extensions that block requests to this site, your connection, and service status. This check cannot identify a particular extension or prove browser integrity.</p></main>
+<script nonce="${nonce}">const status=document.getElementById('status'),button=document.getElementById('retry');let active=false;async function retry(){if(active)return;active=true;button.disabled=true;status.textContent='Confirming audit delivery…';try{const response=await fetch('/api/_zero/logging/observations',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Zero-Logging-Recovery':'1'},body:JSON.stringify({observations:[],policyVersion:${policy}}),signal:AbortSignal.timeout(15000)});if(!response.ok)throw Error();const value=await response.json();if(!value.admission||value.admission.policyVersion!==${policy}||value.admission.expiresAt<=Date.now())throw Error();location.reload()}catch{status.textContent='Audit delivery could not be confirmed. Check your connection or site-blocking settings, then retry.'}finally{active=false;button.disabled=false}}button.addEventListener('click',retry);retry();</script></body></html>`, {
+    status: 428, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store',
+      Vary: 'Authorization, Cookie', 'Referrer-Policy': 'same-origin', 'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` },
+  });
+}

@@ -16,6 +16,7 @@ import { emitAIModelAliasUnresolved } from './ai-observability';
 import { hasAICapability } from './ai-provider-catalog';
 import type { AIRegistry, ResolvedAIModel } from './ai-registry';
 import type { AICapability } from './ai-types';
+import { auditAIModel } from './ai-execution-audit';
 
 /** Resolve a language model from an alias or provider-qualified model id. */
 export function resolveLanguageModel(
@@ -160,14 +161,8 @@ function resolveModel<TModel>(
     );
   }
 
-  try {
-    return {
-      reference,
-      provider,
-      model: resolve(reference.resolved),
-      ...(registry.emitCode === undefined ? {} : { emitCode: registry.emitCode }),
-    };
-  } catch (error) {
+  let model: TModel;
+  try { model = resolve(reference.resolved); } catch (error) {
     emitAIModelAliasUnresolved({
       providerId: provider.id,
       providerType: provider.type,
@@ -184,4 +179,9 @@ function resolveModel<TModel>(
       400,
     );
   }
+  // Audit/Guardian admission errors are not model-configuration errors.
+  return { reference, provider,
+    model: auditAIModel(model, registry.audit?.prepare({ capability, providerId: provider.id, model: reference.resolved })),
+    ...(registry.emitCode === undefined ? {} : { emitCode: registry.emitCode }),
+  };
 }

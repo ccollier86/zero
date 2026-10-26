@@ -56,14 +56,36 @@ existing project. Enabling profile fields alone is also supported.
 | --- | --- | --- |
 | 039, if not already present | Fixed nullable private profiles, shared profile CAS/policy clock. | Does not require every user to fill new fields or create a new account. |
 | 042, if needed | Existing private normalized avatar receipts/assets/pointers. | Does not make a bucket or photo public. |
-| 045 | Explicit public-avatar publication pointers to current normalized private assets. | Does not publish existing images, rewrite Storage grants or copy photo bytes. |
-| 046 | Scoped blog site/author metadata and installed policy clock in SYSTEM. | Does not enroll users, change roles, add post tables or modify customer/Fabric schemas. |
+| 045, if not already present | Released private Storage artifact references, including logging evidence. | Does not move or replace existing Storage objects or logging files. |
+| 046 | Explicit public-avatar publication pointers to current normalized private assets. | Does not publish existing images, rewrite Storage grants or copy photo bytes. |
+| 047 | Scoped blog site/author metadata and installed policy clock in SYSTEM. | Does not enroll users, change roles, add post tables or modify customer/Fabric schemas. |
 
 These are append-only framework migrations. Previous migration definitions and
 checksums stay unchanged. The normal full upgrade can include other intervening
 migrations too; inspect its actual plan rather than running just this table's
 numbers out of order. Empty new framework tables may exist while a feature is
 off; that is not enrollment or public exposure.
+
+### Earlier Feature-Branch Preview
+
+The retained `c7011c7` / `56bbb66` author preview used **045 for public avatars
+and 046 for authors** before main released a different 045 for private Storage
+artifacts. The continuation on `feature/blog-foundation-current` preserves
+released main's 001–045 byte-for-byte and appends public avatars/authors as
+046/047. The earlier branch and archive remain unchanged for reference.
+
+A database initialized by that earlier author preview is **not** a released-main
+database. Normal startup deliberately rejects its conflicting migration 045;
+it does not renumber its receipts, clear its ledger, pretend the old 045 was the
+Storage migration, or discard author/photo data. Keep that preview and its
+consistent backup pinned. Use a fresh disposable database for a new rehearsal,
+or request an explicitly reviewed preview-state conversion before carrying
+valuable preview writes forward. There is no automatic preview-ledger repair.
+
+The older qualification/archive cited above remains historical evidence, not
+qualification of this merged continuation. Review the updated
+[qualification record](../../_work/audits/blog-author-foundation.md) for the
+current source/test boundary before installing it.
 
 With `migrate: false`, missing/incompatible feature schema remains blocked;
 requests do not opportunistically create it. Apply reviewed migrations through

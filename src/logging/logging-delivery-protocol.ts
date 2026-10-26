@@ -84,8 +84,8 @@ export function deliveryFailure(error: unknown): NonNullable<DeliveryWire['error
 }
 export function deliveryError(raw: unknown): LoggingError {
   const r = loggingRecord(raw, ['code', 'outcome']);
-  const codes: readonly string[] = ['LOGGING_CONFIG_INVALID', 'LOGGING_NOT_READY', 'LOGGING_FORBIDDEN', 'LOGGING_AUDIT_UNAVAILABLE', 'LOGGING_EVENT_INVALID', 'LOGGING_EVENT_CONFLICT',
-    'LOGGING_QUERY_INVALID', 'LOGGING_BACKPRESSURE', 'LOGGING_CLOSED', 'LOGGING_WRITE_FAILED', 'LOGGING_OUTCOME_UNKNOWN', 'LOGGING_RESPONSE_INVALID'];
+  const codes: readonly string[] = ['LOGGING_CONFIG_INVALID', 'LOGGING_NOT_READY', 'LOGGING_FORBIDDEN', 'LOGGING_AUDIT_UNAVAILABLE', 'LOGGING_ADMISSION_REQUIRED', 'LOGGING_EVENT_INVALID', 'LOGGING_EVENT_CONFLICT',
+    'LOGGING_QUERY_INVALID', 'LOGGING_BACKPRESSURE', 'LOGGING_CLOSED', 'LOGGING_WRITE_FAILED', 'LOGGING_OUTCOME_UNKNOWN', 'LOGGING_RESPONSE_INVALID', 'LOGGING_INTEGRITY_FAILED'];
   if (!codes.includes(r.code as string) || !['not-admitted', 'not-committed', 'unknown'].includes(r.outcome as string))
     throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid delivery worker failure.', 'unknown');
   return new LoggingError(r.code as LoggingError['code'], 'Logging delivery worker operation failed.', r.outcome as LoggingError['outcome']);

@@ -62,6 +62,7 @@ import {
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_LOGGING_RUNTIME,
 } from '../../runtime/service-keys';
 import type { ResolvedAppFrontendAssets, ZeroPluginBuildContribution } from './server-plugin-build-types';
 import { AppPluginBuildError } from './server-plugin-build-error';
@@ -521,6 +522,11 @@ function applyEndpoint(
     endpoint.path,
     async function zeroEndpointHandler(context: unknown) {
       const handlerContext = createLifecycleContext(context, access, runtime);
+      // Managed strict endpoints automatically own source-mutation attribution.
+      // This does not infer the semantics of reads or untracked/raw SQL.
+      if (handlerContext.auth && runtime?.get(ZERO_LOGGING_RUNTIME)?.config.policy.complianceRequested && handlerContext.zero.logging) {
+        return handlerContext.zero.logging.run(() => endpoint.handler(handlerContext));
+      }
       return endpoint.handler(handlerContext);
     },
     routeOptions

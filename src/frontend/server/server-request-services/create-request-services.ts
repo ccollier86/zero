@@ -26,6 +26,7 @@ import { createScopedRoomService } from './scoped-room-service';
 import { createScopedStorageService } from './scoped-storage-service';
 import { createScopedWorkflowService } from './scoped-workflow-service';
 import { createScopedLoggingService } from '../../../logging/logging-scoped-service';
+import { isLoggingRecoveryRequest } from '../../../logging/logging-admission-paths';
 
 /** Create (or preserve) the authorized service view for one HTTP request. */
 export function createServerRequestServices(
@@ -127,20 +128,27 @@ export function createInternalAuthorityScopedServerServices(
       'Authority-scoped server services require live asynchronous and synchronous authority fences.',
     );
   }
-  const databaseAuthoritySync = options.assertCurrentAuthoritySync;
   const {
     access,
     services,
     scope,
     request,
-    assertCurrentAuthority,
-    assertCurrentAuthoritySync,
+    assertCurrentAuthority: assertGuardianAuthority,
+    assertCurrentAuthoritySync: assertGuardianAuthoritySync,
     allowUnsafe,
     strict,
     privilegedSystem,
     auditProvenance,
     userProperties,
   } = options;
+  const assertDelivery = () => {
+    if (!request || !services.logging?.admission?.required || isLoggingRecoveryRequest(request)) return;
+    const auth = access.context;
+    if (auth) services.logging.admission.assertCurrent({ auth, properties: services.auth.store?.getProperties(auth.userId) ?? {} }, request);
+  };
+  const assertCurrentAuthoritySync = () => { assertGuardianAuthoritySync(); assertDelivery(); };
+  const assertCurrentAuthority = async () => { await assertGuardianAuthority(); assertDelivery(); };
+  const databaseAuthoritySync = assertCurrentAuthoritySync;
   // Public machine/background projections must reject already-stale authority
   // before exposing any capability. HTTP request projections have already
   // passed route admission and may be backed by a legacy session verifier that
@@ -233,8 +241,9 @@ export function createInternalAuthorityScopedServerServices(
     blog: services.blog && access.context && access.context.credentialKind !== 'api-key'
       ? services.blog.forAuthority({ access: projectedAccess, scope, assertCurrentAuthoritySync }) : null,
     [REQUEST_SERVICES]: true,
-    logging: services.logging ? createScopedLoggingService(services.logging, projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync,
-      auditProvenance === 'system' && privilegedSystem ? 'zero.durable-work' : undefined) : null,
+    logging: services.logging ? createScopedLoggingService(services.logging, projectedAccess, scope, assertGuardianAuthority, assertGuardianAuthoritySync,
+      auditProvenance === 'system' && privilegedSystem ? 'zero.durable-work' : undefined,
+      () => authorityProperties ?? services.auth.store?.getProperties(access.context?.userId ?? '') ?? {}, assertDelivery) : null,
     payments: services.payments?.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync, signal: request?.signal }) ?? null,
     access: projectedAccess,
     scope,

@@ -27,6 +27,13 @@ reviewed_against:
 
 [Backend index](../index.md) · [Blog UI](../../frontend/components/public-pages/blog/index.md)
 
+Work has resumed on `feature/blog-foundation-current`, integrated with main's
+released fixes. The frontmatter archive identifies the **earlier** author
+preview; it is historical evidence, not the current continuation package. See
+the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
+and [preview migration boundary](./upgrade.md#earlier-feature-branch-preview).
+The normal updater still selects main, not this blog branch.
+
 Enable `blog: true` in managed app configuration to add user-backed author
 enrollment, separate draft/public bylines and Guardian-scoped management. It
 reuses the accounts, permissions, profile editor, Storage and audit capture that

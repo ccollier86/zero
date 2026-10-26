@@ -1,14 +1,17 @@
 /** Private logging storage port over an already-bound Fabric client. No native handles or caller-selected paths. */
 import type { AsyncDatabaseClient, DatabaseReadOptions, DatabaseSerializableValue } from '../databases/database-operations';
 import { DatabaseError } from '../databases/database-error';
-import type { LoggingEvent, LoggingPage, LoggingQuery, LoggingReadScope, LoggingReceipt, LoggingStream } from './logging-contracts';
+import type { LoggingChangePage, LoggingEvent, LoggingPage, LoggingQuery, LoggingReadScope, LoggingReceipt, LoggingStream } from './logging-contracts';
 import { LoggingError } from './logging-error';
 import { loggingDigest } from './logging-hash';
 import { normalizeLoggingQuery } from './logging-query';
 import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingArray, loggingByteLength, loggingChoice, normalizeLoggingEvent } from './logging-validation';
-import { readLoggingAppend, readLoggingPage } from './logging-results';
+import { readLoggingAppend, readLoggingChangePage, readLoggingPage } from './logging-results';
 import { loggingRecord } from './logging-validation';
-import type { LoggingCheckpoint, LoggingEvidencePage, LoggingVerification } from './logging-evidence-contracts';
+import type { LoggingCheckpoint, LoggingEvidenceCursor, LoggingEvidencePage, LoggingVerification } from './logging-evidence-contracts';
+import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
+import type { OwnedLoggingExportJob } from './logging-export-realm';
+import { readOwnedLoggingExport } from './logging-export-validation';
 
 export interface LoggingAppendResult { readonly receipts: readonly LoggingReceipt[]; readonly sequence: Readonly<{ seq: number }> }
 export interface LoggingBatchWriter {
@@ -45,18 +48,37 @@ export class LoggingFabricStore implements LoggingBatchWriter {
     return readLoggingPage(result.value, input);
   }
 
+  async changes(scope: LoggingReadScope, query: LoggingQuery, afterOrdinal: number): Promise<LoggingChangePage> {
+    if (!Number.isSafeInteger(afterOrdinal) || afterOrdinal < 0) throw new LoggingError('LOGGING_QUERY_INVALID', 'Logging change cursor is invalid.');
+    const input = normalizeLoggingQuery(this.stream, scope, query);
+    const result = await this.data.query('logging.changes', { ...input, afterOrdinal } as unknown as DatabaseSerializableValue, { consistency: { mode: 'snapshot' } });
+    return readLoggingChangePage(result.value, input, afterOrdinal);
+  }
+
   /** @internal Fixed private commands only; request routes never receive this capability. */
-  async evidenceCommand(command: 'logging.hold' | 'logging.review' | 'logging.prune', input: Record<string, unknown>): Promise<unknown> {
+  async evidenceCommand(command: 'logging.hold' | 'logging.review' | 'logging.prune' | 'logging.export.reserve' | 'logging.export.transition', input: Record<string, unknown>): Promise<unknown> {
     const captured = structuredClone(input);
     const result = await this.data.command(command, captured as DatabaseSerializableValue, { idempotencyKey: command + ':' + loggingDigest(captured) });
     const wrapped = loggingRecord(result.value, ['kind', 'name', 'output']);
     if (wrapped.kind !== 'command' || wrapped.name !== command) throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid evidence acknowledgment.', 'unknown');
     return wrapped.output;
   }
-  async evidence(scope: LoggingReadScope, before?: number): Promise<LoggingEvidencePage> {
+  async exportJob(scope: LoggingReadScope, id: string): Promise<OwnedLoggingExportJob | null> {
+    const result = (await this.data.query('logging.export', { scope, id } as DatabaseSerializableValue, { consistency: { mode: 'strong' } })).value;
+    return result === null ? null : readOwnedLoggingExport(result);
+  }
+  async pendingExports(): Promise<readonly OwnedLoggingExportJob[]> {
+    const result = (await this.data.query('logging.exports.pending', {}, { consistency: { mode: 'strong' } })).value;
+    if (!Array.isArray(result) || result.length > 128) throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid pending export page.');
+    return result.map(readOwnedLoggingExport);
+  }
+  async evidence(scope: LoggingReadScope, before?: number | LoggingEvidenceCursor): Promise<LoggingEvidencePage> {
+    before = normalizeLoggingEvidenceCursor(before);
     const value = (await this.data.query('logging.evidence', { scope, ...(before === undefined ? {} : { before }) } as DatabaseSerializableValue, { consistency: { mode: 'strong' } })).value;
-    const r = loggingRecord(value, ['holds', 'reviews', 'hasMoreHolds', 'hasMoreReviews', 'nextReviewBefore']);
+    const r = loggingRecord(value, ['holds', 'reviews', 'hasMoreHolds', 'hasMoreReviews', 'nextReviewBefore', 'nextCursor']);
     if (!Array.isArray(r.holds) || !Array.isArray(r.reviews) || r.holds.length > 100 || r.reviews.length > 100 || typeof r.hasMoreHolds !== 'boolean' || typeof r.hasMoreReviews !== 'boolean') throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid evidence page.');
+    if (r.nextCursor !== null) normalizeLoggingEvidenceCursor(r.nextCursor);
+    if (Boolean(r.hasMoreHolds || r.hasMoreReviews) !== (r.nextCursor !== null)) throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid evidence continuation.');
     return Object.freeze(value as unknown as LoggingEvidencePage);
   }
   async verify(afterOrdinal = 0, checkpoint?: LoggingCheckpoint): Promise<LoggingVerification> {

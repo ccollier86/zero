@@ -23,6 +23,7 @@ import type {
   EmailRuntime,
 } from './types';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import type { EmailSendAudit } from './email-send-audit';
 
 const emailRuntimeProviders = new CompatibilityProviderRegistry<EmailRuntime>(
   'Email runtime',
@@ -119,6 +120,7 @@ export function createEmailRuntime(
   input: EmailConfig | boolean | false | undefined,
   app: AppIdentityConfig,
   emitCode: typeof emitPlatformCode = emitPlatformCode,
+  options: { audit?: EmailSendAudit } = {},
 ): EmailRuntime {
   if (input === false || input === undefined) {
     const provider = new NoopEmailProvider();
@@ -127,7 +129,7 @@ export function createEmailRuntime(
       app,
       config: input,
       provider,
-      service: new EmailService(provider, {}, emitCode),
+      service: new EmailService(provider, {}, emitCode, null, options.audit),
     };
   }
 
@@ -145,7 +147,7 @@ export function createEmailRuntime(
     app,
     config,
     provider,
-    service: new EmailService(provider, config, emitCode, mailbox),
+    service: new EmailService(provider, config, emitCode, mailbox, options.audit),
     mailbox,
     async close() { try { await provider.close?.(); } finally { await mailbox?.close(); } },
   };

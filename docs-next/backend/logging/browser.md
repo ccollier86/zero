@@ -7,15 +7,15 @@ status: in-review
 visibility: internal
 system: logging
 feature: browser-activity
-maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 
@@ -96,10 +96,9 @@ API; it cannot claim server/provider confirmation or select actor/tenant identit
 
 ## Strict Compliance Delivery Requirement
 
-The requested strict profile must fail closed for protected work if required
-audit delivery cannot be acknowledged. This is a release requirement, not a
-shipped bypass-proof browser attestation feature. The current managed
-`compliance` preset rejects until the complete enforcement path is qualified.
+The strict profile fails closed for protected work if required audit delivery
+cannot be acknowledged. This is authenticated delivery admission, not proof
+that a browser or extension reported every real-world action.
 
 This requirement belongs only to the explicit highest/compliance profile.
 `basic`, `activity` and `detailed` do not block protected work because optional
@@ -107,7 +106,7 @@ browser uploads fail, even when view/copy/print capture is enabled. They retain
 honest queue/drop/failure reporting. Required server-side evidence is a separate
 admission rule, not an optional browser-health test.
 
-Required implementation gates are:
+The managed enforcement path is:
 
 1. Verify an authenticated same-origin delivery acknowledgment, bound to the
    current session, tenant, policy version and short server expiry.
@@ -120,6 +119,30 @@ Required implementation gates are:
    site settings, connectivity and service status.
 5. Resume only after the server validates fresh delivery and current authority.
    Record the interruption/recovery without inventing activity during the gap.
+
+`AppProvider` reads the server's logging policy and mounts delivery recovery
+outside the protected data-readiness guard. A committed sign-in/scope switch
+can perform the fixed **empty, same-origin HttpOnly-cookie handshake** while
+Sync waits for its grant. This path accepts no uploaded event content, requires
+the exact Origin and current policy, and does not enable cookie authentication
+for general APIs. The browser collector then uses the normal authenticated
+SDK. This avoids making audit recovery wait on the protected Sync baseline that
+it must itself unlock. Existing authorization and modal/data scope guards stay
+in place.
+
+The collector and session-recovery controller remain mounted independently of
+both display gates. A restore intentionally invalidates the current UI audit
+acknowledgment; showing the audit retry panel must not retire the restore's
+pending final document reload. Protected application content and modal hosts
+remain beneath both gates. Actual app unmount or a replacement session still
+retires stale recovery callbacks, and the same-document attempt marker still
+bounds reloads. No additional app provider, navigation callback, or logging
+configuration is needed for this lifecycle correction.
+
+The server grant expires after 60 seconds; the collector renews every 30 seconds.
+Session/scope/role/property changes, worker/source failure or invalidation retire
+the old grant. Protected streams revalidate at each released chunk; an in-flight
+request cannot keep releasing data just because its initial handshake passed.
 
 Do not claim to enumerate extensions or identify the exact blocker. An offline
 network, proxy, permission restriction and server outage can look alike.
@@ -138,5 +161,6 @@ certification.
 
 - [Capture coverage](./events-and-coverage.md) separates automatic and declared evidence.
 - [Server APIs](./api.md) describes `read()`, `run()` and authenticated SSE.
-- [Roadmap](./roadmap.md) tracks the full strict-profile enforcement gate.
+- [Roadmap](./roadmap.md) distinguishes additional UI/deployment work and
+  deferred backup features from implemented strict admission.
 - [Workspace](../../frontend/components/logging.md) describes connection and scope masking.

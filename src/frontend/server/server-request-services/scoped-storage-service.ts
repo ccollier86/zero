@@ -71,6 +71,7 @@ const STORAGE_SERVICE_INVENTORY: CompleteServiceMemberInventory<
   | 'assertManagedObjectAccessCurrent'
   | 'getDriveForScope'
   | 'listDrivesForUser'
+  | 'privateObjects'
 > = true;
 void STORAGE_SERVICE_INVENTORY;
 

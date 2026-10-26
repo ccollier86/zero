@@ -30,16 +30,9 @@ beforeAll(async () => {
   await mkdir(scratchRoot, { recursive: true });
   buildDir = await mkdtemp(join(scratchRoot, 'session-recovery-browser-'));
   const output = join(buildDir, 'fixture.js');
-  const build = Bun.spawn([
-    process.execPath, 'build',
-    join(import.meta.dir, 'test-fixtures/session-recovery-app-provider.tsx'),
-    '--target=browser', '--format=iife', '--outfile', output,
-  ], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
-  const [code, stdout, stderr] = await Promise.all([
-    build.exited,
-    new Response(build.stdout).text(),
-    new Response(build.stderr).text(),
-  ]);
+  const build = Bun.spawn([process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'test-fixtures/session-recovery-app-provider.tsx'),
+    '--target=browser', '--format=iife', '--outdir', buildDir, '--entry-naming', 'fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+  const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
   if (code !== 0) throw new Error(`Session fixture build failed (${code}): ${stderr || stdout}`);
   bundle = await Bun.file(output).text();
 }, TEST_TIMEOUT_MS);

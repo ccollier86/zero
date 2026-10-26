@@ -7,15 +7,15 @@ status: in-review
 visibility: internal
 system: logging
 feature: logging-workspace
-maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "af5554b750affc48645889debf3680bee29c2ef5"
+  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
   snapshot: clean
-  date: "2026-10-24"
+  date: "2026-10-25"
   evidence_level: implementation-verified
 ---
 
@@ -42,6 +42,12 @@ Use the existing configured AppProvider and app styles. Backend logging and
 Guardian must be enabled. The component can supply a ModalManager host when
 none exists; the normal AppProvider already supplies one.
 
+For an investigator's user-specific view, pass
+`initialQuery={{ actorId: selectedUserId }}`. The existing user/action/resource/
+date/outcome filters run on the server and apply to live arrivals as well as
+pages. This is an initial filter, not permission for a user to view audit logs
+or a server-enforced self-only access policy; Guardian still authorizes reads.
+
 Props are `className`, `defaultStream` (`audit` by default),
 `initialQuery`, `allowExport` (true), and `scope` (`current` by
 default, or `platform`). Platform mode uses the separately authorized
@@ -61,11 +67,22 @@ content uses the shared ScrollArea treatment. All criteria combine with AND.
 Advanced nested/saved filter-builder behavior is still planned, not decorative
 controls pretending to execute on the server.
 
-A committed SSE projection signals newer activity. Existing table rows and the
-reading baseline stay in place; a “New activity available” action explicitly
-starts a fresh snapshot. The UI does not call an ordinal difference an exact
-new-row count. Pagination uses DataTable's directional page motion, not a
-new component for each page.
+The private Fabric/ReactiveDB append sequence drives an authorized SSE cursor
+into DataTable's standard server-source subscription. Genuine INSERT identities
+are batched for roughly 250 ms, then the table performs one page refresh and
+uses its existing insertion/highlight motion. Retained rows stay mounted; live
+arrivals do not replay the initial loading animation or blank the table.
+
+On an older page or while interacting with the table, its existing incoming-record
+control owns the count and return-to-start behavior. There is no separate logging
+“New activity available” button. Cursor pages remain stable by ingestion ordinal;
+an ordinal difference is not treated as an exact filtered count. Visual INSERT
+evidence is bounded to the latest 1000 pending identities, not an unbounded browser
+copy of the audit trail. This limit does not drop durable log events.
+
+Page/cursor/membership lookups share the audited investigation window rather
+than recursively creating audit entries for their own live refreshes. Every
+read still uses current Guardian authorization and strict delivery admission.
 
 Scope replacement masks old rows and evidence immediately. Stream failure or
 failed revalidation hides protected evidence until a fresh authorized snapshot
@@ -78,8 +95,10 @@ are shown safely without raw exceptions/provider data.
 - `LoggingEventDetail({ stored, scopeKey })` renders safe metadata and evidence
   meaning, in a bounded ScrollArea. It refuses to render outside its captured
   ready scope. The workspace opens it through the managed modal API.
-- `createLoggingTableSource(client.logging, stream, query)` provides a stable
-  server DataTable adapter; reconstruct it only for a new explicit baseline.
+- `createLoggingTableSource(client.logging, stream, query)` provides the standard
+  live server DataTable adapter, exact filtered membership and newest-row proof.
+  Keep it stable across updates and page changes. Its `watchStatus()` shares
+  the same connection so recovery remains active while evidence is masked.
 - `useLoggingEvents(stream, query)` returns `page`, `error`,
   `isLoading`, and `refresh` with cancellation and synchronous scope masking.
 - `LoggingActivityProvider` is automatically mounted by the configured
@@ -102,7 +121,12 @@ there is no HTML execution or raw provider payload dump.
 The workspace is an investigation interface, not a green compliance badge.
 Browser copy/print/view signals remain observations. Review/hold/integrity
 services have typed APIs but do not yet have a full management organism.
-Strict required-browser-delivery gating remains a separate release gate.
+Managed compliance adds strict required-browser-delivery gating through
+AppProvider and the managed server; ordinary lower presets stay optional.
+Durable exports retain their request ID across pending/uncertain states so
+checking a job does not create a second export. A fuller dashboard review and
+evidence-management UI are optional future work, not prerequisites for the
+agreed DataTable/filter/live-update/individual-user view.
 
 ## Related Guides and Next Steps
 

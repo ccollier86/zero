@@ -239,3 +239,53 @@ Canonical behavior is documented in
 [AuthClient](../../frontend/guardian/auth-client.md),
 [scope transitions](../../frontend/runtime/scope-transitions.md) and
 [route authentication](../../frontend/router/authentication.md).
+
+## Required-Audit Masking And Recovery Ownership (October 26)
+
+An actual generated file-router/SSR document on main `76b7d4a` reproduced a
+fresh native sign-in stuck on Session refresh required: login, refresh, me,
+authorization and audit requests returned 200, but only the initial document
+was served. The prior standalone audit browser fixture did not supply the
+hydrated route authorization boundary and therefore missed the composition.
+
+The required-audit provider removed its children during a restore, unmounting
+AuthorizationScopeGuard and retiring the pending controller before its final
+reload. The correction in `7e0ba2814b2526fe997282d21d298ed2c87be90c` separates
+the persistent collector owner from its presentation-only gate. Authorization
+recovery remains outside that display gate; the collector also stays outside
+the authorization display gate. Protected routes, data and modal hosts remain
+inside both. Real unmount/replacement retirement, generation checks, bounded
+history markers and all server admission/authorization fences remain unchanged.
+The standalone public LoggingActivityProvider still gates children by default;
+its two internal composition helpers are not added to public barrels.
+
+The new `session-audit-recovery.browser.test.ts` uses native LoginForm without
+a duplicate navigation callback, the real generated browser bundle and route
+renderer, Guardian, private durable compliance workers and LoggingWorkspace.
+Three scenarios pass: unblocked first login, blocked audit/native retry and a
+retryable refresh failure/native session retry. After recovery it exercises
+real SSE inserts, a concurrent burst, retained row DOM, cursor pagination and
+the native incoming control, actor/resource filters, evidence dialogs,
+protected SSR refresh after delivery invalidation, a real new tab sharing the
+session and role-revocation row/dialog masking. The initial expanded run passes
+42 assertions; later artifact qualification is recorded separately.
+
+A concurrently committed burst can still have buffered visual arrivals when
+pagination changes. The browser check uses the native incoming control's
+actual count, rather than assuming only the final single append is pending.
+An isolated profile containing a copied page cookie but no rotating browser
+proof is not the real new-tab case and remains deliberately rejected.
+
+Existing session/scope/collector/handshake selections passed their 62 executed
+cases; the persisted-restart file initially failed its build hook because
+`--outfile fixture.js` collided with its newly emitted CSS. The separate
+test-only correction uses `--outdir` and `fixture.[ext]`, with environment-file
+loading disabled; the rerun passes all six tests / 66 assertions. The earlier failed hook is not
+counted as passing evidence. Public facade identity checks pass both tests / 20
+assertions. Diagnostics are retained under the external project artifact root.
+
+No PracticeIQ source, live or staged database generation, migration ledger,
+email-delivery receipts, real provider or deployment is modified by this fix.
+The app agent must install the exact selected archive, rebuild browser assets
+and rerun its two app-owned reproduction modes before separately authorizing
+release. A package update alone is not an app acceptance or deployment claim.

@@ -32,6 +32,9 @@ publication, search, and production agent bundles.
   - [Logging foundation review](./logging-foundation-review.md): working private
     Fabric storage, validation and batching milestone with real-actor tests;
     separates source groundwork from the remaining managed/client/UI guarantees.
+  - [Strict logging qualification](./logging-compliance-qualification.md): the
+    separate main-based completion branch, mandatory release gates, measured
+    results and PracticeIQ handoff boundary; unfinished blogging is excluded.
 - [Automation and Torrent enqueue review](./automation-torrent-enqueue-review.md):
   commit-acknowledged handoff for long AI work, unchanged eager compatibility,
   source/request authority fences and real managed/package regression evidence.

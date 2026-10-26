@@ -6,6 +6,7 @@ import { LOGGING_CHAIN_TABLE, LOGGING_HOLDS_TABLE, LOGGING_PROOFS_TABLE, LOGGING
 import { loggingArray, loggingChoice, loggingId, loggingRecord, loggingTime, loggingCanonical, normalizeLoggingEvent } from './logging-validation';
 import { normalizeLoggingQuery } from './logging-query';
 import { loggingDigest } from './logging-hash';
+import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
 
 export const LOGGING_GENESIS_HASH = loggingDigest(['zero.logging.chain', 1]);
 export function loggingChainHash(previous: string, ordinal: number, id: string, digest: string, ingestedAt: number): string {
@@ -112,12 +113,22 @@ export function verifyLoggingEvidence({ database }: DatabaseReadQueryContext, va
 }
 
 export function listLoggingEvidence({ database }: DatabaseReadQueryContext, value: unknown) {
-  const r = loggingRecord(value, ['scope', 'before']), s = scope(r.scope), before = positive(r.before ?? Number.MAX_SAFE_INTEGER);
+  const r = loggingRecord(value, ['scope', 'before']), s = scope(r.scope), before = normalizeLoggingEvidenceCursor(r.before);
   const clause = s.kind === 'platform' ? '1=1' : s.kind === 'tenant' ? 'scope_kind=? AND tenant_id=?' : 'scope_kind=?';
   const values = s.kind === 'platform' ? [] : s.kind === 'tenant' ? ['tenant', s.tenantId] : ['application'];
-  const holds = database.query<any>('SELECT * FROM logging_holds WHERE ' + clause + ' ORDER BY created_at DESC,id DESC LIMIT 101').all(...values);
-  const reviews = database.query<any>('SELECT * FROM logging_reviews WHERE ' + clause + ' AND reviewed_at<? ORDER BY reviewed_at DESC,id DESC LIMIT 101').all(...values, before);
+  const catalog = (kind: 'holds' | 'reviews', column: 'created_at' | 'reviewed_at') => {
+    const point = typeof before === 'object' ? before[kind] : undefined;
+    if (point === null) return [];
+    const boundary = point ? ` AND (${column}<? OR (${column}=? AND id<?))` : typeof before === 'number' && kind === 'reviews' ? ` AND ${column}<?` : '';
+    const args = point ? [point.at, point.at, point.id] : typeof before === 'number' && kind === 'reviews' ? [before] : [];
+    // Table/column choices are fixed constants, never request SQL.
+    return database.query<any>(`SELECT * FROM logging_${kind} WHERE ${clause}${boundary} ORDER BY ${column} DESC,id DESC LIMIT 101`).all(...values, ...args);
+  };
+  const holds = catalog('holds', 'created_at'), reviews = catalog('reviews', 'reviewed_at');
   return { holds: holds.slice(0, 100).map(h => ({ id: h.id, since: h.since, until: h.until, reasonRef: h.reason_ref, active: h.active === 1, createdAt: h.created_at, createdBy: h.created_by, releasedAt: h.released_at, releasedBy: h.released_by })),
     reviews: reviews.slice(0, 100).map(r => ({ id: r.id, query: normalizeLoggingQuery('audit', s, JSON.parse(r.query_json)).query, highWaterOrdinal: r.high_water, result: r.result, reference: r.reference, reviewedAt: r.reviewed_at, reviewedBy: r.reviewed_by })),
-    hasMoreHolds: holds.length > 100, hasMoreReviews: reviews.length > 100, nextReviewBefore: reviews.length > 100 ? reviews[99]!.reviewed_at : null };
+    hasMoreHolds: holds.length > 100, hasMoreReviews: reviews.length > 100, nextReviewBefore: reviews.length > 100 ? reviews[99]!.reviewed_at : null,
+    nextCursor: holds.length > 100 || reviews.length > 100 ? { version: 1,
+      holds: holds.length > 100 ? { at: holds[99]!.created_at, id: holds[99]!.id } : null,
+      reviews: reviews.length > 100 ? { at: reviews[99]!.reviewed_at, id: reviews[99]!.id } : null } : null };
 }

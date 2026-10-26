@@ -18,6 +18,11 @@ The current preview implements user-backed author enrollment, draft/public
 profiles, optional explicitly public avatars, Guardian admission, audit capture
 and scoped reactive projections. It deliberately stops before post publishing.
 
+The resumed `feature/blog-foundation-current` continuation incorporates released
+main fixes without changing that boundary. See the
+[qualification record](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
+for the retained checkpoint, migration overlap and current regression results.
+
 ## Next Backend Slices
 
 1. Decide site/content ownership and post storage with supported ReactiveDB/

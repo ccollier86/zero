@@ -113,7 +113,7 @@ The normal `client.userProfile` and `client.userAvatar` facades work without
 
 Profile fields already have fixed nullable SYSTEM storage. Enabling a field
 does not generate an app SQL column or rewrite old values. Public-avatar
-support adds migration 045, but existing images remain private. See the
+support adds migration 046 on the current continuation, but existing images remain private. See the
 [upgrade procedure](./upgrade.md) before changing a deployed app.
 
 ## Read Time And Feature-Off Behavior

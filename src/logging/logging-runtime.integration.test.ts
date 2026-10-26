@@ -89,3 +89,23 @@ test('new app lifetimes cannot collide when the operational emitter restarts its
     expect(new Set(rows.map(row => row.event.sourceId)).size).toBe(2);
   } finally { await runtime?.close(); await rm(root, { recursive: true, force: true }); }
 }, 30000);
+
+test('a failed retained source retires strict grants and recovery requires a new durable acknowledgment', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'logging-strict-source-health-'));
+  const strict = resolveManagedLoggingConfig({ preset: 'compliance', rootDirectory: root }, root) as ResolvedManagedLoggingConfig;
+  const runtime = await LoggingRuntime.open(strict, observability());
+  let offline = false;
+  const source = runtime.registerDeliverySource({ page() { if (offline) throw new Error('Synthetic unavailable source'); return { rows: [], queued: 0, bytes: 0 }; }, failed() {} });
+  const auth = { userId: 'fixture-user', sessionId: 'fixture-session', role: 'user', email: 'fixture@example.test', sessionKind: 'web' as const };
+  const context = { ...loggingContext(), policyVersion: strict.policyVersion };
+  const acknowledge = () => runtime.admission.acknowledge({ auth }, context, strict.policyVersion, async () => {});
+  try {
+    await source.flush(); await acknowledge(); expect(() => runtime.admission.assertCurrent({ auth })).not.toThrow();
+    offline = true; source.wake(); await source.flush();
+    expect(runtime.diagnostics().unavailableSources).toBe(1);
+    expect(() => runtime.admission.assertCurrent({ auth })).toThrow(); await expect(acknowledge()).rejects.toThrow();
+    offline = false; source.wake(); await source.flush(); expect(runtime.diagnostics().unavailableSources).toBe(0);
+    expect(() => runtime.admission.assertCurrent({ auth })).toThrow();
+    await acknowledge(); expect(() => runtime.admission.assertCurrent({ auth })).not.toThrow();
+  } finally { await source.close(); await runtime.close(); await rm(root, { recursive: true, force: true }); }
+}, 30000);

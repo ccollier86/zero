@@ -104,6 +104,7 @@ export interface WorkflowEachOptions {
   label?: string;
   itemSchema?: TSchema | WorkflowJsonValue;
   itemKey?: WorkflowExpression;
+  /** Defaults to the supported fan-out maximum (100). Set 1 only for intentional item ordering. */
   concurrency?: number;
   onInvalid?: WorkflowEachInvalidItemPolicy;
   onError?: WorkflowEachErrorPolicy;

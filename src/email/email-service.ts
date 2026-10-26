@@ -13,6 +13,8 @@ import { safeEmailFailureCode } from './email-failure-policy';
 import type { EmailConfig, EmailMessage, EmailProvider, EmailSendResult } from './types';
 import type { ImapMailbox } from './imap-mailbox';
 import { recipients, snapshotEmailMessage } from './email-message';
+import type { EmailSendAudit } from './email-send-audit';
+import { isDeterministicEmailProviderRejection } from './email-failure-policy';
 
 /** Runtime service that applies defaults and delegates to a provider. */
 export class EmailService {
@@ -22,6 +24,7 @@ export class EmailService {
     private readonly config: EmailConfig = {},
     private readonly emitCode: typeof emitPlatformCode = emitPlatformCode,
     private readonly mailbox: ImapMailbox | null = null,
+    private readonly audit?: EmailSendAudit,
   ) { this.sentFolder = typeof config.imap === 'object' ? config.imap.sentFolder : undefined; }
 
   /**
@@ -44,8 +47,17 @@ export class EmailService {
       },
     });
 
+    const audit = this.audit?.prepare(this.provider.name);
+    if (audit) await audit.admit();
+
+    let providerAccepted = false;
     try {
       const result = { ...await this.provider.send(resolved) };
+      providerAccepted = result.accepted.length > 0;
+      if (audit) {
+        try { await audit.finish(providerAccepted ? 'accepted' : 'rejected', { acceptedCount: result.accepted.length, rejectedCount: result.rejected?.length ?? 0 }); }
+        catch { throw new EmailError('Email provider outcome requires reconciliation; do not automatically send another copy.', 'EMAIL_SEND_OUTCOME_UNKNOWN', 409); }
+      }
       const sentFolder = this.sentFolder;
       if (this.mailbox && sentFolder && result.accepted.length > 0 && !['noop', 'console', 'memory'].includes(this.provider.name)) {
         try {
@@ -67,6 +79,11 @@ export class EmailService {
       });
       return result;
     } catch (error) {
+      if (error instanceof EmailError && error.code === 'EMAIL_SEND_OUTCOME_UNKNOWN') throw error;
+      if (audit) {
+        try { await audit.finish(providerAccepted ? 'accepted' : error instanceof EmailError && isDeterministicEmailProviderRejection(error.status) ? 'rejected' : 'unknown'); }
+        catch { throw new EmailError('Email provider outcome requires reconciliation; do not automatically send another copy.', 'EMAIL_SEND_OUTCOME_UNKNOWN', 409); }
+      }
       const deliveryError = normalizeProviderError(error);
       this.emitCode(OBS_CODES.EMAIL_SEND_FAILED, {
         metadata: {

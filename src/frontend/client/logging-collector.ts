@@ -1,6 +1,7 @@
 /** One lifecycle-owned browser activity collector. Records signals/durations, never clipboard contents, keys or raw URLs. */
 import type { LoggingClient, LoggingCollectionPolicy, LoggingObservation } from '../../logging/logging-api-contracts';
 import { LOGGING_BROWSER_ACTIONS } from '../../logging/logging-api-contracts';
+import type { LoggingAdmissionReceipt } from '../../logging/logging-admission-contracts';
 
 export interface LoggingCollector {
   target(value: { type: string; id: string } | null): void;
@@ -12,7 +13,7 @@ export interface LoggingCollector {
 
 /** Mount once per authenticated scope. No localStorage, unload guarantee, clipboard interception or print-success claim. */
 export function createLoggingCollector(client: Pick<LoggingClient, 'bindObservations'>, policy: LoggingCollectionPolicy,
-  options: { target?: { type: string; id: string }; window?: Window; document?: Document; now?: () => number; onError?: (error: unknown) => void } = {}): LoggingCollector {
+  options: { target?: { type: string; id: string }; window?: Window; document?: Document; now?: () => number; onError?: (error: unknown) => void; onAcknowledgment?: (receipt: LoggingAdmissionReceipt) => void } = {}): LoggingCollector {
   if (!Number.isSafeInteger(policy.heartbeatMs) || policy.heartbeatMs < 10000 || policy.heartbeatMs > 60000
     || !Number.isSafeInteger(policy.idleMs) || policy.idleMs < 1000 || policy.idleMs > 300000) throw new Error('Invalid logging collection policy.');
   const writer = client.bindObservations();
@@ -45,12 +46,20 @@ export function createLoggingCollector(client: Pick<LoggingClient, 'bindObservat
   const flush = (): Promise<void> => {
     if (running) return running;
     running = (async () => {
-      while (pending.length) {
+      let heartbeat = Boolean(policy.delivery?.required);
+      while (pending.length || heartbeat) {
         const fresh = pending.filter(event => Date.now() - event.occurredAt <= 300000);
         dropped += pending.length - fresh.length; pending = fresh;
-        if (!pending.length) break;
+        if (!pending.length && !heartbeat) break;
         const batch = pending.slice(0, 32);
-        try { await writer.observe(batch); pending.splice(0, batch.length); }
+        try {
+          const result = await writer.observe(batch, policy.delivery ? { policyVersion: policy.delivery.policyVersion } : undefined);
+          if (policy.delivery) {
+            if (!result.admission || result.admission.policyVersion !== policy.delivery.policyVersion || result.admission.expiresAt <= Date.now()) throw new Error('Audit delivery was not acknowledged.');
+            options.onAcknowledgment?.(result.admission);
+          }
+          pending.splice(0, batch.length); heartbeat = false;
+        }
         catch (error) { failed++; options.onError?.(error); break; }
       }
     })().finally(() => { running = null; });

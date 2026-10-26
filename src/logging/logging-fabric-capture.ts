@@ -41,7 +41,11 @@ export function installLoggingFabricCapture(logging: LoggingRuntime, manager: Da
         const state = port.coordinator.diagnostics().state;
         if (state === 'created') return { rows: [], queued: 0, bytes: 0 };
         if (state !== 'started') throw new LoggingError('LOGGING_NOT_READY', 'Fabric source owner is unavailable.');
-        const lease = await port.recover(id, scope); if (!lease) return { rows: [], queued: 0, bytes: 0 };
+        const lease = await port.recover(id, scope);
+        if (!lease) {
+          if (logging.admission.required) throw new LoggingError('LOGGING_AUDIT_UNAVAILABLE', 'A retained audit source is missing; restore or reconcile its source before protected work resumes.');
+          return { rows: [], queued: 0, bytes: 0 };
+        }
         try {
           const { sourceId, ...page } = await executeCoordinatorLoggingSource(lease, scope, acknowledge.length ? acknowledge : undefined);
           return page;

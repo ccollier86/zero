@@ -9,6 +9,7 @@ import type {
 import {
   WORKFLOW_COMPILER_ID_PREFIX,
   WORKFLOW_GRAPH_SCHEMA_VERSION,
+  WORKFLOW_GRAPH_LIMITS,
   type WorkflowGraphIR,
   type WorkflowIREdge,
   type WorkflowIRNode,
@@ -97,7 +98,7 @@ class FlowCompiler {
         source: value.source,
         itemSchema: serializableSchema(value.options.itemSchema),
         itemKey: value.options.itemKey,
-        concurrency: value.options.concurrency ?? 1,
+        concurrency: value.options.concurrency ?? WORKFLOW_GRAPH_LIMITS.maxEachConcurrency,
         onInvalid: value.options.onInvalid ?? 'fail',
         onError: value.options.onError ?? 'fail',
         visibility: value.options.visibility,

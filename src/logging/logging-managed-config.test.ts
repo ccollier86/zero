@@ -17,8 +17,10 @@ test('managed logging is opt-in, detached and rooted in the immutable project di
   expect(normalized && normalized.policy.queue.batchSize).toBe(2);
 });
 
-test('managed configuration rejects premature compliance, accessors, unknown fields and unsafe actor environments', () => {
-  expect(() => resolveManagedLoggingConfig({ preset: 'compliance' }, '/project')).toThrow(expect.objectContaining({ code: 'LOGGING_NOT_READY' }));
+test('strict configuration selects built-in custody while rejecting accessors, unknown fields and unsafe actor environments', () => {
+  const strict = resolveManagedLoggingConfig({ preset: 'compliance' }, '/project');
+  expect(strict && strict.policy.complianceRequested).toBe(true);
+  expect(strict && strict.custody).toMatchObject({ kind: 'local', adoptExisting: false });
   for (const input of [null, { rootDirectory: '' }, { rootDirectory: 'x\0y' }, { extra: true }, { actors: { launch: { kind: 'source', entrypoint: '/actor.ts' }, env: { INVALID: 42 } } }]) {
     expect(() => resolveManagedLoggingConfig(input as any, '/project')).toThrow(expect.objectContaining({ code: 'LOGGING_CONFIG_INVALID' }));
   }

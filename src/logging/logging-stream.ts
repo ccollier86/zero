@@ -1,11 +1,13 @@
 /** Backpressure-bounded authorized projection stream. Hints contain no evidence; each delivery performs a fresh fenced read. */
-import type { LoggingPage, LoggingStream } from './logging-contracts';
+import type { LoggingChangePage, LoggingPage, LoggingStream } from './logging-contracts';
 import type { LoggingRuntime } from './logging-runtime';
 
 export function createLoggingProjectionStream(runtime: LoggingRuntime, stream: LoggingStream, first: LoggingPage,
-  read: () => Promise<LoggingPage>, signal: AbortSignal): ReadableStream<Uint8Array> {
+  read: () => Promise<LoggingPage>, signal: AbortSignal,
+  changes?: { afterOrdinal: number; read(after: number): Promise<LoggingChangePage> }): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder(); let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let closed = false, dirty = true, running = false, initial: LoggingPage | null = first;
+  let afterOrdinal = changes?.afterOrdinal ?? 0;
   let detach: (() => void) | undefined, heartbeat: ReturnType<typeof setInterval> | undefined, lifetime: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => { if (closed) return; closed = true; detach?.(); clearInterval(heartbeat); clearTimeout(lifetime); signal.removeEventListener('abort', close); };
   const close = () => { if (closed) return; cleanup(); controller?.close(); };
@@ -13,9 +15,15 @@ export function createLoggingProjectionStream(runtime: LoggingRuntime, stream: L
     if (closed || running || !controller || (controller.desiredSize ?? 0) <= 0 || (!dirty && !initial)) return;
     running = true; dirty = false;
     try {
-      const wasInitial = initial !== null, page = initial ?? await read(); initial = null;
-      if (wasInitial) dirty = true;
-      if (!closed && !signal.aborted) controller.enqueue(encoder.encode('event: snapshot\ndata: ' + JSON.stringify({ version: 1, page }) + '\n\n'));
+      let packet: unknown, event: string;
+      if (initial) {
+        packet = { version: 1, page: initial, ...(changes ? { afterOrdinal } : {}) }; event = 'snapshot'; initial = null; dirty = true;
+      } else if (changes) {
+        const page = await changes.read(afterOrdinal);
+        afterOrdinal = page.throughOrdinal; dirty ||= page.hasMore;
+        packet = { version: 1, changes: page }; event = 'changes';
+      } else { packet = { version: 1, page: await read() }; event = 'snapshot'; }
+      if (!closed && !signal.aborted) controller.enqueue(encoder.encode('event: ' + event + '\ndata: ' + JSON.stringify(packet) + '\n\n'));
     } catch {
       // Do not serialize auth/provider errors or release a stale page.
       if (!closed) { controller.enqueue(encoder.encode('event: end\ndata: {"version":1,"error":"LOGGING_SUBSCRIPTION_ENDED"}\n\n')); close(); }

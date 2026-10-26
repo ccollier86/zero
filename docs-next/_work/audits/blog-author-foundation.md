@@ -11,6 +11,54 @@ visibility: internal
 
 [Audit index](./index.md) · [Author backend](../../backend/blog/index.md) · [UI qualification](./blog-ui-qualification.md)
 
+## Resumed Continuation 2026-10-26
+
+Work resumes on `feature/blog-foundation-current`, preserving the original
+`feature/blog-foundation` checkpoint and its archive below. The continuation
+integrates main through `be266f5fd7ed063c9cfe43c385b8a80b90e5902a`, including
+compliance delivery, provider provenance, persistent session recovery and the
+source-to-bundle core migration identity fix. It is not selected by the normal
+updater and has not been merged to main.
+
+Main's released migration 045 is private Storage artifact metadata. The earlier
+author preview had independently used 045/046. The continuation preserves
+released migrations 001–045 unchanged and places public avatars/authors at
+046/047. Existing released-main ledgers upgrade additively; prior author-preview
+ledgers fail closed instead of being relabeled. The
+[preview boundary](../../backend/blog/upgrade.md#earlier-feature-branch-preview)
+explains why there is no automatic receipt repair or deletion of preview data.
+
+The production build retains **all three** relevant adapters: canonical core
+migrations, canonical private Logging realms, and the email CSS grammar data
+adapter from the blog/SEO branch. The frontend export guard now explicitly
+accounts for the added blog/palette/anchor symbols while still checking the
+original frozen export digest; it does not rebaseline the original contract.
+
+Fresh continuation checks use disposable synthetic data only:
+
+- Focused merge/migration/build/config/facade checks: 30 passed, 0 failed,
+  1016 assertions across 10 files. This includes source-ledger → bundled-ledger
+  equality for all 47 core migrations, retained private artifact references,
+  unchanged identities/credentials/profiles and refusal of old preview ledgers.
+- Wider author/Guardian/request/migration regressions: 363 passed, 0 failed,
+  3363 assertions across 70 files. Package installation is recorded separately.
+- Chromium: 18 passed, 0 failed, 103 assertions across the 15 retained blog UI
+  scenarios and three generated-page/session-audit recovery scenarios. The
+  in-app browser connection was unavailable; the repository's actual Chromium
+  suite ran with no skipped tests.
+- The frozen frontend export contract and symbol-identity tests both pass
+  (25 assertions). The first combined run exposed the previously unaccounted
+  blog/palette additions; the exact-addition guard was corrected and rerun.
+- Root TypeScript and the documentation structure/link checker pass. Additional
+  installed-archive evidence must identify the continuation's own source and
+  bytes; the older archive below is not a substitute.
+
+Diagnostics use the `blog-current-*` prefix under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/`. These checks qualify
+the resumed foundation, not a new post CMS. Author-management UI, post storage,
+block editing, publication and automatic article SEO remain the explicitly
+planned layers in the [roadmap](../../backend/blog/roadmap.md).
+
 ## Scope And Release Boundary
 
 The frozen implementation is `c7011c7dd9dc8561b767752be51029a31ac327cf` on

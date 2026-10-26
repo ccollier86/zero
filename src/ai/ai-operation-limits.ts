@@ -11,8 +11,9 @@ export const AI_MAX_OPERATION_ITEMS = 10_000;
 export const AI_MAX_ITEM_BYTES = 1024 * 1024;
 export const AI_MAX_AGGREGATE_BYTES = 16 * 1024 * 1024;
 export const AI_MAX_RERANK_QUERY_BYTES = 64 * 1024;
-export const AI_DEFAULT_EMBED_PARALLEL_CALLS = 4;
 export const AI_MAX_EMBED_PARALLEL_CALLS = 32;
+/** Use the supported bounded maximum unless the application declares a lower provider/deployment budget. */
+export const AI_DEFAULT_EMBED_PARALLEL_CALLS = AI_MAX_EMBED_PARALLEL_CALLS;
 export const AI_MAX_OPERATION_RETRIES = 10;
 
 /** Validated, detached input for a multi-value embedding call. */

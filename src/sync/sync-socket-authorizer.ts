@@ -91,6 +91,8 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
       }
     }
     try {
+      await options.auth?.admitDataAccess?.(authContext, socket);
+      if (!isCurrent(socket, generation)) return false;
       const access = await resolveSyncSocketAccess(options, authContext);
       if (!isCurrent(socket, generation)) return false;
       const verifier = options.auth?.getTokenVerifier();
@@ -139,6 +141,7 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
           return false;
         }
       }
+      options.auth?.assertDataAdmission?.(authContext, socket);
       if (!isCurrent(socket, generation)) return false;
       const data = socket.data;
       data.authContext = authContext;

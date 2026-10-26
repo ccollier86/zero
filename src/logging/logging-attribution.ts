@@ -14,3 +14,11 @@ export function currentLoggingAttribution(owner: object): LoggingContext | null 
   if (!value.active) throw new Error('Logging attribution lifetime is closed.');
   value.assertCurrent(); return value.context;
 }
+
+/** A managed service may explicitly own an asynchronous invocation after its caller returns a stream. */
+export function captureLoggingServiceAttribution(owner: object): { readonly context: LoggingContext; readonly assertCurrent: () => void } | null {
+  const value = local.getStore(); if (!value || value.owner !== owner) return null;
+  if (!value.active) throw new Error('Logging attribution lifetime is closed.');
+  value.assertCurrent();
+  return Object.freeze({ context: value.context, assertCurrent: value.assertCurrent });
+}

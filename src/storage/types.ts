@@ -385,6 +385,8 @@ export interface StoragePluginConfig {
   studioLifecycleProviderTimeoutMs?: number;
   /** Composition callback for app factories and advanced integrations. */
   onServiceCreated?: (service: import('./storage-service').StorageService) => void;
+  /** Managed composition initializes before publication; listen reuses the same idempotent startup boundary. */
+  onInitializerCreated?: (initialize: () => void) => void;
   /** Trusted composition hook. A verified grant's business receipt must remain live through publication. */
   captureUploadGrantCommitFence?: (grant: Readonly<import('./upload-grant').VerifiedUploadGrant>) => (() => void) | undefined;
 }

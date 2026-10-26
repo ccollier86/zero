@@ -7,16 +7,16 @@ status: in-review
 visibility: internal
 system: logging
 feature: practiceiq-logging-rollout
-maturity: preview
-applies_to: ["PracticeIQ upgraded to pinned Zero 2.6.0 logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [single-tenant, Fabric-logging]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "202b9f7f35c761192ce9089e7ea84c4fbe9c58c3"
+  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
   snapshot: clean
-  date: "2026-10-25"
-  evidence_level: source-observed
+  date: "2026-10-26"
+  evidence_level: implementation-verified
 ---
 
 # Integrate PracticeIQ Logging Deliberately
@@ -25,9 +25,11 @@ reviewed_against:
 
 Enable logging only after the isolated data conversion and ordinary app
 authorization pass. Logging is core but optional; updating Zero alone creates
-no new log files, workers or browser collection. Do not label this rollout a
-complete compliance implementation: `preset: 'compliance'` is still gated by
-`LOGGING_NOT_READY`.
+no new log files, workers or browser collection. PracticeIQ requires the actual
+`preset: 'compliance'`, not a `detailed` substitution or disabled audit.
+The managed completion release implements it with strict source/admission/
+custody/export checks. Select the final qualified normal main archive before
+application acceptance, verifying its source commit and checksum.
 
 ## Configure Separate Storage
 
@@ -38,15 +40,17 @@ full config or a command to execute against current data:
 import type { AppConfig } from '@zero/framework/server';
 
 export const upgradedPlanes = {
-  systemDb: { mode: 'file', path: './data/zero.system.db' },
+  db: { mode: 'file', path: './data/application.db', synchronous: 'FULL' },
+  systemDb: { mode: 'file', path: './data/zero.system.db', synchronous: 'FULL' },
   databaseTopology: { mode: 'single' },
   logging: {
     rootDirectory: './data/zero.logs',
-    preset: 'detailed',
+    preset: 'compliance',
     minimumLevel: 'info',
     metadataKeys: ['operation', 'documentKind', 'rowCount'],
+    retention: { auditDays: null, operationalDays: null },
   },
-} satisfies Pick<AppConfig, 'systemDb' | 'databaseTopology' | 'logging'>;
+} satisfies Pick<AppConfig, 'db' | 'systemDb' | 'databaseTopology' | 'logging'>;
 ```
 
 Merge reviewed slices into the actual typed app config, retaining its app DB,
@@ -55,8 +59,15 @@ KV, AI and PDF settings. Keep Guardian single-tenant. Resolve paths under the
 actual immutable project root and verify none overlap app/system/snapshot,
 Storage, build output or other Fabric ownership.
 
-Logging owns **separate audit and operational Fabric database files** under
-its private root, with FULL sink durability. Do not point either at the clinical
+Preserve PracticeIQ's actual application/system file paths; the example names
+are not permission to create an empty replacement or switch a live hot image
+without its approved migration boundary. Both sources must explicitly use
+`FULL`/`EXTRA`; the ordinary `NORMAL` default is not strict-qualified.
+Guardian remains single-tenant.
+
+Logging owns **separate audit and operational Fabric database files**, plus
+a third private signed-checkpoint file for built-in local custody, under
+its private root with FULL sink durability. Do not point any at the clinical
 database or `systemDb`, create a `logs` table in the patient DB, or invent an
 organization/tenant to hold logs. Original-source queues are small private
 same-transaction evidence queues; they are not the final log store.
@@ -68,14 +79,27 @@ capture and authorized query coordination. Disk/CPU are shared deployment
 resources; independent processes do not promise zero performance cost.
 Budget storage, memory, process supervision and read concurrency accordingly.
 
-Source apps normally use the default actor. Compiled/shared-entry deployments
-must wire `runLoggingActorIfRequested()` before app startup as described in the
-[configuration reference](../../backend/logging/configuration.md). Do not launch
-the main app in a logging child or inherit all production secrets into workers.
+PracticeIQ's bundled `dist/server.js` with retained source/dependencies uses an
+explicit source entry and empty environment:
 
-Start with a low-risk synthetic `basic` smoke test; then use the chosen activity
-families and `detailed` where view/copy/print observations are desired. Restart
-after configuration changes. Retention/holds/export access need an explicit
+```ts
+// server/logging/actor-entry.ts
+import { runLoggingActorIfRequested } from '@zero/framework/server';
+
+if (!await runLoggingActorIfRequested()) process.exit(64);
+```
+
+Set `logging.actors.launch` to `{ kind: 'source', entrypoint: actorEntry }`
+using the resolved retained entry, and `logging.actors.env` to `{}`.
+Build with the official Zero command so canonical logging migration identities
+match between bundle and actors. The linux/amd64 fixture qualifies that shape;
+the app agent must repeat it in PracticeIQ's actual image. Other shared-entry
+forms follow the [configuration reference](../../backend/logging/configuration.md).
+Never import the main server in a logging child or inherit provider/dotenv secrets.
+
+Use compliance in its isolated acceptance environment. A synthetic lower-preset
+smoke test can help diagnosis but is not PracticeIQ's release configuration.
+Restart after configuration changes. Retention/holds/export access need an explicit
 operator policy; do not substitute a guessed legal retention duration. Defaults
 retain data indefinitely, so capacity monitoring and a deliberate policy matter.
 
@@ -124,11 +148,53 @@ PracticeIQ later delegates investigation, declare real Guardian permission
 codes and explicit assignments, then test server denial as well as UI gating.
 Clinical roles do not receive access merely because they can read patients.
 
-The workspace uses server cursor pages and authorized SSE projections. New
-arrivals do not blank/reload existing rows or fabricate an exact total; the user
-can request a new baseline. Browser observations upload through batched
-same-origin HTTPS POST, not SSE. Blocking/offline failures are reported, not
-hidden or misclassified as compliance enforcement.
+The workspace uses server cursor pages and authorized reactive append delivery.
+Small visual batches feed DataTable's existing live-insertion animations and
+incoming-record control. No separate logging reveal button, table remount,
+whole-table blank/reload or fabricated exact total is involved.
+Browser observations upload through batched
+same-origin HTTPS POST, not SSE. Blocking/offline failures are reported.
+Under compliance, expired or interrupted delivery masks protected UI and blocks
+protected HTTP/Sync until a fresh durable acknowledgment; sign-in, health,
+handshake and same-origin empty recovery remain reachable. This neither
+identifies a particular extension nor proves the browser reported every action.
+
+### Generated-route browser acceptance
+
+Rebuild the browser assets after installing the pinned correction; do not reuse
+an older generated bundle merely because the package version still says 2.6.0.
+Keep the normal root AppProvider and native LoginForm without a duplicate
+navigation-only `onSuccess`. The framework now keeps session recovery alive
+while audit delivery masks its output. No app-local auth/logging workaround or
+new provider prop is required.
+
+Repeat the application's fresh unblocked sign-in and initially blocked audit
+delivery fixture modes. Verify native audit/session retries, protected SSR hard
+refresh, a real new tab sharing the existing browser session, and bounded reload
+behavior. A separate profile with a copied page cookie but no browser proof is
+not that new-tab case and must not be promoted into API authentication.
+Successful HTTP statuses alone do not satisfy the gate. After reaching the
+workspace, exercise real SSE inserts/bursts, retained rows, cursor pagination
+and the native incoming-record control, actor/resource filters, evidence
+dialogs and current-role revocation masking. Keep patient state and real
+provider effects absent from the fixture; live cutover remains separately
+authorized. The independent email-delivery receipt migration is not part of
+this browser lifecycle fix.
+
+### Container startup after source setup
+
+PracticeIQ's setup/provisioning and migration commands can run the framework
+from source before `dist/server.js` opens the same system database. Use an
+archive containing the canonical **core as well as logging** build correction,
+and rebuild with `zero build`; otherwise Bun's function formatting can falsely
+trip the unchanged-migration checksum check. No numbered migration, checksum
+ledger rewrite or re-conversion is part of this build correction.
+
+Qualify the actual container sequence against disposable source-prepared state,
+preserving original identities/history and private logging files. Require both
+source setup and compiled startup/restart to pass, not only an empty logging
+worker smoke test. Genuine history mismatches stay blocked. The separate
+email-delivery receipt migration still requires its own reviewed decision.
 
 ## Logging Acceptance Gate
 
@@ -150,9 +216,17 @@ In synthetic managed-app tests, prove all of the following:
    login/refresh and private Storage work on representative data/host settings.
    Record app latency and audit lag; do not mask contention with weakened auth
    or unbounded retries/queues. Source backpressure must not silently lose audit.
-7. Restart after stop and verify persistence, health and source backlog. Confirm
-   failed optional browser upload does not lock staff out under the ordinary
-   detailed profile. Strict enforcement is still a separate unshipped gate.
+7. Restart after stop and verify persistence, health, source backlog and signed
+   checkpoints. Test an unavailable source, disk-full rollback and loss of the
+   delivery worker: no old strict grant may silently become valid after recovery.
+8. Block observations, expire admission, reconnect, switch/revoke scope and hard
+   refresh. Verify fail-closed protected UI/SSR/HTTP/Sync with reachable recovery
+   and no session-restoration deadlock. Test nonadministrator logging denial too.
+9. Request a private export, restart during its lifecycle, then reauthorize its
+   download. Verify exact retained bytes/hash, expiration and cleanup retry.
+   A lost acknowledgment retains the same job/event identity, not a duplicate send.
+10. Validate the agreed native DataTable, user/activity filters and live insertion
+    behavior. Richer saved Filters/evidence-management UI remain optional future work.
 
 ## Related Guides and Next Steps
 
@@ -161,5 +235,5 @@ In synthetic managed-app tests, prove all of the following:
   [capture coverage](../../backend/logging/events-and-coverage.md) own exact contracts.
 - [Browser activity](../../backend/logging/browser.md) explains observation limits.
 - [Logging workspace](../../frontend/components/logging.md) describes the shared UI.
-- [Remaining logging gates](../../backend/logging/roadmap.md) must stay visible
-  in the app's acceptance record rather than being renamed complete compliance.
+- [Remaining work](../../backend/logging/roadmap.md) distinguishes UI/deferred
+  features from the app's mandatory acceptance and qualified archive boundary.

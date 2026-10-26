@@ -13,9 +13,9 @@ modes: [browser, SSR, Guardian single, Guardian multi, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
   snapshot: clean
-  date: "2026-10-07"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 
@@ -133,6 +133,13 @@ AppProvider uses [scope transitions](./scope-transitions.md) to protect complete
 subtrees/loader data and dismiss scoped overlays. Dedicated hooks additionally
 abort superseded requests or hide old results where applicable. Preserve those
 existing semantics when composing tables, forms and custom service panels.
+
+Required-audit masking is not an application/session unmount. AppProvider keeps
+the session recovery controller and audit collector alive while their display
+gates hide unsafe content. A successful current recovery can therefore finish
+the document reload; a genuinely unmounted or replaced owner still cannot
+reload, sign out, or publish an older session. Applications should use this
+composition rather than weakening scope comparison or adding another collector.
 
 ## Verification And Compatibility
 

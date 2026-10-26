@@ -193,6 +193,8 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
     // revoked, not as an anonymous/public socket, or a queued actor operation
     // could pass its final commit fence while shutdown is still propagating.
     if (!data.authResolved) return false;
+    try { options.auth?.assertDataAdmission?.(data.authContext, socket); }
+    catch { closeInvalidSocket(socket, 4003, 'Audit delivery admission expired'); return false; }
     if (expectedContext
       && (!data.authContext
         || !sameSyncAuthContext(data.authContext, expectedContext))) {
@@ -255,6 +257,7 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
     }
     try {
       const access = await resolveSyncSocketAccess(options, current.authContext);
+      await options.auth?.admitDataAccess?.(current.authContext, socket);
       if (!isCurrent(socket, generation)) return false;
       options.auth?.getTokenVerifier()?.assertCurrentProfile?.();
       const installsRowPolicy = access.rowFilters.size > 0
@@ -280,6 +283,7 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
       data.resourceRowFilters = access.rowFilters;
       data.resourceRowProjectors = access.rowProjectors;
       data.readAuthorizationFingerprint = access.readAuthorityFingerprint;
+      options.auth?.assertDataAdmission?.(current.authContext, socket);
       return true;
     } catch {
       if (!isCurrent(socket, generation)) return false;

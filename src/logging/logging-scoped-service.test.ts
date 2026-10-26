@@ -6,6 +6,7 @@ import { createScopedLoggingService } from './logging-scoped-service';
 import type { LoggingRuntime } from './logging-runtime';
 import { resolveManagedLoggingConfig } from './logging-managed-config';
 import type { LoggingEvent } from './logging-contracts';
+import { AuthError } from '../auth/types';
 
 function fixture() {
   let valid = true, admin = true, gate: Promise<void> | undefined;
@@ -29,6 +30,18 @@ test('read scopes cannot be replaced, permission failure does not read, and dela
   f.deny(); await expect(f.service.page('audit')).rejects.toThrow('Forbidden'); expect(f.reads).toHaveLength(1);
   const g = fixture(); let release!: () => void; g.gate(new Promise(resolve => { release = resolve; }));
   const pending = g.service.page('audit'); g.revoke(); release(); await expect(pending).rejects.toThrow('Authority changed'); expect(g.reads).toHaveLength(0);
+});
+
+test('live page and membership reads share one audited investigation window without a query-refresh feedback loop', async () => {
+  const f = fixture();
+  await f.service.page('audit', { actorId: 'user-b', limit: 1 });
+  await f.service.page('audit', { actorId: 'user-b', limit: 25, beforeOrdinal: 200, highWaterOrdinal: 500 });
+  await f.service.page('audit', { actorId: 'user-b', eventIds: [JSON.stringify(['source', 'event'])], limit: 100 });
+  expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(1);
+  await f.service.page('audit', { actorId: 'user-c' });
+  expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(2);
+  f.deny(); await expect(f.service.page('audit')).rejects.toThrow('Forbidden');
+  expect(f.events.at(-1)).toMatchObject({ action: 'logging.query.denied', outcome: 'denied' });
 });
 test('server emission snapshots input before yielding and derives its actor and scope', async () => {
   const f = fixture(); let release!: () => void; f.gate(new Promise(resolve => { release = resolve; }));
@@ -59,4 +72,27 @@ test('tenant-granted read/manage permissions cannot expose global backlog or int
   await expect(service.health()).rejects.toThrow('Platform authority required');
   await expect(service.verify('audit')).rejects.toThrow('Platform authority required');
   expect(inspected).toBe(false);
+});
+
+test('semantic read evidence distinguishes failed, denied and unknown operations without retaining exception content', async () => {
+  for (const [error, outcome] of [
+    [new Error('SYNTHETIC_PRIVATE_CONTENT'), 'failed'],
+    [new AuthError('SYNTHETIC_PRIVATE_CONTENT', 'FORBIDDEN', 403), 'denied'],
+    [Object.assign(new Error('SYNTHETIC_PRIVATE_CONTENT'), { outcome: 'unknown' }), 'unknown'],
+  ] as const) {
+    const f = fixture();
+    await expect(f.service.read({ type: 'record', id: 'opaque' }, () => { throw error; })).rejects.toBe(error);
+    expect(f.events.map(e => [e.action, e.outcome])).toEqual([['record.read.admitted', 'attempted'], ['record.read.' + outcome, outcome]]);
+    expect(JSON.stringify(f.events)).not.toContain('SYNTHETIC_PRIVATE_CONTENT');
+  }
+});
+
+test('semantic reads retain the admitted target and never release a result after authority changed', async () => {
+  const f = fixture(), target = { type: 'record', id: 'original' };
+  const result = await f.service.read(target, () => { target.id = 'changed'; return 42; });
+  expect(result).toBe(42); expect(f.events.map(e => e.target?.id)).toEqual(['original', 'original']);
+  expect(f.events.map(e => e.action)).toEqual(['record.read.admitted', 'record.read.prepared']);
+  const g = fixture();
+  await expect(g.service.read(target, () => { g.revoke(); return 'must-not-release'; })).rejects.toThrow('Authority changed');
+  expect(g.events.some(e => e.action === 'record.read.prepared')).toBe(false);
 });

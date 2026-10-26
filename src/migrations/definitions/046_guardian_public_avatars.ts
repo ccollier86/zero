@@ -9,7 +9,7 @@ const sql = `CREATE TABLE IF NOT EXISTS _auth_avatar_publications (
     FOREIGN KEY (asset_id) REFERENCES _auth_avatar_assets(asset_id) ON DELETE CASCADE
   )`;
 export const migration: Migration = {
-  version: '045',
+  version: '046',
   description: 'Guardian explicit public avatar publications',
   safety: 'safe',
   up(db) {

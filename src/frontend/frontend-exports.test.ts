@@ -76,7 +76,7 @@ test('curated facades preserve every original ordered named/type/star source con
     && record.clause.every(item => item.name.startsWith('JsonDocument') || ['parseJsonDocument', 'diffJsonDocument', 'DocumentEditor', 'parseDocumentSource',
       'DocumentEditorProps', 'DocumentEditorHandle', 'DocumentFormat', 'DocumentSourceChange', 'DocumentParseResult'].includes(item.name));
   const documentAdditive = result.records.filter(documentPart);
-  const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts',
+  const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts', 'src/logging/logging-export-contracts', 'src/logging/logging-admission-contracts',
     'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
   const loggingAdditive = result.records.filter(record => loggingTargets.has(record.target));
   const domainPart = (record: ExportRecord) => !record.type && record.clause === null && ['src/components/email-inbox', 'src/components/messaging'].includes(record.target);
@@ -86,10 +86,37 @@ test('curated facades preserve every original ordered named/type/star source con
   expect(result.records.filter(drawerPart).flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
     'ControlledDrawer', 'ControlledDrawerProps', 'DrawerDescriptor', 'DrawerHandle', 'DrawerManager', 'DrawerOptions', 'DrawerResult', 'DrawerSide', 'DrawerWorkspace', 'drawers', 'useDrawers',
   ].sort());
-  const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record) && !loggingTargets.has(record.target) && !domainPart(record) && !drawerPart(record));
-  expect(loggingAdditive).toHaveLength(7);
+  const blogPart = (record: ExportRecord) => record.target === 'src/components/blog';
+  const palettePart = (record: ExportRecord) => record.target === 'src/components/command-palette';
+  const blogAdditive = result.records.filter(blogPart), paletteAdditive = result.records.filter(palettePart);
+  expect(blogAdditive).toHaveLength(2);
+  expect(blogAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
+    'BlogAuthor', 'BlogCard', 'BlogCardGrid', 'BlogCardProps', 'BlogCategory', 'BlogContentBlock', 'BlogHero', 'BlogHeroCompact', 'BlogHeroContained',
+    'BlogImageLightbox', 'BlogListPage', 'BlogListPageList', 'BlogListPageMinimal', 'BlogListPageProps', 'BlogListPageSidebar', 'BlogPagination', 'BlogPost',
+    'BlogPostPage', 'BlogPostPageProps', 'BlogPostPageSplit', 'BlogPostPageWide', 'BlogPostPageWithSidebar', 'BlogProvider', 'BlogSearchPalette',
+    'BlogSearchPaletteProps', 'BlogTag', 'BlogTocItem', 'RecentPostsHero', 'RelatedPosts',
+  ].sort());
+  expect(paletteAdditive).toHaveLength(3);
+  expect(paletteAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
+    'CommandPalette', 'CommandPaletteController', 'CommandPaletteGroup', 'CommandPaletteItem', 'CommandPaletteProps', 'CommandPaletteProvider',
+    'CommandPaletteProviderProps', 'CommandPaletteTrigger', 'filterCommandPaletteItems', 'useCommandPalette',
+  ].sort());
+  // The anchored palette adds these two names inside existing declarations.
+  // Remove only those exact symbols, retaining the frozen popover contract.
+  const anchorNames = new Set(['PopoverAnchor', 'PopoverAnchorProps']);
+  const popoverTarget = 'src/components/popover';
+  expect(result.records.filter(record => record.target === popoverTarget).flatMap(record => Array.isArray(record.clause)
+    ? record.clause.filter(item => anchorNames.has(item.name)).map(item => ({ ...item, declarationType: record.type })) : [])).toEqual([
+    { name: 'PopoverAnchor', local: 'PopoverAnchor', type: false, declarationType: false },
+    { name: 'PopoverAnchorProps', local: 'PopoverAnchorProps', type: false, declarationType: true },
+  ]);
+  const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record)
+    && !loggingTargets.has(record.target) && !domainPart(record) && !drawerPart(record) && !blogPart(record) && !palettePart(record))
+    .map(record => record.target === popoverTarget && Array.isArray(record.clause)
+      ? { ...record, clause: record.clause.filter(item => !anchorNames.has(item.name)) } : record);
+  expect(loggingAdditive).toHaveLength(9);
   expect(loggingAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
-    'LoggingActivityProvider', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingExport', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
+    'LoggingActivityProvider', 'LoggingAdmissionReceipt', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingEvidenceCursor', 'LoggingEvidencePage', 'LoggingExport', 'LoggingExportJob', 'LoggingExportRequest', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
   ].sort());
   expect(additive).toHaveLength(2);
   expect(additive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([

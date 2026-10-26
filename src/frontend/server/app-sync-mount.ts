@@ -24,6 +24,7 @@ import { resolvePlatformClientTables } from './app-platform-tables';
 import type { ResolvedConfig } from './types';
 import { ZERO_GUARDIAN_PRESENCE } from '../../presence/presence-service';
 import { createPresenceSyncTransport } from '../../presence/presence-sync-transport';
+import { managedLoggingSyncAdmission } from './app-logging-sync-admission';
 
 interface MountAppSyncEngineInput {
   readonly app: Elysia;
@@ -103,10 +104,11 @@ export function mountAppSyncEngine({
     tenantDataPlane,
     auth: config.auth !== false
       ? {
-          required: config.syncAuth === 'required',
+          required: config.syncAuth === 'required' || config.logging !== false && config.logging.policy.complianceRequested,
           modeDefaulted: config.syncAuthDefaulted,
           getTokenVerifier: () => runtime.get(ZERO_AUTH_TOKEN_SERVICE),
           invalidationPollIntervalMs: 250,
+          ...managedLoggingSyncAdmission(runtime),
         }
       : undefined,
   }));

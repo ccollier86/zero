@@ -7,13 +7,13 @@ status: in-review
 visibility: internal
 system: logging
 feature: events-and-coverage
-maturity: preview
-applies_to: ["2.6.0 main builds containing the opt-in logging preview"]
+maturity: supported
+applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "09d31583e6c4160aaf2843e2d40079080fdbf16d"
+  commit: "6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6"
   snapshot: clean
   date: "2026-10-25"
   evidence_level: implementation-verified
@@ -42,6 +42,23 @@ Outcomes are `attempted`, `succeeded`, `denied`, `failed`, or `unknown`.
 A timeout must not become a successful operation. Separate attempts and later
 confirmations retain their own identities rather than rewriting the original.
 
+Managed AI and outbound email record admission under the initiating `backend`
+or `system` origin. Only an actual provider-confirmed terminal stage uses
+`origin: 'provider'`. The transition preserves the original source, actor,
+API-key initiator, application/tenant scope, request/correlation references,
+policy version and invocation target. It does not replace the actor with the
+provider or change which tenant owns the evidence. Rejected or uncertain
+stages keep their original origin and matching server-confirmed/incomplete
+evidence. The ordinary `record()` facade cannot make this transition.
+
+If required post-send logging genuinely fails after email acceptance, the
+caller receives `EMAIL_SEND_OUTCOME_UNKNOWN`, not permission to resend. This
+requires reconciliation; acceptance is never downgraded to a definite provider
+rejection. SMTP and Resend share this behavior through the managed email service.
+Installing a provenance correction does not retroactively confirm old uncertain
+calls or replay their side effects. Reconcile any affected prior sends before
+deciding whether a new attempt is appropriate.
+
 ## Automatic and Declared Capture
 
 | Surface | Current branch behavior |
@@ -54,15 +71,20 @@ confirmations retain their own identities rather than rewriting the original.
 | Request-owned source mutations | `zero.logging.run()` carries trusted actor/scope attribution during its operation. Without an attributed operation, automatic database capture honestly identifies a system actor. |
 | Semantic record reads | Use `zero.logging.read()` after domain authorization. A SQL SELECT alone does not identify what a person saw. |
 | Browser views, copy and print | The authenticated AppProvider collector follows configured families and explicit opaque view bindings. All signals remain browser observations. |
-| Storage, AI, payments, communications and custom tasks | Use declared service-stage instrumentation. Opening the log database does not automatically add complete domain-specific capture to every service. |
-| Investigation reads | Durable admission evidence opens a five-minute window per actor/scope/query fingerprint. Repeated stream snapshots reuse that window; this is not a count of every physical database read. |
+| Strict managed HTTP | Automatic durable request admission, prepared response status and stream producer completion/interruption. Fixed logging projection RPCs retain the same authorization/delivery fences but use their durable investigation window instead of per-refresh transport events, avoiding recursive self-logging. No raw URL, body or exception text. Transport preparation is not semantic business success. |
+| Managed AI provider calls | Automatic admitted and completed/unknown provider stages through the managed AI service, including the native decision facade. SDK streams complete only after their finish part and stream completion. Provider/model selectors are opaque digests; no prompts, tools, results or chunks. A provider return is not proof that the app accepted or used it. |
+| Managed platform email sending | Automatic admitted and provider accepted/rejected/unknown stages with recipient counts, not addresses, subjects or bodies. Acceptance is not delivery to a recipient. Lost post-send evidence returns an unknown send outcome; auth mail does not blindly send it again. |
+| Custom AI service/provider instances and direct vendor SDKs | Explicit instrumentation. Supplying an already-built service does not magically wrap every SDK call, tool or provider callback. |
+| Storage, payments, receiving/inbox providers, workflow and messaging semantics | Partial automatic coverage through Guardian audit, committed metadata mutations and strict managed HTTP. Apps declare actual semantic read/release/provider/durable-task stages through the scoped facade. Do not infer file delivery, payment settlement, message delivery or job completion from a row mutation. |
+| Investigation reads | Durable admission evidence opens a five-minute window per actor/scope/semantic filter fingerprint. Page positions, limits and internal exact-row membership lookups reuse it; different actor/action/date criteria open distinct windows. Permission denial is recorded explicitly. This is not a count of every physical database read. |
 | Holds and reviews | Their state and attributable activity event commit atomically in the private audit actor. |
-| Evidence export | Records generation before release. Generation is not proof of download or review. |
+| Evidence export | Automatic atomic request/state evidence, private artifact publication, separate download authorization, producer completion/interruption and expiry/cleanup stages. Generation or producer completion is not proof of human review. |
 
 The `basic`, `activity`, and `detailed` presets select families; they do not
 fill an uncovered surface. See [configuration](./configuration.md) and the
-[remaining qualification gates](./roadmap.md). The strict compliance preset
-still rejects with `LOGGING_NOT_READY`.
+[remaining qualification gates](./roadmap.md). Strict mode adds required
+delivery, custody and source-durability controls, not an assertion that every
+application semantic operation has been automatically discovered.
 
 ## Privacy and Attribution
 

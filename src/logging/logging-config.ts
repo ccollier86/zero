@@ -14,7 +14,7 @@ export interface ResolvedLoggingConfig {
   readonly minimumLevel: LoggingLevel;
   readonly capture: Readonly<Record<LoggingFamily, boolean>>;
   readonly queue: Readonly<{ maxEvents: number; maxBytes: number; batchSize: number }>;
-  /** Requesting strict policy is not evidence that the unimplemented compliance controls are ready. */
+  /** The managed composition must qualify durable sources, custody, admission and private evidence owners. */
   readonly complianceRequested: boolean;
 }
 

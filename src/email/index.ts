@@ -7,6 +7,7 @@
 
 export { EmailError } from './email-error';
 export { EmailService } from './email-service';
+export type { EmailSendAudit, EmailSendAuditSpan } from './email-send-audit';
 export { ConsoleEmailProvider } from './console-email-provider';
 export { MemoryEmailProvider, type CapturedEmail } from './memory-email-provider';
 export { NoopEmailProvider } from './noop-email-provider';

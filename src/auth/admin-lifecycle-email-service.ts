@@ -179,7 +179,8 @@ export class AdminLifecycleEmailService {
     } catch (error) {
       const cleanupSucceeded = discardUndeliveredActionToken(
         this.actionTokens,
-        created.rawToken
+        created.rawToken,
+        error
       );
       this.recordDelivery(
         'account.security-delivery-failed',

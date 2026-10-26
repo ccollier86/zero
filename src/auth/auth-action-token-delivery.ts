@@ -9,6 +9,7 @@
 import type { EmailSendResult } from '../email/types';
 import type { AuthActionTokenService } from './action-token-service';
 import { AuthError } from './types';
+import { EmailError } from '../email/email-error';
 
 /** Fail closed when the provider resolves without accepting the intended recipient. */
 export function assertAuthEmailRecipientAccepted(
@@ -30,8 +31,12 @@ export function assertAuthEmailRecipientAccepted(
 /** Delete an action token that never reached its recipient and report success. */
 export function discardUndeliveredActionToken(
   service: AuthActionTokenService,
-  rawToken: string
+  rawToken: string,
+  failure?: unknown,
 ): boolean {
+  // A provider may already have accepted this exact link. Keep its ordinary
+  // expiry/single-use checks; a missing audit receipt is not proof of nondelivery.
+  if (failure instanceof EmailError && failure.code === 'EMAIL_SEND_OUTCOME_UNKNOWN') return false;
   try {
     return service.revokeUndelivered(rawToken);
   } catch {
