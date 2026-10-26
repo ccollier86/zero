@@ -12,8 +12,15 @@ import { Button } from '../../components/ui/button';
 import { bootstrapLoggingDelivery } from './logging-bootstrap';
 
 const CollectorContext = createContext<LoggingCollector | null>(null);
-/** AppProvider mounts this only for configured logging. Collection starts after live session/scope admission. */
-export function LoggingActivityProvider({ children, required = false, policyVersion }: { children?: ReactNode; required?: boolean; policyVersion?: string }) {
+const DeliveryContext = createContext<{ readonly paused: boolean; readonly retry: () => void } | null>(null);
+interface LoggingActivityProviderProps { children?: ReactNode; required?: boolean; policyVersion?: string }
+/** Standalone guarded composition. AppProvider uses the same owner/gate with persistent session-recovery ownership. */
+export function LoggingActivityProvider({ children, ...options }: LoggingActivityProviderProps) {
+  return createElement(LoggingActivityOwner, { ...options, children: createElement(LoggingDeliveryGuard, { children }) });
+}
+
+/** @internal Persistent collector owner. AppProvider keeps session recovery outside the presentation-only delivery gate. */
+export function LoggingActivityOwner({ children, required = false, policyVersion }: LoggingActivityProviderProps) {
   const client = useClientMaybe(), scope = useAuthorizationScopeBoundary(client);
   const [value, setValue] = useState<{ key: string; collector: LoggingCollector } | null>(null);
   const [confirmed, setConfirmed] = useState<{ key: string; expiresAt: number } | null>(null);
@@ -63,13 +70,22 @@ export function LoggingActivityProvider({ children, required = false, policyVers
   }, [client, scope.key, canCollect, required, retry]);
   const pause = required && Boolean(auth?.isAuthenticated)
     && (!scope.stable || confirmed?.key !== scope.key || confirmed.expiresAt <= Date.now());
-  return createElement(CollectorContext.Provider, { value: scope.ready && scope.stable && value?.key === scope.key ? value.collector : null }, pause
+  const retryDelivery = useCallback(() => setRetry(n => n + 1), []);
+  return createElement(CollectorContext.Provider, { value: scope.ready && scope.stable && value?.key === scope.key ? value.collector : null },
+    createElement(DeliveryContext.Provider, { value: { paused: pause, retry: retryDelivery }, children }));
+}
+
+/** @internal Masks protected output without retiring either session recovery or its required collector. */
+export function LoggingDeliveryGuard({ children }: { children?: ReactNode }) {
+  const delivery = useContext(DeliveryContext);
+  if (!delivery) throw new Error('Audit delivery guard requires its managed owner.');
+  return delivery.paused
     ? <section role="alert" aria-label="Audit delivery required" className="mx-auto my-8 max-w-lg rounded-xl border bg-card p-6 text-card-foreground">
         <h1 className="text-lg font-semibold">Confirm audit delivery</h1>
         <p className="my-3 text-sm text-muted-foreground">Protected work is paused until audit delivery is confirmed. Check your connection, service status, or extensions blocking requests to this site, then retry.</p>
-        <Button type="button" variant="outline" onClick={() => setRetry(n => n + 1)}>Retry audit delivery</Button>
+        <Button type="button" variant="outline" onClick={delivery.retry}>Retry audit delivery</Button>
       </section>
-    : children);
+    : children;
 }
 
 /** Bind opaque record/document identity; no URL, label, text or clinical content is collected. */
