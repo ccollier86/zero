@@ -49,6 +49,7 @@
       "@zero/framework/components/blog": ["./src/components/blog"],
       "@zero/framework/components/command-palette": ["./src/components/command-palette"],
       "@zero/framework/icons": ["./src/frontend/icons"],
+      "@zero/framework/components/*": ["./src/components/*"],
       "@zero/framework/components/code-block/metadata": ["./src/components/code-block/code-block-metadata.ts"],
       "@zero/framework/components/code-block/highlight": ["./src/components/code-block/code-block-highlight.ts"],
       "@zero/framework/components/code-block/server": ["./src/components/code-block/code-block-server.ts"],

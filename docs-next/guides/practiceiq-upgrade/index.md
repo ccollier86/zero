@@ -42,6 +42,11 @@ with unrelated component organization or product redesign.
 
 ## Read in Order
 
+PracticeIQ's 1.3 → 2.6 data conversion is already deployed. For the subsequent
+navigation/audit/avatar repair, start with the focused
+[post-upgrade integration handoff](./navigation-audit-avatars.md). Do **not**
+rerun the original conversion, recreate accounts/Storage or clear logging state.
+
 1. [Preparation and verification tools](./preparation.md): source/archive checks,
    private rehearsal workspace, consistent backups and offline table evidence.
 2. [Data and compatibility conversion](./conversion.md): classify every legacy

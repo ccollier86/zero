@@ -3,12 +3,14 @@
 /** Owns local browser navigation and optional route-module prefetch; server policy remains authoritative. */
 
 import { createElement, useCallback, useEffect, useRef } from 'react';
-import type { MouseEvent, AnchorHTMLAttributes, ReactNode } from 'react';
+import type { MouseEvent, AnchorHTMLAttributes, ReactNode, Ref } from 'react';
 import { useRouter } from './router-context';
 
 // ─── Link Component ────────────────────────────────────────────────────────
 
 export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> {
+  /** Forwarded to the real anchor for Slot composition, focus and accessibility. */
+  ref?: Ref<HTMLAnchorElement>;
   /** Target URL path */
   href: string;
   /** Prefetch strategy: 'intent' (hover), 'render' (immediate), 'none' */

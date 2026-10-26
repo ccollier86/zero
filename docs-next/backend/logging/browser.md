@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "7e0ba2814b2526fe997282d21d298ed2c87be90c"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
   snapshot: clean
   date: "2026-10-26"
   evidence_level: implementation-verified
@@ -68,8 +68,18 @@ suspension/truncation is marked incomplete. Sleep and hidden time are not
 fabricated as attention. Multiple tabs are independent observations, not summed
 proof of unique human attention.
 
-The collector notices navigation without storing its raw URL, and explicit
-view bindings provide the meaningful target. A pagehide tail is best effort;
+The collector observes admitted router transitions immediately via the existing
+router's `popstate` notification, plus native Back/Forward and `hashchange`.
+Duplicate notifications for one URL are suppressed. Several transitions inside
+one heartbeat interval are separate observations, even when they return to the
+starting URL. A canceled navigation guard is not a completed transition. The
+heartbeat remains a fallback for integrations changing history without a signal.
+Raw URLs, queries and fragments are compared only in memory, never retained;
+explicit view bindings provide the meaningful opaque target. URL observation
+does not prove successful page rendering, a semantic record read or human attention.
+Use [router-aware AppShell links](../../frontend/app-shell/navigation.md#persistent-client-navigation)
+to avoid remounting the collector on ordinary sidebar navigation.
+A pagehide tail is best effort;
 there is no guaranteed unload delivery. There is no persistent browser spool
 or localStorage copy of sensitive activity.
 
@@ -119,6 +129,15 @@ The managed enforcement path is:
    site settings, connectivity and service status.
 5. Resume only after the server validates fresh delivery and current authority.
    Record the interruption/recovery without inventing activity during the gap.
+
+Normal initial admission is **pending**, not a delivery failure. While the first
+acknowledgment is outstanding, protected output remains masked with a neutral
+opening status, not a failure/Retry panel. A failed policy request, failed
+acknowledgment, expired receipt or 15-second stalled initial handshake shows
+the explicit recoverable delivery failure. Healthy client navigation reuses
+the current grant/collector and does not display that failure screen. A healthy
+renewal does not unmount protected output. None of these presentation states
+relax server/SSR/Sync admission or accept stale session/scope acknowledgments.
 
 `AppProvider` reads the server's logging policy and mounts delivery recovery
 outside the protected data-readiness guard. A committed sign-in/scope switch

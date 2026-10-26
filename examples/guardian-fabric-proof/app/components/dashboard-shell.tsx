@@ -17,7 +17,7 @@ import {
   useRouter,
   useTenantAppShellWorkspaces,
 } from '@zero/framework/react/hooks';
-import { toast } from '@zero/framework/react';
+import { Link, toast } from '@zero/framework/react';
 
 export interface DashboardShellProps {
   children: React.ReactNode;
@@ -70,6 +70,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
 
   return (
     <AppShell
+      linkComponent={Link}
       preset="auth-dashboard"
       brand={{
         name: 'Guardian + Fabric + Torrent',

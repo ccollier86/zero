@@ -160,7 +160,8 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
         pendingEvents: streams.reduce((n, s) => n + s.pendingEvents, 0), failedEvents: streams.reduce((n, s) => n + s.failed, 0),
         sourcePendingEvents: (d.sources?.application.queued ?? 0) + (d.sources?.guardian.queued ?? 0) + (d.fabricSources?.queued ?? 0),
         sourceDiscoveryPending: d.fabricSources?.pendingSources ?? 0,
-        sourceDeliveryFailures: (d.sources?.failed ?? 0) + (d.fabricSources?.failed ?? 0) + (d.deliveryWorker?.failures ?? 0), maintenanceFailures: d.maintenanceFailed });
+        sourceDeliveryFailures: (d.sources?.failed ?? 0) + (d.fabricSources?.failed ?? 0) + (d.deliveryWorker?.failures ?? 0), maintenanceFailures: d.maintenanceFailed,
+        operationalBridge: d.operationalBridge });
     },
     async run(operation) {
       const captured = context('backend'); await revalidate(); assertCurrent(); assertWorkAdmission();

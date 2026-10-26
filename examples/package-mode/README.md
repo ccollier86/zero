@@ -157,12 +157,12 @@ Then protect the dashboard branch with a layout:
 
 ```tsx
 // app/(dashboard)/layout.tsx
-import { AppShell, type RouteConfig } from '@zero/framework/react';
+import { AppShell, Link, type RouteConfig } from '@zero/framework/react';
 
 export const config: RouteConfig = { auth: 'required' };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return <AppShell>{children}</AppShell>;
+  return <AppShell linkComponent={Link}>{children}</AppShell>;
 }
 ```
 

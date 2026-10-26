@@ -27,6 +27,13 @@ export type AppShellIcon =
   | ZeroAnimatedIconComponent
   | React.ComponentType<{ className?: string; size?: number }>;
 
+/** Anchor-compatible navigation adapter. Must preserve refs, events and native link semantics. */
+export interface AppShellLinkProps extends Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> {
+  href: string;
+  children: React.ReactNode;
+  ref?: React.Ref<HTMLAnchorElement>;
+}
+
 export interface AppShellBrand {
   name: string;
   subtitle?: string;
@@ -137,6 +144,8 @@ export interface AppShellHeaderConfig {
 }
 
 export interface AppShellProps {
+  /** Use Zero's Link for client navigation; omitted keeps standalone/native anchor behavior. */
+  linkComponent?: React.ComponentType<AppShellLinkProps>;
   preset?: AppShellPreset;
   /** Application theme boundary. Defaults to next; legacy retains the original top-level shell tokens. */
   themeFoundation?: 'next' | 'legacy';

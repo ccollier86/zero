@@ -17,6 +17,10 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [PracticeIQ navigation, audit and avatar repair](./practiceiq-integration-repair.md):
+  main-based isolated repair, exact installed baseline, framework/app ownership,
+  real document-request/retention/native upload checks and release gates. Blog
+  work and production state remain excluded.
 - [Whole-platform audit](./audits/index.md): source-backed inventories,
   public-surface catalogs, findings, and the execution ledger.
 - [Templates](./templates/index.md): reusable system-inventory and feature-guide

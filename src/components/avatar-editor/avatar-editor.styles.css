@@ -1,9 +1,12 @@
 /* Avatar and crop metrics are component tokens; all colors inherit the main Zero theme. */
 .zero-avatar-editor { min-width: 0; display: inline-flex; flex-direction: column; gap: var(--avatar-editor-gap,var(--spacing,.25rem)); }
-.zero-avatar-editor-visual,.zero-avatar-editor-trigger { position: relative; display: inline-flex; width: var(--avatar-editor-size-default,3rem); height: var(--avatar-editor-size-default,3rem); border-radius: var(--_avatar-editor-radius,var(--radius)); flex: none; }
-.zero-avatar-editor[data-size=sm] .zero-avatar-editor-visual,.zero-avatar-editor[data-size=sm] .zero-avatar-editor-trigger { width: var(--avatar-editor-size-sm,2rem); height: var(--avatar-editor-size-sm,2rem); }
-.zero-avatar-editor[data-size=lg] .zero-avatar-editor-visual,.zero-avatar-editor[data-size=lg] .zero-avatar-editor-trigger { width: var(--avatar-editor-size-lg,4rem); height: var(--avatar-editor-size-lg,4rem); }
-.zero-avatar-editor-trigger { outline-offset: var(--avatar-editor-focus-offset,3px); }
+.zero-avatar-editor-visual { position: relative; display: inline-flex; width: var(--avatar-editor-size-default,3rem); height: var(--avatar-editor-size-default,3rem); border-radius: var(--_avatar-editor-radius,var(--radius)); flex: none; }
+.zero-avatar-editor[data-size=sm] .zero-avatar-editor-visual { width: var(--avatar-editor-size-sm,2rem); height: var(--avatar-editor-size-sm,2rem); }
+.zero-avatar-editor[data-size=lg] .zero-avatar-editor-visual { width: var(--avatar-editor-size-lg,4rem); height: var(--avatar-editor-size-lg,4rem); }
+.zero-avatar-editor-trigger { position: relative; display: inline-flex; align-items: center; gap: var(--avatar-editor-action-gap,.625rem); width: fit-content; padding: 0; border-radius: var(--_avatar-editor-radius,var(--radius)); outline-offset: var(--avatar-editor-focus-offset,3px); text-align: start; }
+.zero-avatar-editor-control-image { position: relative; display: inline-flex; flex: none; border-radius: inherit; }
+.zero-avatar-editor-action { font-size: var(--avatar-editor-action-size,var(--text-sm,.875rem)); font-weight: var(--font-weight-medium,500); color: var(--foreground); text-decoration: underline; text-underline-offset: var(--avatar-editor-action-underline-offset,3px); }
+.zero-avatar-editor-remove { align-self: flex-start; }
 button.zero-avatar-editor-trigger { cursor: pointer; }
 button.zero-avatar-editor-trigger:disabled { cursor: wait; }
 .zero-avatar-editor-trigger:focus-visible { outline: var(--avatar-editor-focus-width,2px) solid var(--ring); }

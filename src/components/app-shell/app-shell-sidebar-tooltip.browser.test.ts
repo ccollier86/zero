@@ -26,12 +26,16 @@ beforeAll(async () => {
     const styles = await buildPlatformStyles(directory, join(directory, 'absent-app'));
     css = await Bun.file(styles.cssPath).text();
   } finally { await rm(directory, { recursive: true, force: true }); }
-  const result = await Bun.build({
-    entrypoints: [`${import.meta.dir}/app-shell-sidebar-tooltip.browser-fixture.tsx`],
-    target: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': JSON.stringify('test') },
-  });
-  if (!result.success) throw new Error(result.logs.map((log) => log.message).join('\n'));
-  bundle = await result.outputs[0]!.text();
+  // Managed-server tests in the same Bun process install SSR TSX hooks. The
+  // production CLI compiles browser code in a clean process; match that here.
+  const compiler = Bun.spawn([process.execPath, '--no-env-file', '-e',
+    `const result = await Bun.build({ entrypoints: [${JSON.stringify(join(import.meta.dir, 'app-shell-sidebar-tooltip.browser-fixture.tsx'))}],
+       target: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': '"test"' } });
+     if (!result.success) throw new Error(result.logs.map(log => log.message).join('\\n'));
+     process.stdout.write(await result.outputs[0].text());`], { stdout: 'pipe', stderr: 'pipe' });
+  const [compiled, output, error] = await Promise.all([compiler.exited, new Response(compiler.stdout).text(), new Response(compiler.stderr).text()]);
+  if (compiled !== 0) throw new Error('Sidebar browser fixture build failed: ' + error);
+  bundle = output;
   lease = await acquirePlaywrightTestBrowser();
   browser = lease.browser;
 }, 60_000);

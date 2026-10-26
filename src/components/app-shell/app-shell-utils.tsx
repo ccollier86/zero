@@ -11,6 +11,7 @@ import type * as React from 'react';
 
 import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
 import type { AppShellIcon } from './app-shell.types';
+import { useAppShellLinkComponent } from './app-shell-navigation';
 
 export interface RenderAppShellIconOptions {
   icon?: AppShellIcon;
@@ -36,10 +37,14 @@ export function renderAppShellIcon({
 
 export interface AppShellAnchorProps extends Omit<React.HTMLAttributes<HTMLElement>, 'onClick'> {
   href?: string;
+  target?: React.HTMLAttributeAnchorTarget;
+  rel?: string;
+  download?: boolean | string;
   disabled?: boolean;
   onClick?: React.MouseEventHandler<HTMLElement>;
   className?: string;
   children: React.ReactNode;
+  ref?: React.Ref<HTMLElement>;
 }
 
 /** Render a real anchor when href exists and a button otherwise. */
@@ -49,12 +54,15 @@ export function AppShellAnchor({
   onClick,
   className,
   children,
+  ref,
   ...props
 }: AppShellAnchorProps) {
+  const Anchor = useAppShellLinkComponent();
   if (href) {
     return (
-      <a
+      <Anchor
         {...props}
+        ref={ref as React.Ref<HTMLAnchorElement>}
         href={href}
         className={className}
         aria-disabled={disabled}
@@ -70,13 +78,14 @@ export function AppShellAnchor({
         }}
       >
         {children}
-      </a>
+      </Anchor>
     );
   }
 
   return (
     <button
       {...props}
+      ref={ref as React.Ref<HTMLButtonElement>}
       type="button"
       className={className}
       disabled={disabled}

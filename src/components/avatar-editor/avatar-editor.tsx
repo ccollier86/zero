@@ -109,6 +109,7 @@ function AvatarEditorReady({ profile, expectedRevision, readOnly, onAccepted, on
     : policy.fallback === 'email' ? profile.email?.slice(0, 2).toUpperCase() ?? ''
     : policy.fallback === 'username' ? profile.values.username.slice(0, 2).toUpperCase() : profileInitials(profile);
   const label = profile?.userId === snapshot.userId ? profileDisplayName(profile) : 'Profile picture';
+  const photoAction = snapshot.asset ? 'Change photo' : 'Upload photo';
   const visual = <span className="zero-avatar-editor-visual"><Avatar className="zero-avatar-editor-image">
     {avatar.imageUrl && <AvatarImage src={avatar.imageUrl} alt="" />}
     <AvatarFallback className="zero-avatar-editor-fallback">{fallback}</AvatarFallback></Avatar>
@@ -118,19 +119,23 @@ function AvatarEditorReady({ profile, expectedRevision, readOnly, onAccepted, on
     style={{ '--_avatar-editor-radius': policy.shape === 'circle' ? 'var(--avatar-editor-circle-radius,9999px)'
       : policy.shape === 'rounded' ? 'var(--avatar-editor-rounded-radius,var(--radius))' : 'var(--avatar-editor-square-radius,0px)' } as CSSProperties}>
     {editable ? <Popover open={picker} onOpenChange={setPicker}>
-      <PopoverTrigger asChild><button ref={trigger} type="button" className="zero-avatar-editor-trigger" aria-label={`Change ${label}'s profile picture${presence ? ` · ${presence.label}` : ''}`}
-        disabled={avatar.isSaving}>{visual}<span className="zero-avatar-editor-overlay"><ImagePlus aria-hidden="true" /></span></button></PopoverTrigger>
+      <PopoverTrigger asChild><button ref={trigger} type="button" className="zero-avatar-editor-trigger" aria-label={photoAction}
+        aria-description={`${label}'s profile picture${presence ? ` · ${presence.label}` : ''}`} disabled={avatar.isSaving}>
+        <span className="zero-avatar-editor-control-image">{visual}<span className="zero-avatar-editor-overlay"><ImagePlus aria-hidden="true" /></span></span>
+        <span className="zero-avatar-editor-action">{photoAction}</span>
+      </button></PopoverTrigger>
       <PopoverContent align="start" className="zero-avatar-editor-picker" onCloseAutoFocus={event => { if (candidateRef.current) event.preventDefault(); }}>
         <div {...dropzone.getRootProps({ className: 'zero-avatar-editor-dropzone', 'aria-label': 'Choose or drop a profile picture' })}>
           <input {...dropzone.getInputProps({ 'aria-label': 'Profile picture file' })} /><UploadCloud aria-hidden="true" />
           <strong>Drop a picture here</strong><span>JPEG, PNG or WebP</span>
           <Button type="button" variant="outline" size="sm" onClick={event => { event.stopPropagation(); dropzone.open(); }}>Choose file</Button>
         </div>
-        {snapshot.asset && <Button type="button" size="sm" variant="ghost" className="text-destructive" disabled={avatar.isSaving}
-          onClick={() => { void remove(); }}><Trash2 />Remove picture</Button>}
-        {error && <p role="alert" className="zero-avatar-editor-error">{error}</p>}
       </PopoverContent>
     </Popover> : <span role="img" className="zero-avatar-editor-trigger" aria-label={`${label}${presence ? ` · ${presence.label}` : ''}`}>{visual}</span>}
+    {editable && snapshot.asset && <Button type="button" size="sm" variant="ghost" className="zero-avatar-editor-remove text-destructive" disabled={avatar.isSaving}
+      onClick={() => { void remove(); }}><Trash2 aria-hidden="true" />Remove photo</Button>}
+    {!candidate && avatar.isSaving && <span role="status" className="zero-avatar-editor-hint">Saving profile picture…</span>}
+    {error && <p role="alert" className="zero-avatar-editor-error">{error}</p>}
     {candidate && <AvatarCropDialog open image={candidate.image} capabilities={policy} readOnly={!editable}
       onOpenChange={open => { if (!open) setCandidate(null); }} onSave={save} onReviewLatest={reviewLatest} onCloseAutoFocus={event => {
         event.preventDefault(); requestAnimationFrame(() => { if (current()) trigger.current?.focus({ preventScroll: true }); });

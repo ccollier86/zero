@@ -13,9 +13,9 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced, native]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
   snapshot: clean
-  date: "2026-10-07"
+  date: "2026-10-26"
   evidence_level: implementation-verified
 ---
 
@@ -197,6 +197,14 @@ such a provider is not a supported safe-drain guarantee.
 Observability reports stable operation codes, never images, receipts, addresses
 or signed upload grants. Media is not served through an arbitrary external URL
 or copied into reactive user rows.
+
+Native byte-stream cleanup is best effort after substantive reading: a drained
+Bun reader's `releaseLock()` error must not reject an otherwise valid upload or
+mask the original limit/source/authorization error. This does not skip the byte,
+checksum, fsync, MIME, decoder or final authority fences. Qualify the actual
+browser stage → signed PUT → finalize → shared profile save → private delivery
+sequence on the deployed OS/architecture; a mocked adapter or direct in-memory
+Request is not proof that native HTTP/file stream cleanup works.
 
 - [Storage](../storage/index.md) owns providers and blob recovery.
 - [Presence](./presence.md) supplies optional fresh avatar rings.

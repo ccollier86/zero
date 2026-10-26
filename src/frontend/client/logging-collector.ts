@@ -74,10 +74,20 @@ export function createLoggingCollector(client: Pick<LoggingClient, 'bindObservat
   listen(win, 'afterprint', () => { enqueue('print.dialog.closed'); void flush(); });
   listen(win, 'pagehide', () => { if (!suspended) interval('view.closed'); suspended = true; void flush(); });
   listen(win, 'pageshow', () => { if (suspended) { suspended = false; last = interaction = now(); viewId = crypto.randomUUID(); sequence = 0; opened(); } });
+  // Zero's router publishes popstate only after navigation admission. Native
+  // Back/Forward and hash navigation use the same signal; the URL is compared
+  // in memory only, never copied into evidence. A duplicate browser signal is
+  // not a second navigation. Keep the heartbeat as a fallback for integrations
+  // which change history without publishing a navigation event.
+  const navigation = () => {
+    if (stopped || suspended || win.location.href === href) return false;
+    interval('view.closed'); href = win.location.href; viewId = crypto.randomUUID(); sequence = 0;
+    enqueue('navigation.changed'); opened(); void flush(); return true;
+  };
+  listen(win, 'popstate', navigation); listen(win, 'hashchange', navigation);
   const timer = setInterval(() => {
     if (stopped || suspended) return;
-    if (win.location.href !== href) { interval('view.closed'); href = win.location.href; viewId = crypto.randomUUID(); sequence = 0; enqueue('navigation.changed'); opened(); }
-    else interval('view.interval');
+    if (!navigation()) interval('view.interval');
     void flush();
   }, policy.heartbeatMs);
   opened();

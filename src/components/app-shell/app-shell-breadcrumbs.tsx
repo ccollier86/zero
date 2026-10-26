@@ -19,7 +19,7 @@ import {
 } from '#zero/components/ui/breadcrumb';
 import { cn } from '#zero/lib/utils';
 import type { AppShellBreadcrumb } from './app-shell.types';
-import { renderAppShellIcon } from './app-shell-utils';
+import { AppShellAnchor, renderAppShellIcon } from './app-shell-utils';
 
 export interface AppShellBreadcrumbsProps {
   items?: AppShellBreadcrumb[] | false;
@@ -49,11 +49,13 @@ export function AppShellBreadcrumbs({
                   </BreadcrumbPage>
                 ) : (
                   <BreadcrumbLink
-                    href={item.href}
+                    asChild
                     className="inline-flex min-w-0 items-center gap-1.5 truncate"
                   >
+                    <AppShellAnchor href={item.href}>
                     {renderAppShellIcon({ icon: item.icon, className: 'size-3.5 shrink-0' })}
                     <span className="truncate">{item.label}</span>
+                    </AppShellAnchor>
                   </BreadcrumbLink>
                 )}
               </BreadcrumbItem>

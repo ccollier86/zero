@@ -42,6 +42,8 @@ export interface LoggingHealth {
   readonly sourceDiscoveryPending: number;
   readonly sourceDeliveryFailures: number;
   readonly maintenanceFailures: number;
+  /** Best-effort diagnostics are separate from audit worker/source delivery. Counters are runtime-lifetime totals. */
+  readonly operationalBridge?: Readonly<{ attached: boolean; accepted: number; filtered: number; failed: number }> | null;
 }
 /** Query projections never accept a tenant, actor, database ref or raw SQL selector. */
 export interface ScopedLogging {

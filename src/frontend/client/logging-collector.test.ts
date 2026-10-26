@@ -54,3 +54,31 @@ test('strict delivery heartbeats work with all optional browser capture disabled
     expect(collector.diagnostics()).toMatchObject({ queued: 0, failed: 1 });
   } finally { await collector.stop(); }
 });
+
+test('every admitted rapid URL change is observed promptly, deduplicated and contains no URL data', async () => {
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
+  const win = Object.assign(new EventTarget(), { location: { href: 'https://synthetic.invalid/start' } });
+  const observations: LoggingObservation[] = [];
+  const collector = createLoggingCollector({ bindObservations: () => ({ async observe(rows) {
+    observations.push(...structuredClone(rows)); return { accepted: rows.length };
+  } }) }, { enabled: true, capture: Object.fromEntries(LOGGING_FAMILIES.map(f => [f, true])) as LoggingCollectionPolicy['capture'],
+    heartbeatMs: 30000, idleMs: 60000 }, { document: doc as unknown as Document, window: win as unknown as Window });
+  try {
+    for (const path of ['/one?private=do-not-retain', '/two#sensitive', '/start']) {
+      win.location.href = 'https://synthetic.invalid' + path;
+      win.dispatchEvent(new Event('popstate'));
+      // A hash navigation may publish both browser events, not two transitions.
+      win.dispatchEvent(new Event('hashchange'));
+    }
+    await collector.flush();
+    expect(observations.filter(row => row.action === 'navigation.changed')).toHaveLength(3);
+    expect(observations.filter(row => row.action === 'view.closed')).toHaveLength(3);
+    expect(observations.filter(row => row.action === 'view.opened')).toHaveLength(4);
+    expect(new Set(observations.map(row => row.id)).size).toBe(observations.length);
+    expect(JSON.stringify(observations)).not.toMatch(/https:|private|sensitive|do-not-retain/);
+    await collector.stop();
+    const retained = observations.length;
+    win.location.href = 'https://synthetic.invalid/retired'; win.dispatchEvent(new Event('popstate'));
+    await collector.flush(); expect(observations).toHaveLength(retained);
+  } finally { await collector.stop(); }
+});
