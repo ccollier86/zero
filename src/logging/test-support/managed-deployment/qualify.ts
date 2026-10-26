@@ -44,6 +44,8 @@ try {
     await request(origin, '/api/_zero/logging/observations', signed.accessToken, { observations: [], policyVersion: policy.delivery.policyVersion });
   };
   await acknowledge();
+  const seeded = await request(origin, '/api/_zero/logging/events', signed.accessToken, { stream: 'audit', query: { action: 'fixture.source.prepared' } });
+  expect(seeded.events).toHaveLength(1);
   await request(origin, '/proof/record', signed.accessToken, {});
   const artifact = await request(origin, '/api/_zero/logging/exports/create', signed.accessToken,
     { id: 'deployment.export', stream: 'audit', query: { action: 'app.deployment.prepared' } });
@@ -67,7 +69,8 @@ try {
   expect(probes.length).toBeGreaterThanOrEqual(8);
   expect(probes.every(probe => !probe.providerSecret && !probe.dotenvSecret)).toBe(true);
   const report = { platform: process.platform, arch: process.arch, bun: Bun.version, mainBoots: boots.length, workerLaunches: probes.length,
-    sourceActor: true, emptyChildEnvironment: true, dotenvExcluded: true, officialBuild: true, privateExportAfterRestart: true, exactReplayCount: page.events.length, complianceReady: true };
+    sourceActor: true, emptyChildEnvironment: true, dotenvExcluded: true, officialBuild: true, sourcePreparedMigrations: true,
+    retainedSourceEvidence: seeded.events.length, privateExportAfterRestart: true, exactReplayCount: page.events.length, complianceReady: true };
   await Bun.write('./qualification-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   const active = child as ReturnType<typeof Bun.spawn> | null;
