@@ -278,7 +278,11 @@ export class AuthUserAvatarService {
         length += next.value.byteLength; if (length > maximum) throw imageUnavailable(); chunks.push(Uint8Array.from(next.value)); }
       const bytes = new Uint8Array(length); let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; } return bytes;
-    } finally { this.readers.delete(reader); await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    } finally {
+      this.readers.delete(reader);
+      try { await reader.cancel(); } catch { /* Preserve the substantive read outcome. */ }
+      try { reader.releaseLock(); } catch { /* Native stream cleanup is best-effort after bounded reading. */ }
+    }
   }
   private track<T>(operation: () => Promise<T>): Promise<T> {
     if (this.stopping) return Promise.reject(expiredAuthority());

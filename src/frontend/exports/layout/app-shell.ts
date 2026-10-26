@@ -9,6 +9,7 @@ export {
 } from '../../../components/app-shell';
 export type {
   AppShellProps,
+  AppShellLinkProps,
   AppShellHeaderProps,
   AppShellBreadcrumbsProps,
   AppShellSidebarProps,

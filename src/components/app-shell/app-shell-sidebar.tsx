@@ -159,7 +159,7 @@ function AppShellBrandButton({ brand }: { brand?: AppShellBrand }) {
           asChild
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
         >
-          <a href={brand.href}>{content}</a>
+          <AppShellAnchor href={brand.href}>{content}</AppShellAnchor>
         </SidebarMenuButton>
       </AnimatedIconTrigger>
     );
@@ -644,15 +644,15 @@ function AppShellMenuItems({
         return (
           <AnimatedIconTrigger key={item.id ?? item.href ?? item.label}>
             <DropdownMenuItem
+              asChild={Boolean(item.href)}
               variant={item.destructive ? 'destructive' : 'default'}
               disabled={disabled || item.disabled}
-              onClick={() => {
+              onSelect={() => {
                 if (disabled || item.disabled) return;
                 item.onSelect?.();
-                if (item.href) window.location.href = item.href;
               }}
             >
-              {content}
+              {item.href ? <AppShellAnchor href={item.href} disabled={disabled || item.disabled}>{content}</AppShellAnchor> : content}
             </DropdownMenuItem>
           </AnimatedIconTrigger>
         );

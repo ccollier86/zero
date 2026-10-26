@@ -140,6 +140,14 @@ Observability reports stable operation codes, never images, receipts, addresses
 or signed upload grants. Media is not served through an arbitrary external URL
 or copied into reactive user rows.
 
+Native byte-stream cleanup is best effort after substantive reading: a drained
+Bun reader's `releaseLock()` error must not reject an otherwise valid upload or
+mask the original limit/source/authorization error. This does not skip the byte,
+checksum, fsync, MIME, decoder or final authority fences. Qualify the actual
+browser stage → signed PUT → finalize → shared profile save → private delivery
+sequence on the deployed OS/architecture; a mocked adapter or direct in-memory
+Request is not proof that native HTTP/file stream cleanup works.
+
 - [Storage](../storage/index.md) owns providers and blob recovery.
 - [Presence](./presence.md) supplies optional fresh avatar rings.
 - [Avatar Group](../../frontend/components/avatar-group.md) is roster presentation.

@@ -133,9 +133,10 @@ browserTest('avatar shape/presence obeys actual optional fresh observations and 
     await page.evaluate(() => window.__profileSettings.setAvatarPresence(true));
     const ring = avatar.locator('[data-slot="avatar-presence-indicator"]'); await ring.waitFor();
     expect(await ring.evaluate(element => getComputedStyle(element).borderRadius)).toBe('0px');
-    expect(await avatar.getByRole('button', { name: /Available/ }).count()).toBe(1);
+    const upload = avatar.getByRole('button', { name: 'Upload photo', exact: true });
+    expect(await upload.getAttribute('aria-description')).toContain('Available');
     await page.evaluate(() => window.__profileSettings.setAvatarPresence(true, true)); await ring.waitFor({ state: 'hidden' });
-    expect(await avatar.getByRole('button', { name: /Available/ }).count()).toBe(0);
+    expect(await upload.getAttribute('aria-description')).not.toContain('Available');
     await page.evaluate(() => window.__profileSettings.setProps({ mode: 'read-only' }));
     await avatar.getByRole('img', { name: 'Jane Doe', exact: true }).waitFor();
     expect(await avatar.getByRole('button').count()).toBe(0);

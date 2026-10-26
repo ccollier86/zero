@@ -12,10 +12,15 @@ import { cn } from '#zero/lib/utils';
 import { createThemeAttributes } from '../../design-system/theme-tokens';
 import { AppShellHeader } from './app-shell-header';
 import { AppShellSidebar } from './app-shell-sidebar';
+import { AppShellNavigationProvider } from './app-shell-navigation';
 import type { AppShellHeaderConfig, AppShellProps } from './app-shell.types';
 
 /** Zero's default dashboard shell with optional simpler layout presets. */
-export function AppShell({
+export function AppShell({ linkComponent, ...props }: AppShellProps) {
+  return <AppShellNavigationProvider component={linkComponent}><AppShellLayout {...props} /></AppShellNavigationProvider>;
+}
+
+function AppShellLayout({
   preset = 'dashboard',
   themeFoundation = 'next',
   brand,

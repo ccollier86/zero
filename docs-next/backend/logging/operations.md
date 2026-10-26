@@ -73,6 +73,22 @@ requires a new durable acknowledgment.
 
 Operational diagnostics remain best effort and preserve the preexisting sink.
 Do not treat their in-memory batching queue as an origin durability guarantee.
+The bridge accepts bounded ASCII diagnostic identifiers, including existing
+`APP_*`/`ZERO_*` codes, as lowercase operational actions and retains the exact
+original identifier in `metadata.sourceCode`. For example, filter action
+`app_biopsych_workflow_registered`, not its uppercase source spelling. This
+mapping belongs only to the operational bridge; custom audit `record()` action
+codes retain their lowercase contract. Messages, exception contents and arbitrary
+custom metadata are not copied into retained diagnostics. Invalid/unbounded
+codes remain reported failures, not silently accepted or discarded.
+
+Authenticated health includes `operationalBridge` with `attached`, `accepted`,
+`filtered` and `failed` lifetime counters (null when no bridge is installed).
+These are separate from audit/source worker failures. `state: 'ready'` means
+the owned runtime is ready, not that every diagnostic was retained or every
+application event was semantically instrumented. Check retained audit and
+operational records, source backlogs and bridge failures separately. Public
+`/api/health` is not an authenticated logging-health inspection.
 Source queues require durable originating databases for crash recovery;
 ephemeral application/system DBs are intentionally not crash-persistent.
 

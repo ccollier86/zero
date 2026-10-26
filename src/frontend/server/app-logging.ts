@@ -56,6 +56,7 @@ export async function installManagedAppLogging(config: ResolvedConfig, runtime: 
     }
     runtime.set(ZERO_LOGGING_RUNTIME, logging);
     bridge = installLoggingObservabilityBridge(logging, observability, logging.config.policyVersion);
+    logging.attachOperationalBridge(bridge);
     emitPlatformCodeTo(fallback, OBS_CODES.LOGGING_STARTED);
   } catch (error) {
     bridge?.detach(); runtime.clear(ZERO_LOGGING_RUNTIME, logging); removeCleanup?.();

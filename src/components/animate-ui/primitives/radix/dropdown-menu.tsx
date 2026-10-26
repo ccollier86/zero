@@ -11,6 +11,7 @@ import {
   type HighlightProps,
 } from '#zero/components/animate-ui/primitives/effects/highlight';
 import { getStrictContext } from '#zero/lib/get-strict-context';
+import { Slot } from '#zero/components/animate-ui/primitives/animate/slot';
 import { useControlledState } from '#zero/hooks/use-controlled-state';
 import { useDataState } from '#zero/hooks/use-data-state';
 import { composeOverlayRefs } from '../../../overlays/overlay-scope';
@@ -378,12 +379,14 @@ type DropdownMenuItemProps = Omit<
   React.ComponentProps<typeof DropdownMenuPrimitive.Item>,
   'asChild'
 > &
-  HTMLMotionProps<'div'>;
+  HTMLMotionProps<'div'> & { asChild?: boolean };
 
 function DropdownMenuItem({
   disabled,
   onSelect,
   textValue,
+  asChild,
+  children,
   ...props
 }: DropdownMenuItemProps) {
   const { setHighlightedValue } = useDropdownMenu();
@@ -407,11 +410,15 @@ function DropdownMenuItem({
       textValue={textValue}
       asChild
     >
-      <motion.div
+      {asChild ? <Slot
         data-slot="dropdown-menu-item"
         data-disabled={disabled}
         {...props}
-      />
+      >{children}</Slot> : <motion.div
+        data-slot="dropdown-menu-item"
+        data-disabled={disabled}
+        {...props}
+      >{children}</motion.div>}
     </DropdownMenuPrimitive.Item>
   );
 }

@@ -23,6 +23,7 @@ import type { OwnedLoggingExportJob } from './logging-export-realm';
 import type { StoragePrivateObjects } from '../storage/storage-private-objects';
 import { markLocalLoggingIdentityEstablished, openLocalLoggingIdentity } from './logging-local-identity';
 import { createLocalLoggingCustody } from './logging-local-custody';
+import type { LoggingHealth } from './logging-api-contracts';
 
 interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store: LoggingFabricStore }
 
@@ -41,6 +42,7 @@ export class LoggingRuntime {
   private maintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceTask: Promise<void> | null = null;
   private maintenanceFailed = 0;
+  private operationalBridge: { diagnostics(): LoggingHealth['operationalBridge'] } | null = null;
   private readonly listeners = new Map<LoggingStream, Set<() => void>>();
   private readonly subscriptions = new Set<() => void>();
   private readonly unavailableSources = new Set<object>();
@@ -65,6 +67,8 @@ export class LoggingRuntime {
   attachSource(source: NonNullable<LoggingRuntime['source']>): void { this.source = source; }
   /** @internal Independent managed actor sources are a separate discovery/delivery owner. */
   attachFabricSource(source: NonNullable<LoggingRuntime['fabricSource']>): void { this.fabricSource = source; }
+  /** @internal Best-effort diagnostics health does not grant/retire required audit admission. */
+  attachOperationalBridge(bridge: NonNullable<LoggingRuntime['operationalBridge']>): void { this.operationalBridge = bridge; }
   /** @internal Storage must outlive this owner; managed composition registers dependent cleanup after Storage. */
   attachExportStorage(storage: StoragePrivateObjects): () => Promise<void> {
     this.assertReady(); if (this.exportOwner) throw new LoggingError('LOGGING_CONFIG_INVALID', 'Logging export storage is already bound.');
@@ -263,6 +267,7 @@ export class LoggingRuntime {
       sources: this.source?.diagnostics() ?? null,
       fabricSources: this.fabricSource?.diagnostics() ?? null,
       maintenanceFailed: this.maintenanceFailed,
+      operationalBridge: this.operationalBridge?.diagnostics() ?? null,
       admission: this.admission.diagnostics(),
       custody: this.custody?.diagnostics() ?? null,
       exports: this.exportOwner?.diagnostics() ?? null,

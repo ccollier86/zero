@@ -8,7 +8,7 @@ visibility: internal
 system: frontend-components
 feature: app-shell-navigation
 maturity: supported
-applies_to: ["2.4.3 candidate with collapsed-sidebar tooltip corrections; package qualification pending"]
+applies_to: ["2.6.0 builds with AppShell linkComponent"]
 modes: [browser, SSR, Guardian single, Guardian multi]
 reviewed_against:
   package: "@zero/framework"
@@ -75,16 +75,59 @@ export const navigation: AppShellNavGroup[] = [{
 }];
 ```
 
-This declaration fragment supplies presentation and callbacks only. AppShell
-anchors use ordinary browser links; they do not substitute the file router's
-Link/prefetch behavior. A leaf without href becomes a button. disabled leaves
-prevent activation; disabled descriptors do not revoke access to a server API.
+This declaration fragment supplies presentation and callbacks only. A leaf
+without href becomes a button. Disabled leaves prevent activation; disabled
+descriptors do not revoke access to a server API.
+
+## Persistent Client Navigation
+
+In a managed Zero application, pass the existing router `Link` once at the
+shared shell boundary:
+
+```tsx
+import type { ReactNode } from 'react';
+import { AppShell } from '@zero/framework/components/app-shell';
+import { Link, usePathname } from '@zero/framework/react';
+
+export function StaffShell({ children }: { children: ReactNode }) {
+  return <AppShell linkComponent={Link} currentPath={usePathname()}
+    brand={{ name: 'Workspace', href: '/app' }} nav={navigation}>
+    {children}
+  </AppShell>;
+}
+```
+
+Keep that shell in a common layout with one unkeyed root `AppProvider`. The
+generated hydration runtime already provides the router; standalone compositions
+need `RouterProvider`. Do not key the provider/layout by pathname or mount a
+second collector per route. Internal links then preserve shared provider,
+collector and layout identity while the new route module resolves.
+
+`linkComponent` covers brand, leaf/nested sidebar entries, breadcrumbs and
+built-in account/workspace/action menus, including portaled menus. It is an
+anchor-compatible component receiving `AppShellLinkProps`: forward `href`, DOM
+attributes, events, children and the real anchor ref. Zero `Link` preserves
+modified/middle clicks, target/new-tab links, downloads and external destinations.
+Ordinary local activation uses the existing router and unsaved-change guards.
+
+Omission intentionally keeps real native anchors for standalone/other-router
+compatibility. Custom sidebar/footer/header content is app-owned: use `Link`
+there explicitly. Do not combine `router.push()` with an unprevented native
+`href`, invent a MouseEvent argument for the parameterless `onSelect`, or await
+an action callback as if it were a navigation admission guard. Use the shared
+form/save navigation guards instead. An href-less menu item remains an action.
+
+Qualify actual document-request counts and shared shell identity, not only the
+eventual page text. A hard refresh/new tab is still a new document and performs
+normal session and required-delivery admission. Unknown/server-only routes keep
+the router's documented document fallback; this adapter does not add SSR loaders,
+server actions or replace the underlying router.
 
 ## Menu And Icon Types
 
 AppShellMenuItem is a union: a separator, a label, or an actionable item. Actionable
 items accept id, label, icon, href, shortcut, destructive, disabled and onSelect.
-The menu invokes onSelect and then navigates to href when supplied; it does not
+The menu invokes onSelect and activates a real composed anchor when href is supplied; it does not
 await asynchronous callbacks or run table-style confirmations/invalidation.
 A displayed shortcut is a label, not an installed hotkey handler.
 

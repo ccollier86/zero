@@ -41,6 +41,14 @@ prefetch uses normalized pathname keys instead of raw query/hash strings.
 Changing href updates prefetch intent; native downloads/targets are not prefetched.
 Render prefetch is SSR-safe because it happens in an effect.
 
+For dashboard chrome, use `<AppShell linkComponent={Link}>` in the shared
+layout. This composes real anchors for sidebar, brand, breadcrumbs and built-in
+menus instead of a full-document navigation on each click. Keep one unkeyed
+root `AppProvider`; custom footer/header/sidebar content uses `Link` explicitly.
+See the [complete AppShell integration](../app-shell/navigation.md#persistent-client-navigation).
+The adapter preserves DOM refs and native modified/new-tab behavior; do not
+combine an ordinary href with a second imperative push in onSelect.
+
 Prefetch loads the route module/layouts into browser cache, not protected records,
 server permission admission or a guaranteed successful page transition.
 Do not store secrets in browser-importable route modules.

@@ -12,7 +12,7 @@ import { Button } from '../../components/ui/button';
 import { bootstrapLoggingDelivery } from './logging-bootstrap';
 
 const CollectorContext = createContext<LoggingCollector | null>(null);
-const DeliveryContext = createContext<{ readonly paused: boolean; readonly retry: () => void } | null>(null);
+const DeliveryContext = createContext<{ readonly paused: boolean; readonly failed: boolean; readonly retry: () => void } | null>(null);
 interface LoggingActivityProviderProps { children?: ReactNode; required?: boolean; policyVersion?: string }
 /** Standalone guarded composition. AppProvider uses the same owner/gate with persistent session-recovery ownership. */
 export function LoggingActivityProvider({ children, ...options }: LoggingActivityProviderProps) {
@@ -24,6 +24,7 @@ export function LoggingActivityOwner({ children, required = false, policyVersion
   const client = useClientMaybe(), scope = useAuthorizationScopeBoundary(client);
   const [value, setValue] = useState<{ key: string; collector: LoggingCollector } | null>(null);
   const [confirmed, setConfirmed] = useState<{ key: string; expiresAt: number } | null>(null);
+  const [failure, setFailure] = useState<{ key: string } | null>(null);
   const [retry, setRetry] = useState(0);
   const auth = (client as InternalClient | null)?.auth;
   // The write-only handshake proves live server authority itself. It must not
@@ -37,48 +38,61 @@ export function LoggingActivityOwner({ children, required = false, policyVersion
     if (!required || !policyVersion || !auth?.isAuthenticated || !['committed', 'reconciling', 'recovery-required'].includes(auth.sessionTransition.phase)) return;
     const abort = new AbortController();
     const family = auth.authorizationScopeKey, revision = auth.sessionTransition.revision;
-    void bootstrapLoggingDelivery(policyVersion, abort.signal).then(() => {
+    void bootstrapLoggingDelivery(policyVersion, AbortSignal.any([abort.signal, AbortSignal.timeout(15000)])).then(() => {
       if (!abort.signal.aborted && auth.authorizationScopeKey === family && auth.sessionTransition.revision === revision) (client as InternalClient)._syncClient.reconnect();
-    }).catch(() => { if (!abort.signal.aborted) emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED); });
+    }).catch(() => { if (!abort.signal.aborted) { setFailure({ key: scope.key }); emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED); } });
     return () => abort.abort();
   }, [client, auth, scope.key, policyVersion, required, retry]);
   useEffect(() => {
     if (!client || !canCollect) return;
     const abort = new AbortController(); let collector: LoggingCollector | undefined;
     let expiry: ReturnType<typeof setTimeout> | undefined;
+    const fail = () => {
+      if (abort.signal.aborted) return;
+      setConfirmed(null); setFailure({ key: scope.key }); emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED);
+    };
+    // Pending is not failure, but an indefinitely stalled first handshake is
+    // not healthy either. Keep protection closed and offer explicit recovery.
+    const pendingDeadline = setTimeout(fail, 15000);
     // Pin before fetching policy, not after a possible identity replacement.
     const writer = client.logging.bindObservations();
     void client.logging.collectionPolicy({ signal: abort.signal }).then(policy => {
-      if (abort.signal.aborted || !policy.enabled) return;
+      if (abort.signal.aborted) return;
+      if (!policy.enabled) {
+        if (required) throw new Error('Required audit collection is unavailable.');
+        clearTimeout(pendingDeadline); return;
+      }
       if (required && !policy.delivery?.required) throw new Error('Required audit delivery policy is unavailable.');
       collector = createLoggingCollector({ bindObservations: () => writer }, policy, {
         onError: () => {
-          if (abort.signal.aborted) return;
-          setConfirmed(null); emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED);
+          clearTimeout(pendingDeadline); fail();
         },
         onAcknowledgment: receipt => {
           if (abort.signal.aborted) return;
-          clearTimeout(expiry);
+          clearTimeout(pendingDeadline); clearTimeout(expiry); setFailure(null);
           setConfirmed({ key: scope.key, expiresAt: receipt.expiresAt });
-          expiry = setTimeout(() => { if (!abort.signal.aborted) setConfirmed(null); }, Math.max(0, receipt.expiresAt - Date.now()));
+          expiry = setTimeout(fail, Math.max(0, receipt.expiresAt - Date.now()));
         },
       });
       setValue({ key: scope.key, collector });
+      if (!policy.delivery?.required) clearTimeout(pendingDeadline);
       if (policy.delivery?.required) void collector.flush();
-    }).catch(() => { if (!abort.signal.aborted) emitFrontendCode(OBS_CODES.LOGGING_BROWSER_FAILED); });
-    return () => { abort.abort(); clearTimeout(expiry); void collector?.stop(); };
+    }).catch(() => { clearTimeout(pendingDeadline); fail(); });
+    return () => { abort.abort(); clearTimeout(pendingDeadline); clearTimeout(expiry); void collector?.stop(); };
   }, [client, scope.key, canCollect, required, retry]);
   const pause = required && Boolean(auth?.isAuthenticated)
     && (!scope.stable || confirmed?.key !== scope.key || confirmed.expiresAt <= Date.now());
-  const retryDelivery = useCallback(() => setRetry(n => n + 1), []);
+  const retryDelivery = useCallback(() => { setFailure(null); setRetry(n => n + 1); }, []);
   return createElement(CollectorContext.Provider, { value: scope.ready && scope.stable && value?.key === scope.key ? value.collector : null },
-    createElement(DeliveryContext.Provider, { value: { paused: pause, retry: retryDelivery }, children }));
+    createElement(DeliveryContext.Provider, { value: { paused: pause, failed: failure?.key === scope.key, retry: retryDelivery }, children }));
 }
 
 /** @internal Masks protected output without retiring either session recovery or its required collector. */
 export function LoggingDeliveryGuard({ children }: { children?: ReactNode }) {
   const delivery = useContext(DeliveryContext);
   if (!delivery) throw new Error('Audit delivery guard requires its managed owner.');
+  if (delivery.paused && !delivery.failed) return <p role="status" aria-label="Preparing secure workspace" aria-busy="true"
+    className="mx-auto my-8 text-sm text-muted-foreground">Opening secure workspace…</p>;
   return delivery.paused
     ? <section role="alert" aria-label="Audit delivery required" className="mx-auto my-8 max-w-lg rounded-xl border bg-card p-6 text-card-foreground">
         <h1 className="text-lg font-semibold">Confirm audit delivery</h1>

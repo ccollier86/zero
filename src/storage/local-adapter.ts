@@ -402,7 +402,10 @@ async function* readableStreamChunks(
         // Source cancellation is best-effort after a more useful write/input error.
       }
     }
-    reader.releaseLock();
+    // Bun's native HTTP readers can throw while releasing an already drained
+    // reader after asynchronous file writes. Cleanup cannot invalidate the
+    // bytes already read or replace a substantive source/limit/abort failure.
+    try { reader.releaseLock(); } catch { /* Best-effort reader cleanup only. */ }
   }
 }
 

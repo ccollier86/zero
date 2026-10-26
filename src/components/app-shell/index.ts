@@ -18,6 +18,7 @@ export type { AppShellSidebarProps } from './app-shell-sidebar';
 
 export type {
   AppShellPreset,
+  AppShellLinkProps,
   AppShellIcon,
   AppShellBrand,
   AppShellBreadcrumb,

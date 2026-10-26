@@ -98,11 +98,19 @@ temporary policy-loading state does not silently suppress that retry.
 
 ## Avatar Editing
 
-When enabled/ready, the avatar summary offers browse/upload/remove and a compact
-drop target. Selecting or dropping a JPEG, PNG or WebP opens the existing
+When enabled/ready and editable, the avatar summary always shows **Upload photo**
+or **Change photo**, not just a hover overlay. The trigger supports keyboard and
+touch; **Remove photo** is a separate visible action when an image exists.
+Optional presence is an accessible description, not an unstable action name.
+The picker offers browse/upload and a compact drop target. Selecting or dropping
+a JPEG, PNG or WebP opens the existing
 react-easy-crop engine inside a tokenized, fade-only Zero Dialog. Zoom controls
 and the crop preview stay within the available viewport; the image is not
 attached until the real staged Storage/Guardian acknowledgement succeeds.
+Pending operations show honest saving status, not invented upload percentages.
+Rejected crops remain available to retry or explicitly review the latest profile;
+remove/load failures remain visible and the corresponding action stays retryable.
+Read-only policy has no upload/remove controls or hidden active file input.
 
 The optional `AvatarEditor` is also independently composable. Its transport
 keeps the entire upload under one captured identity, validates private receipt

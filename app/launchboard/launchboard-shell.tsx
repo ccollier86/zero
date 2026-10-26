@@ -12,6 +12,7 @@ import * as React from 'react';
 import {
   AppShell,
   Button,
+  Link,
   type AppShellMenuItem,
   type AppShellNavGroup,
   type AppShellWorkspaceConfig,
@@ -116,6 +117,7 @@ function LaunchBoardShellFrame({ children }: LaunchBoardShellProps) {
 
   return (
     <AppShell
+      linkComponent={Link}
       brand={{
         name: 'LaunchBoard',
         subtitle: 'Zero ReactiveDB',
