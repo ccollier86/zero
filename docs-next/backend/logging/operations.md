@@ -149,6 +149,14 @@ package. Source/compiled custom actor entries must call the public logging
 bootstrap before ordinary app startup. Existing apps without logging enabled
 do not acquire new log files or workers merely by updating.
 
+If source setup succeeds but the compiled server reports that an unchanged core
+migration changed after application, verify the exact framework archive and
+rebuild through the corrected [official build](../../cli/tooling/build.md).
+Core and logging migrations retain their canonical source identities in that
+pipeline. Do not edit migration checksums, skip validation, delete the system
+database, or substitute an empty logging root. Rehearse source-prepared files
+under the compiled server; a fresh compiled-only database is not the same test.
+
 Use the official `zero build` pipeline for a bundled server with retained
 source actors. It preserves the framework logging realm's canonical migration
 checksums so the bundle and matching installed source agree on the complete

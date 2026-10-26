@@ -181,6 +181,21 @@ provider effects absent from the fixture; live cutover remains separately
 authorized. The independent email-delivery receipt migration is not part of
 this browser lifecycle fix.
 
+### Container startup after source setup
+
+PracticeIQ's setup/provisioning and migration commands can run the framework
+from source before `dist/server.js` opens the same system database. Use an
+archive containing the canonical **core as well as logging** build correction,
+and rebuild with `zero build`; otherwise Bun's function formatting can falsely
+trip the unchanged-migration checksum check. No numbered migration, checksum
+ledger rewrite or re-conversion is part of this build correction.
+
+Qualify the actual container sequence against disposable source-prepared state,
+preserving original identities/history and private logging files. Require both
+source setup and compiled startup/restart to pass, not only an empty logging
+worker smoke test. Genuine history mismatches stay blocked. The separate
+email-delivery receipt migration still requires its own reviewed decision.
+
 ## Logging Acceptance Gate
 
 In synthetic managed-app tests, prove all of the following:

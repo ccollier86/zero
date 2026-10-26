@@ -207,6 +207,29 @@ that work never encounters resource limits.
 
 ## Release Boundary
 
+### Source-prepared system migration identity correction
+
+The existing logging-realm preservation covered its retained source actors but
+not core system migrations. A source-to-Bun-bundle diagnostic changed 23 of 45
+core function-based checksums without a source edit. The raw bundled Migrator
+rejects a source-prepared synthetic ledger at migration 004. The earlier clean
+Linux fixture booted a new bundle-owned ledger and therefore did not exercise
+this boundary.
+
+Code `0875dd874046871b7678745e5853b2491bfc7395` adds build-owned canonical core
+function definitions to the official pipeline. All 45 source checksums and
+their existing definitions remain unchanged; no persisted history is rewritten
+or accepted through an alias. Framework migration source files are snapshotted
+and checked while bundling. Real edits remain rejected. Custom app/Fabric
+registries and earlier noncanonical bundle ledgers are not silently admitted.
+
+The focused build/immutability checks pass seven tests / 28 assertions. The
+ledger/released-upgrade/managed-system selection passes 33 tests / 206 assertions.
+The deployment fixture now runs `prepare-source-state.ts` before the official
+build and requires its retained source evidence after compiled startup. Final
+artifact deployment results must be checked separately before updater selection.
+No PracticeIQ data or deployment is used by these synthetic qualifications.
+
 ### Corrective provider-provenance regression
 
 The initial managed release missed a composition defect: the shared AI/email

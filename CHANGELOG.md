@@ -4,6 +4,13 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Fixed false core migration checksum changes between source setup and the
+  official bundled server. The build retains trusted canonical source function
+  identities for all core migrations, as it already did for logging migrations.
+  Checks remain strict, existing definitions/ledgers are unchanged, and genuine
+  migration edits still fail. Linux deployment qualification now seeds source
+  state before compiled startup instead of testing only an empty bundle-first DB.
+
 - Fixed required-audit UI masking retiring the session recovery controller
   before its final hydrated-document reload. Persistent recovery/collector
   ownership is separate from protected display gates; bounded attempts,
