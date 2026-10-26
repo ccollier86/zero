@@ -15,7 +15,7 @@ browserTest('published SSR, real remote search, private drafts, noindex, old slu
   const app = await createApp({ projectRoot: root, db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
     auth: { bootstrap: 'public' }, blog: { authors: { requireAvatar: false }, siteName: 'A considered journal' },
     app: { name: 'Synthetic journal', publicUrl: 'https://journal.example.test' }, seo: { indexing: true }, sitemap: true,
-    appDir: 'app', outDir: 'out', generatedDir: 'generated', storageDir: 'storage',
+    appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false,
     workflows: false, email: false, ai: false, vector: false, pdf: false, kv: false, stateSync: false,
     observability: { console: false, endpoint: false }, logging: false });

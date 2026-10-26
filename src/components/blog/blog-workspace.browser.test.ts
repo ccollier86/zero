@@ -16,7 +16,7 @@ browserTest('writers compose, format, save, publish and protect dirty drafts thr
   const script = await build.outputs.find(file => file.path.endsWith('.js'))!.text();
   const css = (await Promise.all(build.outputs.filter(file => file.path.endsWith('.css')).map(file => file.text()))).join('\n');
   const app = await createApp({ projectRoot: root, db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
-    auth: { bootstrap: 'public' }, blog: { authors: { requireAvatar: false }, siteName: 'The editorial desk' }, appDir: 'app', outDir: 'out', generatedDir: 'generated', storageDir: 'storage',
+    auth: { bootstrap: 'public' }, blog: { authors: { requireAvatar: false }, siteName: 'The editorial desk' }, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false,
     workflows: false, email: false, ai: false, vector: false, pdf: false, kv: false, stateSync: false, observability: { console: false, endpoint: false }, logging: false,
     serverExtensions: [defineZeroPlugin({ name: 'blog-test-editor', setup(context) {
