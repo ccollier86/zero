@@ -14,6 +14,9 @@ import { createBlogPlugin } from './plugin';
 import type { UserPublicAvatarAsset } from '../auth/auth-user-avatar-types';
 import { MemoryEventStore } from '../observability';
 import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
+import { NativeSessionStore } from '../auth/oidc/native-session-store';
+import { prepareNativeSession } from '../auth/oidc/native-session-factory';
+import { NativeTenantAuthorityService } from '../auth/oidc/native-tenant-authority';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -41,6 +44,10 @@ async function fixture(
       tenancy: mode,
       authorization,
       bootstrap: 'public',
+      nativeIssuer: 'http://localhost/auth',
+      nativeAudience: 'http://localhost',
+      nativeApps: { clients: [{ clientId: 'blog-native', name: 'Blog Native',
+        redirectUris: ['com.example.blog:/callback'], scopes: ['openid', 'profile', 'profile:write'] }] },
       onRuntimeCreated: (value) => {
         auth = value;
       },
@@ -120,6 +127,18 @@ async function fixture(
       { userId, expectedRevision, status },
       token,
     );
+  const nativeToken = async (accessToken: string, scope: string) => {
+    const tokens = auth.getTokenService()!, pageAuth = await tokens.resolveAuthContext(accessToken);
+    if (!pageAuth) throw new Error('Expected an active fixture web session.');
+    const authority = new NativeTenantAuthorityService(mode, auth.getTenancyService()).capturePageAuthority(pageAuth);
+    if (!authority) throw new Error('Expected a current fixture application/organization authority.');
+    const user = auth.getStore()!.getUserById(pageAuth.userId)!;
+    const generation = auth.getStore()!.getAuthGeneration(user.userId);
+    const prepared = prepareNativeSession({ userId: user.userId, clientId: 'blog-native', scope,
+      authGeneration: generation, ttlMs: 3_600_000, authority });
+    expect(new NativeSessionStore(db).consumeCodeAndInsert(() => true, prepared.session)).toBe(true);
+    return tokens.signNativeAccessToken(user, 'blog-native', scope, generation, prepared.session.familyId);
+  };
   return {
     db,
     runtime,
@@ -131,8 +150,49 @@ async function fixture(
     request,
     register,
     assign,
+    nativeToken,
   };
 }
+test('native profile readers can read an authorized author directory but every mutation still requires profile:write', async () => {
+  for (const mode of ['single', 'multi'] as const) for (const authorization of ['simple', 'advanced'] as const) {
+    const f = await fixture(mode, false, authorization), owner = await f.register(`native-${mode}-${authorization}`);
+    const id = owner.user.userId;
+    expect((await f.assign(id, owner.accessToken)).status).toBe(200);
+    const peer = await f.register(`native-peer-${mode}-${authorization}`);
+    if (mode === 'single') expect((await f.assign(peer.user.userId, owner.accessToken)).status).toBe(200);
+    const reader = await f.nativeToken(owner.accessToken, 'openid profile');
+    const identityOnly = await f.nativeToken(owner.accessToken, 'openid');
+    expect((await f.request('GET', '/api/blog/authors', undefined, reader)).body.items).toHaveLength(mode === 'single' ? 2 : 1);
+    expect((await f.request('GET', `/api/blog/authors/${id}`, undefined, reader)).body.revision).toBe(1);
+    if (mode === 'single') expect((await f.request('GET', `/api/blog/authors/${peer.user.userId}`, undefined, reader)).status).toBe(200);
+    const foreignReader = await f.nativeToken(peer.accessToken, 'openid profile profile:write');
+    expect((await f.request('GET', `/api/blog/authors/${id}`, undefined, foreignReader)).status).toBe(mode === 'single' ? 403 : 404);
+    const foreignPage = await f.request('GET', '/api/blog/authors', undefined, foreignReader);
+    if (mode === 'single') expect(foreignPage.status).toBe(403);
+    else { expect(foreignPage.status).toBe(200); expect(foreignPage.body.items).toEqual([]); }
+    expect((await f.request('GET', '/api/blog/config', undefined, reader)).body).toMatchObject({
+      state: 'ready', canManageAuthors: false, canEditProfile: false,
+    });
+    expect((await f.request('GET', '/api/blog/authors', undefined, identityOnly)).status).toBe(403);
+    const before = f.db.prepare('SELECT * FROM _blog_authors WHERE user_id=?').get(id);
+    const auditBefore = f.db.prepare('SELECT count(*) AS count FROM _auth_audit_events').get();
+    for (const [method, path, command] of [
+      ['POST', '/api/blog/authors', { userId: id, expectedRevision: 1 }],
+      ['PATCH', `/api/blog/authors/${id}/profile`, { expectedRevision: 1, changes: { displayName: 'Not allowed' } }],
+      ['POST', `/api/blog/authors/${id}/publication`, { expectedRevision: 1 }],
+      ['DELETE', `/api/blog/authors/${id}/publication`, { expectedRevision: 1 }],
+    ] as const) expect((await f.request(method, path, command, reader)).status).toBe(403);
+    expect(f.db.prepare('SELECT * FROM _blog_authors WHERE user_id=?').get(id)).toEqual(before);
+    expect(f.db.prepare('SELECT count(*) AS count FROM _auth_audit_events').get()).toEqual(auditBefore);
+    const writer = await f.nativeToken(owner.accessToken, 'openid profile profile:write');
+    const updated = await f.request('PATCH', `/api/blog/authors/${id}/profile`,
+      { expectedRevision: 1, changes: { displayName: 'Native Author' } }, writer);
+    expect(updated.status).toBe(200);
+    expect((await f.request('POST', `/api/blog/authors/${id}/publication`, { expectedRevision: updated.body.revision }, writer)).status).toBe(200);
+    f.auth.getStore()!.revokeAllUserTokens(id);
+    expect((await f.request('GET', '/api/blog/authors', undefined, reader)).status).toBe(401);
+  }
+});
 test('single and multi advanced RBAC preserve existing assignments and current manager permissions', async () => {
   for (const mode of ['single', 'multi'] as const) {
     const f = await fixture(mode, false, 'advanced'),

@@ -12,6 +12,13 @@ All notable Zero Platform changes are tracked here.
   Reconciled exact blog/palette/anchor frontend export additions without changing
   the original frozen public contract.
 
+- Corrected the blog native-session scope split: an authorized manager with
+  `profile` can read scoped authors without a write grant. All author mutations
+  still require `profile:write`, current Guardian authority and accepted CAS.
+  Added actual native-family tests in single/multi simple/advanced modes,
+  including cross-scope denial, no accepted data/audit from rejected writes,
+  and revocation.
+
 - Added an opt-in managed blog author foundation with additive SYSTEM metadata,
   scoped author enrollment that preserves existing roles, separate draft/public
   profiles, Guardian-fenced server/browser facades, authorized live projections

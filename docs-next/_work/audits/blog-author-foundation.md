@@ -49,6 +49,16 @@ Fresh continuation checks use disposable synthetic data only:
 - The frozen frontend export contract and symbol-identity tests both pass
   (25 assertions). The first combined run exposed the previously unaccounted
   blog/palette additions; the exact-addition guard was corrected and rerun.
+- SEO/UI/compliance/provider regressions: 42 passed, 0 failed, 624 assertions
+  across nine files after correcting that export test. They retain native
+  strict Logging admission and the trusted AI/email provider provenance fix.
+- Follow-up native-author scope review found management reads incorrectly
+  required `profile:write`. Read admission now uses `profile` plus the same
+  Guardian management requirement; mutation admission is unchanged. Real native
+  refresh-family tests exercise single/multi simple/advanced modes, unauthorized
+  and cross-org reads, all four rejected mutation kinds, unchanged data/audit,
+  permitted writes and revocation. The final focused author/config/SDK/managed
+  upgrade run passes 18 tests and 257 assertions across four files.
 - Root TypeScript and the documentation structure/link checker pass. Additional
   installed-archive evidence must identify the continuation's own source and
   bytes; the older archive below is not a substitute.

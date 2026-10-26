@@ -162,8 +162,8 @@ export class BlogService {
         throw forbidden();
       this.assertReady();
     };
-    const manage = () => {
-      admit(true);
+    const manage = (write: boolean) => {
+      admit(write);
       access.authorize(this.deps.config.manageAuthors);
     };
     const canManage = () => {
@@ -186,7 +186,7 @@ export class BlogService {
     const edit = (userId: string) => {
       admit(true);
       blogUserId(userId);
-      if (userId !== actor.userId) manage();
+      if (userId !== actor.userId) manage(true);
       const row = getRow(userId);
       if (row.status !== 'active' || !this.eligible(scope, userId))
         throw forbidden();
@@ -240,7 +240,7 @@ export class BlogService {
       },
       authors: Object.freeze<ScopedBlog['authors']>({
         list: (options: { limit?: number; after?: string } = {}) => {
-          manage();
+          manage(false);
           const limit = options.limit ?? 50,
             after = options.after ?? '';
           if (
@@ -268,16 +268,16 @@ export class BlogService {
         get: (userId: string) => {
           admit();
           blogUserId(userId);
-          if (userId !== actor.userId) manage();
+          if (userId !== actor.userId) manage(false);
           const result = this.record(getRow(userId));
           admit();
           return result;
         },
         assign: (input) => {
           const value = captureBlogAssignment(input);
-          manage();
+          manage(true);
           return commit(() => {
-            manage();
+            manage(true);
             const currentSite = site(),
               previous = currentSite
                 ? this.author(currentSite.site_id, value.userId)
@@ -398,7 +398,7 @@ export class BlogService {
               row.status !== 'active' ||
               !this.eligible(scope, userId)
             )
-              manage();
+              manage(true);
             if (row.revision !== expectedRevision) throw conflict();
             this.deps.db
               .prepare(

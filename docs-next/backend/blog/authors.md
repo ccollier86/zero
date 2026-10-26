@@ -141,6 +141,15 @@ sessions need `profile` to read and `profile:write` to mutate, plus the same
 Guardian management requirement for administrative operations. API keys cannot
 use account-author operations. Ownership alone does not bypass a revoked session.
 
+The resumed continuation correctly separates management **reads** from writes:
+a native `profile` reader with the existing Guardian management permission can
+list/get scoped authors without `profile:write`. Assignment, draft editing,
+publication and withdrawal still require `profile:write`; that scope alone
+never grants management rights. `canManageAuthors` describes the effective
+ability to **change** enrollments, so it remains false for a read-only native
+session. Its live snapshot contains the own-author view; use the bounded list
+facade for authorized read-only administrative browsing.
+
 Every mutation rechecks policy/session/organization authority inside the same
 transaction and immediately before commit. Author revisions prevent overwriting
 concurrent changes. Private author CAS is separate from the Guardian profile/
