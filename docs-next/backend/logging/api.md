@@ -143,7 +143,10 @@ reading snapshot. New arrivals do not move an older page boundary.
 Query fields are `limit` (1–100, default 50), `since` (inclusive),
 `until` (exclusive), `beforeOrdinal`, `highWaterOrdinal`, `family`,
 `action`, `actorId`, `sessionId`, `targetType`, `targetId`,
-`outcome`, and `level`. Scalar criteria combine with AND. There is no
+`outcome`, `level`, and `eventIds`. Exact `eventIds` are at most 100
+JSON-encoded `[sourceId, eventId]` identities; they narrow the same authorized
+query and never select a different scope. An empty list matches nothing.
+Scalar criteria combine with AND. There is no
 free-text scan, raw SQL or advanced nested filter grammar in this version.
 
 Ordinary `page()` is permanently bound to the live application/tenant scope.
@@ -186,6 +189,28 @@ Use `{ transport: 'poll', intervalMs: 5000 }` only as an explicit fallback;
 poll intervals are integers from 1000 to 60000 milliseconds. `platform: true`
 selects the separately authorized platform read. A snapshot/reconnect is not a
 new business event or an exact count of new records.
+
+For DataTable, use `createLoggingTableSource(client.logging, stream, criteria)`
+from `@zero/framework/components/logging`. Its adapter supplies the standard
+`subscribeChanges`, `confirmInsertedRows` and `getLeadingRowId` capabilities;
+it does not create a second table, shared public collection or reveal button.
+The live first page updates normally while older pages retain ordinal cursors.
+
+The underlying `watch()` options `afterOrdinal` and `onChanges` opt into the
+authorized append cursor. A change batch contains ascending retained `events`,
+`afterOrdinal`, `throughOrdinal`, `highWaterOrdinal` and `hasMore`.
+The SDK resumes from the last validated `throughOrdinal` across reconnects.
+It never turns an initial/reconnect snapshot into INSERT evidence. Bursts drain
+in bounded pages rather than losing events beyond the latest snapshot window.
+These options require stream transport; polling does not pretend to prove inserts.
+
+The component groups visual INSERTs for roughly 250 ms and bounds pending
+presentation identities to the latest 1000. This is UI batching, not delayed
+durable logging. Every retained record remains queryable. Native DataTable
+owns insertion motion, pagination and its existing incoming-record control.
+Page and membership reads share the semantic investigation window, preventing
+their refreshes from recursively appending audit events. Authorization,
+required delivery and final stream fences remain enforced.
 
 Browser-to-server observations use batched HTTPS POST requests. SSE is one-way,
 server to browser; it cannot upload observations. Both routes stay on the

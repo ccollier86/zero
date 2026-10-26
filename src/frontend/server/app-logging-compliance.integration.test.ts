@@ -8,6 +8,8 @@ import { createApp } from './app-factory';
 import { defineEndpoint, defineRouter, defineZeroPlugin } from './server-extensions';
 import type { AppConfig } from './types';
 import type { ServerRouteServices } from './server-services';
+import { createLoggingClient } from '../client/logging-client';
+import { loggingEvent } from '../../logging/test-support/logging-fixture';
 
 function config(root: string, overrides: Partial<AppConfig> = {}): AppConfig {
   return { projectRoot: root,
@@ -22,6 +24,66 @@ function config(root: string, overrides: Partial<AppConfig> = {}): AppConfig {
     migrate: false, serverPluginsDir: false, serverResourcesDir: false, serverMiddlewareDir: false, serverEndpointsDir: false,
     serverRoutesDir: false, resourceRoutes: false, observability: { console: false }, ...overrides };
 }
+
+test('strict reactive investigation RPCs retain admission fences without logging their own page/membership refreshes forever', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'logging-live-investigation-'));
+  let app: Awaited<ReturnType<typeof createApp>> | undefined, services: ServerRouteServices | undefined, stop: (() => void) | undefined;
+  let phase = 'setup', primary: unknown;
+  try {
+    await mkdir(join(root, 'app'));
+    app = await createApp(config(root, { serverExtensions: [defineZeroPlugin({ name: 'live-inspection', setup({ zero }) { services = zero; } })] }));
+    app.listen({ hostname: '127.0.0.1', port: 0 }); const origin = 'http://127.0.0.1:' + app.server!.port;
+    const registered = await fetch(origin + '/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'live-owner', email: 'live-owner@example.test', password: 'Fixture-password-123!' }) });
+    expect(registered.status).toBe(200); const user = await registered.json() as { accessToken: string };
+    const client = createLoggingClient(async <T>(path: string, init?: import('../client/sdk').FetchInit): Promise<T> => {
+      const response = await fetch(origin + path, { method: init?.method ?? 'GET', signal: init?.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + user.accessToken },
+        ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }) });
+      if (!response.ok) throw new Error('Synthetic logging RPC was rejected: ' + response.status);
+      return (init?.json === false ? response : await response.json()) as T;
+    });
+    const logging = services!.logging!;
+    phase = 'acknowledge';
+    await client.observe([], { policyVersion: logging.config.policyVersion }); await logging.flush();
+    phase = 'read and membership';
+    const first = await client.page('audit', {}), before = first.highWaterOrdinal;
+    const id = JSON.stringify([first.events[0]!.event.sourceId, first.events[0]!.event.id]);
+    await client.page('audit', { eventIds: [id], limit: 100 });
+    await client.page('audit', { limit: 25 });
+    expect((await logging.page('audit', { kind: 'application' }, { limit: 1 })).highWaterOrdinal).toBe(before);
+    phase = 'stream start';
+    let ready!: () => void, complete!: () => void, failed!: (error: unknown) => void;
+    const started = new Promise<void>(resolve => { ready = resolve; });
+    const finished = new Promise<void>((resolve, reject) => { complete = resolve; failed = reject; });
+    void finished.catch(() => {}); // A provider error can arrive while the test awaits the durable append.
+    const timer = setTimeout(() => failed(new Error('Reactive managed investigation timed out')), 10000);
+    try {
+      stop = client.watch('audit', {}, () => {}, { afterOrdinal: before, onError: failed, onChanges(change) {
+        if (!change.events.length) ready();
+        if (change.events.some(row => row.event.id === 'live-one')) {
+          void Promise.all([client.page('audit', { limit: 25 }), client.page('audit', { eventIds: [JSON.stringify(['fixture-source', 'live-one'])], limit: 100 })])
+            .then(() => complete(), failed);
+        }
+      } });
+      await Promise.race([started, finished]);
+      phase = 'append';
+      await logging.deliver(loggingEvent('live-one', null));
+      await finished;
+      phase = 'final head';
+      stop(); stop = undefined;
+      await logging.flush();
+      expect((await logging.page('audit', { kind: 'application' }, { limit: 1 })).highWaterOrdinal).toBe(before + 1);
+      expect((await logging.page('audit', { kind: 'application' }, { action: 'logging.query.window' })).events).toHaveLength(1);
+      client.clear();
+    } finally { clearTimeout(timer); }
+  } catch (error) { primary = error; throw new Error('Reactive investigation failed during ' + phase, { cause: error }); }
+  finally {
+    stop?.();
+    try { await app?.stop(true); } catch (error) { if (!primary) throw error; }
+    await rm(root, { recursive: true, force: true });
+  }
+}, 45000);
 
 test('strict source preflight rejects weak control durability before opening app, system or log files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'logging-strict-preflight-'));

@@ -154,12 +154,27 @@ The [framework handoff](../guides/practiceiq-upgrade/agent-handoff.md) and
 app-side acceptance. The app agent performs its own isolated image tests,
 domain instrumentation and separately authorized cutover.
 
-The user requested that we plan and execute any review-dashboard improvements
-together before the application handoff. Do not expand this backend correction
-into an unreviewed redesign. Existing workspace scope/revocation masking and
-durable export-state feedback remain required functional behavior. Advanced
-Filters, richer review/hold management and a manual-review/dead-letter organism
-are not silently represented as implemented by a backend-ready state.
+The user narrowed the UI pass to DataTable, server filtering, live updates and
+individual-user audit history. The separate “New activity available” button
+and explicit live-update opt-outs are removed. No dashboard redesign, advanced
+Filters, richer review/hold management or manual-review organism is implied.
+
+The authorized private Fabric append cursor now supplies genuine INSERTs to
+the standard DataTable adapter, with exact server-side membership/newest-row
+proof, reconnect continuation and 250 ms bounded visual batching. Older pages
+retain ordinal cursors and the normal incoming-record control; retained rows
+are not remounted or replaced with the initial loading animation. One burst
+causes one page refresh. Five browser checks across the logging/native-insert
+selection pass, and the expanded user-filter/server-source browser selection
+passes all 26 tests. The latter includes three logging UI cases; counts overlap.
+
+The expanded backend selection passes 164 tests across 42 files / 3199 assertions.
+It covers a 205-event cross-tenant burst, resume cursors, duplicate safety,
+1000-identity presentation bounds, exact user membership and strict managed
+HTTP. The managed test verifies that projection/page/membership reads share one
+audited investigation window rather than recursively generating refresh events,
+without removing authorization, delivery or release fences. Client cancellation
+closes the producer cleanly; failed authority fences still interrupt release.
 
 ## Self-Contained Custody And Deferred Work
 
@@ -193,7 +208,7 @@ that work never encounters resource limits.
 
 The implementation is committed on the feature branch and the exact candidate
 is qualified. Keep hook-driven selection disabled while saving review evidence.
-Complete the agreed joint dashboard review, then deliberately merge and select
+The agreed minimal UI pass is implemented and tested. Deliberately merge and select
 the final qualified main archive through Zero's release tooling. Return its exact source
 commit, archive path and SHA-256 only after selection verifies. No app update,
 live conversion or deployment is performed by this framework task.

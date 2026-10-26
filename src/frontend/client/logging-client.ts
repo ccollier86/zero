@@ -1,7 +1,7 @@
 /** Scope-generation owned logging transport. Reuses authenticated SDK fetch; never exposes server persistence modules. */
 import { LOGGING_API, type LoggingClient, type LoggingCollectionPolicy, type LoggingObservationResult } from '../../logging/logging-api-contracts';
 import { LOGGING_FAMILIES, LOGGING_EVIDENCE, LOGGING_OUTCOMES } from '../../logging/logging-contracts';
-import type { LoggingPage } from '../../logging/logging-contracts';
+import type { LoggingChangePage, LoggingPage } from '../../logging/logging-contracts';
 import type { FetchInit } from './sdk';
 import { readLoggingExportJob } from '../../logging/logging-export-result';
 
@@ -104,11 +104,14 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     },
     verify: (stream, afterOrdinal = 0, checkpoint, options) => request('/verify', { stream, afterOrdinal, ...(checkpoint ? { checkpoint } : {}) }, options?.signal),
     watch(stream, query, listener, options = {}) {
+      if (options.onChanges && (!Number.isSafeInteger(options.afterOrdinal) || Number(options.afterOrdinal) < 0 || options.transport === 'poll')) {
+        throw new Error('Live INSERT delivery requires a committed cursor and stream transport.');
+      }
       const epoch = generation, controller = new AbortController(), signal = AbortSignal.any([controller.signal, boundary.signal, ...(options.signal ? [options.signal] : [])]);
       const detached = structuredClone(query);
       const intervalMs = options.intervalMs ?? 3000;
       if (!Number.isSafeInteger(intervalMs) || intervalMs < 1000 || intervalMs > 60000) throw new Error('Invalid logging refresh interval.');
-      let timer: ReturnType<typeof setTimeout> | undefined, highWater = -1;
+      let timer: ReturnType<typeof setTimeout> | undefined, highWater = -1, afterOrdinal = options.afterOrdinal;
       const poll = async () => {
         try {
           const result = await (options.platform ? platformPage : page)(stream, detached, { signal });
@@ -123,7 +126,8 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let failed = false;
         try {
-          const response = await fetch<Response>(LOGGING_API + '/stream', { method: 'POST', body: { stream, query: detached, platform: options.platform ?? false }, signal, json: false });
+          const response = await fetch<Response>(LOGGING_API + '/stream', { method: 'POST', body: { stream, query: detached, platform: options.platform ?? false,
+            ...(options.onChanges ? { afterOrdinal } : {}) }, signal, json: false });
           if (signal.aborted || epoch !== generation) { await response.body?.cancel(); return; }
           if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Invalid logging stream response.');
           reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '', eventData = '';
@@ -138,6 +142,23 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
               if (line !== '' || !eventData) continue;
               const packet = JSON.parse(eventData); eventData = '';
               if (packet.version !== 1 || packet.error) throw new Error('Logging subscription ended; authority must be rechecked.');
+              if (packet.changes !== undefined) {
+                const change = packet.changes as LoggingChangePage;
+                if (!options.onChanges || afterOrdinal === undefined || !change || change.afterOrdinal !== afterOrdinal
+                  || !Number.isSafeInteger(change.throughOrdinal) || change.throughOrdinal < afterOrdinal
+                  || !Number.isSafeInteger(change.highWaterOrdinal) || change.highWaterOrdinal < change.throughOrdinal
+                  || typeof change.hasMore !== 'boolean' || !Array.isArray(change.events)) throw new Error('Invalid logging change cursor.');
+                validatePage({ events: [...change.events].reverse(), highWaterOrdinal: change.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null });
+                if (change.events.some(row => row.ordinal <= afterOrdinal! || row.ordinal > change.throughOrdinal)
+                  || (change.hasMore ? !change.events.length || change.throughOrdinal !== change.events.at(-1)!.ordinal : change.throughOrdinal !== change.highWaterOrdinal)) {
+                  throw new Error('Invalid logging change delivery.');
+                }
+                if (!signal.aborted && epoch === generation) {
+                  options.onStatus?.('live'); options.onChanges(change); afterOrdinal = change.throughOrdinal;
+                }
+                continue;
+              }
+              if (options.onChanges && packet.afterOrdinal !== afterOrdinal) throw new Error('Logging server did not confirm the requested live cursor.');
               const page = validatePage(packet.page);
               if (!signal.aborted && epoch === generation) options.onStatus?.('live');
               if (!signal.aborted && epoch === generation && page.highWaterOrdinal !== highWater) { highWater = page.highWaterOrdinal; listener(page); }

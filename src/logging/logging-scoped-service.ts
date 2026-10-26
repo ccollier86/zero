@@ -2,7 +2,7 @@
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import type { ServiceDataScope } from '../auth/service-data-scope';
 import type { LoggingRuntime } from './logging-runtime';
-import type { LoggingContext, LoggingEventInput, LoggingReadScope } from './logging-contracts';
+import type { LoggingContext, LoggingEventInput, LoggingQuery, LoggingReadScope } from './logging-contracts';
 import { LOGGING_BROWSER_ACTIONS, type LoggingObservation, type ScopedLogging } from './logging-api-contracts';
 import { LoggingError } from './logging-error';
 import { captureLoggingEvent, loggingArray, loggingByteLength, loggingCanonical, loggingChoice, loggingId, loggingRecord, loggingTime } from './logging-validation';
@@ -56,19 +56,44 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     entry.admission = runtime.deliver(audit('logging.query.window', { stream, criteriaDigest: loggingDigest(query), windowMs: 300000 })).then(() => {}).catch(error => { if (windows!.get(key) === entry) windows!.delete(key); throw error; });
     windows.set(key, entry); await entry.admission; assertCurrent();
   };
+  const investigationCriteria = (query: LoggingQuery) => {
+    // Page cursors and internal INSERT-membership lookups belong to the same
+    // investigation window. Auditing every such RPC would make a live audit
+    // table recursively observe the queries caused by its own inserted rows.
+    const { limit: _limit, beforeOrdinal: _before, highWaterOrdinal: _highWater, eventIds: _ids, ...criteria } = query;
+    return criteria;
+  };
   const readPage = async (stream: Parameters<ScopedLogging['page']>[0], query: Parameters<ScopedLogging['page']>[1] = {}, platform = false) => {
     const admitted = normalizeLoggingQuery(stream, platform ? { kind: 'platform' } : readScope, query);
-    const authorize = () => { if (platform) { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); } permit('read'); };
-    await revalidate(); authorize(); await readAdmission((platform ? 'platform.' : '') + stream, admitted.query);
-    const result = await runtime.page(stream, admitted.scope, admitted.query); await revalidate(); authorize(); return result;
+    const caller = context('backend');
+    const authorize = async () => {
+      try { if (platform) { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); } permit('read'); }
+      catch (error) {
+        await runtime.deliver(captureLoggingEvent(caller, { id: crypto.randomUUID(), family: 'investigations', action: 'logging.query.denied',
+          occurredAt: Date.now(), outcome: 'denied', evidence: 'server-confirmed',
+          metadata: { stream, criteriaDigest: loggingDigest(investigationCriteria(admitted.query)) } }, ['stream', 'criteriaDigest']));
+        throw error;
+      }
+    };
+    await revalidate(); await authorize(); await readAdmission((platform ? 'platform.' : '') + stream, investigationCriteria(admitted.query));
+    const result = await runtime.page(stream, admitted.scope, admitted.query); await revalidate(); await authorize(); return result;
   };
   return Object.freeze({
     page: (stream, query = {}) => readPage(stream, query),
     platformPage: (stream, query = {}) => readPage(stream, query, true),
-    async stream(stream, query, signal, platform = false) {
+    async stream(stream, query, signal, platform = false, afterOrdinal) {
+      if (afterOrdinal !== undefined && (!Number.isSafeInteger(afterOrdinal) || afterOrdinal < 0)) throw new LoggingError('LOGGING_QUERY_INVALID', 'Logging change cursor is invalid.');
       const admitted = normalizeLoggingQuery(stream, readScope, query);
       const first = await readPage(stream, admitted.query, platform);
-      return createLoggingProjectionStream(runtime, stream, first, () => readPage(stream, admitted.query, platform), signal);
+      return createLoggingProjectionStream(runtime, stream, first, () => readPage(stream, admitted.query, platform), signal,
+        afterOrdinal === undefined ? undefined : { afterOrdinal, read: async after => {
+          await revalidate();
+          if (platform) { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); } permit('read');
+          const result = await runtime.changes(stream, platform ? { kind: 'platform' } : readScope, { ...admitted.query, limit: 100 }, after);
+          await revalidate();
+          if (platform) { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); } permit('read');
+          return result;
+        } });
     },
     async record(input: LoggingEventInput) {
       const captured = captureLoggingEvent(context('backend'), input, runtime.config.metadataKeys);

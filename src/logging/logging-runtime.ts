@@ -191,6 +191,13 @@ export class LoggingRuntime {
   }
 
   /** @internal Fixed private evidence capability; scope is provided by the admitted Guardian facade. */
+  async changes(stream: LoggingStream, scope: LoggingReadScope, query: LoggingQuery, afterOrdinal: number) {
+    this.assertReady();
+    const owner = this.streams.get(stream);
+    if (!owner) throw new LoggingError('LOGGING_QUERY_INVALID', 'Logging stream is invalid.');
+    return owner.store.changes(scope, query, afterOrdinal);
+  }
+  /** @internal Fixed private evidence capability; scope is provided by the admitted Guardian facade. */
   async evidence(scope: LoggingReadScope, before?: number | LoggingEvidenceCursor): Promise<LoggingEvidencePage> { this.assertReady(); return this.streams.get('audit')!.store.evidence(scope, before); }
   async evidenceCommand(command: 'logging.hold' | 'logging.review' | 'logging.export.reserve' | 'logging.export.transition', input: Record<string, unknown>): Promise<unknown> {
     this.assertReady(); const store = this.streams.get('audit')!.store;

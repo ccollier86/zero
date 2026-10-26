@@ -28,8 +28,18 @@ All notable Zero Platform changes are tracked here.
   optional browser observations and LoggingWorkspace. Worker restart/replay,
   bounded ingestion/reads, queue pressure and joined shutdown preserve source
   evidence. Existing Guardian audit remains intact and logging stays off by
-  default. Strict compliance mode still rejects until its remaining controls
-  are implemented and qualified; this is not a compliance certification.
+  default. Managed compliance now enforces durable source admission, expiring
+  delivery grants across UI/HTTP/Sync, signed checkpoint custody and private
+  durable exports. App/system sources require file mode with FULL/EXTRA.
+  The logging view uses DataTable's native live INSERT/motion/pagination paths,
+  batches visual arrivals for 250 ms, and retains server-side user/activity
+  filters without a separate reveal button or recursive refresh auditing.
+  Additive core migration 045 registers private export metadata; existing
+  migration definitions and the legacy-state boundary are preserved.
+  This is not a compliance certification or automatic clinical instrumentation.
+- Independent AI calls/jobs remain concurrent; new workflow fan-outs default to
+  the supported bound of 100 and embedding batches to 32 parallel calls.
+  Explicit ordering, pinned graphs, quotas and capacity limits remain honored.
 - Added commit-acknowledged Torrent enqueue handoffs so short durable database
   handlers can schedule long AI/provider work without awaiting its activities.
   Existing eager start/event behavior, live authority and idempotent receipts

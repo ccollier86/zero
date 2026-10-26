@@ -90,6 +90,8 @@ export type LoggingReadScope =
 
 /** Closed initial query vocabulary. Nested shared Filters execution is a later integration. */
 export interface LoggingQuery {
+  /** Exact stable [sourceId,eventId] row identities, bounded to 100 per authorized lookup. */
+  readonly eventIds?: readonly string[];
   readonly limit?: number;
   readonly since?: number;
   readonly until?: number;
@@ -110,4 +112,13 @@ export interface LoggingPage {
   readonly highWaterOrdinal: number;
   readonly hasMore: boolean;
   readonly nextBeforeOrdinal: number | null;
+}
+
+/** Genuine retained appends in increasing ingestion order, with an explicit resumable cursor. */
+export interface LoggingChangePage {
+  readonly events: readonly StoredLoggingEvent[];
+  readonly afterOrdinal: number;
+  readonly throughOrdinal: number;
+  readonly highWaterOrdinal: number;
+  readonly hasMore: boolean;
 }

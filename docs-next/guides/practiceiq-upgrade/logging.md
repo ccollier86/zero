@@ -148,9 +148,11 @@ PracticeIQ later delegates investigation, declare real Guardian permission
 codes and explicit assignments, then test server denial as well as UI gating.
 Clinical roles do not receive access merely because they can read patients.
 
-The workspace uses server cursor pages and authorized SSE projections. New
-arrivals do not blank/reload existing rows or fabricate an exact total; the user
-can request a new baseline. Browser observations upload through batched
+The workspace uses server cursor pages and authorized reactive append delivery.
+Small visual batches feed DataTable's existing live-insertion animations and
+incoming-record control. No separate logging reveal button, table remount,
+whole-table blank/reload or fabricated exact total is involved.
+Browser observations upload through batched
 same-origin HTTPS POST, not SSE. Blocking/offline failures are reported.
 Under compliance, expired or interrupted delivery masks protected UI and blocks
 protected HTTP/Sync until a fresh durable acknowledgment; sign-in, health,

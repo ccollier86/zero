@@ -31,6 +31,18 @@ test('read scopes cannot be replaced, permission failure does not read, and dela
   const g = fixture(); let release!: () => void; g.gate(new Promise(resolve => { release = resolve; }));
   const pending = g.service.page('audit'); g.revoke(); release(); await expect(pending).rejects.toThrow('Authority changed'); expect(g.reads).toHaveLength(0);
 });
+
+test('live page and membership reads share one audited investigation window without a query-refresh feedback loop', async () => {
+  const f = fixture();
+  await f.service.page('audit', { actorId: 'user-b', limit: 1 });
+  await f.service.page('audit', { actorId: 'user-b', limit: 25, beforeOrdinal: 200, highWaterOrdinal: 500 });
+  await f.service.page('audit', { actorId: 'user-b', eventIds: [JSON.stringify(['source', 'event'])], limit: 100 });
+  expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(1);
+  await f.service.page('audit', { actorId: 'user-c' });
+  expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(2);
+  f.deny(); await expect(f.service.page('audit')).rejects.toThrow('Forbidden');
+  expect(f.events.at(-1)).toMatchObject({ action: 'logging.query.denied', outcome: 'denied' });
+});
 test('server emission snapshots input before yielding and derives its actor and scope', async () => {
   const f = fixture(); let release!: () => void; f.gate(new Promise(resolve => { release = resolve; }));
   const input = { id: 'record-test', family: 'records' as const, action: 'record.read', occurredAt: Date.now(), outcome: 'succeeded' as const, evidence: 'server-confirmed' as const, metadata: { count: 2 } };

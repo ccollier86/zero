@@ -260,7 +260,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   useEffect(() => {
     const captured = current.current, source = captured.options.source, query = captured.resolution.query;
     if (!source || !query || source.live === false || !admitted(captured)) return;
-    const controller = new AbortController(); let unsubscribe: (() => void) | undefined;
+    const controller = new AbortController(); let unsubscribe: (() => void) | undefined, scheduled = false;
     try {
       unsubscribe = subscribeDataTableServerChanges(source, query, captured.client as InternalClient | null, change => {
         if (!admitted(captured) || current.current.signature !== captured.signature) return;
@@ -275,7 +275,15 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
           projectDataTableServerRows(baseline.data, captured.options.primaryKey, source.getRowId).orderedIds);
         else if (change.op !== 'INSERT') membership.observe(change, EMPTY_ROWS);
         leading.require(needsLeading());
-        void load('live', true);
+        // One committed burst can contain many genuine INSERTs. Keep every
+        // identity for standard motion/membership, but refetch the page once.
+        if (!scheduled) {
+          scheduled = true;
+          queueMicrotask(() => {
+            scheduled = false;
+            if (!controller.signal.aborted && admitted(captured) && current.current.signature === captured.signature) void load('live', true);
+          });
+        }
       }, controller.signal);
     } catch (cause) { if (admitted(captured)) report(source, normalizeDataTableServerFailure(cause)); }
     return () => {

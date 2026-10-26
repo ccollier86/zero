@@ -19,12 +19,15 @@ import type { LoggingAdmissionAuthority } from '../../logging/logging-admission'
 import type { LoggingContext } from '../../logging/logging-contracts';
 import { isLoggingRecoveryRequest } from '../../logging/logging-admission-paths';
 import { guardLoggingResponseStream } from './app-logging-response-stream';
+import { LOGGING_API } from '../../logging/logging-api-contracts';
+
+const LOGGING_PROJECTION_READS = new Set([LOGGING_API + '/events', LOGGING_API + '/platform/events', LOGGING_API + '/stream']);
 
 /** Install before any protected route mounts, including built-in services and file-router loaders. */
 export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRuntime): void {
   const logging = runtime.get(ZERO_LOGGING_RUNTIME);
   if (!logging?.admission.required) return;
-  const requests = new WeakMap<Request, { authority: LoggingAdmissionAuthority; context: LoggingContext; fence: () => void; revalidate: () => Promise<void>; id: string }>();
+  const requests = new WeakMap<Request, { authority: LoggingAdmissionAuthority; context: LoggingContext; fence: () => void; revalidate: () => Promise<void>; id: string; recordTransport: boolean }>();
   const headers = { 'Cache-Control': 'private, no-store', Vary: 'Authorization, Cookie' };
   const failure = (error: unknown): Response => {
     if (error instanceof LoggingError) {
@@ -52,10 +55,14 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
         await logging.admission.admitMachine(authority, context, fences.asynchronous, request);
       } else logging.admission.assertCurrent(authority, request);
       const id = crypto.randomUUID();
-      await logging.deliver(captureLoggingEvent(context, { id: id + ':admitted', family: 'records', action: 'access.http.admitted',
+      // These fixed read RPCs own durable investigation-window admission. They
+      // still enforce this same authority/delivery gate and release fences,
+      // but must not append another event for each live projection refresh.
+      const recordTransport = !LOGGING_PROJECTION_READS.has(new URL(request.url).pathname);
+      if (recordTransport) await logging.deliver(captureLoggingEvent(context, { id: id + ':admitted', family: 'records', action: 'access.http.admitted',
         occurredAt: Date.now(), outcome: 'attempted', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' } }));
       fences.synchronous(); logging.admission.assertCurrent(authority, request);
-      requests.set(request, { authority, context, fence: fences.synchronous, revalidate: fences.asynchronous, id });
+      requests.set(request, { authority, context, fence: fences.synchronous, revalidate: fences.asynchronous, id, recordTransport });
     } catch (error) {
       if (error instanceof LoggingError && error.code === 'LOGGING_ADMISSION_REQUIRED' && !request.headers.has('authorization')
         && (request.method === 'GET' || request.method === 'HEAD')) return loggingRecoveryPage(logging.config.policyVersion);
@@ -67,11 +74,11 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
     try {
       current.fence(); logging.admission.assertCurrent(current.authority, request);
       const status = response instanceof Response ? response.status : typeof set.status === 'number' ? set.status : 200;
-      await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':prepared', family: 'records', action: 'access.http.response.prepared',
+      if (current.recordTransport) await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':prepared', family: 'records', action: 'access.http.response.prepared',
         occurredAt: Date.now(), outcome: 'succeeded', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' }, metadata: { httpStatus: status } }, ['httpStatus']));
       current.fence(); logging.admission.assertCurrent(current.authority, request);
       if (response instanceof Response) return guardLoggingResponseStream(response, request, logging, current.context, current.id, current.revalidate,
-        () => { current.fence(); logging.admission.assertCurrent(current.authority, request); });
+        () => { current.fence(); logging.admission.assertCurrent(current.authority, request); }, current.recordTransport);
     } catch (error) {
       if (response instanceof Response) await response.body?.cancel().catch(() => {});
       // A handler may already have committed. Never tell a caller it is safe to
@@ -86,7 +93,7 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
     requests.delete(request);
     // No exception bodies are admitted. A handler exception does not prove that
     // every external effect rolled back; writes are deliberately unresolved.
-    try { await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':failed', family: 'records', action: 'access.http.failed',
+    try { if (current.recordTransport) await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':failed', family: 'records', action: 'access.http.failed',
       occurredAt: Date.now(), outcome: request.method === 'GET' || request.method === 'HEAD' ? 'failed' : 'unknown', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' } })); }
     catch { /* Existing fail-closed response remains; never recursively log sink failure. */ }
   });

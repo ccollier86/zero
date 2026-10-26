@@ -2,6 +2,7 @@
 import { expect, test } from 'bun:test';
 import { createLoggingClient } from './logging-client';
 import { readLoggingExportJob } from '../../logging/logging-export-result';
+import { loggingEvent } from '../../logging/test-support/logging-fixture';
 
 test('retired collector bindings fail before transport and in-flight results cannot cross an auth generation', async () => {
   const calls: unknown[] = []; let resolve!: (value: unknown) => void;
@@ -33,6 +34,31 @@ test('committed SSE projections stream through the existing SDK transport, valid
   sender.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify({ version: 1, page: { events: [], highWaterOrdinal: 2, hasMore: false, nextBeforeOrdinal: null } }) + '\n\n'));
   await received; expect(seen).toEqual([2]); expect(states).toContain('live');
   stop(); client.clear();
+});
+
+test('live append delivery resumes the exact committed cursor and never reclassifies snapshot rows as INSERTs', async () => {
+  const cursors: number[] = [], seen: number[] = [];
+  let complete!: () => void; const completed = new Promise<void>(resolve => { complete = resolve; });
+  const client = createLoggingClient(async (_path, init) => {
+    const after = (init!.body as { afterOrdinal: number }).afterOrdinal; cursors.push(after);
+    const values = after === 5 ? [6, 7] : [8];
+    return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      const send = (packet: unknown) => controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ version: 1, ...packet as object }) + '\n\n'));
+      send({ afterOrdinal: after, page: { events: [{ ordinal: 4, ingestedAt: 1, event: loggingEvent('old') }], highWaterOrdinal: values.at(-1)!, hasMore: false, nextBeforeOrdinal: null } });
+      send({ changes: { afterOrdinal: after, throughOrdinal: values.at(-1)!, highWaterOrdinal: values.at(-1)!, hasMore: false,
+        events: values.map(ordinal => ({ ordinal, ingestedAt: 1, event: loggingEvent('new-' + ordinal) })) } });
+      controller.close();
+    } }), { headers: { 'Content-Type': 'text/event-stream' } }) as any;
+  });
+  const stop = client.watch('audit', {}, () => {}, { afterOrdinal: 5, onChanges(page) {
+    seen.push(...page.events.map(row => row.ordinal)); if (page.throughOrdinal === 8) complete();
+  } });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([completed, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Live cursor reconnect timed out')), 3000); })]);
+    expect(cursors).toEqual([5, 7]); expect(seen).toEqual([6, 7, 8]);
+  }
+  finally { clearTimeout(timer); stop(); client.clear(); }
 });
 
 test('strict observation acknowledgment cannot be missing, stale or for a different policy', async () => {

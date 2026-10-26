@@ -2,10 +2,9 @@
 import type { LoggingRuntime } from '../../logging/logging-runtime';
 import type { LoggingContext } from '../../logging/logging-contracts';
 import { captureLoggingEvent } from '../../logging/logging-validation';
-import { LoggingError } from '../../logging/logging-error';
 
 export function guardLoggingResponseStream(response: Response, request: Request, logging: LoggingRuntime,
-  context: LoggingContext, operationId: string, revalidate: () => Promise<void>, assertCurrent: () => void): Response {
+  context: LoggingContext, operationId: string, revalidate: () => Promise<void>, assertCurrent: () => void, recordTerminal = true): Response {
   if (!response.body) return response;
   const reader = response.body.getReader(); let closed = false, remove = () => {};
   const release = () => { try { reader.releaseLock(); } catch { /* Preserve the substantive stream outcome. */ } };
@@ -13,7 +12,7 @@ export function guardLoggingResponseStream(response: Response, request: Request,
   const cleanup = () => { remove(); request.signal.removeEventListener('abort', abort); };
   const terminal = async (complete: boolean) => {
     if (closed) return; closed = true; cleanup();
-    await logging.deliver(captureLoggingEvent(context, { id: operationId + ':stream-terminal', family: 'records',
+    if (recordTerminal) await logging.deliver(captureLoggingEvent(context, { id: operationId + ':stream-terminal', family: 'records',
       action: complete ? 'access.http.stream.completed' : 'access.http.stream.incomplete', occurredAt: Date.now(),
       outcome: complete ? 'succeeded' : 'unknown', evidence: complete ? 'server-confirmed' : 'incomplete',
       target: { type: 'transport', id: 'http' } }));
@@ -22,7 +21,10 @@ export function guardLoggingResponseStream(response: Response, request: Request,
   const abort = () => {
     if (closed) return;
     void cancel(); void terminal(false).catch(() => {});
-    try { controller.error(new LoggingError('LOGGING_CLOSED', 'Protected response stream was interrupted.')); } catch { /* Already stopped. */ }
+    // A client disconnect/owner stop is cancellation, not an unhandled server
+    // producer rejection. No further bytes are released; incomplete evidence
+    // is retained above. Failed authority fences still error in pull().
+    try { controller.close(); } catch { /* Already stopped. */ }
   };
   try {
     const body = new ReadableStream<Uint8Array>({

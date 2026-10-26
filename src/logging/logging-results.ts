@@ -1,5 +1,5 @@
 /** Revalidate actor acknowledgments/pages before publication; malformed accepted writes retain an unknown outcome. */
-import type { LoggingEvent, LoggingPage, LoggingReceipt } from './logging-contracts';
+import type { LoggingChangePage, LoggingEvent, LoggingPage, LoggingReceipt } from './logging-contracts';
 import type { NormalizedLoggingQuery } from './logging-query';
 import { LoggingError } from './logging-error';
 import { loggingArray, loggingRecord, loggingTime, normalizeLoggingEvent } from './logging-validation';
@@ -42,4 +42,21 @@ export function readLoggingPage(value: unknown, input: NormalizedLoggingQuery): 
     if (r.hasMore ? !events.length || r.nextBeforeOrdinal !== events.at(-1)!.ordinal : r.nextBeforeOrdinal !== null) throw new Error();
     return Object.freeze({ events: Object.freeze(events), highWaterOrdinal: r.highWaterOrdinal, hasMore: r.hasMore, nextBeforeOrdinal: r.nextBeforeOrdinal as number | null });
   } catch { throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Logging query response is invalid.'); }
+}
+
+/** Change cursors are ascending and resumable; a truncated latest snapshot is not append evidence. */
+export function readLoggingChangePage(value: unknown, input: NormalizedLoggingQuery, afterOrdinal: number): LoggingChangePage {
+  try {
+    const r = loggingRecord(value, ['events', 'afterOrdinal', 'throughOrdinal', 'highWaterOrdinal', 'hasMore']);
+    if (r.afterOrdinal !== afterOrdinal || !Number.isSafeInteger(r.throughOrdinal) || Number(r.throughOrdinal) < afterOrdinal
+      || !Number.isSafeInteger(r.highWaterOrdinal) || Number(r.highWaterOrdinal) < Number(r.throughOrdinal) || typeof r.hasMore !== 'boolean') throw new Error();
+    const rows = loggingArray(r.events, input.query.limit);
+    const page = readLoggingPage({ events: rows.slice().reverse(), highWaterOrdinal: r.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null },
+      { ...input, query: { ...input.query, highWaterOrdinal: undefined } });
+    const events = Object.freeze([...page.events].reverse());
+    if (events.some(row => row.ordinal <= afterOrdinal || row.ordinal > Number(r.throughOrdinal)
+      || input.query.highWaterOrdinal !== undefined && row.ordinal > input.query.highWaterOrdinal)
+      || (r.hasMore ? !events.length || r.throughOrdinal !== events.at(-1)!.ordinal : r.throughOrdinal !== r.highWaterOrdinal)) throw new Error();
+    return Object.freeze({ events, afterOrdinal, throughOrdinal: Number(r.throughOrdinal), highWaterOrdinal: Number(r.highWaterOrdinal), hasMore: r.hasMore });
+  } catch { throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Logging change response is invalid.'); }
 }

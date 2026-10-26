@@ -1,5 +1,5 @@
 /** Browser-safe public logging transport contracts; no auth, filesystem or database dependencies. */
-import type { LoggingEventInput, LoggingFamily, LoggingPage, LoggingQuery, LoggingReceipt, LoggingStream } from './logging-contracts';
+import type { LoggingChangePage, LoggingEventInput, LoggingFamily, LoggingPage, LoggingQuery, LoggingReceipt, LoggingStream } from './logging-contracts';
 import type { LoggingCheckpoint, LoggingEvidenceCursor, LoggingEvidencePage, LoggingHoldReceipt, LoggingReviewReceipt, LoggingExport, LoggingVerification } from './logging-evidence-contracts';
 import type { LoggingAdmissionReceipt } from './logging-admission-contracts';
 import type { LoggingExportJob, LoggingExportRequest } from './logging-export-contracts';
@@ -47,7 +47,7 @@ export interface LoggingHealth {
 export interface ScopedLogging {
   page(stream: LoggingStream, query?: LoggingQuery): Promise<LoggingPage>;
   platformPage(stream: LoggingStream, query?: LoggingQuery): Promise<LoggingPage>;
-  stream(stream: LoggingStream, query: LoggingQuery, signal: AbortSignal, platform?: boolean): Promise<ReadableStream<Uint8Array>>;
+  stream(stream: LoggingStream, query: LoggingQuery, signal: AbortSignal, platform?: boolean, afterOrdinal?: number): Promise<ReadableStream<Uint8Array>>;
   record(input: LoggingEventInput): Promise<LoggingReceipt | null>;
   observe(observations: readonly LoggingObservation[], policyVersion?: string): Promise<LoggingObservationResult>;
   collectionPolicy(): Promise<LoggingCollectionPolicy>;
@@ -85,6 +85,8 @@ export interface LoggingClient {
   downloadExport(id: string, options?: { signal?: AbortSignal }): Promise<Blob>;
   verify(stream: LoggingStream, afterOrdinal?: number, checkpoint?: LoggingCheckpoint, options?: { signal?: AbortSignal }): Promise<LoggingVerification>;
   /** Generation-aware committed projections. Stream is default; polling remains an explicit fallback. */
-  watch(stream: LoggingStream, query: LoggingQuery, listener: (page: LoggingPage) => void, options?: { signal?: AbortSignal; onError?: (error: unknown) => void; onStatus?: (state: 'connecting' | 'live' | 'reconnecting') => void; intervalMs?: number; platform?: boolean; transport?: 'stream' | 'poll' }): () => void;
+  watch(stream: LoggingStream, query: LoggingQuery, listener: (page: LoggingPage) => void, options?: { signal?: AbortSignal; onError?: (error: unknown) => void; onStatus?: (state: 'connecting' | 'live' | 'reconnecting') => void; intervalMs?: number; platform?: boolean; transport?: 'stream' | 'poll';
+    /** Actual retained append cursor, used by DataTable's standard INSERT handling. Stream transport only. */
+    afterOrdinal?: number; onChanges?: (changes: LoggingChangePage) => void }): () => void;
   clear(): void;
 }

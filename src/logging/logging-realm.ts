@@ -11,6 +11,8 @@ import { LOGGING_EVENTS_TABLE, LOGGING_STATE_TABLE, LOGGING_TABLES, LOGGING_CHAI
 import { changeLoggingHold, recordLoggingReview, loggingPruneCandidates, pruneLoggingEvents, verifyLoggingEvidence, listLoggingEvidence, LOGGING_GENESIS_HASH, loggingChainHash } from './logging-evidence-realm';
 import { reserveLoggingExport, transitionLoggingExport, readLoggingExport, pendingLoggingExports } from './logging-export-realm';
 import { appendLocalLoggingCheckpoint, readLocalLoggingCheckpoint } from './logging-checkpoint-realm';
+import { readLoggingChanges } from './logging-change-query';
+import { projectLoggingStoredEvent } from './logging-stored-event';
 
 const HEADS = LOGGING_STATE_TABLE;
 const HEAD_ID = 'head';
@@ -19,7 +21,7 @@ type EventRow = Row & { id: string; digest: string; envelope: string; ordinal: n
 
 /** Side-effect-free declaration. Both writer and reader actors import this exact realm/version. */
 export const loggingRealm = defineDatabaseRealm({
-  name: 'zero-logging', version: '5',
+  name: 'zero-logging', version: '6',
   tables: LOGGING_TABLES,
   migrations: [{
     version: '001', description: 'Index bounded scope, actor and resource investigations', safety: 'safe',
@@ -84,7 +86,7 @@ export const loggingRealm = defineDatabaseRealm({
     'logging.export.reserve': (context, input) => reserveLoggingExport(context, input, appendLoggingBatch),
     'logging.export.transition': (context, input) => transitionLoggingExport(context, input, appendLoggingBatch),
     'logging.checkpoint.append': appendLocalLoggingCheckpoint },
-  queries: { 'logging.page': readLoggingPage, 'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence,
+  queries: { 'logging.page': readLoggingPage, 'logging.changes': readLoggingChanges, 'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence,
     'logging.export': readLoggingExport, 'logging.exports.pending': pendingLoggingExports, 'logging.checkpoint.read': readLocalLoggingCheckpoint },
 });
 
@@ -159,15 +161,7 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
   const found = database.query<EventRow>('SELECT e.*,p.digest AS proof_digest,p.previous_hash,p.chain_hash,p.expired FROM logging_events e LEFT JOIN logging_proofs p ON p.id=e.id WHERE ' + predicate.sql + ' ORDER BY e.ordinal DESC LIMIT ?').all(...predicate.values, input.query.limit + 1);
   const events = []; let bytes = 1024;
   for (const row of found.slice(0, input.query.limit)) {
-    const event = normalizeLoggingEvent(JSON.parse(row.envelope));
-    // Indexed scope/filter fields must describe the retained envelope exactly.
-    const columns = { stream: event.stream, source_id: event.sourceId, event_id: event.id, scope_kind: event.scope.kind, tenant_id: event.scope.tenantId,
-      occurred_at: event.occurredAt, actor_id: event.actor.id, session_id: event.actor.sessionId, family: event.family, action: event.action,
-      level: event.level, outcome: event.outcome, target_type: event.target?.type ?? null, target_id: event.target?.id ?? null };
-    if (row.expired !== 0 || row.proof_digest !== row.digest || row.chain_hash !== loggingChainHash(String(row.previous_hash), row.ordinal, row.id, row.digest, row.ingested_at)
-      || row.id !== loggingDigest([event.sourceId, event.id]) || row.digest !== loggingDigest(event)
-      || Object.entries(columns).some(([key, value]) => row[key] !== value)) throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Stored logging evidence is inconsistent.');
-    const item = { event, ordinal: row.ordinal, ingestedAt: row.ingested_at }, size = loggingByteLength(item);
+    const item = projectLoggingStoredEvent(row), size = loggingByteLength(item);
     if (bytes + size > LOGGING_MAX_BATCH_BYTES) break;
     events.push(item); bytes += size;
   }

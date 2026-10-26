@@ -1,12 +1,12 @@
 /** Private logging storage port over an already-bound Fabric client. No native handles or caller-selected paths. */
 import type { AsyncDatabaseClient, DatabaseReadOptions, DatabaseSerializableValue } from '../databases/database-operations';
 import { DatabaseError } from '../databases/database-error';
-import type { LoggingEvent, LoggingPage, LoggingQuery, LoggingReadScope, LoggingReceipt, LoggingStream } from './logging-contracts';
+import type { LoggingChangePage, LoggingEvent, LoggingPage, LoggingQuery, LoggingReadScope, LoggingReceipt, LoggingStream } from './logging-contracts';
 import { LoggingError } from './logging-error';
 import { loggingDigest } from './logging-hash';
 import { normalizeLoggingQuery } from './logging-query';
 import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingArray, loggingByteLength, loggingChoice, normalizeLoggingEvent } from './logging-validation';
-import { readLoggingAppend, readLoggingPage } from './logging-results';
+import { readLoggingAppend, readLoggingChangePage, readLoggingPage } from './logging-results';
 import { loggingRecord } from './logging-validation';
 import type { LoggingCheckpoint, LoggingEvidenceCursor, LoggingEvidencePage, LoggingVerification } from './logging-evidence-contracts';
 import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
@@ -46,6 +46,13 @@ export class LoggingFabricStore implements LoggingBatchWriter {
     const input = normalizeLoggingQuery(this.stream, scope, query);
     const result = await this.data.query('logging.page', input as unknown as DatabaseSerializableValue, { consistency: { mode: 'snapshot' }, ...options });
     return readLoggingPage(result.value, input);
+  }
+
+  async changes(scope: LoggingReadScope, query: LoggingQuery, afterOrdinal: number): Promise<LoggingChangePage> {
+    if (!Number.isSafeInteger(afterOrdinal) || afterOrdinal < 0) throw new LoggingError('LOGGING_QUERY_INVALID', 'Logging change cursor is invalid.');
+    const input = normalizeLoggingQuery(this.stream, scope, query);
+    const result = await this.data.query('logging.changes', { ...input, afterOrdinal } as unknown as DatabaseSerializableValue, { consistency: { mode: 'snapshot' } });
+    return readLoggingChangePage(result.value, input, afterOrdinal);
   }
 
   /** @internal Fixed private commands only; request routes never receive this capability. */

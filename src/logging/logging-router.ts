@@ -9,7 +9,7 @@ import { projectLoggingHttpFailure } from './logging-http-error';
 import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 
 const stream = t.Union([t.Literal('audit'), t.Literal('operational')]);
-const query = t.Object({ limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })), since: t.Optional(t.Number()), until: t.Optional(t.Number()),
+const query = t.Object({ eventIds: t.Optional(t.Array(t.String({ maxLength: 1024 }), { maxItems: 100 })), limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })), since: t.Optional(t.Number()), until: t.Optional(t.Number()),
   beforeOrdinal: t.Optional(t.Number()), highWaterOrdinal: t.Optional(t.Number()), family: t.Optional(t.String({ maxLength: 32 })), action: t.Optional(t.String({ maxLength: 120 })),
   actorId: t.Optional(t.String({ maxLength: 200 })), sessionId: t.Optional(t.String({ maxLength: 200 })), targetType: t.Optional(t.String({ maxLength: 120 })), targetId: t.Optional(t.String({ maxLength: 200 })),
   outcome: t.Optional(t.String({ maxLength: 32 })), level: t.Optional(t.String({ maxLength: 16 })),
@@ -36,9 +36,9 @@ export function createLoggingRouter(options: { pageRecovery?: (request: Request)
     }
   };
   const routes = [
-    defineEndpoint({ method: 'POST', path: '/stream', body: t.Object({ stream, query, platform: t.Optional(t.Boolean()) }, { additionalProperties: false }), handler: ({ zero, body, request }) => run(async () => {
+    defineEndpoint({ method: 'POST', path: '/stream', body: t.Object({ stream, query, platform: t.Optional(t.Boolean()), afterOrdinal: t.Optional(t.Integer({ minimum: 0 })) }, { additionalProperties: false }), handler: ({ zero, body, request }) => run(async () => {
       if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.');
-      const data = await zero.logging.stream(body.stream, body.query as NonNullable<Parameters<NonNullable<typeof zero.logging>['page']>[1]>, request.signal, body.platform);
+      const data = await zero.logging.stream(body.stream, body.query as NonNullable<Parameters<NonNullable<typeof zero.logging>['page']>[1]>, request.signal, body.platform, body.afterOrdinal);
       return new Response(data, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'private, no-store, no-transform', 'X-Accel-Buffering': 'no', Vary: 'Authorization, Cookie' } });
     }) }),
     defineEndpoint({ method: 'POST', path: '/platform/events', body: t.Object({ stream, query }, { additionalProperties: false }), handler: ({ zero, body }) => run(() => {
