@@ -11,7 +11,7 @@ async function checked(args: string[]) {
   } finally { clearTimeout(timer); }
 }
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
-await checked(['prepare.ts']);
+if (!Bun.argv.includes('--resume')) await checked(['prepare.ts']);
 await checked(['node_modules/@zero/framework/src/cli/run.ts', 'build']);
 const expected = await Bun.file('./state/expected.json').json();
 for (let generation = 0; generation < 2; generation++) {

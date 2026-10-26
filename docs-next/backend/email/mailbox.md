@@ -56,7 +56,9 @@ sockets until an operation/subscription is used.
 An explicit alternative is:
 
 ```ts
-email: {
+import type { AppConfig } from '@zero/framework/server';
+
+export const email: AppConfig['email'] = {
   provider: 'smtp', from: 'Example <join@example.test>',
   smtp: { host: 'smtp.purelymail.com', port: 465 },
   imap: {
@@ -65,7 +67,7 @@ email: {
     maxMessageBytes: 25 * 1024 * 1024,
     // sentFolder: 'Sent', // opt in only when needed
   },
-},
+};
 ```
 
 The common connection fields follow [SMTP configuration](./smtp.md), using
@@ -108,13 +110,18 @@ A changed epoch raises `EMAIL_MAILBOX_RESYNC_REQUIRED`/409 instead of touching
 an unrelated message with a recycled UID.
 
 ```ts
-const page = await mailbox.list({ folder: 'INBOX', limit: 50 });
-const older = page.hasMore
-  ? await mailbox.list({
-      folder: page.folder, uidValidity: page.uidValidity,
-      beforeUid: page.nextBeforeUid, limit: 50,
-    })
-  : null;
+import type { ImapMailbox } from '@zero/framework/email';
+
+export async function recentPages(mailbox: ImapMailbox) {
+  const page = await mailbox.list({ folder: 'INBOX', limit: 50 });
+  const older = page.hasMore
+    ? await mailbox.list({
+        folder: page.folder, uidValidity: page.uidValidity,
+        beforeUid: page.nextBeforeUid, limit: 50,
+      })
+    : null;
+  return { page, older };
+}
 ```
 
 Pages scan bounded UID windows, not the entire mailbox. Deleted UIDs and search
@@ -139,10 +146,14 @@ update clients. Zero does not choose a shared/global mail table or tenant
 mapping on an application's behalf.
 
 ```ts
-for await (const change of mailbox.watch({ folder: 'INBOX', signal })) {
-  // change is a typed metadata event. Reconcile only the affected folder/UIDs
-  // through mailbox.list/read and the app's existing authorized data layer.
-  await inboxService.reconcile(change);
+import type { ImapMailbox, MailboxChange } from '@zero/framework/email';
+
+export async function watchInbox(mailbox: ImapMailbox, signal: AbortSignal,
+  inboxService: { reconcile(change: MailboxChange): Promise<void> }) {
+  for await (const change of mailbox.watch({ folder: 'INBOX', signal })) {
+    // Reconcile only affected folders/UIDs through the authorized app data layer.
+    await inboxService.reconcile(change);
+  }
 }
 ```
 

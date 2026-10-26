@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { collectSourceImportSpecifiers } from '../scripts/private-import-specifiers';
 
 interface PackageJson {
   scripts?: Record<string, string>;
@@ -81,10 +82,7 @@ describe('package build scripts', () => {
     for (const pattern of ['src/**/*.ts', 'src/**/*.tsx']) {
       for await (const pathname of new Bun.Glob(pattern).scan('.')) {
         const source = await Bun.file(pathname).text();
-        const imported = [
-          ...source.matchAll(/\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s*)?['"]([^'"]+)['"]/g),
-          ...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g),
-        ].map((match) => match[1]!);
+        const imported = collectSourceImportSpecifiers(pathname, source);
         expect(imported.filter((specifier) => specifier.startsWith('@/'))).toEqual([]);
         for (const specifier of imported) {
           if (specifier.startsWith('#zero/')) specifiers.add(specifier);
@@ -92,6 +90,10 @@ describe('package build scripts', () => {
       }
     }
 
+    // The generator deliberately retains these existing compatibility routes
+    // even when no current runtime import uses them. They are not removable by
+    // changing a synthetic fixture or by replacing the source inventory.
+    for (const retained of ['#zero/components/animate-ui/primitives/radix/popover', '#zero/components/ui/calendar', '#zero/components/ui/date-picker-value', '#zero/components/ui/time-picker-value']) specifiers.add(retained);
     expect(Object.keys(packageJson.imports ?? {}).sort()).toEqual([...specifiers].sort());
     for (const specifier of specifiers) {
       const target = packageJson.imports?.[specifier];

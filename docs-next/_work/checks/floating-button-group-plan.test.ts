@@ -133,7 +133,10 @@ test('working implementation records the complete public facade and promoted rol
   const tokens = implementation.tokens, catalog = getThemeTokenCatalog();
   expect(tokens.roleCount).toBe(57); expect(tokens.completeCatalogRoleCount).toBe(462);
   expect(tokens.suffixes).toHaveLength(57); expect(new Set(tokens.suffixes).size).toBe(57);
-  expect(catalog).toHaveLength(462);
+  // The recorded total belongs to that historical qualification snapshot; new
+  // unrelated semantic roles must not invalidate this family's exact inventory.
+  expect(catalog.length).toBeGreaterThanOrEqual(tokens.completeCatalogRoleCount);
+  expect(new Set(catalog.map(role => role.name)).size).toBe(catalog.length);
   expect(catalog.filter(role => role.name.startsWith(tokens.canonicalPrefix)).map(role => role.name).sort())
     .toEqual(tokens.suffixes.map((suffix: string) => `${tokens.canonicalPrefix}${suffix}`).sort());
   const css = await readSource('src/frontend/styles/theme-next.css');

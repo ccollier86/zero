@@ -36,9 +36,11 @@ For an existing app, use it in the normal app configuration:
 ```ts
 import { emailFromEnv } from '@zero/framework/email';
 
-// Inside createApp(...) or zero.config.ts:
-email: emailFromEnv(),
+export const email = emailFromEnv();
 ```
+
+Use that value for the `email` field of the existing app configuration; keep
+the app's database, tables, authorization and other configuration unchanged.
 
 Configure deployment secrets, not browser environment variables:
 
@@ -69,7 +71,9 @@ Environment helpers are optional. The equivalent trusted server configuration
 is:
 
 ```ts
-email: {
+import type { AppConfig } from '@zero/framework/server';
+
+export const email: AppConfig['email'] = {
   provider: 'smtp',
   from: 'Example <join@example.test>',
   replyTo: 'support@example.test',
@@ -79,7 +83,7 @@ email: {
     auth: { user: Bun.env.SMTP_USER, pass: Bun.env.SMTP_PASSWORD },
     timeoutMs: 30_000,
   },
-},
+};
 ```
 
 | Setting | Default and behavior |
@@ -104,7 +108,13 @@ reported by Doctor. There is no `rejectUnauthorized: false` option.
 In an authorized server handler, send through its owning app's service:
 
 ```ts
-const receipt = await zero.email.send({
+import { defineEndpoint } from '@zero/framework/server';
+
+export const sendReport = defineEndpoint({
+  method: 'POST', path: '/reports/email', auth: 'user',
+  handler: async ({ zero, request }) => {
+    zero.access.requirePlatformAdmin();
+    return zero.email.send({
   to: 'recipient@example.test',
   cc: 'copy@example.test',
   subject: 'Your report is ready',
@@ -115,6 +125,8 @@ const receipt = await zero.email.send({
     contentType: 'text/csv',
   }],
   signal: request.signal,
+    });
+  },
 });
 ```
 

@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import * as ts from 'typescript';
 import { fileURLToPath } from 'node:url';
-import { collectPrivateImportSpecifiers, privateImportMapsMatch } from './private-import-specifiers';
+import { collectPrivateImportSpecifiers, collectSourceImportSpecifiers, privateImportMapsMatch } from './private-import-specifiers';
 
 test('static imports and every literal re-export spelling remain in the inventory', () => {
   const source = `
@@ -64,6 +64,13 @@ test('computed and non-module call arguments are never guessed as literal import
     consume('#zero/caller-string');
   `;
   expect(collectPrivateImportSpecifiers('module.ts', source)).toEqual([]);
+});
+
+test('the source-wide build guard rejects actual app aliases but does not mistake Doctor fixture text for a dependency', async () => {
+  expect(collectSourceImportSpecifiers('module.ts', `import Real from '@/components/actual'; const text = "import Fake from '@/components/example';"; const lazy = import('@/lazy');`))
+    .toEqual(['@/components/actual', '@/lazy']);
+  const fixture = await Bun.file(new URL('../src/doctor/source-only-upgrade-checks.test.ts', import.meta.url)).text();
+  expect(collectSourceImportSpecifiers('fixture.test.ts', fixture).filter(value => value.startsWith('@/'))).toEqual([]);
 });
 
 test('escaped and repeated real literal targets are decoded, deduplicated and deterministic', () => {

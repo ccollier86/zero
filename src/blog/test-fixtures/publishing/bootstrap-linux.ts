@@ -8,7 +8,8 @@ for (const [source, target] of [['zero.config.ts', 'zero.config.ts'], ['logging-
   await cp('/fixture/' + source, './' + target);
 }
 await Bun.write('./.env', 'ZERO_SYNTHETIC_DOTENV_SECRET=fixture-only\n');
-for (const args of [['install', '--ignore-scripts'], ['qualify.ts']]) {
+const commands = Bun.argv.includes('--resume') ? [['qualify.ts', '--resume']] : [['install', '--ignore-scripts'], ['qualify.ts']];
+for (const args of commands) {
   const child = Bun.spawn([process.execPath, '--no-env-file', ...args], { stdout: 'inherit', stderr: 'inherit', env: { PATH: process.env.PATH, BUN_INSTALL_CACHE_DIR: '/cache' } });
   const timer = setTimeout(() => child.kill(), 360000);
   const status = await child.exited; clearTimeout(timer);

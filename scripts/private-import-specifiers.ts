@@ -1,14 +1,14 @@
 /** Pure private-import syntax inventory and map comparison; never executes source, resolves modules or reads configuration. */
 import * as ts from 'typescript';
 
-/** Collect actual literal import/re-export/type-import/import-equals and direct dynamic import/require targets. */
-export function collectPrivateImportSpecifiers(filename: string, source: string): readonly string[] {
+/** Collect actual literal import/re-export/type-import/import-equals and direct dynamic import/require targets, never examples inside strings or comments. */
+export function collectSourceImportSpecifiers(filename: string, source: string): readonly string[] {
   const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, false,
     /\.tsx$/u.test(filename) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const specifiers = new Set<string>();
   const pending: ts.Node[] = [file];
   const include = (node: ts.Node | undefined): void => {
-    if (node && ts.isStringLiteralLike(node) && node.text.startsWith('#zero/')) specifiers.add(node.text);
+    if (node && ts.isStringLiteralLike(node)) specifiers.add(node.text);
   };
   while (pending.length) {
     const node = pending.pop()!;
@@ -20,6 +20,11 @@ export function collectPrivateImportSpecifiers(filename: string, source: string)
     ts.forEachChild(node, child => { pending.push(child); });
   }
   return [...specifiers].sort();
+}
+
+/** Preserve the exact package-private alias inventory used by the map generator. */
+export function collectPrivateImportSpecifiers(filename: string, source: string): readonly string[] {
+  return collectSourceImportSpecifiers(filename, source).filter(specifier => specifier.startsWith('#zero/'));
 }
 
 /** Compare every exact own mapping without treating object-key presentation order as a stale alias. */

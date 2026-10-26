@@ -104,5 +104,10 @@ test('taxonomy ancestry, slug uniqueness and reference deletion are enforced in 
     expect((await f.query('blog.public.terms', { siteId: 'application', ids: Array.from({ length: 101 }, () => 'child') })).code).toBe('BLOG_INVALID_INPUT');
     expect((await f.query('blog.public.taxonomy-sitemap', { siteId: 'application' })).value).toEqual([{ id: 'child', kind: 'category' }]);
     expect((await f.query('blog.posts', { public: true, siteId: 'application', query: { categoryId: 'child' } })).value.total).toBe(1);
+    await f.command('blog.term.write', { actor, id: 'child', expectedRevision: 1, term: { ...term, slug: 'orchids', name: 'Orchids', parentId: 'botany', noIndex: true } });
+    expect((await f.query('blog.public.taxonomy-sitemap', { siteId: 'application' })).value).toEqual([]);
+    expect((await f.query('blog.public.terms', { siteId: 'application', ids: ['child'] })).value).toHaveLength(1);
+    await f.command('blog.post.state', { actor, id: 'post-taxonomy', expectedRevision: 2, action: 'withdraw' });
+    expect((await f.query('blog.public.terms', { siteId: 'application', ids: ['child'] })).value).toEqual([]);
   } finally { await f.close(); }
 }, 30000);

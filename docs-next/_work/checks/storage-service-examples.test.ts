@@ -53,6 +53,6 @@ test('Guardian/Storage and service Markdown examples compile against actual publ
     return `${diagnostic.file?.fileName.split('/').at(-1) ?? 'compiler'}${line ? `:${line}` : ''} TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`;
   });
   // Includes the adaptive profile organism and required-completion flow examples.
-  expect(fixtures.size).toBe(53);
+  expect(fixtures.size).toBe(60);
   expect(diagnostics).toEqual([]);
 }, 30_000);

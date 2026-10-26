@@ -61,6 +61,29 @@ The selected main archive is unchanged. Unreleased work is not update-ready.
   `zero build` → two compiled server generations, strict audit admission,
   retained identities/history, native normalized image delivery and browser-only
   editor bundling. This host check is not the Linux/amd64 qualification.
+- Candidate `32823628d0276fde56f3e78f98e256397a6b1bfb`, archive
+  `/Volumes/code-bank/artifacts/zero-platform/dev/blog/3282362/zero-framework.tgz`,
+  SHA-256 `89268134a425315b4bf4ff99f0123d564a5f947846269832bfa76adc526632e7`,
+  also passed the public consumer protocol in an isolated Linux/x64 Bun 1.3.14
+  container: source preparation, official build and two compiled server starts.
+  A diagnostic resume and a subsequent fresh synthetic-state run passed. An
+  initial run during competing host qualification failed actor startup; the
+  underlying reason was not established. No authorization, checksums, startup
+  deadlines or runtime behavior was relaxed to obtain the passing runs. This is
+  not a cold-start latency/stress guarantee and is not the selected update.
+- Full-suite preflight identified existing main failures in a regex import guard,
+  historical theme count, and malformed SMTP/IMAP documentation snippets.
+  Corrections keep exact real-import checks/retained compatibility mappings and
+  compile all 60 service examples. Missing independent Chrome source and payments
+  dependencies are qualification prerequisites, not shipped blog dependencies.
+
+The admitted Chrome source fixture is clean child commit
+`622ef4e4eeb2577510417d0405286c7771765fe4`, tree
+`3a512e1620c18a02bbe4d50cb9b9d569932a5295`, tar SHA-256
+`4b61c262ecab99041b3b0c20995f2fe2c540389a7c566de85fc55bf1e0ecc59b`.
+It is excluded from the framework archive. Initial full-suite preflight was
+stopped after failures; it is not a full-suite pass. Exact final candidate
+qualification must be rerun with the declared prerequisites and scratch root.
 
 These are focused checks, not a complete release claim. Exact candidate archive,
 installed Linux/bundle qualification and final review remain required.
