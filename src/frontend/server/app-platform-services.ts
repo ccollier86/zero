@@ -51,6 +51,7 @@ import { ManagedPresencePublisher } from '../../presence/presence-managed-publis
 import { createPresencePlugin } from '../../presence/presence.plugin';
 import { composeManagedUserAvatars } from './app-user-avatars';
 import { mountManagedBlog } from './app-blog';
+import { mountManagedMessaging } from './app-messaging';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import { ZERO_DATABASE_MANAGER } from '../../runtime/service-keys';
 import { createAuthPlatformCodeEmitter } from '../../auth/auth-observability';
@@ -283,6 +284,7 @@ export async function mountPlatformServices({
   // the plugin reuses this same single-flight initializer when listen() runs.
   await Promise.all(managedInitializers.map((initialize) => initialize()));
   await mountManagedBlog({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
+  await mountManagedMessaging({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
 }
 
 interface WorkflowMountInput {

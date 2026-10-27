@@ -25,6 +25,7 @@ import type { ResolvedConfig } from './types';
 import { ZERO_GUARDIAN_PRESENCE } from '../../presence/presence-service';
 import { createPresenceSyncTransport } from '../../presence/presence-sync-transport';
 import { managedLoggingSyncAdmission } from './app-logging-sync-admission';
+import { authorizeMessagingTyping } from '../../messaging/sync-policy';
 
 interface MountAppSyncEngineInput {
   readonly app: Elysia;
@@ -95,6 +96,7 @@ export function mountAppSyncEngine({
     ephemeralPolicy: config.auth !== false
       ? createManagedEphemeralTopicPolicy({
           getRoomService: () => runtime.get(ZERO_ROOM_SERVICE),
+          authorizeMessaging: (context, scope) => authorizeMessagingTyping(runtime, context, scope),
           customPolicy: config.ephemeralPolicy,
           tenancyMode: authConfig.tenancy.mode,
         })

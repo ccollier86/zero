@@ -36,6 +36,12 @@ The remaining backend is a complete-messaging release gate, not an application i
 left to every consumer. Do not present the frontend parts as a complete messaging
 product or build a production app against an invented SDK method.
 
+The isolated `feature/messaging-backend` branch has started the canonical actor
+persistence slice. Its [implementation checkpoint](../../_work/messaging-backend-implementation.md)
+distinguishes those real-file command/query tests from the still-unfinished
+managed HTTP/SDK, Storage, AI, channel and installed-deployment work. The stable
+package described here does not yet expose the proposed `client.messaging` API.
+
 | Layer | Current status | Required completion |
 | --- | --- | --- |
 | Typing | Implemented with real room authorization, transient Sync, server-relative freshness and browser lifecycle tests | Complete conversation-membership integration |

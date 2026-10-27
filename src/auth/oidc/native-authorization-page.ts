@@ -32,6 +32,9 @@ function scopeDisclosures(scopes: string[]): string[] {
   if (scopes.includes('blog:read')) values.push('Read blog drafts you are permitted to access');
   if (scopes.includes('blog:write')) values.push('Create and edit permitted blog drafts and media');
   if (scopes.includes('blog:publish')) values.push('Publish and withdraw permitted blog articles');
+  if (scopes.includes('messaging:read')) values.push('Read conversations you are a current participant in');
+  if (scopes.includes('messaging:write')) values.push('Send messages and manage your permitted conversations and contacts');
+  if (scopes.includes('messaging:support')) values.push('Use support queues and takeover only with your current staff permissions');
   if (scopes.includes('phone')) values.push('Your configured phone number and its verification status');
   if (scopes.includes('contacts:write')) values.push('Edit and verify your permitted email and phone contact details');
   if (scopes.includes('email')) values.push('Your email address and verification status');

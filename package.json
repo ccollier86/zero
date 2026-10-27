@@ -315,6 +315,14 @@
       "types": "./src/components/messaging/index.ts",
       "import": "./src/components/messaging/index.ts"
     },
+    "./messaging/server": {
+      "types": "./src/messaging/index.ts",
+      "import": "./src/messaging/index.ts"
+    },
+    "./messaging/client": {
+      "types": "./src/messaging/client-contracts.ts",
+      "import": "./src/messaging/client-contracts.ts"
+    },
     "./components/messaging": {
       "types": "./src/components/messaging/index.ts",
       "import": "./src/components/messaging/index.ts"

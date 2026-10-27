@@ -6,7 +6,7 @@ import type { NativeAuthorizationRequest, NativeIdentityScope } from './types';
 const TRANSACTION_VALUE = /^[A-Za-z0-9._~-]{32,512}$/;
 const CLIENT_ID = /^[A-Za-z0-9._~-]{1,128}$/;
 const SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
-const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write', 'blog:read', 'blog:write', 'blog:publish']);
+const IDENTITY_SCOPES = new Set<NativeIdentityScope>(['openid', 'profile', 'email', 'phone', 'profile:write', 'contacts:write', 'blog:read', 'blog:write', 'blog:publish', 'messaging:read', 'messaging:write', 'messaging:support']);
 
 export function parseNativeAuthorizationRequest(
   input: URL | URLSearchParams
@@ -37,6 +37,7 @@ export function parseNativeAuthorizationRequest(
   if (scopes.includes('blog:read') && !scopes.includes('profile') || scopes.includes('blog:write') && !scopes.includes('blog:read') || scopes.includes('blog:publish') && !scopes.includes('blog:write')) {
     fail('invalid_scope', 'Blog scopes require profile, blog:read and blog:write dependencies.');
   }
+  if (scopes.includes('messaging:read') && !scopes.includes('profile') || scopes.includes('messaging:write') && !scopes.includes('messaging:read') || scopes.includes('messaging:support') && !scopes.includes('messaging:write')) fail('invalid_scope', 'Messaging scopes require profile, messaging:read and messaging:write dependencies.');
   const nonce = transaction(params, 'nonce');
   const responseMode = optional(params, 'response_mode');
   if (responseMode && responseMode !== 'query') {

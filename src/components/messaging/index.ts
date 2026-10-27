@@ -5,5 +5,6 @@ export { MessageBubble, MessageDeliveryIndicator, type MessageBubbleProps, type 
 export { ConversationTypingIndicator, ConversationAssistantActivity, type ConversationTypingIndicatorProps, type ConversationAssistantActivityProps } from './conversation-activity';
 export { MessagingComposer, type MessagingComposerProps, type MessagingComposerFile } from './messaging-composer';
 export { useConversationTyping, type UseConversationTypingOptions, type UseConversationTypingReturn } from './use-conversation-typing';
+export { useMessagingTyping } from './use-messaging-typing';
 export { conversationActivityLabel, conversationActivityMembers, type ConversationActivityMember } from '../../messaging/activity';
 export type * from '../../messaging/presentation';

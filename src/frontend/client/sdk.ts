@@ -145,6 +145,8 @@ import { createEmailInboxSource, type EmailInboxSdkSurface } from './email-inbox
 import { createLoggingClient } from './logging-client';
 import { createBlogClient } from './blog-client';
 import type { BlogClient } from '../../blog/client-contracts';
+import { createMessagingClient } from './messaging-client';
+import type { MessagingClient } from '../../messaging/client-contracts';
 import type { LoggingClient } from '../../logging/logging-api-contracts';
 
 /**
@@ -764,6 +766,7 @@ export interface Client extends AuthAdminSdkSurface {
   readonly payments: PaymentsClient;
   readonly logging: LoggingClient;
   readonly blog: BlogClient;
+  readonly messaging: MessagingClient;
 
   // ─── Data ────────────────────────────────────────────────────────
 
@@ -959,6 +962,7 @@ export function createClient(config: ClientConfig): Client {
   let emailInbox!: EmailInboxSdkSurface;
   let logging!: LoggingClient;
   let blog!: BlogClient;
+  let messaging!: MessagingClient;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -983,6 +987,7 @@ export function createClient(config: ClientConfig): Client {
     emailInbox?.clear();
     logging?.clear();
     blog?.clear();
+    messaging?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -1004,6 +1009,7 @@ export function createClient(config: ClientConfig): Client {
     emailInbox?.clear();
     logging?.clear();
     blog?.clear();
+    messaging?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();
@@ -1229,6 +1235,7 @@ export function createClient(config: ClientConfig): Client {
   emailInbox = createEmailInboxSource(clientFetch);
   logging = createLoggingClient(clientFetch);
   blog = createBlogClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
+  messaging = createMessagingClient(clientFetch);
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();
@@ -1254,6 +1261,7 @@ export function createClient(config: ClientConfig): Client {
       emailInbox.clear();
       logging.clear();
       blog.clear();
+      messaging.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1391,6 +1399,7 @@ export function createClient(config: ClientConfig): Client {
     get emailInbox() { return emailInbox; },
     get logging() { return logging; },
     get blog() { return blog; },
+    get messaging() { return messaging; },
     get presence() { return presenceClient; },
     vectorVisualization,
     vectorVisualizationFor,
@@ -1639,6 +1648,7 @@ export function createClient(config: ClientConfig): Client {
       emailInbox.clear();
       logging.clear();
       blog.clear();
+      messaging.clear();
       _instance = null;
     },
   };

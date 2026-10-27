@@ -17,6 +17,8 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Durable messaging implementation](./messaging-backend-implementation.md): actor
+  persistence checkpoint, remaining service boundaries and release gates.
 - [Blog publishing implementation](./blog-publishing-implementation.md): private Fabric
   content, publication snapshots, media, metrics and the remaining presentation,
   editing and release qualification gates. Unreleased feature work is not the

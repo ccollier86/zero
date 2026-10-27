@@ -19,6 +19,8 @@ export interface EphemeralRoomMembershipService {
 }
 
 export interface ManagedEphemeralTopicPolicyOptions {
+  /** Reserved durable conversations must prove membership in their canonical Fabric file. */
+  authorizeMessaging?: (context: EphemeralTopicPolicyContext, scope: ServiceDataScope) => Promise<EphemeralTopicDecision>;
   getRoomService: () => EphemeralRoomMembershipService | null;
   /** Explicit policy for non-reserved application collaboration topics. */
   customPolicy?: EphemeralTopicPolicy;
@@ -62,6 +64,10 @@ export function createManagedEphemeralTopicPolicy(
 
       if (context.topic.startsWith(PRESENCE_PREFIX)) {
         return authorizeRoomTopic('presence', PRESENCE_PREFIX, context, options, scope);
+      }
+      if (context.topic.startsWith('typing:messaging:')) {
+        if (!options.authorizeMessaging) return deny('EPHEMERAL_POLICY_UNAVAILABLE', 'Managed messaging is unavailable');
+        return options.authorizeMessaging(context, scope);
       }
       if (context.topic.startsWith(TYPING_PREFIX)) {
         return authorizeRoomTopic('typing', TYPING_PREFIX, context, options, scope);
