@@ -464,6 +464,9 @@ git diff --check
    The declared-build deployment file also owns a window: its compiled executable
    cold native-loader admission remains bounded independently from the unchanged
    20s application-start limit, without competing archive extraction/browser builds.
+   The generated native session/audit recovery browser file likewise owns its
+   strict 60s scenarios and real logging actors; its blocked-delivery, refresh,
+   live-record, hard-reload, new-tab and revocation checks are never bypassed.
    The slot stays owned through process, descendant
    and output retirement. This changes admission overlap, not inventories,
    assertions, deadlines, cleanup requirements or failure handling. Review

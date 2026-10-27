@@ -4,7 +4,8 @@ import { FRAMEWORK_INSTALLED_CONSUMER_FILES, EXCLUSIVE_TEST_FILES, isFrameworkIn
 
 test('only the reviewed cold-I/O and explicit hot-auth performance gates reserve an exclusive execution window', () => {
   expect(EXCLUSIVE_TEST_FILES).toEqual(['packages/payments/src/package.test.ts', 'src/frontend/server/auth-hot-admission.integration.test.ts', 'src/frontend/server/auth-hot-mutations.integration.test.ts',
-    'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts', 'src/build/build-app.test.ts']);
+    'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts', 'src/build/build-app.test.ts',
+    'src/frontend/client/session-audit-recovery.browser.test.ts']);
   expect(isExclusiveTestFile('packages/payments/src/package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/blog/blog-publishing.package.test.ts')).toBe(false);
 });

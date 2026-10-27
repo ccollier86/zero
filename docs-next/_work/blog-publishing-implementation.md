@@ -283,3 +283,10 @@ its entry marker, while the earlier app startup itself took 66ms. Its next run
 owns an exclusive test window, preserving the original native/app deadlines and
 all relocation/signature assertions. None of these edits changes app routes,
 authority, historical migrations or a consuming app's custom public theme.
+
+The generated native session/audit browser file also times out its first 60s
+scenario in that shared-load run, then fails another actor startup and is killed
+with `SIGKILL`; this is retained failed evidence, not a diagnosed native crash.
+Its next run has an exclusive window too, preserving its actual first-login,
+blocked/retry, live burst, page cursor, hard-refresh/new-tab and revocation checks.
+No protected UI, collector, auth behavior or browser assertion was removed.
