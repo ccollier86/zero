@@ -31,3 +31,11 @@ test('jobs default to maximum bounded concurrency and assistant policy changes c
   expect(first.assistant.policyHash).toMatch(/^[a-f0-9]{64}$/); expect(same.assistant.policyHash).toBe(first.assistant.policyHash); expect(changed.assistant.policyHash).not.toBe(first.assistant.policyHash);
   for (const input of [{ assistant: {} }, { support: {}, assistant: { maxOutputTokens: 8193 } }, { jobs: { concurrency: 101 } }, { jobs: { concurrency: 0 } }, { notifications: 'yes' }]) expect(() => resolve(input)).toThrow();
 });
+
+test('native notification links are configurable local paths, never caller-selected external URLs', () => {
+  const auth = resolveAuthBehaviorConfig(), resolve = (input: unknown) => resolveMessagingConfig(input as never, '/synthetic-project', auth);
+  expect(resolve({ notifications: true })).toMatchObject({ notifications: true, notificationPath: '/messages' });
+  expect(resolve({ notifications: { path: '/app/messages' } })).toMatchObject({ notifications: true, notificationPath: '/app/messages' });
+  expect(resolve({ notifications: false })).toMatchObject({ notifications: false });
+  for (const path of ['https://hostile.example', '//hostile.example', '/\\hostile.example', '/messages?tenant=other', '/messages#fragment', '/messages\n', '/' + 'x'.repeat(400)]) expect(() => resolve({ notifications: { path } })).toThrow();
+});

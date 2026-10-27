@@ -12,6 +12,7 @@ import { executeMessagingJob, type MessagingJobContext, type MessagingJobExecuti
 import { MESSAGING_JOB_PRINCIPAL, MESSAGING_JOB_WORKFLOW } from './jobs-workflow';
 import { TERMINAL_MESSAGING_JOBS, type MessagingJobRow, type MessagingJobState } from './job-model';
 import { messagingHash, messagingId } from './validation';
+import type { MessagingNotificationContext } from './notification-queries';
 
 export const ZERO_MESSAGING_JOBS = createZeroRuntimeServiceKey<MessagingJobs>('Managed messaging jobs');
 export class MessagingJobs {
@@ -99,7 +100,7 @@ export class MessagingJobs {
             if (job.workflow_id) {
               const instance = this.workflow!.get(job.workflow_id, scope);
               if (instance && ['pending', 'running', 'paused'].includes(instance.status)) { this.scheduled.set(key, { scope, workflowId: job.workflow_id }); continue; }
-              await this.reconcileTerminal(scope, job); continue;
+              await this.reconcileTerminal(scope, job, instance?.status ?? null); continue;
             }
             this.scheduled.set(key, { scope, workflowId: null });
             try {
@@ -123,8 +124,16 @@ export class MessagingJobs {
     });
     return this.pumping;
   }
-  private async reconcileTerminal(scope: ServiceDataScope, job: MessagingJobRow): Promise<void> {
+  private async reconcileTerminal(scope: ServiceDataScope, job: MessagingJobRow & { workflow_id?: string | null }, workflowStatus: string | null): Promise<void> {
     const scopeId = serviceDataScopeKey(scope), nonce = 'reconcile_' + crypto.randomUUID(), check = () => this.assertOpen();
+    if (job.kind === 'notification' && job.dispatch_generation < 2 && this.deps.config.notifications && this.deps.notifications && workflowStatus === 'failed' && job.workflow_id) {
+      const source = await this.deps.runtime.read<MessagingNotificationContext>(scope, 'messaging.notification.context', { scopeId, id: job.id }, check);
+      if (source.audiencePresent) {
+        await this.deps.runtime.write(scope, 'messaging.notification.redispatch', { scopeId, id: job.id, generation: job.dispatch_generation, workflowId: job.workflow_id },
+          'notice-redispatch:' + messagingHash([scopeId, job.id, job.dispatch_generation]), check);
+        this.wake(scope); return;
+      }
+    }
     const claimed = await this.deps.runtime.write<{ state: MessagingJobState }>(scope, 'messaging.job.claim', { scopeId, id: job.id, nonce, policyHash: this.deps.config.assistant ? this.deps.config.assistant.policyHash : null, leaseMs: 10000 }, 'job-reconcile:' + nonce, check);
     if (!TERMINAL_MESSAGING_JOBS.has(claimed.state)) await this.deps.runtime.write(scope, 'messaging.job.review', { scopeId, id: job.id, nonce, code: 'WORKFLOW_REQUIRES_RECONCILIATION' }, 'job-review:' + nonce, check);
   }

@@ -54,3 +54,30 @@ test('effect inputs reject getters, metadata, unbounded audiences and external n
     expect(db.prepare('SELECT COUNT(*) AS count FROM notifications').get()).toEqual({ count: 0 });
   } finally { db.dispose(); }
 });
+
+test('a current recipient policy narrows first publication atomically but never changes or repeats an accepted audience', () => {
+  const { db, service } = fixture();
+  try {
+    let admitted = 'user-a', evaluations = 0;
+    const filter = (id: string) => { evaluations++; return id === admitted; };
+    const first = service.notifyUsersOnce('narrowed', ['user-a', 'user-b'], { title: 'New message' }, undefined, applicationServiceDataScope(), undefined, filter);
+    expect(JSON.parse(service.getById(first.notificationId!)!.target_value!)).toEqual(['user-a']); expect(evaluations).toBe(2);
+    admitted = 'user-b'; const replay = service.notifyUsersOnce('narrowed', ['user-a', 'user-b'], { title: 'New message' }, undefined, applicationServiceDataScope(), undefined, filter);
+    expect(replay).toEqual({ ...first, duplicate: true }); expect(evaluations).toBe(2);
+    expect(JSON.parse(service.getById(first.notificationId!)!.target_value!)).toEqual(['user-a']);
+    expect(service.notifyUsersOnce('none-eligible', ['user-a'], { title: 'New message' }, undefined, applicationServiceDataScope(), undefined, () => false)).toEqual({ notificationId: null, duplicate: false, retained: false });
+    expect(() => service.notifyUsersOnce('async-policy', ['user-a'], { title: 'New message' }, undefined, applicationServiceDataScope(), undefined, (async () => true) as never)).toThrow('synchronous');
+    expect(db.prepare('SELECT COUNT(*) AS count FROM notifications').get()).toEqual({ count: 1 });
+  } finally { db.dispose(); }
+});
+
+test('missing or changed immutable receipt controls fail before native publication and are not silently repaired', () => {
+  const { db, service } = fixture();
+  try {
+    service.notifyUsersOnce('qualified-schema', ['user-a'], { title: 'New message' });
+    db.exec('DROP TRIGGER notification_effect_receipt_no_delete');
+    expect(() => service.notifyUsersOnce('missing-control', ['user-a'], { title: 'New message' })).toThrow('reviewed SYSTEM migration');
+    expect(db.prepare('SELECT COUNT(*) AS count FROM notifications').get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name='notification_effect_receipt_no_delete'").get()).toBeNull();
+  } finally { db.dispose(); }
+});

@@ -10,6 +10,8 @@ import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { Row } from '../sync/types';
 import { publishNotificationOnce, type NotificationEffectReceipt, type NotificationOnceParams } from './notification-effects';
+import { invokeSynchronousAuthCallback } from '../auth/auth-synchronous-callback';
+import { AuthError } from '../auth/types';
 import type {
   NotificationRecord,
   NotificationReceiptRecord,
@@ -157,10 +159,19 @@ export class NotificationService {
 
   /** Persist an exact-user effect once, even after its notice expires or is deleted. The caller owns a stable scoped effect identity. */
   notifyUsersOnce(effectId: string, userIds: readonly string[], params: NotificationOnceParams, senderId?: string,
-    scope?: ServiceDataScope, commitFence?: NotificationCommitFence): NotificationEffectReceipt {
+    scope?: ServiceDataScope, commitFence?: NotificationCommitFence, recipientFilter?: (userId: string) => boolean): NotificationEffectReceipt {
     const boundary = this.requireScope(scope);
     return publishNotificationOnce(this.db, effectId, userIds, params, senderId, boundary, commitFence,
-      (users, captured) => this.notifyUsers(users, captured, senderId, boundary, commitFence));
+      (users, captured, fence) => {
+        // A trusted subsystem can only narrow the accepted candidates. It runs
+        // inside the same SYSTEM commit and is not reevaluated on receipt replay.
+        const admitted = recipientFilter ? users.filter(id => {
+          const result = invokeSynchronousAuthCallback(() => recipientFilter(id), { component: 'notifications', invariant: 'effect-recipient-policy', message: 'Notification recipient policy must be synchronous.' });
+          if (typeof result !== 'boolean') throw new AuthError('Notification recipient policy is invalid.', 'NOTIFICATION_INPUT_INVALID', 422);
+          return result;
+        }) : users;
+        return admitted.length ? this.notifyUsers(admitted, captured, senderId, boundary, fence) : null;
+      });
   }
 
   /** Notify all users with a specific role. */

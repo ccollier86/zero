@@ -22,6 +22,8 @@ export interface MessagingDirectory {
   /** Must be synchronous and return no authority supplied by the client. */
   assertRecipient(scope: ServiceDataScope, userId: string): void;
   list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }): MessagingPage<MessagingDirectoryEntry>;
+  /** Synchronous current SYSTEM eligibility, evaluated only when a new native notice is first committed. */
+  notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean): boolean;
 }
 export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void } }
 export const ZERO_MESSAGING = createZeroRuntimeServiceKey<MessagingService>('Managed messaging service');
@@ -142,7 +144,7 @@ export class MessagingService {
         send: (conversationId, input, options) => {
           const r = messagingRecord(input, ['text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch']), opts = mutation(options);
           return afterCommit(write<DurableMessage>('messaging.message.send', { ...r, conversationId: messagingId(conversationId), id: 'message_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40), maxMessageLength: this.deps.config.maxMessageLength,
-            assistantEnabled: Boolean(assistantPolicy), assistantPolicy, notificationsEnabled: this.deps.config.notifications }, opts), accepted => message(conversationId, accepted.id, opts.signal));
+            assistantEnabled: Boolean(assistantPolicy), assistantPolicy, notificationsEnabled: this.deps.config.notifications, notificationPath: this.deps.config.notificationPath }, opts), accepted => message(conversationId, accepted.id, opts.signal));
         },
         edit: (conversationId, id, revision, text, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), text: messagingText(text, this.deps.config.maxMessageLength), action: 'edit', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy }, opts), () => message(conversationId, id, opts.signal)),
         remove: (conversationId, id, revision, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy }, opts), () => message(conversationId, id, opts.signal)),

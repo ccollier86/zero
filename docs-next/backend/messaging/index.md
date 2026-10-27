@@ -54,6 +54,11 @@ and installed Linux/browser release qualification. The stable package described
 here does not yet expose the branch's `client.messaging` API. Do not copy a
 feature-branch example into an older archive based on the `2.6.0` label alone.
 
+The subsequent branch-only [native notification integration](./notifications.md)
+uses fixed private source audiences and permanent SYSTEM receiver receipts. Its
+native recovery tests do not complete public portal/Messenger channels, the
+managed workspace, or normal peer-chat delivery-review tooling.
+
 | Layer | Current status | Required completion |
 | --- | --- | --- |
 | Typing | Implemented with real room authorization, transient Sync, server-relative freshness and browser lifecycle tests | Complete conversation-membership integration |

@@ -34,6 +34,38 @@ async function fixture() {
 const claim = (id: string, nonce: string) => ({ scopeId: 'application', id, nonce, policyHash: policy, leaseMs: 30000 });
 const ref = (id: string, nonce: string) => ({ scopeId: 'application', id, nonce });
 
+test('only a qualified native notice can recover an admitted call; its fixed source audience and receiver completion survive restart', async () => {
+  const f = await fixture();
+  try {
+    await f.command('messaging.support.claim', { actor: staff, id: 'support-one', requestId: 'notice-staff', expectedEpoch: 1, maxParticipants: 100 });
+    await f.send('notice-turn', { assistantEnabled: false, notificationsEnabled: true }); const job = (await f.pending())[0]!;
+    expect(job.kind).toBe('notification');
+    const read = () => f.runtime.read<{ audiencePresent: boolean; recipients: unknown[]; currentRecipientIds: string[] }>(scope, 'messaging.notification.context', { scopeId: 'application', id: job.id }, guard);
+    expect(await read()).toMatchObject({ audiencePresent: true, recipients: [{ id: staff.id, staff: true }], currentRecipientIds: [staff.id] });
+    await f.command('messaging.conversation.read', { actor: staff, id: 'support-one', requestId: 'notice-seen-in-chat', throughSequence: 1 });
+    expect(await read()).toMatchObject({ recipients: [{ id: staff.id, staff: true }], currentRecipientIds: [] });
+    await f.command('messaging.job.claim', claim(job.id, 'native-first')); await f.command('messaging.job.call', ref(job.id, 'native-first'));
+    await f.restart(); expect(await f.command('messaging.job.claim', claim(job.id, 'native-recovered'))).toEqual({ state: 'claimed' });
+    await f.command('messaging.job.call', ref(job.id, 'native-recovered'));
+    expect(await f.command('messaging.notification.complete', { ...ref(job.id, 'native-recovered'), notificationId: null })).toEqual({ state: 'accepted' });
+    expect((await f.context(job.id)).job).toMatchObject({ state: 'accepted', attempts: 2, provider_id: null });
+  } finally { await f.close(); }
+}, 30000);
+
+test('native redispatch binds the previous failed workflow generation rather than broadening external-call retry permission', async () => {
+  const f = await fixture();
+  try {
+    await f.send('notice-generation', { assistantEnabled: false, notificationsEnabled: true }); const job = (await f.pending())[0]!;
+    await f.command('messaging.job.dispatch', { scopeId: 'application', id: job.id, generation: 0, workflowId: 'synthetic-failed-instance' });
+    await f.command('messaging.job.claim', claim(job.id, 'failed-native')); await f.command('messaging.job.call', ref(job.id, 'failed-native'));
+    const input = { scopeId: 'application', id: job.id, generation: 0, workflowId: 'synthetic-failed-instance' };
+    await expect(f.command('messaging.notification.redispatch', { ...input, workflowId: 'different-instance' })).rejects.toMatchObject({ code: 'MESSAGING_JOB_CONFLICT' });
+    expect(await f.command('messaging.notification.redispatch', input)).toEqual({ state: 'pending' });
+    expect((await f.context(job.id)).job).toMatchObject({ state: 'pending', dispatch_generation: 1, attempts: 1 });
+    await expect(f.command('messaging.notification.redispatch', input)).rejects.toMatchObject({ code: 'MESSAGING_JOB_CONFLICT' });
+  } finally { await f.close(); }
+}, 30000);
+
 test('a received private result resumes after restart without another invocation and publishes one canonical assistant reply', async () => {
   const f = await fixture();
   try {

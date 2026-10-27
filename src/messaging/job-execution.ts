@@ -12,12 +12,16 @@ import { messagingHash, messagingId } from './validation';
 import type { MessagingJobRow, MessagingJobState } from './job-model';
 import { TERMINAL_MESSAGING_JOBS } from './job-model';
 import { AuthError } from '../auth/types';
+import type { ReactiveDB } from '../sync/reactive-db';
+import type { NotificationService } from '../notifications/notification-service';
+import { executeMessagingNotification } from './notification-execution';
 export interface MessagingJobContext {
   job: MessagingJobRow; valid: boolean; customerId: string | null; customerKind: 'user' | 'external' | 'assistant' | null;
   attachmentOnly: boolean; messages: { role: 'user' | 'assistant'; content: string }[]; result: { text: string; provider_id: string | null } | null;
 }
 export interface MessagingJobExecutionDependencies {
   runtime: MessagingRuntime; config: ResolvedMessagingConfig; directory: MessagingDirectory; ai: AIService | null; logging: LoggingRuntime | null;
+  system: ReactiveDB; notifications: NotificationService | null;
   assertOpen(): void;
 }
 export async function executeMessagingJob(deps: MessagingJobExecutionDependencies, context: StepContext<{ jobId: string }>, signal: AbortSignal): Promise<{ jobId: string; state: MessagingJobState }> {
@@ -36,6 +40,7 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
     let failureCode = 'ADMISSION_REQUIRES_REVIEW';
     const current = () => { check(); if (captured.customerKind === 'user' && captured.customerId) deps.directory.assertRecipient(scope, captured.customerId); };
     try {
+      if (captured.job.kind === 'notification') { failureCode = 'NATIVE_NOTIFICATION_REQUIRES_REVIEW'; return await executeMessagingNotification(deps, context, scope, jobId, nonce, signal); }
       current();
       if (captured.job.kind !== 'assistant' || !policy || !deps.ai || captured.attachmentOnly || !captured.messages.length) {
         const review = await write<{ state: MessagingJobState }>('messaging.job.review', { code: captured.attachmentOnly ? 'ATTACHMENT_REQUIRES_REVIEW' : captured.job.kind === 'assistant' ? 'ASSISTANT_NOT_READY' : 'DELIVERY_NOT_READY' });
@@ -55,9 +60,17 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
         if (received.state !== 'received') return result(received.state);
       }
       captured = await read(); current(); failureCode = 'PUBLICATION_REQUIRES_REVIEW';
-      const published = await write<{ state: MessagingJobState }>('messaging.job.publish', { notificationsEnabled: deps.config.notifications }, current);
+      const published = await write<{ state: MessagingJobState }>('messaging.job.publish', { notificationsEnabled: deps.config.notifications, notificationPath: deps.config.notificationPath }, current);
       return result(published.state);
     } catch (failure) {
+      // Native receiver effects alone have permanent destination idempotency.
+      // Let Torrent retain the failed attempt so its bounded generation
+      // reconciler can safely replay that same effect. Known schema/input
+      // conflicts still go directly to review; external calls never use this.
+      if (captured.job.kind === 'notification' && deps.config.notifications && deps.notifications
+        && !(failure instanceof AuthError && ['NOTIFICATION_NOT_READY', 'NOTIFICATION_INPUT_INVALID', 'NOTIFICATION_EFFECT_CONFLICT'].includes(failure.code))) {
+        throw new AuthError('The native messaging notification requires safe receipt reconciliation.', 'MESSAGING_NATIVE_NOTIFICATION_DEFERRED', 503);
+      }
       // Never put provider exception text, prompts or results in workflow error
       // fields. An interrupted invocation remains a durable review fact.
       try {

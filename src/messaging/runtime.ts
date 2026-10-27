@@ -52,7 +52,9 @@ export class MessagingRuntime {
   static async open(options: MessagingRuntimeOptions): Promise<MessagingRuntime> {
     if (options.config.defaultActorEntrypoint && !existsSync(options.config.defaultActorEntrypoint)) throw unavailable('The retained messaging actor is missing.');
     if (!installMessagingOwnerSchema(options.system, options.installAllowed)) throw unavailable('Messaging requires its additive SYSTEM migration.');
-    const backgroundConcurrency = options.config.assistant || options.config.notifications ? options.config.jobConcurrency : 0;
+    // Disabled features still reconcile their retained jobs. Their configured
+    // pool must not overrun a smaller source queue during that safe shutdown.
+    const backgroundConcurrency = options.config.jobConcurrency;
     const coordinator = new DatabaseCoordinator({ rootDirectory: options.config.rootDirectory, realm: messagingRealm, createExecutor: options.config.createExecutor,
       placement: { default: 'file', hot: null }, sqlite: { synchronous: 'FULL' }, readers: true,
       maxDatabases: options.config.maxActiveDatabases, maxDatabaseFiles: options.config.maxDatabaseFiles,

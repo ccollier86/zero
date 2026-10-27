@@ -6,6 +6,7 @@ import type { ServiceDataScope } from '../auth/service-data-scope';
 import { serviceDataScopeKey } from '../auth/service-data-scope';
 import { AuthError } from '../auth/types';
 import { invokeSynchronousAuthCallback } from '../auth/auth-synchronous-callback';
+import { assertNotificationEffectSchema } from './notification-effect-schema';
 import type { CreateNotificationParams, NotificationRecord } from './types';
 
 export type NotificationOnceParams = Omit<CreateNotificationParams, 'metadata'>;
@@ -14,7 +15,7 @@ const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 /** Metadata-free, bounded destination effect. Empty audiences are remembered without broadcasting an empty notice. */
 export function publishNotificationOnce(db: ReactiveDB, effectId: string, userIds: readonly string[], params: NotificationOnceParams,
   senderId: string | undefined, scope: ServiceDataScope, check: (() => void) | undefined,
-  publish: (users: string[], captured: NotificationOnceParams) => NotificationRecord): NotificationEffectReceipt {
+  publish: (users: string[], captured: NotificationOnceParams, fence: () => void) => NotificationRecord | null): NotificationEffectReceipt {
   if (typeof effectId !== 'string' || !identifier.test(effectId) || senderId !== undefined && (typeof senderId !== 'string' || !identifier.test(senderId))) throw invalid();
   const users = captureUsers(userIds), captured = capture(params), scopeId = serviceDataScopeKey(scope);
   const fence = () => { if (check) invokeSynchronousAuthCallback(check, { component: 'notifications', invariant: 'effect-commit-authority', message: 'Notification effect authority must be synchronous.', createError: invalid }); };
@@ -22,13 +23,14 @@ export function publishNotificationOnce(db: ReactiveDB, effectId: string, userId
   const id = digest([scopeId, effectId]), fingerprint = digest([scopeId, users, captured, senderId ?? null]);
   return db.transaction(() => {
     fence();
+    assertNotificationEffectSchema(db);
     const existing = db.prepare('SELECT request_hash,notification_id FROM _notification_effect_receipts WHERE id=? AND scope_id=?').get(id, scopeId) as { request_hash: string; notification_id: string | null } | null;
     if (existing) {
       if (existing.request_hash !== fingerprint) throw new AuthError('The notification effect identity was reused with different input.', 'NOTIFICATION_EFFECT_CONFLICT', 409);
       const retained = existing.notification_id !== null && !!db.prepare('SELECT 1 FROM notifications WHERE notification_id=? AND tenant_id IS ?').get(existing.notification_id, scope.tenantId);
       fence(); return { notificationId: existing.notification_id, duplicate: true, retained };
     }
-    const notificationId = users.length ? publish(users, captured).notification_id : null;
+    const notificationId = users.length ? publish(users, captured, fence)?.notification_id ?? null : null;
     fence(); db.prepare('INSERT INTO _notification_effect_receipts(id,scope_id,request_hash,notification_id,created_at) VALUES(?,?,?,?,?)').run(id, scopeId, fingerprint, notificationId, Date.now()); fence();
     return { notificationId, duplicate: false, retained: notificationId !== null };
   });

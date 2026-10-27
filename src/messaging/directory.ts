@@ -6,8 +6,9 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import type { MessagingDirectory } from './service';
 import type { MessagingDirectoryEntry, MessagingPage } from './contracts';
 import { messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
+import { AuthError } from '../auth/types';
 
-interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null }
+interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean }
 /** The server owns Guardian relationships and published avatar descriptors; caller-selected identity metadata is ignored. */
 export class ManagedMessagingDirectory implements MessagingDirectory {
   constructor(private readonly deps: DirectoryDependencies) {}
@@ -22,6 +23,10 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
       const tenant = this.deps.tenancy?.getTenant(scope.tenantId), member = this.deps.tenancy?.getMembership(scope.tenantId, userId);
       if (tenant?.status !== 'active' || member?.status !== 'active') messagingFail('MESSAGING_NOT_FOUND', 404);
     }
+  }
+  notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean): boolean {
+    try { this.assertRecipient(scope, userId); return !staff || this.deps.supportRecipient?.(scope, userId) === true; }
+    catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
   }
   list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }): MessagingPage<MessagingDirectoryEntry> {
     const q = messagingRecord(query, ['after', 'limit', 'search']), limit = messagingInteger(q.limit ?? 25, 1, 50);

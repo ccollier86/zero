@@ -6,7 +6,7 @@ import { messagingArray, messagingId, messagingRecord } from './validation';
 export interface MessagingCommitHint { readonly conversationId: string | null; readonly recipientIds: readonly string[] }
 export interface MessagingSubscription { readonly actorId: string; readonly conversationId?: string }
 type Before = { conversation: ConversationRow | null; recipients: string[]; staff: string[]; privateNote: boolean; actorId: string | null; peerId: string | null };
-const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire', 'messaging.job.dispatch', 'messaging.job.call']);
+const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire', 'messaging.job.dispatch', 'messaging.job.call', 'messaging.notification.complete', 'messaging.notification.redispatch']);
 
 /** The parent strips this envelope before returning the ordinary public command result. Exact transport replay is not a new change. */
 export function withMessagingCommitHints(commands: DatabaseWriteCommandRegistry): DatabaseWriteCommandRegistry {

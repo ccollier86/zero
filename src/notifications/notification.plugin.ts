@@ -135,6 +135,8 @@ export interface NotificationPluginConfig {
   authorization?: AuthMiddlewareAuthorizationOptions;
   getScheduler?: () => SchedulerService | null;
   onServiceCreated?: (service: NotificationService) => void;
+  /** Managed composition settles this same idempotent initializer before dependent services or Torrent recovery. */
+  onInitializerCreated?: (initialize: () => void) => void;
 }
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
@@ -158,7 +160,8 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
   const owner = {};
   let service: NotificationService | null = null;
   let registration: ReturnType<typeof notificationProviders.register> | null = null;
-  config.runtime?.addCleanup(() => registration?.unregister());
+  let closed = false;
+  let cleanupSchedule: { scheduler: SchedulerService; run: () => void } | null = null;
   const getNotificationTokenService = config.getTokenService
     ?? (config.runtime
       ? () => config.runtime!.get(ZERO_AUTH_TOKEN_SERVICE)
@@ -180,50 +183,51 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
     requireRequestServiceDataScope(access, getAuthorizationKernel);
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    cleanupSchedule?.scheduler.unregister('notification-cleanup', cleanupSchedule.run);
+    cleanupSchedule = null;
+    if (service) config.runtime?.clear(ZERO_NOTIFICATION_SERVICE, service);
+    registration?.unregister();
+    registration = null;
+    const started = service !== null;
+    service = null;
+    if (started) emitPlatformCode(OBS_CODES.NOTIFICATIONS_STOPPED);
+  };
+  config.runtime?.addCleanup(stop);
+  const initialize = () => {
+    if (closed) throw new AuthError('The notification service is closed.', 'NOTIFICATION_NOT_READY', 503);
+    if (service) return;
+    try {
+      defineNotificationTables(config.db);
+      service = new NotificationService(config.db, getAuthorizationKernel()?.tenancy.mode ?? 'single');
+      registration = notificationProviders.register(owner, () => service);
+      config.runtime?.set(ZERO_NOTIFICATION_SERVICE, service);
+      config.onServiceCreated?.(service);
+
+      const scheduler = getNotificationScheduler();
+      if (scheduler && !scheduler.has('notification-cleanup')) {
+        const run = () => {
+          const deleted = service?.deleteExpired() ?? 0;
+          if (deleted > 0) emitPlatformCode(OBS_CODES.NOTIFICATIONS_CLEANUP, { metadata: { deleted } });
+        };
+        scheduler.register({
+          name: 'notification-cleanup', pattern: '0 0 * * * *', run,
+        });
+        cleanupSchedule = { scheduler, run };
+      }
+      emitPlatformCode(OBS_CODES.NOTIFICATIONS_STARTED, { metadata: { tablesDefined: true } });
+    } catch (error) { stop(); throw error; }
+  };
+  config.onInitializerCreated?.(initialize);
   return new Elysia({ name: 'notifications', prefix: '/notifications' })
 
     .use(createAuthMiddleware(getNotificationTokenService, authorization))
 
     // ─── Lifecycle ─────────────────────────────────────
-    .onStart(() => {
-      defineNotificationTables(config.db);
-      service = new NotificationService(
-        config.db,
-        getAuthorizationKernel()?.tenancy.mode ?? 'single',
-      );
-      registration = notificationProviders.register(owner, () => service);
-      config.runtime?.set(ZERO_NOTIFICATION_SERVICE, service);
-      config.onServiceCreated?.(service);
-
-      // Register cleanup job if scheduler is available
-      const scheduler = getNotificationScheduler();
-      if (scheduler && !scheduler.has('notification-cleanup')) {
-        scheduler.register({
-          name: 'notification-cleanup',
-          pattern: '0 0 * * * *', // every hour
-          run: () => {
-            const deleted = service?.deleteExpired() ?? 0;
-            if (deleted > 0) {
-              emitPlatformCode(OBS_CODES.NOTIFICATIONS_CLEANUP, {
-                metadata: { deleted },
-              });
-            }
-          },
-        });
-      }
-
-      emitPlatformCode(OBS_CODES.NOTIFICATIONS_STARTED, {
-        metadata: { tablesDefined: true },
-      });
-    })
-
-    .onStop(() => {
-      if (service) config.runtime?.clear(ZERO_NOTIFICATION_SERVICE, service);
-      registration?.unregister();
-      registration = null;
-      service = null;
-      emitPlatformCode(OBS_CODES.NOTIFICATIONS_STOPPED);
-    })
+    .onStart(initialize)
+    .onStop(stop)
 
     // ─── Derive: expose service globally ──────────────
     .derive({ as: 'global' }, () => ({

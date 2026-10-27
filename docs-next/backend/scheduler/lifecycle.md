@@ -34,6 +34,14 @@ removes the entry. It returns true when a job existed and false when absent.
 Recreating the same name requires a new registration; resume cannot resurrect
 a removed Croner instance.
 
+The messaging development branch additionally supports trusted-server
+`unregister(name, expectedRun)`. It removes the schedule only if its currently
+registered callback is that exact function reference. Use this optional fence
+when a subsystem retires its own timer: a later replacement under the same name
+must remain untouched. The ordinary one-argument and HTTP contracts are unchanged;
+the callback is an ownership fence, not a credential or a serializable API input.
+This additive capability is not available in older selected archives.
+
 stopAll(), and its stop alias, stops every admitted schedule and clears the
 registry. These methods return void. A later direct service registration can
 create new work; stopAll is not a permanent-disposal state on SchedulerService.

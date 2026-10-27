@@ -30,16 +30,16 @@ function peer(origin: string): TestClient {
   const authenticate = async (path: string, body: unknown) => { const result = await call<any>(path, { method: 'POST', body }); token = result.accessToken; user = result.user; return result; };
   return { messaging, logging, fetch: call, get user() { return user; }, register: input => authenticate('/auth/register', input), login: (username, password) => authenticate('/auth/login', { username, password }), disconnect() { messaging.clear(); logging.clear(); token = null; user = null; } };
 }
-async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string) {
+async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false) {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
   let zero!: ServerRouteServices;
   const diagnostics = new MemoryEventStore();
   const configuration: AppConfig = { projectRoot: root, db: { mode: 'file', path: join(root, 'app.db'), synchronous: 'FULL' }, systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' }, tables: {},
-    auth: { bootstrap: 'public' }, messaging: { support: {}, history,
+    auth: { bootstrap: 'public' }, messaging: { support: {}, history, ...(notifications ? { notifications: { path: '/app/messages' } } : {}),
       ...(providerBaseURL ? { assistant: { model: 'synthetic/chat', timeoutMs: 30000 }, jobs: { concurrency: 2 } } : {}) }, logging: { preset: compliance ? 'compliance' : 'detailed', rootDirectory: join(root, 'logs') },
     appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     themeFoundation: 'legacy', frontendBuild: { version: 1, frontend: { themeFoundation: 'legacy', plugins: {} }, pluginIdentities: {} },
-    workflows: providerBaseURL ? {} : false, email: false,
+    workflows: providerBaseURL || notifications ? {} : false, email: false,
     ai: providerBaseURL ? { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-local-key', baseURL: providerBaseURL } } } : false,
     vector: false, pdf: false, kv: false, stateSync: false, observability: { console: false, endpoint: false, store: diagnostics },
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false,
@@ -299,7 +299,9 @@ test('native sockets bind typing to canonical conversation/staff membership, act
     expect(await a.wait(message => message.type === 'ephemeral.error' && message.key === first)).toMatchObject({ code: 'EPHEMERAL_INVALID_TTL' });
     a.send({ type: 'ephemeral.set', topic: privateTopic, key: first, value: { ...value, metadata: { activity: 'recording' } }, ttl: 1000 });
     await a.wait(message => message.type === 'ephemeral.change' && message.topic === privateTopic && message.op === 'set');
-    await a.wait(message => message.type === 'ephemeral.change' && message.topic === privateTopic && message.op === 'delete');
+    // Values become stale at TTL independently from the normal five-second
+    // server cleanup sweep. Observe that sweep, not an assumed sub-4s phase.
+    await a.wait(message => message.type === 'ephemeral.change' && message.topic === privateTopic && message.op === 'delete', 7000);
     expect(b.messages.some(message => message.type === 'ephemeral.change' && message.topic === privateTopic)).toBe(false);
     const group = await alice.messaging.conversations.create({ kind: 'group', userIds: [bob.user!.userId] }, { requestId: 'typing-group' });
     const groupTopic = 'typing:' + messagingTypingRoom(group.id);
@@ -308,4 +310,56 @@ test('native sockets bind typing to canonical conversation/staff membership, act
     await alice.messaging.conversations.removeParticipant(group.id, group.revision, bob.user!.userId, { requestId: 'typing-remove' });
     expect(await b.wait(message => message.type === 'ephemeral.error' && message.topic === groupTopic && message.revoked === true)).toMatchObject({ code: 'EPHEMERAL_FORBIDDEN' });
   } finally { await Promise.all(sockets.map(socket => socket.close())); alice.disconnect(); bob.disconnect(); outsider.disconnect(); await f.close(); }
+}, 90000);
+
+test('accepted public sends create one generic native notification for eligible peers; deletion, replay and restart never recreate it or grant transcript access', async () => {
+  const f = await fixture(false, 'all', undefined, true); let alice = f.client(), bob = f.peer(); const outsider = f.peer();
+  const notices = async (client: TestClient) => (await client.fetch<{ notifications: { notification_id: string; title: string; body: string | null; metadata: string | null; target_value: string; action_url: string; receipt: unknown }[] }>('/notifications')).notifications;
+  try {
+    await enroll(alice, 'notice-alice'); await enroll(bob, 'notice-bob'); await enroll(outsider, 'notice-outsider');
+    const conversation = await alice.messaging.conversations.create({ kind: 'group', userIds: [bob.user!.userId] }, { requestId: 'notice-group' });
+    const options = { requestId: 'notice-send' }, message = { text: 'SYNTHETIC_PRIVATE_NOTICE_SOURCE_TEXT' };
+    const sent = await alice.messaging.messages.send(conversation.id, message, options);
+    let page = await notices(bob); const deadline = Date.now() + 10000;
+    while (!page.length && Date.now() < deadline) { await Bun.sleep(50); page = await notices(bob); }
+    expect(page).toHaveLength(1);
+    const notice = page[0]!;
+    expect(notice).toMatchObject({ title: 'New message', body: null, metadata: null, action_url: '/app/messages?conversation=' + conversation.id, receipt: null });
+    expect(JSON.parse(notice.target_value)).toEqual([bob.user!.userId]); expect(JSON.stringify(page)).not.toContain(message.text);
+    expect(await notices(alice)).toEqual([]); expect(await notices(outsider)).toEqual([]);
+    await bob.messaging.conversations.markRead(conversation.id, sent.sequence, { requestId: 'notice-chat-read' });
+    expect((await notices(bob))[0]!.receipt).toBeNull();
+    await alice.messaging.conversations.removeParticipant(conversation.id, conversation.revision, bob.user!.userId, { requestId: 'notice-remove-bob' });
+    await expect(bob.messaging.messages.list(conversation.id)).rejects.toMatchObject({ status: 404 });
+    await alice.fetch('/notifications/' + notice.notification_id, { method: 'DELETE' });
+    await alice.messaging.messages.send(conversation.id, message, options); await Bun.sleep(100);
+    expect(await notices(bob)).toEqual([]);
+    alice.disconnect(); bob.disconnect(); outsider.disconnect(); await f.restart(); alice = f.client(); bob = f.peer();
+    await alice.login('notice-alice', PASSWORD); await bob.login('notice-bob', PASSWORD);
+    await alice.messaging.messages.send(conversation.id, message, options); await Bun.sleep(100);
+    expect(await notices(bob)).toEqual([]);
+  } finally { alice.disconnect(); bob.disconnect(); outsider.disconnect(); await f.close(); }
+}, 90000);
+
+test('a native notification error after its real receiver commit is reconciled once without another notice or overwriting the failed workflow', async () => {
+  const f = await fixture(false, 'all', undefined, true), alice = f.client(), bob = f.peer();
+  const service = f.zero.notifications!; const publish = service.notifyUsersOnce.bind(service); let calls = 0;
+  service.notifyUsersOnce = (...args) => { const result = publish(...args); if (++calls === 1) throw new Error('Synthetic error after the native receiver committed.'); return result; };
+  try {
+    await enroll(alice, 'notice-recovery-alice'); await enroll(bob, 'notice-recovery-bob');
+    const conversation = await alice.messaging.conversations.create({ userIds: [bob.user!.userId] }, { requestId: 'notice-recovery-conversation' });
+    await alice.messaging.messages.send(conversation.id, { text: 'PRIVATE_NATIVE_NOTICE_RECOVERY_SOURCE' }, { requestId: 'notice-recovery-send' });
+    const deadline = Date.now() + 10000;
+    while (calls < 2 && Date.now() < deadline) await Bun.sleep(20);
+    expect(calls).toBe(2);
+    const page = await bob.fetch<{ notifications: { notification_id: string; body: string | null }[] }>('/notifications');
+    expect(page.notifications).toHaveLength(1); expect(page.notifications[0]!.body).toBeNull();
+    let runs = f.zero.workflows!.list();
+    while (!runs.some(run => run.name === 'zero.messaging.job.v1' && run.status === 'completed') && Date.now() < deadline) { await Bun.sleep(20); runs = f.zero.workflows!.list(); }
+    const failed = runs.filter(run => run.name === 'zero.messaging.job.v1' && run.status === 'failed');
+    expect(failed).toHaveLength(1);
+    expect(runs.filter(run => run.name === 'zero.messaging.job.v1' && run.status === 'completed')).toHaveLength(1);
+    expect(JSON.stringify(runs)).not.toContain('PRIVATE_NATIVE_NOTICE_RECOVERY_SOURCE');
+    expect(JSON.stringify(runs)).not.toContain('Synthetic error after the native receiver committed.');
+  } finally { service.notifyUsersOnce = publish; alice.disconnect(); bob.disconnect(); await f.close(); }
 }, 90000);

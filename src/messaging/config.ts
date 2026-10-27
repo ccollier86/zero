@@ -7,6 +7,7 @@ import type { NormalizedAuthBehaviorConfig } from '../auth/types';
 import { createSubprocessDatabaseExecutorFactory, type SubprocessDatabaseExecutorFactory, type SubprocessDatabaseExecutorFactoryOptions } from '../databases/subprocess-database-executor-factory';
 import { messagingChoice, messagingHash, messagingInteger, messagingRecord, messagingText } from './validation';
 import { MESSAGING_ACTOR_FLAG } from './actor-bootstrap';
+import { messagingNotificationPath } from './notification-link';
 
 export interface MessagingConfig {
   directory?: 'everyone' | 'contacts';
@@ -20,7 +21,7 @@ export interface MessagingConfig {
   maxUploadBytes?: number;
   support?: false | { staff?: AccessRequirement };
   assistant?: false | { model?: string; instructions?: string; maxOutputTokens?: number; timeoutMs?: number };
-  notifications?: boolean;
+  notifications?: boolean | { path?: string };
   /** Maximum parallel I/O activities by default, not one global serialized AI queue. */
   jobs?: { concurrency?: number | 'max' };
 }
@@ -30,7 +31,7 @@ export interface ResolvedMessagingConfig {
   readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxActiveDatabases: number; readonly maxDatabaseFiles: number; readonly maxUploadBytes: number;
   readonly support: false | { readonly staff: AccessRequirement };
   readonly assistant: false | { readonly model: string; readonly instructions: string; readonly maxOutputTokens: number; readonly timeoutMs: number; readonly policyHash: string };
-  readonly notifications: boolean; readonly jobConcurrency: number;
+  readonly notifications: boolean; readonly notificationPath: string; readonly jobConcurrency: number;
 }
 /** Explicit auth:false never becomes an unauthenticated messaging service. */
 export function resolveMessagingConfig(input: boolean | MessagingConfig | undefined, projectRoot: string, auth: NormalizedAuthBehaviorConfig | null): ResolvedMessagingConfig | false {
@@ -56,7 +57,8 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
     instructions: messagingText(assistantInput.instructions ?? 'Help the customer using this conversation. Do not claim to have completed external actions. Ask for human assistance when the issue cannot be resolved from the available information.', 20000),
     maxOutputTokens: messagingInteger(assistantInput.maxOutputTokens ?? 1024, 1, 8192), timeoutMs: messagingInteger(assistantInput.timeoutMs ?? 120000, 1000, 300000),
   };
-  if (r.notifications !== undefined && typeof r.notifications !== 'boolean') throw new Error('[messaging] notifications must be a boolean.');
+  const notice = r.notifications === undefined || r.notifications === false ? false : r.notifications === true ? {} : messagingRecord(r.notifications, ['path']);
+  const notificationPath = messagingNotificationPath(notice === false ? '/messages' : notice.path ?? '/messages');
   const jobs = r.jobs === undefined ? {} : messagingRecord(r.jobs, ['concurrency']);
   const jobConcurrency = jobs.concurrency === undefined || jobs.concurrency === 'max' ? 100 : messagingInteger(jobs.concurrency, 1, 100);
   return Object.freeze({ directory: messagingChoice(r.directory ?? 'everyone', ['everyone', 'contacts']), history: messagingChoice(r.history ?? 'all', ['all', 'since-join']),
@@ -64,7 +66,7 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
     createExecutor: createSubprocessDatabaseExecutorFactory({ ...actors, actorFlag: MESSAGING_ACTOR_FLAG } as unknown as SubprocessDatabaseExecutorFactoryOptions), defaultActorEntrypoint: entry,
     maxMessageLength: messagingInteger(r.maxMessageLength ?? 20000, 1, 20000), maxParticipants: messagingInteger(r.maxParticipants ?? 100, 2, 100), maxActiveDatabases, maxDatabaseFiles,
     maxUploadBytes: messagingInteger(r.maxUploadBytes ?? 16 * 1024 * 1024, 1024, 256 * 1024 * 1024), support: staff === null ? false : Object.freeze({ staff: deepFreeze(staff) }),
-    assistant: assistantPolicy === false ? false : Object.freeze({ ...assistantPolicy, policyHash: messagingHash(assistantPolicy) }), notifications: r.notifications === true, jobConcurrency });
+    assistant: assistantPolicy === false ? false : Object.freeze({ ...assistantPolicy, policyHash: messagingHash(assistantPolicy) }), notifications: notice !== false, notificationPath, jobConcurrency });
 }
 function packagedMessagingActor(projectRoot: string): string {
   const adjacent = fileURLToPath(new URL('./actor-entry.ts', import.meta.url)); if (existsSync(adjacent)) return adjacent;

@@ -23,7 +23,7 @@ test('a completion plus newly inserted head work cannot reset the active page an
     runtime: runtime as unknown as MessagingRuntime,
     system: { onChange(listener: typeof changed) { changed = listener; return () => { changed = undefined; }; } } as unknown as ReactiveDB,
     config: { jobConcurrency: 1, assistant: false } as ResolvedMessagingConfig,
-    directory: { assertScope() {}, assertRecipient() {}, list() { return { items: [], hasMore: false, nextCursor: null }; } }, ai: null, logging: null,
+    directory: { assertScope() {}, assertRecipient() {}, notificationRecipient() { return false; }, list() { return { items: [], hasMore: false, nextCursor: null }; } }, ai: null, logging: null, notifications: null,
     dispatchFailed() { throw new Error('Unexpected scheduler dispatch failure.'); },
   });
   const workflow = { async enqueueAsSystemOnce(_name: string, input: { jobId: string }) { admitted.push(input.jobId); return { instanceId: 'workflow-' + input.jobId }; } } as unknown as WorkflowService;

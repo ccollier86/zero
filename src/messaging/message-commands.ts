@@ -6,10 +6,11 @@ import { messagingArray, messagingChoice, messagingFail, messagingHash, messagin
 import { MESSAGING_REACTIONS } from './contracts';
 import { releaseAttachmentReservation, type AttachmentRow } from './attachment-model';
 import type { JobConversation } from './job-model';
+import { captureMessagingNotificationAudience } from './notification-model';
 
 export function sendMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'notificationsEnabled']);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'notificationsEnabled', 'notificationPath']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.conversationId), staff = staffTimeline(conversation, member);
     const text = messagingText(r.text, messagingInteger(r.maxMessageLength, 1, 20000), true), id = messagingId(r.id), visibility = messagingChoice(r.visibility ?? 'conversation', ['conversation', 'staff']);
     const attachments = [...new Set(messagingArray(r.attachmentIds ?? [], 10).map(messagingId))];
@@ -37,18 +38,19 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
       if (visibility === 'conversation') {
         if (conversation.channel_id && actor.kind !== 'external') appendMessagingJob(context, conversation, id, 'delivery', now);
         if (r.assistantEnabled === true) queueMessagingAssistant(context, next, r.assistantPolicy);
-        if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now);
+        if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now, null, r.notificationPath);
       }
       return projectMessage(row, staff);
     });
   });
 }
 /** Job identity binds the accepted message and ownership epoch; one queued start does not run a provider inline. */
-export function appendMessagingJob(context: DatabaseWriteCommandContext, conversation: ConversationRow, messageId: string, kind: 'assistant' | 'delivery' | 'notification', now: number, policyHash: string | null = null): string {
+export function appendMessagingJob(context: DatabaseWriteCommandContext, conversation: ConversationRow, messageId: string, kind: 'assistant' | 'delivery' | 'notification', now: number, policyHash: string | null = null, notificationPath?: unknown): string {
   const revision = (conversation as JobConversation).context_revision ?? 0, id = messagingHash(kind === 'assistant' ? [messageId, kind, conversation.owner_epoch, revision] : [messageId, kind]);
   if (context.db.get('messaging_jobs', id)) return id;
   context.db.createStrict('messaging_jobs', { id, scope_id: conversation.scope_id, conversation_id: conversation.id, message_id: messageId,
     kind, owner_epoch: conversation.owner_epoch, context_revision: revision, policy_hash: policyHash, dispatch_generation: 0, state: 'pending', lease_nonce: null, lease_expires: null, attempts: 0, provider_id: null, error_code: null, created_at: now, updated_at: now });
+  if (kind === 'notification') captureMessagingNotificationAudience(context, conversation, messageId, id, now, notificationPath);
   return id;
 }
 export function queueMessagingAssistant(context: DatabaseWriteCommandContext, conversation: JobConversation, policy: unknown): string | null {

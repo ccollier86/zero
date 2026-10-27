@@ -231,6 +231,9 @@ export async function mountPlatformServices({
       getTokenService,
       authorization,
       getScheduler: () => scheduler,
+      onInitializerCreated(initialize) {
+        managedInitializers.push(async () => { await managedStartup.auth!.start(); initialize(); });
+      },
     }));
     app.use(createRoomPlugin({
       db: systemDB,

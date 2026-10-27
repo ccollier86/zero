@@ -20,6 +20,9 @@ import { pendingMessagingJobs, readMessagingJobContext } from './job-queries';
 import { MESSAGING_REVIEW_TABLES } from './review-model';
 import { listMessagingReviews, readMessagingReview } from './review-queries';
 import { resolveMessagingReview } from './review-commands';
+import { MESSAGING_NOTIFICATION_TABLES } from './notification-model';
+import { readMessagingNotification } from './notification-queries';
+import { completeMessagingNotification, redispatchMessagingNotification } from './notification-commands';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -28,7 +31,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '4', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES,
+  name: 'zero-messaging', version: '5', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
     messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" },
     messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0' },
     messaging_jobs: { ...MESSAGING_TABLES.messaging_jobs!, context_revision: 'INTEGER NOT NULL DEFAULT 0', policy_hash: 'TEXT', dispatch_generation: 'INTEGER NOT NULL DEFAULT 0' } },
@@ -82,6 +85,10 @@ export const messagingRealm = defineDatabaseRealm({
     for (const [table, columns] of Object.entries(MESSAGING_REVIEW_TABLES)) database.run('CREATE TABLE ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
     database.run('CREATE UNIQUE INDEX messaging_job_resolution ON messaging_job_resolutions(job_id)');
     database.run('CREATE INDEX messaging_review_page ON messaging_jobs(scope_id,conversation_id,state,id)');
+  } }, { version: '005', description: 'Fixed private notification audiences bound to accepted public messages', safety: 'safe', up(database) {
+    database.run('CREATE TABLE messaging_notification_audiences (id TEXT PRIMARY KEY,scope_id TEXT NOT NULL,path TEXT NOT NULL,recipients_json TEXT NOT NULL,created_at INTEGER NOT NULL)');
+    // Old experimental jobs without a source audience are not backfilled from
+    // current membership and must be reconciled explicitly instead of resent.
   } }],
   commands: withMessagingCommitHints({
     'messaging.owner.bind': (context, input) => messagingCommand(context, () => {
@@ -98,9 +105,10 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.job.claim': claimMessagingJob, 'messaging.job.call': beginMessagingJobCall, 'messaging.job.receive': receiveMessagingJobResult,
     'messaging.job.publish': publishMessagingJobResult, 'messaging.job.review': reviewMessagingJob, 'messaging.job.dispatch': bindMessagingJobDispatch,
     'messaging.review.resolve': resolveMessagingReview,
+    'messaging.notification.complete': completeMessagingNotification, 'messaging.notification.redispatch': redispatchMessagingNotification,
   }),
   queries: { 'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
     'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments),
     'messaging.jobs.pending': query(pendingMessagingJobs), 'messaging.job.context': query(readMessagingJobContext),
-    'messaging.reviews': query(listMessagingReviews), 'messaging.review': query(readMessagingReview) },
+    'messaging.reviews': query(listMessagingReviews), 'messaging.review': query(readMessagingReview), 'messaging.notification.context': query(readMessagingNotification) },
 });

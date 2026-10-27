@@ -14,7 +14,12 @@ export function claimMessagingJob(context: DatabaseWriteCommandContext, input: u
     if (job.kind === 'assistant' && !currentAssistantTurn(context, job)) return terminalJob(context, job, 'cancelled', 'TURN_SUPERSEDED');
     // A crash after invocation admission is an uncertain call, never a license
     // to issue another one. A received result can resume publication only.
-    if (job.state === 'calling') return terminalJob(context, job, 'needs-review', 'INVOCATION_UNKNOWN');
+    if (job.state === 'calling') {
+      if (job.kind !== 'notification' || !context.db.get('messaging_notification_audiences', job.id)) return terminalJob(context, job, 'needs-review', 'INVOCATION_UNKNOWN');
+      // Only this native destination has a permanent receiver receipt. An
+      // assistant or external channel never gains this replay permission.
+      finishJobAttempt(context, job, 'unknown', 'NATIVE_NOTIFICATION_RECONCILIATION');
+    }
     const state = job.state === 'received' ? 'received' : 'claimed', now = Date.now();
     context.db.update('messaging_jobs', job.id, { state, lease_nonce: nonce, lease_expires: now + messagingInteger(r.leaseMs, 1000, 600000), updated_at: now });
     return { state };
@@ -45,7 +50,7 @@ export function receiveMessagingJobResult(context: DatabaseWriteCommandContext, 
 }
 export function publishMessagingJobResult(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['scopeId', 'id', 'nonce', 'notificationsEnabled']), job = jobInScope(context, r.id, r.scopeId);
+    const r = messagingRecord(input, ['scopeId', 'id', 'nonce', 'notificationsEnabled', 'notificationPath']), job = jobInScope(context, r.id, r.scopeId);
     if (job.state === 'accepted') return { state: 'accepted' };
     if (job.kind !== 'assistant' || job.state !== 'received' || job.lease_nonce !== messagingId(r.nonce) || !job.lease_expires || job.lease_expires <= Date.now()) messagingFail('MESSAGING_JOB_CONFLICT');
     if (!currentAssistantTurn(context, job)) return terminalJob(context, job, 'cancelled', 'TURN_SUPERSEDED');
@@ -58,7 +63,7 @@ export function publishMessagingJobResult(context: DatabaseWriteCommandContext, 
     context.db.createStrict('messaging_messages', row);
     context.db.update('messaging_conversations', conversation.id, { internal_sequence: row.sequence, public_sequence: row.public_sequence, updated_at: now, public_updated_at: now, customer_turn_id: null, context_revision: conversation.context_revision + 1 });
     if (conversation.channel_id) appendMessagingJob(context, conversation, id, 'delivery', now);
-    if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now);
+    if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now, null, r.notificationPath);
     context.db.update('messaging_jobs', job.id, { state: 'accepted', lease_nonce: null, lease_expires: null, updated_at: now });
     return { state: 'accepted' };
   });

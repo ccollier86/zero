@@ -15,6 +15,10 @@ applies_to: ["feature/messaging-backend; not a selected stable update"]
 
 [Working index](./index.md) · [Messaging architecture](../backend/messaging/index.md)
 
+[Public customer/Messenger continuation](./messaging-public-channels.md) records
+the remaining capability, callback, ordered-outbox and review boundaries; it is
+a plan, not an implemented adapter or a selected release.
+
 Finish and qualify publishing first, then the native logging investigation UI,
 then this subsystem. Worktrees isolate their release candidates. No production
 application, database, migration or deployment is changed by these fixtures.
@@ -288,6 +292,83 @@ claiming production channel qualification; never infer reply windows, approved
 tags, message-size limits or non-idempotent retry safety from an old sample.
 
 ## Fixed integration decisions
+
+### Native notification continuation (development slice; no release qualification)
+
+The next slice connects the existing native receiver rather than claiming a
+notification job was sent merely because a row exists. Private migration `005`
+adds fixed audience snapshots inside the accepted public-message/job commit;
+staff notes never create these jobs and old jobs without an audience are not
+backfilled from today's membership. SYSTEM migration `051` retains permanent
+native effect receipts independently of later notification deletion/expiry.
+
+First publication narrows accepted candidates using a fresh canonical
+membership/history/read-position snapshot, then current account/organization
+and staff-role/property policy inside the destination SYSTEM transaction. Those
+are separate databases, not one distributed transaction: a concurrent private
+membership removal cannot be made atomic with native notice persistence. The
+notice therefore contains only `New message` and an opaque conversation link;
+it never grants transcript access, and opening always reauthorizes canonically.
+The policy may only remove candidates, and receipt replay does not reevaluate
+it into a new audience or recreate a removed notice.
+
+Native invocation recovery is deliberately separate from AI/external recovery.
+Only an audience-qualified native notice has permanent receiver idempotency.
+It can recover an admitted call or redispatch a failed Torrent generation while
+retaining the old attempt/workflow fact, for at most three native dispatch
+generations before manual review. Known receipt schema/input conflicts go
+directly to review. Cancelled/missing workflows, unsupported
+external sends, uncertain AI calls and legacy jobs do not gain resend permission.
+An accepted native receipt with an empty eligible audience is not a delivered or
+read message. The configurable notification path defaults to `/messages`, is
+capped at 400 characters to reserve the encoded ID budget, and must be a local
+path; consumers can use `{ notifications: { path: '/app/messages' } }`. The source
+pins that path alongside its accepted audience, so a later configuration change
+cannot alter a recovered effect's request fingerprint. Native effect schema and
+immutable receipt controls are checked read-only at activation and again after
+schema changes; missing controls are not silently recreated.
+
+The native continuation now passes its five-file source/receiver/config/policy/
+scheduler run. The complete managed file passes nine scenarios / 105 assertions
+through actual Guardian, HTTP/SDK, private Fabric, Storage, Logging, Torrent,
+loopback AI and native sockets. It proves one generic eligible-peer notice,
+no message-body/metadata disclosure, independent read receipts, membership
+removal, deletion/replay/restart non-resurrection, and recovery after an injected
+error **after a real receiver commit**. One notice remains; the old failed
+workflow is retained separately from the later completed workflow.
+
+That first managed run found a genuine composition defect: NotificationService
+was created only by Elysia onStart, after messaging tried to resolve it. Managed
+composition now settles the same idempotent notification initializer before
+messaging and Torrent recovery; normal listen does not create a second owner.
+Failure/stop clears the matching runtime/compatibility registration. Its owned
+cleanup timer uses an exact Scheduler callback fence, so late teardown cannot
+delete a replacement callback under the same name. Native lifecycle, HTTP,
+advanced-role and all Scheduler-neighbor files pass.
+
+The second managed run exposed a test assumption: it allowed four seconds to
+observe a one-second TTL deletion even though the server's normal sweep interval
+is five seconds. That one sweep observation now has a bounded seven-second wait;
+all other socket connection/protocol/revocation waits remain four seconds, and
+client-visible freshness still expires at TTL without waiting for the sweep.
+No production TTL, timer or permission was changed to make that test pass.
+
+The eight-file build/notification/Scheduler gate passes, including source versus
+bundled private migration/schema/fingerprint identity and resolution of the
+matching retained source actor rather than the main app. These build fixtures
+now use the normal portable temporary root and await retirement of their own
+outputs. They are not an installed compiled-server or Linux deployment proof.
+The native manual is [notifications](../backend/messaging/notifications.md).
+
+Evidence is retained in `messaging-notification-focused.log`,
+`messaging-notification-managed-final.log` and
+`messaging-notification-build-neighbors.log` under the external diagnostics root.
+Earlier failed runs remain retained, not replaced by the later checks. The full
+backend still requires normal peer-chat native-delivery review/discovery,
+public portal and verified Messenger adapters/media, managed workspace/controller,
+exact-archive typecheck/docs/security review and installed Linux/browser/full-suite
+qualification. Do not advertise this development slice as a selected release.
+The current source-slice root typecheck passes; it is not an installed archive gate.
 
 Use a dedicated private Fabric root. Single tenancy owns one messaging database;
 multi tenancy owns a canonical database per admitted organization, enabling

@@ -101,10 +101,12 @@ export class SchedulerService {
   /**
    * Unregister and permanently stop a job.
    * Returns true if found and stopped, false if not found.
+   * An optional exact callback fence lets a retiring owner leave a replacement
+   * job intact. It is trusted server composition, not an HTTP authority token.
    */
-  unregister(name: string): boolean {
+  unregister(name: string, expectedRun?: JobDefinition['run']): boolean {
     const entry = this.jobs.get(name);
-    if (!entry) return false;
+    if (!entry || expectedRun !== undefined && entry.def.run !== expectedRun) return false;
     entry.cron.stop();
     this.jobs.delete(name);
     emitPlatformCode(OBS_CODES.SCHEDULER_JOB_UNREGISTERED, {
