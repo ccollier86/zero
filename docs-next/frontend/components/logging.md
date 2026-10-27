@@ -61,9 +61,24 @@ It does not download the full dataset for filtering or fabricate an exact total.
 Page size defaults to 25. Dates display source times in the browser locale;
 the evidence dialog separately shows ingestion time and source position.
 
+The compact Audit activity / Diagnostics tabs use the shared magnetic selection
+highlight. The header reports the live connection state, not audit integrity or
+compliance health. No ornamental global totals or success-rate cards infer
+completion from the currently loaded page.
+
 Family and outcome remain compact. More filters opens a standard morphing
-Popover with actor, exact action, resource and date constraints; overflowing
-content uses the shared ScrollArea treatment. All criteria combine with AND.
+Popover with actor ID, session ID, exact action, resource type/ID, severity and
+source-time constraints; overflowing content uses the shared ScrollArea
+treatment. All criteria combine with AND. Applied criteria have individually
+removable chips. Invalid codes and reversed date ranges produce local feedback
+without issuing an invalid page query; server validation remains authoritative.
+Times are interpreted in the investigator's local timezone and the end time is
+exclusive. No free-text clinical or message-content search is exposed.
+
+Clear filters removes these editable criteria, not a caller-supplied `eventIds`,
+`beforeOrdinal` or `highWaterOrdinal` investigation restriction. Those restrictions
+are explained visibly. Neither `initialQuery` nor its chips constitute an
+authorization policy; a mandatory self-only boundary belongs on the server.
 Advanced nested/saved filter-builder behavior is still planned, not decorative
 controls pretending to execute on the server.
 
@@ -114,9 +129,18 @@ Fabric are not part of either browser import graph.
 ## Accessibility and Evidence Limits
 
 Use normal keyboard table navigation, labelled filter controls and shared
-dialog focus management. The standard components provide compact light/dark,
+dialog focus management. Each row also has an explicit Inspect event button.
+The modern managed evidence dialog morphs from that initiating control (or the
+native row), and groups outcome, evidence meaning, source/ingestion times,
+actor/resource identity, provenance and allowed metadata. Exact action codes
+remain visible in detail alongside friendly table labels. Missing values are
+labelled Not recorded, not silently inferred. The standard components provide compact light/dark,
 touch, narrow-layout and reduced-motion behavior. Long IDs wrap in detail;
-there is no HTML execution or raw provider payload dump.
+there is no HTML execution or raw provider payload dump. Narrow screens retain
+readable columns inside the shared horizontal ScrollArea without widening the
+page; scrollbar chrome remains hidden by default. Stream recovery keeps its
+subscription alive while protected rows are masked. A successful fresh read
+restores the table; normal reconnection is never represented as missing logs.
 
 The workspace is an investigation interface, not a green compliance badge.
 Browser copy/print/view signals remain observations. Review/hold/integrity
@@ -134,4 +158,5 @@ agreed DataTable/filter/live-update/individual-user view.
 - [Server and client API](../../backend/logging/api.md) covers query/stream contracts.
 - [Browser collection](../../backend/logging/browser.md) defines signal semantics and strict delivery requirements.
 - [Evidence lifecycle](../../backend/logging/evidence.md) covers exports, holds, reviews and integrity.
+- [Investigation UI repair and qualification](../../_work/logging-workspace-polish.md) records the current branch's scope and evidence.
 - [DataTable](../data-controls/data-table/index.md) owns underlying server pagination and row presentation.

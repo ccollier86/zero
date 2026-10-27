@@ -12,6 +12,7 @@ import { ModalManager } from '../../modals';
 import { TooltipProvider } from '../tooltip';
 
 const listeners = new Set<() => void>(), watches = new Set<() => void>();
+let disconnected = false;
 const boundary = new AuthorizationDataBoundaryController(); let tenant = 'tenant-a', ordinal = 65;
 const auth = { user: { userId: 'fixture-user' }, activeTenant: { tenantId: tenant }, isAuthenticated: true, isLoading: false, isRestoring: false,
   authorizationState: { status: 'ready' }, get authorizationScopeKey() { return tenant; }, sessionTransition: { phase: 'idle', operation: null, revision: 0, recoverable: false, error: null },
@@ -22,7 +23,8 @@ function row(n: number): StoredLoggingEvent { return { ordinal: n, ingestedAt: D
   occurredAt: 1700000000000 + n * 1000, target: { type: 'record', id: 'record-' + n }, metadata: { count: 1 } } }; }
 function page(q: LoggingQuery = {}): LoggingPage {
   const water = Math.min(q.highWaterOrdinal ?? ordinal, ordinal);
-  const all = Array.from({ length: water }, (_, i) => row(water - i)).filter(r => (!q.eventIds || q.eventIds.includes(JSON.stringify([r.event.sourceId, r.event.id]))) && (!q.beforeOrdinal || r.ordinal < q.beforeOrdinal) && (!q.actorId || r.event.actor.id === q.actorId) && (!q.outcome || r.event.outcome === q.outcome) && (!q.action || r.event.action === q.action) && (!q.targetId || r.event.target?.id === q.targetId));
+  const all = Array.from({ length: water }, (_, i) => row(water - i)).filter(r => (!q.eventIds || q.eventIds.includes(JSON.stringify([r.event.sourceId, r.event.id]))) && (!q.beforeOrdinal || r.ordinal < q.beforeOrdinal) && (!q.actorId || r.event.actor.id === q.actorId) && (!q.outcome || r.event.outcome === q.outcome) && (!q.action || r.event.action === q.action) && (!q.targetId || r.event.target?.id === q.targetId)
+    && (!q.sessionId || r.event.actor.sessionId === q.sessionId) && (!q.targetType || r.event.target?.type === q.targetType) && (!q.family || r.event.family === q.family) && (!q.level || r.event.level === q.level) && (q.since === undefined || r.event.occurredAt >= q.since) && (q.until === undefined || r.event.occurredAt < q.until));
   const events = all.slice(0, q.limit ?? 50), hasMore = all.length > events.length;
   return { events, highWaterOrdinal: water, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
 }
@@ -32,6 +34,7 @@ const client = { auth, _authorizationDataBoundary: boundary, logging: { page: as
   watch(_s: unknown, q: LoggingQuery, fn: (p: LoggingPage) => void, options: Parameters<LoggingClient['watch']>[3] = {}) {
     let after = options.afterOrdinal ?? ordinal;
     const notify = () => {
+      if (disconnected) { options.onStatus?.('reconnecting'); return; }
       options.onStatus?.('live'); fn(page({ ...q, limit: 1 }));
       const events = page({ ...q, limit: 100 }).events.filter(row => row.ordinal > after).slice().reverse();
       options.onChanges?.({ events, afterOrdinal: after, throughOrdinal: ordinal, highWaterOrdinal: ordinal, hasMore: false }); after = ordinal;
@@ -42,12 +45,15 @@ const client = { auth, _authorizationDataBoundary: boundary, logging: { page: as
   export: async () => { throw new Error('Denied'); } }, _tables: {},
 } as unknown as Client;
 configureFrontendObservability({ console: false, http: false });
+function changeScope() { tenant = tenant === 'tenant-a' ? 'tenant-b' : 'tenant-a'; auth.activeTenant = { tenantId: tenant }; for (const fn of listeners) fn(); }
+(window as unknown as { __loggingChangeScope: () => void }).__loggingChangeScope = changeScope;
 function Fixture() {
   return <ClientProvider client={client}><TooltipProvider><ModalManager><main className="mx-auto max-w-6xl space-y-4 p-5">
     <div className="flex gap-4 text-xs"><button onClick={() => { ordinal++; for (const fn of watches) fn(); }}>Add synthetic activity</button>
       <button onClick={() => { ordinal += 3; for (const fn of watches) fn(); }}>Add synthetic burst</button>
-      <button onClick={() => { tenant = tenant === 'tenant-a' ? 'tenant-b' : 'tenant-a'; auth.activeTenant = { tenantId: tenant }; for (const fn of listeners) fn(); }}>Change synthetic scope</button>
+      <button onClick={changeScope}>Change synthetic scope</button>
       <button onClick={() => document.documentElement.classList.toggle('dark')}>Toggle theme</button></div>
+    <button onClick={() => { disconnected = !disconnected; for (const notify of watches) notify(); }}>Toggle live connection</button>
     <LoggingWorkspace allowExport={false} />
   </main></ModalManager></TooltipProvider></ClientProvider>;
 }

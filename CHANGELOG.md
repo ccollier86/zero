@@ -4,6 +4,13 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Reworked the native logging investigation UI without replacing its live
+  DataTable or relaxing audit admission: magnetic stream tabs, explicit
+  connection state, exact server filters with removable criteria, readable
+  outcome/evidence cells, origin-aware managed inspection and grouped evidence
+  provenance. Narrow screens retain aligned columns inside ScrollArea. Retained
+  rows survive batched arrivals and protected evidence masks during recovery.
+
 - Preserve accepted first-use profile completion when publishing the real
   session unmounts its anonymous form. Cancellation/replacement before acceptance
   remains enforced, and genuine committed synchronization failures keep their

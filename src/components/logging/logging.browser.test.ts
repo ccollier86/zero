@@ -45,9 +45,12 @@ browserTest('native live inserts preserve rows and pagination, use the existing 
     expect(await page.getByRole('cell', { name: 'record · record-67', exact: true }).count()).toBe(0);
     await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).click();
     await page.getByRole('cell', { name: 'record · record-67', exact: true }).waitFor();
-    await page.getByRole('cell', { name: 'record · record-67', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Event evidence', exact: true }).waitFor();
     const directory = process.env.LOGGING_SCREENSHOTS;
+    if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: join(directory, 'logging-workspace-desktop.png'), fullPage: true }); }
+    await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Event evidence', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Trace and provenance', exact: true }).waitFor();
+    await page.getByText('This is one retained event, not proof that an entire workflow completed.', { exact: false }).waitFor({ state: 'attached' });
     await page.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running'));
     if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: join(directory, 'logging-evidence-desktop.png'), fullPage: true }); }
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -56,9 +59,72 @@ browserTest('native live inserts preserve rows and pagination, use the existing 
     expect(await page.getByRole('cell', { name: 'tenant-a-user', exact: true }).count()).toBe(0);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+    const columns = await page.locator('[data-slot="table"]').evaluate(table => {
+      const headers = [...table.querySelectorAll('thead th')].map(cell => cell.getBoundingClientRect());
+      const cells = [...table.querySelector('[data-row-id]')!.querySelectorAll('td')].map(cell => cell.getBoundingClientRect());
+      return headers.map((header, i) => ({ width: header.width, delta: Math.abs(header.x - cells[i]!.x) }));
+    });
+    expect(columns.every(column => column.width > 40 && column.delta < 1)).toBe(true);
     await page.getByRole('button', { name: 'Toggle theme', exact: true }).click();
     await page.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running'));
     if (directory) await page.screenshot({ path: join(directory, 'logging-mobile-dark.png'), fullPage: true });
+  } finally { await page.close(); }
+}, 30000);
+
+browserTest('native row keyboard inspection restores focus and masks an already-open dialog on scope retirement', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(7000); page.on('pageerror', error => faults.push(error.message));
+  await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
+  try {
+    await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
+    const row = page.locator('[data-row-id]').first(); await row.waitFor(); await row.focus(); await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'Event evidence', exact: true }); await dialog.waitFor();
+    await page.getByRole('heading', { name: 'Actor and resource', exact: true }).waitFor();
+    await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
+    // Logical dismissal precedes scene cleanup and its owned focus return.
+    await page.waitForFunction(() => document.activeElement?.matches('[data-row-id]'));
+    expect(await row.evaluate(element => element === document.activeElement)).toBe(true);
+    await page.keyboard.press('Enter'); await dialog.waitFor();
+    // An external authority update is not a UI click through the modal backdrop.
+    await page.evaluate(() => (window as any).__loggingChangeScope());
+    await dialog.getByRole('status').waitFor();
+    expect(await dialog.getByText('tenant-a-user', { exact: true }).count()).toBe(0);
+    expect(await dialog.locator('[data-slot="logging-event-detail"]').count()).toBe(0);
+  } finally { await page.close(); }
+}, 30000);
+
+browserTest('disconnected evidence masks, reconnects and uses real filter grammar with removable criteria', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultTimeout(7000); page.on('pageerror', error => faults.push(error.message));
+  await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
+  try {
+    await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
+    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Toggle live connection', exact: true }).click();
+    await page.getByText('Protected evidence is hidden while the connection is revalidated.', { exact: true }).waitFor();
+    expect(await page.getByRole('cell', { name: 'record · record-65', exact: true }).count()).toBe(0);
+    await page.getByRole('button', { name: 'Toggle live connection', exact: true }).click();
+    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'More filters', exact: true }).click();
+    await page.getByLabel('Exact action', { exact: true }).fill('Record.READ');
+    await page.keyboard.press('Escape');
+    const before = await page.evaluate(() => (window as any).__loggingQueries.length);
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await page.getByText('Exact action must be an exact lowercase code, such as record.read.', { exact: true }).waitFor();
+    expect(await page.evaluate(() => (window as any).__loggingQueries.length)).toBe(before);
+    await page.getByRole('button', { name: 'More filters', exact: true }).click();
+    await page.getByLabel('Exact action', { exact: true }).fill('record.read');
+    await page.getByLabel('Resource type', { exact: true }).fill('record');
+    await page.getByLabel('Session ID', { exact: true }).fill('fixture-session');
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove Session ID filter', exact: true }).waitFor();
+    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.targetType === 'record' && q.sessionId === 'fixture-session' && q.action === 'record.read'))).toBe(true);
+    await page.getByRole('button', { name: 'Remove Session ID filter', exact: true }).click();
+    expect(await page.getByRole('button', { name: 'Remove Session ID filter', exact: true }).count()).toBe(0);
+    await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
+    await page.getByRole('tabpanel').getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
   } finally { await page.close(); }
 }, 30000);
 

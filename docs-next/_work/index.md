@@ -37,6 +37,8 @@ publication, search, and production agent bundles.
 - [Configurable core logging](./logging-system-plan.md): basic through detailed
   activity/compliance presets, granular capture, dedicated Fabric databases and
   workers, honest browser evidence, scoped investigation UI and shared filters.
+  - [Investigation UI repair](./logging-workspace-polish.md): compact native filters,
+    grouped evidence, real live connection state and browser qualification.
   - [Logging foundation review](./logging-foundation-review.md): working private
     Fabric storage, validation and batching milestone with real-actor tests;
     separates source groundwork from the remaining managed/client/UI guarantees.
