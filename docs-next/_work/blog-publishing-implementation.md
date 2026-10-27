@@ -201,7 +201,9 @@ The installed profile consumer exposed an additive type-compatibility gap:
 caller-supplied older avatar capability projections lacked `publicAccess`.
 That wire/presentation field is now optional (absence stays private); resolved
 server policy remains a required boolean and explicit publication checks are
-unchanged. The complete installed profile proof still needs its solitary run.
+unchanged. The complete installed profile proof subsequently passes against the
+`0b7e69b` candidate (76.6s), with another 75.4s pass in the corrected-admission
+follow-up. Those focused passes do not replace the required full candidate run.
 
 The complete frozen `975db2f` inventory finished with 1320/1338 files passing;
 18 failed and none were skipped/not run. Its log remains in diagnostics. The
@@ -219,3 +221,42 @@ Do not reset data, alter prior migration checksums, replace Guardian identities,
 publish private avatars, loosen admission or expose private Storage paths to
 make a test pass. The blog remains one application-owned Fabric file in either
 tenancy mode by default; explicit organization ownership is a compatibility opt-in.
+
+## Combined candidate follow-up
+
+The `0b7e69b` Git-object archive passes its four installed package gates, normal
+existing-app dry-run/update/frozen-reinstall rehearsal and Linux/amd64 installed
+source-to-bundle publishing/restart proof. Its complete-suite attempt is retained
+as a failed gate, not replaced by those focused successes. It exposed further
+loaded-browser timing and cold archive-admission failures. Seven missing genuine
+full-framework archive consumers are now in the reviewed resource catalog;
+exclusive windows preserve the original cold-I/O/hot-auth/native-vector deadlines.
+Its full 1339-file run finished with 1326 passing, 13 failing, none unrun and no
+interruption; all original output is retained. No test is retried, omitted or
+given a larger timeout. A fresh full run is required.
+
+The native ContextMenu producer now uses a transient 120ms Web Animation instead
+of changing/restoring consumer inline declarations inside Motion's final render
+batch. The complete browser suite retains DOM refs, native animation/drag events,
+touch/keyboard and the exact original content/style files. Polar topology tests
+wait for React's actual commit before asserting the unchanged live descriptions.
+
+Managed messaging integration additionally exposed a core writer-lane lifetime
+bug: `pump()` starts a queued callback from the prior operation's completion
+context. Without a submission-time async-context binding, a new operation can
+inherit a retired logging attribution (or another actor's attribution). A new
+deterministic FIFO test fails before the repair and passes afterwards; the 73-test
+coordinator/lane qualification passes with unchanged ordering, queue bounds,
+authority fences and mutation semantics. Messaging's repeated native send also
+passes the formerly failing replay boundary after this repair. This core fix
+belongs in the blog/logging candidate independently of unfinished messaging APIs.
+
+The corrected-admission 13-file follow-up passes 12 files, including both hot-auth
+contention gates and all fresh archive consumers. The remaining real native FTS
+file exceeds its original third-case 20s deadline in that attempt. A retained
+diagnostic times the native reopen/index creation boundaries; a subsequent
+uninstrumented canonical run passes all three original cases and deadlines.
+No vector production behavior or timeout is changed. The failed attempt remains
+failed evidence; a fresh complete frozen-candidate run is still mandatory before
+selection. Root typecheck, external-output build, dependency audit (no reported
+vulnerabilities) and the 864-page documentation graph pass for the repair tree.

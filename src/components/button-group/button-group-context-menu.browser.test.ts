@@ -231,12 +231,13 @@ describe('ContextMenu browser behavior', () => {
         await page.getByTestId(`${prefix}-surface-target`).focus(); await page.keyboard.press('Shift+F10');
         const content = page.getByTestId(`${prefix}-surface-menu`);
         await content.waitFor(); await waitMenuFocused(content);
+        if (surface === 'slotted') expect(await content.evaluate(element => ({ opacity: (element as HTMLElement).style.opacity, transform: (element as HTMLElement).style.transform }))).toEqual({ opacity: '0.65', transform: 'translateX(2px)' });
         if (surface === 'native') await waitMenuSettled(content);
         else await content.evaluate(element => new Promise<void>((resolve, reject) => {
           let frames = 0;
           const check = () => {
             if ((element as HTMLElement).style.opacity === '0.65' && (element as HTMLElement).style.transform === 'translateX(2px)') resolve();
-            else if (++frames > 120) reject(new Error('Consumer inline styles were not restored after menu entrance.'));
+            else if (++frames > 120) reject(new Error(`Consumer inline styles were not restored after menu entrance: ${JSON.stringify({ opacity: (element as HTMLElement).style.opacity, transform: (element as HTMLElement).style.transform })}`));
             else requestAnimationFrame(check);
           };
           requestAnimationFrame(check);

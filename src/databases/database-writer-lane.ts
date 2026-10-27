@@ -1,4 +1,5 @@
 /** Per-database bounded FIFO for serialized writer work. */
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { DatabaseError } from './database-error';
 import type { DatabaseRef } from './database-file';
@@ -83,7 +84,10 @@ export class DatabaseWriterLane {
 
     const promise = new Promise<T>((resolve, reject) => {
       const task: WriterLaneTask<T> = {
-        execute,
+        // pump() may start this task from the preceding request's completion.
+        // Bind at submission, before queuing, so request-local audit/authority
+        // lifetimes never bleed into another actor or system recovery work.
+        execute: AsyncLocalStorage.bind(execute),
         resolve,
         reject,
         queuedAt: this.options.now(),

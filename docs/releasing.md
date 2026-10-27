@@ -446,11 +446,22 @@ git diff --check
    spawn failure or nonzero exit fails the run. No files are retried or excluded
    because they previously crashed.
 
-   Ten explicitly catalogued full-framework archive consumers share one
+   Explicitly catalogued full-framework archive consumers share one
    admission slot because their fresh installation and compilation compete for
    the same external package cache and cold-I/O budget. The scheduler admits
    ordinary queued files around a waiting archive consumer, retaining up to
-   four total fresh processes. The slot stays owned through process, descendant
+   four total fresh processes. The dual-provider payments archive consumer alone
+   reserves an exclusive cold-I/O window: existing children drain before it
+   starts, and other admission resumes after its cleanup retires. It still runs
+   once with the same assertions and original deadlines. This prevents its two
+   managed app boots and archive cleanup from competing with three browser builds.
+   The two hot-auth contention acceptance files also run exclusively so their
+   unchanged latency and actor-start assertions measure their own deliberate
+   workload, not unrelated package extraction or another benchmark.
+   The two real native-vector integration files use the same window so their
+   unchanged native/managed-operation deadlines are not dominated by unrelated
+   package I/O. Fake vector adapters and source-only tests remain ordinary files.
+   The slot stays owned through process, descendant
    and output retirement. This changes admission overlap, not inventories,
    assertions, deadlines, cleanup requirements or failure handling. Review
    `src/testing/test-suite-resources.ts` when adding a full-framework installed

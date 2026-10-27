@@ -97,6 +97,19 @@ test('an installed-consumer failure releases admission without retrying or omitt
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 10000);
 
+test('the reviewed cold-I/O consumer waits for active files and owns its complete window without changing deadlines or inventory', async () => {
+  const root = await scratch(), payment = 'packages/payments/src/package.test.ts', files = ['00/first.test.ts', payment, 'zz/last.test.ts'];
+  try {
+    for (const file of files) { await mkdir(join(root, file, '..'), { recursive: true }); await Bun.write(join(root, file), `import {test} from 'bun:test';test('owned window',async()=>{await Bun.sleep(50);});`); }
+    const active = new Set<string>(), order: string[] = [];
+    const summary = await runTestSuite({ root, files, fileTimeoutMs: 5000, event(event) {
+      if (event.type === 'test-file-start') { if (event.file === payment || active.has(payment)) expect(active.size).toBe(0); active.add(event.file); order.push(event.file); }
+      if (event.type === 'test-file-result') active.delete(event.file);
+    } });
+    expect(summary).toMatchObject({ total: 3, passed: 3, failed: 0, notRun: 0, exitCode: 0 }); expect(order).toEqual(files); expect(active.size).toBe(0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 10000);
+
 test('interruption retires active class and ordinary children and never admits blocked consumers', async () => {
   const root = await scratch();
   try {
