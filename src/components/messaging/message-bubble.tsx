@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Check, CheckCheck, Clock3, CircleAlert, File, LoaderCircle } from 'lucide-react';
-import { Avatar, AvatarFallback } from '../ui/avatar';
+import { MessagingAvatar } from './messaging-avatar';
 import { cn } from '../../lib/utils';
 import type { MessageDeliveryState, MessagingAttachment, MessagingAttachmentDisplay, MessagingMessageDisplay, NativeMessagingAttachmentDisplay } from '../../messaging/presentation';
 import './messaging.css';
@@ -29,7 +29,7 @@ export function NativeMessageBubble(props: NativeMessageBubbleProps) { return <M
 function MessageBubbleDisplay<Attachment extends MessagingAttachmentDisplay>({ message, own = false, onAttachment, onReaction, formatTime, className }: MessageBubbleDisplayProps<Attachment>) {
   const date = new Date(message.createdAt), validDate = Number.isFinite(date.getTime());
   return <article data-slot="message-bubble" data-message-id={message.id} data-own={own || undefined} className={cn('zero-messaging-message', className)} aria-label={`Message from ${message.author.label}`}>
-    {!own && <span className="zero-messaging-message-avatar" aria-hidden="true">{message.author.avatar ?? <Avatar><AvatarFallback>{message.author.label.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>}</span>}
+    {!own && <MessagingAvatar participant={message.author} className="zero-messaging-message-avatar" />}
     <div className="zero-messaging-message-content"><div className="zero-messaging-message-meta"><span>{own ? 'You' : message.author.label}{message.author.kind === 'assistant' && <span className="zero-messaging-assistant-tag">AI</span>}</span>{validDate && <time dateTime={date.toISOString()} title={date.toISOString()}>{formatTime ? formatTime(message.createdAt) : date.toISOString().slice(11, 16) + ' UTC'}</time>}</div>
       {message.text && <div className="zero-messaging-message-text" dir="auto">{message.text}</div>}
       {!!message.attachments?.length && <div className="zero-messaging-message-files">{message.attachments.map(file => <button type="button" key={file.id} className="zero-messaging-message-file" disabled={!onAttachment} onClick={() => onAttachment?.(file)}><File aria-hidden="true" className="size-5" /><span><b>{file.name}</b><small>{file.sizeBytes < 1024 ? `${file.sizeBytes} B` : `${Math.round(file.sizeBytes / 1024)} KB`}</small></span></button>)}</div>}

@@ -56,6 +56,43 @@ async function enroll(client: TestClient, name: string) {
   const policy = await client.logging.collectionPolicy(); if (policy.delivery) await client.logging.observe([], { policyVersion: policy.delivery.policyVersion });
 }
 
+test('Guardian availability and messaging share native sockets without confusing presence, typing, membership or read receipts', async () => {
+  const f = await fixture(false, 'all', undefined, false, { auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: false } });
+  const alice = f.client(), bob = f.peer(), outsider = f.peer(), sockets: Awaited<ReturnType<typeof messagingTypingSocket>>[] = [];
+  const own = (client: TestClient) => client.fetch<{ intent: { revision: number }; observation: { status: string; connected: boolean } }>('/auth/presence/me');
+  const waitForStatus = async (status: string) => {
+    const deadline = Date.now() + 5000;
+    while ((await own(bob)).observation.status !== status) { if (Date.now() >= deadline) throw new Error('Native presence status deadline.'); await Bun.sleep(10); }
+  };
+  try {
+    await enroll(alice, 'presence-alice'); await enroll(bob, 'presence-bob'); await enroll(outsider, 'presence-outsider');
+    const login = await bob.login('presence-bob', PASSWORD);
+    if (!('accessToken' in login)) throw new Error('Synthetic presence sign-in did not complete.');
+    const first = await messagingTypingSocket(f.origin, login.accessToken), second = await messagingTypingSocket(f.origin, login.accessToken);
+    sockets.push(first, second);
+    const activity = (socket: typeof first, sequence: number) => socket.send({ type: 'ephemeral.set', topic: 'guardian:presence', key: 'self', value: { sequence, activity: true, visible: true } });
+    activity(first, 1); activity(second, 1); await waitForStatus('available');
+    const conversation = await alice.messaging.conversations.create({ kind: 'group', userIds: [bob.user!.userId] }, { requestId: 'presence-group' });
+    await alice.messaging.messages.send(conversation.id, { text: 'Unread synthetic message' }, { requestId: 'presence-unread' });
+    const topic = 'typing:' + messagingTypingRoom(conversation.id), key = 'user:' + bob.user!.userId + ':session:presence01';
+    second.send({ type: 'ephemeral.subscribe', topic }); await second.wait(message => message.type === 'ephemeral.snapshot' && message.topic === topic);
+    second.send({ type: 'ephemeral.set', topic, key, value: { userId: bob.user!.userId, label: 'Synthetic teammate', since: 1, updatedAt: 1 }, ttl: 5000 });
+    expect(await second.wait(message => message.type === 'ephemeral.change' && message.key === key && message.op === 'set'
+      || message.type === 'ephemeral.error' && message.key === key)).toMatchObject({ type: 'ephemeral.change', op: 'set' });
+    const revision = (await own(bob)).intent.revision;
+    expect(await bob.fetch('/auth/presence/me', { method: 'PATCH', body: { status: 'busy', expectedRevision: revision } })).toMatchObject({ observation: { status: 'busy' } });
+    await bob.fetch('/auth/presence/config'); activity(first, 2); activity(second, 2); await waitForStatus('busy');
+    expect(first.messages.some(message => message.type === 'ephemeral.error' && message.topic === 'guardian:presence')).toBe(false);
+    await first.close(); expect((await own(bob)).observation).toMatchObject({ status: 'busy', connected: true });
+    expect((await outsider.fetch<{ items: { userId: string; status: string }[] }>('/auth/presence')).items)
+      .toContainEqual(expect.objectContaining({ userId: bob.user!.userId, status: 'busy' })); // Same-scope directory is the documented presence policy.
+    await expect(outsider.messaging.conversations.get(conversation.id)).rejects.toMatchObject({ status: 404 });
+    expect((await bob.messaging.conversations.get(conversation.id)).unreadCount).toBe(1);
+    await second.close(); await waitForStatus('offline');
+    expect((await bob.messaging.conversations.get(conversation.id)).unreadCount).toBe(1);
+  } finally { await Promise.all(sockets.map(socket => socket.close())); alice.disconnect(); bob.disconnect(); outsider.disconnect(); await f.close(); }
+}, 90000);
+
 test('internal named assistants work without support, preserve distinct identities and fence a real held response after trusted-property revocation', async () => {
   let release!: () => void, entered = 0;
   const held = new Promise<void>(resolve => { release = resolve; });

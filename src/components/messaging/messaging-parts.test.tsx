@@ -61,7 +61,16 @@ test('conversation presence is explicit, list labels escape and unread count doe
   expect(output).toContain('&lt;Alice&gt;'); expect(output).toContain('&lt;img src=x&gt;'); expect(output).toContain('4 unread messages');
   expect(output).not.toContain('avatar-presence-indicator'); expect(output).not.toContain('Online');
   const header = renderToStaticMarkup(createElement(ConversationHeader, { participant, presence: { label: 'Available', tone: 'success' } }));
-  expect(header).toContain('Available'); expect(header).toContain('data-variant="dot"');
+  expect(header).toContain('Available'); expect(header).toContain('data-variant="ring"');
+});
+test('messaging preserves explicit dot/badge variants and carries avatar shape to image and status decoration', () => {
+  const participant = { id: 'u1', kind: 'user' as const, label: 'Alice', avatarShape: 'square' as const };
+  for (const variant of ['ring', 'dot', 'badge'] as const) {
+    const header = renderToStaticMarkup(createElement(ConversationHeader, { participant, presence: { label: 'Busy', tone: 'destructive', variant, icon: createElement('i', { 'data-status-icon': '' }) } }));
+    expect(header).toContain(`data-variant="${variant}"`); expect(header).toContain('data-shape="square"');
+    expect(header).toContain('--zero-messaging-avatar-radius:var(--zero-avatar-group-square-radius, 0px)');
+    expect(header.includes('data-status-icon')).toBe(variant === 'badge');
+  }
 });
 test('message time defaults to hydration-stable UTC and accepts an explicit application formatter', () => {
   const message = { id: 'm', author: { id: 'u', label: 'User', kind: 'user' as const }, text: 'Hello', createdAt: Date.UTC(2026, 9, 24, 13, 5) };

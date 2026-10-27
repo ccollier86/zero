@@ -125,6 +125,70 @@ Exact source logs are retained under
 relabeled as a passing installed qualification. The final root typecheck is
 recorded in `messaging-correction-qualified-typecheck.log`.
 
-Public visitor/email support, configured human destination routing, the managed
-workspace/presence binding and installed/browser/Linux/full-release qualification
-remain incomplete. These corrections are not a selected stable update.
+Public visitor/email support, configured human destination routing, the full
+managed workspace and installed/Linux/full-release qualification remain
+incomplete. The list/header presence binding is now implemented as described
+below; this is not qualification of the entire managed workspace. These
+corrections are not a selected stable update.
+
+## Presence review and messaging integration
+
+Reuse the existing Guardian service, not a duplicate chat presence subsystem.
+The review found and corrected these source boundaries:
+
+- Capability/cadence refreshes restarted the activity sequence on an unchanged
+  admitted connection. The server properly rejected that replay. Counters now
+  increase for the SDK tracker's lifetime; activity itself is discarded at
+  retirement and uses a monotonic browser clock.
+- Messaging forced every indicator to a dot and separately styled it as one.
+  The shared AvatarPresenceIndicator now provides the default perimeter, with
+  explicit dot/badge choices preserved. Participant `avatarShape` and inherited
+  radius roles keep image/fallback/perimeter corners identical across headers,
+  lists, message bubbles and typing avatars. Shared tooltips expose the label.
+- Headers/lists accepted manual presentation but did not bind the actual feed.
+  They now observe one existing Guardian feed per consumer, without creating a
+  tracker, and support controlled-only opt-out. The public `useMessagingPresence`
+  helper uses the same fresh-evidence mapper as `useAvatarPresence`. Non-user
+  participants cannot borrow a human's status by matching a display ID.
+- Per-user aggregation scanned the full organization's ephemeral namespace on
+  each report. Scoped connection indexes and exact-entry TTL reads now limit
+  aggregation to that user's connections; expiration lookup is direct. Existing
+  resource caps, replay watermarks and final authority checks remain intact.
+- Expired/removed selections could leave account controls showing a stale Busy
+  or reject an unknown retired custom key. Own-intent responses normalize to
+  automatic Available while preserving the durable revision, and controls
+  refresh at acknowledged expiry without fabricating a write or extra tracker.
+
+Global presence visibility remains the admitted same-application/same-tenant
+directory, not a newly claimed contact-only privacy policy. It grants no chat
+history/files, typing access, read receipt or support ownership. No presence
+schema/migration or production app change is introduced by this review.
+
+Evidence is retained under the same external diagnostics directory with the
+`presence-review-` prefix. The initial failing sequence regression and later
+native test attempt are retained distinctly; the latter was a missing required
+display label in the synthetic typing payload, correctly rejected by policy.
+Source/real-browser/native results and package qualification are recorded after
+their actual runs, not inferred from static markup or a successful build.
+
+| Presence review check | Result | Evidence file (`presence-review-` prefix) |
+| --- | --- | --- |
+| Presence store/service/SDK and controlled messaging parts | 37 passing tests, 243 assertions | `source-retention.log` |
+| Real Chromium account controls and messaging presentation | 14 passing tests, 334 assertions | `browser-retention.log` |
+| Actual HTTP/Sync/Fabric presence and messaging runtime | 27 passing tests, 287 assertions | `native-reviewed.log` |
+| Fresh installed archive, public aliases/types, SSR and browser consumer build | 1 passing test, 26 assertions | `package-retention.log` |
+| Public UI boundaries and facade identity | 9 passing tests, 70 assertions | `exports.log` |
+| Final whole-repository typecheck | Exit 0 | `typecheck-final.log` |
+| Documentation navigation/metadata | 870 reachable pages, no problems | `docs-final.log` |
+
+Browser geometry/screenshots verify matching image/fallback/perimeter corners
+for circle, rounded and square shapes in both themes at 320px, plus shared status
+tooltips. Freshness transitions retain the actual avatar DOM and conversation
+rows, rather than reloading an image. The in-app browser connection failed before
+execution; these browser checks used the repository's isolated Playwright
+Chromium harness instead, on synthetic fixtures only.
+
+The installed consumer proves package export/build behavior, not a selected
+stable release, deployed-app acceptance or Linux/amd64 qualification. The native
+integration uses actual managed actors and local sockets, not the browser
+fixture's synthetic presence receipts. No live customer service or data was used.

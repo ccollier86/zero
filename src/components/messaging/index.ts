@@ -6,5 +6,6 @@ export { ConversationTypingIndicator, ConversationAssistantActivity, type Conver
 export { MessagingComposer, type MessagingComposerProps, type MessagingComposerFile } from './messaging-composer';
 export { useConversationTyping, type UseConversationTypingOptions, type UseConversationTypingReturn } from './use-conversation-typing';
 export { useMessagingTyping } from './use-messaging-typing';
+export { useMessagingPresence } from './use-messaging-presence';
 export { conversationActivityLabel, conversationActivityMembers, type ConversationActivityMember } from '../../messaging/activity';
 export type * from '../../messaging/presentation';

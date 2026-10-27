@@ -10,7 +10,7 @@ import { PresenceProjectionStore } from './presence-projection-store';
 import { PresenceService, type PresenceProjectionPublisher } from './presence-service';
 import { presenceRowId } from './presence-publication';
 
-function fixture(tenancyMode: 'single' | 'multi' = 'single', enabled = true) {
+function fixture(tenancyMode: 'single' | 'multi' = 'single', enabled = true, onCallEnabled = false) {
   let now = Date.now(); const db = createReactiveDB({ mode: 'memory' }), target = createReactiveDB({ mode: 'memory' });
   db.exec(`CREATE TABLE users(user_id TEXT PRIMARY KEY,status TEXT NOT NULL,password_change_required INTEGER NOT NULL,
     email_verification_required INTEGER NOT NULL,email_verified_at INTEGER);
@@ -28,7 +28,7 @@ function fixture(tenancyMode: 'single' | 'multi' = 'single', enabled = true) {
   const publisher: PresenceProjectionPublisher = { publish: async (packet, assertCurrent) => { assertCurrent(); packets.push(packet.mode); return projection.apply(packet); },
     isReady: () => projection.inspect()?.ready === true };
   const config = normalizeAuthPresence({ enabled, idleAfterMs: 1000, awayAfterMs: 2000, heartbeatIntervalMs: 1000,
-    leaseDurationMs: 3000, ownerCheckpointIntervalMs: 1000, ownerLeaseDurationMs: 6000 });
+    leaseDurationMs: 3000, ownerCheckpointIntervalMs: 1000, ownerLeaseDurationMs: 6000, onCallEnabled });
   const manager = new EphemeralStateManager(0, () => now);
   const service = new PresenceService(db, config, tenancyMode, publisher, true, () => now, 'owner');
   const detached = service.attachEphemeralManager(manager);
@@ -168,5 +168,24 @@ describe('managed Guardian presence aggregation', () => {
       expect(() => f.service.list(scope, 'user', noop, { limit: 502 })).toThrow();
       expect(() => f.service.list(scope, 'user', noop, { limit: 1, after: 'forged' })).toThrow();
     } finally { await f.close(); }
+  });
+  test('expired and removed manual selections stay editable and preserve the durable CAS revision', async () => {
+    const f = fixture('single', true, true), scope = applicationServiceDataScope(), noop = () => {};
+    let replacement: PresenceService | null = null;
+    try {
+      await f.service.initialize();
+      f.service.updateIntent(scope, 'user', { status: 'busy', expectedRevision: 0, expiresAfterMs: 1000 }, noop);
+      f.advance(1000);
+      expect(f.service.self(scope, 'user', noop).intent).toEqual({ status: 'available', expiresAt: null, revision: 1 });
+      expect(f.service.updateIntent(scope, 'user', { status: 'on-call', expectedRevision: 1 }, noop).intent.status).toBe('on-call');
+      await f.service.close();
+      replacement = new PresenceService(f.db, { ...f.config, onCallEnabled: false }, 'single', f.publisher, true, f.now, 'replacement');
+      await replacement.initialize();
+      const own = replacement.self(scope, 'user', noop);
+      expect(own.intent).toEqual({ status: 'available', expiresAt: null, revision: 2 });
+      expect(own.capabilities.statuses.some(status => status.key === own.intent.status && status.selectable)).toBe(true);
+      expect(replacement.updateIntent(scope, 'user', { status: 'busy', expectedRevision: 2 }, noop).intent.revision).toBe(3);
+      expect(() => replacement!.updateIntent(scope, 'user', { status: 'away', expectedRevision: 2 }, noop)).toThrow();
+    } finally { await replacement?.close(); await f.close(); }
   });
 });

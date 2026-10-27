@@ -185,8 +185,16 @@ Available/Idle/Away/Offline, manual Busy, optional On call/custom statuses and
 tokenized avatar rings/dots/badges. One SDK tracker owns activity; each avatar
 must not start another lease. Unknown/stale status must not look online.
 
-Conversation lists/headers already accept these shared presentation records.
-The complete managed workspace/controller must wire the real hooks, typing,
+The branch's conversation lists/headers now observe this existing feed by default
+under the normal SDK provider. Rings follow circular/rounded/square avatar shape;
+explicit dots/badges remain optional. Only Guardian user participants are mapped,
+never assistant/visitor/group display IDs. Use `useMessagingPresence()` for custom
+assemblies, or `livePresence={false}` for controlled-only presentation. See the
+[frontend contract](../../frontend/messaging/index.md#guardian-presence-and-avatar-shape).
+This does not add a second presence tracker or make same-scope directory presence
+proof of contact/conversation access. Stale/retired feeds are omitted.
+
+The complete managed workspace/controller still must wire typing,
 attachments, read visibility and history/scroll continuity. Existing styled parts
 and source HTTP tests do not establish that finished browser integration.
 

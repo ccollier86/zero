@@ -21,15 +21,23 @@ export function presenceStatusCatalog(config: ResolvedAuthPresenceConfig): reado
   ] as AuthPresenceStatusDefinition[]).map(status => Object.freeze(status)));
 }
 
+/** Expired/removed selections return to automatic availability without rewriting their CAS history. */
+export function currentPresenceIntent(intent: AuthPresenceIntent, config: ResolvedAuthPresenceConfig, now: number): AuthPresenceIntent {
+  if (intent.expiresAt !== null && intent.expiresAt <= now
+    || !presenceStatusCatalog(config).some(status => status.selectable && status.key === intent.status)) {
+    return Object.freeze({ status: 'available', expiresAt: null, revision: intent.revision });
+  }
+  return intent;
+}
+
 /** A live active tab wins over idle/hidden tabs; manual busy/away/custom intent wins over activity. */
 export function effectivePresenceStatus(
   leases: readonly PresenceActivityLease[], intent: AuthPresenceIntent,
   config: ResolvedAuthPresenceConfig, now: number,
 ): string {
   if (!leases.length) return 'offline';
-  const manual = intent.expiresAt === null || intent.expiresAt > now ? intent.status : 'available';
-  const admitted = presenceStatusCatalog(config).some(status => status.selectable && status.key === manual);
-  if (admitted && manual !== 'available') return manual;
+  const manual = currentPresenceIntent(intent, config, now).status;
+  if (manual !== 'available') return manual;
   if (leases.some(lease => lease.visible && lease.lastActivityAt !== null
     && now - lease.lastActivityAt < config.idleAfterMs)) return 'available';
   if (leases.some(lease => lease.lastActivityAt !== null

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Bot, Mic, Upload } from 'lucide-react';
-import { Avatar, AvatarFallback } from '../ui/avatar';
+import { MessagingAvatar } from './messaging-avatar';
 import { cn } from '../../lib/utils';
 import { conversationActivityLabel, type ConversationActivityMember } from '../../messaging/activity';
 import type { MessagingAssistantActivity, MessagingParticipant } from '../../messaging/presentation';
@@ -24,7 +24,7 @@ export function ConversationTypingIndicator({ participants, participantFor, vari
   return <div data-slot="conversation-typing" data-variant={variant} data-activity={kind} className={cn('zero-messaging-typing', className)} role="status" aria-live="polite" aria-atomic="true">
     {avatars && <span className="zero-messaging-typing-avatars" aria-hidden="true">{participants.slice(0, 3).map(member => {
       const participant = participantFor?.(member.userId), name = participant?.label || member.label;
-      return participant?.avatar ? <span key={member.userId}>{participant.avatar}</span> : <Avatar key={member.userId}><AvatarFallback>{name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>;
+      return <MessagingAvatar key={member.userId} participant={participant ?? { id: member.userId, label: name, kind: 'user' }} />;
     })}</span>}
     <span className="zero-messaging-typing-body">
       <span aria-hidden="true" className="zero-messaging-typing-visual">{kind === 'recording' ? <Mic className="size-3.5" /> : kind === 'uploading' ? <Upload className="size-3.5" /> : <span className="zero-messaging-typing-dots"><i /><i /><i /></span>}</span>

@@ -13,7 +13,7 @@ import { PresenceDirectory } from './presence-directory';
 import { PresenceSystemStore, type PresenceOwnerClaim } from './presence-system-store';
 import { PresenceCanonicalStore } from './presence-canonical-store';
 import { PresenceLeaseStore, type PresenceActivityReport, type PresenceLeasePrincipal } from './presence-lease-store';
-import { effectivePresenceStatus, presenceStatusCatalog } from './presence-status';
+import { currentPresenceIntent, effectivePresenceStatus, presenceStatusCatalog } from './presence-status';
 import { presenceRowId, type PresencePublication, type PresenceProjectionReceipt, type PresenceProjectionRow } from './presence-publication';
 import { reconcilePresenceSystemSchema } from './presence-schema';
 
@@ -133,7 +133,8 @@ export class PresenceService {
   self(scope: ServiceDataScope, userId: string, assertCurrent: () => void): PresenceSelfSnapshot {
     this.assertReady(scope); assertCurrent(); this.assertMember(scope, userId);
     const row = this.canonical.user(scope, userId);
-    const snapshot = { capabilities: this.capabilities(scope), intent: this.system.intent(scope, userId), observation: row ? this.observe(row) : null };
+    const snapshot = { capabilities: this.capabilities(scope), intent: currentPresenceIntent(this.system.intent(scope, userId), this.config, this.now()),
+      observation: row ? this.observe(row) : null };
     assertCurrent(); return snapshot;
   }
   updateIntent(scope: ServiceDataScope, userId: string, input: UpdateAuthPresenceIntentInput, assertCurrent: () => void): PresenceSelfSnapshot {

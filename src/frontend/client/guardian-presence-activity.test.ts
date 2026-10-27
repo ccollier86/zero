@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { GuardianPresenceActivity } from './guardian-presence-activity';
 
-test('one activity tracker reports heartbeats without inventing human activity, and resets on reconnect', () => {
+test('one activity tracker expires activity but keeps sequence increasing across restarts on a live connection', () => {
   const target = new EventTarget(), visibility = new EventTarget(); let now = 0, visible = true;
   let tick = () => {}, scheduled = 0, cancelled = 0;
   const reports: Array<{ sequence: number; activity: boolean; visible: boolean }> = [];
@@ -17,7 +17,7 @@ test('one activity tracker reports heartbeats without inventing human activity, 
   visible = false; visibility.dispatchEvent(new Event('visibilitychange'));
   expect(reports.at(-1)?.visible).toBe(false);
   tracker.stop(); target.dispatchEvent(new Event('keydown')); tick(); expect(cancelled).toBe(1);
-  visible = true; tracker.start(10_000); expect(reports.at(-1)).toEqual({ sequence: 1, activity: false, visible: true }); tracker.stop();
+  visible = true; tracker.start(10_000); expect(reports.at(-1)).toEqual({ sequence: 5, activity: false, visible: true }); tracker.stop();
 });
 test('dropped or hidden activity expires instead of replaying stale observations', () => {
   let now = 0, writable = false, tick = () => {}; const target = new EventTarget(), reports: boolean[] = [];

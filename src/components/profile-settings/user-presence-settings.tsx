@@ -33,6 +33,21 @@ export function UserPresenceSettings({ readOnly = false, expiresAfterMs = null, 
     });
     return () => { operation.controller.abort(); if (request.current === operation) request.current = null; };
   }, [enabled, ready, boundary.key, boundary.ready, presence.getSelf]);
+  useEffect(() => {
+    const self = presence.self;
+    if (!ready || !boundary.ready || presence.saving || self?.intent.expiresAt == null) return;
+    const operation = { controller: new AbortController(), kind: 'read' as const };
+    // Expiry is server-owned. Refresh its acknowledged selection rather than
+    // inventing a local mutation/revision or leaving an expired Busy selected.
+    const timer = setTimeout(() => {
+      if (request.current?.kind === 'mutation') return;
+      request.current?.controller.abort(); request.current = operation;
+      void presence.getSelf(operation.controller.signal).catch(() => {
+        if (!operation.controller.signal.aborted && request.current === operation) setError('Your availability could not be loaded. Retry to review it.');
+      });
+    }, Math.max(0, Math.min(2_147_483_647, self.intent.expiresAt - self.capabilities.serverTime)));
+    return () => { clearTimeout(timer); operation.controller.abort(); if (request.current === operation) request.current = null; };
+  }, [ready, boundary.ready, boundary.key, presence.saving, presence.self, presence.getSelf]);
   useEffect(() => () => { request.current?.controller.abort(); }, []);
   useEffect(() => { if (readOnly && request.current?.kind === 'mutation') request.current.controller.abort(); }, [readOnly]);
   if (presence.status === 'disabled' || presence.capabilities?.state === 'disabled') return null;

@@ -64,4 +64,28 @@ describe('presence lease and status policy', () => {
     expect(presenceStatusCatalog(normalizeAuthPresence()).find(status => status.key === 'on-call')).toBeUndefined();
     expect(presenceStatusCatalog(config).filter(status => status.selectable).map(status => status.key)).toEqual(['available', 'away', 'busy', 'on-call', 'focus']);
   });
+  test('per-user aggregation reads only its own leases, expires lazily and retains replay watermarks', () => {
+    let now = 0, lookups = 0; const events: string[] = [];
+    const manager = new EphemeralStateManager(0, () => now);
+    const leases = new PresenceLeaseStore(manager, config, 4, (_scope, id) => events.push(id), () => now);
+    try {
+      for (let i = 0; i < 100; i++) leases.report({ scope, userId: `other-${i}`, connectionId: `other-${i}` }, { sequence: 1, activity: false, visible: true });
+      const principal = { scope, userId: 'user', connectionId: 'tab:a' };
+      leases.report(principal, { sequence: 1, activity: true, visible: true });
+      leases.report({ ...principal, connectionId: 'tab:b' }, { sequence: 1, activity: false, visible: true });
+      const getEntry = manager.getEntry.bind(manager);
+      manager.getEntry = (topic, key) => { lookups++; return getEntry(topic, key); };
+      manager.getSnapshot = () => { throw new Error('Presence must not scan a whole namespace per heartbeat'); };
+      expect(leases.forUser(scope, 'user')).toHaveLength(2); expect(lookups).toBe(2);
+      expect(leases.forUser(other, 'user')).toHaveLength(0); expect(lookups).toBe(2);
+      now = 3000; expect(leases.forUser(scope, 'user')).toHaveLength(0); expect(lookups).toBe(4);
+      expect(leases.principals()).toHaveLength(100);
+      expect(events.filter(id => id === 'user')).toHaveLength(4);
+      expect(() => leases.report(principal, { sequence: 1, activity: true, visible: true })).toThrow();
+      leases.report(principal, { sequence: 2, activity: false, visible: true });
+      expect(leases.forUser(scope, 'user')).toHaveLength(1);
+      leases.release(principal.connectionId); expect(leases.principals()).toHaveLength(100);
+      expect(leases.forUser(scope, 'user')).toHaveLength(0);
+    } finally { leases.close(); manager.dispose(); }
+  });
 });

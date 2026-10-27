@@ -23,12 +23,14 @@ interface StoredLease extends PresenceActivityLease, PresenceLeasePrincipal {
   readonly sequence: number;
   readonly namespace: string;
   readonly key: string;
+  readonly principalKey: string;
 }
 
 /** Per-connection storage and expiration ownership; aggregation belongs to PresenceService. */
 export class PresenceLeaseStore {
   private readonly leases = new Map<string, StoredLease>();
   private readonly sequences = new Map<string, number>();
+  private readonly byPrincipal = new Map<string, Map<string, StoredLease>>();
   private readonly removeExpiration: () => void;
   private closed = false;
 
@@ -65,21 +67,24 @@ export class PresenceLeaseStore {
         throw presenceError('AUTH_PRESENCE_CAPACITY_EXCEEDED');
       }
     }
-    const lease: StoredLease = Object.freeze({ ...principal, namespace, key, sequence: input.sequence,
+    const principalKey = this.principalKey(principal.scope, principal.userId);
+    const lease: StoredLease = Object.freeze({ ...principal, namespace, key, principalKey, sequence: input.sequence,
       visible: input.visible, lastActivityAt: input.activity ? this.now() : previous?.lastActivityAt ?? null });
-    this.leases.set(principal.connectionId, lease);
-    this.sequences.set(principal.connectionId, input.sequence);
     this.manager.set(namespace, key, { sequence: lease.sequence, visible: lease.visible,
       lastActivityAt: lease.lastActivityAt } as JsonValue, principal.userId, this.config.leaseDurationMs);
+    this.leases.set(principal.connectionId, lease);
+    this.sequences.set(principal.connectionId, input.sequence);
+    const connections = this.byPrincipal.get(principalKey) ?? new Map<string, StoredLease>();
+    connections.set(principal.connectionId, lease); this.byPrincipal.set(principalKey, connections);
     this.onAffected(principal.scope, principal.userId);
   }
 
   /** Read only current TTL leases; no clock from the client can renew or age a lease. */
   forUser(scope: ServiceDataScope, userId: string): readonly PresenceActivityLease[] {
-    const namespace = `_guardian-presence:${serviceDataScopeKey(scope)}`;
-    const entries = this.manager.getSnapshot(namespace);
-    return [...this.leases.values()].filter(lease => lease.namespace === namespace && lease.userId === userId
-      && Object.hasOwn(entries, lease.key));
+    // A heartbeat must not copy/scan the entire organization's ephemeral
+    // namespace. Only this account's few connection leases affect its status.
+    const connections = this.byPrincipal.get(this.principalKey(scope, userId));
+    return connections ? [...connections.values()].filter(lease => this.manager.getEntry(lease.namespace, lease.key) !== null) : [];
   }
 
   /** Clean close retires only this connection, never all tabs/devices of its user. */
@@ -87,15 +92,13 @@ export class PresenceLeaseStore {
     this.sequences.delete(connectionId);
     const lease = this.leases.get(connectionId);
     if (!lease) return;
-    this.leases.delete(connectionId); this.manager.delete(lease.namespace, lease.key);
+    this.removeLease(lease); this.manager.delete(lease.namespace, lease.key);
     this.onAffected(lease.scope, lease.userId);
   }
 
   /** Return deduplicated affected principals for automatic inactivity sweeps. */
   principals(): readonly Pick<PresenceLeasePrincipal, 'scope' | 'userId'>[] {
-    const distinct = new Map<string, Pick<PresenceLeasePrincipal, 'scope' | 'userId'>>();
-    for (const lease of this.leases.values()) distinct.set(JSON.stringify([serviceDataScopeKey(lease.scope), lease.userId]), lease);
-    return [...distinct.values()];
+    return [...this.byPrincipal.values()].map(connections => connections.values().next().value!);
   }
 
   /** Disposal cannot re-add entries/timers when retained work settles later. */
@@ -104,16 +107,26 @@ export class PresenceLeaseStore {
     this.closed = true; this.removeExpiration();
     for (const lease of this.leases.values()) this.manager.delete(lease.namespace, lease.key);
     this.leases.clear();
+    this.byPrincipal.clear();
     this.sequences.clear();
   }
 
   private expired(expiration: EphemeralExpiration): void {
     if (this.closed || !expiration.namespace.startsWith('_guardian-presence:')) return;
-    for (const [connectionId, lease] of this.leases) {
-      if (lease.namespace === expiration.namespace && lease.key === expiration.key) {
-        this.leases.delete(connectionId); this.onAffected(lease.scope, lease.userId); break;
-      }
-    }
+    const prefix = `${this.ownerEpoch}:`;
+    if (!expiration.key.startsWith(prefix)) return;
+    const lease = this.leases.get(expiration.key.slice(prefix.length));
+    if (!lease || lease.namespace !== expiration.namespace || lease.key !== expiration.key) return;
+    this.removeLease(lease); this.onAffected(lease.scope, lease.userId);
+  }
+  private removeLease(lease: StoredLease): void {
+    this.leases.delete(lease.connectionId);
+    const connections = this.byPrincipal.get(lease.principalKey);
+    connections?.delete(lease.connectionId);
+    if (connections?.size === 0) this.byPrincipal.delete(lease.principalKey);
+  }
+  private principalKey(scope: ServiceDataScope, userId: string): string {
+    return JSON.stringify([serviceDataScopeKey(scope), userId]);
   }
 }
 

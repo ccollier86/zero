@@ -49,6 +49,19 @@ browserTest('disabled server catalog omits controls; native read ceiling renders
     expect(await native.page.evaluate(() => window.__presenceSettings.starts())).toBe(0);
   } finally { await native.close(); }
 }, 15_000);
+browserTest('a server-expired selection refreshes without a fabricated write and can be selected again with the same CAS history', async () => {
+  const h = await open('?expiring');
+  try {
+    const status = h.page.getByRole('combobox', { name: 'Status' }); await status.filter({ hasText: 'Busy' }).waitFor();
+    await status.filter({ hasText: 'Available' }).waitFor();
+    expect(await h.page.evaluate(() => window.__presenceSettings.reads())).toBe(2);
+    expect(await h.page.evaluate(() => window.__presenceSettings.calls.length)).toBe(0);
+    await status.click(); await h.page.getByRole('option', { name: 'Busy', exact: true }).click();
+    expect(await h.page.evaluate(() => window.__presenceSettings.calls[0]!.input.expectedRevision)).toBe(1);
+    await h.page.evaluate(() => window.__presenceSettings.resolve(0)); await status.filter({ hasText: 'Busy' }).waitFor();
+    expect(await h.page.evaluate(() => window.__presenceSettings.starts())).toBe(1);
+  } finally { await h.close(); }
+}, 15_000);
 browserTest('actual catalog excludes derived choices, pending locks duplicates, errors are safe, explicit retry reloads before changing', async () => {
   const h = await open();
   try {
@@ -109,6 +122,76 @@ browserTest('actual default browser activity environment disconnects, restarts a
     await h.page.evaluate(() => window.__presenceSettings.dispose()); await ring.waitFor({ state: 'detached' });
   } finally { await h.close(); }
 }, 15_000);
+browserTest('messaging observes actual SDK presence, never borrows human status for bots/visitors, and never multiplies the tracker', async () => {
+  const h = await open('?messaging');
+  try {
+    const header = h.page.getByRole('region', { name: 'Connected conversation header' });
+    const list = h.page.getByRole('list', { name: 'Conversation list' });
+    const ring = header.locator('[data-slot="avatar-presence-indicator"]');
+    await ring.waitFor(); expect(await ring.getAttribute('data-variant')).toBe('ring');
+    expect(await ring.getAttribute('data-tone')).toBe('success');
+    await header.locator('.zero-messaging-avatar').hover();
+    await h.page.getByRole('tooltip', { name: 'Available', exact: true }).waitFor();
+    expect(await list.locator('[data-slot="avatar-presence-indicator"]').count()).toBe(1);
+    expect(await h.page.getByRole('region', { name: 'Controlled-only header' }).locator('[data-slot="avatar-presence-indicator"]').count()).toBe(0);
+    expect(await h.page.getByRole('region', { name: 'Explicit badge header' }).locator('[data-custom-badge]').count()).toBe(1);
+    for (const [status, label, tone] of [['busy', 'Busy', 'destructive'], ['away', 'Away', 'warning'], ['on-call', 'On call', 'primary'], ['offline', 'Offline', 'muted']] as const) {
+      await h.page.getByRole('button', { name: status, exact: true }).click();
+      await header.getByText(label, { exact: true }).waitFor(); expect(await ring.getAttribute('data-tone')).toBe(tone);
+      expect(await list.getByRole('button', { name: new RegExp(`Alex Rivera.*${label}`) }).count()).toBe(1);
+    }
+    expect(await h.page.evaluate(() => window.__presenceSettings.starts())).toBe(1);
+    const row = list.locator('[data-conversation-id="conversation-0"]');
+    await row.evaluate(element => { element.dataset.retainedNode = 'retained'; });
+    await header.locator('[data-slot="avatar"]').evaluate(element => { element.dataset.retainedAvatar = 'retained'; });
+    await h.page.getByRole('button', { name: 'Refresh presence', exact: true }).click(); await ring.waitFor();
+    expect(await row.getAttribute('data-retained-node')).toBe('retained');
+    expect(await h.page.evaluate(() => window.__presenceSettings.reports)).toEqual([1, 2].map(sequence => ({ sequence, activity: false, visible: true })));
+    await h.page.getByRole('button', { name: 'Disconnect feed', exact: true }).click(); await ring.waitFor({ state: 'detached' });
+    expect(await list.locator('[data-slot="avatar-presence-indicator"]').count()).toBe(0);
+    expect(await header.locator('[data-slot="avatar"]').getAttribute('data-retained-avatar')).toBe('retained');
+    await h.page.getByRole('button', { name: 'Reconnect feed', exact: true }).click(); await ring.waitFor();
+    expect(await header.locator('[data-slot="avatar"]').getAttribute('data-retained-avatar')).toBe('retained');
+    await h.page.getByRole('button', { name: 'Expire owner', exact: true }).click(); await ring.waitFor({ state: 'detached' });
+    await h.page.getByRole('button', { name: 'Reconnect feed', exact: true }).click(); await ring.waitFor();
+    await h.page.getByRole('button', { name: 'Replace scope', exact: true }).click(); await ring.waitFor({ state: 'detached' });
+    expect(await list.locator('[data-slot="avatar-presence-indicator"]').count()).toBe(0);
+  } finally { await h.close(); }
+}, 20_000);
+browserTest('messaging circle, square and rounded status perimeters match actual avatar/fallback geometry in both themes', async () => {
+  const h = await open('?messaging');
+  try {
+    const header = h.page.getByRole('region', { name: 'Connected conversation header' });
+    const ring = header.locator('[data-slot="avatar-presence-indicator"]'); await ring.waitFor();
+    for (const dark of [false, true]) {
+      if (dark) await h.page.getByRole('button', { name: 'Toggle theme', exact: true }).click();
+      for (const shape of ['circle', 'square', 'rounded'] as const) {
+        await h.page.getByRole('button', { name: `${shape} avatar`, exact: true }).click();
+        for (const avatar of await h.page.locator('.zero-messaging-avatar').all()) {
+          expect(await avatar.getAttribute('data-shape')).toBe(shape);
+          const geometry = await avatar.evaluate(element => ({ radius: getComputedStyle(element).borderRadius,
+            avatarRadius: getComputedStyle(element.querySelector('[data-slot="avatar"]')!).borderRadius,
+            fallbackRadius: getComputedStyle(element.querySelector('[data-slot="avatar-fallback"]')!).borderRadius }));
+          expect(geometry.avatarRadius).toBe(geometry.radius); expect(geometry.fallbackRadius).toBe(geometry.radius);
+          if (shape === 'square') expect(geometry.radius).toBe('0px');
+        }
+        const geometry = await ring.evaluate(element => { const parent = element.parentElement!, r = element.getBoundingClientRect(), p = parent.getBoundingClientRect();
+          return { radius: getComputedStyle(element).borderRadius, parentRadius: getComputedStyle(parent).borderRadius,
+            width: r.width, height: r.height, parentWidth: p.width, parentHeight: p.height, border: getComputedStyle(element).borderTopWidth }; });
+        expect(geometry.radius).toBe(geometry.parentRadius); expect(geometry.width).toBe(geometry.parentWidth);
+        expect(geometry.height).toBe(geometry.parentHeight); expect(geometry.border).toBe('2px');
+        expect(await h.page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+      }
+    }
+    await h.page.getByRole('button', { name: 'square avatar', exact: true }).click();
+    await header.screenshot({ path: '/Volumes/code-bank/tmp/scratch/zero-platform/presence-settings-browser/messaging-square-status-dark.png' });
+    await h.page.screenshot({ path: '/Volumes/code-bank/tmp/scratch/zero-platform/presence-settings-browser/messaging-square-dark.png', fullPage: true });
+    await h.page.getByRole('button', { name: 'Toggle theme', exact: true }).click();
+    await h.page.getByRole('button', { name: 'circle avatar', exact: true }).click();
+    await header.screenshot({ path: '/Volumes/code-bank/tmp/scratch/zero-platform/presence-settings-browser/messaging-circle-status-light.png' });
+    await h.page.screenshot({ path: '/Volumes/code-bank/tmp/scratch/zero-platform/presence-settings-browser/messaging-circle-light.png', fullPage: true });
+  } finally { await h.close(); }
+}, 20_000);
 for (const dark of [false, true]) browserTest(`public standalone narrow ${dark ? 'dark' : 'light'} availability and square rings inherit semantic and public metric tokens`, async () => {
   const h = await open('?standalone');
   try {

@@ -1,14 +1,14 @@
 'use client';
 
 /** Components observe one SDK-owned tracker; none of these hooks installs activity listeners. */
-import { createElement, useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { useClientMaybe, shouldUseSsrFallback } from './client-context';
 import { useAuthorizationScopeBoundary, readAuthorizationScopeBoundaryKey, isAuthorizationScopeCallbackCurrent } from './authorization-scope-hooks';
 import type { InternalClient } from './sdk';
 import type { UpdateAuthPresenceIntentInput } from '../../auth/auth-presence-types';
 import type { AvatarPresence } from '../../components/avatar-group';
-import { ZeroIcon } from '../icons';
 import { EMPTY_GUARDIAN_PRESENCE } from './guardian-presence-client';
+import { guardianAvatarPresence } from './guardian-presence-presentation';
 
 const noSubscribe = () => () => {};
 const getEmpty = () => EMPTY_GUARDIAN_PRESENCE;
@@ -34,10 +34,5 @@ export function useGuardianPresence() {
 
 /** An expired/disconnected/unconfirmed observation does not paint a misleading status ring. */
 export function useAvatarPresence(userId: string): AvatarPresence | undefined {
-  const presence = useGuardianPresence();
-  const observation = presence.observations[userId];
-  const definition = presence.capabilities?.statuses.find(status => status.key === observation?.status);
-  if (!observation || observation.stale || !definition || presence.status !== 'ready') return undefined;
-  return { label: definition.label, tone: definition.tone,
-    ...(definition.icon ? { icon: createElement(ZeroIcon, { name: definition.icon }) } : {}), variant: 'ring' };
+  return guardianAvatarPresence(useGuardianPresence(), userId);
 }

@@ -35,6 +35,8 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
     const installed = join(consumer, 'node_modules/@zero/framework');
     for (const file of [
       'src/components/messaging/index.ts', 'src/components/messaging/messaging.css', 'src/components/messaging/use-conversation-typing.ts',
+      'src/components/messaging/use-messaging-presence.ts', 'src/components/messaging/messaging-avatar.tsx',
+      'src/frontend/client/guardian-presence-presentation.ts', 'src/components/avatar-group/avatar-group.styles.css',
       'src/frontend/client/typing-indicator-hooks.ts', 'src/frontend/client/typing-indicator-model.ts',
       'src/sync/client/ephemeral-client.ts', 'src/sync/client/ephemeral-store.ts', 'src/sync/ephemeral-channel.ts',
       'docs-next/frontend/messaging/index.md', 'docs-next/backend/messaging/index.md',
@@ -82,7 +84,7 @@ import type { UseConversationTypingReturn, MessageBubbleProps, MessageDeliveryIn
   MessagingComposerProps, MessagingAttachment, MessagingMessage } from '@zero/framework/messaging';
 const names = ['MessagingLayout', 'ConversationList', 'ConversationListHeading', 'ConversationHeader', 'ConversationSeparator',
   'ConversationTypingIndicator', 'ConversationAssistantActivity', 'MessageBubble', 'MessageDeliveryIndicator', 'MessagingComposer',
-  'useConversationTyping', 'conversationActivityLabel', 'conversationActivityMembers'] as const;
+  'useConversationTyping', 'useMessagingPresence', 'conversationActivityLabel', 'conversationActivityMembers'] as const;
 export const publicAliases = names.every(name => Parts[name] === Root[name] && Parts[name] === Frontend[name] && Parts[name] === Alias[name]);
 export const message: MessagingMessage = { id: 'fixture-message', author: { id: 'fixture-user', kind: 'user', label: 'Customer' },
   text: '<fixture text>', createdAt: Date.UTC(2026, 9, 24, 12), delivery: 'accepted' };
@@ -92,7 +94,9 @@ const assistant: ConversationAssistantActivityProps = { activity: null };
 export let hookSsr = false;
 function Input() {
   const typing: UseConversationTypingReturn = Parts.useConversationTyping('room-fixture');
-  hookSsr = !typing.isTyping && !typing.isAnyoneTyping && typing.participants.length === 0 && typing.resetError() === false;
+  const presence = Parts.useMessagingPresence();
+  hookSsr = !typing.isTyping && !typing.isAnyoneTyping && typing.participants.length === 0 && typing.resetError() === false
+    && presence.presenceFor({ ...message.author, avatarShape: 'square' }) === undefined;
   const composer: MessagingComposerProps = { value: '', onChange() {}, onSubmit() {}, onTyping: typing.onTextChange };
   return <Parts.MessagingComposer {...composer} />;
 }

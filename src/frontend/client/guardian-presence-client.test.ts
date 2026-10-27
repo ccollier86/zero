@@ -5,6 +5,10 @@ import { readGuardianPresenceRows } from './guardian-presence-model';
 import type { AuthPresenceCapabilities } from '../../auth/auth-presence-types';
 import type { PresenceActivityEnvironment } from './guardian-presence-activity';
 import type { Row } from '../../sync/types';
+import { EphemeralStateManager } from '../../sync/ephemeral-manager';
+import { PresenceLeaseStore } from '../../presence/presence-lease-store';
+import { normalizeAuthPresence } from '../../auth/auth-config-presence';
+import { applicationServiceDataScope } from '../../auth/service-data-scope';
 
 const capabilities: AuthPresenceCapabilities = { enabled: true, state: 'ready', topology: 'single-owner',
   canReportActivity: true, canSetIntent: true,
@@ -68,6 +72,23 @@ describe('Guardian SDK presence lifecycle', () => {
       expect(h.cancelled()).toBe(1);
     } finally { h.client.dispose(); }
   });
+  test('same-connection config refreshes and cadence changes remain admitted by the real lease sequence guard', async () => {
+    const manager = new EphemeralStateManager(0);
+    const leases = new PresenceLeaseStore(manager, normalizeAuthPresence({ enabled: true }), 1, () => {});
+    const principal = { scope: applicationServiceDataScope(), userId: 'alice', connectionId: 'same-socket' };
+    let cadence = 10_000;
+    const h = harness(async path => Response.json(path.endsWith('/config') ? { ...capabilities, heartbeatIntervalMs: cadence } : own()));
+    // Replay the actual emitted wire reports through the server guard without
+    // resetting its admitted connection between capability refreshes.
+    try {
+      h.client.activate(); await flush();
+      await h.client.refresh(); cadence = 20_000; await h.client.refresh();
+      for (const report of h.heartbeat) leases.report(principal, report as { sequence: number; activity: boolean; visible: boolean });
+      expect(h.heartbeat).toEqual([1, 2, 3].map(sequence => ({ sequence, activity: false, visible: true })));
+      expect(h.failures).toEqual([]);
+      expect(h.scheduled()).toBe(3); expect(h.cancelled()).toBe(2);
+    } finally { h.client.dispose(); leases.close(); manager.dispose(); }
+  });
   test('an old capability/body result cannot populate a new scope even before notification', async () => {
     let release!: (response: Response) => void;
     const h = harness(() => new Promise(resolve => { release = resolve; }));
@@ -112,7 +133,7 @@ describe('Guardian SDK presence lifecycle', () => {
     h.client.activate(); await flush();
     h.setBoundary({ key: 'b', scopeId: 'b' }); await flush();
     expect(h.client.getSnapshot().observations).toEqual({});
-    expect(h.heartbeat).toEqual([{ sequence: 1, activity: false, visible: true }, { sequence: 1, activity: false, visible: true }]);
+    expect(h.heartbeat).toEqual([{ sequence: 1, activity: false, visible: true }, { sequence: 2, activity: false, visible: true }]);
     h.client.dispose(); h.notify();
     expect(h.scheduled()).toBe(2); expect(h.cancelled()).toBe(2);
   });

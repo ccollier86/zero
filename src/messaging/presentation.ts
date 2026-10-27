@@ -1,14 +1,16 @@
 /** Browser-safe presentation records. These do not grant conversation or file access. */
 import type { ReactNode } from 'react';
-import type { AvatarPresence } from '../components/avatar-group/avatar-group-types';
+import type { AvatarPresence, AvatarGroupShape } from '../components/avatar-group/avatar-group-types';
 
 export type MessagingActivity = 'typing' | 'recording' | 'uploading';
 export type MessageDeliveryState = 'queued' | 'sending' | 'accepted' | 'delivered' | 'read' | 'failed' | 'unknown';
 export interface MessagingParticipant {
   id: string;
   label: string;
-  kind: 'user' | 'external' | 'assistant';
+  kind: 'user' | 'external' | 'assistant' | 'group';
   avatar?: ReactNode;
+  /** Shared image/fallback/presence corners. Defaults to the messaging avatar radius token (circle). */
+  avatarShape?: AvatarGroupShape;
 }
 /** Display data supplied by an authorized directory/conversation projection. */
 export interface MessagingConversationSummary {

@@ -4,6 +4,7 @@
 
 import { cn } from '../../lib/utils';
 import type { AvatarPresenceIndicatorProps } from './avatar-group-types';
+import './avatar-group.styles.css';
 
 /** Omit disabled/unknown presence instead of presenting it as offline. */
 export function AvatarPresenceIndicator({

@@ -21,7 +21,7 @@ export class GuardianPresenceActivity {
     private readonly environment: PresenceActivityEnvironment | null = browserPresenceActivityEnvironment()) {}
   start(cadence: number): void {
     if (!this.environment || this.running && this.cadence === cadence) return;
-    this.stop(); this.running = true; this.cadence = cadence; this.sequence = 0;
+    this.stop(); this.running = true; this.cadence = cadence;
     for (const event of HUMAN_EVENTS) this.environment.target.addEventListener(event, this.activity, { passive: true });
     this.environment.visibility.addEventListener('visibilitychange', this.visibility);
     this.report();
@@ -30,7 +30,10 @@ export class GuardianPresenceActivity {
   stop(): void {
     if (!this.environment) return;
     if (this.timer !== null) this.environment.cancel(this.timer);
-    this.timer = null; this.running = false; this.sequence = 0; this.dirtyActivity = false;
+    // Config refreshes/cadence changes can restart the tracker on the same
+    // admitted socket. Its server watermark outlives this timer; never replay
+    // sequence 1. A replacement socket also accepts a higher sequence.
+    this.timer = null; this.running = false; this.dirtyActivity = false;
     this.lastHumanAt = -Infinity;
     for (const event of HUMAN_EVENTS) this.environment.target.removeEventListener(event, this.activity);
     this.environment.visibility.removeEventListener('visibilitychange', this.visibility);
@@ -54,5 +57,5 @@ export class GuardianPresenceActivity {
 export function browserPresenceActivityEnvironment(): PresenceActivityEnvironment | null {
   if (typeof window === 'undefined' || typeof document === 'undefined') return null;
   return { target: window, visibility: document, isVisible: () => document.visibilityState !== 'hidden',
-    now: Date.now, schedule: (callback, delay) => setInterval(callback, delay), cancel: timer => clearInterval(timer) };
+    now: () => performance.now(), schedule: (callback, delay) => setInterval(callback, delay), cancel: timer => clearInterval(timer) };
 }

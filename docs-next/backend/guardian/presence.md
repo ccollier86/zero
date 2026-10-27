@@ -79,6 +79,13 @@ account, organization and connection identity; client IDs, TTLs, clocks and
 arbitrary topic writes are not trusted. Dropped/replaced/disconnected activity
 is not queued and replayed as if it were current.
 
+The current feature-branch refinement preserves increasing report sequences for
+the SDK tracker's lifetime. Refreshing the capability catalog or changing cadence
+can restart its timer without replacing the server connection; restarting the
+sequence would be a rejected replay. Actual reconnects accept higher counters,
+while pending human activity is still discarded at retirement. Browser activity
+age uses a monotonic clock; the server remains the authority for lease time.
+
 ## Scoped Reactive And SQL Views
 
 Migration 040 supplies fixed private SYSTEM intent/lease/outbox/owner storage.
@@ -132,6 +139,21 @@ observation into an optional tokenized avatar ring/icon.
 controls and acknowledged revision checks. Read-only/native sessions without
 the explicit writer ceiling cannot select manual status or report activity.
 Unknown/disconnected/stale observations produce no misleading live ring.
+
+In the feature-branch refinement, expired selections or keys removed from the
+configured catalog return to automatic Available in the own-intent response,
+retaining the durable CAS revision. The read does not rewrite history or invent a
+mutation. `UserPresenceSettings` refreshes its acknowledged selection at the
+server's expiry, so Busy can be selected again normally. Errors remain explicit
+and read-only/native sessions do not acquire write permission.
+
+Messaging's [list/header components](../../frontend/messaging/index.md#guardian-presence-and-avatar-shape)
+reuse this one feed automatically. Rings are the default; their perimeter follows
+the avatar's circular, rounded or square corners. Only Guardian user participants
+are mapped; an assistant/visitor/group is not a synthetic online human. Explicit
+dot/badge presentation remains available. Components never infer a read receipt
+or conversation permission from presence. Directory visibility remains same-scope
+Guardian membership, not an implicit friends-only policy.
 
 HTTP routes are `/auth/presence/config`, `/auth/presence/me` and bounded
 directory access. Actual capabilities include `canReportActivity` and

@@ -2,22 +2,15 @@
 
 import * as React from 'react';
 import { MessageSquare, Search } from 'lucide-react';
-import { Avatar, AvatarFallback } from '../ui/avatar';
-import { AvatarPresenceIndicator } from '../avatar-group/avatar-presence-indicator';
 import type { AvatarPresence } from '../avatar-group/avatar-group-types';
 import { Input } from '../ui/input';
 import { MenuActiveHighlight } from '../overlays/menu-active-highlight';
 import { cn } from '../../lib/utils';
 import type { MessagingConversationSummary, MessagingParticipant } from '../../messaging/presentation';
+import { useClientMaybe } from '../../frontend/client/client-context';
+import { useMessagingPresence } from './use-messaging-presence';
+import { MessagingAvatar } from './messaging-avatar';
 import './messaging.css';
-
-/** Shared avatar decoration; presence must come from an admitted, current observation. */
-function ConversationAvatar({ participant, presence }: { participant: MessagingParticipant; presence?: AvatarPresence }) {
-  return <span className="zero-messaging-conversation-avatar" aria-hidden="true">
-    {participant.avatar ?? <Avatar><AvatarFallback>{participant.label.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>}
-    <AvatarPresenceIndicator enabled={!!presence} presence={presence && { ...presence, variant: 'dot' }} />
-  </span>;
-}
 
 export interface ConversationListProps {
   conversations: readonly MessagingConversationSummary[];
@@ -26,10 +19,21 @@ export interface ConversationListProps {
   loading?: boolean;
   emptyLabel?: string;
   className?: string;
+  /** Observe the existing Guardian feed when provided. False keeps this a controlled-only view. */
+  livePresence?: boolean;
 }
 
 /** Controlled list: keeps existing keyed rows during reactivity and never marks messages read. */
-export function ConversationList({ conversations, activeId, onSelect, loading, emptyLabel = 'No conversations yet', className }: ConversationListProps) {
+export function ConversationList(props: ConversationListProps) {
+  const client = useClientMaybe();
+  return client?.presence && props.livePresence !== false ? <ConnectedConversationList {...props} /> : <ConversationListView {...props} />;
+}
+function ConnectedConversationList(props: ConversationListProps) {
+  const { presenceFor } = useMessagingPresence();
+  return <ConversationListView {...props} presenceFor={presenceFor} />;
+}
+function ConversationListView({ conversations, activeId, onSelect, loading, emptyLabel = 'No conversations yet', className, presenceFor }:
+  ConversationListProps & { presenceFor?: (participant: MessagingParticipant) => AvatarPresence | undefined }) {
   const [container, setContainer] = React.useState<HTMLUListElement | null>(null);
   return <ul ref={setContainer} data-slot="conversation-list" className={cn('zero-messaging-conversations', className)} aria-label="Conversation list" aria-busy={!!loading}
     onKeyDown={event => {
@@ -43,16 +47,17 @@ export function ConversationList({ conversations, activeId, onSelect, loading, e
     <MenuActiveHighlight container={container} activeSelector="[data-active]" hoverSelector="[data-conversation-open]" preserveSelectionFill={false} />
     {conversations.map(conversation => {
       const unread = Number.isSafeInteger(conversation.unreadCount) && conversation.unreadCount! > 0 ? conversation.unreadCount! : 0;
+      const presence = conversation.presence ?? presenceFor?.(conversation.participant);
       return <li key={conversation.id}>
         <button type="button" data-conversation-open="" data-conversation-id={conversation.id} data-active={activeId === conversation.id || undefined}
           aria-pressed={activeId === conversation.id} className="zero-messaging-conversation" onClick={() => onSelect(conversation.id)}>
-          <ConversationAvatar participant={conversation.participant} presence={conversation.presence} />
+          <MessagingAvatar participant={conversation.participant} presence={presence} presenceEnabled className="zero-messaging-conversation-avatar" />
           <span className="zero-messaging-conversation-detail">
             <span className="zero-messaging-conversation-title"><b>{conversation.participant.label}</b><small>{conversation.updatedAtLabel}</small></span>
             <span className={cn('zero-messaging-conversation-preview', conversation.activityLabel && 'is-active')}>{conversation.activityLabel || conversation.preview}</span>
             <span className="zero-messaging-conversation-bottom"><small>{conversation.channelLabel}</small>{unread > 0 && <span className="zero-messaging-unread" aria-label={`${unread} unread messages`}>{unread > 99 ? '99+' : unread}</span>}</span>
           </span>
-          {conversation.presence && <span className="sr-only">{conversation.presence.label}</span>}
+          {presence && <span className="sr-only">{presence.label}</span>}
         </button>
       </li>;
     })}
@@ -80,11 +85,21 @@ export interface ConversationHeaderProps {
   subtitle?: React.ReactNode;
   presence?: AvatarPresence;
   actions?: React.ReactNode;
+  /** False omits automatic Guardian binding, not explicitly supplied presence. */
+  livePresence?: boolean;
 }
 /** Capability-dependent calls, profile, menus and takeover controls are explicit action slots. */
-export function ConversationHeader({ participant, subtitle, presence, actions }: ConversationHeaderProps) {
+export function ConversationHeader(props: ConversationHeaderProps) {
+  const client = useClientMaybe();
+  return client?.presence && props.livePresence !== false ? <ConnectedConversationHeader {...props} /> : <ConversationHeaderView {...props} />;
+}
+function ConnectedConversationHeader(props: ConversationHeaderProps) {
+  const { presenceFor } = useMessagingPresence();
+  return <ConversationHeaderView {...props} presence={props.presence ?? presenceFor(props.participant)} />;
+}
+function ConversationHeaderView({ participant, subtitle, presence, actions }: ConversationHeaderProps) {
   return <div data-slot="conversation-header" className="zero-messaging-conversation-header">
-    <ConversationAvatar participant={participant} presence={presence} />
+    <MessagingAvatar participant={participant} presence={presence} presenceEnabled className="zero-messaging-conversation-avatar" />
     <div className="zero-messaging-header-identity"><h2>{participant.label}{participant.kind === 'assistant' && <span className="zero-messaging-assistant-tag">AI</span>}</h2><div>{subtitle}</div></div>
     {presence && <span className="zero-messaging-presence-label">{presence.label}</span>}
     <div className="zero-messaging-header-actions">{actions}</div>
