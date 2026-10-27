@@ -15,7 +15,7 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
     const text = messagingText(r.text, messagingInteger(r.maxMessageLength, 1, 20000), true), id = messagingId(r.id), visibility = messagingChoice(r.visibility ?? 'conversation', ['conversation', 'staff']);
     const attachments = [...new Set(messagingArray(r.attachmentIds ?? [], 10).map(messagingId))];
     if (!text.trim() && !attachments.length || visibility === 'staff' && !staff) messagingFail('MESSAGING_INPUT_INVALID', 422);
-    if (conversation.kind !== 'support') for (const other of conversationMembers(conversation)) if (other !== actor.id) assertMessagingContact(context, actor, other, false);
+    if (conversation.kind !== 'support' && conversation.kind !== 'assistant') for (const other of conversationMembers(conversation)) if (other !== actor.id) assertMessagingContact(context, actor, other, false);
     return messagingIntent(context, actor, r.requestId, ['message.send', conversation.id, text, attachments, visibility, r.expectedOwnerEpoch ?? null], () => {
       if (conversation.archived) messagingFail('MESSAGING_ARCHIVED');
       if (staff && visibility === 'conversation' && (conversation.owner !== 'human' || conversation.owner_id !== actor.id || conversation.owner_epoch !== messagingInteger(r.expectedOwnerEpoch))) messagingFail('MESSAGING_OWNER_CONFLICT');
@@ -33,11 +33,11 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
       const prior = conversation as JobConversation;
       if (visibility === 'conversation' && prior.context_revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
       const next: JobConversation = { ...prior, internal_sequence: sequence, public_sequence: publicSequence ?? conversation.public_sequence,
-        updated_at: now, ...(visibility === 'conversation' ? { public_updated_at: now, context_revision: prior.context_revision + 1, customer_turn_id: member.role === 'customer' ? id : null } : {}) };
+        updated_at: now, ...(visibility === 'conversation' ? { public_updated_at: now, context_revision: prior.context_revision + 1, customer_turn_id: member.role === 'customer' || conversation.kind === 'assistant' && actor.kind === 'user' ? id : null } : {}) };
       context.db.update('messaging_conversations', conversation.id, next);
       if (visibility === 'conversation') {
         if (conversation.channel_id && actor.kind !== 'external') appendMessagingJob(context, conversation, id, 'delivery', now);
-        if (r.assistantEnabled === true) queueMessagingAssistant(context, next, r.assistantPolicy);
+        if (r.assistantEnabled === true || conversation.kind === 'assistant') queueMessagingAssistant(context, next, conversation.kind === 'assistant' ? actor.assistantPolicies?.[conversation.assistant_id!] : r.assistantPolicy);
         if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now, null, r.notificationPath);
       }
       return projectMessage(row, staff);
@@ -49,7 +49,7 @@ export function appendMessagingJob(context: DatabaseWriteCommandContext, convers
   const revision = (conversation as JobConversation).context_revision ?? 0, id = messagingHash(kind === 'assistant' ? [messageId, kind, conversation.owner_epoch, revision] : [messageId, kind]);
   if (context.db.get('messaging_jobs', id)) return id;
   context.db.createStrict('messaging_jobs', { id, scope_id: conversation.scope_id, conversation_id: conversation.id, message_id: messageId,
-    kind, owner_epoch: conversation.owner_epoch, context_revision: revision, policy_hash: policyHash, dispatch_generation: 0, state: 'pending', lease_nonce: null, lease_expires: null, attempts: 0, provider_id: null, error_code: null, created_at: now, updated_at: now });
+    kind, owner_epoch: conversation.owner_epoch, context_revision: revision, policy_hash: policyHash, assistant_id: kind === 'assistant' ? conversation.assistant_id ?? 'default' : null, dispatch_generation: 0, state: 'pending', lease_nonce: null, lease_expires: null, attempts: 0, provider_id: null, error_code: null, created_at: now, updated_at: now });
   if (kind === 'notification') captureMessagingNotificationAudience(context, conversation, messageId, id, now, notificationPath);
   return id;
 }
@@ -78,7 +78,8 @@ export function changeMessagingMessage(context: DatabaseWriteCommandContext, inp
       const changed: JobConversation = { ...prior, updated_at: next.edited_at!, ...(row.visibility === 'conversation' ? { public_updated_at: next.edited_at!, context_revision: prior.context_revision + 1,
         ...(action === 'remove' && prior.customer_turn_id === row.id ? { customer_turn_id: null } : {}) } : {}) };
       context.db.update('messaging_conversations', conversation.id, changed);
-      if (row.visibility === 'conversation' && r.assistantPolicy) queueMessagingAssistant(context, changed, r.assistantPolicy);
+      const policy = conversation.kind === 'assistant' ? actor.assistantPolicies?.[conversation.assistant_id!] : r.assistantPolicy;
+      if (row.visibility === 'conversation' && policy) queueMessagingAssistant(context, changed, policy);
       return projectMessage(next, staff);
     });
   });

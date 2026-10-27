@@ -31,7 +31,9 @@ export async function executeMessagingNotification(deps: MessagingJobExecutionDe
     check();
     return deps.notifications!.notifyUsersOnce('zero.messaging:' + jobId, source.recipients.map(recipient => recipient.id),
       { title: 'New message', actionUrl: source.path + '?conversation=' + encodeURIComponent(source.job.conversation_id) }, undefined, scope, check,
-      id => members.has(id) && deps.directory.notificationRecipient(scope, id, recipients.get(id)!.staff));
+      id => members.has(id) && deps.directory.notificationRecipient(scope, id, recipients.get(id)!.staff)
+        && (!source.managedGroupId || deps.directory.groupRecipient?.(scope, id, source.managedGroupId) === true)
+        && (!source.internalAssistantId || deps.directory.assistantRecipient?.(scope, id, source.internalAssistantId) === true));
   }, { signal });
   const result = await deps.runtime.write<{ state: MessagingJobState }>(scope, 'messaging.notification.complete', { ...input, notificationId: receipt.notificationId }, key('complete'), check, signal);
   return { jobId, state: result.state };

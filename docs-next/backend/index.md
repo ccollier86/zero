@@ -82,8 +82,10 @@ than importing implementation files or reconstructing authentication in routes.
 
 ## Communication
 
-- [Messaging foundation](./messaging/index.md): active integration plan and release
-  gates for conversations, Storage attachments, AI takeover and channels.
+- [Messaging foundation](./messaging/index.md): configurable contacts/directories,
+  groups, internal assistants and support using Guardian/Fabric/Storage/presence.
+  The [configuration reference](./messaging/configuration.md) separates implemented
+  feature-branch commands from remaining workspace/public-support/release gates.
 
 - [Realtime Sync](./sync/index.md): admitted snapshots, replay/live changes,
   mutation receipts, durable user state and bounded ephemeral collaboration.

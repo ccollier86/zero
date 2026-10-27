@@ -15,6 +15,7 @@ import type { MessagingServerApi } from './server-contracts';
 import type { MessagingAttachmentService } from './attachment-service';
 import { projectMessagingCommit as afterCommit } from './mutation-projection';
 import { auditMessagingRead, type MessagingReadAction } from './read-audit';
+import { messagingAssistantId } from './assistant-config';
 
 export interface MessagingAuthority { readonly access: RequestAuthorizationAccess; readonly scope: ServiceDataScope; assertCurrentAuthoritySync(): void }
 export interface MessagingDirectory {
@@ -24,8 +25,12 @@ export interface MessagingDirectory {
   list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }): MessagingPage<MessagingDirectoryEntry>;
   /** Synchronous current SYSTEM eligibility, evaluated only when a new native notice is first committed. */
   notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean): boolean;
+  /** Current account, tenant and named-bot policy; absent adapters never admit internal assistant work. */
+  assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean;
+  groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean;
+  groupCandidates?(scope: ServiceDataScope, after: string, limit: number): { readonly ids: readonly string[]; readonly hasMore: boolean };
 }
-export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void } }
+export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void }; readonly groups?: { ensure(scope: ServiceDataScope): Promise<void> } }
 export const ZERO_MESSAGING = createZeroRuntimeServiceKey<MessagingService>('Managed messaging service');
 /** Request-local closures retain no ambient mutable user, selected organization or native upload grants. */
 export class MessagingService {
@@ -34,7 +39,7 @@ export class MessagingService {
   /** @internal Reserved Sync typing uses current canonical membership, never a delayed RoomService shadow. */
   async typingMember(authority: MessagingAuthority, id: string, staffOnly: boolean, write: boolean): Promise<boolean> {
     const resolve = createMessagingActorResolver(authority, this.deps.config), captured = resolve(write);
-    const check = () => { const current = resolve(write); if (current.id !== captured.id || current.staff !== captured.staff) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409); };
+    const check = () => { const current = resolve(write); if (current.id !== captured.id || current.staff !== captured.staff || messagingHash(current.assistantPolicies ?? {}) !== messagingHash(captured.assistantPolicies ?? {}) || messagingHash(current.groupPolicies ?? {}) !== messagingHash(captured.groupPolicies ?? {})) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409); };
     try {
       const result = await this.runtime.read<{ active: boolean; staff: boolean }>(authority.scope, 'messaging.typing', { actor: captured, id: messagingId(id) }, check);
       return result.active && (!staffOnly || result.staff);
@@ -52,7 +57,7 @@ export class MessagingService {
     const actor = createMessagingActorResolver(authority, this.deps.config);
     const final = (captured: MessagingActor, write = false, recipients: readonly string[] = []) => () => {
       const current = actor(write);
-      if (current.id !== captured.id || current.scopeId !== captured.scopeId || current.staff !== captured.staff) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409);
+      if (current.id !== captured.id || current.scopeId !== captured.scopeId || current.staff !== captured.staff || messagingHash(current.assistantPolicies ?? {}) !== messagingHash(captured.assistantPolicies ?? {}) || messagingHash(current.groupPolicies ?? {}) !== messagingHash(captured.groupPolicies ?? {})) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409);
       for (const id of recipients) this.deps.directory.assertRecipient(scope, id);
     };
     const mutation = (input: MessagingMutationOptions) => {
@@ -61,8 +66,13 @@ export class MessagingService {
       (signal as AbortSignal | undefined)?.throwIfAborted();
       return { requestId, signal: signal as AbortSignal | undefined };
     };
-    const read = <T>(name: string, input: object, signal?: AbortSignal): Promise<T> => {
-      const captured = actor(); return this.runtime.read<T>(scope, name, { ...input, actor: captured }, final(captured), signal);
+    const prepare = (name: string, input: object) => {
+      const value = input as { id?: unknown; conversationId?: unknown };
+      return name === 'messaging.conversations' || [value.id, value.conversationId].some(id => typeof id === 'string' && id.startsWith('group_')) ? this.deps.groups?.ensure(scope) : undefined;
+    };
+    const read = async <T>(name: string, input: object, signal?: AbortSignal): Promise<T> => {
+      const captured = actor(), check = final(captured); await prepare(name, input); check();
+      return this.runtime.read<T>(scope, name, { ...input, actor: captured }, check, signal);
     };
     const audit = <T>(action: MessagingReadAction, conversationId: string | null, operation: () => Promise<T>): Promise<T> => {
       const captured = actor(), check = final(captured);
@@ -83,7 +93,7 @@ export class MessagingService {
     const write = <T>(name: string, input: object, options: MessagingMutationOptions, recipients: readonly string[] = [], extra?: () => void): Promise<T> => {
       const captured = actor(true), opts = mutation(options), base = final(captured, true, recipients), check = () => { base(); extra?.(); };
       check(); const transport = 'messaging:' + messagingHash([scopeId, captured.kind, captured.id, opts.requestId]);
-      return attributed(captured, opts, check, () => this.runtime.write<T>(scope, name, { ...input, actor: captured, requestId: opts.requestId }, transport, check, opts.signal)).then(value => {
+      return attributed(captured, opts, check, async () => { await prepare(name, input); check(); return this.runtime.write<T>(scope, name, { ...input, actor: captured, requestId: opts.requestId }, transport, check, opts.signal); }).then(value => {
         this.deps.jobs?.wake(scope); return value;
       }, error => { if (error?.code === 'DATABASE_OUTCOME_UNKNOWN') this.deps.jobs?.wake(scope); throw error; });
     };
@@ -93,21 +103,37 @@ export class MessagingService {
       const target = messagingId(id), revision = messagingInteger(expectedRevision);
       return afterCommit(write('messaging.conversation.change', { id: target, expectedRevision: revision, action, value,
         ...(action === 'add' ? { maxParticipants: this.deps.config.maxParticipants, contactsOnly: this.deps.config.directory === 'contacts', history: this.deps.config.history } : {}) }, options,
-      action === 'add' ? [messagingId(value)] : []), () => conversation(target, options.signal));
+      action === 'add' || action === 'transfer' ? [messagingId(value)] : []), () => conversation(target, options.signal));
     };
     const assistantPolicy = this.deps.config.assistant ? this.deps.config.assistant.policyHash : null;
     const ownership = (id: string, expectedEpoch: number, owner: 'human' | 'assistant' | 'triage', options: MessagingMutationOptions) => {
-      if (owner === 'assistant' && !assistantPolicy) messagingFail('MESSAGING_FORBIDDEN', 403);
-      return afterCommit(write('messaging.conversation.owner', { id: messagingId(id), expectedEpoch: messagingInteger(expectedEpoch), owner, assistantPolicy }, options), () => conversation(id, options.signal));
+      if (owner === 'assistant' && !assistantPolicy && !Object.keys(actor(true).assistantPolicies ?? {}).length) messagingFail('MESSAGING_FORBIDDEN', 403);
+      return afterCommit(write('messaging.conversation.owner', { id: messagingId(id), expectedEpoch: messagingInteger(expectedEpoch), owner, assistantPolicy,
+        assistantId: this.deps.config.assistant ? this.deps.config.assistant.id : null }, options), () => conversation(id, options.signal));
     };
     const contact = <T>(action: string, userId: string, options: MessagingMutationOptions, expectedRevision?: number): Promise<T> =>
       write<T>('messaging.contact', { action, userId: messagingId(userId), ...(expectedRevision === undefined ? {} : { expectedRevision: messagingInteger(expectedRevision) }) }, options, action === 'request' || action === 'block' ? [userId] : []);
     const api: MessagingServerApi = {
+      assistants: {
+        list: options => audit('assistants', null, async () => {
+          const captured = actor(), check = final(captured); check(); options?.signal?.throwIfAborted();
+          const items = Object.values(this.deps.config.assistants).filter(value => captured.assistantPolicies?.[value.id]).sort((a, b) => a.id.localeCompare(b.id))
+            .map(({ id, name, description }) => ({ id, name, description }));
+          check(); return { items, hasMore: false, nextCursor: null };
+        }),
+        open: (id, input, options) => {
+          const assistantId = messagingAssistantId(id), assistant = this.deps.config.assistants[assistantId], r = messagingRecord(input, ['title']), opts = mutation(options);
+          if (!assistant || !actor(true).assistantPolicies?.[assistantId]) messagingFail('MESSAGING_NOT_FOUND', 404);
+          if (!this.deps.jobs) messagingFail('MESSAGING_NOT_READY', 503);
+          const conversationId = 'conversation_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40);
+          return afterCommit(write('messaging.assistant.open', { id: conversationId, assistantId, title: messagingText(r.title ?? assistant.name, 200, true) }, opts), () => conversation(conversationId, opts.signal));
+        },
+      },
       review: {
         list: (conversationId, query = {}, options) => audit('review.list', messagingId(conversationId), () => read('messaging.reviews', { conversationId: messagingId(conversationId), query }, options?.signal)),
         get: (conversationId, id, options) => audit('review.detail', messagingId(conversationId), () => read('messaging.review', { conversationId: messagingId(conversationId), id: messagingId(id) }, options?.signal)),
         retry: (conversationId, id, epoch, acknowledgePossibleDuplicate, options) => {
-          if (!assistantPolicy) messagingFail('MESSAGING_FORBIDDEN', 403);
+          if (!assistantPolicy && !Object.keys(actor(true).assistantPolicies ?? {}).length) messagingFail('MESSAGING_FORBIDDEN', 403);
           return write('messaging.review.resolve', { conversationId: messagingId(conversationId), id: messagingId(id), expectedOwnerEpoch: messagingInteger(epoch), action: 'retry', acknowledgePossibleDuplicate, assistantPolicy }, options);
         },
         dismiss: (conversationId, id, epoch, options) => write('messaging.review.resolve', { conversationId: messagingId(conversationId), id: messagingId(id), expectedOwnerEpoch: messagingInteger(epoch), action: 'dismiss' }, options),
@@ -116,7 +142,7 @@ export class MessagingService {
         options: mutation, read, write: (name, input, options, fence) => write(name, input, options, [], fence),
         run: (options, operation) => { const captured = actor(true), opts = mutation(options); return attributed(captured, opts, final(captured, true), operation); } }),
       capabilities: async () => ({ enabled: true, directory: this.deps.config.directory, canSupport: actor().staff, maxMessageLength: this.deps.config.maxMessageLength, maxParticipants: this.deps.config.maxParticipants, maxUploadBytes: this.deps.config.maxUploadBytes,
-        assistant: Boolean(this.deps.config.assistant), notifications: this.deps.config.notifications }),
+        assistant: Object.keys(actor().assistantPolicies ?? {}).length > 0, notifications: this.deps.config.notifications }),
       directory: (query = {}, options) => audit('directory', null, async () => { const captured = actor(), check = final(captured); check(); options?.signal?.throwIfAborted();
         const page = this.deps.directory.list(scope, captured.id, query); check(); return page; }),
       receipt: (requestId, options) => read('messaging.receipt', { requestId: messagingId(requestId) }, options?.signal),
@@ -132,6 +158,7 @@ export class MessagingService {
         rename: (id, revision, title, opts) => changeConversation(id, revision, 'rename', messagingText(title, 200, true), opts),
         archive: (id, revision, archived, opts) => changeConversation(id, revision, 'archive', archived, opts),
         addParticipant: (id, revision, userId, opts) => changeConversation(id, revision, 'add', messagingId(userId), opts),
+        transferOwnership: (id, revision, userId, opts) => changeConversation(id, revision, 'transfer', messagingId(userId), opts),
         removeParticipant: async (id, revision, participantId, opts) => { await write('messaging.conversation.change', { id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', value: messagingId(participantId) }, opts); return { removed: true }; },
         markRead: (id, throughSequence, opts) => afterCommit(write<{ throughSequence: number }>('messaging.conversation.read', { id: messagingId(id), throughSequence: messagingInteger(throughSequence, 0) }, opts), async accepted => {
           const current = await conversation(id, opts.signal); return { throughSequence: accepted.throughSequence, unreadCount: current.unreadCount };
@@ -157,12 +184,13 @@ export class MessagingService {
         open: (input, options) => {
           if (!this.deps.config.support) messagingFail('MESSAGING_FORBIDDEN', 403);
           const r = messagingRecord(input, ['title']), opts = mutation(options), id = 'conversation_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40);
-          return afterCommit(write('messaging.support.open', { id, title: messagingText(r.title ?? '', 200, true), owner: assistantPolicy ? 'assistant' : 'triage', channelId: null }, opts), () => conversation(id, opts.signal));
+          return afterCommit(write('messaging.support.open', { id, title: messagingText(r.title ?? '', 200, true), owner: assistantPolicy ? 'assistant' : 'triage', channelId: null,
+            assistantId: this.deps.config.assistant ? this.deps.config.assistant.id : null }, opts), () => conversation(id, opts.signal));
         },
         queue: (query = {}, opts) => audit('support.queue', null, () => read('messaging.support.queue', { query }, opts?.signal)),
         claim: (id, epoch, opts) => afterCommit(write('messaging.support.claim', { id: messagingId(id), expectedEpoch: messagingInteger(epoch), maxParticipants: this.deps.config.maxParticipants }, opts), () => conversation(id, opts.signal)),
       },
     };
-    return Object.freeze({ ...api, review: Object.freeze(api.review), conversations: Object.freeze(api.conversations), messages: Object.freeze(api.messages), contacts: Object.freeze(api.contacts), support: Object.freeze(api.support) });
+    return Object.freeze({ ...api, assistants: Object.freeze(api.assistants), review: Object.freeze(api.review), conversations: Object.freeze(api.conversations), messages: Object.freeze(api.messages), contacts: Object.freeze(api.contacts), support: Object.freeze(api.support) });
   }
 }

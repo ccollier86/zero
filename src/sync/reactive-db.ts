@@ -208,6 +208,7 @@ export class ReactiveDB {
   private ownsDatabase: boolean;
   private tables: Map<string, TableDef> = new Map();
   private listeners: ChangeListener[] = [];
+  private commitListeners: Array<() => unknown> = [];
   private changeLog: ReactiveDBChangeLog;
   private readonly emitCode: ReactiveDBPlatformCodeEmitter;
   private managedTableSchemaContracts = new Map<string, ManagedTableSchemaContract>();
@@ -1207,6 +1208,24 @@ export class ReactiveDB {
   }
 
   /**
+   * Payload-free local root-transaction completion, including private/raw SQL.
+   * This is a best-effort wake hint, not a row event, mutation receipt or durable
+   * cross-process feed. Listeners must be synchronous and should schedule work.
+   * Rollback emits nothing; nested transactions share their root's one signal.
+   */
+  onCommit(listener: () => unknown): () => void {
+    this.assertNotDisposed();
+    if (typeof listener !== 'function') throw new TypeError('ReactiveDB commit listener must be a function');
+    this.commitListeners.push(listener);
+    let removed = false;
+    return () => {
+      if (removed) return; removed = true;
+      const index = this.commitListeners.indexOf(listener);
+      if (index !== -1) this.commitListeners.splice(index, 1);
+    };
+  }
+
+  /**
    * Deliver the shared durable change log to this instance's ordinary
    * onChange listeners in strict sequence order.
    *
@@ -1571,7 +1590,11 @@ export class ReactiveDB {
         this.enqueueLocalChanges(pendingChanges);
       }
 
+      // Capture a stable subscription batch. Existing callbacks may retire or
+      // register an observer; that affects the next commit, not this batch.
+      const commitListeners = this.commitListeners.length ? [...this.commitListeners] : null;
       this.runPostCommitCallbacks(pendingPostCommitCallbacks);
+      if (commitListeners) this.runPostCommitCallbacks(commitListeners, false);
 
       if (postCommitFenceFailure) throw postCommitFenceFailure;
 
@@ -1805,6 +1828,7 @@ export class ReactiveDB {
         this.tables.clear();
         this.managedTableSchemaContracts.clear();
         this.listeners.length = 0;
+        this.commitListeners.length = 0;
         this.localDeliveryQueue.length = 0;
         this.drainingLocalDeliveryQueue = false;
         this.activeTransactionChangeOrigin = null;
@@ -1972,7 +1996,7 @@ export class ReactiveDB {
     }
   }
 
-  private runPostCommitCallbacks(callbacks: readonly (() => unknown)[]): void {
+  private runPostCommitCallbacks(callbacks: readonly (() => unknown)[], includeError = true): void {
     for (const callback of callbacks) {
       try {
         const result = callback();
@@ -1981,9 +2005,7 @@ export class ReactiveDB {
           throw new Error('ReactiveDB afterCommit callbacks must be synchronous');
         }
       } catch (error) {
-        this.reportPlatformCode(OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED, {
-          error,
-        });
+        this.reportPlatformCode(OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED, includeError ? { error } : undefined);
       }
     }
   }

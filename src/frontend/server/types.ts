@@ -705,8 +705,8 @@ export function resolveConfig(
       ? false
       : config.email;
   const ai = resolveAIConfig(config.ai, env);
-  if (messaging && (messaging.assistant || messaging.notifications) && workflows === false) throw new Error('[messaging] Assistant and notification jobs require Torrent workflows.');
-  if (messaging && messaging.assistant && ai === false) throw new Error('[messaging] An assistant requires the configured Zero AI service.');
+  if (messaging && (Object.keys(messaging.assistants).length > 0 || messaging.notifications) && workflows === false) throw new Error('[messaging] Assistant and notification jobs require Torrent workflows.');
+  if (messaging && Object.keys(messaging.assistants).length > 0 && ai === false) throw new Error('[messaging] An assistant requires the configured Zero AI service.');
   const vector = resolveVectorConfig(config.vector, env);
   const vectorVisualization = resolveVectorVisualizationConfig(config.vectorVisualization, vector, auth !== false, ai !== false);
   if (vectorVisualization !== false) for (const policy of Object.values(vectorVisualization.indexes)) {

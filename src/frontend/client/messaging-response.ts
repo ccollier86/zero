@@ -1,6 +1,6 @@
 /** Bounded JSON response assertions shared by normal requests and SSE. This is display validation, never authorization. */
 import type { ConversationRecord, DurableMessage, MessagingPage } from '../../messaging/contracts';
-import type { MessagingCapabilities, MessagingContact, MessagingDirectoryEntry, MessagingReceipt } from '../../messaging/contracts';
+import type { MessagingCapabilities, MessagingContact, MessagingDirectoryEntry, MessagingReceipt, MessagingAssistant } from '../../messaging/contracts';
 const bad = () => { throw new Error('Invalid messaging response.'); };
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : bad();
 const text = (value: unknown, maximum = 200) => { if (typeof value !== 'string' || value.length > maximum) bad(); };
@@ -14,9 +14,11 @@ export function assertMessagingMessage(value: unknown): asserts value is Durable
 }
 export function assertMessagingConversation(value: unknown): asserts value is ConversationRecord {
   const r = record(value); text(r.id); text(r.title, 200); for (const key of ['revision', 'createdAt', 'updatedAt', 'ownerEpoch', 'unreadCount']) integer(r[key]);
-  if (!['direct', 'group', 'support'].includes(r.kind) || !['human', 'assistant', 'triage'].includes(r.owner) || typeof r.archived !== 'boolean' || !Array.isArray(r.participants) || r.participants.length > 100) bad();
+  if (!['direct', 'group', 'support', 'assistant'].includes(r.kind) || !['human', 'assistant', 'triage'].includes(r.owner) || typeof r.archived !== 'boolean' || !Array.isArray(r.participants) || r.participants.length > 100) bad();
+  if (r.assistantId !== undefined && r.assistantId !== null) text(r.assistantId, 64);
+  if (r.managedGroupId !== undefined && r.managedGroupId !== null) text(r.managedGroupId, 64);
   if (r.ownerId !== null) text(r.ownerId);
-  r.participants.forEach((item: unknown) => { const member = record(item); text(member.id); integer(member.joinedAt); if (!['user', 'external'].includes(member.kind) || !['owner', 'member', 'staff', 'customer'].includes(member.role)) bad(); });
+  r.participants.forEach((item: unknown) => { const member = record(item); text(member.id); integer(member.joinedAt); if (!['user', 'external', 'assistant'].includes(member.kind) || !['owner', 'member', 'staff', 'customer'].includes(member.role)) bad(); });
   if (r.lastMessage !== null) { const preview = r.lastMessage as Record<string, unknown>; assertMessagingMessage(preview); if (typeof (preview as DurableMessage & { truncated?: unknown }).truncated !== 'boolean') bad(); }
 }
 export function assertMessagingPage<T>(value: unknown, item: (value: unknown) => void, maximum: number): asserts value is MessagingPage<T> {
@@ -32,6 +34,10 @@ export function assertMessagingCapabilities(value: unknown): asserts value is Me
 export function assertMessagingDirectoryEntry(value: unknown): asserts value is MessagingDirectoryEntry {
   const r = record(value); text(r.id); text(r.name, 241);
   if (r.avatarUrl !== null) { text(r.avatarUrl, 2000); if (!/^(?:\/(?!\/)|https?:\/\/)/.test(r.avatarUrl)) bad(); }
+}
+export function assertMessagingAssistant(value: unknown): asserts value is MessagingAssistant {
+  const r = record(value); text(r.id, 64); text(r.name, 120); text(r.description, 500);
+  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(r.id)) bad();
 }
 export function assertMessagingContact(value: unknown): asserts value is MessagingContact {
   const r = record(value); text(r.id); text(r.userId); integer(r.revision); integer(r.updatedAt);

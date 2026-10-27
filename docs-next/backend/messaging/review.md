@@ -32,6 +32,12 @@ Configured staff may discover the content-free support queue and explicitly
 claim the conversation. A staff role alone does not grant private membership,
 transcript, draft, attachment or review-history access.
 
+Internal named-assistant conversations are independent of support. Their admitted
+human owner can inspect and resolve that conversation's recovery facts without a
+support role. A failure retains the old job/attempt and advances its epoch; a new
+explicit human turn may proceed, but the uncertain old call is not automatically
+retried. The same explicit retry/context/duplicate-acknowledgment rules apply.
+
 ## One Public Facade
 
 Both the request-scoped `zero.messaging.review` and authenticated
@@ -39,8 +45,8 @@ Both the request-scoped `zero.messaging.review` and authenticated
 
 | Method | Contract |
 | --- | --- |
-| `list(conversationId, { after?, limit? }, options?)` | Current staff members only; unresolved review items, stable ID cursor, default 25/max 50, real `hasMore`/`nextCursor`. |
-| `get(conversationId, jobId, options?)` | Current staff members only; safe reason, optional retained private draft, up to 25 attempt summaries, explicit `historyTruncated` and resolution. |
+| `list(conversationId, { after?, limit? }, options?)` | Current support staff members, or the internal bot conversation's admitted human owner; unresolved items, stable ID cursor, default 25/max 50, real `hasMore`/`nextCursor`. |
+| `get(conversationId, jobId, options?)` | Same current conversation admission; safe reason, optional retained private draft, up to 25 attempt summaries, explicit `historyTruncated` and resolution. |
 | `retry(conversationId, jobId, expectedOwnerEpoch, true, mutationOptions)` | Current human owner only; exact epoch, explicit possible-duplicate acknowledgment, still-current customer turn/context and configured assistant policy. |
 | `dismiss(conversationId, jobId, expectedOwnerEpoch, mutationOptions)` | Current human owner only; records deliberate resolution without calling a provider. |
 

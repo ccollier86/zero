@@ -2,7 +2,7 @@
 export { runMessagingActorIfRequested, MESSAGING_ACTOR_FLAG } from './actor-bootstrap';
 export { MessagingService } from './service';
 export type { MessagingAuthority } from './service';
-export type { MessagingConfig } from './config';
+export type { MessagingConfig, MessagingAssistantConfig, MessagingGroupConfig } from './config';
 export type * from './contracts';
 export type * from './attachment-contracts';
 export type * from './review-contracts';

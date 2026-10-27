@@ -24,6 +24,8 @@ export function projectMessagingConversation(database: DatabaseReadQueryConnecti
   return { id: conversation.id, kind: conversation.kind, title: conversation.title, revision: conversation.revision, createdAt: conversation.created_at,
     updatedAt: staff ? conversation.updated_at : conversation.public_updated_at, archived: conversation.archived === 1,
     owner: conversation.owner, ownerId: conversation.owner_id, ownerEpoch: conversation.owner_epoch,
+    assistantId: conversation.assistant_id ?? null,
+    managedGroupId: conversation.managed_group_id ?? null,
     participants: participants.map(row => ({ id: row.participant_id, kind: row.kind, role: row.role, joinedAt: row.joined_at })), lastMessage: summary, unreadCount: unread };
 }
 export function readMessagingConversation({ database }: DatabaseReadQueryContext, input: unknown): unknown {
@@ -51,6 +53,12 @@ export function listMessagingConversations({ database }: DatabaseReadQueryContex
   const where = ['m.scope_id=?', 'm.participant_id=?', 'm.active=1', 'c.scope_id=m.scope_id', 'c.archived=?'];
   const values: (string | number)[] = [actor.scopeId, actor.id, q.archived ? 1 : 0];
   if (!actor.staff) where.push("m.role!='staff'");
+  const assistants = Object.keys(actor.assistantPolicies ?? {});
+  where.push(assistants.length ? `(c.kind!='assistant' OR c.assistant_id IN (${assistants.map(() => '?').join(',')}))` : "c.kind!='assistant'");
+  values.push(...assistants);
+  const groups = Object.entries(actor.groupPolicies ?? {});
+  where.push(groups.length ? `(c.managed_group_id IS NULL OR ${groups.map(() => '(c.managed_group_id=? AND c.group_policy_hash=?)').join(' OR ')})` : 'c.managed_group_id IS NULL');
+  for (const [id, hash] of groups) values.push(id, hash);
   if (q.after !== undefined) {
     const cursor = messagingText(q.after, 512);
     let parsed: unknown; try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { messagingFail('MESSAGING_INPUT_INVALID', 422); }

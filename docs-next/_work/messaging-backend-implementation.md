@@ -15,6 +15,17 @@ applies_to: ["feature/messaging-backend; not a selected stable update"]
 
 [Working index](./index.md) · [Messaging architecture](../backend/messaging/index.md)
 
+## Current scope correction (2026-10-27)
+
+The [configuration correction](./messaging-configuration-correction.md) supersedes
+the support-only assistant and framework-owned Facebook assumptions in the older
+chronological notes below. The [configuration reference](../backend/messaging/configuration.md)
+documents named internal assistants, Guardian-property groups, manual owner
+transfer, existing presence reuse, tests and outstanding limits. Third-party
+channel connectors are app-owned and are not a framework completion requirement.
+The old channel research and earlier unqualified checkpoints are history, not
+instructions to implement a Messenger adapter.
+
 [Public customer/Messenger continuation](./messaging-public-channels.md) records
 the remaining capability, callback, ordered-outbox and review boundaries; it is
 a plan, not an implemented adapter or a selected release.

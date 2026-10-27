@@ -6,13 +6,14 @@ import { messagingChoice, messagingFail, messagingId, messagingInteger, messagin
 
 export function openMessagingSupport(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'title', 'owner', 'channelId']), actor = captureMessagingActor(r.actor), id = messagingId(r.id), title = messagingText(r.title, 200, true);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'title', 'owner', 'channelId', 'assistantId']), actor = captureMessagingActor(r.actor), id = messagingId(r.id), title = messagingText(r.title, 200, true);
     const owner = messagingChoice(r.owner, ['triage', 'assistant']), channelId = r.channelId === null ? null : messagingId(r.channelId);
     if (actor.kind === 'assistant') messagingFail('MESSAGING_FORBIDDEN', 403);
     return messagingIntent(context, actor, r.requestId, ['support.open', title, owner, channelId], () => {
       const now = Date.now();
       context.db.createStrict('messaging_conversations', { id, scope_id: actor.scopeId, kind: 'support', title, revision: 1, created_at: now, updated_at: now, public_updated_at: now, archived: 0,
-        created_by: actor.id, owner, owner_id: null, owner_epoch: 1, internal_sequence: 0, public_sequence: 0, channel_id: channelId, members_json: JSON.stringify([actor.id]) });
+        created_by: actor.id, owner, owner_id: null, owner_epoch: 1, internal_sequence: 0, public_sequence: 0, channel_id: channelId,
+        assistant_id: r.assistantId === undefined ? 'default' : r.assistantId === null ? null : messagingText(r.assistantId, 64), members_json: JSON.stringify([actor.id]) });
       context.db.createStrict('messaging_members', { id: memberKey(id, actor.id), scope_id: actor.scopeId, conversation_id: id, participant_id: actor.id, kind: actor.kind, role: 'customer', active: 1, joined_at: now, history_from: 1, read_sequence: 0 });
       return { id, revision: 1 };
     });

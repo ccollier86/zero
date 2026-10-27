@@ -56,6 +56,26 @@ prevent remaining listeners. Disposal during delivery is rejected.
 
 ## Not A Durable Trigger Or Public Subscription
 
+### Private/raw transaction wake hints (feature-branch addition)
+
+`onCommit(listener)` observes settled local root transactions, including private
+prepared SQL which intentionally produces no ordinary row-change records. It is
+payload-free, synchronous, best-effort, and returns an idempotent unsubscribe.
+Nested transactions emit only their root's hint; rollback emits none. Actual
+commit-authority leases have been released before callbacks run. Observer failure
+does not change the committed outcome and uses existing post-commit diagnostics.
+Commit-observer failures emit only the stable failure code, not callback exception
+messages, row data or identifiers.
+
+The signal also covers an explicitly committed read-only transaction; it is not
+proof a particular table or value changed. Re-read the service's authoritative
+revision/state, coalesce work, and never manufacture INSERT/UPDATE events from
+it. This is a local wake mechanism, not a durable or ordered cross-process feed.
+External writers still need the service's supported revision/reconciliation path.
+The messaging correction uses it with Guardian's existing authority clock for
+configured group maintenance. Stable archives without this addition do not
+gain the method merely from this draft manual.
+
 A process-local listener is useful for small synchronous coordination. It
 cannot guarantee an external effect survives a crash. Use same-transaction
 automation for a rollup/invariant and durable automation/Torrent for external work.

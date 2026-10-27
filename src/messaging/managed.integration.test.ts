@@ -14,6 +14,7 @@ import { defineEndpoint, defineZeroPlugin } from '../frontend/server/server-exte
 import type { ServerRouteServices } from '../frontend/server/server-services';
 import { messagingTypingSocket } from './test-support/typing-socket';
 import { messagingTypingRoom } from './typing-topic';
+import { applicationServiceDataScope } from '../auth/service-data-scope';
 const PASSWORD = 'Synthetic-messaging-password-123';
 type TestClient = Pick<Client, 'register' | 'login' | 'messaging' | 'logging' | 'fetch' | 'disconnect' | 'user'>;
 /** Another actual native HTTP identity, not a second forbidden global browser Client singleton. */
@@ -30,7 +31,7 @@ function peer(origin: string): TestClient {
   const authenticate = async (path: string, body: unknown) => { const result = await call<any>(path, { method: 'POST', body }); token = result.accessToken; user = result.user; return result; };
   return { messaging, logging, fetch: call, get user() { return user; }, register: input => authenticate('/auth/register', input), login: (username, password) => authenticate('/auth/login', { username, password }), disconnect() { messaging.clear(); logging.clear(); token = null; user = null; } };
 }
-async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false) {
+async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false, overrides: Pick<Partial<AppConfig>, 'messaging' | 'auth'> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
   let zero!: ServerRouteServices;
   const diagnostics = new MemoryEventStore();
@@ -44,6 +45,7 @@ async function fixture(compliance = false, history: 'all' | 'since-join' = 'all'
     vector: false, pdf: false, kv: false, stateSync: false, observability: { console: false, endpoint: false, store: diagnostics },
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false,
     serverExtensions: [defineZeroPlugin({ name: 'messaging-fixture', setup(context) { zero = context.zero; } }), defineEndpoint({ method: 'GET', path: '/proof/messaging', auth: 'user', handler: ({ zero }) => zero.messaging!.capabilities() })],
+    ...overrides,
   };
   let app = await createApp(configuration); const listen = () => { app.listen({ hostname: '127.0.0.1', port: 0 }); return 'http://127.0.0.1:' + app.server!.port; }; let origin = listen();
   const client = () => createClient({ url: origin, auth: true, autoConnect: false });
@@ -53,6 +55,75 @@ async function enroll(client: TestClient, name: string) {
   await client.register({ username: name, email: name + '@example.test', password: PASSWORD });
   const policy = await client.logging.collectionPolicy(); if (policy.delivery) await client.logging.observe([], { policyVersion: policy.delivery.policyVersion });
 }
+
+test('internal named assistants work without support, preserve distinct identities and fence a real held response after trusted-property revocation', async () => {
+  let release!: () => void, entered = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    const input = await request.json(), knowledge = JSON.stringify(input).includes('PRIVATE_KNOWLEDGE_POLICY');
+    entered++; if (knowledge) await held;
+    return Response.json({ id: knowledge ? 'synthetic-knowledge' : 'synthetic-writing', object: 'chat.completion', created: 1, model: 'chat',
+      choices: [{ index: 0, message: { role: 'assistant', content: knowledge ? 'REVOKED_PRIVATE_ANSWER' : 'SYNTHETIC_WRITING_ANSWER' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } });
+  } });
+  const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1', false, {
+    auth: { bootstrap: 'public', userProperties: { department: { editableBy: 'admin', useInPolicies: true } } },
+    messaging: { support: false, assistants: {
+      knowledge: { name: 'Knowledge', model: 'synthetic/chat', instructions: 'PRIVATE_KNOWLEDGE_POLICY', access: { properties: { department: 'clinical' } } },
+      writing: { name: 'Writing', model: 'synthetic/chat', instructions: 'PRIVATE_WRITING_POLICY' },
+    }, jobs: { concurrency: 2 } },
+  }), admin = f.client(), user = f.peer();
+  const until = async (ready: () => Promise<boolean>) => { const deadline = Date.now() + 12000; while (!await ready()) { if (Date.now() >= deadline) throw new Error('Synthetic assistant progress deadline.'); await Bun.sleep(40); } };
+  const setDepartment = (value: string) => admin.fetch('/auth/admin/users/' + user.user!.userId + '/properties/department', { method: 'PUT', body: { value } });
+  try {
+    await enroll(admin, 'internal-admin'); await enroll(user, 'internal-user');
+    expect((await user.messaging.assistants.list()).items.map(row => row.id)).toEqual(['writing']);
+    await expect(user.messaging.assistants.open('knowledge', {}, { requestId: 'forbidden-bot' })).rejects.toMatchObject({ status: 404 });
+    await expect(user.messaging.support.open({}, { requestId: 'support-disabled' })).rejects.toMatchObject({ status: 403 });
+    await setDepartment('clinical'); await user.login('internal-user', PASSWORD);
+    const directory = await user.messaging.assistants.list();
+    expect(directory.items.map(row => row.id)).toEqual(['knowledge', 'writing']); expect(JSON.stringify(directory)).not.toContain('PRIVATE_');
+    const knowledge = await user.messaging.assistants.open('knowledge', {}, { requestId: 'open-knowledge' });
+    const writing = await user.messaging.assistants.open('writing', {}, { requestId: 'open-writing' });
+    expect(knowledge).toMatchObject({ kind: 'assistant', assistantId: 'knowledge', owner: 'assistant' });
+    expect(knowledge.participants).toContainEqual(expect.objectContaining({ id: 'assistant:knowledge', kind: 'assistant' }));
+    expect(knowledge.participants.some(row => row.role === 'customer')).toBe(false);
+    expect((await user.messaging.assistants.open('writing', {}, { requestId: 'open-writing' })).id).toBe(writing.id);
+    await expect(admin.messaging.conversations.get(knowledge.id)).rejects.toMatchObject({ status: 404 });
+    await user.messaging.messages.send(knowledge.id, { text: 'Synthetic knowledge request' }, { requestId: 'knowledge-turn' });
+    await user.messaging.messages.send(writing.id, { text: 'Synthetic writing request' }, { requestId: 'writing-turn' });
+    await until(async () => (await user.messaging.messages.list(writing.id)).items.some(row => row.authorId === 'assistant:writing'));
+    expect(entered).toBe(2); // Writing completed while Knowledge's real provider call is still held.
+    await setDepartment('other');
+    release();
+    // Internal queue inspection establishes settlement; it is not used as an
+    // HTTP authorization proof or to grant an administrator transcript access.
+    await until(async () => (await f.zero.messaging!.runtime.read<any[]>(applicationServiceDataScope(), 'messaging.jobs.pending', { scopeId: 'application' }, () => {})).length === 0);
+    await user.login('internal-user', PASSWORD);
+    expect((await user.messaging.assistants.list()).items.map(row => row.id)).toEqual(['writing']);
+    expect((await user.messaging.conversations.list()).items.map(row => row.id)).toEqual([writing.id]);
+    await expect(user.messaging.conversations.get(knowledge.id)).rejects.toMatchObject({ status: 404 });
+    await expect(user.messaging.messages.list(knowledge.id)).rejects.toMatchObject({ status: 404 });
+    await expect(user.messaging.assistants.open('knowledge', {}, { requestId: 'open-knowledge' })).rejects.toMatchObject({ status: 404 });
+    await setDepartment('clinical'); await user.login('internal-user', PASSWORD);
+    expect((await user.messaging.messages.list(knowledge.id)).items.every(row => row.authorKind !== 'assistant')).toBe(true);
+    const review = await user.messaging.review.list(knowledge.id);
+    expect(review.items).toHaveLength(1); // The bot's human owner needs no support role to inspect recovery.
+    const failed = await user.messaging.review.get(knowledge.id, review.items[0]!.id), current = await user.messaging.conversations.get(knowledge.id);
+    await expect(user.messaging.review.retry(knowledge.id, failed.id, current.ownerEpoch, false as true, { requestId: 'internal-no-duplicate-ack' })).rejects.toMatchObject({ status: 422 });
+    const retryOptions = { requestId: 'internal-explicit-retry' };
+    const retried = await user.messaging.review.retry(knowledge.id, failed.id, current.ownerEpoch, true, retryOptions);
+    expect(await user.messaging.review.retry(knowledge.id, failed.id, current.ownerEpoch, true, retryOptions)).toEqual(retried);
+    await until(async () => (await user.messaging.messages.list(knowledge.id)).items.some(row => row.authorId === 'assistant:knowledge'));
+    expect(entered).toBe(3);
+    const retained = await user.messaging.review.get(knowledge.id, failed.id);
+    expect(retained.reason).toBe(failed.reason); expect(retained.history).toEqual(failed.history); expect(retained.resolution).toEqual(retried);
+    await f.zero.logging!.flush();
+    const evidence = await admin.logging.page('audit', { family: 'communications' });
+    expect(JSON.stringify(evidence)).not.toContain('PRIVATE_KNOWLEDGE_POLICY');
+    expect(JSON.stringify(evidence)).not.toContain('SYNTHETIC_WRITING_ANSWER');
+  } finally { release(); admin.disconnect(); user.disconnect(); await f.close(); await provider.stop(true); }
+}, 90000);
 
 test('native messaging uses current identity, persists accepted messages/reactions/receipts and retains safe source evidence through restart', async () => {
   const f = await fixture(); let alice = f.client(), bob = f.peer();
@@ -89,6 +160,100 @@ test('native messaging uses current identity, persists accepted messages/reactio
     expect((await bob.messaging.conversations.get(created.id)).unreadCount).toBe(0);
     expect(await alice.messaging.receipt('send-one')).toMatchObject({ requestId: 'send-one', resourceId: sent.id });
   } finally { for (const event of f.diagnostics.query({ limit: 1000 }).events.filter(event => event.code === 'messaging.operation.rejected' || event.code.includes('executor.failed'))) console.info('Synthetic messaging storage outcome', event.metadata); alice.disconnect(); bob.disconnect(); await f.close(); }
+}, 90000);
+
+test('configured groups reconcile trusted properties without contact requests, revoke access, rejoin safely and preserve manual group ownership transfer', async () => {
+  const f = await fixture(false, 'all', undefined, false, {
+    auth: { bootstrap: 'public', userProperties: { department: { editableBy: 'admin', useInPolicies: true } } },
+    messaging: { directory: 'contacts', support: false, groups: { team: { name: 'Team' }, clinical: { name: 'Clinical', members: { properties: { department: 'clinical' } }, history: 'since-join' } } },
+  });
+  const admin = f.client(), user = f.peer();
+  const setDepartment = (id: string, value: string) => admin.fetch('/auth/admin/users/' + id + '/properties/department', { method: 'PUT', body: { value } });
+  try {
+    await enroll(admin, 'group-admin'); await enroll(user, 'group-user');
+    const adminId = admin.user!.userId, userId = user.user!.userId;
+    const team = (await user.messaging.conversations.list()).items.find(row => row.managedGroupId === 'team')!;
+    expect(team.participants.map(row => row.id).sort()).toEqual([adminId, userId].sort());
+    expect((await user.messaging.contacts.list()).items).toEqual([]);
+    await user.messaging.messages.send(team.id, { text: 'Synthetic team message without a contact request.' }, { requestId: 'team-send' });
+    expect((await admin.messaging.messages.list(team.id)).items).toHaveLength(1);
+    await expect(user.messaging.conversations.removeParticipant(team.id, team.revision, userId, { requestId: 'cannot-edit-policy' })).rejects.toMatchObject({ status: 403 });
+    await setDepartment(userId, 'clinical'); await user.login('group-user', PASSWORD);
+    const clinical = (await user.messaging.conversations.list()).items.find(row => row.managedGroupId === 'clinical')!;
+    expect(clinical.participants.map(row => row.id)).toEqual([userId]);
+    await expect(admin.messaging.conversations.get(clinical.id)).rejects.toMatchObject({ status: 404 });
+    const bytes = new TextEncoder().encode('Synthetic group attachment'), checksum = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    const attachment = await user.messaging.attachments.allocate(clinical.id, { fileName: 'synthetic-group.txt', mimeType: 'text/plain', sizeBytes: bytes.byteLength, checksum }, { requestId: 'clinical-file' });
+    await user.messaging.attachments.upload(clinical.id, attachment.id, bytes, { requestId: 'clinical-file-bytes' });
+    await user.messaging.messages.send(clinical.id, { text: 'Synthetic earlier clinical message.', attachmentIds: [attachment.id] }, { requestId: 'clinical-before' });
+    await setDepartment(adminId, 'clinical'); await admin.login('group-admin', PASSWORD);
+    await admin.messaging.conversations.get(clinical.id);
+    let invalidations = 0;
+    const detach = f.zero.messaging!.runtime.subscribe(applicationServiceDataScope(), () => { invalidations++; }, { actorId: adminId, conversationId: clinical.id });
+    try {
+      await setDepartment(userId, 'other');
+      const deadline = Date.now() + 5000;
+      while (!invalidations && Date.now() < deadline) await Bun.sleep(25);
+      expect(invalidations).toBeGreaterThan(0); // No list/get demand read triggered this canonical membership wake-up.
+    } finally { detach(); }
+    await user.login('group-user', PASSWORD);
+    expect((await user.messaging.conversations.list()).items.some(row => row.id === clinical.id)).toBe(false);
+    await expect(user.messaging.messages.list(clinical.id)).rejects.toMatchObject({ status: 404 });
+    await expect(user.messaging.attachments.download(clinical.id, attachment.id)).rejects.toMatchObject({ status: 404 });
+    await expect(user.messaging.messages.send(clinical.id, { text: 'Rejected after property removal.' }, { requestId: 'clinical-revoked' })).rejects.toMatchObject({ status: 404 });
+    await admin.messaging.messages.send(clinical.id, { text: 'Synthetic message while the user was absent.' }, { requestId: 'clinical-absent' });
+    // A -> B -> A must not replay an old transport acknowledgment and leave
+    // canonical membership at B. Rejoining applies the configured history rule.
+    await setDepartment(userId, 'clinical'); await user.login('group-user', PASSWORD);
+    expect((await user.messaging.conversations.get(clinical.id)).participants.map(row => row.id).sort()).toEqual([adminId, userId].sort());
+    expect((await user.messaging.messages.list(clinical.id)).items).toEqual([]);
+    await expect(user.messaging.attachments.download(clinical.id, attachment.id)).rejects.toMatchObject({ status: 404 });
+    await admin.messaging.messages.send(clinical.id, { text: 'Synthetic new message after rejoin.' }, { requestId: 'clinical-after' });
+    expect((await user.messaging.messages.list(clinical.id)).items.map(row => row.text)).toEqual(['Synthetic new message after rejoin.']);
+    const request = await admin.messaging.contacts.request(userId, { requestId: 'manual-contact' });
+    await user.messaging.contacts.respond(adminId, request.revision, true, { requestId: 'manual-contact-accept' });
+    const manual = await admin.messaging.conversations.create({ kind: 'group', userIds: [userId], title: 'Manual' }, { requestId: 'manual-group' });
+    const transferred = await admin.messaging.conversations.transferOwnership(manual.id, manual.revision, userId, { requestId: 'manual-transfer' });
+    expect(transferred.participants.find(row => row.id === userId)?.role).toBe('owner');
+    await admin.messaging.conversations.removeParticipant(manual.id, transferred.revision, adminId, { requestId: 'old-owner-leave' });
+    expect((await user.messaging.conversations.get(manual.id)).participants.map(row => row.id)).toEqual([userId]);
+  } finally { admin.disconnect(); user.disconnect(); await f.close(); }
+}, 90000);
+
+test('multi-tenant configured groups and internal assistants use independent native scopes without cross-tenant discovery or transcript access', async () => {
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch() {
+    return Response.json({ id: 'synthetic-scoped-reply', object: 'chat.completion', created: 1, model: 'chat',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'Synthetic scoped answer.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 } });
+  } });
+  const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1', false, {
+    auth: { tenancy: 'multi', bootstrap: 'public', registration: { mode: 'public' } },
+    messaging: { support: false, groups: { team: { name: 'Team' } }, assistants: { helper: { name: 'Helper', model: 'synthetic/chat' } } },
+  }), first = f.client(), second = f.peer();
+  try {
+    await first.register({ username: 'tenant-messages-one', email: 'tenant-one@example.test', password: PASSWORD, organizationName: 'Synthetic one' });
+    await second.register({ username: 'tenant-messages-two', email: 'tenant-two@example.test', password: PASSWORD, organizationName: 'Synthetic two' });
+    expect((await first.messaging.directory()).items).toEqual([]); expect((await second.messaging.directory()).items).toEqual([]);
+    const groupA = (await first.messaging.conversations.list()).items.find(row => row.managedGroupId === 'team')!;
+    const groupB = (await second.messaging.conversations.list()).items.find(row => row.managedGroupId === 'team')!;
+    expect(groupA.id).not.toBe(groupB.id);
+    expect(groupA.participants.map(row => row.id)).toEqual([first.user!.userId]);
+    expect(groupB.participants.map(row => row.id)).toEqual([second.user!.userId]);
+    await expect(second.messaging.conversations.get(groupA.id)).rejects.toMatchObject({ status: 404 });
+    const botA = await first.messaging.assistants.open('helper', {}, { requestId: 'same-scoped-request' });
+    const botB = await second.messaging.assistants.open('helper', {}, { requestId: 'same-scoped-request' });
+    expect(botA.id).not.toBe(botB.id);
+    await Promise.all([first.messaging.messages.send(botA.id, { text: 'Synthetic tenant one question.' }, { requestId: 'same-scoped-turn' }),
+      second.messaging.messages.send(botB.id, { text: 'Synthetic tenant two question.' }, { requestId: 'same-scoped-turn' })]);
+    const deadline = Date.now() + 12000;
+    for (;;) {
+      const pages = await Promise.all([first.messaging.messages.list(botA.id), second.messaging.messages.list(botB.id)]);
+      if (pages.every(page => page.items.some(row => row.authorId === 'assistant:helper'))) break;
+      if (Date.now() >= deadline) throw new Error('Synthetic scoped assistant deadline.'); await Bun.sleep(40);
+    }
+    await expect(second.messaging.messages.list(botA.id)).rejects.toMatchObject({ status: 404 });
+    await expect(first.messaging.conversations.create({ userIds: [second.user!.userId] }, { requestId: 'cross-tenant-contact' })).rejects.toMatchObject({ status: 404 });
+    await expect(first.fetch('/api/messaging/assistants/helper/conversations', { method: 'POST', headers: { 'Idempotency-Key': 'forged-scope' }, body: { tenantId: 'foreign' } })).rejects.toMatchObject({ status: 422 });
+  } finally { first.disconnect(); second.disconnect(); await f.close(); await provider.stop(true); }
 }, 90000);
 
 test('native review HTTP and SDK retain the failed attempt, require an explicit current-owner retry, and never duplicate its replacement', async () => {

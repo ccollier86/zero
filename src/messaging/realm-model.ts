@@ -2,19 +2,28 @@
 import type { Row } from '../sync/types';
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { ConversationKind, ConversationOwner, ConversationRole, DurableMessage } from './contracts';
-import { messagingArray, messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
-export interface MessagingActor { scopeId: string; id: string; kind: 'user' | 'external' | 'assistant'; staff: boolean }
+import { messagingArray, messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingRegistry, messagingText } from './validation';
+export interface MessagingActor { scopeId: string; id: string; kind: 'user' | 'external' | 'assistant'; staff: boolean; assistantPolicies?: Readonly<Record<string, string>>; groupPolicies?: Readonly<Record<string, string>> }
 export type ConversationRow = Row & { id: string; scope_id: string; kind: ConversationKind; title: string; revision: number; created_at: number; updated_at: number; public_updated_at: number; archived: number;
-  created_by: string; owner: ConversationOwner; owner_id: string | null; owner_epoch: number; internal_sequence: number; public_sequence: number; channel_id: string | null; members_json: string };
-export type MemberRow = Row & { id: string; scope_id: string; conversation_id: string; participant_id: string; kind: 'user' | 'external'; role: ConversationRole; active: number; joined_at: number; history_from: number; read_sequence: number };
+  created_by: string; owner: ConversationOwner; owner_id: string | null; owner_epoch: number; internal_sequence: number; public_sequence: number; channel_id: string | null; members_json: string; assistant_id?: string | null; managed_group_id?: string | null; group_policy_hash?: string | null };
+export type MemberRow = Row & { id: string; scope_id: string; conversation_id: string; participant_id: string; kind: 'user' | 'external' | 'assistant'; role: ConversationRole; active: number; joined_at: number; history_from: number; read_sequence: number };
 export type MessageRow = Row & { id: string; scope_id: string; conversation_id: string; sequence: number; public_sequence: number | null; revision: number; author_id: string; author_kind: MessagingActor['kind']; visibility: 'conversation' | 'staff'; text: string; created_at: number; edited_at: number | null; deleted: number; attachment_ids: string };
 
 /** Minted by the service, not forwarded from an HTTP body. Actor validation repeats inside the worker. */
 export function captureMessagingActor(input: unknown): MessagingActor {
-  const r = messagingRecord(input, ['scopeId', 'id', 'kind', 'staff']);
+  const r = messagingRecord(input, ['scopeId', 'id', 'kind', 'staff', 'assistantPolicies', 'groupPolicies']);
   const scopeId = messagingText(r.scopeId, 263), tenantId = scopeId.startsWith('tenant:') ? scopeId.slice(7) : '';
   if (scopeId !== 'application' && (!tenantId || tenantId.length > 256 || tenantId.trim() !== tenantId || /\p{Cc}/u.test(tenantId)) || typeof r.staff !== 'boolean') messagingFail('MESSAGING_FORBIDDEN', 403);
-  return { scopeId, id: messagingId(r.id), kind: messagingChoice(r.kind, ['user', 'external', 'assistant']), staff: r.staff };
+  const policies = (input: unknown) => {
+    const result: Record<string, string> = Object.create(null);
+    for (const [id, hash] of Object.entries(messagingRegistry(input, 32))) {
+      if (!/^[a-z][a-z0-9_-]{0,63}$/.test(id) || typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) messagingFail('MESSAGING_INPUT_INVALID', 422);
+      result[id] = hash;
+    }
+    return result;
+  };
+  return { scopeId, id: messagingId(r.id), kind: messagingChoice(r.kind, ['user', 'external', 'assistant']), staff: r.staff,
+    ...(r.assistantPolicies === undefined ? {} : { assistantPolicies: policies(r.assistantPolicies) }), ...(r.groupPolicies === undefined ? {} : { groupPolicies: policies(r.groupPolicies) }) };
 }
 export function memberKey(conversationId: string, participantId: string): string { return messagingHash([conversationId, participantId]); }
 export function contactKey(scopeId: string, first: string, second: string): string { return messagingHash([scopeId, ...[first, second].sort()]); }
@@ -28,8 +37,14 @@ export function conversationMember(context: DatabaseWriteCommandContext, actor: 
 /** The same closed admission is used by read and write handlers; global staff is not conversation membership. */
 export function assertMessagingMember(actor: MessagingActor, conversation: ConversationRow | null, member: MemberRow | null): void {
   if (!conversation || conversation.scope_id !== actor.scopeId || !member || member.scope_id !== actor.scopeId || member.active !== 1 || member.participant_id !== actor.id || member.kind !== actor.kind || member.role === 'staff' && (!actor.staff || conversation.kind !== 'support')) messagingFail('MESSAGING_NOT_FOUND', 404);
+  if (conversation.kind === 'assistant' && (!conversation.assistant_id || !actor.assistantPolicies?.[conversation.assistant_id])) messagingFail('MESSAGING_NOT_FOUND', 404);
+  if (conversation.managed_group_id && actor.groupPolicies?.[conversation.managed_group_id] !== conversation.group_policy_hash) messagingFail('MESSAGING_NOT_FOUND', 404);
 }
 export function staffTimeline(conversation: ConversationRow, member: MemberRow): boolean { return conversation.kind === 'support' && member.role === 'staff'; }
+/** A bot conversation's human owner may inspect its own recovery facts without global support authority. */
+export function canReviewMessagingConversation(actor: MessagingActor, conversation: ConversationRow, member: MemberRow): boolean {
+  return actor.kind === 'user' && (actor.staff && staffTimeline(conversation, member) || conversation.kind === 'assistant' && member.role === 'owner');
+}
 export function assertRevision(row: { revision: number }, expected: unknown): void {
   if (row.revision !== messagingInteger(expected)) messagingFail('MESSAGING_REVISION_CONFLICT');
   if (row.revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);

@@ -7,7 +7,7 @@ import type { ConversationRow, MessageRow } from './realm-model';
 export type MessagingJobState = 'pending' | 'claimed' | 'calling' | 'received' | 'accepted' | 'cancelled' | 'needs-review';
 export type MessagingJobKind = 'assistant' | 'delivery' | 'notification';
 export type MessagingJobRow = Row & { id: string; scope_id: string; conversation_id: string; message_id: string; kind: MessagingJobKind;
-  owner_epoch: number; context_revision: number; policy_hash: string | null; dispatch_generation: number; state: MessagingJobState;
+  owner_epoch: number; context_revision: number; policy_hash: string | null; assistant_id?: string | null; dispatch_generation: number; state: MessagingJobState;
   lease_nonce: string | null; lease_expires: number | null; attempts: number; provider_id: string | null; error_code: string | null; created_at: number; updated_at: number };
 export type JobConversation = ConversationRow & { customer_turn_id: string | null; context_revision: number };
 export const MESSAGING_JOB_TABLES: Record<string, TableSchema> = {
@@ -27,7 +27,8 @@ export function jobInScope({ db }: DatabaseWriteCommandContext, id: unknown, sco
   return row;
 }
 export function liveAssistantTurn(job: MessagingJobRow, conversation: JobConversation | null, message: MessageRow | null): boolean {
-  return !!conversation && conversation.scope_id === job.scope_id && conversation.kind === 'support' && !conversation.archived && conversation.owner === 'assistant'
+  return !!conversation && conversation.scope_id === job.scope_id && ['support', 'assistant'].includes(conversation.kind) && !conversation.archived && conversation.owner === 'assistant'
+    && (conversation.assistant_id ?? 'default') === (job.assistant_id ?? 'default')
     && conversation.owner_epoch === job.owner_epoch && conversation.context_revision === job.context_revision && conversation.customer_turn_id === job.message_id
     && !!message && message.scope_id === job.scope_id && message.conversation_id === conversation.id && message.visibility === 'conversation' && !message.deleted;
 }
@@ -47,7 +48,7 @@ export function terminalJob(context: DatabaseWriteCommandContext, job: Messaging
   if (state === 'needs-review' && job.kind === 'assistant' && currentAssistantTurn(context, job)) {
     const conversation = context.db.get('messaging_conversations', job.conversation_id) as JobConversation;
     if (conversation.owner_epoch < Number.MAX_SAFE_INTEGER - 2 && conversation.revision < Number.MAX_SAFE_INTEGER - 2) context.db.update('messaging_conversations', conversation.id,
-      { owner: 'triage', owner_id: null, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1, updated_at: Date.now(), public_updated_at: Date.now() });
+      { owner: conversation.kind === 'assistant' ? 'assistant' : 'triage', owner_id: null, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1, updated_at: Date.now(), public_updated_at: Date.now() });
   }
   return { state };
 }

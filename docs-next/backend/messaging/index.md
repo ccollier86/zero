@@ -8,66 +8,56 @@ visibility: internal
 system: messaging
 feature: integration-plan
 maturity: planned
-applies_to: ["2.6.0 presentation and room typing; complete messaging backend is planned"]
+applies_to: ["2.6.0 packaged presentation; configurable backend on feature/messaging-backend is not a selected update"]
 ---
 
 # Messaging Foundation And Integration Plan
 
 [Backend index](../index.md) · [Messaging components and typing](../../frontend/messaging/index.md)
 
-Build an optional Zero messaging subsystem with one coherent API, not a detached
-chat widget. The supplied reference establishes an existing AppShell sidebar,
-conversation sidebar and main conversation area. The first product is an AI
-customer assistant reachable through a web portal and Facebook Messenger, with
-explicit staff takeover. The same foundations must support user-to-user and
-organization conversations without weakening their different admission rules.
+Build one optional messaging subsystem with a coherent Zero API. Contacts-based
+apps, everyone-in-directory apps, tenant-local messaging, ordinary and
+property-managed groups, internal assistants and support inboxes may coexist.
+The supplied visual reference uses the existing AppShell sidebar, a conversation
+sidebar and a main conversation area.
 
-The branch-only [durable review API](./review.md) documents explicit retry,
-current-owner admission, immutable prior outcomes and semantic read evidence.
-It is not available in an older stable archive merely because its version is
-also `2.6.0`.
+Facebook Messenger was an application-specific example, not a Zero feature.
+Third-party provider connectors are application-owned and do not gate the
+framework. Native public-support/email integration has its own remaining work.
+
+[Configuration and facade](./configuration.md) · [Review](./review.md) ·
+[Notifications](./notifications.md) · [Guardian presence](../guardian/presence.md)
 
 ## Implementation Status
 
-The packaged foundation implements session-scoped room typing over the
-existing authenticated ephemeral Sync transport, participant aggregation, activity
-presentation, magnetic conversation list/header, message/composer/layout parts
-and browser-safe presentation records.
-It does not yet install messaging tables, expose `zero.messaging`, send messages,
-upload attachments or connect an AI/Messenger provider. Storage references and
-delivery labels in a presentation record are not evidence those operations ran.
+The selected stable archive supplies the presentation/typing foundation. The
+isolated feature branch also implements canonical Fabric persistence,
+Guardian-bound native HTTP/SDK, committed live projections, private Storage
+attachments, contacts/groups, read cursors, support ownership, concurrent
+assistant jobs and duplicate-safe native notifications. It is not yet a
+complete, installed/browser-qualified messaging release.
 
-The remaining backend is a complete-messaging release gate, not an application integration exercise
-left to every consumer. Do not present the frontend parts as a complete messaging
-product or build a production app against an invented SDK method.
+The [scope correction](../../_work/messaging-configuration-correction.md) removes
+the support-only AI assumption. Named internal assistants now have independent
+identities, Guardian policies and conversations; support need not be enabled.
+Configured groups use current Guardian role/permission/trusted-property rules
+and canonical membership. A delayed reconciliation cannot preserve revoked
+history/file/typing access. Ordinary groups retain manual ownership/membership
+and can transfer ownership before the old owner leaves.
 
-The isolated `feature/messaging-backend` branch now implements canonical actor
-persistence, Guardian-bound HTTP/SDK facades, scoped SSE, private Storage
-attachments, contacts, read cursors, support ownership and durable assistant
-jobs. Focused native tests cover those boundaries, including concurrent actual
-loopback-provider calls through the Zero AI gateway/Torrent, safe provider-stage
-logging and stale-reply takeover fencing. Its
-[implementation checkpoint](../../_work/messaging-backend-implementation.md)
-distinguishes that work from the unfinished notification/channel delivery,
-operator-resolution API, public widget/Messenger admission, managed workspace
-and installed Linux/browser release qualification. The stable package described
-here does not yet expose the branch's `client.messaging` API. Do not copy a
-feature-branch example into an older archive based on the `2.6.0` label alone.
-
-The subsequent branch-only [native notification integration](./notifications.md)
-uses fixed private source audiences and permanent SYSTEM receiver receipts. Its
-native recovery tests do not complete public portal/Messenger channels, the
-managed workspace, or normal peer-chat delivery-review tooling.
-
-| Layer | Current status | Required completion |
+| Layer | Feature-branch source status | Remaining qualification/completion |
 | --- | --- | --- |
-| Typing | Implemented with real room authorization, transient Sync, server-relative freshness and browser lifecycle tests | Complete conversation-membership integration |
-| UI parts | Implemented, tokenized, source-controlled with desktop/narrow browser tests | Managed controller, realtime history, delivery and attachment binding |
-| Durable messages | Not implemented | Canonical ReactiveDB schema, scoped facade, accepted receipts and paging |
-| Storage | Reference-only presentation contract | Managed staging, upload, attach, authorized download and safe cleanup |
-| Contacts and teams | Not implemented | Guardian directory policies and accepted relationship commands |
-| AI takeover | Display contract only | Durable ownership epoch, sealed workflow execution and stale-run fencing |
-| External channels | Not implemented | Verified Messenger connection, ingress, outbox and real delivery receipts |
+| Contacts/directory/tenant scope | Implemented, default everyone; contact requests optional | Full installed/security matrix |
+| Ordinary groups | Create, add/remove, archive/rename, owner transfer | Managed controls and browser flows |
+| Configured groups | Declarative Guardian rules, reconciliation, remove/rejoin history | Scale/resource and installed qualification |
+| Internal assistants | Named discovery/open, policy/identity-pinned jobs, owner review, support independent | Managed UI; group-bot participation is not implemented |
+| Typing/presence | Canonical messaging typing; existing Guardian presence/availability | Bind the existing fresh presence hooks in the managed workspace |
+| Messages/files/notifications | Canonical receipts/history, private bytes, targeted live updates, native notice recovery | Installed/browser/worker qualification |
+| Public support/email | Authenticated support claim/takeover/private notes exist | Visitor capabilities, configured human destinations and native email association |
+
+The [implementation checkpoint](../../_work/messaging-backend-implementation.md)
+separates native source evidence from unfinished work. A feature-branch example
+is not available in an older archive merely because both say `2.6.0`.
 
 ## Zero Service Integration
 
@@ -228,8 +218,9 @@ old work. An AI worker checks that epoch before generation, before emitting
 customer-visible tokens and before committing or delivering its reply. Merely
 aborting a browser stream does not fence a remote worker.
 
-Use the existing Zero AI provider/model selection, BYOK, RBAC and cancellation
-facades. Optional System One routing may suggest a queue or priority; code checks
+Use the existing Zero AI provider/model selection, Guardian policy and cancellation
+facades. The current implementation uses the configured platform gateway; do not
+claim user/organization BYOK until that AI-foundation boundary is supported and qualified. Optional System One routing may suggest a queue or priority; code checks
 the permitted action. Do not add a semantic model call when an explicit rule or
 current database value answers the question. Provider failures, insufficient
 context and routing uncertainty must remain distinct from an accepted answer.
@@ -260,7 +251,7 @@ cursor state; optimistic UI cannot permanently clear unread work.
 Private staff notes are a separate visibility class, not a cosmetic bubble
 style. Server queries, realtime payloads, counts, search, attachments, exports
 and notifications all enforce that visibility. Notes never enter customer or
-Messenger delivery, customer unread counts or default assistant context. Any
+email/external delivery, customer unread counts or default assistant context. Any
 explicit staff-authorized AI use of notes requires a deliberate policy.
 Shared sequence gaps or aggregate counts must not disclose hidden note activity.
 
@@ -270,29 +261,33 @@ receipts. Private-note acceptance, human takeover and stale-run suppression
 need their own durable outcomes. These remain messaging backend acceptance
 requirements, not guarantees supplied by today's presentation/typing components.
 
-## Channels And Delivery
+## Support And Delivery
 
-The web portal uses the managed authenticated/capability-scoped transport.
-Messenger requires a server-owned verified connection and the provider's current
-API/signature requirements before implementation. Map ingress IDs within that
-connection and tenant; verify raw bounded webhook bytes before parsing or
-admitting a durable inbox receipt. Provider-supplied user IDs are external
-identities, not Guardian credentials.
+Authenticated support already uses the managed Guardian facade. Public visitor
+admission and email association remain separate gates in the
+[public-support continuation](../../_work/messaging-public-channels.md). A visitor
+must receive a scoped expiring capability, not access to Guardian's internal
+directory or app Sync. Current staff destination policy, canonical membership
+and ownership epochs govern triage/claim/transfer/handback.
 
-Outbound delivery uses an idempotent durable outbox and the current ownership
-epoch. Record provider acceptance separately from delivered/read acknowledgements.
-Supported channel capabilities govern typing, files, edits and receipts; do not
-simulate unsupported provider acknowledgements. Unknown network outcomes retain
-their operation/provider correlation IDs rather than creating duplicate sends.
-Resolve credentials on the server and never project them into UI configuration.
+Use Zero's configured SMTP/Resend/IMAP/inbox services for optional email support.
+Accepted chat state, provider acceptance, receipt and human attention are distinct.
+Unknown sends retain their identity for reconciliation/review. Reuse private
+Storage and safe email HTML rendering; never put provider credentials, private
+notes or upload grants into a public conversation.
+
+External provider adapters belong to the application and must use supported
+public facades rather than private SQL. No Facebook-specific SDK, webhook,
+permission, reply-window or media behavior is part of Zero's completion target.
 
 ## API And UI Assembly
 
-The intended server/browser facade is `zero.messaging` / `client.messaging`,
-with conversations, participants, messages, attachments, contacts, receipts and
-handoff commands. Those endpoints are not implemented in this slice. Define
-closed typed operations, accepted receipts and live subscriptions before exposing
-an SDK property. The optional subsystem should install nothing when disabled.
+The feature-branch request-scoped server/browser facade is `zero.messaging` /
+`client.messaging`, with conversations, named assistants, messages, files,
+contacts, review and support commands. See [configuration](./configuration.md).
+Commands require stable operation IDs; reads and projections reauthorize after
+async boundaries. Disabled messaging installs no runtime/worker. Stable archives
+without the backend do not gain these APIs from documentation alone.
 
 The organism should compose independently documented parts: conversation sidebar,
 directory/search, header/presence, transcript, date/unread separators, message
@@ -313,17 +308,17 @@ Magnetic hover highlights belong in the conversation/contact/menu lists.
    recovery and revocation during upload/download.
 5. AI execution and human takeover with ownership fences, durable workflow jobs,
    notifications and safe observability.
-6. Verified Messenger ingress/outbox and channel capability differences.
+6. Configurable groups/internal assistants, capability-bound public support and
+   optional native email association, using existing Guardian/presence/services.
 7. Full organism/browser/accessibility polish and installed-archive qualification,
-   then reviewed merge. Square and the planned
-   [configurable core logging system](../../_work/logging-system-plan.md) follow
-   this work; logging is no longer planned as a separate compliance plugin.
+   then the normal reviewed archive/full-suite release. Third-party channel
+   connectors are app-owned, not a prerequisite.
 
 Required tests include same actor in multiple tabs, spoofed typing identity,
 cross-tenant IDs, removed membership while subscribed, unauthorized contact
 discovery, accepted-send replay, concurrent insertion/order, reconnect/backfill
 scroll anchors, orphan blob recovery, attachment revocation, worker death,
-stale AI reply after takeover, webhook duplicate/reordering, unknown delivery,
+stale AI reply after takeover, property revocation/rejoin, native email duplicate/reordering, unknown delivery,
 slow-reader backpressure, reduced motion, IME input, keyboard and narrow layouts.
 Qualify actual file/hot/Fabric modes and fresh installed packages explicitly;
 no synthetic fixture or visual screenshot proves a production channel is wired.
@@ -345,8 +340,9 @@ packaged sources, types/styles, public import aliases, browser isolation and
 the real hook under AppProvider's SSR fallback. None of those checks claim a
 durable messaging backend or external channel is running.
 
-This slice deliberately has no messaging migration, new private database or
-production data changes. Updating the package exposes the documented parts
+That packaged presentation-only slice deliberately had no messaging migration or
+new private database. The current feature branch has additive private migrations
+and dedicated Fabric files, but no production data changes. Updating the package exposes the documented parts
 without provisioning an unfinished messaging subsystem. The merged payment,
 SMTP/IMAP and email-inbox features retain their own opt-in configuration and
 release/installation contracts.

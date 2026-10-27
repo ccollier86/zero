@@ -8,7 +8,7 @@ import type { MessagingDirectoryEntry, MessagingPage } from './contracts';
 import { messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 import { AuthError } from '../auth/types';
 
-interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean }
+interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean }
 /** The server owns Guardian relationships and published avatar descriptors; caller-selected identity metadata is ignored. */
 export class ManagedMessagingDirectory implements MessagingDirectory {
   constructor(private readonly deps: DirectoryDependencies) {}
@@ -27,6 +27,22 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
   notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean): boolean {
     try { this.assertRecipient(scope, userId); return !staff || this.deps.supportRecipient?.(scope, userId) === true; }
     catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
+  }
+  assistantRecipient(scope: ServiceDataScope, userId: string, assistantId: string): boolean {
+    try { this.assertRecipient(scope, userId); return this.deps.assistantRecipient?.(scope, userId, assistantId) === true; }
+    catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
+  }
+  groupRecipient(scope: ServiceDataScope, userId: string, groupId: string): boolean {
+    try { this.assertRecipient(scope, userId); return this.deps.groupRecipient?.(scope, userId, groupId) === true; }
+    catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
+  }
+  groupCandidates(scope: ServiceDataScope, after: string, limit: number): { ids: readonly string[]; hasMore: boolean } {
+    this.assertScope(scope);
+    const maximum = messagingInteger(limit, 1, 100), values: (string | number)[] = [after];
+    const tenant = scope.tenantId === null ? '' : " AND EXISTS(SELECT 1 FROM _auth_tenant_memberships m JOIN _auth_tenants t ON t.tenant_id=m.tenant_id WHERE m.user_id=u.user_id AND m.tenant_id=? AND m.status='active' AND t.status='active')";
+    if (scope.tenantId !== null) values.push(scope.tenantId);
+    const rows = this.deps.db.prepare("SELECT u.user_id FROM users u WHERE u.status='active' AND u.user_id>?" + tenant + ' ORDER BY u.user_id LIMIT ?').all(...values, maximum + 1) as { user_id: string }[];
+    return { ids: rows.slice(0, maximum).map(row => row.user_id), hasMore: rows.length > maximum };
   }
   list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }): MessagingPage<MessagingDirectoryEntry> {
     const q = messagingRecord(query, ['after', 'limit', 'search']), limit = messagingInteger(q.limit ?? 25, 1, 50);

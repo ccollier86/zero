@@ -59,7 +59,7 @@ export function publishMessagingJobResult(context: DatabaseWriteCommandContext, 
     if (conversation.internal_sequence >= Number.MAX_SAFE_INTEGER - 2 || conversation.public_sequence >= Number.MAX_SAFE_INTEGER - 2 || conversation.context_revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
     const id = 'message_' + messagingHash(['assistant', job.id]).slice(0, 40), now = Date.now();
     const row: MessageRow = { id, scope_id: job.scope_id, conversation_id: conversation.id, sequence: conversation.internal_sequence + 1, public_sequence: conversation.public_sequence + 1,
-      revision: 1, author_id: 'assistant:default', author_kind: 'assistant', visibility: 'conversation', text: result.text, created_at: now, edited_at: null, deleted: 0, attachment_ids: '[]' };
+      revision: 1, author_id: 'assistant:' + (job.assistant_id ?? 'default'), author_kind: 'assistant', visibility: 'conversation', text: result.text, created_at: now, edited_at: null, deleted: 0, attachment_ids: '[]' };
     context.db.createStrict('messaging_messages', row);
     context.db.update('messaging_conversations', conversation.id, { internal_sequence: row.sequence, public_sequence: row.public_sequence, updated_at: now, public_updated_at: now, customer_turn_id: null, context_revision: conversation.context_revision + 1 });
     if (conversation.channel_id) appendMessagingJob(context, conversation, id, 'delivery', now);

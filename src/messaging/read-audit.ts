@@ -4,7 +4,7 @@ import type { LoggingRuntime } from '../logging/logging-runtime';
 import type { LoggingContext, LoggingOutcome } from '../logging/logging-contracts';
 import { captureLoggingEvent } from '../logging/logging-validation';
 
-export type MessagingReadAction = 'directory' | 'conversations' | 'conversation' | 'history' | 'contacts' | 'support.queue' | 'review.list' | 'review.detail';
+export type MessagingReadAction = 'directory' | 'assistants' | 'conversations' | 'conversation' | 'history' | 'contacts' | 'support.queue' | 'review.list' | 'review.detail';
 
 /** Audit delivery occurs outside SQLite/authority leases; a successful prepared result is fenced again before release. */
 export async function auditMessagingRead<T>(logging: LoggingRuntime | undefined, context: LoggingContext, action: MessagingReadAction,

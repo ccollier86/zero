@@ -16,9 +16,11 @@ applies_to: ["2.6.0 source with the messaging presentation and typing exports"]
 [Frontend index](../index.md) · [Full integration plan](../../backend/messaging/index.md)
 
 The initial messaging family provides composable presentation parts and real
-room-authorized typing. It is not yet a durable chat backend or a Facebook/AI
-connector. The complete service, Storage binding and controller are explicit
-release gates in the integration plan. Existing email/inbox remains separate.
+room-authorized typing. The branch-only [backend configuration](../../backend/messaging/configuration.md)
+adds durable messaging, groups and internal assistants independently of support.
+These parts are not yet the fully wired managed controller; public support/email
+and installed-browser qualification remain explicit gates. Third-party provider
+connectors are app-owned. Existing email/inbox remains separate.
 
 Import from `@zero/framework/messaging` or the identical
 `@zero/framework/components/messaging` facade. The documented parts are also

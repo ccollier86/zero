@@ -134,7 +134,8 @@ export class MessagingJobs {
         this.wake(scope); return;
       }
     }
-    const claimed = await this.deps.runtime.write<{ state: MessagingJobState }>(scope, 'messaging.job.claim', { scopeId, id: job.id, nonce, policyHash: this.deps.config.assistant ? this.deps.config.assistant.policyHash : null, leaseMs: 10000 }, 'job-reconcile:' + nonce, check);
+    const policy = this.deps.config.assistants[job.assistant_id ?? 'default'];
+    const claimed = await this.deps.runtime.write<{ state: MessagingJobState }>(scope, 'messaging.job.claim', { scopeId, id: job.id, nonce, policyHash: policy?.policyHash ?? null, leaseMs: 10000 }, 'job-reconcile:' + nonce, check);
     if (!TERMINAL_MESSAGING_JOBS.has(claimed.state)) await this.deps.runtime.write(scope, 'messaging.job.review', { scopeId, id: job.id, nonce, code: 'WORKFLOW_REQUIRES_RECONCILIATION' }, 'job-review:' + nonce, check);
   }
 }

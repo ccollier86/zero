@@ -3,15 +3,19 @@ export const MESSAGING_API = '/api/messaging';
 import type { MessagingAttachmentsApi } from './attachment-contracts';
 export interface MessagingMutationOptions { readonly requestId: string; readonly signal?: AbortSignal }
 export interface MessagingReadOptions { readonly signal?: AbortSignal }
-export type ConversationKind = 'direct' | 'group' | 'support';
+export type ConversationKind = 'direct' | 'group' | 'support' | 'assistant';
 export type ConversationRole = 'owner' | 'member' | 'staff' | 'customer';
 export type ConversationOwner = 'triage' | 'human' | 'assistant';
 export const MESSAGING_REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '✅'] as const;
-export interface ConversationParticipant { readonly id: string; readonly kind: 'user' | 'external'; readonly role: ConversationRole; readonly joinedAt: number }
+export interface ConversationParticipant { readonly id: string; readonly kind: 'user' | 'external' | 'assistant'; readonly role: ConversationRole; readonly joinedAt: number }
+export interface MessagingAssistant { readonly id: string; readonly name: string; readonly description: string }
 export interface ConversationRecord {
   readonly id: string; readonly kind: ConversationKind; readonly title: string; readonly revision: number;
   readonly createdAt: number; readonly updatedAt: number; readonly archived: boolean;
   readonly owner: ConversationOwner; readonly ownerId: string | null; readonly ownerEpoch: number;
+  readonly assistantId?: string | null;
+  /** Non-null means membership/name are configured by Guardian policy rather than manually editable. */
+  readonly managedGroupId?: string | null;
   readonly participants: readonly ConversationParticipant[];
   readonly lastMessage: (DurableMessage & { readonly truncated: boolean }) | null; readonly unreadCount: number;
 }
@@ -34,6 +38,10 @@ export interface MessagingDirectoryEntry { readonly id: string; readonly name: s
 export interface MessagingReceipt { readonly requestId: string; readonly operation: string; readonly resourceId: string | null; readonly acceptedAt: number }
 export interface MessagingContact { readonly id: string; readonly userId: string; readonly direction: 'incoming' | 'outgoing'; readonly state: 'pending' | 'accepted' | 'declined' | 'blocked'; readonly revision: number; readonly updatedAt: number }
 export interface MessagingApi {
+  readonly assistants: {
+    list(options?: MessagingReadOptions): Promise<MessagingPage<MessagingAssistant>>;
+    open(id: string, input: { readonly title?: string }, options: MessagingMutationOptions): Promise<ConversationRecord>;
+  };
   readonly review: import('./review-contracts').MessagingReviewApi;
   readonly attachments: MessagingAttachmentsApi;
   capabilities(): Promise<MessagingCapabilities>;
@@ -46,6 +54,7 @@ export interface MessagingApi {
     rename(id: string, expectedRevision: number, title: string, options: MessagingMutationOptions): Promise<ConversationRecord>;
     archive(id: string, expectedRevision: number, archived: boolean, options: MessagingMutationOptions): Promise<ConversationRecord>;
     addParticipant(id: string, expectedRevision: number, userId: string, options: MessagingMutationOptions): Promise<ConversationRecord>;
+    transferOwnership(id: string, expectedRevision: number, userId: string, options: MessagingMutationOptions): Promise<ConversationRecord>;
     removeParticipant(id: string, expectedRevision: number, participantId: string, options: MessagingMutationOptions): Promise<{ readonly removed: true }>;
     markRead(id: string, throughSequence: number, options: MessagingMutationOptions): Promise<{ readonly throughSequence: number; readonly unreadCount: number }>;
     takeover(id: string, expectedEpoch: number, options: MessagingMutationOptions): Promise<ConversationRecord>;

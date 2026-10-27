@@ -19,8 +19,12 @@ publication, search, and production agent bundles.
 
 - [Durable messaging implementation](./messaging-backend-implementation.md): actor
   persistence checkpoint, remaining service boundaries and release gates.
-- [Public customer and Messenger delivery](./messaging-public-channels.md): planned
-  visitor capabilities, verified ingress, ordered external effects and review.
+- [Configurable messaging correction](./messaging-configuration-correction.md):
+  directory/contact modes, manual/property-managed groups and independent internal
+  assistants using existing Guardian, Fabric, AI, typing, Storage and presence.
+- [Public support continuation](./messaging-public-channels.md): planned
+  visitor capabilities, native email association and human destinations;
+  third-party channel adapters are application-owned, not framework gates.
 - [Blog publishing implementation](./blog-publishing-implementation.md): private Fabric
   content, publication snapshots, media, metrics and the remaining presentation,
   editing and release qualification gates. Unreleased feature work is not the

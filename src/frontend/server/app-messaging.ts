@@ -15,8 +15,9 @@ import { MessagingAttachmentService } from '../../messaging/attachment-service';
 import { MessagingJobs, ZERO_MESSAGING_JOBS } from '../../messaging/jobs';
 import { emitPlatformCodeTo } from '../../observability/sink';
 import { OBS_CODES } from '../../observability/codes';
-import { createMessagingRecipientPolicy } from '../../messaging/recipient-policy';
+import { createMessagingRecipientPolicy, createMessagingAccessPolicy } from '../../messaging/recipient-policy';
 import { assertNotificationEffectSchema } from '../../notifications/notification-effect-schema';
+import { ManagedMessagingGroups } from '../../messaging/groups';
 export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroAppRuntime; systemDB: ReactiveDB; config: ResolvedConfig; authorization: AuthMiddlewareAuthorizationOptions; startAuth(): Promise<void> }): Promise<void> {
   const { app, runtime, systemDB, config, authorization } = input;
   if (!config.messaging || config.auth === false) return;
@@ -30,16 +31,25 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
   const attachments = new MessagingAttachmentService({ db: systemDB, runtime: content, storage: runtime.require(ZERO_STORAGE_SERVICE), config: config.messaging, installAllowed,
     cleanupFailed: () => { try { emitPlatformCodeTo(runtime.require(ZERO_OBSERVABILITY_RUNTIME), OBS_CODES.MESSAGING_ATTACHMENT_CLEANUP_RETRY); } catch { /* Recovery evidence cannot change an accepted operation. */ } } });
   runtime.addCleanup(() => attachments.close()); await attachments.initialize();
+  const accessPolicy = createMessagingAccessPolicy({ users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
+    kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null,
+    assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile() });
   const directory = new ManagedMessagingDirectory({ db: systemDB, users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
+    assistantRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.assistants[id] && accessPolicy(scope, userId, config.messaging.assistants[id].access)),
+    groupRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.groups[id] && accessPolicy(scope, userId, config.messaging.groups[id].members)),
     supportRecipient: createMessagingRecipientPolicy({ users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
       kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null, support: config.messaging.support,
       assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile() }),
     publicAvatar: id => runtime.get(ZERO_GUARDIAN_AVATARS)?.publicDescriptorFor(id)?.deliveryPath ?? null });
+  const groups = new ManagedMessagingGroups({ system: systemDB, runtime: content, directory, config: config.messaging, ...(logging ? { logging } : {}),
+    failed: () => { try { emitPlatformCodeTo(runtime.require(ZERO_OBSERVABILITY_RUNTIME), OBS_CODES.MESSAGING_OPERATION_REJECTED,
+      { metadata: { operation: 'messaging.group.reconcile', failureCode: 'MESSAGING_GROUP_RECONCILIATION_REQUIRED' } }); } catch { /* No property values or identities in failure diagnostics. */ } } });
+  runtime.addCleanup(() => groups.close());
   const jobs = config.workflows !== false ? new MessagingJobs({ system: systemDB, runtime: content, config: config.messaging, directory,
     ai: runtime.get(ZERO_AI_SERVICE) ?? null, logging: logging ?? null, notifications: config.messaging.notifications ? runtime.require(ZERO_NOTIFICATION_SERVICE) : runtime.get(ZERO_NOTIFICATION_SERVICE) ?? null,
     dispatchFailed: () => { try { emitPlatformCodeTo(runtime.require(ZERO_OBSERVABILITY_RUNTIME), OBS_CODES.MESSAGING_JOB_DISPATCH_RETRY); } catch { /* Durable work retains its original identity. */ } } }) : null;
   if (jobs) { runtime.set(ZERO_MESSAGING_JOBS, jobs); runtime.addCleanup(async () => { runtime.clear(ZERO_MESSAGING_JOBS, jobs); await jobs.close(); }); }
-  const service = new MessagingService({ runtime: content, config: config.messaging, directory, attachments, ...(logging ? { logging } : {}), ...(jobs ? { jobs } : {}) });
+  const service = new MessagingService({ runtime: content, config: config.messaging, directory, attachments, groups, ...(logging ? { logging } : {}), ...(jobs ? { jobs } : {}) });
   runtime.set(ZERO_MESSAGING, service); runtime.addCleanup(() => { runtime.clear(ZERO_MESSAGING, service); });
   app.use(createMessagingPlugin({ getService: () => runtime.get(ZERO_MESSAGING) ?? null, getTokenService: () => runtime.get(ZERO_AUTH_TOKEN_SERVICE) ?? null, authorization, getLoggingRuntime: () => runtime.get(ZERO_LOGGING_RUNTIME) ?? null }));
 }

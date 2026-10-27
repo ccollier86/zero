@@ -9,8 +9,14 @@ import { AuthError, type AuthContext } from '../auth/types';
 /** Only current role/property policy is tested; recipients still need canonical conversation authorization when opening the generic notice. */
 export function createMessagingRecipientPolicy(input: { users: UserStore; tenancy: TenancyService | null; kernel: AuthorizationKernel; roles: AuthorizationRoleAssignmentResolver | null;
   support: false | { readonly staff: AccessRequirement }; assertCurrent(): void }): (scope: ServiceDataScope, userId: string) => boolean {
-  return (scope, userId) => {
-    input.assertCurrent(); if (!input.support) return false;
+  const permits = createMessagingAccessPolicy(input);
+  return (scope, userId) => input.support !== false && permits(scope, userId, input.support.staff);
+}
+/** Reuses Guardian's exact current role/property semantics for configured assistant and group policies. */
+export function createMessagingAccessPolicy(input: { users: UserStore; tenancy: TenancyService | null; kernel: AuthorizationKernel; roles: AuthorizationRoleAssignmentResolver | null;
+  assertCurrent(): void }): (scope: ServiceDataScope, userId: string, requirement?: AccessRequirement) => boolean {
+  return (scope, userId, requirement) => {
+    input.assertCurrent();
     const user = input.users.getUserById(userId); if (!user || user.status !== 'active') return false;
     const context: AuthContext = { userId: user.userId, email: user.email, role: user.role, sessionScopeKind: scope.scopeKind, sessionScopeId: scope.scopeId };
     if (scope.tenantId !== null) {
@@ -20,7 +26,7 @@ export function createMessagingRecipientPolicy(input: { users: UserStore; tenanc
         tenantAuthorizationGeneration: tenant.authorizationGeneration, membershipAuthorizationGeneration: member.authorizationGeneration });
     } else if (input.kernel.tenancy.mode !== 'single') return false;
     const access = createRequestAuthorizationAccess({ authContext: context, kernel: input.kernel, propertyStore: input.users, roleAssignments: input.roles, assertCurrentProfile: input.assertCurrent });
-    try { access.authorize(input.support.staff); input.assertCurrent(); return true; }
+    try { if (requirement !== undefined) access.authorize(requirement); input.assertCurrent(); return true; }
     catch (error) { if (error instanceof AuthError && [401, 403, 404].includes(error.status)) return false; throw error; }
   };
 }

@@ -17,6 +17,7 @@ import type { NotificationService } from '../notifications/notification-service'
 import { executeMessagingNotification } from './notification-execution';
 export interface MessagingJobContext {
   job: MessagingJobRow; valid: boolean; customerId: string | null; customerKind: 'user' | 'external' | 'assistant' | null;
+  conversationKind?: string | null; assistantId?: string;
   attachmentOnly: boolean; messages: { role: 'user' | 'assistant'; content: string }[]; result: { text: string; provider_id: string | null } | null;
 }
 export interface MessagingJobExecutionDependencies {
@@ -27,18 +28,26 @@ export interface MessagingJobExecutionDependencies {
 export async function executeMessagingJob(deps: MessagingJobExecutionDependencies, context: StepContext<{ jobId: string }>, signal: AbortSignal): Promise<{ jobId: string; state: MessagingJobState }> {
   const jobId = messagingId(context.input.jobId), scope: ServiceDataScope = trustedSystemServiceDataScope(context.execution.scopeKind === 'tenant'
     ? { scopeKind: 'tenant', tenantId: context.execution.tenantId! } : { scopeKind: 'application' });
-  const scopeId = serviceDataScopeKey(scope), nonce = 'attempt_' + crypto.randomUUID(), policy = deps.config.assistant;
+  const scopeId = serviceDataScopeKey(scope), nonce = 'attempt_' + crypto.randomUUID();
   const base = () => { deps.assertOpen(); deps.directory.assertScope(scope); context.assertCurrentAuthority(); };
   const check = () => { base(); signal.throwIfAborted(); };
   const read = () => deps.runtime.read<MessagingJobContext>(scope, 'messaging.job.context', { scopeId, id: jobId }, check, signal);
   const write = <T>(name: string, input: object, assert = check) => deps.runtime.write<T>(scope, name, { ...input, scopeId, id: jobId, nonce }, 'job:' + messagingHash([jobId, nonce, name]), assert, signal);
   const result = (state: MessagingJobState) => ({ jobId, state });
   const run = async () => {
+    const initial = await read(), assistantId = initial.assistantId ?? initial.job.assistant_id ?? 'default';
+    const policy = deps.config.assistants[assistantId] ?? false;
     const claimed = await write<{ state: MessagingJobState }>('messaging.job.claim', { policyHash: policy ? policy.policyHash : null, leaseMs: (policy ? policy.timeoutMs : 120000) + 10000 });
     if (TERMINAL_MESSAGING_JOBS.has(claimed.state)) return result(claimed.state);
     let captured = await read();
     let failureCode = 'ADMISSION_REQUIRES_REVIEW';
-    const current = () => { check(); if (captured.customerKind === 'user' && captured.customerId) deps.directory.assertRecipient(scope, captured.customerId); };
+    const current = () => {
+      check();
+      if (captured.customerKind === 'user' && captured.customerId) {
+        deps.directory.assertRecipient(scope, captured.customerId);
+        if (captured.conversationKind === 'assistant' && deps.directory.assistantRecipient?.(scope, captured.customerId, assistantId) !== true) throw new AuthError('Messaging assistant access changed.', 'MESSAGING_FORBIDDEN', 403);
+      }
+    };
     try {
       if (captured.job.kind === 'notification') { failureCode = 'NATIVE_NOTIFICATION_REQUIRES_REVIEW'; return await executeMessagingNotification(deps, context, scope, jobId, nonce, signal); }
       current();

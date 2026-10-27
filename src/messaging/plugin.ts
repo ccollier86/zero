@@ -26,6 +26,8 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     .onError(({ error, code, set }) => { if (code === 'NOT_FOUND') return; const failure = projectMessagingHttpError(error, code); set.status = failure.status; set.headers['Cache-Control'] = 'private, no-store'; return failure.body; })
     .get('/config', ({ access, request }) => { noQuery(request); return read(access.requireUser(), request).capabilities(); })
     .get('/directory', ({ access, request }) => read(access.requireUser(), request).directory(readMessagingQuery(request, ['after', 'limit', 'search']) as never, { signal: request.signal }))
+    .get('/assistants', ({ access, request }) => { noQuery(request); return read(access.requireUser(), request).assistants.list({ signal: request.signal }); })
+    .post('/assistants/:id/conversations', async ({ access, params, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).assistants.open(params.id, await readMessagingBody(request) as never, options); }, { parse: 'none' })
     .get('/receipts/:id', ({ access, params, request }) => { noQuery(request); return read(access.requireUser(), request).receipt(params.id, { signal: request.signal }); })
     .get('/conversations', ({ access, request }) => read(access.requireUser(), request).conversations.list(readMessagingQuery(request, ['after', 'limit', 'archived']) as ConversationQuery, { signal: request.signal }))
     .get('/conversations/live', async ({ access, request }) => {
@@ -37,8 +39,8 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     .get('/conversations/:conversationId', ({ access, params, request }) => { noQuery(request); return read(access.requireUser(), request).conversations.get(params.conversationId, { signal: request.signal }); })
     .post('/conversations', async ({ access, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).conversations.create(await readMessagingBody(request) as never, options); }, { parse: 'none' })
     .post('/conversations/:conversationId/:action', async ({ access, params, request }) => {
-      const user = access.requireUser(), options = mutation(request); noQuery(request); const action = messagingChoice(params.action, ['rename', 'archive', 'add', 'remove', 'read', 'takeover', 'hand-back']);
-      const allowed = action === 'rename' ? ['expectedRevision', 'title'] : action === 'archive' ? ['expectedRevision', 'archived'] : action === 'add' || action === 'remove' ? ['expectedRevision', 'userId'] : action === 'read' ? ['throughSequence'] : action === 'takeover' ? ['expectedEpoch'] : ['expectedEpoch', 'owner'];
+      const user = access.requireUser(), options = mutation(request); noQuery(request); const action = messagingChoice(params.action, ['rename', 'archive', 'add', 'remove', 'transfer', 'read', 'takeover', 'hand-back']);
+      const allowed = action === 'rename' ? ['expectedRevision', 'title'] : action === 'archive' ? ['expectedRevision', 'archived'] : action === 'add' || action === 'remove' || action === 'transfer' ? ['expectedRevision', 'userId'] : action === 'read' ? ['throughSequence'] : action === 'takeover' ? ['expectedEpoch'] : ['expectedEpoch', 'owner'];
       const r = messagingRecord(await readMessagingBody(request), allowed), api = read(user, request).conversations;
       if (action === 'read') return api.markRead(params.conversationId, messagingInteger(r.throughSequence, 0), options);
       if (action === 'takeover') return api.takeover(params.conversationId, messagingInteger(r.expectedEpoch), options);
@@ -46,6 +48,7 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
       const revision = messagingInteger(r.expectedRevision);
       if (action === 'rename') return api.rename(params.conversationId, revision, r.title as string, options);
       if (action === 'archive') return api.archive(params.conversationId, revision, r.archived as boolean, options);
+      if (action === 'transfer') return api.transferOwnership(params.conversationId, revision, messagingId(r.userId), options);
       return action === 'add' ? api.addParticipant(params.conversationId, revision, messagingId(r.userId), options) : api.removeParticipant(params.conversationId, revision, messagingId(r.userId), options);
     }, { parse: 'none' })
     .get('/conversations/:conversationId/messages', ({ access, params, request }) => read(access.requireUser(), request).messages.list(params.conversationId, readMessagingQuery(request, ['before', 'after', 'limit', 'search']) as MessageHistoryQuery, { signal: request.signal }))

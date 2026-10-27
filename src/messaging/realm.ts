@@ -23,6 +23,8 @@ import { resolveMessagingReview } from './review-commands';
 import { MESSAGING_NOTIFICATION_TABLES } from './notification-model';
 import { readMessagingNotification } from './notification-queries';
 import { completeMessagingNotification, redispatchMessagingNotification } from './notification-commands';
+import { openMessagingAssistant } from './assistant-commands';
+import { reconcileMessagingGroup } from './group-commands';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -31,10 +33,10 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '5', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
+  name: 'zero-messaging', version: '7', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
     messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" },
-    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0' },
-    messaging_jobs: { ...MESSAGING_TABLES.messaging_jobs!, context_revision: 'INTEGER NOT NULL DEFAULT 0', policy_hash: 'TEXT', dispatch_generation: 'INTEGER NOT NULL DEFAULT 0' } },
+    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT', managed_group_id: 'TEXT', group_policy_hash: 'TEXT' },
+    messaging_jobs: { ...MESSAGING_TABLES.messaging_jobs!, context_revision: 'INTEGER NOT NULL DEFAULT 0', policy_hash: 'TEXT', dispatch_generation: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT' } },
   migrations: [{ version: '001', description: 'Canonical scoped conversations, messages, contacts, private attachments and durable delivery', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(MESSAGING_TABLES)) database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
     for (const sql of [
@@ -89,6 +91,17 @@ export const messagingRealm = defineDatabaseRealm({
     database.run('CREATE TABLE messaging_notification_audiences (id TEXT PRIMARY KEY,scope_id TEXT NOT NULL,path TEXT NOT NULL,recipients_json TEXT NOT NULL,created_at INTEGER NOT NULL)');
     // Old experimental jobs without a source audience are not backfilled from
     // current membership and must be reconciled explicitly instead of resent.
+  } }, { version: '006', description: 'Named internal assistant identities independent of support conversations', safety: 'safe', up(database) {
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN assistant_id TEXT');
+    database.run('ALTER TABLE messaging_jobs ADD COLUMN assistant_id TEXT');
+    // Existing support jobs retain their exact policy fingerprints and default
+    // identity; no unknown historical invocation is given retry permission.
+    database.run("UPDATE messaging_conversations SET assistant_id='default' WHERE kind='support'");
+    database.run("UPDATE messaging_jobs SET assistant_id='default' WHERE kind='assistant'");
+  } }, { version: '007', description: 'Canonical configured groups with current Guardian policy admission', safety: 'safe', up(database) {
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN managed_group_id TEXT');
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN group_policy_hash TEXT');
+    database.run('CREATE UNIQUE INDEX messaging_configured_group ON messaging_conversations(scope_id,managed_group_id)');
   } }],
   commands: withMessagingCommitHints({
     'messaging.owner.bind': (context, input) => messagingCommand(context, () => {
@@ -97,6 +110,8 @@ export const messagingRealm = defineDatabaseRealm({
       if (!prior) context.db.createStrict('_messaging_owner', { id: 'application', owner_id: ownerId }); return { bound: true };
     }),
     'messaging.conversation.create': createMessagingConversation, 'messaging.conversation.change': changeMessagingConversation,
+    'messaging.assistant.open': openMessagingAssistant,
+    'messaging.group.reconcile': reconcileMessagingGroup,
     'messaging.conversation.read': markMessagingRead, 'messaging.conversation.owner': ownMessagingConversation,
     'messaging.contact': changeMessagingContact, 'messaging.message.send': sendMessagingMessage,
     'messaging.support.open': openMessagingSupport, 'messaging.support.claim': claimMessagingSupport,

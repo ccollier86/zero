@@ -156,7 +156,7 @@ export class MessagingRuntime {
       if (value?.ok === false && MESSAGING_CODES.includes(value.code as typeof MESSAGING_CODES[number]) && [403, 404, 409, 422, 429].includes(value.status!)) throw new AuthError('The messaging request was not accepted.', value.code!, value.status!);
       if (value?.ok !== true || !Object.hasOwn(value, 'value')) throw unavailable('The messaging acknowledgment is invalid.');
       if (kind === 'command' && !('replayed' in result && result.replayed) && value.hint !== undefined) {
-        if (['messaging.conversation.change', 'messaging.support.claim', 'messaging.contact'].includes(name)) {
+        if (['messaging.conversation.change', 'messaging.support.claim', 'messaging.contact', 'messaging.group.reconcile'].includes(name)) {
           try { this.options.onMembershipChanged?.(); } catch {
             try { emitPlatformCodeTo(this.options.observability, OBS_CODES.MESSAGING_OPERATION_REJECTED, { metadata: { operation: 'messaging.typing.revalidation', failureCode: 'MESSAGING_TYPING_REVALIDATION_FAILED' } }); } catch { /* Every actual publish/delivery also reauthorizes; diagnostic failure cannot rewrite the accepted commit. */ }
           }

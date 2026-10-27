@@ -1,6 +1,6 @@
 /** Indexed operator-only review reads. Scope and staff conversation membership precede private drafts or attempt history. */
 import type { DatabaseReadQueryContext } from '../databases/database-realm';
-import { captureMessagingActor, staffTimeline } from './realm-model';
+import { captureMessagingActor, canReviewMessagingConversation } from './realm-model';
 import { readMessagingMembership } from './realm-queries';
 import { messagingFail, messagingId, messagingInteger, messagingRecord } from './validation';
 import type { MessagingJobRow } from './job-model';
@@ -10,7 +10,7 @@ import type { MessagingReviewResolution } from './review-contracts';
 export function listMessagingReviews({ database }: DatabaseReadQueryContext, input: unknown): unknown {
   const r = messagingRecord(input, ['actor', 'conversationId', 'query']), actor = captureMessagingActor(r.actor);
   const { conversation, member } = readMessagingMembership(database, actor, messagingId(r.conversationId));
-  if (!actor.staff || actor.kind !== 'user' || !staffTimeline(conversation, member)) messagingFail('MESSAGING_FORBIDDEN', 403);
+  if (!canReviewMessagingConversation(actor, conversation, member)) messagingFail('MESSAGING_FORBIDDEN', 403);
   const q = messagingRecord(r.query ?? {}, ['after', 'limit']), after = q.after === undefined ? '' : messagingId(q.after), limit = messagingInteger(q.limit ?? 25, 1, 50);
   const rows = database.query<MessagingJobRow>("SELECT j.* FROM messaging_jobs j WHERE j.scope_id=? AND j.conversation_id=? AND j.state='needs-review' AND j.id>? AND NOT EXISTS(SELECT 1 FROM messaging_job_resolutions r WHERE r.job_id=j.id) ORDER BY j.id LIMIT ?").all(actor.scopeId, conversation.id, after, limit + 1);
   const items = rows.slice(0, limit).map(projectMessagingReview);
@@ -19,7 +19,7 @@ export function listMessagingReviews({ database }: DatabaseReadQueryContext, inp
 export function readMessagingReview({ database }: DatabaseReadQueryContext, input: unknown): unknown {
   const r = messagingRecord(input, ['actor', 'conversationId', 'id']), actor = captureMessagingActor(r.actor);
   const { conversation, member } = readMessagingMembership(database, actor, messagingId(r.conversationId));
-  if (!actor.staff || actor.kind !== 'user' || !staffTimeline(conversation, member)) messagingFail('MESSAGING_FORBIDDEN', 403);
+  if (!canReviewMessagingConversation(actor, conversation, member)) messagingFail('MESSAGING_FORBIDDEN', 403);
   const job = database.query<MessagingJobRow>("SELECT * FROM messaging_jobs WHERE id=? AND scope_id=? AND conversation_id=? AND state='needs-review'").get(messagingId(r.id), actor.scopeId, conversation.id);
   if (!job) messagingFail('MESSAGING_NOT_FOUND', 404);
   const result = database.query<{ text: string }>('SELECT text FROM messaging_job_results WHERE id=? AND scope_id=?').get(job.id, actor.scopeId);

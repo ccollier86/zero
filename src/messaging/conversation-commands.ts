@@ -26,7 +26,8 @@ export function createMessagingConversation(context: DatabaseWriteCommandContext
 export function changeMessagingConversation(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
     const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedRevision', 'action', 'value', 'maxParticipants', 'contactsOnly', 'history']);
-    const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id), action = messagingChoice(r.action, ['rename', 'archive', 'add', 'remove']);
+    const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id), action = messagingChoice(r.action, ['rename', 'archive', 'add', 'remove', 'transfer']);
+    if (conversation.managed_group_id) messagingFail('MESSAGING_FORBIDDEN', 403);
     const selfLeave = action === 'remove' && r.value === actor.id && member.role !== 'owner';
     if (member.role !== 'owner' && !selfLeave) messagingFail('MESSAGING_FORBIDDEN', 403);
     return messagingIntent(context, actor, r.requestId, [action, conversation.id, r.expectedRevision, r.value], () => {
@@ -38,7 +39,11 @@ export function changeMessagingConversation(context: DatabaseWriteCommandContext
         if (conversation.kind !== 'group') messagingFail('MESSAGING_FORBIDDEN', 403);
         const user = messagingId(r.value), members = conversationMembers(conversation), key = memberKey(conversation.id, user);
         const prior = context.db.get('messaging_members', key) as MemberRow | null;
-        if (action === 'add') {
+        if (action === 'transfer') {
+          if (!prior || prior.active !== 1 || prior.kind !== 'user' || prior.role !== 'member') messagingFail('MESSAGING_FORBIDDEN', 403);
+          context.db.update('messaging_members', member.id, { role: 'member' });
+          context.db.update('messaging_members', prior.id, { role: 'owner' });
+        } else if (action === 'add') {
           const maximum = messagingInteger(r.maxParticipants, 2, 100);
           if (members.length >= maximum) messagingFail('MESSAGING_CAPACITY', 429);
           if (prior?.active) messagingFail('MESSAGING_REVISION_CONFLICT');
@@ -70,14 +75,17 @@ export function markMessagingRead(context: DatabaseWriteCommandContext, input: u
 }
 export function ownMessagingConversation(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedEpoch', 'owner', 'assistantPolicy']), actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedEpoch', 'owner', 'assistantPolicy', 'assistantId']), actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id);
     const owner = messagingChoice(r.owner, ['human', 'assistant', 'triage']);
-    if (!actor.staff || member.role !== 'staff' || conversation.kind !== 'support') messagingFail('MESSAGING_FORBIDDEN', 403);
+    const internal = conversation.kind === 'assistant' && actor.kind === 'user' && member.role === 'owner';
+    if (!internal && (!actor.staff || member.role !== 'staff' || conversation.kind !== 'support')) messagingFail('MESSAGING_FORBIDDEN', 403);
+    if (internal && owner === 'triage') messagingFail('MESSAGING_INPUT_INVALID', 422);
     return messagingIntent(context, actor, r.requestId, ['ownership', conversation.id, r.expectedEpoch, owner], () => {
       if (conversation.owner_epoch !== messagingInteger(r.expectedEpoch)) messagingFail('MESSAGING_OWNER_CONFLICT');
       if (conversation.owner_epoch >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
-      context.db.update('messaging_conversations', conversation.id, { owner, owner_id: owner === 'human' ? actor.id : null, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1, updated_at: Date.now(), public_updated_at: Date.now() });
-      if (owner === 'assistant') queueMessagingAssistant(context, { ...conversation, owner, owner_epoch: conversation.owner_epoch + 1 } as JobConversation, r.assistantPolicy);
+      const assistantId = internal ? conversation.assistant_id : owner === 'assistant' ? messagingText(r.assistantId ?? 'default', 64) : conversation.assistant_id;
+      context.db.update('messaging_conversations', conversation.id, { owner, owner_id: owner === 'human' ? actor.id : null, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1, assistant_id: assistantId ?? null, updated_at: Date.now(), public_updated_at: Date.now() });
+      if (owner === 'assistant') queueMessagingAssistant(context, { ...conversation, owner, assistant_id: assistantId, owner_epoch: conversation.owner_epoch + 1 } as JobConversation, internal ? actor.assistantPolicies?.[assistantId!] : r.assistantPolicy);
       // Old queued work cannot pass the epoch comparison at claim/send/final commit.
       // An already-dispatched provider request remains unknown/accepted, not retroactively unsent.
       return { id: conversation.id, ownerEpoch: conversation.owner_epoch + 1 };

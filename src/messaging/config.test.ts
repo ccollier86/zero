@@ -29,7 +29,26 @@ test('jobs default to maximum bounded concurrency and assistant policy changes c
   const changed = resolve({ support: {}, assistant: { model: 'fast', instructions: 'Synthetic support instructions' } });
   if (!first || !same || !changed || !first.assistant || !same.assistant || !changed.assistant) throw new Error('Synthetic assistant policy missing.');
   expect(first.assistant.policyHash).toMatch(/^[a-f0-9]{64}$/); expect(same.assistant.policyHash).toBe(first.assistant.policyHash); expect(changed.assistant.policyHash).not.toBe(first.assistant.policyHash);
-  for (const input of [{ assistant: {} }, { support: {}, assistant: { maxOutputTokens: 8193 } }, { jobs: { concurrency: 101 } }, { jobs: { concurrency: 0 } }, { notifications: 'yes' }]) expect(() => resolve(input)).toThrow();
+  expect(resolve({ assistant: {} })).toMatchObject({ support: false, assistants: { default: { id: 'default' } } });
+  for (const input of [{ support: {}, assistant: { maxOutputTokens: 8193 } }, { jobs: { concurrency: 101 } }, { jobs: { concurrency: 0 } }, { notifications: 'yes' }]) expect(() => resolve(input)).toThrow();
+});
+
+test('named assistants do not require support and compile Guardian policies without publishing instructions or keys', () => {
+  const auth = resolveAuthBehaviorConfig({ userProperties: { department: { editableBy: 'admin', useInPolicies: true } } });
+  const config = resolveMessagingConfig({ assistants: { knowledge: { name: 'Knowledge', access: { properties: { department: 'clinical' } }, instructions: 'Synthetic private policy' }, writing: { name: 'Writing' } } }, '/synthetic-project', auth);
+  if (!config) throw new Error('Synthetic config missing.');
+  expect(config.support).toBe(false); expect(config.assistant).toBe(false);
+  expect(Object.keys(config.assistants)).toEqual(['knowledge', 'writing']);
+  expect(config.assistants.knowledge!.policyHash).not.toBe(config.assistants.writing!.policyHash);
+  expect(Object.isFrozen(config.assistants.knowledge!.access)).toBe(true);
+  expect(() => resolveMessagingConfig({ assistants: { knowledge: { access: { properties: { unknown: 'yes' } } } } }, '/synthetic-project', auth)).toThrow();
+  const selected = resolveMessagingConfig({ support: { assistant: 'help' }, assistants: { help: { name: 'Help' }, writing: {} } }, '/synthetic-project', auth);
+  expect(selected && selected.assistant).toMatchObject({ id: 'help' });
+  expect(() => resolveMessagingConfig({ support: { assistant: 'missing' } }, '/synthetic-project', auth)).toThrow();
+  expect(() => resolveMessagingConfig({ assistant: {}, assistants: { default: {} } }, '/synthetic-project', auth)).toThrow();
+  let called = false;
+  const hostile = Object.defineProperty({}, 'knowledge', { enumerable: true, get() { called = true; return {}; } });
+  expect(() => resolveMessagingConfig({ assistants: hostile }, '/synthetic-project', auth)).toThrow(); expect(called).toBe(false);
 });
 
 test('native notification links are configurable local paths, never caller-selected external URLs', () => {
@@ -38,4 +57,12 @@ test('native notification links are configurable local paths, never caller-selec
   expect(resolve({ notifications: { path: '/app/messages' } })).toMatchObject({ notifications: true, notificationPath: '/app/messages' });
   expect(resolve({ notifications: false })).toMatchObject({ notifications: false });
   for (const path of ['https://hostile.example', '//hostile.example', '/\\hostile.example', '/messages?tenant=other', '/messages#fragment', '/messages\n', '/' + 'x'.repeat(400)]) expect(() => resolve({ notifications: { path } })).toThrow();
+});
+
+test('configured groups reuse Guardian policy-trusted fields and keep ordinary contacts/directory options independent', () => {
+  const auth = resolveAuthBehaviorConfig({ userProperties: { department: { editableBy: 'admin', useInPolicies: true } } });
+  const config = resolveMessagingConfig({ directory: 'contacts', groups: { team: { name: 'Team' }, clinical: { members: { properties: { department: 'clinical' } }, history: 'since-join' } } }, '/synthetic', auth);
+  expect(config && config.groups.clinical).toMatchObject({ id: 'clinical', history: 'since-join' });
+  expect(config && config.groups.team!.policyHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(() => resolveMessagingConfig({ groups: { invalid: { members: { properties: { untrusted: 'yes' } } } } }, '/synthetic', auth)).toThrow();
 });

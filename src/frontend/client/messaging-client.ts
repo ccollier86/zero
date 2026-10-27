@@ -3,7 +3,7 @@ import { MESSAGING_API, type MessagingMutationOptions } from '../../messaging/co
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { FetchInit } from './sdk';
 import { assertMessagingConversation, assertMessagingMessage, assertMessagingPage, assertMessagingCapabilities, assertMessagingDirectoryEntry, assertMessagingReceipt,
-  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem } from './messaging-response';
+  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem, assertMessagingAssistant } from './messaging-response';
 import { watchMessagingProjection } from './messaging-watch';
 import { createMessagingAttachmentClient, type MessagingBinaryTransport } from './messaging-attachment-client';
 import { assertMessagingReviewItem, assertMessagingReviewDetail, assertMessagingReviewResolution } from './messaging-review-response';
@@ -24,6 +24,10 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
   };
   const thread = (id: string) => '/conversations/' + encodeURIComponent(id), msg = (id: string, messageId: string) => thread(id) + '/messages/' + encodeURIComponent(messageId);
   return Object.freeze<MessagingClient>({
+    assistants: Object.freeze<MessagingClient['assistants']>({
+      list: opts => call('/assistants', 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingAssistant, 32)),
+      open: (id, input, opts) => mutate('/assistants/' + encodeURIComponent(id) + '/conversations', 'POST', input, opts, assertMessagingConversation),
+    }),
     review: Object.freeze<MessagingClient['review']>({
       list: (id, query = {}, opts) => call(thread(id) + '/review' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingReviewItem, 50)),
       get: (id, jobId, opts) => call(thread(id) + '/review/' + encodeURIComponent(jobId), 'GET', undefined, opts?.signal, undefined, assertMessagingReviewDetail),
@@ -40,6 +44,7 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
       rename: (id, expectedRevision, title, opts) => mutate(thread(id) + '/rename', 'POST', { expectedRevision, title }, opts, assertMessagingConversation),
       archive: (id, expectedRevision, archived, opts) => mutate(thread(id) + '/archive', 'POST', { expectedRevision, archived }, opts, assertMessagingConversation),
       addParticipant: (id, expectedRevision, userId, opts) => mutate(thread(id) + '/add', 'POST', { expectedRevision, userId }, opts, assertMessagingConversation),
+      transferOwnership: (id, expectedRevision, userId, opts) => mutate(thread(id) + '/transfer', 'POST', { expectedRevision, userId }, opts, assertMessagingConversation),
       removeParticipant: (id, expectedRevision, userId, opts) => mutate(thread(id) + '/remove', 'POST', { expectedRevision, userId }, opts, assertMessagingRemoved),
       markRead: (id, throughSequence, opts) => mutate(thread(id) + '/read', 'POST', { throughSequence }, opts, assertMessagingReadPosition),
       takeover: (id, expectedEpoch, opts) => mutate(thread(id) + '/takeover', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
