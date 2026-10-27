@@ -7,17 +7,19 @@ status: draft
 visibility: internal
 system: blog
 feature: publishing-workspace
-maturity: experimental
-applies_to: ["feature/blog-publishing-backend working source; final archive qualification pending"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 ---
 
 # Managed Reader And Publishing Workspace
 
 [Blog UI index](./index.md) · [Backend configuration](../../../../backend/blog/configuration.md) · [Publishing API](../../../../backend/blog/publishing-api.md)
 
-These are working-source components, not a claim that the current main updater
-already contains them. Use the exact final qualified archive when this feature
-is released. The older author-only preview is not the publishing package.
+These components use the qualified native publishing APIs. Select the exact
+committed-main archive identified by the normal release/updater tools; an older
+author-only preview is not the publishing package. See
+[release qualification](../../../../backend/blog/qualification.md) for the
+installed/Linux/browser checks and application acceptance requirements.
 
 ## Enable The Defaults
 

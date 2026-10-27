@@ -7,8 +7,8 @@ status: in-review
 visibility: internal
 system: frontend-components
 feature: blog-ui
-maturity: preview
-applies_to: ["2.6.0 UI feature snapshot; not the selected main archive"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
@@ -121,7 +121,7 @@ inside this migration. These are not missing UI components; they are the
 
 ## Adopting In An App
 
-1. Use a qualified feature archive/commit from the [qualification ledger](../../../../_work/audits/blog-ui-qualification.md),
+1. Use the selected committed-main archive/commit described by the [release qualification](../../../../backend/blog/qualification.md),
    not a guessed version number. Work on an app feature branch.
 2. Import the normal Zero styles and `@zero/framework/blog`. Start with
    BlogListPage/BlogPostPage and caller-supplied data.

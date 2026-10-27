@@ -13,10 +13,14 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  commit: "c9c5fb92e559cf88a0743ae06c4aaa04cf8bfe62"
   snapshot: clean
-  date: "2026-10-25"
-  evidence_level: implementation-verified
+  date: "2026-10-27"
+  evidence_level: package-qualified
+  artifact:
+    version: "2.6.0"
+    commit: "c9c5fb92e559cf88a0743ae06c4aaa04cf8bfe62"
+    sha256: "64ed430072bba7218d0bab425305f50626f35ce0daaed4294fce94c0b09a3c82"
 ---
 
 # Logging Workspace and Activity Hooks
@@ -27,6 +31,12 @@ reviewed_against:
 existing authenticated SDK, DataTable cursor adapter, Morph Select, Popover,
 ScrollArea, managed ModalManager and design tokens. It does not introduce a
 second table, auth client, database connection or analytics script.
+
+The repaired interface is included in the combined
+[publishing/logging UI qualification](../../backend/blog/qualification.md).
+Its public props/import paths remain compatible; installing the package does
+not widen investigator permissions or turn a live connection into an integrity
+or compliance certification.
 
 ## Composition
 

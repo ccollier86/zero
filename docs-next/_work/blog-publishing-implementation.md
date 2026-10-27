@@ -359,3 +359,23 @@ performance repair or an unchanged-total-timeout claim. The first corrected
 three-case run passes with a 12.8s migration. A new exact committed candidate
 still needs a complete run before stable selection; neither this focused pass
 nor the diagnostic resolves an unobserved native crash cause.
+
+## Complete code candidate qualification (2026-10-27)
+
+The frozen clean `c9c5fb92e559cf88a0743ae06c4aaa04cf8bfe62` code candidate
+passes all ten gates in `qualification-c9c5fb9.json`: root typecheck, documentation
+(864 pages/no problems), locked dependency audit, official external-output build,
+browser/PDF install/status, canonical installed-package script, exact-archive
+Linux/amd64 source-to-bundle plus two restart generations, populated normal
+updater/frozen-reinstall preservation, and the complete 1,341-file suite.
+All 1,341 files pass; none failed, none were unrun, no run interruption occurred.
+There were no test-file retries or production accesses. Earlier failures above
+remain failed historical candidates, not omitted files in this result.
+
+The code candidate archive SHA-256 is
+`64ed430072bba7218d0bab425305f50626f35ce0daaed4294fce94c0b09a3c82`.
+A documentation-only follow-up replaces stale branch-preview labels and adds
+the public [qualification/activation guide](../backend/blog/qualification.md).
+The release still requires explicit main publication; the diagnostic gate does
+not select stable or deploy an application. The final updater identity must be
+verified using the normal release metadata, not guessed from the version label.

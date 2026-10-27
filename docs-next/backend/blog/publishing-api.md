@@ -7,18 +7,19 @@ status: draft
 visibility: internal
 system: blog
 feature: publishing
-maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 ---
 
 # Publishing Backend And Facades
 
 [Blog index](./index.md) · [Implementation checkpoint](../../_work/blog-publishing-implementation.md)
 
-This guide describes implemented feature-branch APIs. The earlier qualified
-author-only archive does not contain them. Public pages/editor have real-browser
-checks; final installed Linux qualification remains in progress. Do not select this working
-tree as a production update.
+This guide describes the qualified source/local publishing APIs. The earlier
+author-only archive does not contain them. Use the selected committed archive,
+not an editable working tree; the version label alone is insufficient. See
+[release qualification](./qualification.md) for package/Linux/browser evidence
+and the remaining application-specific deployment checks.
 
 ## Ownership And Enablement
 

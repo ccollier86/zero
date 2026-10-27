@@ -7,8 +7,8 @@ status: in-review
 visibility: internal
 system: blog
 feature: existing-project-upgrade
-maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 ---
 
@@ -24,7 +24,7 @@ existing project. Enabling profile fields alone is also supported.
 ## Prepare A Rehearsal
 
 1. Use an application feature branch and the exact qualified candidate commit
-   and archive recorded in the [implementation checkpoint](../../_work/blog-publishing-implementation.md).
+   and archive recorded in the [release qualification](./qualification.md).
    The historical author-only preview does not qualify the new publishing code.
    The version string alone does not identify an update.
 2. Back up SYSTEM, the app DB, any Fabric files and Storage with the project's

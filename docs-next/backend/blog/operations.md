@@ -7,8 +7,8 @@ status: in-review
 visibility: internal
 system: blog
 feature: operations
-maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 ---
 

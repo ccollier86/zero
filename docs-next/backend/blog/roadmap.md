@@ -14,7 +14,7 @@ maturity: planned
 
 [Blog index](./index.md) · [Presentation and editor roadmap](../../frontend/components/public-pages/blog/roadmap.md)
 
-The working publishing branch now implements user-backed authors, isolated
+The qualified publishing implementation provides user-backed authors, isolated
 Fabric content, immutable revisions, conditional drafts/publication, taxonomy,
 private Storage media, indexed search, optional aggregate observations and
 managed public rendering. The native workspace uses these APIs and existing Zero
@@ -26,11 +26,13 @@ The earlier `feature/blog-foundation-current` preview remains historical. See th
 for its retained checkpoint and migration overlap. It does not qualify the newer
 publishing implementation.
 
-The [implementation checkpoint](../../_work/blog-publishing-implementation.md)
-tracks actual source/browser results and the remaining final package/Linux
-qualification. No focused passing test substitutes for a qualified release.
+The [release qualification](./qualification.md) records the completed exact-code
+package/Linux/browser/full-suite gates. The
+[implementation checkpoint](../../_work/blog-publishing-implementation.md)
+retains earlier failed candidates as history; they are not alternate passing
+releases. No framework fixture substitutes for application deployment acceptance.
 
-## Implemented Working-Source Slices
+## Qualified Publishing Slices
 
 1. One app-owned private Fabric file by default in either tenancy mode; explicit
    organization ownership for custom/headless composition.
@@ -45,9 +47,9 @@ qualification. No focused passing test substitutes for a qualified release.
 6. Metadata and structured data from the accepted public revision, trusted app
    origin and the existing SEO/sitemap lifecycle; explicit indexing controls win.
 
-Each slice needs existing-project additive upgrade support, organization/site
-isolation, accepted revision semantics, background lifecycle and public-package
-qualification. Scheduled publication and notification delivery need durable
+Existing-project additive upgrade, organization/site isolation, accepted revision
+semantics and background lifecycle are covered by the qualified boundary.
+Scheduled publication and notification delivery remain later work and need durable
 work boundaries, not process-local animation timers.
 
 ## Author Foundation Extensions

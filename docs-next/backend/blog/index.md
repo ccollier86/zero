@@ -7,8 +7,8 @@ status: in-review
 visibility: internal
 system: blog
 feature: author-foundation
-maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 ---
 
@@ -16,23 +16,25 @@ modes: [managed-server, single-simple, single-advanced, multi-simple, multi-adva
 
 [Backend index](../index.md) · [Blog UI](../../frontend/components/public-pages/blog/index.md)
 
-## Publishing Work In Progress
+## Supported Publishing Boundary
 
-The `feature/blog-publishing-backend` implementation includes private Fabric
+The publishing implementation includes private Fabric
 posts, revisions, explicit publication, taxonomy, Storage media, indexed search,
 optional aggregate observations, managed Magazine/article routes and a native
 authoring workspace. See the [publishing API](./publishing-api.md),
 [workspace and reader](../../frontend/components/public-pages/blog/publishing-workspace.md)
 and [execution checkpoint](../../_work/blog-publishing-implementation.md).
-Source and real-browser checks are not an installed Linux release qualification.
-The normal updater remains on qualified main until the final candidate is admitted.
+The exact `c9c5fb9` code candidate passed all ten qualification gates, including
+all 1,341 test files, installed Linux/amd64 source-to-bundle restarts and normal
+updater preservation. See the [release qualification](./qualification.md) for
+provenance, supported boundaries, activation and application acceptance.
 
 ## Earlier Qualified Author Foundation
 
 The retained author-only preview and its package evidence remain historical.
 See the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
 and [preview migration boundary](./upgrade.md#earlier-feature-branch-preview).
-The normal updater still selects main, not this blog branch.
+Use the selected committed-main archive, not an old author-only preview.
 
 Enable `blog: true` in managed app configuration to add user-backed author
 enrollment, separate draft/public bylines and Guardian-scoped management. It
@@ -82,7 +84,7 @@ turn on blogging, enroll authors, change tenancy or add custom SQL.
 
 ## Qualification And Related Contracts
 
-The [qualification record](../../_work/audits/blog-author-foundation.md) identifies
+The [release qualification](./qualification.md) identifies
 the tested source and candidate package. An older installed `2.6.0` does not
 gain these changes from its version label; use the identified source/archive.
 No existing application or live database is modified by framework tests.

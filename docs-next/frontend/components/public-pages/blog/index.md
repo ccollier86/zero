@@ -7,8 +7,8 @@ status: in-review
 visibility: internal
 system: frontend-components
 feature: blog-ui
-maturity: preview
-applies_to: ["2.6.0 UI source on feature/blog-foundation; not the selected main archive"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
@@ -40,9 +40,12 @@ existing authenticated SDK when mounted; they do not provision services by impor
 
 The opt-in [publishing backend](../../../../backend/blog/index.md) now provides
 user-backed authors, private Fabric content, media, search and published-only
-reader assembly on the working feature branch. The [publishing workspace](./publishing-workspace.md)
-uses those facades without rebuilding the app's shell/auth. Final installed
-release qualification remains separate from source/browser checks.
+reader assembly. The [publishing workspace](./publishing-workspace.md) uses those
+facades without rebuilding the app's shell/auth. The
+[publishing qualification](../../../../backend/blog/qualification.md) records
+the current code baseline's full installed/Linux/browser/update gates; the
+older front-matter artifact remains historical UI provenance, not the package
+to select for native publishing.
 
 This is a Zero-native adaptation, not an import-compatible copy of the archived
 Next.js package. Shared buttons, inputs, menus, tooltips, avatars, cards and code

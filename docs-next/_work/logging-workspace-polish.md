@@ -65,5 +65,8 @@ directory. The in-app browser runtime was unavailable (sandbox-state metadata
 error), so the repository's existing Chromium harness supplied the visual and
 interaction checks. No live PracticeIQ/Pantheon access or data was used.
 
-Final exact-archive qualification and selected-update promotion remain release
-gates. The frozen blog candidate is independent and is not changed by this pass.
+The combined frozen `c9c5fb9` code candidate subsequently passed all ten
+qualification gates, including its complete 1,341-file suite and exact installed
+Linux/update proofs. See [release qualification](../backend/blog/qualification.md).
+Explicit selected-update promotion remains separate from test execution; this
+record does not authorize deploying or changing a live application's configuration.

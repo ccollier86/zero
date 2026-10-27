@@ -12,13 +12,14 @@ maturity: planned
 
 [Blog UI index](./index.md) · [Documentation index](../../../../index.md)
 
-The UI migration is complete on the feature branch. The separately approved
+The UI migration and native publishing delivery are implemented. The
 [author foundation](../../../../backend/blog/index.md) now implements enrollment,
 draft/public profiles, explicit public photos, Guardian and audit integration.
-The new working branch implements the [native workspace/reader](./publishing-workspace.md)
-and [publishing API](../../../../backend/blog/publishing-api.md). Final archive/Linux
-qualification is still required. The sections below preserve the design requirements;
-they are not evidence that the old UI-only or author-only archives contain the new work.
+The [native workspace/reader](./publishing-workspace.md) and
+[publishing API](../../../../backend/blog/publishing-api.md) are covered by the
+[current release qualification](../../../../backend/blog/qualification.md).
+The sections below retain design requirements and later extensions; old UI-only
+or author-only archives do not acquire these features from their version label.
 
 ## User Backed Authors
 

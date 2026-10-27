@@ -15,10 +15,12 @@ maturity: planned
 [Blog index](./index.md) · [Current authors](./authors.md) · [Roadmap](./roadmap.md)
 
 This is the complete delivery plan, not a claim that all CMS work is released.
-The [publishing API](./publishing-api.md) describes the working backend on
-`feature/blog-publishing-backend`, including the native workspace and default
-public reader. Final qualification remains in progress. Do not build a second app-specific backend around these
-owned framework contracts.
+The [publishing API](./publishing-api.md) describes the implemented backend,
+native workspace and default public reader. The
+[release qualification](./qualification.md) records the completed code-candidate
+gates. This document retains the original delivery requirements and later CMS
+ideas; it is not an alternate API or permission to build a second app-specific
+backend around the owned framework contracts.
 
 ## Current Delivery Scope (2026-10-26)
 
@@ -218,5 +220,5 @@ Before a CMS archive is selected, test the actual managed app and public package
    the native components, not a parallel test-only UI implementation.
 
 Each implementation slice updates its own configuration/API/upgrade guides and
-the qualification record. Keep the released updater on main until the new
-feature has its own reviewed source, archive identity and application acceptance.
+the qualification record. Only select an exact qualified committed-main archive;
+application acceptance and deployment still belong to the application owner.

@@ -7,8 +7,8 @@ status: in-review
 visibility: internal
 system: frontend-components
 feature: blog-ui
-maturity: preview
-applies_to: ["2.6.0 UI feature snapshot; not the selected main archive"]
+maturity: supported
+applies_to: ["2.6.0 source/local builds containing c9c5fb9; older 2.6.0 archives differ"]
 modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"
