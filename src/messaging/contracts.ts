@@ -26,7 +26,9 @@ export interface DurableMessage {
 export interface MessagingPage<T> { readonly items: readonly T[]; readonly hasMore: boolean; readonly nextCursor: string | null }
 export interface MessageHistoryQuery { readonly before?: number; readonly after?: number; readonly limit?: number; readonly search?: string }
 export interface ConversationQuery { readonly after?: string; readonly limit?: number; readonly archived?: boolean }
-export interface MessagingCapabilities { readonly enabled: boolean; readonly directory: 'everyone' | 'contacts'; readonly canSupport: boolean; readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxUploadBytes: number }
+export interface MessagingCapabilities { readonly enabled: boolean; readonly directory: 'everyone' | 'contacts'; readonly canSupport: boolean; readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxUploadBytes: number;
+  /** Configuration/capability, not a provider-delivery or current network-health claim. */
+  readonly assistant?: boolean; readonly notifications?: boolean }
 export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null }
 /** Reconciles an uncertain command without returning a message body after membership removal. */
 export interface MessagingReceipt { readonly requestId: string; readonly operation: string; readonly resourceId: string | null; readonly acceptedAt: number }

@@ -28,15 +28,18 @@ function peer(origin: string): TestClient {
   const authenticate = async (path: string, body: unknown) => { const result = await call<any>(path, { method: 'POST', body }); token = result.accessToken; user = result.user; return result; };
   return { messaging, logging, fetch: call, get user() { return user; }, register: input => authenticate('/auth/register', input), login: (username, password) => authenticate('/auth/login', { username, password }), disconnect() { messaging.clear(); logging.clear(); token = null; user = null; } };
 }
-async function fixture(compliance = false, history: 'all' | 'since-join' = 'all') {
+async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string) {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
   let zero!: ServerRouteServices;
   const diagnostics = new MemoryEventStore();
   const configuration: AppConfig = { projectRoot: root, db: { mode: 'file', path: join(root, 'app.db'), synchronous: 'FULL' }, systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' }, tables: {},
-    auth: { bootstrap: 'public' }, messaging: { support: {}, history }, logging: { preset: compliance ? 'compliance' : 'detailed', rootDirectory: join(root, 'logs') },
+    auth: { bootstrap: 'public' }, messaging: { support: {}, history,
+      ...(providerBaseURL ? { assistant: { model: 'synthetic/chat', timeoutMs: 30000 }, jobs: { concurrency: 2 } } : {}) }, logging: { preset: compliance ? 'compliance' : 'detailed', rootDirectory: join(root, 'logs') },
     appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     themeFoundation: 'legacy', frontendBuild: { version: 1, frontend: { themeFoundation: 'legacy', plugins: {} }, pluginIdentities: {} },
-    workflows: false, email: false, ai: false, vector: false, pdf: false, kv: false, stateSync: false, observability: { console: false, endpoint: false, store: diagnostics },
+    workflows: providerBaseURL ? {} : false, email: false,
+    ai: providerBaseURL ? { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-local-key', baseURL: providerBaseURL } } } : false,
+    vector: false, pdf: false, kv: false, stateSync: false, observability: { console: false, endpoint: false, store: diagnostics },
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false,
     serverExtensions: [defineZeroPlugin({ name: 'messaging-fixture', setup(context) { zero = context.zero; } }), defineEndpoint({ method: 'GET', path: '/proof/messaging', auth: 'user', handler: ({ zero }) => zero.messaging!.capabilities() })],
   };
@@ -80,6 +83,58 @@ test('native messaging uses current identity, persists accepted messages/reactio
     expect((await bob.messaging.conversations.get(created.id)).unreadCount).toBe(0);
     expect(await alice.messaging.receipt('send-one')).toMatchObject({ requestId: 'send-one', resourceId: sent.id });
   } finally { for (const event of f.diagnostics.query({ limit: 1000 }).events.filter(event => event.code === 'messaging.operation.rejected' || event.code.includes('executor.failed'))) console.info('Synthetic messaging storage outcome', event.metadata); alice.disconnect(); bob.disconnect(); await f.close(); }
+}, 90000);
+
+/** Actual loopback provider transport; the real AI gateway, Torrent, Guardian and private actors remain in the path. */
+test('independent assistant jobs run concurrently without holding message commits; takeover fences the old answer and provider evidence remains private', async () => {
+  const entered: string[] = [], releases = new Map<string, () => void>(), faults: string[] = [];
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    if (new URL(request.url).pathname !== '/v1/chat/completions') return new Response(null, { status: 404 });
+    const input = await request.json() as { messages?: unknown }, text = JSON.stringify(input.messages);
+    const marker = ['CUSTOMER_FIRST_PRIVATE_MARKER', 'CUSTOMER_SECOND_PRIVATE_MARKER'].find(value => text.includes(value));
+    if (!marker) { faults.push('Missing synthetic marker'); return new Response(null, { status: 400 }); }
+    entered.push(marker);
+    await new Promise<void>(resolve => { releases.set(marker, resolve); });
+    return Response.json({ id: 'synthetic-' + marker, object: 'chat.completion', created: 1, model: 'chat',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'SYNTHETIC_PRIVATE_ANSWER_' + marker }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 } });
+  } });
+  const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1').catch(async failure => { await provider.stop(true); throw failure; });
+  const staff = f.client(), first = f.peer(), second = f.peer();
+  const until = async (condition: () => boolean | Promise<boolean>) => {
+    const deadline = Date.now() + 10000;
+    while (!await condition()) { if (Date.now() >= deadline) throw new Error('Synthetic messaging activity did not reach its expected boundary.'); await Bun.sleep(20); }
+  };
+  try {
+    await enroll(staff, 'assistant-staff'); await enroll(first, 'assistant-first'); await enroll(second, 'assistant-second');
+    const a = await first.messaging.support.open({}, { requestId: 'assistant-open-first' });
+    const b = await second.messaging.support.open({}, { requestId: 'assistant-open-second' });
+    await first.messaging.messages.send(a.id, { text: 'CUSTOMER_FIRST_PRIVATE_MARKER' }, { requestId: 'assistant-turn-first' });
+    await second.messaging.messages.send(b.id, { text: 'CUSTOMER_SECOND_PRIVATE_MARKER' }, { requestId: 'assistant-turn-second' });
+    await until(() => entered.length === 2);
+    expect(new Set(entered).size).toBe(2);
+    // Both provider requests are held. Foreground reads and accepted writes
+    // above must already have finished instead of waiting behind either call.
+    expect((await first.messaging.messages.list(a.id)).items.map(row => row.authorKind)).toEqual(['user']);
+    releases.get('CUSTOMER_SECOND_PRIVATE_MARKER')!();
+    await until(async () => (await second.messaging.messages.list(b.id)).items.some(row => row.authorKind === 'assistant'));
+    expect((await first.messaging.messages.list(a.id)).items.map(row => row.authorKind)).toEqual(['user']);
+    const taken = await staff.messaging.support.claim(a.id, a.ownerEpoch, { requestId: 'assistant-human-takeover' });
+    expect(taken.owner).toBe('human');
+    releases.get('CUSTOMER_FIRST_PRIVATE_MARKER')!();
+    await until(() => f.zero.workflows!.list().every(row => ['completed', 'failed', 'cancelled'].includes(row.status)));
+    expect((await first.messaging.messages.list(a.id)).items.map(row => row.authorKind)).toEqual(['user']);
+    expect(entered).toHaveLength(2); expect(faults).toEqual([]);
+    await f.zero.logging!.flush();
+    const evidence = await f.zero.logging!.page('audit', { kind: 'platform' }, { family: 'ai', limit: 100 });
+    expect(evidence.events.some(row => row.event.action === 'ai.provider.completed' && row.event.origin === 'provider' && row.event.evidence === 'provider-confirmed')).toBe(true);
+    const retained = JSON.stringify({ evidence, diagnostics: f.diagnostics.query({ limit: 1000 }), workflows: f.zero.workflows!.list() });
+    for (const secret of ['CUSTOMER_FIRST_PRIVATE_MARKER', 'CUSTOMER_SECOND_PRIVATE_MARKER', 'SYNTHETIC_PRIVATE_ANSWER_', 'synthetic-local-key']) expect(retained).not.toContain(secret);
+  } finally {
+    for (const release of releases.values()) release();
+    staff.disconnect(); first.disconnect(); second.disconnect();
+    try { await f.close(); } finally { await provider.stop(true); }
+  }
 }, 90000);
 
 test('exact transport replay cannot disclose a retained message after removal, since-join readmission or deletion', async () => {

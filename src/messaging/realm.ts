@@ -14,6 +14,9 @@ import { MESSAGING_ATTACHMENT_TABLES } from './attachment-model';
 import { allocateMessagingAttachment, acceptMessagingAttachment, retireMessagingAttachment } from './attachment-commands';
 import { readMessagingAttachment, pendingMessagingAttachments } from './attachment-queries';
 import { withMessagingCommitHints } from './commit-hints';
+import { MESSAGING_JOB_TABLES } from './job-model';
+import { claimMessagingJob, beginMessagingJobCall, receiveMessagingJobResult, publishMessagingJobResult, reviewMessagingJob, bindMessagingJobDispatch } from './job-commands';
+import { pendingMessagingJobs, readMessagingJobContext } from './job-queries';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -22,8 +25,10 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '3', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES,
-    messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" } },
+  name: 'zero-messaging', version: '3', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES,
+    messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" },
+    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0' },
+    messaging_jobs: { ...MESSAGING_TABLES.messaging_jobs!, context_revision: 'INTEGER NOT NULL DEFAULT 0', policy_hash: 'TEXT', dispatch_generation: 'INTEGER NOT NULL DEFAULT 0' } },
   migrations: [{ version: '001', description: 'Canonical scoped conversations, messages, contacts, private attachments and durable delivery', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(MESSAGING_TABLES)) database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
     for (const sql of [
@@ -57,6 +62,19 @@ export const messagingRealm = defineDatabaseRealm({
     database.run("ALTER TABLE messaging_attachments ADD COLUMN owner_kind TEXT NOT NULL DEFAULT 'user'");
     database.run('CREATE TABLE messaging_attachment_reservations (id TEXT PRIMARY KEY,ids_json TEXT NOT NULL)');
     database.run('CREATE INDEX messaging_attachment_scope_expiry ON messaging_attachments(scope_id,state,expires_at,id)');
+  } }, { version: '003', description: 'Fenced assistant turns, private results and immutable invocation/dispatch evidence', safety: 'safe', up(database) {
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN customer_turn_id TEXT');
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN context_revision INTEGER NOT NULL DEFAULT 0');
+    database.run('ALTER TABLE messaging_jobs ADD COLUMN context_revision INTEGER NOT NULL DEFAULT 0');
+    database.run('ALTER TABLE messaging_jobs ADD COLUMN policy_hash TEXT');
+    database.run('ALTER TABLE messaging_jobs ADD COLUMN dispatch_generation INTEGER NOT NULL DEFAULT 0');
+    for (const [table, columns] of Object.entries(MESSAGING_JOB_TABLES)) database.run('CREATE TABLE ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
+    database.run('CREATE INDEX messaging_pending_job_scope ON messaging_jobs(scope_id,state,id)');
+    database.run('CREATE INDEX messaging_attempt_history ON messaging_job_attempts(scope_id,job_id,started_at,id)');
+    // No legacy queued model call acquires a new policy silently. Such rows
+    // retain null policy_hash and are reconciled to review before invocation.
+    database.run('UPDATE messaging_conversations SET context_revision=public_sequence');
+    database.run("UPDATE messaging_conversations SET customer_turn_id=(SELECT m.id FROM messaging_messages m JOIN messaging_members p ON p.conversation_id=m.conversation_id AND p.participant_id=m.author_id WHERE m.conversation_id=messaging_conversations.id AND m.public_sequence=messaging_conversations.public_sequence AND m.deleted=0 AND p.role='customer') WHERE kind='support'");
   } }],
   commands: withMessagingCommitHints({
     'messaging.owner.bind': (context, input) => messagingCommand(context, () => {
@@ -70,7 +88,10 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.support.open': openMessagingSupport, 'messaging.support.claim': claimMessagingSupport,
     'messaging.message.change': changeMessagingMessage, 'messaging.message.react': reactMessagingMessage,
     'messaging.attachment.allocate': allocateMessagingAttachment, 'messaging.attachment.accept': acceptMessagingAttachment, 'messaging.attachment.retire': retireMessagingAttachment,
+    'messaging.job.claim': claimMessagingJob, 'messaging.job.call': beginMessagingJobCall, 'messaging.job.receive': receiveMessagingJobResult,
+    'messaging.job.publish': publishMessagingJobResult, 'messaging.job.review': reviewMessagingJob, 'messaging.job.dispatch': bindMessagingJobDispatch,
   }),
   queries: { 'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
-    'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments) },
+    'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments),
+    'messaging.jobs.pending': query(pendingMessagingJobs), 'messaging.job.context': query(readMessagingJobContext) },
 });

@@ -3,6 +3,8 @@ import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import { messagingCommand } from './realm-errors';
 import { assertMessagingContact, assertRevision, captureMessagingActor, conversationMember, conversationMembers, memberKey, messagingIntent, staffTimeline, type ConversationRow, type MemberRow } from './realm-model';
 import { messagingArray, messagingChoice, messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
+import { queueMessagingAssistant } from './message-commands';
+import type { JobConversation } from './job-model';
 
 export function createMessagingConversation(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
@@ -68,13 +70,14 @@ export function markMessagingRead(context: DatabaseWriteCommandContext, input: u
 }
 export function ownMessagingConversation(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedEpoch', 'owner']), actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedEpoch', 'owner', 'assistantPolicy']), actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id);
     const owner = messagingChoice(r.owner, ['human', 'assistant', 'triage']);
     if (!actor.staff || member.role !== 'staff' || conversation.kind !== 'support') messagingFail('MESSAGING_FORBIDDEN', 403);
     return messagingIntent(context, actor, r.requestId, ['ownership', conversation.id, r.expectedEpoch, owner], () => {
       if (conversation.owner_epoch !== messagingInteger(r.expectedEpoch)) messagingFail('MESSAGING_OWNER_CONFLICT');
       if (conversation.owner_epoch >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
       context.db.update('messaging_conversations', conversation.id, { owner, owner_id: owner === 'human' ? actor.id : null, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1, updated_at: Date.now(), public_updated_at: Date.now() });
+      if (owner === 'assistant') queueMessagingAssistant(context, { ...conversation, owner, owner_epoch: conversation.owner_epoch + 1 } as JobConversation, r.assistantPolicy);
       // Old queued work cannot pass the epoch comparison at claim/send/final commit.
       // An already-dispatched provider request remains unknown/accepted, not retroactively unsent.
       return { id: conversation.id, ownerEpoch: conversation.owner_epoch + 1 };

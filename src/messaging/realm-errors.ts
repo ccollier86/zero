@@ -4,7 +4,7 @@ import { DatabaseError } from '../databases/database-error';
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 export const MESSAGING_CODES = ['MESSAGING_INPUT_INVALID', 'MESSAGING_FORBIDDEN', 'MESSAGING_NOT_FOUND', 'MESSAGING_REVISION_CONFLICT', 'MESSAGING_CAPACITY',
   'MESSAGING_CONTACT_REQUIRED', 'MESSAGING_BLOCKED', 'MESSAGING_INTENT_CONFLICT', 'MESSAGING_OWNER_CONFLICT', 'MESSAGING_ARCHIVED', 'MESSAGING_ATTACHMENT_UNAVAILABLE',
-  'MESSAGING_OWNER_INVALID', 'MESSAGING_STAGE_CONFLICT', 'MESSAGING_MEMBERSHIP_REQUIRED'] as const;
+  'MESSAGING_OWNER_INVALID', 'MESSAGING_STAGE_CONFLICT', 'MESSAGING_MEMBERSHIP_REQUIRED', 'MESSAGING_JOB_CONFLICT'] as const;
 export function messagingCommand(_context: DatabaseWriteCommandContext, run: () => unknown): unknown {
   try { return { ok: true, value: run() }; }
   catch (error) {

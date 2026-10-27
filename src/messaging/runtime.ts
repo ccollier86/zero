@@ -50,10 +50,13 @@ export class MessagingRuntime {
   static async open(options: MessagingRuntimeOptions): Promise<MessagingRuntime> {
     if (options.config.defaultActorEntrypoint && !existsSync(options.config.defaultActorEntrypoint)) throw unavailable('The retained messaging actor is missing.');
     if (!installMessagingOwnerSchema(options.system, options.installAllowed)) throw unavailable('Messaging requires its additive SYSTEM migration.');
+    const backgroundConcurrency = options.config.assistant || options.config.notifications ? options.config.jobConcurrency : 0;
     const coordinator = new DatabaseCoordinator({ rootDirectory: options.config.rootDirectory, realm: messagingRealm, createExecutor: options.config.createExecutor,
       placement: { default: 'file', hot: null }, sqlite: { synchronous: 'FULL' }, readers: true,
       maxDatabases: options.config.maxActiveDatabases, maxDatabaseFiles: options.config.maxDatabaseFiles,
-      maxQueuedPerDatabase: 64, maxQueuedTotal: 256, queueTimeoutMs: 5000, operationTimeoutMs: 15000, sweepIntervalMs: false,
+      // A maximum-concurrency job burst must not overflow a smaller writer
+      // admission budget before making its first (short) state transition.
+      maxQueuedPerDatabase: Math.max(64, backgroundConcurrency * 3), maxQueuedTotal: Math.max(256, backgroundConcurrency * 4), queueTimeoutMs: 5000, operationTimeoutMs: 15000, sweepIntervalMs: false,
       authorityCommitCoordinator: options.authority.coordinator, requireCommitAuthority: true,
       ...(options.authority.actorContext ? { actorAuthorityContext: options.authority.actorContext } : {}), observability: createDatabaseObservability(options.observability) });
     const runtime = new MessagingRuntime(options, coordinator);

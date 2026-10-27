@@ -132,6 +132,56 @@ request controllers are not aborted.
   keyboard/touch/reduced-motion and actual installed Linux/browser acceptance.
 - [ ] Documentation, full review, normal qualified archive/update release.
 
+## Durable jobs implementation in progress (not qualified)
+
+The current branch slice implements private realm `003`, a fixed versioned
+Torrent activity, bounded short idempotent starts, and a 100-slot default I/O
+pool (`jobs.concurrency` can reduce it; `max` selects the supported maximum).
+The core slice passes root typecheck, pool/config/wire validation and private
+native job-protocol checks. Do not activate or advertise it as a supported
+release: the complete backend and installed deployment qualification are still
+unfinished.
+
+Public-turn/context revisions and ownership epochs fence generation and final
+publication. A newer customer turn, public edit/removal, or human takeover makes
+the old result ineligible; private notes do not enter or invalidate the model's
+public context. Provider admission is durable before invocation. A saved private
+result can resume finalization; an uncertain call is retained for review rather
+than automatically generated again. Invocation attempts are separate facts, not
+overwritten by a later attempt. Current native user/organization eligibility is
+checked before model use and publication. AI requests go through the real Zero
+AI gateway with provider-stage logging and zero automatic provider retries; the
+bounded recent-context default has no attachment reading, tool execution or RAG.
+
+Managed composition now prepares Storage/private messaging before Torrent
+recovery, registers the fixed activity before recovery, starts new dispatch
+after publication, and drains Torrent before closing its providers. The fixed
+activity remains registered when generation is disabled so retained work can
+reconcile instead of vanishing from the registry. Its handler requires a sealed
+system principal; an ordinary actor/admin HTTP start cannot invoke it. Workflow
+input/output contain only opaque job IDs and safe states, never transcript or
+generated text. The managed bundler preserves source migration identities for
+the matching retained source actors, just as it does for Logging and Blog.
+
+The current worker still sends notification/channel jobs to explicit review;
+those delivery integrations, the operator resolution facade, Portal/Messenger
+ingress, native controller/workspace, socket/browser and installed Linux proofs
+remain unfinished. The canonical bundled-realm regression has been added and
+still needs execution; a same-source native pass is not a source-to-bundle proof.
+
+Focused evidence is retained under the normal external `blog-publishing`
+diagnostics directory. `messaging-jobs-focused.log` passes four files, including
+four actual-file protocol scenarios (saved-result restart, uncertain invocation,
+policy change and stale-turn/takeover fences) plus the pool and capability
+validation. `messaging-jobs-managed.log` passes all five managed scenarios / 59
+assertions. Its new loopback HTTP provider test uses the actual Zero AI gateway,
+Torrent, Guardian and private messaging/logging actors: two held calls enter
+concurrently, the second finishes while the first is held, foreground reads and
+accepted sends finish without waiting, and human takeover excludes the old
+reply. Provider completion retains its trusted origin/evidence and neither
+logs nor workflow records contain transcript, generated text or provider keys.
+All identities, messages, files and provider requests are synthetic and local.
+
 ## Fixed integration decisions
 
 Use a dedicated private Fabric root. Single tenancy owns one messaging database;

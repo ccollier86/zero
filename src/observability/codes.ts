@@ -28,6 +28,7 @@ function code(
 export const OBS_CODES = {
   MESSAGING_OPERATION_REJECTED: code('messaging', 'operation.rejected', 'warn', 'A messaging storage operation was not accepted.'),
   MESSAGING_ATTACHMENT_CLEANUP_RETRY: code('messaging', 'attachment.cleanup.retry', 'warn', 'Private messaging attachment cleanup requires another bounded recovery pass.'),
+  MESSAGING_JOB_DISPATCH_RETRY: code('messaging', 'job.dispatch.retry', 'warn', 'A short durable messaging job start requires another bounded attempt with its original identity.'),
   BLOG_MEDIA_CLEANUP_RETRY: code('blog', 'media.cleanup_retry', 'warn', 'Retained blog media work needs a cleanup retry.'),
   SEO_DISCOVERY_FAILED: code('seo', 'discovery.failed', 'warn', 'Public SEO discovery is temporarily unavailable.'),
   PAYMENTS_JOB_RETRY: code('payments', 'job.retry', 'warn', 'Billing background work will retry.'),

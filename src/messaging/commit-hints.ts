@@ -6,7 +6,7 @@ import { messagingArray, messagingId, messagingRecord } from './validation';
 export interface MessagingCommitHint { readonly conversationId: string | null; readonly recipientIds: readonly string[] }
 export interface MessagingSubscription { readonly actorId: string; readonly conversationId?: string }
 type Before = { conversation: ConversationRow | null; recipients: string[]; staff: string[]; privateNote: boolean; actorId: string | null; peerId: string | null };
-const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire']);
+const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire', 'messaging.job.dispatch', 'messaging.job.call']);
 
 /** The parent strips this envelope before returning the ordinary public command result. Exact transport replay is not a new change. */
 export function withMessagingCommitHints(commands: DatabaseWriteCommandRegistry): DatabaseWriteCommandRegistry {
@@ -37,6 +37,10 @@ function capture({ db }: DatabaseWriteCommandContext, input: unknown, name: stri
   const actorId = typeof actor.id === 'string' ? actor.id : null;
   let id = typeof r.conversationId === 'string' ? r.conversationId : typeof r.id === 'string' ? r.id : null;
   let privateNote = r.visibility === 'staff';
+  if (name.startsWith('messaging.job.') && typeof r.id === 'string') {
+    const job = db.get('messaging_jobs', r.id);
+    if (typeof job?.conversation_id === 'string') id = job.conversation_id;
+  }
   if (name.startsWith('messaging.message.') && typeof r.id === 'string') {
     const message = db.get('messaging_messages', r.id) as MessageRow | null;
     if (message) { id = message.conversation_id; privateNote = message.visibility === 'staff'; }

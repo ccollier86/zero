@@ -36,11 +36,18 @@ The remaining backend is a complete-messaging release gate, not an application i
 left to every consumer. Do not present the frontend parts as a complete messaging
 product or build a production app against an invented SDK method.
 
-The isolated `feature/messaging-backend` branch has started the canonical actor
-persistence slice. Its [implementation checkpoint](../../_work/messaging-backend-implementation.md)
-distinguishes those real-file command/query tests from the still-unfinished
-managed HTTP/SDK, Storage, AI, channel and installed-deployment work. The stable
-package described here does not yet expose the proposed `client.messaging` API.
+The isolated `feature/messaging-backend` branch now implements canonical actor
+persistence, Guardian-bound HTTP/SDK facades, scoped SSE, private Storage
+attachments, contacts, read cursors, support ownership and durable assistant
+jobs. Focused native tests cover those boundaries, including concurrent actual
+loopback-provider calls through the Zero AI gateway/Torrent, safe provider-stage
+logging and stale-reply takeover fencing. Its
+[implementation checkpoint](../../_work/messaging-backend-implementation.md)
+distinguishes that work from the unfinished notification/channel delivery,
+operator-resolution API, public widget/Messenger admission, managed workspace
+and installed Linux/browser release qualification. The stable package described
+here does not yet expose the branch's `client.messaging` API. Do not copy a
+feature-branch example into an older archive based on the `2.6.0` label alone.
 
 | Layer | Current status | Required completion |
 | --- | --- | --- |

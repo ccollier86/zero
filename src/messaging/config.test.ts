@@ -18,3 +18,16 @@ test('unknown, hostile and unbounded configuration does not become permissive me
   let called = false; const input = Object.defineProperty({}, 'directory', { enumerable: true, get() { called = true; return 'everyone'; } });
   expect(() => resolve(input)).toThrow(); expect(called).toBe(false);
 });
+
+test('jobs default to maximum bounded concurrency and assistant policy changes cannot reuse an old decision contract', () => {
+  const auth = resolveAuthBehaviorConfig(), resolve = (input: unknown) => resolveMessagingConfig(input as never, '/synthetic-project', auth);
+  expect(resolve(true)).toMatchObject({ assistant: false, notifications: false, jobConcurrency: 100 });
+  expect(resolve({ jobs: { concurrency: 4 } })).toMatchObject({ jobConcurrency: 4 });
+  expect(resolve({ jobs: { concurrency: 'max' } })).toMatchObject({ jobConcurrency: 100 });
+  const first = resolve({ support: {}, assistant: { model: 'smart', instructions: 'Synthetic support instructions' } });
+  const same = resolve({ support: {}, assistant: { model: 'smart', instructions: 'Synthetic support instructions' } });
+  const changed = resolve({ support: {}, assistant: { model: 'fast', instructions: 'Synthetic support instructions' } });
+  if (!first || !same || !changed || !first.assistant || !same.assistant || !changed.assistant) throw new Error('Synthetic assistant policy missing.');
+  expect(first.assistant.policyHash).toMatch(/^[a-f0-9]{64}$/); expect(same.assistant.policyHash).toBe(first.assistant.policyHash); expect(changed.assistant.policyHash).not.toBe(first.assistant.policyHash);
+  for (const input of [{ assistant: {} }, { support: {}, assistant: { maxOutputTokens: 8193 } }, { jobs: { concurrency: 101 } }, { jobs: { concurrency: 0 } }, { notifications: 'yes' }]) expect(() => resolve(input)).toThrow();
+});

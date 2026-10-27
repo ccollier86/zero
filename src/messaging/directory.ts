@@ -11,7 +11,11 @@ interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserS
 /** The server owns Guardian relationships and published avatar descriptors; caller-selected identity metadata is ignored. */
 export class ManagedMessagingDirectory implements MessagingDirectory {
   constructor(private readonly deps: DirectoryDependencies) {}
+  assertScope(scope: ServiceDataScope): void {
+    if (scope.tenantId !== null && this.deps.tenancy?.getTenant(scope.tenantId)?.status !== 'active') messagingFail('MESSAGING_NOT_FOUND', 404);
+  }
   assertRecipient(scope: ServiceDataScope, userId: string): void {
+    this.assertScope(scope);
     const user = this.deps.users.getUserById(messagingId(userId));
     if (!user || user.status !== 'active') messagingFail('MESSAGING_NOT_FOUND', 404);
     if (scope.tenantId !== null) {

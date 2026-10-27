@@ -5,10 +5,11 @@ import { assertMessagingContact, assertRevision, captureMessagingActor, conversa
 import { messagingArray, messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 import { MESSAGING_REACTIONS } from './contracts';
 import { releaseAttachmentReservation, type AttachmentRow } from './attachment-model';
+import type { JobConversation } from './job-model';
 
 export function sendMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'notificationsEnabled']);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'notificationsEnabled']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.conversationId), staff = staffTimeline(conversation, member);
     const text = messagingText(r.text, messagingInteger(r.maxMessageLength, 1, 20000), true), id = messagingId(r.id), visibility = messagingChoice(r.visibility ?? 'conversation', ['conversation', 'staff']);
     const attachments = [...new Set(messagingArray(r.attachmentIds ?? [], 10).map(messagingId))];
@@ -28,11 +29,14 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
       const row: MessageRow = { id, scope_id: actor.scopeId, conversation_id: conversation.id, sequence, public_sequence: publicSequence, revision: 1, author_id: actor.id,
         author_kind: actor.kind, visibility, text, created_at: now, edited_at: null, deleted: 0, attachment_ids: JSON.stringify(attachments) };
       context.db.createStrict('messaging_messages', row);
-      context.db.update('messaging_conversations', conversation.id, { internal_sequence: sequence, public_sequence: publicSequence ?? conversation.public_sequence,
-        updated_at: now, ...(visibility === 'conversation' ? { public_updated_at: now } : {}) });
+      const prior = conversation as JobConversation;
+      if (visibility === 'conversation' && prior.context_revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
+      const next: JobConversation = { ...prior, internal_sequence: sequence, public_sequence: publicSequence ?? conversation.public_sequence,
+        updated_at: now, ...(visibility === 'conversation' ? { public_updated_at: now, context_revision: prior.context_revision + 1, customer_turn_id: member.role === 'customer' ? id : null } : {}) };
+      context.db.update('messaging_conversations', conversation.id, next);
       if (visibility === 'conversation') {
         if (conversation.channel_id && actor.kind !== 'external') appendMessagingJob(context, conversation, id, 'delivery', now);
-        if (r.assistantEnabled === true && conversation.owner === 'assistant' && actor.kind === 'external') appendMessagingJob(context, conversation, id, 'assistant', now);
+        if (r.assistantEnabled === true) queueMessagingAssistant(context, next, r.assistantPolicy);
         if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now);
       }
       return projectMessage(row, staff);
@@ -40,13 +44,20 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
   });
 }
 /** Job identity binds the accepted message and ownership epoch; one queued start does not run a provider inline. */
-export function appendMessagingJob(context: DatabaseWriteCommandContext, conversation: ConversationRow, messageId: string, kind: 'assistant' | 'delivery' | 'notification', now: number): void {
-  context.db.createStrict('messaging_jobs', { id: messagingHash([messageId, kind]), scope_id: conversation.scope_id, conversation_id: conversation.id, message_id: messageId,
-    kind, owner_epoch: conversation.owner_epoch, state: 'pending', lease_nonce: null, lease_expires: null, attempts: 0, provider_id: null, error_code: null, created_at: now, updated_at: now });
+export function appendMessagingJob(context: DatabaseWriteCommandContext, conversation: ConversationRow, messageId: string, kind: 'assistant' | 'delivery' | 'notification', now: number, policyHash: string | null = null): void {
+  const revision = (conversation as JobConversation).context_revision ?? 0, id = messagingHash(kind === 'assistant' ? [messageId, kind, conversation.owner_epoch, revision] : [messageId, kind]);
+  if (context.db.get('messaging_jobs', id)) return;
+  context.db.createStrict('messaging_jobs', { id, scope_id: conversation.scope_id, conversation_id: conversation.id, message_id: messageId,
+    kind, owner_epoch: conversation.owner_epoch, context_revision: revision, policy_hash: policyHash, dispatch_generation: 0, state: 'pending', lease_nonce: null, lease_expires: null, attempts: 0, provider_id: null, error_code: null, created_at: now, updated_at: now });
+}
+export function queueMessagingAssistant(context: DatabaseWriteCommandContext, conversation: JobConversation, policy: unknown): void {
+  if (!conversation.customer_turn_id || conversation.owner !== 'assistant' || conversation.archived) return;
+  if (typeof policy !== 'string' || !/^[a-f0-9]{64}$/.test(policy)) messagingFail('MESSAGING_INPUT_INVALID', 422);
+  appendMessagingJob(context, conversation, conversation.customer_turn_id, 'assistant', Date.now(), policy);
 }
 export function changeMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'conversationId', 'id', 'requestId', 'expectedRevision', 'text', 'action', 'maxMessageLength']);
+    const r = messagingRecord(input, ['actor', 'conversationId', 'id', 'requestId', 'expectedRevision', 'text', 'action', 'maxMessageLength', 'assistantPolicy']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.conversationId), staff = staffTimeline(conversation, member);
     const row = context.db.get('messaging_messages', messagingId(r.id)) as MessageRow | null;
     if (!row || row.conversation_id !== conversation.id || row.scope_id !== actor.scopeId || row.visibility === 'staff' && !staff || (staff ? row.sequence : row.public_sequence!) < member.history_from) messagingFail('MESSAGING_NOT_FOUND', 404);
@@ -59,7 +70,12 @@ export function changeMessagingMessage(context: DatabaseWriteCommandContext, inp
       if (conversation.channel_id && row.visibility === 'conversation') messagingFail('MESSAGING_STAGE_CONFLICT');
       const next: MessageRow = { ...row, revision: row.revision + 1, text, edited_at: Date.now(), deleted: action === 'remove' ? 1 : 0 };
       context.db.update('messaging_messages', row.id, next);
-      context.db.update('messaging_conversations', conversation.id, { updated_at: next.edited_at!, ...(row.visibility === 'conversation' ? { public_updated_at: next.edited_at! } : {}) });
+      const prior = conversation as JobConversation;
+      if (row.visibility === 'conversation' && prior.context_revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
+      const changed: JobConversation = { ...prior, updated_at: next.edited_at!, ...(row.visibility === 'conversation' ? { public_updated_at: next.edited_at!, context_revision: prior.context_revision + 1,
+        ...(action === 'remove' && prior.customer_turn_id === row.id ? { customer_turn_id: null } : {}) } : {}) };
+      context.db.update('messaging_conversations', conversation.id, changed);
+      if (row.visibility === 'conversation' && r.assistantPolicy) queueMessagingAssistant(context, changed, r.assistantPolicy);
       return projectMessage(next, staff);
     });
   });

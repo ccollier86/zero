@@ -31,6 +31,7 @@ import {
   ZERO_AI_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
   ZERO_LOGGING_RUNTIME,
+  ZERO_WORKFLOW_SERVICE,
 } from '../../runtime/service-keys';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { createSchedulerPlugin } from '../../scheduler';
@@ -52,6 +53,8 @@ import { createPresencePlugin } from '../../presence/presence.plugin';
 import { composeManagedUserAvatars } from './app-user-avatars';
 import { mountManagedBlog } from './app-blog';
 import { mountManagedMessaging } from './app-messaging';
+import { ZERO_MESSAGING_JOBS } from '../../messaging/jobs';
+import { registerMessagingJobWorkflow } from '../../messaging/jobs-workflow';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import { ZERO_DATABASE_MANAGER } from '../../runtime/service-keys';
 import { createAuthPlatformCodeEmitter } from '../../auth/auth-observability';
@@ -93,6 +96,8 @@ export async function mountPlatformServices({
   };
   const managedStartup: { auth: AuthRuntime | null } = { auth: null };
   const managedInitializers: Array<() => Promise<void>> = [];
+  const workflowInitializers: Array<() => Promise<void>> = [];
+  const workflowLifecycle: { stop?: () => Promise<void> } = {};
 
   app.use(createPlatformTokenPlugin({ db: systemDB, runtime }));
 
@@ -270,11 +275,16 @@ export async function mountPlatformServices({
         runtime,
         systemDB,
         scheduler,
-        managedInitializers,
+        managedInitializers: workflowInitializers,
         getTokenService,
         authorization,
         managedStartup,
         workflowConfig: config.workflows,
+        // Keep the fixed activity registered when generation is switched off:
+        // retained jobs must reconcile to review, not disappear from recovery.
+        registerManaged: config.messaging
+          ? registry => registerMessagingJobWorkflow(registry, () => runtime.require(ZERO_MESSAGING_JOBS)) : undefined,
+        onStopCreated: stop => { workflowLifecycle.stop = stop; },
       });
     }
   }
@@ -285,6 +295,12 @@ export async function mountPlatformServices({
   await Promise.all(managedInitializers.map((initialize) => initialize()));
   await mountManagedBlog({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
   await mountManagedMessaging({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
+  // Recovered activities may immediately use Storage/private messaging. Settle
+  // those providers first; do not make them wait on the recovery they unblock.
+  // Register a distinct dependant teardown before recovery can start work.
+  if (workflowLifecycle.stop) runtime.addCleanup(async () => { await workflowLifecycle.stop?.(); });
+  await Promise.all(workflowInitializers.map(initialize => initialize()));
+  runtime.get(ZERO_MESSAGING_JOBS)?.start(runtime.require(ZERO_WORKFLOW_SERVICE));
 }
 
 interface WorkflowMountInput {
@@ -296,6 +312,8 @@ interface WorkflowMountInput {
   readonly getTokenService: () => TokenService | null;
   readonly authorization: AuthMiddlewareAuthorizationOptions;
   readonly workflowConfig: Exclude<ResolvedConfig['workflows'], false>;
+  readonly registerManaged?: (registry: import('../../workflows/workflow-registry').WorkflowRegistry) => void;
+  readonly onStopCreated: (stop: () => Promise<void>) => void;
   readonly managedStartup: {
     auth: AuthRuntime | null;
   };
@@ -311,17 +329,15 @@ function mountWorkflowService({
   authorization,
   managedStartup,
   workflowConfig,
+  registerManaged,
+  onStopCreated,
 }: WorkflowMountInput): void {
   app.use(createWorkflowPlugin({
     db: systemDB,
     http: workflowConfig.http,
     runtime,
     scheduler,
-    register: workflowConfig.register
-      ? (registry) => workflowConfig.register?.(registry, {
-        ai: runtime.get(ZERO_AI_SERVICE),
-      })
-      : undefined,
+    register: async registry => { registerManaged?.(registry); await workflowConfig.register?.(registry, { ai: runtime.get(ZERO_AI_SERVICE) }); },
     onServiceCreated: workflowConfig.onServiceCreated,
     shutdownGraceMs: workflowConfig.shutdownGraceMs,
     interactionAuthority: workflowConfig.interactionAuthority,
@@ -336,6 +352,7 @@ function mountWorkflowService({
     authorization,
   }, {
     managedStartup: true,
+    onStopCreated,
     onInitializerCreated(initialize) {
       managedInitializers.push(initialize);
     },
