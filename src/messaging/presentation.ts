@@ -22,24 +22,31 @@ export interface MessagingConversationSummary {
   presence?: AvatarPresence;
   activityLabel?: string;
 }
-/** Reference only: bytes and authorization stay in Zero Storage. No public download URL. */
-export interface MessagingAttachment {
+/** Minimum file presentation. Metadata is not a grant, URL or assertion that bytes exist. */
+export interface MessagingAttachmentDisplay {
   id: string;
   name: string;
   sizeBytes: number;
   mimeType: string | null;
+}
+/** Retained generic Storage presentation; native durable messaging uses its domain facade instead. */
+export interface MessagingAttachment extends MessagingAttachmentDisplay {
   storage: { driveId: string; path: string; checksum: string | null };
 }
-export interface MessagingMessage {
+/** A native conversation attachment never fabricates a generic Storage drive/path for presentation. */
+export interface NativeMessagingAttachmentDisplay extends MessagingAttachmentDisplay { conversationId: string }
+export interface MessagingMessageDisplay<Attachment extends MessagingAttachmentDisplay = MessagingAttachment> {
   id: string;
   author: MessagingParticipant;
   text: string;
   createdAt: number;
   delivery?: MessageDeliveryState;
   edited?: boolean;
-  attachments?: readonly MessagingAttachment[];
+  attachments?: readonly Attachment[];
   reactions?: readonly { emoji: string; count: number; selected?: boolean }[];
 }
+/** Original presentation contract retained for existing callers. */
+export interface MessagingMessage extends MessagingMessageDisplay<MessagingAttachment> {}
 export interface MessagingAssistantActivity {
   /** A real server run identity, never a timer-created pretend assistant. */
   runId: string;

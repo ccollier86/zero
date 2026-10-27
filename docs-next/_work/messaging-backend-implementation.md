@@ -62,6 +62,58 @@ This is a committed development foundation, **not full messaging completion or
 a selected stable update**. Attachment I/O, worker/Torrent/AI/provider dispatch,
 customer/channel ingress, notification and final UI/deployment gates remain.
 
+## Private attachment implementation in progress
+
+The next slice adds typed allocation/upload/association/download/remove methods
+under the same Guardian/SDK facade. Fabric owns conversation/history admission,
+declared integrity, visibility, bounded per-actor reservations and the immutable
+message association. Existing Storage private CAS artifacts own bytes: there is
+no generic drive, object grant, public URL or browser-selected namespace. The
+trusted streamed-artifact extension keeps the existing small `put()` ceiling
+unchanged and caps streamed declarations at 256 MiB; messaging defaults to 16 MiB.
+Each attachment's exact checksum and length are checked before private-byte
+publication. Declared MIME is not a malware/content-verification verdict.
+
+Native binary downloads are attachment-only with `nosniff`, sandbox/CSP and no-store;
+the stream rechecks canonical membership/history before releasing each chunk.
+SDK download additionally verifies length and SHA-256. Unattached stages are
+owner-only and expire after 30 minutes. Allocation reserves at most ten stages
+per actor/scope; association and reservation release are one commit. Removal and
+expiry fence against association before deleting bytes. Lease recovery is bounded
+and wakes at actual expiry rather than polling an empty queue. Tombstoned-message
+bytes are retained, not automatically or securely erased. No aggregate namespace
+quota or malware scanner is claimed by this slice.
+
+Core migration `050` and private realm migration `002` are additive; committed
+`049` and private `001` remain unchanged. Byte I/O uses a short durable lease,
+never a SQLite transaction or auth-exclusive lock across network work. Shutdown
+cancels owned uploads/downloads; cleanup preserves uncertain/quarantined stages.
+
+The initial native run catches a missing HTTP projection for Fabric's changed
+idempotency-key conflict. The safe specific 409 mapping and the complete native
+attachment scenario now pass. The five-file follow-up passes all 22 scenarios /
+152 assertions: four managed native cases (47 assertions), five private Storage
+cases (37), attachment/HTTP validation (31), and nine presentation cases (37).
+Actual upload/delivery, immutable association, membership revocation, retained
+restart, strict admission and live inserts are exercised, not mocked completion.
+The full root typecheck also passes. This is a development slice, **not an
+installed/Linux/browser-qualified messaging release**.
+
+Further review found that Fabric's exact transport cache can bypass a replayed
+command handler. An old acknowledgment therefore cannot be used as continuing
+permission to read its retained body. Sends/edits/removals and attachment stage
+projections now re-read under current canonical membership/history; a removed or
+since-join-readmitted member gets no old body, but can reconcile the content-free
+receipt. A send replay after deletion projects the current tombstone instead of
+resurrecting cached text. An actual native regression for those three boundaries
+passes through the actual native facade. Native attachment presentation composes the
+existing bubble renderer with typed domain references, without changing the old
+Storage-backed bubble contract or fabricating private drive/path coordinates.
+Private Storage also rejects yielded authorization callbacks before provider I/O
+and within publication transactions. Owned attachment readers are cancelled when
+their task/stream retires, including early provider-admission failures; unrelated
+request controllers are not aborted.
+
 ## Remaining release work
 
 - [ ] Managed configuration, private root/realm ownership and missing-file
@@ -100,3 +152,66 @@ No private message text, notes, upload capabilities, credentials, customer conta
 details, prompts or responses belong in operational/audit metadata. Optional
 public widget admission must mint an expiring connection-bound customer session;
 the browser cannot select a tenant, external identity or staff role.
+
+## Next orchestration boundary (reviewed, not implemented)
+
+The existing Torrent registry finishes activity registration before recovery.
+Currently platform composition recovers workflows before mounting messaging;
+simply registering a late handler is not sufficient. The jobs slice must split
+service readiness from dispatch readiness: register fixed versioned messaging
+activities before recovery, initialize Guardian/Storage/private messaging before
+allowing their recovered activities to run, and start source dispatch only after
+Torrent publishes its service. Never introduce a circular initializer wait.
+Shutdown must drain Torrent's activities before closing their messaging owners.
+
+Use `enqueueAsSystemOnce()` for the short permanent source effect receipt, with
+only an opaque job identity in workflow input/output. A MAC-verified execution
+scope selects the realm; there is no HTTP tenant/principal selector. Message text,
+notes, credentials and generated replies must not enter Sync-visible workflow
+instance/step input/output. An activity loads its bounded private context only
+when executing. Provider work does not hold a source automation queue or SQL lock.
+
+The durable job protocol must distinguish pending, claimed, calling, received,
+accepted, cancelled and needs-review facts. Persist the invocation boundary before
+a non-idempotent network call. After a crash, a possibly executed send/generation
+cannot become an automatic fresh provider call. Reconcile a known provider/run
+identity or send it to review. A received assistant result belongs in private
+Fabric state until the final reply/ownership transaction; never return its body
+as a workflow step result. Provider acceptance is not customer delivery or human
+attention. Use the existing actual AI/provider stage instrumentation.
+
+Independent conversations execute concurrently. A bounded configurable work pool
+must not default to one global serial lane. Newer customer turns supersede old
+assistant work in the same conversation; takeover advances the canonical owner
+epoch and requests cooperative cancellation, while the final publication fence
+remains authoritative even if cancellation is ignored. Check both the owner epoch
+and latest customer-turn identity before generation/publication/dispatch. Private
+notes never enter default assistant context or customer/channel/notification jobs.
+
+Notifications use the existing native service and an atomic SYSTEM effect receipt
+for duplicate safety. They target only current eligible recipients and declared
+preferences, not the whole organization. Keep their retained payload generic and
+content-free so a later conversation-membership removal does not leave transcript
+previews in another service. Clicking a notification still needs current canonical
+conversation authorization. Notification receipts and transcript read positions
+are distinct facts.
+
+Public widget and Messenger adapters come after these durable boundaries. Widget
+admission must bind an expiring server-issued customer session to a configured
+connection/scope/conversation, not accept an existing identity from browser input.
+Messenger requires current official provider-contract verification, raw-body
+signature checks, connection-bound page/customer mapping, permanent event dedup,
+a real outbox, provider-ack reconciliation and truthful policy/capability failures.
+No real providers or production connections may be used by qualification tests.
+
+Before messaging release, narrow reactive invalidations as well: the current
+foundation uses one payload-free scope hint, so even source-ack housekeeping can
+wake unrelated conversation readers. The final native streams need canonical
+conversation/recipient-targeted invalidations, with accepted worker metadata
+stripped from public responses. Do not derive recipients from a submitted browser
+participant list, invent INSERT events, or expose private-note activity to public
+timelines. Removed members must still receive an invalidation that masks their
+projection; uncertainty uses safe revalidation, not an assumed row result.
+Retain bounded coalescing, slow-reader backpressure and periodic live authority
+checks. Qualify a busy organization with many unrelated conversations, not just
+two messages in one room. Source audit acknowledgments are not new chat content.

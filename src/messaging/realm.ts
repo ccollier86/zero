@@ -10,6 +10,9 @@ import { changeMessagingContact } from './contact-commands';
 import { changeMessagingMessage, reactMessagingMessage, sendMessagingMessage } from './message-commands';
 import { listMessagingContacts, listMessagingConversations, listMessagingMessages, listMessagingSupportQueue, readMessagingConversation, readMessagingMessage, readMessagingReceipt, readMessagingTypingMembership } from './realm-queries';
 import { openMessagingSupport, claimMessagingSupport } from './support-commands';
+import { MESSAGING_ATTACHMENT_TABLES } from './attachment-model';
+import { allocateMessagingAttachment, acceptMessagingAttachment, retireMessagingAttachment } from './attachment-commands';
+import { readMessagingAttachment, pendingMessagingAttachments } from './attachment-queries';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -18,7 +21,8 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '1', tables: MESSAGING_TABLES,
+  name: 'zero-messaging', version: '2', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES,
+    messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" } },
   migrations: [{ version: '001', description: 'Canonical scoped conversations, messages, contacts, private attachments and durable delivery', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(MESSAGING_TABLES)) database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
     for (const sql of [
@@ -48,6 +52,10 @@ export const messagingRealm = defineDatabaseRealm({
       database.run(`CREATE TRIGGER ${index}_update_old AFTER UPDATE OF text,deleted,visibility ON messaging_messages WHEN ${eligible('OLD')} BEGIN INSERT INTO ${index}(${index},rowid,text) VALUES('delete',OLD.rowid,OLD.text); END`);
       database.run(`CREATE TRIGGER ${index}_update_new AFTER UPDATE OF text,deleted,visibility ON messaging_messages WHEN ${eligible('NEW')} BEGIN INSERT INTO ${index}(rowid,text) VALUES(NEW.rowid,NEW.text); END`);
     }
+  } }, { version: '002', description: 'Bounded typed attachment reservations and expiry recovery', safety: 'safe', up(database) {
+    database.run("ALTER TABLE messaging_attachments ADD COLUMN owner_kind TEXT NOT NULL DEFAULT 'user'");
+    database.run('CREATE TABLE messaging_attachment_reservations (id TEXT PRIMARY KEY,ids_json TEXT NOT NULL)');
+    database.run('CREATE INDEX messaging_attachment_scope_expiry ON messaging_attachments(scope_id,state,expires_at,id)');
   } }],
   commands: {
     'messaging.owner.bind': (context, input) => messagingCommand(context, () => {
@@ -60,6 +68,8 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.contact': changeMessagingContact, 'messaging.message.send': sendMessagingMessage,
     'messaging.support.open': openMessagingSupport, 'messaging.support.claim': claimMessagingSupport,
     'messaging.message.change': changeMessagingMessage, 'messaging.message.react': reactMessagingMessage,
+    'messaging.attachment.allocate': allocateMessagingAttachment, 'messaging.attachment.accept': acceptMessagingAttachment, 'messaging.attachment.retire': retireMessagingAttachment,
   },
-  queries: { 'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership) },
+  queries: { 'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
+    'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments) },
 });

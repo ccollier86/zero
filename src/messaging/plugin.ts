@@ -10,6 +10,7 @@ import { projectMessagingHttpError } from './http-errors';
 import { readMessagingBody, readMessagingQuery } from './http-input';
 import { messagingChoice, messagingId, messagingInteger, messagingRecord } from './validation';
 import { messagingProjectionStream } from './stream';
+import { createMessagingAttachmentRoutes } from './attachment-routes';
 
 export interface MessagingPluginConfig { getService(): MessagingService | null; getTokenService(): TokenService | null; readonly authorization: AuthMiddlewareAuthorizationOptions; getLoggingRuntime?(): LoggingRuntime | null }
 /** The caller, not the HTTP layer, retains a mutation identity after an interrupted response. */
@@ -61,5 +62,6 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     }, { parse: 'none' })
     .post('/support', async ({ access, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).support.open(await readMessagingBody(request) as never, options); }, { parse: 'none' })
     .get('/support/queue', ({ access, request }) => read(access.requireUser(), request).support.queue(readMessagingQuery(request, ['after', 'limit']) as never, { signal: request.signal }))
-    .post('/support/:id/claim', async ({ access, params, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); const r = messagingRecord(await readMessagingBody(request), ['expectedEpoch']); return read(user, request).support.claim(params.id, messagingInteger(r.expectedEpoch), options); }, { parse: 'none' });
+    .post('/support/:id/claim', async ({ access, params, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); const r = messagingRecord(await readMessagingBody(request), ['expectedEpoch']); return read(user, request).support.claim(params.id, messagingInteger(r.expectedEpoch), options); }, { parse: 'none' })
+    .use(createMessagingAttachmentRoutes(config));
 }

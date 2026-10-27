@@ -4,7 +4,7 @@ import * as React from 'react';
 import { Check, CheckCheck, Clock3, CircleAlert, File, LoaderCircle } from 'lucide-react';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import { cn } from '../../lib/utils';
-import type { MessageDeliveryState, MessagingAttachment, MessagingMessage } from '../../messaging/presentation';
+import type { MessageDeliveryState, MessagingAttachment, MessagingAttachmentDisplay, MessagingMessageDisplay, NativeMessagingAttachmentDisplay } from '../../messaging/presentation';
 import './messaging.css';
 
 const DELIVERY_LABELS: Record<MessageDeliveryState, string> = { queued: 'Queued', sending: 'Sending', accepted: 'Saved by server', delivered: 'Delivered', read: 'Read', failed: 'Failed', unknown: 'Delivery not confirmed' };
@@ -13,14 +13,20 @@ export function MessageDeliveryIndicator({ state }: MessageDeliveryIndicatorProp
   const Icon = state === 'read' || state === 'delivered' ? CheckCheck : state === 'accepted' ? Check : state === 'sending' ? LoaderCircle : state === 'failed' || state === 'unknown' ? CircleAlert : Clock3;
   return <span data-slot="message-delivery" data-state={state} className="zero-messaging-delivery"><Icon aria-hidden="true" className="size-3" /><span>{DELIVERY_LABELS[state]}</span></span>;
 }
-export interface MessageBubbleProps {
-  message: MessagingMessage; own?: boolean; onAttachment?: (attachment: MessagingAttachment) => void;
+interface MessageBubbleDisplayProps<Attachment extends MessagingAttachmentDisplay> {
+  message: MessagingMessageDisplay<Attachment>; own?: boolean; onAttachment?: (attachment: Attachment) => void;
   onReaction?: (emoji: string) => void;
   /** Defaults to stable UTC HH:mm for identical server/browser hydration. */
   formatTime?: (timestamp: number) => React.ReactNode;
   className?: string;
 }
-export function MessageBubble({ message, own = false, onAttachment, onReaction, formatTime, className }: MessageBubbleProps) {
+/** Existing generic-Storage bubble contract remains source/type compatible. */
+export interface MessageBubbleProps extends MessageBubbleDisplayProps<MessagingAttachment> {}
+/** Native private attachments use the conversation facade, not generic Storage coordinates. */
+export interface NativeMessageBubbleProps extends MessageBubbleDisplayProps<NativeMessagingAttachmentDisplay> {}
+export function MessageBubble(props: MessageBubbleProps) { return <MessageBubbleDisplay {...props} />; }
+export function NativeMessageBubble(props: NativeMessageBubbleProps) { return <MessageBubbleDisplay {...props} />; }
+function MessageBubbleDisplay<Attachment extends MessagingAttachmentDisplay>({ message, own = false, onAttachment, onReaction, formatTime, className }: MessageBubbleDisplayProps<Attachment>) {
   const date = new Date(message.createdAt), validDate = Number.isFinite(date.getTime());
   return <article data-slot="message-bubble" data-message-id={message.id} data-own={own || undefined} className={cn('zero-messaging-message', className)} aria-label={`Message from ${message.author.label}`}>
     {!own && <span className="zero-messaging-message-avatar" aria-hidden="true">{message.author.avatar ?? <Avatar><AvatarFallback>{message.author.label.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>}</span>}

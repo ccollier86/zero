@@ -14,7 +14,7 @@ import type { ScopedStorageService } from './scoped-storage-service';
 import type { ScopedWorkflowService } from './scoped-workflow-service';
 import type { ScopedLogging } from '../../../logging/logging-api-contracts';
 import type { ScopedBlog } from '../../../blog/types';
-import type { MessagingApi } from '../../../messaging/contracts';
+import type { MessagingServerApi as MessagingApi } from '../../../messaging/server-contracts';
 
 /** App services projected into one request's immutable authorization scope. */
 export interface ServerRequestServices extends Omit<

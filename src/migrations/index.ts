@@ -60,6 +60,7 @@ import { migration as m046 } from './definitions/046_guardian_public_avatars';
 import { migration as m047 } from './definitions/047_blog_author_foundation';
 import { migration as m048 } from './definitions/048_blog_content_owner';
 import { migration as m049 } from './definitions/049_messaging_owner';
+import { migration as m050 } from './definitions/050_messaging_attachment_leases';
 
 export {
   createMigrationRegistry,
@@ -155,4 +156,5 @@ export const migrations: Migration[] = [
   m047,
   m048,
   m049,
+  m050,
 ];

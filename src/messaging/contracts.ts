@@ -1,5 +1,6 @@
 /** Browser-safe durable messaging contracts. Identifiers and display data never confer access. */
 export const MESSAGING_API = '/api/messaging';
+import type { MessagingAttachmentsApi } from './attachment-contracts';
 export interface MessagingMutationOptions { readonly requestId: string; readonly signal?: AbortSignal }
 export interface MessagingReadOptions { readonly signal?: AbortSignal }
 export type ConversationKind = 'direct' | 'group' | 'support';
@@ -25,12 +26,13 @@ export interface DurableMessage {
 export interface MessagingPage<T> { readonly items: readonly T[]; readonly hasMore: boolean; readonly nextCursor: string | null }
 export interface MessageHistoryQuery { readonly before?: number; readonly after?: number; readonly limit?: number; readonly search?: string }
 export interface ConversationQuery { readonly after?: string; readonly limit?: number; readonly archived?: boolean }
-export interface MessagingCapabilities { readonly enabled: boolean; readonly directory: 'everyone' | 'contacts'; readonly canSupport: boolean; readonly maxMessageLength: number; readonly maxParticipants: number }
+export interface MessagingCapabilities { readonly enabled: boolean; readonly directory: 'everyone' | 'contacts'; readonly canSupport: boolean; readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxUploadBytes: number }
 export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null }
 /** Reconciles an uncertain command without returning a message body after membership removal. */
 export interface MessagingReceipt { readonly requestId: string; readonly operation: string; readonly resourceId: string | null; readonly acceptedAt: number }
 export interface MessagingContact { readonly id: string; readonly userId: string; readonly direction: 'incoming' | 'outgoing'; readonly state: 'pending' | 'accepted' | 'declined' | 'blocked'; readonly revision: number; readonly updatedAt: number }
 export interface MessagingApi {
+  readonly attachments: MessagingAttachmentsApi;
   capabilities(): Promise<MessagingCapabilities>;
   directory(query?: { readonly after?: string; readonly limit?: number; readonly search?: string }, options?: MessagingReadOptions): Promise<MessagingPage<MessagingDirectoryEntry>>;
   receipt(requestId: string, options?: MessagingReadOptions): Promise<MessagingReceipt | null>;

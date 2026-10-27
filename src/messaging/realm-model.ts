@@ -12,8 +12,8 @@ export type MessageRow = Row & { id: string; scope_id: string; conversation_id: 
 /** Minted by the service, not forwarded from an HTTP body. Actor validation repeats inside the worker. */
 export function captureMessagingActor(input: unknown): MessagingActor {
   const r = messagingRecord(input, ['scopeId', 'id', 'kind', 'staff']);
-  const scopeId = messagingText(r.scopeId, 256);
-  if (!/^(?:application|tenant:[A-Za-z0-9][A-Za-z0-9_.:-]{0,199})$/.test(scopeId) || typeof r.staff !== 'boolean') messagingFail('MESSAGING_FORBIDDEN', 403);
+  const scopeId = messagingText(r.scopeId, 263), tenantId = scopeId.startsWith('tenant:') ? scopeId.slice(7) : '';
+  if (scopeId !== 'application' && (!tenantId || tenantId.length > 256 || tenantId.trim() !== tenantId || /\p{Cc}/u.test(tenantId)) || typeof r.staff !== 'boolean') messagingFail('MESSAGING_FORBIDDEN', 403);
   return { scopeId, id: messagingId(r.id), kind: messagingChoice(r.kind, ['user', 'external', 'assistant']), staff: r.staff };
 }
 export function memberKey(conversationId: string, participantId: string): string { return messagingHash([conversationId, participantId]); }

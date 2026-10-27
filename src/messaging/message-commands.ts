@@ -4,6 +4,7 @@ import { messagingCommand } from './realm-errors';
 import { assertMessagingContact, assertRevision, captureMessagingActor, conversationMember, conversationMembers, messagingIntent, projectMessage, staffTimeline, type ConversationRow, type MessageRow } from './realm-model';
 import { messagingArray, messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 import { MESSAGING_REACTIONS } from './contracts';
+import { releaseAttachmentReservation, type AttachmentRow } from './attachment-model';
 
 export function sendMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
@@ -18,9 +19,10 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
       if (staff && visibility === 'conversation' && (conversation.owner !== 'human' || conversation.owner_id !== actor.id || conversation.owner_epoch !== messagingInteger(r.expectedOwnerEpoch))) messagingFail('MESSAGING_OWNER_CONFLICT');
       if (conversation.internal_sequence >= Number.MAX_SAFE_INTEGER - 2 || conversation.public_sequence >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
       for (const attachmentId of attachments) {
-        const asset = context.db.get('messaging_attachments', attachmentId);
-        if (!asset || asset.scope_id !== actor.scopeId || asset.conversation_id !== conversation.id || asset.owner_id !== actor.id || asset.visibility !== visibility || asset.state !== 'ready' || asset.message_id !== null) messagingFail('MESSAGING_ATTACHMENT_UNAVAILABLE', 422);
+        const asset = context.db.get('messaging_attachments', attachmentId) as AttachmentRow | null;
+        if (!asset || asset.scope_id !== actor.scopeId || asset.conversation_id !== conversation.id || asset.owner_id !== actor.id || asset.owner_kind !== actor.kind || asset.visibility !== visibility || asset.state !== 'ready' || asset.message_id !== null || asset.expires_at <= Date.now()) messagingFail('MESSAGING_ATTACHMENT_UNAVAILABLE', 422);
         context.db.update('messaging_attachments', attachmentId, { message_id: id });
+        releaseAttachmentReservation(context, asset);
       }
       const now = Date.now(), sequence = conversation.internal_sequence + 1, publicSequence = visibility === 'conversation' ? conversation.public_sequence + 1 : null;
       const row: MessageRow = { id, scope_id: actor.scopeId, conversation_id: conversation.id, sequence, public_sequence: publicSequence, revision: 1, author_id: actor.id,

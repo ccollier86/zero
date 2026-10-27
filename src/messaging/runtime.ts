@@ -1,7 +1,7 @@
 /** Private Fabric lifecycle. Each admitted organization owns its own canonical file and fixed audit scope. */
 import { existsSync } from 'node:fs';
 import { AuthError } from '../auth/types';
-import { serviceDataScopeKey, type ServiceDataScope } from '../auth/service-data-scope';
+import { serviceDataScopeKey, trustedSystemServiceDataScope, type ServiceDataScope } from '../auth/service-data-scope';
 import { invokeSynchronousAuthCallback } from '../auth/auth-synchronous-callback';
 import { DatabaseCoordinator } from '../databases/database-coordinator';
 import { createAsyncDatabaseClient } from '../databases/database-client';
@@ -81,6 +81,13 @@ export class MessagingRuntime {
     return () => { entries!.delete(listener); if (!entries!.size) this.listeners.delete(ref); };
   }
   diagnostics() { return { state: this.state, filesBound: this.bound.size, activeOperations: this.active.size, fabric: this.owner.diagnostics() }; }
+  /** @internal Validated established catalog scopes for bounded retained-stage recovery, never HTTP-selected tenant IDs. */
+  retainedScopes(): readonly ServiceDataScope[] {
+    this.assertReady();
+    const records = this.options.system.prepare('SELECT * FROM _messaging_owners WHERE established=1 ORDER BY id LIMIT ?').all(this.options.config.maxDatabaseFiles + 1) as MessagingOwnerRecord[];
+    if (records.length > this.options.config.maxDatabaseFiles) throw unavailable('Messaging owner capacity changed.');
+    return records.map(record => { this.assertRetained(record); return record.scope_id === 'application' ? trustedSystemServiceDataScope({ scopeKind: 'application' }) : trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: record.scope_id.slice('tenant:'.length) }); });
+  }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.state = 'closing'; this.removeCommit?.(); this.removeCommit = null;

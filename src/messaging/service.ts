@@ -2,7 +2,6 @@
 import { AuthError } from '../auth/types';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import { serviceDataScopeKey, type ServiceDataScope } from '../auth/service-data-scope';
-import { DatabaseError } from '../databases/database-error';
 import type { LoggingRuntime } from '../logging/logging-runtime';
 import { runWithLoggingAttribution } from '../logging/logging-attribution';
 import type { ResolvedMessagingConfig } from './config';
@@ -11,7 +10,10 @@ import { createZeroRuntimeServiceKey } from '../runtime/zero-app-runtime';
 import type { MessagingActor } from './realm-model';
 import { createMessagingActorResolver } from './authority';
 import { messagingArray, messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
-import type { ConversationRecord, DurableMessage, MessagingApi, MessagingDirectoryEntry, MessagingMutationOptions, MessagingPage } from './contracts';
+import type { ConversationRecord, DurableMessage, MessagingDirectoryEntry, MessagingMutationOptions, MessagingPage } from './contracts';
+import type { MessagingServerApi } from './server-contracts';
+import type { MessagingAttachmentService } from './attachment-service';
+import { projectMessagingCommit as afterCommit } from './mutation-projection';
 
 export interface MessagingAuthority { readonly access: RequestAuthorizationAccess; readonly scope: ServiceDataScope; assertCurrentAuthoritySync(): void }
 export interface MessagingDirectory {
@@ -19,7 +21,7 @@ export interface MessagingDirectory {
   assertRecipient(scope: ServiceDataScope, userId: string): void;
   list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }): MessagingPage<MessagingDirectoryEntry>;
 }
-export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly logging?: LoggingRuntime }
+export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime }
 export const ZERO_MESSAGING = createZeroRuntimeServiceKey<MessagingService>('Managed messaging service');
 /** Request-local closures retain no ambient mutable user, selected organization or native upload grants. */
 export class MessagingService {
@@ -34,7 +36,7 @@ export class MessagingService {
       return result.active && (!staffOnly || result.staff);
     } catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
   }
-  forAuthority(authority: MessagingAuthority): MessagingApi {
+  forAuthority(authority: MessagingAuthority): MessagingServerApi {
     const identity = authority.access.requireUser(), scope = authority.scope, scopeId = serviceDataScopeKey(scope);
     const actor = createMessagingActorResolver(authority, this.deps.config);
     const final = (captured: MessagingActor, write = false, recipients: readonly string[] = []) => () => {
@@ -51,20 +53,17 @@ export class MessagingService {
     const read = <T>(name: string, input: object, signal?: AbortSignal): Promise<T> => {
       const captured = actor(); return this.runtime.read<T>(scope, name, { ...input, actor: captured }, final(captured), signal);
     };
-    const write = <T>(name: string, input: object, options: MessagingMutationOptions, recipients: readonly string[] = []): Promise<T> => {
-      const captured = actor(true), opts = mutation(options), check = final(captured, true, recipients);
-      check(); const transport = 'messaging:' + messagingHash([scopeId, captured.kind, captured.id, opts.requestId]);
-      const operation = () => this.runtime.write<T>(scope, name, { ...input, actor: captured, requestId: opts.requestId }, transport, check, opts.signal);
+    const attributed = <T>(captured: MessagingActor, opts: MessagingMutationOptions, check: () => void, operation: () => Promise<T>): Promise<T> => {
       const logging = this.deps.logging;
       return logging ? runWithLoggingAttribution(logging, { sourceId: 'messaging-request:' + messagingHash([captured.id]).slice(0, 40), origin: 'backend',
         scope: scope.tenantId === null ? { kind: 'application', tenantId: null } : { kind: 'tenant', tenantId: scope.tenantId },
         actor: { kind: 'user', id: captured.id, sessionId: identity.sessionId ?? null, initiatorId: null }, requestId: opts.requestId, correlationId: null, policyVersion: logging.config.policyVersion,
       }, check, operation) : operation();
     };
-    const afterCommit = async <T, A = unknown>(accepted: Promise<A>, query: (accepted: A) => Promise<T>): Promise<T> => {
-      const result = await accepted;
-      try { return await query(result); }
-      catch { throw new DatabaseError('DATABASE_OUTCOME_UNKNOWN', 'The messaging operation was accepted but its current projection is unavailable; reconcile the original request identity.', { outcome: 'unknown', retryable: false }); }
+    const write = <T>(name: string, input: object, options: MessagingMutationOptions, recipients: readonly string[] = [], extra?: () => void): Promise<T> => {
+      const captured = actor(true), opts = mutation(options), base = final(captured, true, recipients), check = () => { base(); extra?.(); };
+      check(); const transport = 'messaging:' + messagingHash([scopeId, captured.kind, captured.id, opts.requestId]);
+      return attributed(captured, opts, check, () => this.runtime.write<T>(scope, name, { ...input, actor: captured, requestId: opts.requestId }, transport, check, opts.signal));
     };
     const conversation = (id: string, signal?: AbortSignal) => read<ConversationRecord>('messaging.conversation', { id: messagingId(id) }, signal);
     const message = (conversationId: string, id: string, signal?: AbortSignal) => read<DurableMessage>('messaging.message', { conversationId: messagingId(conversationId), id: messagingId(id) }, signal);
@@ -78,15 +77,18 @@ export class MessagingService {
       afterCommit(write('messaging.conversation.owner', { id: messagingId(id), expectedEpoch: messagingInteger(expectedEpoch), owner }, options), () => conversation(id, options.signal));
     const contact = <T>(action: string, userId: string, options: MessagingMutationOptions, expectedRevision?: number): Promise<T> =>
       write<T>('messaging.contact', { action, userId: messagingId(userId), ...(expectedRevision === undefined ? {} : { expectedRevision: messagingInteger(expectedRevision) }) }, options, action === 'request' || action === 'block' ? [userId] : []);
-    const api: MessagingApi = {
-      capabilities: async () => ({ enabled: true, directory: this.deps.config.directory, canSupport: actor().staff, maxMessageLength: this.deps.config.maxMessageLength, maxParticipants: this.deps.config.maxParticipants }),
+    const api: MessagingServerApi = {
+      attachments: this.deps.attachments.forAuthority({ scope, capture: (write = false) => { const captured = actor(write); return { actor: captured, check: final(captured, write) }; },
+        options: mutation, read, write: (name, input, options, fence) => write(name, input, options, [], fence),
+        run: (options, operation) => { const captured = actor(true), opts = mutation(options); return attributed(captured, opts, final(captured, true), operation); } }),
+      capabilities: async () => ({ enabled: true, directory: this.deps.config.directory, canSupport: actor().staff, maxMessageLength: this.deps.config.maxMessageLength, maxParticipants: this.deps.config.maxParticipants, maxUploadBytes: this.deps.config.maxUploadBytes }),
       directory: async (query = {}, options) => { const captured = actor(), check = final(captured); check(); options?.signal?.throwIfAborted();
         const page = this.deps.directory.list(scope, captured.id, query); check(); return page; },
       receipt: (requestId, options) => read('messaging.receipt', { requestId: messagingId(requestId) }, options?.signal),
       conversations: {
         list: (query = {}, options) => read('messaging.conversations', { query }, options?.signal), get: (id, options) => conversation(id, options?.signal),
         create: (input, options) => {
-          const r = messagingRecord(input, ['kind', 'title', 'userIds']), opts = mutation(options), users = messagingArray(r.userIds, this.deps.config.maxParticipants - 1).map(messagingId);
+          const r = messagingRecord(input, ['kind', 'title', 'userIds']), opts = mutation(options), users = [...new Set(messagingArray(r.userIds, this.deps.config.maxParticipants - 1).map(messagingId))];
           const id = 'conversation_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40);
           return afterCommit(write('messaging.conversation.create', { id, kind: messagingChoice(r.kind ?? (users.length === 1 ? 'direct' : 'group'), ['direct', 'group']), title: messagingText(r.title ?? '', 200, true),
             userIds: users, contactsOnly: this.deps.config.directory === 'contacts', maxParticipants: this.deps.config.maxParticipants }, opts, users), () => conversation(id, opts.signal));
@@ -105,11 +107,11 @@ export class MessagingService {
         list: (conversationId, query = {}, opts) => read('messaging.messages', { conversationId: messagingId(conversationId), query }, opts?.signal),
         send: (conversationId, input, options) => {
           const r = messagingRecord(input, ['text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch']), opts = mutation(options);
-          return write('messaging.message.send', { ...r, conversationId: messagingId(conversationId), id: 'message_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40), maxMessageLength: this.deps.config.maxMessageLength,
-            assistantEnabled: false, notificationsEnabled: false }, opts);
+          return afterCommit(write<DurableMessage>('messaging.message.send', { ...r, conversationId: messagingId(conversationId), id: 'message_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40), maxMessageLength: this.deps.config.maxMessageLength,
+            assistantEnabled: false, notificationsEnabled: false }, opts), accepted => message(conversationId, accepted.id, opts.signal));
         },
-        edit: (conversationId, id, revision, text, opts) => write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), text: messagingText(text, this.deps.config.maxMessageLength), action: 'edit', maxMessageLength: this.deps.config.maxMessageLength }, opts),
-        remove: (conversationId, id, revision, opts) => write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', maxMessageLength: this.deps.config.maxMessageLength }, opts),
+        edit: (conversationId, id, revision, text, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), text: messagingText(text, this.deps.config.maxMessageLength), action: 'edit', maxMessageLength: this.deps.config.maxMessageLength }, opts), () => message(conversationId, id, opts.signal)),
+        remove: (conversationId, id, revision, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', maxMessageLength: this.deps.config.maxMessageLength }, opts), () => message(conversationId, id, opts.signal)),
         react: (conversationId, id, emoji, selected, opts) => afterCommit(write('messaging.message.react', { conversationId: messagingId(conversationId), id: messagingId(id), emoji, selected }, opts), () => message(conversationId, id, opts.signal)),
       },
       contacts: { list: (query = {}, opts) => read('messaging.contacts', { query }, opts?.signal), request: (userId, opts) => contact('request', userId, opts),

@@ -24,16 +24,16 @@ function peer(origin: string): TestClient {
     if (!response.ok) { const failure = await response.json() as { code?: string }; throw Object.assign(new Error('Synthetic peer HTTP request was rejected.'), { status: response.status, code: failure.code }); }
     return init.json === false ? response as T : await response.json() as T;
   };
-  const messaging = createMessagingClient(call), logging = createLoggingClient(call);
+  const messaging = createMessagingClient(call, async (path, init) => { const headers = new Headers(init.headers); if (token) headers.set('Authorization', 'Bearer ' + token); return fetch(origin + path, { ...init, headers }); }), logging = createLoggingClient(call);
   const authenticate = async (path: string, body: unknown) => { const result = await call<any>(path, { method: 'POST', body }); token = result.accessToken; user = result.user; return result; };
   return { messaging, logging, fetch: call, get user() { return user; }, register: input => authenticate('/auth/register', input), login: (username, password) => authenticate('/auth/login', { username, password }), disconnect() { messaging.clear(); logging.clear(); token = null; user = null; } };
 }
-async function fixture(compliance = false) {
+async function fixture(compliance = false, history: 'all' | 'since-join' = 'all') {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
   let zero!: ServerRouteServices;
   const diagnostics = new MemoryEventStore();
   const configuration: AppConfig = { projectRoot: root, db: { mode: 'file', path: join(root, 'app.db'), synchronous: 'FULL' }, systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' }, tables: {},
-    auth: { bootstrap: 'public' }, messaging: { support: {} }, logging: { preset: compliance ? 'compliance' : 'detailed', rootDirectory: join(root, 'logs') },
+    auth: { bootstrap: 'public' }, messaging: { support: {}, history }, logging: { preset: compliance ? 'compliance' : 'detailed', rootDirectory: join(root, 'logs') },
     appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     themeFoundation: 'legacy', frontendBuild: { version: 1, frontend: { themeFoundation: 'legacy', plugins: {} }, pluginIdentities: {} },
     workflows: false, email: false, ai: false, vector: false, pdf: false, kv: false, stateSync: false, observability: { console: false, endpoint: false, store: diagnostics },
@@ -80,6 +80,66 @@ test('native messaging uses current identity, persists accepted messages/reactio
     expect((await bob.messaging.conversations.get(created.id)).unreadCount).toBe(0);
     expect(await alice.messaging.receipt('send-one')).toMatchObject({ requestId: 'send-one', resourceId: sent.id });
   } finally { for (const event of f.diagnostics.query({ limit: 1000 }).events.filter(event => event.code === 'messaging.operation.rejected' || event.code.includes('executor.failed'))) console.info('Synthetic messaging storage outcome', event.metadata); alice.disconnect(); bob.disconnect(); await f.close(); }
+}, 90000);
+
+test('exact transport replay cannot disclose a retained message after removal, since-join readmission or deletion', async () => {
+  const f = await fixture(false, 'since-join'), alice = f.client(), owner = f.peer();
+  try {
+    await enroll(alice, 'replay-alice'); await enroll(owner, 'replay-owner');
+    const conversation = await owner.messaging.conversations.create({ kind: 'group', userIds: [alice.user!.userId] }, { requestId: 'private-replay-create' });
+    const input = { text: 'Synthetic retained private message' }, options = { requestId: 'private-replay-send' };
+    const sent = await alice.messaging.messages.send(conversation.id, input, options);
+    await owner.messaging.conversations.removeParticipant(conversation.id, conversation.revision, alice.user!.userId, { requestId: 'private-replay-remove' });
+    await expect(alice.messaging.messages.send(conversation.id, input, options)).rejects.toMatchObject({ status: 409 });
+    const receipt = await alice.messaging.receipt(options.requestId);
+    expect(receipt).toMatchObject({ requestId: options.requestId, resourceId: sent.id }); expect(JSON.stringify(receipt)).not.toContain(input.text);
+    const updated = await owner.messaging.conversations.get(conversation.id);
+    await owner.messaging.conversations.addParticipant(conversation.id, updated.revision, alice.user!.userId, { requestId: 'private-replay-readmit' });
+    expect((await alice.messaging.messages.list(conversation.id)).items).toEqual([]);
+    await expect(alice.messaging.messages.send(conversation.id, input, options)).rejects.toMatchObject({ status: 409 });
+    const freshInput = { text: 'Synthetic current history' }, freshOptions = { requestId: 'private-replay-fresh' };
+    const fresh = await alice.messaging.messages.send(conversation.id, freshInput, freshOptions);
+    expect((await alice.messaging.messages.remove(conversation.id, fresh.id, fresh.revision, { requestId: 'private-replay-delete' })).deleted).toBe(true);
+    const replayed = await alice.messaging.messages.send(conversation.id, freshInput, freshOptions);
+    expect(replayed.deleted).toBe(true); expect(replayed.text).toBe('');
+  } finally { alice.disconnect(); owner.disconnect(); await f.close(); }
+}, 90000);
+
+test('native private attachments qualify allocation, bytes, immutable association, delivery, membership revocation and retained restart', async () => {
+  const f = await fixture(); let alice = f.client(), bob = f.peer(); const carol = f.peer();
+  try {
+    await enroll(alice, 'file-alice'); await enroll(bob, 'file-bob'); await enroll(carol, 'file-carol');
+    const conversation = await alice.messaging.conversations.create({ kind: 'group', userIds: [bob.user!.userId] }, { requestId: 'files-conversation' });
+    const bytes = new TextEncoder().encode('Synthetic confidential orchid attachment.'), checksum = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    const input = { fileName: 'confidential-synthetic-file.txt', mimeType: 'text/plain', sizeBytes: bytes.byteLength, checksum };
+    const allocated = await alice.messaging.attachments.allocate(conversation.id, input, { requestId: 'file-allocate' });
+    expect(allocated.state).toBe('allocated');
+    await expect(bob.messaging.attachments.get(conversation.id, allocated.id)).rejects.toMatchObject({ status: 404 });
+    await expect(carol.messaging.attachments.get(conversation.id, allocated.id)).rejects.toMatchObject({ status: 404 });
+    const uploaded = await alice.messaging.attachments.upload(conversation.id, allocated.id, bytes, { requestId: 'file-upload' });
+    expect(uploaded).toMatchObject({ state: 'ready', checksum, sizeBytes: bytes.byteLength });
+    expect((await alice.messaging.attachments.upload(conversation.id, allocated.id, new Uint8Array([9]), { requestId: 'file-upload' })).checksum).toBe(checksum);
+    const sent = await alice.messaging.messages.send(conversation.id, { text: '', attachmentIds: [allocated.id] }, { requestId: 'file-send' });
+    expect(sent.attachmentIds).toEqual([allocated.id]);
+    const download = await bob.messaging.attachments.download(conversation.id, allocated.id);
+    expect(await download.text()).toBe(new TextDecoder().decode(bytes));
+    expect((await bob.messaging.attachments.get(conversation.id, allocated.id)).messageId).toBe(sent.id);
+    expect((await fetch(f.origin + '/api/messaging/conversations/' + conversation.id + '/attachments/' + allocated.id + '/content')).status).toBe(401);
+    await expect(alice.messaging.attachments.remove(conversation.id, allocated.id, { requestId: 'file-remove-attached' })).rejects.toMatchObject({ status: 422 });
+    await expect(alice.messaging.attachments.allocate(conversation.id, { ...input, fileName: 'changed.txt' }, { requestId: 'file-allocate' })).rejects.toMatchObject({ status: 409 });
+    const bad = await alice.messaging.attachments.allocate(conversation.id, { ...input, checksum: '0'.repeat(64) }, { requestId: 'file-bad-allocate' });
+    await expect(alice.messaging.attachments.upload(conversation.id, bad.id, bytes, { requestId: 'file-bad-upload' })).rejects.toMatchObject({ status: 400, code: 'STORAGE_INPUT_INVALID' });
+    expect((await alice.messaging.attachments.get(conversation.id, bad.id)).state).toBe('allocated');
+    expect(await alice.messaging.attachments.remove(conversation.id, bad.id, { requestId: 'file-bad-remove' })).toEqual({ removed: true });
+    expect(await alice.messaging.receipt('file-bad-remove')).toMatchObject({ operation: 'attachment.remove', requestId: 'file-bad-remove' });
+    await alice.messaging.conversations.removeParticipant(conversation.id, conversation.revision, bob.user!.userId, { requestId: 'file-remove-bob' });
+    await expect(bob.messaging.attachments.download(conversation.id, allocated.id)).rejects.toMatchObject({ status: 404 });
+    await f.zero.logging!.flush();
+    const audit = await alice.logging.page('audit', { family: 'records' });
+    expect(JSON.stringify(audit)).not.toContain(input.fileName); expect(JSON.stringify(audit)).not.toContain('confidential orchid');
+    alice.disconnect(); bob.disconnect(); carol.disconnect(); await f.restart(); alice = f.client(); bob = f.peer();
+    await alice.login('file-alice', PASSWORD); expect(await (await alice.messaging.attachments.download(conversation.id, allocated.id)).text()).toBe(new TextDecoder().decode(bytes));
+  } finally { alice.disconnect(); bob.disconnect(); carol.disconnect(); await f.close(); }
 }, 90000);
 
 test('strict audit admission gates native messaging and a healthy live stream observes committed inserts without recreating identities', async () => {

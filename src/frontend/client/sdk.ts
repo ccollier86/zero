@@ -1235,7 +1235,7 @@ export function createClient(config: ClientConfig): Client {
   emailInbox = createEmailInboxSource(clientFetch);
   logging = createLoggingClient(clientFetch);
   blog = createBlogClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
-  messaging = createMessagingClient(clientFetch);
+  messaging = createMessagingClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();

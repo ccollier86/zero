@@ -60,3 +60,51 @@ test('private object identifiers support export IDs and invalid stored metadata 
     expect(reads).toBe(0);
   } finally { await service.stop(); db.dispose(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('streamed private files verify exact bytes before publication and preserve the bounded legacy put contract', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'storage-private-stream-'));
+  const db = createReactiveDB({ mode: 'memory' }); defineStorageTables(db);
+  const adapter = new LocalStorageAdapter(root), service = new StorageService(db, adapter);
+  try {
+    const bytes = new TextEncoder().encode('Synthetic streamed attachment'), checksum = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    const input = { checksum, sizeBytes: bytes.byteLength, maxBytes: 1024 };
+    const source = () => new Blob([Uint8Array.from(bytes).buffer]).stream();
+    await expect(service.privateObjects.putStream('zero.messaging.attachments', 'bad-digest', source(), 'text/plain', { ...input, checksum: '0'.repeat(64) }, () => {})).rejects.toMatchObject({ code: 'STORAGE_INPUT_INVALID' });
+    await expect(service.privateObjects.putStream('zero.messaging.attachments', 'bad-size', source(), 'text/plain', { ...input, sizeBytes: 1 }, () => {})).rejects.toMatchObject({ code: 'STORAGE_INPUT_INVALID' });
+    expect(await service.privateObjects.get('zero.messaging.attachments', 'bad-digest', () => {})).toBeNull();
+    expect(await service.privateObjects.get('zero.messaging.attachments', 'bad-size', () => {})).toBeNull();
+    await expect(service.privateObjects.putStream('zero.messaging.attachments', 'revoked', source(), 'text/plain', input, () => { throw new Error('Synthetic revoked stream'); })).rejects.toThrow('Synthetic revoked stream');
+    const accepted = await service.privateObjects.putStream('zero.messaging.attachments', 'accepted', source(), 'text/plain', input, () => {});
+    expect(accepted).toMatchObject({ checksum, sizeBytes: bytes.byteLength });
+    expect(service.listDrives()).toEqual([]); expect(db.list('storage_objects')).toEqual([]);
+    expect(await service.privateObjects.putStream('zero.messaging.attachments', 'accepted', source(), 'text/plain', input, () => {})).toEqual(accepted);
+    await expect(service.privateObjects.put('zero.logging', 'still-bounded', new Uint8Array(8 * 1024 * 1024 + 16385), 'application/octet-stream')).rejects.toMatchObject({ code: 'STORAGE_INPUT_INVALID' });
+    const large = new Uint8Array(9 * 1024 * 1024), largeChecksum = new Bun.CryptoHasher('sha256').update(large).digest('hex');
+    await service.privateObjects.putStream('zero.messaging.attachments', 'large-stream', new Blob([large.buffer]).stream(), 'application/octet-stream', { checksum: largeChecksum, sizeBytes: large.byteLength, maxBytes: 16 * 1024 * 1024 }, () => {});
+    const loaded = await service.privateObjects.get('zero.messaging.attachments', 'large-stream', () => {});
+    expect(loaded?.object.sizeBytes).toBe(large.byteLength); await loaded?.stream.cancel();
+  } finally { await service.stop(); db.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('private object authorization cannot yield before I/O or inside its publication transaction', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'storage-private-yield-'));
+  const db = createReactiveDB({ mode: 'memory' }); defineStorageTables(db);
+  const adapter = new LocalStorageAdapter(root), service = new StorageService(db, adapter);
+  try {
+    const bytes = new Uint8Array([1, 2, 3]), input = { sizeBytes: 3, checksum: new Bun.CryptoHasher('sha256').update(bytes).digest('hex'), maxBytes: 3 };
+    let writes = 0; const write = adapter.writeBlob.bind(adapter);
+    adapter.writeBlob = (...args) => { writes++; return write(...args); };
+    const yielded = async () => { throw new Error('Synthetic delayed authority rejection'); };
+    await expect(service.privateObjects.putStream('zero.messaging.attachments', 'before-io', bytes, 'application/octet-stream', input, yielded)).rejects.toMatchObject({ code: 'AUTH_STATE_INVARIANT_FAILED' });
+    expect(writes).toBe(0);
+    let checks = 0;
+    await expect(service.privateObjects.putStream('zero.messaging.attachments', 'at-commit', bytes, 'application/octet-stream', input,
+      () => { if (++checks > 1) return yielded(); })).rejects.toMatchObject({ code: 'AUTH_STATE_INVARIANT_FAILED' });
+    expect(await service.privateObjects.get('zero.messaging.attachments', 'at-commit', () => {})).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM _storage_private_objects').get()).toMatchObject({ n: 0 });
+    await service.privateObjects.put('zero.logging', 'kept', bytes, 'application/octet-stream');
+    await expect(service.privateObjects.get('zero.logging', 'kept', yielded)).rejects.toMatchObject({ code: 'AUTH_STATE_INVARIANT_FAILED' });
+    await expect(service.privateObjects.delete('zero.logging', 'kept', yielded)).rejects.toMatchObject({ code: 'AUTH_STATE_INVARIANT_FAILED' });
+    expect(await service.privateObjects.get('zero.logging', 'kept', () => {})).not.toBeNull();
+  } finally { await service.stop(); db.dispose(); await rm(root, { recursive: true, force: true }); }
+});

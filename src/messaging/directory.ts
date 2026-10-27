@@ -30,7 +30,9 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
       where.push("(u.username LIKE ? ESCAPE '\\' OR coalesce(u.first_name,'') || ' ' || coalesce(u.last_name,'') LIKE ? ESCAPE '\\')"); values.push('%' + search + '%', '%' + search + '%');
     }
     const rows = this.deps.db.prepare(`SELECT u.user_id,u.username,u.first_name,u.last_name FROM users u WHERE ${where.join(' AND ')} ORDER BY u.user_id LIMIT ?`).all(...values, limit + 1) as { user_id: string; username: string; first_name: string | null; last_name: string | null }[];
-    const items = rows.slice(0, limit).map(row => ({ id: row.user_id, name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.username, avatarUrl: this.deps.publicAvatar(row.user_id) }));
+    // Current profile names allow 120 characters each. Bound legacy longer
+    // display values on the wire without changing their canonical identity/profile.
+    const items = rows.slice(0, limit).map(row => ({ id: row.user_id, name: ([row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.username).slice(0, 241), avatarUrl: this.deps.publicAvatar(row.user_id) }));
     return { items, hasMore: rows.length > limit, nextCursor: rows.length > limit ? items.at(-1)!.id : null };
   }
 }

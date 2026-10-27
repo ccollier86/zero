@@ -2,13 +2,15 @@
 import { MESSAGING_API, type MessagingMutationOptions } from '../../messaging/contracts';
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { FetchInit } from './sdk';
-import { assertMessagingConversation, assertMessagingMessage, assertMessagingPage } from './messaging-response';
+import { assertMessagingConversation, assertMessagingMessage, assertMessagingPage, assertMessagingCapabilities, assertMessagingDirectoryEntry, assertMessagingReceipt,
+  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem } from './messaging-response';
 import { watchMessagingProjection } from './messaging-watch';
+import { createMessagingAttachmentClient, type MessagingBinaryTransport } from './messaging-attachment-client';
 export function messagingQueryString(input: object = {}): string {
   const query = new URLSearchParams(); for (const key of ['before', 'after', 'limit', 'search', 'archived']) { const value = (input as Record<string, unknown>)[key]; if (value !== undefined) query.set(key, String(value)); }
   return query.size ? '?' + query : '';
 }
-export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit) => Promise<T>): MessagingClient {
+export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit) => Promise<T>, raw?: MessagingBinaryTransport): MessagingClient {
   let epoch = 0, boundary = new AbortController();
   const call = async <T>(path: string, method: string, body?: unknown, signal?: AbortSignal, requestId?: string, validate?: (value: unknown) => void): Promise<T> => {
     const captured = epoch, active = AbortSignal.any([boundary.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]); active.throwIfAborted();
@@ -21,8 +23,9 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
   };
   const thread = (id: string) => '/conversations/' + encodeURIComponent(id), msg = (id: string, messageId: string) => thread(id) + '/messages/' + encodeURIComponent(messageId);
   return Object.freeze<MessagingClient>({
-    capabilities: () => call('/config', 'GET'), directory: (query = {}, opts) => call('/directory' + messagingQueryString(query), 'GET', undefined, opts?.signal),
-    receipt: (id, opts) => call('/receipts/' + encodeURIComponent(id), 'GET', undefined, opts?.signal),
+    attachments: createMessagingAttachmentClient(call, raw, () => boundary.signal),
+    capabilities: () => call('/config', 'GET', undefined, undefined, undefined, assertMessagingCapabilities), directory: (query = {}, opts) => call('/directory' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingDirectoryEntry, 50)),
+    receipt: (id, opts) => call('/receipts/' + encodeURIComponent(id), 'GET', undefined, opts?.signal, undefined, assertMessagingReceipt),
     conversations: Object.freeze<MessagingClient['conversations']>({
       list: (query = {}, opts) => call('/conversations' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingConversation, 25)),
       get: (id, opts) => call(thread(id), 'GET', undefined, opts?.signal, undefined, assertMessagingConversation),
@@ -30,8 +33,8 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
       rename: (id, expectedRevision, title, opts) => mutate(thread(id) + '/rename', 'POST', { expectedRevision, title }, opts, assertMessagingConversation),
       archive: (id, expectedRevision, archived, opts) => mutate(thread(id) + '/archive', 'POST', { expectedRevision, archived }, opts, assertMessagingConversation),
       addParticipant: (id, expectedRevision, userId, opts) => mutate(thread(id) + '/add', 'POST', { expectedRevision, userId }, opts, assertMessagingConversation),
-      removeParticipant: (id, expectedRevision, userId, opts) => mutate(thread(id) + '/remove', 'POST', { expectedRevision, userId }, opts),
-      markRead: (id, throughSequence, opts) => mutate(thread(id) + '/read', 'POST', { throughSequence }, opts),
+      removeParticipant: (id, expectedRevision, userId, opts) => mutate(thread(id) + '/remove', 'POST', { expectedRevision, userId }, opts, assertMessagingRemoved),
+      markRead: (id, throughSequence, opts) => mutate(thread(id) + '/read', 'POST', { throughSequence }, opts, assertMessagingReadPosition),
       takeover: (id, expectedEpoch, opts) => mutate(thread(id) + '/takeover', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
       handBack: (id, expectedEpoch, owner, opts) => mutate(thread(id) + '/hand-back', 'POST', { expectedEpoch, owner }, opts, assertMessagingConversation),
     }),
@@ -43,14 +46,14 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
       react: (conversationId, id, emoji, selected, opts) => mutate(msg(conversationId, id) + '/reactions', 'POST', { emoji, selected }, opts, assertMessagingMessage),
     }),
     contacts: Object.freeze<MessagingClient['contacts']>({
-      list: (query = {}, opts) => call('/contacts' + messagingQueryString(query), 'GET', undefined, opts?.signal),
-      request: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/request', 'POST', {}, opts),
-      respond: (id, expectedRevision, accept, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/respond', 'POST', { expectedRevision, accept }, opts),
-      block: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/block', 'POST', {}, opts),
-      unblock: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/unblock', 'POST', {}, opts),
+      list: (query = {}, opts) => call('/contacts' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingContact, 50)),
+      request: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/request', 'POST', {}, opts, assertMessagingContact),
+      respond: (id, expectedRevision, accept, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/respond', 'POST', { expectedRevision, accept }, opts, assertMessagingContact),
+      block: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/block', 'POST', {}, opts, assertMessagingContact),
+      unblock: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/unblock', 'POST', {}, opts, assertMessagingUnblocked),
     }),
     support: Object.freeze<MessagingClient['support']>({
-      open: (input, opts) => mutate('/support', 'POST', input, opts, assertMessagingConversation), queue: (query = {}, opts) => call('/support/queue' + messagingQueryString(query), 'GET', undefined, opts?.signal),
+      open: (input, opts) => mutate('/support', 'POST', input, opts, assertMessagingConversation), queue: (query = {}, opts) => call('/support/queue' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingSupportQueueItem, 50)),
       claim: (id, expectedEpoch, opts) => mutate('/support/' + encodeURIComponent(id) + '/claim', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
     }),
     watchConversations: (listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), '/conversations/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingConversation, 25), options),

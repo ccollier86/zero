@@ -17,7 +17,7 @@ export function messagingId(value: unknown): string {
   return value;
 }
 export function messagingText(value: unknown, max = 20000, empty = false): string {
-  if (typeof value !== 'string' || value.length > max || !empty && !value.trim() || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) messagingFail('MESSAGING_INPUT_INVALID', 422);
+  if (typeof value !== 'string' || value.length > max || !empty && !value.trim() || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value) || /\p{Cs}/u.test(value)) messagingFail('MESSAGING_INPUT_INVALID', 422);
   return value;
 }
 export function messagingInteger(value: unknown, min = 1, max = Number.MAX_SAFE_INTEGER - 1): number {
