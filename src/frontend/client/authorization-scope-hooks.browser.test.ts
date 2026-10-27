@@ -46,7 +46,7 @@ beforeAll(async () => {
     entrypoints: [entrypoint],
     root: process.cwd(),
     outdir: buildDir,
-    naming: 'bundle.js',
+    naming: 'bundle.[ext]',
     target: 'browser',
     format: 'iife',
   });

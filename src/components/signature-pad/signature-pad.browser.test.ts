@@ -21,7 +21,7 @@ beforeAll(async () => {
   directory = await mkdtemp(join(SCRATCH, 'signature-browser-'));
   evidence = await mkdtemp(join(ARTIFACTS, 'acceptance-'));
   const result = await Bun.build({ entrypoints: [join(import.meta.dir, 'signature-pad.browser-fixture.tsx')],
-    outdir: directory, naming: 'bundle.js', target: 'browser', format: 'iife' });
+    outdir: directory, naming: 'bundle.[ext]', target: 'browser', format: 'iife' });
   if (!result.success) throw new Error(result.logs.map((log) => log.message).join('\n'));
   script = await Bun.file(join(directory, 'bundle.js')).text();
   css = await Bun.file((await buildPlatformStyles(directory, join(directory, 'missing-app'))).cssPath).text();

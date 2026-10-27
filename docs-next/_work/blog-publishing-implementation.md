@@ -180,6 +180,13 @@ creating a replacement; restoring that exact root preserves drafts/history.
 No owner/ledger rows are cleared to obtain recovery. Final complete-suite and
 updater admission still remain separate release gates.
 
+The frozen `975db2f` broad run additionally exposed a remaining fixed-output
+browser-fixture collision in IntegrationSettingsList: JavaScript and imported
+CSS both targeted `fixture.js`. The remaining eight affected qualification
+harnesses now use extension-aware output names. Their focused fresh-process
+run passes all eight files without removing style imports or changing runtime
+behavior. The original frozen run is retained and is not a passing release gate.
+
 Do not reset data, alter prior migration checksums, replace Guardian identities,
 publish private avatars, loosen admission or expose private Storage paths to
 make a test pass. The blog remains one application-owned Fabric file in either
