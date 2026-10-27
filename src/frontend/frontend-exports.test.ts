@@ -105,6 +105,9 @@ test('curated facades preserve every original ordered named/type/star source con
   // Remove only those exact symbols, retaining the frozen popover contract.
   const anchorNames = new Set(['PopoverAnchor', 'PopoverAnchorProps']);
   const popoverTarget = 'src/components/popover';
+  const appShellTarget = 'src/components/app-shell';
+  expect(result.records.filter(record => record.target === appShellTarget && record.type).flatMap(record => Array.isArray(record.clause)
+    ? record.clause.filter(item => item.name === 'AppShellLinkProps') : [])).toEqual([{ name: 'AppShellLinkProps', local: 'AppShellLinkProps', type: false }]);
   expect(result.records.filter(record => record.target === popoverTarget).flatMap(record => Array.isArray(record.clause)
     ? record.clause.filter(item => anchorNames.has(item.name)).map(item => ({ ...item, declarationType: record.type })) : [])).toEqual([
     { name: 'PopoverAnchor', local: 'PopoverAnchor', type: false, declarationType: false },
@@ -112,8 +115,8 @@ test('curated facades preserve every original ordered named/type/star source con
   ]);
   const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record)
     && !loggingTargets.has(record.target) && !domainPart(record) && !drawerPart(record) && !blogPart(record) && !palettePart(record))
-    .map(record => record.target === popoverTarget && Array.isArray(record.clause)
-      ? { ...record, clause: record.clause.filter(item => !anchorNames.has(item.name)) } : record);
+    .map(record => Array.isArray(record.clause) && (record.target === popoverTarget || record.target === appShellTarget)
+      ? { ...record, clause: record.clause.filter(item => record.target === popoverTarget ? !anchorNames.has(item.name) : item.name !== 'AppShellLinkProps') } : record);
   expect(loggingAdditive).toHaveLength(9);
   expect(loggingAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
     'LoggingActivityProvider', 'LoggingAdmissionReceipt', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingEvidenceCursor', 'LoggingEvidencePage', 'LoggingExport', 'LoggingExportJob', 'LoggingExportRequest', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',

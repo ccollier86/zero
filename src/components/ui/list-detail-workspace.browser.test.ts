@@ -182,7 +182,10 @@ browserTest('animated tabs content-fill-content transition clears the old natura
     const bounded = await contents.evaluate(element => ({ height: element.getBoundingClientRect().height, inlineHeight: (element as HTMLElement).style.height,
       parentHeight: element.parentElement!.getBoundingClientRect().height }));
     expect(bounded.height).toBeLessThanOrEqual(bounded.parentHeight);
-    expect(bounded.inlineHeight).toBe('auto');
+    // The mode state publishes before Motion finishes replacing its old target.
+    // Verify actual cleanup, not an intermediate frame after the button click.
+    await page.waitForFunction(() => document.querySelector<HTMLElement>('[data-slot="tabs-contents"]')!.style.height === 'auto');
+    expect(await contents.evaluate(element => (element as HTMLElement).style.height)).toBe('auto');
     const long = page.getByTestId('long-tab-body');
     expect(await long.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await long.evaluate(element => { element.scrollTop = 500; });

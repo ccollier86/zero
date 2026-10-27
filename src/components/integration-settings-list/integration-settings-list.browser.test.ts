@@ -30,7 +30,7 @@ beforeAll(async () => {
   directory = await mkdtemp(join(SCRATCH, 'integration-settings-')); evidence = await mkdtemp(join(ARTIFACTS, 'acceptance-'));
   const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', 'build',
     join(import.meta.dir, 'integration-settings-list.browser-fixture.tsx'), '--target=browser', '--format=iife',
-    `--outfile=${join(directory, 'fixture.js')}`], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+    `--outdir=${directory}`, '--entry-naming=fixture.[ext]'], cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, status] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
   if (status !== 0) throw new Error(`Integration settings fixture compilation failed.\n${stdout}\n${stderr}`);
   const css = await buildPlatformStyles(directory, join(directory, 'missing-app'));

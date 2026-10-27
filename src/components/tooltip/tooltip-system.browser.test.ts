@@ -18,7 +18,7 @@ beforeAll(async () => {
   try {
     const output = join(directory, 'fixture.js');
     const child = Bun.spawn([process.execPath, '--no-env-file', 'build', import.meta.dir + '/tooltip-system.browser-fixture.tsx',
-      '--target=browser', '--format=iife', '--outfile', output], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
+      '--target=browser', '--format=iife', '--outdir', directory, '--entry-naming=fixture.[ext]'], { stdout: 'pipe', stderr: 'pipe', timeout: 40_000 });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     if (code !== 0) throw new Error('Tooltip fixture build failed: ' + (stderr || stdout));
     bundle = await Bun.file(output).text();

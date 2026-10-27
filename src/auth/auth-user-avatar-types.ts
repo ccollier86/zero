@@ -22,7 +22,9 @@ export interface ResolvedAuthUserAvatarConfig {
   maxPixels: number;
   outputSize: number;
 }
-export interface UserAvatarCapabilities extends ResolvedAuthUserAvatarConfig {
+export interface UserAvatarCapabilities extends Omit<ResolvedAuthUserAvatarConfig, 'publicAccess'> {
+  /** Additive capability: older/native caller-supplied projections omit it and remain private. */
+  publicAccess?: boolean;
   state: 'ready' | 'blocked' | 'disabled';
   publicState?: 'ready' | 'blocked' | 'disabled';
 }

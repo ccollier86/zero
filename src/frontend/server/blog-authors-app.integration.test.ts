@@ -109,7 +109,9 @@ test('a minimal existing project can enable authors without changing identities,
 
     app = await createApp(
       config(root, {
-        blog: true,
+        // This headless legacy-profile fixture has no browser dependency tree.
+        // Full default publishing/pages are qualified by the installed app suite.
+        blog: { content: false, pages: false },
         logging: { rootDirectory: join(root, 'logs') },
         serverExtensions: [
           capture,
@@ -371,7 +373,7 @@ test('an existing pre-feature SYSTEM database with migrate:false stays unmodifie
     }
     app = await createApp(
       config(root, {
-        blog: true,
+        blog: { content: false, pages: false },
         migrate: false,
         serverExtensions: [
           defineZeroPlugin({
