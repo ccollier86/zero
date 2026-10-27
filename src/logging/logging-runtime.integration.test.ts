@@ -62,7 +62,7 @@ test('diagnostic bridge excludes private contents, preserves previous sinks, avo
     const first = await runtime.page('operational', { kind: 'platform' });
     expect(first.events.map(row => row.event.action)).toEqual(['fixture.warning']);
     expect(JSON.stringify(first)).not.toMatch(/synthetic-secret|synthetic-content|private detail|Private raw error/i);
-    expect(first.events[0]?.event.metadata).toEqual({ category: 'fixture' });
+    expect(first.events[0]?.event.metadata).toEqual({ category: 'fixture', sourceCode: 'fixture.warning' });
     expect(obs.store?.query({ code: 'fixture.warning' }).count).toBe(1);
     await runtime.flush();
     expect((await runtime.page('operational', { kind: 'platform' })).highWaterOrdinal).toBe(first.highWaterOrdinal);

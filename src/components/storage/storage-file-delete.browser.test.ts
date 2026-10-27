@@ -69,7 +69,7 @@ beforeAll(async () => {
   const build = Bun.spawn({
     cmd: [process.execPath, '--no-env-file', 'build',
       join(import.meta.dir, 'storage-file-delete.browser-fixture.tsx'),
-      '--target=browser', '--format=iife', '--production', `--outfile=${bundlePath}`],
+      '--target=browser', '--format=iife', '--production', `--outdir=${directory}`, '--entry-naming=fixture.[ext]'],
     cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe',
   });
   const [stdout, stderr, status] = await Promise.all([
@@ -137,7 +137,7 @@ test('held Delete dispatches once and distinguishes plain, space, and literal-pe
     await firstRow.waitFor({ state: 'visible' });
     await firstRow.press('Enter');
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    const cancelledDialog = page.getByRole('dialog');
+    const cancelledDialog = page.getByRole('alertdialog');
     await cancelledDialog.waitFor({ state: 'visible' });
     expect(deleteRequests).toEqual([]);
     const cancelledHold = cancelledDialog.getByRole('button', { name: 'Delete', exact: true });
@@ -151,15 +151,18 @@ test('held Delete dispatches once and distinguishes plain, space, and literal-pe
 
     for (const [index, file] of files.entries()) {
       const row = page.locator(`[data-storage-item-id="${file.id}"]`);
+      // Logical dismissal removes the dialog before its exit scene releases the
+      // background. Keyboard dispatch must wait for the real surface admission.
+      await page.waitForFunction(() => !document.querySelector('[data-zero-modal-surface][inert]'));
       await row.press('Enter');
       await page.getByRole('button', { name: 'Delete', exact: true }).click();
-      const dialog = page.getByRole('dialog');
+      const dialog = page.getByRole('alertdialog');
       await dialog.waitFor({ state: 'visible' });
       expect(await dialog.getByText(`${file.name} will be permanently deleted.`, { exact: true }).isVisible()).toBe(true);
       expect(deleteRequests).toHaveLength(index);
       if (evidenceDirectory && index === 1) {
         await page.waitForFunction(() => {
-          const visibleDialog = document.querySelector('[role="dialog"]');
+          const visibleDialog = document.querySelector('[role="alertdialog"]');
           if (!visibleDialog) return false;
           const style = getComputedStyle(visibleDialog);
           return style.opacity === '1' && (style.filter === 'none' || style.filter === 'blur(0px)');

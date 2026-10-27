@@ -3,6 +3,7 @@ import { expect, test, afterEach } from 'bun:test';
 import { modals } from './modal-events';
 import { modalStore } from './modal-store';
 import type { ModalDescriptor } from './modal-system.types';
+import { originalThemeBeforeBlogStyles } from '../test-support/preserved-blog-theme';
 
 const root = new URL('../../', import.meta.url);
 const originals = {
@@ -22,7 +23,9 @@ afterEach(() => modals.discardAll());
 
 test('modal scroll adoption keeps every original shell/skin/legacy-theme byte until approved retirement', async () => {
   for (const [path, hash] of Object.entries(originals)) {
-    expect(new Bun.CryptoHasher('sha256').update(await Bun.file(new URL(path, root)).arrayBuffer()).digest('hex'), path).toBe(hash);
+    const source = path === 'src/frontend/styles/globals.css'
+      ? originalThemeBeforeBlogStyles(await Bun.file(new URL(path, root)).text()) : await Bun.file(new URL(path, root)).arrayBuffer();
+    expect(new Bun.CryptoHasher('sha256').update(source).digest('hex'), path).toBe(hash);
   }
 });
 

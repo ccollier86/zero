@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { originalThemeBeforeBlogStyles } from '../test-support/preserved-blog-theme';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const DIAGNOSTICS = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/scroll-adoption';
@@ -127,7 +128,9 @@ test('fresh installed modal scroll archive qualifies public types, original SSR 
       sourceHashes[path] = installedHash;
     }
     for (const [path, hash] of Object.entries(ORIGINALS)) {
-      expect(sourceHashes[path], `Original must remain byte-identical in the fresh archive: ${path}`).toBe(hash);
+      const original = path === 'src/frontend/styles/globals.css'
+        ? createHash('sha256').update(originalThemeBeforeBlogStyles(await Bun.file(join(installed, path)).text())).digest('hex') : sourceHashes[path];
+      expect(original, `Original theme bytes remain preserved after the exact approved style imports: ${path}`).toBe(hash);
     }
     const metadata = await Bun.file(join(installed, 'package.json')).json();
     expect(metadata.exports['./modals']).toEqual({ types: './src/modals/index.ts', import: './src/modals/index.ts' });
@@ -139,7 +142,7 @@ test('fresh installed modal scroll archive qualifies public types, original SSR 
       publicFacadeIdentity: true, publicTypeIdentity: true, publicTypes: PUBLIC_TYPES,
       strictProductionAndConsumerTypes: true, sourceOnlyNamedExports: true, privateAdaptersRemainPrivate: true,
       ssrOriginalParity: true, ssrComparisons: result.ssrComparisons, commandsInvoked: result.commandsInvoked,
-      originalFilesByteIdentical: Object.keys(ORIGINALS).length, originalThemeRetained: true,
+      originalFilesByteIdentical: Object.keys(ORIGINALS).length - 1, approvedAdditiveStyleImports: 3, originalThemeRetained: true,
       browserFromInstalledArchive: true, browserCss: true, browserBytes: result.browserBytes,
       copiedCliBuild: true, copiedCustomOriginalsRetained: true, copiedTestFiles: result.copiedTestFiles,
       configTripwireNotExecuted: true, installScriptsNotExecuted: true, environmentNotLoaded: true, databaseFiles: 0,

@@ -125,6 +125,9 @@ describe('request tenant-database projection', () => {
     });
 
     expect(new Set(Object.keys(zero))).toEqual(new Set([
+      'blog',
+      'logging',
+      'payments',
       'access',
       'scope',
       'data',
@@ -136,6 +139,9 @@ describe('request tenant-database projection', () => {
       'workflows',
       'pdf',
     ]));
+    expect(zero.blog).toBeNull();
+    expect(zero.logging).toBeNull();
+    expect(zero.payments).toBeNull();
     expect('futurePrivilegedService' in zero).toBeFalse();
     expect(Object.getOwnPropertyDescriptor(zero, 'futurePrivilegedService')).toBeUndefined();
     expect(() => Reflect.get(zero, 'futurePrivilegedService')).toThrow(

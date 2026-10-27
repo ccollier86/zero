@@ -14,7 +14,7 @@ beforeAll(async () => {
   const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform'; await mkdir(scratch,{recursive:true});
   directory = await mkdtemp(join(scratch,'storage-settings-')); const builder=join(directory,'build.ts');
   await Bun.write(builder,`const build=await Bun.build({entrypoints:[${JSON.stringify(join(import.meta.dir,'storage-settings-validation.browser-fixture.tsx'))}],
-    target:'browser',format:'iife',outdir:${JSON.stringify(directory)},naming:'bundle.js',define:{'process.env.NODE_ENV':'"test"'}});
+    target:'browser',format:'iife',outdir:${JSON.stringify(directory)},naming:'bundle.[ext]',define:{'process.env.NODE_ENV':'"test"'}});
     if(!build.success){console.error(build.logs.map(log=>log.message).join('\\n'));process.exit(1)}`);
   const build=Bun.spawn({cmd:[process.execPath,'--no-env-file',builder],cwd:process.cwd(),stdout:'pipe',stderr:'pipe'});
   const [stdout,stderr,status]=await Promise.all([new Response(build.stdout).text(),new Response(build.stderr).text(),build.exited]);

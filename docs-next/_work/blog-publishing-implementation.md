@@ -180,6 +180,41 @@ creating a replacement; restoring that exact root preserves drafts/history.
 No owner/ledger rows are cleared to obtain recovery. Final complete-suite and
 updater admission still remain separate release gates.
 
+The frozen `975db2f` broad run additionally exposed a remaining fixed-output
+browser-fixture collision in IntegrationSettingsList: JavaScript and imported
+CSS both targeted `fixture.js`. The remaining eight affected qualification
+harnesses now use extension-aware output names. Their focused fresh-process
+run passes all eight files without removing style imports or changing runtime
+behavior. The original frozen run is retained and is not a passing release gate.
+
+Further broad-run reconciliation preserves the original facade digest while
+admitting only the already-released `AppShellLinkProps` addition; diagnostic
+expectations now retain the trusted bridge's original `sourceCode`. Headless
+author-only fixtures explicitly select `content:false,pages:false` rather than
+attempting to bundle a public reader in a deliberately dependency-free app root.
+Full default publishing remains covered by installed/source/bundle tests.
+Keyboard modal tests wait for actual scene/background admission and the completed
+Motion height target instead of dispatching through inert exit paint.
+Destructive confirmation tests use the managed `alertdialog` role.
+
+The installed profile consumer exposed an additive type-compatibility gap:
+caller-supplied older avatar capability projections lacked `publicAccess`.
+That wire/presentation field is now optional (absence stays private); resolved
+server policy remains a required boolean and explicit publication checks are
+unchanged. The complete installed profile proof still needs its solitary run.
+
+The complete frozen `975db2f` inventory finished with 1320/1338 files passing;
+18 failed and none were skipped/not run. Its log remains in diagnostics. The
+remaining distribution smoke now expects all 48 additive migrations, while
+preserving every older migration's checks. Public UI export rejection is tested
+from an external consumer process, not the repository's broader development
+aliases. Modal source/archive checks remove only the exact three approved blog
+CSS imports before comparing the unchanged original theme hash, while still
+verifying raw installed/source identity. An unchanged native FTS scenario which
+exceeded its original 20s deadline in that full run passes in 8.9s when isolated;
+no timeout was raised and no vector production behavior was changed. A fresh
+complete candidate run and the heavy installed/updater proofs remain required.
+
 Do not reset data, alter prior migration checksums, replace Guardian identities,
 publish private avatars, loosen admission or expose private Storage paths to
 make a test pass. The blog remains one application-owned Fabric file in either
