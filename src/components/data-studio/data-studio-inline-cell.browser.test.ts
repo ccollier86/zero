@@ -37,7 +37,7 @@ beforeAll(async () => {
     entrypoints: [${JSON.stringify(entrypoint)}],
     root: ${JSON.stringify(process.cwd())},
     outdir: ${JSON.stringify(buildDir)},
-    naming: 'bundle.js',
+    naming: 'bundle.[ext]',
     target: 'browser',
     format: 'iife',
   });

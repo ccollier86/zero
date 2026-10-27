@@ -1,23 +1,36 @@
 /** Exact historical copy edges protect app-owned customizations even when compatibility files arrive transitively. */
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getComponentCompatibilityCompanions } from './component-compatibility';
 import { addZeroSource } from './copy';
 
 const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform';
 
-test('organization preserves supported package paths without publishing canonical helpers or fixtures', () => {
+test('organization preserves supported package paths without publishing canonical helpers or fixtures', async () => {
   const root = join(import.meta.dir, '../..');
   for (const name of ['calendar', 'date-picker', 'date-range-picker', 'time-picker', 'select', 'card', 'content-card']) {
     expect(Bun.resolveSync(`@zero/framework/components/ui/${name}`, root)).toEndWith(`/src/components/ui/${name}.tsx`);
   }
   expect(Bun.resolveSync('@zero/framework/components/popover', root)).toEndWith('/src/components/popover/index.ts');
-  for (const path of ['controls/date-time', 'controls/select', 'surfaces/card', 'surfaces/popover',
+  const privatePaths = ['controls/date-time', 'controls/select', 'surfaces/card', 'surfaces/popover',
     '_internal/overlay-scope', '_internal/anchored-surface', '_internal/scroll-viewport', '_internal/magnetic-highlight',
     'ui/calendar.test', 'ui/calendar.browser-fixture', 'ui/date-time-picker.test', 'ui/date-time-picker.browser-fixture',
-    'controls/date-time/calendar.browser-fixture', '_internal/overlay-scope/overlay-scope.test']) {
-    expect(() => Bun.resolveSync(`@zero/framework/components/${path}`, root)).toThrow();
+    'controls/date-time/calendar.browser-fixture', '_internal/overlay-scope/overlay-scope.test'];
+  await mkdir(scratch, { recursive: true });
+  const consumer = await mkdtemp(join(scratch, 'public-component-paths-'));
+  try {
+    await mkdir(join(consumer, 'node_modules/@zero'), { recursive: true });
+    await symlink(root, join(consumer, 'node_modules/@zero/framework'), 'dir');
+    await Bun.write(join(consumer, 'tsconfig.json'), '{"compilerOptions":{}}');
+    // The repository's intentional @zero/framework/components/* source alias
+    // bypasses package exports. Test actual consumer resolution outside it.
+    const script = `const paths=${JSON.stringify(privatePaths)};console.log(JSON.stringify(paths.map(path=>{try{Bun.resolveSync('@zero/framework/components/'+path,process.cwd());return false;}catch{return true;}})));`;
+    const child = Bun.spawn([process.execPath, '--no-env-file', '-e', script], { cwd: consumer, stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH } });
+    const [out, err, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(status, err).toBe(0); expect(JSON.parse(out)).toEqual(privatePaths.map(() => true));
+  } finally {
+    await rm(consumer, { recursive: true, force: true });
   }
 });
 

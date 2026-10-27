@@ -6,9 +6,6 @@
  */
 export const FRAMEWORK_INSTALLED_CONSUMER_FILES = [
   'packages/docs/package-installed.integration.test.ts',
-  'src/blog/blog.package.test.ts',
-  'src/blog/blog-publishing.package.test.ts',
-  'src/components/blog/blog.package.test.ts',
   'src/components/button-group/button-group-context-menu.package.test.ts',
   'src/components/cascader/cascader.package.test.ts',
   'src/components/data-studio/data-studio-storage-editors.package.test.ts',
@@ -25,6 +22,10 @@ export const FRAMEWORK_INSTALLED_CONSUMER_FILES = [
   'src/components/tooltip/tooltip-system.package.test.ts',
   'src/frontend/server/style-foundation.package.test.ts',
   'src/migrations/legacy-state/legacy-state.package.test.ts',
+  'src/blog/blog.package.test.ts',
+  'src/blog/blog-publishing.package.test.ts',
+  'src/components/blog/blog.package.test.ts',
+  'packages/payments/src/package.test.ts',
 ] as const;
 
 /** Match only the reviewed full-framework installed consumers, not arbitrary package tests. */

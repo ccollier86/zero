@@ -29,6 +29,7 @@ export class SourceOnlyUpgradeExports {
   private bytes = 0;
   private operations = 0;
   private readonly files = new Map<string, Promise<ts.SourceFile | UpgradeExportEvidence>>();
+  private readonly sources = new Map<string, Promise<string | UpgradeExportEvidence>>();
   private readonly queries = new Map<string, UpgradeResolvedExport>();
   constructor(readonly root: string, private readonly exportsMap: unknown) {}
 
@@ -38,6 +39,17 @@ export class SourceOnlyUpgradeExports {
 
   async source(from: string, target: string): Promise<string | UpgradeExportEvidence> {
     if (++this.operations > MAX_OPERATIONS) { this.complete = false; return unknown('inspection-limit'); }
+    const key = `${from}\0${target}`, existing = this.sources.get(key);
+    if (existing) return existing;
+    const pending = this.resolveSource(from, target);
+    this.sources.set(key, pending);
+    return pending;
+  }
+
+  /** Source identities are instance-local snapshots, just like admitted ASTs.
+   * Repeated export queries must not spend the stat budget resolving the same
+   * literal edge for every symbol. The original bounds remain unchanged. */
+  private async resolveSource(from: string, target: string): Promise<string | UpgradeExportEvidence> {
     if (!target.startsWith('.') || /[*?#\\]/u.test(target)) return unknown();
     const base = resolve(dirname(from), target);
     if (this.blocked(base)) { this.complete = false; return unknown('private-target'); }

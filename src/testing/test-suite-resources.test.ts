@@ -3,8 +3,8 @@ import { expect, test } from 'bun:test';
 import { FRAMEWORK_INSTALLED_CONSUMER_FILES, isFrameworkInstalledConsumer } from './test-suite-resources';
 
 test('the resource catalog contains only reviewed existing full-framework pack/install consumers', async () => {
-  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES).toHaveLength(17);
-  expect(new Set(FRAMEWORK_INSTALLED_CONSUMER_FILES).size).toBe(17);
+  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES).toHaveLength(21);
+  expect(new Set(FRAMEWORK_INSTALLED_CONSUMER_FILES).size).toBe(21);
   // Keep the original admission list/order; qualify the reviewed additive consumers independently.
   expect(FRAMEWORK_INSTALLED_CONSUMER_FILES.slice(0, 10)).toEqual([
     'packages/docs/package-installed.integration.test.ts',
@@ -18,7 +18,7 @@ test('the resource catalog contains only reviewed existing full-framework pack/i
     'src/frontend/server/fabric-sync-metadata.package.test.ts',
     'src/frontend/server/resource-array-policy.package.test.ts',
   ]);
-  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES.slice(10)).toEqual([
+  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES.slice(10, 17)).toEqual([
     'src/components/controls/floating-button-group/floating-button-group.package.test.ts',
     'src/modals/modal-scroll.package.test.ts',
     'src/components/_internal/scroll-viewport/ordinary-scroll.package.test.ts',
@@ -26,6 +26,12 @@ test('the resource catalog contains only reviewed existing full-framework pack/i
     'src/components/tooltip/tooltip-system.package.test.ts',
     'src/frontend/server/style-foundation.package.test.ts',
     'src/migrations/legacy-state/legacy-state.package.test.ts',
+  ]);
+  expect(FRAMEWORK_INSTALLED_CONSUMER_FILES.slice(17)).toEqual([
+    'src/blog/blog.package.test.ts',
+    'src/blog/blog-publishing.package.test.ts',
+    'src/components/blog/blog.package.test.ts',
+    'packages/payments/src/package.test.ts',
   ]);
   for (const file of FRAMEWORK_INSTALLED_CONSUMER_FILES) {
     const source = await Bun.file(new URL(`../../${file}`, import.meta.url)).text();

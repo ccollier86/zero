@@ -40,12 +40,15 @@ beforeAll(async () => {
   const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform', artifacts = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/docs-plugin';
   await mkdir(scratch, { recursive: true }); await mkdir(artifacts, { recursive: true });
   directory = await mkdtemp(join(scratch, 'docs-reader-')); evidence = await mkdtemp(join(artifacts, 'reader-'));
-  const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'hydrate.tsx'), '--target=browser', '--format=iife', `--outfile=${join(directory, 'reader.js')}`], stdout: 'pipe', stderr: 'pipe' });
+  // Browser entries may also emit native component CSS. Give each asset its
+  // own extension instead of forcing both outputs onto the JavaScript path.
+  const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'hydrate.tsx'), '--target=browser', '--format=iife', `--outdir=${directory}`, '--entry-naming=reader.[ext]'], stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
   if (code) throw new Error(`Docs browser fixture could not build: ${stdout}\n${stderr}`);
   const platform = await buildPlatformStyles(directory, join(directory, 'empty-app'), [import.meta.dir]);
   const cssPath = join(directory, 'reader.css');
-  await Bun.write(cssPath, await Bun.file(platform.cssPath).text() + '\n' + await Bun.file(join(import.meta.dir, 'docs.css')).text());
+  const emitted = await Bun.file(cssPath).text().catch(() => '');
+  await Bun.write(cssPath, await Bun.file(platform.cssPath).text() + '\n' + emitted + '\n' + await Bun.file(join(import.meta.dir, 'docs.css')).text());
   const body = { ...readerFixture.page.body, children: [...readerFixture.page.body.children!,
     { type: 'paragraph' as const, children: [{ type: 'text' as const, value: 'Declare ' }, { type: 'inlineCode' as const, value: 'docs()' }, { type: 'text' as const, value: ' in the existing Zero extension loader.' }] },
     ...Array.from({ length: 12 }, (_, index) => ({ type: 'paragraph' as const, children: [{ type: 'text' as const, value: `Step ${index + 1}. Build reusable services with explicit authority and small responsibilities. ` + 'Keep the reading layout calm and focused. '.repeat(8) }] })),

@@ -47,6 +47,17 @@ test('package exact denial and most-specific wildcard mappings beat broad public
   expect((await inspector.inspect('#zero/private', 'Secret')).status).toBe('missing');
 }));
 
+test('many symbols sharing literal barrel edges reuse admitted source resolution within the original inspection budget', async () => fixture(async root => {
+  const count = 100;
+  await write(root, 'index.ts', Array.from({ length: 20 }, (_, i) => `export * from './barrel-${i}';`).join('\n'));
+  for (let i = 0; i < 20; i++) await write(root, `barrel-${i}.ts`, `export { ${Array.from({ length: count }, (_, n) => `Value${n}`).join(',')} } from './values';`);
+  await write(root, 'values.ts', Array.from({ length: count }, (_, n) => `export const Value${n}=${n};`).join('\n'));
+  const inspector = new SourceOnlyUpgradeExports(root, { '.': './index.ts' });
+  for (let n = 0; n < count; n++) expect((await inspector.inspect('@zero/framework', `Value${n}`)).status).toBe('available');
+  expect(inspector.complete).toBe(true);
+  expect(inspector.records.size).toBe(22);
+}));
+
 test('unresolved, private, external, malformed, CommonJS and cyclic stars stay unknown', async () => fixture(async root => {
   const cases = {
     unresolved: `export * from './absent';`, external: `export * from 'custom-resolver';`,

@@ -24,7 +24,7 @@ test('packed groups and menus retain public identity, native SSR semantics, docs
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
     await checked(['install', '--ignore-scripts'], consumer);
     // A fresh CLI compiler avoids test-process server/browser resolver warming.
-    await checked(['build', 'consumer.tsx', '--target=browser', '--outfile=browser.js'], consumer);
+    await checked(['build', 'consumer.tsx', '--target=browser', '--outdir=.', '--entry-naming=browser.[ext]'], consumer);
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim()) as {
       exported: number; bytes: number; version: string; html: string; noDom: boolean; docs: number;
     };

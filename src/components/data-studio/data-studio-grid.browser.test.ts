@@ -12,10 +12,11 @@ let browser: Browser, lease: PlaywrightTestBrowserLease, directory: string, scri
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   lease = await acquirePlaywrightTestBrowser(); browser = lease.browser;
-  await mkdir(join(process.cwd(), '.zero'), { recursive: true });
-  directory = await mkdtemp(join(process.cwd(), '.zero/studio-grid-browser-'));
+  const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform';
+  await mkdir(scratch, { recursive: true });
+  directory = await mkdtemp(join(scratch, 'studio-grid-browser-'));
   const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'data-studio-grid.browser-fixture.tsx')],
-    outdir: directory, naming: 'bundle.js', target: 'browser', format: 'iife' });
+    outdir: directory, naming: 'bundle.[ext]', target: 'browser', format: 'iife' });
   if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
   script = await Bun.file(join(directory, 'bundle.js')).text();
   css = await Bun.file((await buildPlatformStyles(directory, join(directory, 'missing-app'))).cssPath).text();

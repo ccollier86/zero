@@ -1,4 +1,4 @@
-/** Structural overlay migration: exact former copy closure, unchanged runtime/CSS bodies and shared identities; no application boot. */
+/** Structural overlay migration: exact former copy closure, frozen bodies with explicit approved enhancements, and shared identities. */
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
@@ -192,7 +192,20 @@ for (const entry of cases) test(`${entry.item} retains its complete pre-move des
   expect(plan.filesWritten).toEqual([]);
 });
 
-test('canonical overlay runtime statements and CSS are unchanged after import-only relocation', async () => {
+// The original relocation hashes above remain the historical baseline. The
+// approved blog UI introduced a real input anchor in 68ed0ba. Managed drawers
+// (376a13c) and scroll chaining/decoration fixes (645295d) also deliberately
+// changed their runtime owners. Keep every exception exact and attributable.
+const approvedRuntimeBodies: Readonly<Record<string, string>> = {
+  'components/surfaces/popover/popover.tsx': 'd9e20e1821be71f117cb5042a85142459072d2246fa791cd94edd843412357c6',
+  'components/surfaces/popover/popover-primitive.tsx': 'c644617a72d0492345337a7f214921821236aa799cf5dd278c60119af0af7936',
+  'components/_internal/overlay-scope/overlay-scope.tsx': 'b524af4a167265aefd00d9b5d6e30217533b2015f019bed7228162409a94cb68',
+  'components/_internal/scroll-viewport/scroll-viewport-decoration.tsx': '11c9391274c9413f50ba7e3b4b38f1c33f3936c54cead157f6c13f6a1c86c2e0',
+  'components/_internal/scroll-viewport/scroll-viewport-metrics.ts': '61b7f54169444167a7d5a6142fea0eb1035f23641646918cd605a5ee465ffe7a',
+  'components/_internal/scroll-viewport/use-scroll-viewport.ts': 'd20e25b3107219f8de99e4bf98571f981a3d2d8661a78d84791a873619d2ff70',
+};
+
+test('canonical overlay bodies retain the relocation baseline or exact approved runtime enhancements', async () => {
   const printer = ts.createPrinter({ removeComments: true });
   for (const entry of bodies) {
     const source = await readFile(join(sourceRoot, entry.canonical), 'utf8');
@@ -200,7 +213,7 @@ test('canonical overlay runtime statements and CSS are unchanged after import-on
     const normalized = entry.canonical.endsWith('.css') ? source.trimEnd()
       : ast.statements.filter(node => !ts.isImportDeclaration(node))
         .map(node => printer.printNode(ts.EmitHint.Unspecified, node, ast)).join('\n');
-    expect(createHash('sha256').update(normalized).digest('hex')).toBe(entry.sha256);
+    expect(createHash('sha256').update(normalized).digest('hex')).toBe(approvedRuntimeBodies[entry.canonical] ?? entry.sha256);
     const old = await readFile(join(sourceRoot, entry.legacy), 'utf8');
     expect(old).toContain(entry.canonical.endsWith('.css') ? '@import ' : 'export * from ');
     expect(source.split('\n').length).toBeLessThanOrEqual(400);
@@ -213,8 +226,8 @@ test('Popover canonical and retained public facades expose only the same curated
     return ast.statements.filter(ts.isExportDeclaration).flatMap(node => node.exportClause && ts.isNamedExports(node.exportClause)
       ? node.exportClause.elements.map(element => `${node.isTypeOnly || element.isTypeOnly ? 'type' : 'value'}:${element.name.text}`) : ['UNBOUNDED_EXPORT']);
   };
-  const expected = ['value:Popover', 'value:PopoverClose', 'value:PopoverContent', 'value:PopoverTrigger', 'value:PopoverViewport',
-    'type:PopoverCloseProps', 'type:PopoverContentProps', 'type:PopoverProps', 'type:PopoverTriggerProps', 'type:PopoverViewportProps'];
+  const expected = ['value:Popover', 'value:PopoverAnchor', 'value:PopoverClose', 'value:PopoverContent', 'value:PopoverTrigger', 'value:PopoverViewport',
+    'type:PopoverCloseProps', 'type:PopoverContentProps', 'type:PopoverProps', 'type:PopoverAnchorProps', 'type:PopoverTriggerProps', 'type:PopoverViewportProps'];
   expect(await declarations('components/surfaces/popover/index.ts')).toEqual(expected);
   expect(await declarations('components/popover/index.ts')).toEqual(expected);
 });

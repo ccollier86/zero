@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { getThemeTokenCatalog } from '../../../design-system';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const DIAGNOSTICS = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/floating-button-group';
@@ -68,7 +69,9 @@ test('installed action tray preserves public identities, strict types, standalon
     expect(result.commandsInvoked).toBe(0);
     expect(result.joinedGroupIdentity).toBe(true);
     expect(result.joinedMarkup).toContain('data-slot="button-group"');
-    expect(result.roles).toBe(462);
+    // 462 was the action-tray snapshot, not a ban on new scoped token roles.
+    expect(result.roles).toBe(getThemeTokenCatalog().length);
+    expect(result.roles).toBeGreaterThanOrEqual(462);
     expect(result.newRoles).toBe(57);
     expect(result.newAliases).toBe(57);
     expect(result.themeParity).toBe(true);

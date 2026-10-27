@@ -31,7 +31,7 @@ beforeAll(async () => {
   await mkdir(scratch, { recursive: true }); await mkdir(artifacts, { recursive: true });
   directory = await mkdtemp(join(scratch, 'code-block-')); evidence = await mkdtemp(join(artifacts, 'acceptance-'));
   const build = Bun.spawn({ cmd: [process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'code-block.browser-fixture.tsx'),
-    '--target=browser', '--format=iife', `--outfile=${join(directory, 'fixture.js')}`], stdout: 'pipe', stderr: 'pipe' });
+    '--target=browser', '--format=iife', `--outdir=${directory}`, '--entry-naming=fixture.[ext]'], stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, status] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);
   if (status) throw new Error(`CodeBlock fixture build failed: ${stdout}\n${stderr}`);
   const styles = await buildPlatformStyles(directory, join(directory, 'empty-app'));

@@ -20,9 +20,12 @@ const ORIGINALS = {
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
   'src/frontend/styles/globals.css': 'af1682801435cc0ceef66a2a472099b7adc25e9e55b626ce56d1815a9e2a282d',
 } as const;
+// New families are additive imports, not permission to rewrite legacy tokens.
+const APPROVED_STYLE_IMPORTS = ['../../components/messaging/messaging.css', '../../components/email-inbox/email-inbox.css',
+  '../../components/blog/blog.css', '../../components/command-palette/command-palette.css', '../../components/ui/pagination.css']
+  .map(path => `@import "${path}";`);
 // Shared scroll policy/fade helpers and the next picker supplement have approved
-// Oct 13 fixes. Installed/source identity still includes them; only the original
-// picker/menu/modal owners, skin and legacy theme remain byte-frozen.
+// Oct 13 fixes. Other original picker/menu/modal owners and skins stay frozen.
 const QUALIFIED_SOURCE = [...new Set([
   ...Object.keys(ORIGINALS),
   'src/components/_internal/scroll-viewport/use-scroll-viewport.ts',
@@ -136,7 +139,15 @@ test('fresh installed ordinary-scroll archive retains public identity, native SS
       hashes[path] = await sha256(join(installed, path));
       expect(hashes[path], `Installed/source identity: ${path}`).toBe(await sha256(join(SOURCE_ROOT, path)));
     }
-    for (const [path, hash] of Object.entries(ORIGINALS)) expect(hashes[path], `Retained original: ${path}`).toBe(hash);
+    for (const [path, hash] of Object.entries(ORIGINALS)) {
+      if (path !== 'src/frontend/styles/globals.css') expect(hashes[path], `Retained original: ${path}`).toBe(hash);
+      else {
+        const css = await Bun.file(join(installed, path)).text(), lines = css.split('\n');
+        for (const statement of APPROVED_STYLE_IMPORTS) expect(lines.filter(line => line === statement)).toHaveLength(1);
+        const original = lines.filter(line => !APPROVED_STYLE_IMPORTS.includes(line)).join('\n');
+        expect(createHash('sha256').update(original).digest('hex'), 'Legacy theme bytes excluding only admitted family imports').toBe(hash);
+      }
+    }
     const metadata = await Bun.file(join(installed, 'package.json')).json();
     expect(metadata.exports['./components/context-menu']).toEqual({ types: './src/components/context-menu/index.ts', import: './src/components/context-menu/index.ts' });
     expect(metadata.exports['.']).toEqual(metadata.exports['./react']);
