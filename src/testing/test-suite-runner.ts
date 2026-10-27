@@ -2,7 +2,7 @@
 import { constants } from 'node:os'; // Portable signal exit codes; subprocess execution remains Bun-native.
 import { runTestSuiteFile, testSuiteExitCode, type TestSuiteFileResult, type TestSuiteProcessOptions } from './test-suite-process';
 import { DEFAULT_TEST_TIMEOUT_MS, MAX_FILE_TIMEOUT_MS, MAX_TEST_PROCESSES } from './test-suite-options';
-import { isFrameworkInstalledConsumer } from './test-suite-resources';
+import { isFrameworkInstalledConsumer, isExclusiveTestFile } from './test-suite-resources';
 
 export interface TestSuiteSummary {
   type: 'test-suite-summary';
@@ -49,6 +49,7 @@ export async function runTestSuite(options: TestSuiteRunnerOptions): Promise<Tes
   if (options.signal?.aborted) abort();
   const queued = files.map((_, index) => index), admissionWaiters = new Set<() => void>();
   let installedConsumerActive = false;
+  let activeProcesses = 0, exclusiveConsumerActive = false;
   const wakeAdmission = () => {
     for (const wake of admissionWaiters) wake();
     admissionWaiters.clear();
@@ -56,12 +57,18 @@ export async function runTestSuite(options: TestSuiteRunnerOptions): Promise<Tes
   controller.signal.addEventListener('abort', wakeAdmission);
   const admit = async (): Promise<number | undefined> => {
     while (!controller.signal.aborted && queued.length) {
-      // A blocked installed consumer must not hold up ordinary files behind it.
+      // One explicitly qualified cold-I/O consumer drains other children before
+      // entry. Preserve every file/deadline and do not starve it by jumping ahead.
+      if (exclusiveConsumerActive || isExclusiveTestFile(files[queued[0]!]!) && activeProcesses > 0) {
+        await new Promise<void>(resolve => admissionWaiters.add(resolve)); continue;
+      }
+      // Other blocked installed consumers do not hold up ordinary files behind them.
       // Selection and resource reservation occur synchronously before awaiting.
-      const position = queued.findIndex(index => !installedConsumerActive || !isFrameworkInstalledConsumer(files[index]!));
+      const position = queued.findIndex(index => (!installedConsumerActive || !isFrameworkInstalledConsumer(files[index]!)) && (!isExclusiveTestFile(files[index]!) || activeProcesses === 0));
       if (position >= 0) {
         const index = queued.splice(position, 1)[0]!;
         if (isFrameworkInstalledConsumer(files[index]!)) installedConsumerActive = true;
+        activeProcesses++; if (isExclusiveTestFile(files[index]!)) exclusiveConsumerActive = true;
         return index;
       }
       await new Promise<void>(resolve => admissionWaiters.add(resolve));
@@ -82,6 +89,7 @@ export async function runTestSuite(options: TestSuiteRunnerOptions): Promise<Tes
       } finally {
         // The resource remains owned through process/descendant/output retirement.
         if (isFrameworkInstalledConsumer(file)) installedConsumerActive = false;
+        activeProcesses--; if (isExclusiveTestFile(file)) exclusiveConsumerActive = false;
         wakeAdmission();
       }
     }

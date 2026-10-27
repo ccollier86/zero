@@ -56,6 +56,9 @@ browserTest('All polar keyboard plots retain exact live descriptions through nav
   await page.evaluate(()=>window.__nativePolar.patch('hide-tooltip'));
   expect(await page.locator('.zero-native-sunburst [data-polar-readout]').textContent()).toContain('Alpha: 40');
   await page.evaluate(()=>window.__nativePolar.patch('retire'));
+  // React's commit is asynchronous; wait for the real retired topology before
+  // asserting its live description, not just the fixture setter returning.
+  await page.waitForFunction(()=>document.querySelector('.zero-native-radar [data-polar-readout]')?.textContent==='No measurement inspected.'&&document.querySelector('.zero-native-sunburst [data-polar-readout]')?.textContent==='No hierarchy values in Empty.'&&document.querySelector('.zero-native-radial-bar [data-polar-readout]')?.textContent==='No range data.');
   expect(await page.locator('.zero-native-radar [data-polar-readout]').textContent()).toBe('No measurement inspected.');
   expect(await page.locator('.zero-native-sunburst [data-polar-readout]').textContent()).toBe('No hierarchy values in Empty.');
   expect(await page.locator('.zero-native-radial-bar [data-polar-readout]').textContent()).toBe('No range data.');

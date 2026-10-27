@@ -26,9 +26,22 @@ export const FRAMEWORK_INSTALLED_CONSUMER_FILES = [
   'src/blog/blog-publishing.package.test.ts',
   'src/components/blog/blog.package.test.ts',
   'packages/payments/src/package.test.ts',
+  'src/components/data-table/data-table-refresh.package.test.ts',
+  'src/components/json-editor/document-editor.package.test.ts',
+  'src/components/messaging/messaging.package.test.ts',
+  'src/email/mail.package.test.ts',
+  'src/frontend/server/application-data.package.test.ts',
+  'src/workflows/workflow-contracts.package.test.ts',
+  'src/package-distribution.test.ts',
 ] as const;
 
 /** Match only the reviewed full-framework installed consumers, not arbitrary package tests. */
 export function isFrameworkInstalledConsumer(file: string): boolean {
   return (FRAMEWORK_INSTALLED_CONSUMER_FILES as readonly string[]).includes(file);
 }
+
+/** Preserve exact performance/deadline assertions under their own synthetic load, without unrelated cold-install I/O. */
+export const EXCLUSIVE_TEST_FILES = ['packages/payments/src/package.test.ts', 'src/frontend/server/auth-hot-admission.integration.test.ts', 'src/frontend/server/auth-hot-mutations.integration.test.ts',
+  'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts', 'src/build/build-app.test.ts',
+  'src/frontend/client/session-audit-recovery.browser.test.ts'] as const;
+export function isExclusiveTestFile(file: string): boolean { return (EXCLUSIVE_TEST_FILES as readonly string[]).includes(file); }

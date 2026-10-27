@@ -4,6 +4,17 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Bind each Fabric writer-lane task to its submitting async context. A queued
+  request or background delivery must not inherit a previous user's audit
+  attribution or retired request lifetime. The deterministic regression fails
+  before the repair; queue ordering, capacity and final authority checks remain.
+- Preserve custom ContextMenu inline paint throughout its original 120ms native
+  entrance using a transient Web Animation, avoiding the final-render restoration
+  race. Browser qualification still covers native events, refs and keyboard/touch.
+  Reviewed full-framework archive consumers now share complete install admission;
+  explicit cold-I/O/performance gates run in owned windows without raised
+  deadlines, skipped cases or automatic retries.
+
 - Reworked the native logging investigation UI without replacing its live
   DataTable or relaxing audit admission: magnetic stream tabs, explicit
   connection state, exact server filters with removable criteria, readable

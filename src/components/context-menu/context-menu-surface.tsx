@@ -1,9 +1,9 @@
 'use client';
 
-/** Mounted native menu surface; imperative Motion animation preserves every native React event/ref. */
+/** Mounted native menu surface; a transient entrance effect preserves consumer styles and every native React event/ref. */
 import * as React from 'react';
 import { Slot } from 'radix-ui';
-import { animate, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
 
 type ContextMenuSurfaceProps = React.ComponentProps<'div'> & { asChild?: boolean };
 
@@ -23,17 +23,19 @@ export function ContextMenuSurface({ asChild, ref, ...props }: ContextMenuSurfac
   }, [ref]);
   React.useLayoutEffect(() => {
     const element = localRef.current;
-    if (!element || reducedMotion) return;
-    const opacity = Number.parseFloat(getComputedStyle(element).opacity);
-    const originalOpacity = element.style.opacity;
-    const originalTransform = element.style.transform;
-    const restore = () => {
-      element.style.opacity = originalOpacity;
-      element.style.transform = originalTransform;
-    };
-    // Native onAnimationStart/onDrag handlers must never be consumed as Motion callbacks.
-    const animation = animate(element, { opacity: [0, opacity], scale: [0.97, 1] }, { duration: 0.12, onComplete: restore });
-    return () => { animation.stop(); restore(); };
+    if (!element || reducedMotion || typeof element.animate !== 'function') return;
+    const computed = getComputedStyle(element), opacity = Number.parseFloat(computed.opacity);
+    const transform = computed.transform === 'none' ? '' : computed.transform;
+    // A transient native effect never owns the consumer's inline declarations.
+    // Restoring inside Motion's onComplete raced its final render batch, which
+    // could reapply scale/opacity after restoration under a loaded main thread.
+    // Native React animation/drag handlers and the 120ms entrance stay intact.
+    const animation = element.animate([
+      { opacity: 0, transform: `${transform} scale(.97)`.trim() },
+      { opacity, transform: transform || 'none' },
+    ], { duration: 120, easing: 'ease-out', fill: 'none' });
+    void animation.finished.catch(() => {});
+    return () => { animation.cancel(); };
   }, [reducedMotion]);
   const Surface = asChild ? Slot.Root : 'div';
   return <Surface ref={surfaceRef} {...props} />;

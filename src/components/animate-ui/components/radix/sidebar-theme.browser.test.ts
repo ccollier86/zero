@@ -83,6 +83,8 @@ browserTest('mobile Sidebar projects live scoped tokens without changing the exi
     expect(await page.locator('body').getAttribute('data-zero-theme')).toBeNull();
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'detached' });
+    // Radix runs close autofocus after unmount; DOM detachment alone is not that completion signal.
+    await page.waitForFunction(() => document.querySelector('[data-testid="toggle"]') === document.activeElement);
     expect(await page.getByTestId('toggle').evaluate(element => element === document.activeElement)).toBe(true);
     expect(await page.evaluate(() => (window as any).__sidebarTheme.refs())).toMatchObject({ closes: 1 });
     await page.evaluate(() => (window as any).__sidebarTheme.unmount());
