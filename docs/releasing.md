@@ -461,6 +461,9 @@ git diff --check
    The two real native-vector integration files use the same window so their
    unchanged native/managed-operation deadlines are not dominated by unrelated
    package I/O. Fake vector adapters and source-only tests remain ordinary files.
+   The declared-build deployment file also owns a window: its compiled executable
+   cold native-loader admission remains bounded independently from the unchanged
+   20s application-start limit, without competing archive extraction/browser builds.
    The slot stays owned through process, descendant
    and output retirement. This changes admission overlap, not inventories,
    assertions, deadlines, cleanup requirements or failure handling. Review

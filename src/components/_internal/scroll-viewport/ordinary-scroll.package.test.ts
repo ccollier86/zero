@@ -20,6 +20,11 @@ const ORIGINALS = {
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
   'src/frontend/styles/globals.css': 'af1682801435cc0ceef66a2a472099b7adc25e9e55b626ce56d1815a9e2a282d',
 } as const;
+// The reviewed 120ms entrance fix is not an unchanged original. Retain its
+// historical hash above, pin the repair explicitly and keep all other skins frozen.
+const APPROVED_SOURCE_REPAIRS: Record<string, string> = {
+  'src/components/context-menu/context-menu-surface.tsx': '5a373879953c91039eb32df4eb4f1eb84ee0d089babddbeee7fa3234072d9066',
+};
 // New families are additive imports, not permission to rewrite legacy tokens.
 const APPROVED_STYLE_IMPORTS = ['../../components/messaging/messaging.css', '../../components/email-inbox/email-inbox.css',
   '../../components/blog/blog.css', '../../components/command-palette/command-palette.css', '../../components/ui/pagination.css']
@@ -64,7 +69,7 @@ const COPY_PATHS = ['components/ui/date-picker.tsx', 'components/controls/date-t
   'components/_internal/scroll-viewport/use-scroll-viewport.ts',
   'components/_internal/scroll-viewport/scroll-viewport.css'];
 
-test('fresh installed ordinary-scroll archive retains public identity, native SSR, original bytes and actual CLI closure', async () => {
+test('fresh installed ordinary-scroll archive retains public identity, native SSR, original skins, qualified entrance and actual CLI closure', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const allocation = await mkdtemp(join(SCRATCH, 'ordinary-scroll-package-'));
   const consumer = join(allocation, 'consumer'), archive = join(allocation, 'framework.tgz');
@@ -140,7 +145,8 @@ test('fresh installed ordinary-scroll archive retains public identity, native SS
       expect(hashes[path], `Installed/source identity: ${path}`).toBe(await sha256(join(SOURCE_ROOT, path)));
     }
     for (const [path, hash] of Object.entries(ORIGINALS)) {
-      if (path !== 'src/frontend/styles/globals.css') expect(hashes[path], `Retained original: ${path}`).toBe(hash);
+      if (APPROVED_SOURCE_REPAIRS[path]) expect(hashes[path], `Explicitly qualified entrance repair: ${path}`).toBe(APPROVED_SOURCE_REPAIRS[path]);
+      else if (path !== 'src/frontend/styles/globals.css') expect(hashes[path], `Retained original: ${path}`).toBe(hash);
       else {
         const css = await Bun.file(join(installed, path)).text(), lines = css.split('\n');
         for (const statement of APPROVED_STYLE_IMPORTS) expect(lines.filter(line => line === statement)).toHaveLength(1);
@@ -160,11 +166,11 @@ test('fresh installed ordinary-scroll archive retains public identity, native SS
       ssrOriginalParity: true, ssrComparisons: result.ssrComparisons,
       ssrScope: 'closed DatePicker input/button in both modes; native ContextMenu standard/asChild; opaque Arc asChild host',
       commandsInvoked: result.commandsInvoked,
-      originalFilesByteIdentical: Object.keys(ORIGINALS).length, originalThemeRetained: true,
+      originalFilesByteIdentical: Object.keys(ORIGINALS).filter(path => path !== 'src/frontend/styles/globals.css' && !APPROVED_SOURCE_REPAIRS[path]).length, originalThemeRetained: true,
       browserFromInstalledArchive: true, browserCss: true, browserBytes: result.browserBytes,
       actualInstalledCliCopyBuild: true, copiedCustomOriginalsRetained: true, copiedTestFiles: result.copiedTestFiles,
       configTripwireNotExecuted: true, installScriptsNotExecuted: true, environmentNotLoaded: true, databaseFiles: 0,
-      qualifiedSourceSha256: hashes, preservedOriginalSha256: ORIGINALS, verifiedAt: new Date().toISOString(),
+      qualifiedSourceSha256: hashes, preservedOriginalSha256: ORIGINALS, approvedSourceRepairs: APPROVED_SOURCE_REPAIRS, verifiedAt: new Date().toISOString(),
     }, null, 2));
   } finally {
     // Only this exact newly allocated archive/consumer is disposable; all original framework files remain.

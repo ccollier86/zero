@@ -269,3 +269,17 @@ collector. The fixture now maintains authenticated observation heartbeats at the
 actual returned policy interval, with no protected-operation retries, longer TTL
 or admission exception. The bundled stage still first proves an unacknowledged
 session is rejected. Exact-archive Linux/full-suite qualification remains required.
+
+The frozen `2855b44` full run is in progress and already remains a failed gate.
+Its installed publishing copy list missed the newly added heartbeat helper; both
+native/installed consumers now use one pure shared copy manifest with a small
+regression test. The mobile Sidebar check now waits for Radix's asynchronous
+close-autofocus completion before the unchanged focus assertion. Menu preservation
+checks retain historical hashes while explicitly qualifying only the reviewed
+transient entrance repair (including its corrected descriptive comment); installed
+ordinary-scroll evidence no longer calls that modified surface byte-identical.
+The declared-build file's cold executable missed native-loader admission before
+its entry marker, while the earlier app startup itself took 66ms. Its next run
+owns an exclusive test window, preserving the original native/app deadlines and
+all relocation/signature assertions. None of these edits changes app routes,
+authority, historical migrations or a consuming app's custom public theme.

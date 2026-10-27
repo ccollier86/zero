@@ -2,6 +2,14 @@
 import { expect, test } from 'bun:test';
 import type { Client } from '../frontend/client/sdk';
 import { publishingAuditHeartbeat } from './test-fixtures/publishing/audit-heartbeat';
+import { PUBLISHING_FIXTURE_FILES } from './test-fixtures/publishing/fixture-files';
+test('both installed and Linux consumers use the same complete native copy manifest', async () => {
+  expect(PUBLISHING_FIXTURE_FILES).toContainEqual(['audit-heartbeat.ts', 'audit-heartbeat.ts']);
+  for (const [source] of PUBLISHING_FIXTURE_FILES) expect(await Bun.file(new URL('./test-fixtures/publishing/' + source, import.meta.url)).exists()).toBe(true);
+  for (const relative of ['./blog-publishing.package.test.ts', './test-fixtures/publishing/bootstrap-linux.ts']) {
+    expect(await Bun.file(new URL(relative, import.meta.url)).text()).toContain('of PUBLISHING_FIXTURE_FILES');
+  }
+});
 function fixture(heartbeatMs: number, observe: () => Promise<unknown>) {
   return { logging: { collectionPolicy: async () => ({ heartbeatMs, delivery: { required: true, policyVersion: 'synthetic-v1', ttlMs: 60000 } }), observe } } as unknown as Pick<Client, 'logging'>;
 }
