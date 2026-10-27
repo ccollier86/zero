@@ -379,3 +379,33 @@ the public [qualification/activation guide](../backend/blog/qualification.md).
 The release still requires explicit main publication; the diagnostic gate does
 not select stable or deploy an application. The final updater identity must be
 verified using the normal release metadata, not guessed from the version label.
+
+## Documentation-follow-up release hold (2026-10-27)
+
+The exact clean documentation-only `5b76788f8769f9a19e4d00c6ed13ec35f71334cb`
+archive (`901dbcd1ca545115d0927c6cf032dffc55281adb0b8337cd75f4a3a158a24941`)
+passes its first nine gates, including the installed package, Linux/amd64
+source-to-bundle/restarts and populated normal updater. Its complete suite is
+**failed**, not qualified: 1,338 files pass, three fail, none are unrun and no
+interruption occurs. The original `full-suite-5b76788.log` and qualification JSON
+are retained. Do not substitute the preceding code candidate's passing run for
+this final archive's failed gate or select stable from these partial results.
+
+The failures are strict logging readiness during browser-fixture construction,
+the auth-disabled Sync lifecycle's 20-second case, and the hot-mode fixture's
+background automation-delivery count (41/51 at its 45-second drain boundary).
+The hot fixture still passes all eight login/refresh/protected-read cycles and
+their separate two-second authority-admission assertions. In one diagnostic
+three-file isolation, browser recovery and auth-disabled Sync pass; hot backlog
+drain fails again at 42/51. These diagnostic passes are not a replacement full
+gate and do not establish the cause of the intermittent readiness/lifecycle
+failures.
+
+The external test drive has approximately 2 GiB free. A bounded synthetic I/O
+probe, with no SQLite/auth changes or application data, measures six 8-MiB
+durable image publications at 375–468 ms each; file fsync alone takes
+368–463 ms. This is evidence that durable-image I/O is expensive on the current
+test host, not proof that all failures are environmental. No fsync, hot commit
+fence, audit requirement, source row, auth assertion or test deadline was removed
+to force a pass. The candidate remains held pending diagnosis and fresh complete
+qualification. No production application or selected stable archive was changed.

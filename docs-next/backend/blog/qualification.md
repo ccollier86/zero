@@ -50,6 +50,18 @@ the final `qualified: true` result. Its `stableSelectionChanged: false` means
 the test script does not publish; main selection is a separate explicit release
 step. Framework qualification never deploys PracticeIQ, Pantheon or another app.
 
+### Final Archive Is Not Yet Selected
+
+The documentation-only `5b76788` follow-up is **not qualified for promotion**.
+Its nine initial gates pass, but its complete regression records 1,338 passed
+files and three failures, with none unrun. Browser-fixture logging readiness,
+auth-disabled Sync lifecycle and hot-mode background-drain qualification still
+require resolution. The passing `c9c5fb9` code baseline above must not be
+misrepresented as a passing full run for a different archive. See the
+[retained release-hold analysis](../../_work/blog-publishing-implementation.md#documentation-follow-up-release-hold-2026-10-27).
+Until a final archive passes and is explicitly selected, normal updater users
+remain on the prior selected release.
+
 ## Included Behavior
 
 Blogging remains opt-in. `blog: true` supplies user-backed authors, explicit
