@@ -270,7 +270,8 @@ actual returned policy interval, with no protected-operation retries, longer TTL
 or admission exception. The bundled stage still first proves an unacknowledged
 session is rejected. Exact-archive Linux/full-suite qualification remains required.
 
-The frozen `2855b44` full run is in progress and already remains a failed gate.
+The frozen `2855b44` full run finished: 1335/1341 files passed, six failed,
+none were unrun and no interruption occurred. It remains a failed gate.
 Its installed publishing copy list missed the newly added heartbeat helper; both
 native/installed consumers now use one pure shared copy manifest with a small
 regression test. The mobile Sidebar check now waits for Radix's asynchronous
@@ -290,3 +291,18 @@ with `SIGKILL`; this is retained failed evidence, not a diagnosed native crash.
 Its next run has an exclusive window too, preserving its actual first-login,
 blocked/retry, live burst, page cursor, hard-refresh/new-tab and revocation checks.
 No protected UI, collector, auth behavior or browser assertion was removed.
+
+The committed `b90219c` follow-up passes ten of eleven selected files, including
+the real browser recovery and Sidebar checks, installed publishing, ordinary
+scroll preservation, ContextMenu interaction and all resource/context tests.
+Its declared-build file fails while reading dependencies through that development
+worktree's shared `node_modules` symlink: repeated Bun builds report `EISDIR` and
+mismatched source locations against readable regular files. A second isolated
+run of that same setup reproduces the failure; neither is a passing gate.
+The independently installed frozen `2855b44` candidate (unchanged build source)
+then passes all eight declared-build scenarios / 106 assertions in 115s with
+the original deadlines, signatures, relocations and native avatar operations.
+That distinguishes the shared-dependency harness failure from the actual
+independently installed build, without weakening production checks. The next
+exact committed candidate must again own a physical locked dependency install
+and complete all release gates; these separate successes do not qualify it.
