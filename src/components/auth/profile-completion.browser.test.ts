@@ -61,6 +61,9 @@ browserTest('real required validation stays anonymous; accepted profile installs
     await h.page.getByRole('textbox', { name: 'First name', exact: false }).fill('Accepted profile');
     await h.page.getByRole('button', { name: 'Continue', exact: true }).click();
     await h.page.getByTestId('completed-session').waitFor();
+    // Session publication can render before the accepted-completion callback's
+    // microtask. Qualify both boundaries instead of racing the visible marker.
+    await h.page.waitForFunction(() => window.__profileCompletionBrowser.snapshot().successes === 1);
     expect(h.commands).toHaveLength(1); expect(h.commands[0]).toMatchObject({ expectedRevision: 1, changes: { firstName: 'Accepted profile' } });
     expect(Object.keys(h.commands[0].changes)).toEqual(['firstName']);
     expect(await h.page.evaluate(() => window.__profileCompletionBrowser.snapshot())).toMatchObject({ authenticated: true, recoverable: true, successes: 1 });

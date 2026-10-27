@@ -311,7 +311,15 @@ export class AuthSessionController {
                 assertOwned(); assertCurrent();
                 scopeConsumed = true;
                 consumed = true;
-                return this.completeAuthenticationLocked(data, () => { assertOwned(); assertCurrent(); }, finishNetwork);
+                return this.completeAuthenticationLocked(data, () => { assertOwned(); assertCurrent(); }, () => {
+                  // Publishing the accepted session retires anonymous forms.
+                  // Their unmount cancellation must not relabel this committed
+                  // exchange as failed while the local scope owner reconciles.
+                  // Before acceptance every caller/scope fence remains active;
+                  // disposal still cancels through recoveryRequests directly.
+                  signal?.removeEventListener('abort', cancel);
+                  finishNetwork();
+                });
               },
               updateTokens: async (accessToken, refreshToken, activeTenant, assertCurrent = () => {}) => {
                 assertOwned(); assertCurrent();

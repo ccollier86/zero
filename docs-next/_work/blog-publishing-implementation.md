@@ -101,6 +101,42 @@ Primary advisory references: [Zod collection validation](https://github.com/advi
 These are focused checks, not a complete release claim. Exact candidate archive,
 installed Linux/bundle qualification and final review remain required.
 
+## Wider Qualification Follow-up
+
+The 8980f96 complete-suite attempt was stopped after concrete failures; it is
+not a passing release run. The next candidate includes these narrow repairs:
+
+- The retained Select math facade now forwards `selectDepartureLanded`, keeping
+  old/new source-copy imports identical instead of duplicating the function.
+- Source-only Doctor caches admitted literal source edges per inspection. The
+  original filesystem/operation limits remain unchanged; repeated barrel-symbol
+  queries no longer spend the filesystem budget re-resolving identical paths.
+- Consumer path checks run outside the repository's intentional source aliases.
+  Browser fixtures give emitted CSS its own output extension, as the production
+  builder already does. Central styles and component CSS owners are retained.
+- Historical relocation/theme snapshots keep their original hashes and explicitly
+  admit the approved drawer, scroll and blog-anchor enhancements. Legacy theme
+  bytes still match after removing only the five exact new-family imports.
+- Reviewed full-framework blog/payment consumers share the existing installed
+  consumer admission slot. This does not skip, retry or extend any test deadline.
+- A real-browser first-use profile test exposed accepted session publication
+  unmounting/canceling its originating form before its success callback returned.
+  A failing deterministic controller regression confirms that boundary. The fix
+  detaches form cancellation only after accepted completion; pre-acceptance
+  cancellation, replacement, disposal and explicit synchronization errors remain
+  covered. All five focused auth/browser files pass after the fix.
+
+The 8980f96 Linux/x64 consumer passed resumed source preparation, the official
+build and two compiled server generations with the patched dependency graph.
+Its initial fresh run failed before logging-actor entry. Diagnostic source
+preparation and resumed startup passed without changed runtime code, retries or
+relaxed deadlines. That does not establish the initial failure's cause or a
+complete fresh-candidate pass. A final clean install/run remains required.
+
+Qualification now uses independently installed frozen dependencies, not a
+dependency-directory symlink to an active development worktree. Rebuildable
+scratch symlinks were retired without changing their shared target files.
+
 ## Remaining Gates
 
 - [ ] Recovery/authority review: shutdown drain, media lease expiry and retained

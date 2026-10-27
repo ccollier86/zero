@@ -156,12 +156,29 @@ describe('operation-owned credential issuance', () => {
     expect(session.sessionTransition.phase).toBe('idle');
   });
 
-  test('a committed local synchronization failure retains its explicit committed contract', async () => {
-    const fixture = environment();
+  test('retiring the originating form after accepted session publication does not cancel its acknowledged completion', async () => {
+    const fixture = environment(), caller = new AbortController(), gate = deferred<void>(), started = deferred<void>();
     const session = new AuthSessionController(baseUrl, { coordination: fixture.options,
-      scopeLifecycle: { beginTransition() {}, completeTransition() { throw new Error('Synthetic baseline unavailable'); }, abortTransition() {} } });
+      scopeLifecycle: { beginTransition() {}, completeTransition() {
+        // React unmounts the anonymous form as soon as its real session appears.
+        caller.abort(); started.resolve(); return gate.promise;
+      }, abortTransition() {} } });
     sessions.add(session);
-    await expect(session.runCredentialIssuance(() => {}, lease => lease.completeAuthentication(result())))
+    const pending = session.runCredentialIssuance(() => {}, lease => lease.completeAuthentication(result()), caller.signal);
+    const settled = pending.then(value => ({ value }), error => ({ error }));
+    await started.promise;
+    expect(session.isAuthenticated).toBe(true);
+    gate.resolve();
+    expect(await settled).toMatchObject({ value: { accessToken: 'synthetic-access' } });
+    expect(session.sessionTransition.phase).toBe('idle');
+  });
+
+  test('a committed local synchronization failure retains its explicit committed contract', async () => {
+    const fixture = environment(), caller = new AbortController();
+    const session = new AuthSessionController(baseUrl, { coordination: fixture.options,
+      scopeLifecycle: { beginTransition() {}, completeTransition() { caller.abort(); throw new Error('Synthetic baseline unavailable'); }, abortTransition() {} } });
+    sessions.add(session);
+    await expect(session.runCredentialIssuance(() => {}, lease => lease.completeAuthentication(result()), caller.signal))
       .rejects.toMatchObject({ code: 'AUTH_SCOPE_SYNCHRONIZATION_REQUIRED', committed: true, recoverable: true });
     expect(session.isAuthenticated).toBe(true);
     expect(session.sessionTransition.phase).toBe('recovery-required');
