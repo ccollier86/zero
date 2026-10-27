@@ -306,3 +306,15 @@ That distinguishes the shared-dependency harness failure from the actual
 independently installed build, without weakening production checks. The next
 exact committed candidate must again own a physical locked dependency install
 and complete all release gates; these separate successes do not qualify it.
+
+The exact `4062e22` archive passes independent typecheck, documentation and the
+Linux/amd64 installed publishing proof across source setup and two official
+bundle/restart generations. Its package-script gate fails the scaffold's original
+30s build deadline while other first-phase tests share one `bun test --parallel`
+process. That script still bypassed the canonical suite's OS-file isolation and
+reviewed archive-consumer admission. Both multi-file package phases now use the
+same canonical runner as the full suite, preserving all test files, original
+per-case deadlines, package/runtime assertions and sequential heavy installed
+phases. A regression pins that script boundary. No production timeout, runtime
+behavior or installed-app contract is changed; `4062e22` remains an unselected
+failed candidate and the corrected committed archive needs fresh qualification.

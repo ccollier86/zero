@@ -43,6 +43,11 @@ describe('package build scripts', () => {
   test('the canonical release suite isolates files in bounded OS processes without skipping actor entry', async () => {
     expect(packageJson.scripts?.test).toBe('bun --no-env-file src/testing/run-test-suite.ts');
     expect(packageJson.scripts?.['test:parallel']).toBe('bun run test');
+    // Package qualification must not reintroduce shared global/module/build
+    // state after the complete suite deliberately moved to OS-file isolation.
+    expect(packageJson.scripts?.['test:package']).toStartWith('bun run test --timeout 120000 ');
+    expect(packageJson.scripts?.['test:package']).not.toContain('--parallel=');
+    expect(packageJson.scripts?.['test:package']).toContain('&& bun run test --timeout 120000 src/update/');
     expect(await Bun.file('src/testing/run-test-suite.ts').exists()).toBe(true);
     const { discoverTestSuiteFiles } = await import('./testing/test-suite-discovery');
     const { parseTestSuiteOptions } = await import('./testing/test-suite-options');
