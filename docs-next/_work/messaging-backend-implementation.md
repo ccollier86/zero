@@ -204,14 +204,16 @@ signature checks, connection-bound page/customer mapping, permanent event dedup,
 a real outbox, provider-ack reconciliation and truthful policy/capability failures.
 No real providers or production connections may be used by qualification tests.
 
-Before messaging release, narrow reactive invalidations as well: the current
-foundation uses one payload-free scope hint, so even source-ack housekeeping can
-wake unrelated conversation readers. The final native streams need canonical
-conversation/recipient-targeted invalidations, with accepted worker metadata
-stripped from public responses. Do not derive recipients from a submitted browser
-participant list, invent INSERT events, or expose private-note activity to public
-timelines. Removed members must still receive an invalidation that masks their
-projection; uncertainty uses safe revalidation, not an assumed row result.
-Retain bounded coalescing, slow-reader backpressure and periodic live authority
-checks. Qualify a busy organization with many unrelated conversations, not just
-two messages in one room. Source audit acknowledgments are not new chat content.
+Reactive invalidations now use a canonical private sideband computed inside the
+accepted writer command. Before/after membership includes removed participants;
+only canonical staff participants receive private-note hints. The parent strips
+that metadata from the public acknowledgment, targets actor/conversation readers,
+and treats malformed advisory metadata as revalidation rather than a new row fact.
+Internal audit acknowledgments no longer wake public readers. Exact transport
+replay is not announced as a new mutation. Existing coalescing, one-packet
+backpressure, fresh projection authorization and periodic authority checks remain.
+The native follow-up passes all ten cases, including 100 distinct conversations,
+unrelated-reader isolation, removal invalidation, private-note non-disclosure and
+the full Guardian/attachment/restart/strict-admission scenarios. Root typecheck
+passes. This still requires installed/browser/deployment qualification, not a
+claim that any commit hint proves delivery or human attention.

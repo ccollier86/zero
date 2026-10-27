@@ -23,6 +23,7 @@ import { messagingRealm } from './realm';
 import { messagingHash } from './validation';
 import { installMessagingOwnerSchema } from './owner-schema';
 import { MESSAGING_CODES, readMessagingActorRejection } from './realm-errors';
+import { readMessagingCommitHint, messagingHintMatches, type MessagingSubscription } from './commit-hints';
 
 export interface MessagingOwnerRecord { id: string; scope_id: string; owner_id: string; root_hash: string; realm_fingerprint: string; established: number }
 export interface MessagingSourceOwner { prepare(owner: MessagingOwnerRecord): void; wake(ref: string): void; close(): Promise<void> }
@@ -39,7 +40,7 @@ export class MessagingRuntime {
   private readonly initializers = new Map<string, Promise<void>>();
   private readonly bound = new Set<string>();
   private readonly active = new Set<Promise<unknown>>();
-  private readonly listeners = new Map<string, Set<() => void>>();
+  private readonly listeners = new Map<string, Set<{ listener(): void; filter?: MessagingSubscription }>>();
   private source: MessagingSourceOwner | null = null;
   private removeCommit: (() => void) | null = null;
   private readonly rootHash: string;
@@ -61,7 +62,8 @@ export class MessagingRuntime {
       if (records.length > options.config.maxDatabaseFiles || records.some(row => row.root_hash !== runtime.rootHash)) throw unavailable('The retained messaging owner catalog does not match this configuration.');
       runtime.source = options.source?.(coordinator) ?? null;
       for (const record of records) { runtime.assertRetained(record); runtime.source?.prepare(record); }
-      runtime.removeCommit = observeDatabaseCoordinatorCommits(coordinator, ref => { runtime.source?.wake(ref); for (const listener of runtime.listeners.get(ref) ?? []) try { listener(); } catch { /* Advisory only. */ } });
+      // Internal source acknowledgments are not new conversation content.
+      runtime.removeCommit = observeDatabaseCoordinatorCommits(coordinator, ref => { runtime.source?.wake(ref); });
       coordinator.start(); return runtime;
     } catch (error) { try { await runtime.close(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'Messaging startup and cleanup failed.'); } throw error; }
   }
@@ -74,11 +76,12 @@ export class MessagingRuntime {
     return this.track(async () => { guard(); const id = await this.ensure(scope, guard); return this.execute(id, 'command', name, input, requestId, guard, signal); });
   }
   /** Payload-free commit hints; subscribers re-read with their own live authorization before receiving data. */
-  subscribe(scope: ServiceDataScope, listener: () => void): () => void {
+  subscribe(scope: ServiceDataScope, listener: () => void, filter?: MessagingSubscription): () => void {
     this.assertReady(); const count = [...this.listeners.values()].reduce((total, entries) => total + entries.size, 0);
     if (count >= 1024) throw new AuthError('Messaging subscription capacity is exhausted.', 'MESSAGING_CAPACITY', 429);
-    const ref = createDatabaseRef(databaseId(scope)); let entries = this.listeners.get(ref); if (!entries) this.listeners.set(ref, entries = new Set()); entries.add(listener);
-    return () => { entries!.delete(listener); if (!entries!.size) this.listeners.delete(ref); };
+    const ref = createDatabaseRef(databaseId(scope)), entry = { listener, ...(filter ? { filter: Object.freeze({ ...filter }) } : {}) };
+    let entries = this.listeners.get(ref); if (!entries) this.listeners.set(ref, entries = new Set()); entries.add(entry);
+    return () => { entries!.delete(entry); if (!entries!.size) this.listeners.delete(ref); };
   }
   diagnostics() { return { state: this.state, filesBound: this.bound.size, activeOperations: this.active.size, fabric: this.owner.diagnostics() }; }
   /** @internal Validated established catalog scopes for bounded retained-stage recovery, never HTTP-selected tenant IDs. */
@@ -91,7 +94,7 @@ export class MessagingRuntime {
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.state = 'closing'; this.removeCommit?.(); this.removeCommit = null;
-    for (const entries of this.listeners.values()) for (const listener of entries) try { listener(); } catch { /* Advisory only. */ } this.listeners.clear();
+    for (const entries of this.listeners.values()) for (const entry of entries) try { entry.listener(); } catch { /* Advisory only. */ } this.listeners.clear();
     this.closeTask = (async () => {
       await Promise.allSettled([...this.active]);
       try { await this.source?.close(); } finally { await this.owner.close(); this.state = 'closed'; }
@@ -142,9 +145,14 @@ export class MessagingRuntime {
       const command = result.value as { kind?: string; name?: string; output?: unknown };
       if (kind === 'command' && (command?.kind !== 'command' || command.name !== name)) throw unavailable('The messaging commit acknowledgment is invalid.');
       const envelope = kind === 'query' ? result.value : command.output;
-      const value = envelope as { ok?: boolean; value?: unknown; code?: string; status?: number } | null;
+      const value = envelope as { ok?: boolean; value?: unknown; code?: string; status?: number; hint?: unknown } | null;
       if (value?.ok === false && MESSAGING_CODES.includes(value.code as typeof MESSAGING_CODES[number]) && [403, 404, 409, 422, 429].includes(value.status!)) throw new AuthError('The messaging request was not accepted.', value.code!, value.status!);
       if (value?.ok !== true || !Object.hasOwn(value, 'value')) throw unavailable('The messaging acknowledgment is invalid.');
+      if (kind === 'command' && !('replayed' in result && result.replayed) && value.hint !== undefined) {
+        let hint: ReturnType<typeof readMessagingCommitHint> | null = null;
+        try { hint = readMessagingCommitHint(value.hint); } catch { /* Incompatible advisory metadata requests safe revalidation, never a guessed row result or changed commit outcome. */ }
+        for (const entry of this.listeners.get(createDatabaseRef(id)) ?? []) if (hint === null || messagingHintMatches(hint, entry.filter)) try { entry.listener(); } catch { /* Advisory only; projections still reauthorize. */ }
+      }
       return value.value as T;
     } catch (error) {
       const rejected = readMessagingActorRejection(error);

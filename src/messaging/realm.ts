@@ -13,6 +13,7 @@ import { openMessagingSupport, claimMessagingSupport } from './support-commands'
 import { MESSAGING_ATTACHMENT_TABLES } from './attachment-model';
 import { allocateMessagingAttachment, acceptMessagingAttachment, retireMessagingAttachment } from './attachment-commands';
 import { readMessagingAttachment, pendingMessagingAttachments } from './attachment-queries';
+import { withMessagingCommitHints } from './commit-hints';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -21,7 +22,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '2', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES,
+  name: 'zero-messaging', version: '3', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES,
     messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" } },
   migrations: [{ version: '001', description: 'Canonical scoped conversations, messages, contacts, private attachments and durable delivery', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(MESSAGING_TABLES)) database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
@@ -57,7 +58,7 @@ export const messagingRealm = defineDatabaseRealm({
     database.run('CREATE TABLE messaging_attachment_reservations (id TEXT PRIMARY KEY,ids_json TEXT NOT NULL)');
     database.run('CREATE INDEX messaging_attachment_scope_expiry ON messaging_attachments(scope_id,state,expires_at,id)');
   } }],
-  commands: {
+  commands: withMessagingCommitHints({
     'messaging.owner.bind': (context, input) => messagingCommand(context, () => {
       const ownerId = messagingId(messagingRecord(input, ['ownerId']).ownerId), prior = context.db.get('_messaging_owner', 'application');
       if (prior && prior.owner_id !== ownerId) messagingFail('MESSAGING_OWNER_INVALID');
@@ -69,7 +70,7 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.support.open': openMessagingSupport, 'messaging.support.claim': claimMessagingSupport,
     'messaging.message.change': changeMessagingMessage, 'messaging.message.react': reactMessagingMessage,
     'messaging.attachment.allocate': allocateMessagingAttachment, 'messaging.attachment.accept': acceptMessagingAttachment, 'messaging.attachment.retire': retireMessagingAttachment,
-  },
+  }),
   queries: { 'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
     'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments) },
 });

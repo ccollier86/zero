@@ -30,7 +30,7 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     .get('/conversations/live', async ({ access, request }) => {
       const captured = context(access.requireUser(), request), query = readMessagingQuery(request, ['after', 'limit', 'archived']) as ConversationQuery;
       await captured.facade.conversations.list({ ...query, limit: 1 }, { signal: request.signal });
-      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => captured.facade.conversations.list(query, { signal: request.signal }), request.signal), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
+      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => captured.facade.conversations.list(query, { signal: request.signal }), request.signal, { actorId: captured.authority.access.requireUser().userId }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
     })
     .get('/conversations/:conversationId', ({ access, params, request }) => { noQuery(request); return read(access.requireUser(), request).conversations.get(params.conversationId, { signal: request.signal }); })
     .post('/conversations', async ({ access, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).conversations.create(await readMessagingBody(request) as never, options); }, { parse: 'none' })
@@ -50,7 +50,7 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     .get('/conversations/:conversationId/messages/live', async ({ access, params, request }) => {
       const captured = context(access.requireUser(), request), query = readMessagingQuery(request, ['before', 'after', 'limit', 'search']) as MessageHistoryQuery, id = messagingId(params.conversationId);
       await captured.facade.messages.list(id, { ...query, limit: 1 }, { signal: request.signal });
-      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => captured.facade.messages.list(id, query, { signal: request.signal }), request.signal), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
+      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => captured.facade.messages.list(id, query, { signal: request.signal }), request.signal, { actorId: captured.authority.access.requireUser().userId, conversationId: id }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
     })
     .post('/conversations/:conversationId/messages', async ({ access, params, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).messages.send(params.conversationId, await readMessagingBody(request) as never, options); }, { parse: 'none' })
     .put('/conversations/:conversationId/messages/:messageId', async ({ access, params, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); const r = messagingRecord(await readMessagingBody(request), ['expectedRevision', 'text']); return read(user, request).messages.edit(params.conversationId, params.messageId, messagingInteger(r.expectedRevision), r.text as string, options); }, { parse: 'none' })

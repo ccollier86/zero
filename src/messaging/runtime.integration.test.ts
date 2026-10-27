@@ -85,3 +85,41 @@ test('payload-free commit subscriptions are scope-local and unsubscribe before s
     await f.stop(); expect(notices).toBe(prior);
   } finally { remove(); await f.close(); }
 }, 30000);
+
+test('a busy scope targets canonical participants and conversations, not every open reader or internal source commit', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), guard = () => {}, removes: (() => void)[] = [], notices = Array.from({ length: 100 }, () => 0);
+  const actor = (n: number) => ({ ...f.actor(scope), id: 'owner-' + n });
+  try {
+    for (let n = 0; n < notices.length; n++) {
+      await f.runtime.write(scope, 'messaging.conversation.create', { ...group(actor(n), 'create-' + n), id: 'group-' + n, userIds: ['peer-' + n] }, 'create-' + n, guard);
+      removes.push(f.runtime.subscribe(scope, () => { notices[n]!++; }, { actorId: actor(n).id, conversationId: 'group-' + n }));
+    }
+    const owner = f.system.prepare('SELECT owner_id FROM _messaging_owners WHERE scope_id=?').get('application') as { owner_id: string };
+    await f.runtime.write(scope, 'messaging.owner.bind', { ownerId: owner.owner_id }, 'internal-housekeeping-proof', guard);
+    expect(notices.every(n => n === 0)).toBe(true);
+    const input = { actor: actor(0), conversationId: 'group-0', id: 'targeted-message', requestId: 'targeted-send', text: 'Synthetic targeted message', maxMessageLength: 20000 };
+    const accepted = await f.runtime.write(scope, 'messaging.message.send', input, 'targeted-send', guard);
+    expect(accepted).not.toHaveProperty('hint');
+    expect(notices[0]).toBe(1); expect(notices.slice(1).every(n => n === 0)).toBe(true);
+    await f.runtime.write(scope, 'messaging.message.send', input, 'targeted-send', guard);
+    expect(notices[0]).toBe(1);
+    let removedParticipant = 0;
+    removes.push(f.runtime.subscribe(scope, () => { removedParticipant++; }, { actorId: 'peer-0', conversationId: 'group-0' }));
+    await f.runtime.write(scope, 'messaging.conversation.change', { actor: actor(0), id: 'group-0', requestId: 'remove-peer', expectedRevision: 1, action: 'remove', value: 'peer-0' }, 'remove-peer', guard);
+    expect(removedParticipant).toBe(1); expect(notices[0]).toBe(2); expect(notices.slice(1).every(n => n === 0)).toBe(true);
+  } finally { removes.forEach(remove => remove()); await f.close(); }
+}, 30000);
+
+test('private-note hints reach only current staff participants and do not reveal activity to the customer', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), customer = f.actor(scope), staff = { ...customer, id: 'staff-one', staff: true }, guard = () => {};
+  const removes: (() => void)[] = []; let customerChanges = 0, staffChanges = 0;
+  try {
+    await f.runtime.write(scope, 'messaging.support.open', { actor: customer, id: 'support-one', requestId: 'support-open', title: '', owner: 'triage', channelId: null }, 'support-open', guard);
+    await f.runtime.write(scope, 'messaging.support.claim', { actor: staff, id: 'support-one', requestId: 'support-claim', expectedEpoch: 1, maxParticipants: 100 }, 'support-claim', guard);
+    removes.push(f.runtime.subscribe(scope, () => { customerChanges++; }, { actorId: customer.id }), f.runtime.subscribe(scope, () => { staffChanges++; }, { actorId: staff.id }));
+    await f.runtime.write(scope, 'messaging.message.send', { actor: staff, conversationId: 'support-one', id: 'private-note', requestId: 'note-send', text: 'Synthetic private note', visibility: 'staff', maxMessageLength: 20000 }, 'note-send', guard);
+    expect(customerChanges).toBe(0); expect(staffChanges).toBe(1);
+    const page = await f.runtime.read(scope, 'messaging.messages', { actor: customer, conversationId: 'support-one' }, guard);
+    expect(page).toMatchObject({ items: [], hasMore: false });
+  } finally { removes.forEach(remove => remove()); await f.close(); }
+}, 30000);
