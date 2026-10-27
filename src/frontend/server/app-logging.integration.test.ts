@@ -44,7 +44,7 @@ test('createApp opens logging before plugin setup, retains diagnostics through s
     logger = await LoggingRuntime.open(storage(root), fallback());
     const setup = await logger.page('operational', { kind: 'platform' }, { action: 'fixture.setup' });
     expect(setup.events).toHaveLength(1);
-    expect(setup.events[0]?.event.metadata).toEqual({ category: 'fixture' });
+    expect(setup.events[0]?.event.metadata).toEqual({ category: 'fixture', sourceCode: 'fixture.setup' });
     expect(JSON.stringify(setup)).not.toContain('synthetic-private');
     expect((await logger.page('operational', { kind: 'platform' }, { action: 'fixture.drain' })).events).toHaveLength(1);
     expect((await logger.page('audit', { kind: 'platform' })).events).toHaveLength(0);

@@ -17,7 +17,7 @@ beforeAll(async () => {
   try {
     const style = await buildPlatformStyles(directory, `${directory}/absent-app`); css = await Bun.file(style.cssPath).text();
     const output = join(directory, 'fixture.js'), build = Bun.spawn([process.execPath, 'build', `${import.meta.dir}/kbd.browser-fixture.tsx`,
-      '--target=browser', '--format=iife', '--outfile', output], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+      '--target=browser', '--format=iife', '--outdir', directory, '--entry-naming=fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
     const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
     if (code !== 0) throw new Error(`Kbd fixture build failed (${code}): ${stderr || stdout}`);
     bundle = await Bun.file(output).text();
