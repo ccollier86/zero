@@ -6,6 +6,7 @@ import { assertMessagingConversation, assertMessagingMessage, assertMessagingPag
   assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem } from './messaging-response';
 import { watchMessagingProjection } from './messaging-watch';
 import { createMessagingAttachmentClient, type MessagingBinaryTransport } from './messaging-attachment-client';
+import { assertMessagingReviewItem, assertMessagingReviewDetail, assertMessagingReviewResolution } from './messaging-review-response';
 export function messagingQueryString(input: object = {}): string {
   const query = new URLSearchParams(); for (const key of ['before', 'after', 'limit', 'search', 'archived']) { const value = (input as Record<string, unknown>)[key]; if (value !== undefined) query.set(key, String(value)); }
   return query.size ? '?' + query : '';
@@ -23,6 +24,12 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
   };
   const thread = (id: string) => '/conversations/' + encodeURIComponent(id), msg = (id: string, messageId: string) => thread(id) + '/messages/' + encodeURIComponent(messageId);
   return Object.freeze<MessagingClient>({
+    review: Object.freeze<MessagingClient['review']>({
+      list: (id, query = {}, opts) => call(thread(id) + '/review' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingReviewItem, 50)),
+      get: (id, jobId, opts) => call(thread(id) + '/review/' + encodeURIComponent(jobId), 'GET', undefined, opts?.signal, undefined, assertMessagingReviewDetail),
+      retry: (id, jobId, expectedOwnerEpoch, acknowledgePossibleDuplicate, opts) => mutate(thread(id) + '/review/' + encodeURIComponent(jobId) + '/retry', 'POST', { expectedOwnerEpoch, acknowledgePossibleDuplicate }, opts, assertMessagingReviewResolution),
+      dismiss: (id, jobId, expectedOwnerEpoch, opts) => mutate(thread(id) + '/review/' + encodeURIComponent(jobId) + '/dismiss', 'POST', { expectedOwnerEpoch }, opts, assertMessagingReviewResolution),
+    }),
     attachments: createMessagingAttachmentClient(call, raw, () => boundary.signal),
     capabilities: () => call('/config', 'GET', undefined, undefined, undefined, assertMessagingCapabilities), directory: (query = {}, opts) => call('/directory' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingDirectoryEntry, 50)),
     receipt: (id, opts) => call('/receipts/' + encodeURIComponent(id), 'GET', undefined, opts?.signal, undefined, assertMessagingReceipt),

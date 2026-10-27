@@ -5,4 +5,5 @@ export type { MessagingAuthority } from './service';
 export type { MessagingConfig } from './config';
 export type * from './contracts';
 export type * from './attachment-contracts';
+export type * from './review-contracts';
 export type { MessagingServerApi } from './server-contracts';

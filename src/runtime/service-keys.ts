@@ -34,6 +34,8 @@ import { createZeroRuntimeServiceKey } from './zero-app-runtime';
 export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
   'Application reactive database',
 );
+/** Internal coalesced admission invalidation for canonical membership outside the main Sync database. */
+export const ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED = createZeroRuntimeServiceKey<() => void>('Private membership Sync revalidation');
 
 export const ZERO_SQLITE_SERVICE = createZeroRuntimeServiceKey<PlatformSQLiteService>(
   'Application SQLite service',

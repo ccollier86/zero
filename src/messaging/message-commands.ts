@@ -44,16 +44,17 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
   });
 }
 /** Job identity binds the accepted message and ownership epoch; one queued start does not run a provider inline. */
-export function appendMessagingJob(context: DatabaseWriteCommandContext, conversation: ConversationRow, messageId: string, kind: 'assistant' | 'delivery' | 'notification', now: number, policyHash: string | null = null): void {
+export function appendMessagingJob(context: DatabaseWriteCommandContext, conversation: ConversationRow, messageId: string, kind: 'assistant' | 'delivery' | 'notification', now: number, policyHash: string | null = null): string {
   const revision = (conversation as JobConversation).context_revision ?? 0, id = messagingHash(kind === 'assistant' ? [messageId, kind, conversation.owner_epoch, revision] : [messageId, kind]);
-  if (context.db.get('messaging_jobs', id)) return;
+  if (context.db.get('messaging_jobs', id)) return id;
   context.db.createStrict('messaging_jobs', { id, scope_id: conversation.scope_id, conversation_id: conversation.id, message_id: messageId,
     kind, owner_epoch: conversation.owner_epoch, context_revision: revision, policy_hash: policyHash, dispatch_generation: 0, state: 'pending', lease_nonce: null, lease_expires: null, attempts: 0, provider_id: null, error_code: null, created_at: now, updated_at: now });
+  return id;
 }
-export function queueMessagingAssistant(context: DatabaseWriteCommandContext, conversation: JobConversation, policy: unknown): void {
-  if (!conversation.customer_turn_id || conversation.owner !== 'assistant' || conversation.archived) return;
+export function queueMessagingAssistant(context: DatabaseWriteCommandContext, conversation: JobConversation, policy: unknown): string | null {
+  if (!conversation.customer_turn_id || conversation.owner !== 'assistant' || conversation.archived) return null;
   if (typeof policy !== 'string' || !/^[a-f0-9]{64}$/.test(policy)) messagingFail('MESSAGING_INPUT_INVALID', 422);
-  appendMessagingJob(context, conversation, conversation.customer_turn_id, 'assistant', Date.now(), policy);
+  return appendMessagingJob(context, conversation, conversation.customer_turn_id, 'assistant', Date.now(), policy);
 }
 export function changeMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {

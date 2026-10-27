@@ -12,6 +12,8 @@ import { MemoryEventStore } from '../observability/memory-event-store';
 import type { AppConfig } from '../frontend/server/types';
 import { defineEndpoint, defineZeroPlugin } from '../frontend/server/server-extensions';
 import type { ServerRouteServices } from '../frontend/server/server-services';
+import { messagingTypingSocket } from './test-support/typing-socket';
+import { messagingTypingRoom } from './typing-topic';
 const PASSWORD = 'Synthetic-messaging-password-123';
 type TestClient = Pick<Client, 'register' | 'login' | 'messaging' | 'logging' | 'fetch' | 'disconnect' | 'user'>;
 /** Another actual native HTTP identity, not a second forbidden global browser Client singleton. */
@@ -67,6 +69,7 @@ test('native messaging uses current identity, persists accepted messages/reactio
     });
     expect(created.kind).toBe('direct');
     const sent = await alice.messaging.messages.send(created.id, { text: 'Private synthetic orchid' }, { requestId: 'send-one' });
+    expect((await bob.messaging.messages.list(created.id, { search: 'orchid' })).items[0]?.id).toBe(sent.id);
     expect((await alice.messaging.messages.send(created.id, { text: 'Private synthetic orchid' }, { requestId: 'send-one' })).id).toBe(sent.id);
     expect((await bob.messaging.conversations.get(created.id)).unreadCount).toBe(1);
     expect((await bob.messaging.messages.react(created.id, sent.id, '👍', true, { requestId: 'react-one' })).reactions).toEqual([{ emoji: '👍', count: 1, selected: true }]);
@@ -77,12 +80,54 @@ test('native messaging uses current identity, persists accepted messages/reactio
     await f.zero.logging!.flush();
     const audit = await f.zero.logging!.page('audit', { kind: 'platform' }, { family: 'records', actorId: alice.user!.userId });
     expect(audit.events.length).toBeGreaterThan(0); expect(JSON.stringify(audit)).not.toContain('Private synthetic orchid');
+    const reads = await alice.logging.page('audit', { family: 'communications', actorId: bobId, action: 'messaging.history.prepared' });
+    expect(reads.events.some(row => row.event.target?.id === created.id && row.event.outcome === 'succeeded' && row.event.evidence === 'server-confirmed')).toBe(true);
+    expect(JSON.stringify(reads)).not.toContain('orchid');
     alice.disconnect(); bob.disconnect(); await f.restart(); alice = f.client(); bob = f.peer();
     await alice.login('message-alice', PASSWORD); await bob.login('message-bob', PASSWORD);
     expect((await bob.messaging.messages.list(created.id)).items[0]!.id).toBe(sent.id);
     expect((await bob.messaging.conversations.get(created.id)).unreadCount).toBe(0);
     expect(await alice.messaging.receipt('send-one')).toMatchObject({ requestId: 'send-one', resourceId: sent.id });
   } finally { for (const event of f.diagnostics.query({ limit: 1000 }).events.filter(event => event.code === 'messaging.operation.rejected' || event.code.includes('executor.failed'))) console.info('Synthetic messaging storage outcome', event.metadata); alice.disconnect(); bob.disconnect(); await f.close(); }
+}, 90000);
+
+test('native review HTTP and SDK retain the failed attempt, require an explicit current-owner retry, and never duplicate its replacement', async () => {
+  let calls = 0, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch() {
+    if (++calls === 1) return Response.json({ error: { message: 'Synthetic local provider failure.' } }, { status: 503 });
+    await held;
+    return Response.json({ id: 'synthetic-review-reply', object: 'chat.completion', created: 1, model: 'chat', choices: [{ index: 0, message: { role: 'assistant', content: 'Synthetic reviewed replacement answer.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } });
+  } });
+  const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1'), staff = f.client(), customer = f.peer();
+  try {
+    await enroll(staff, 'review-staff'); await enroll(customer, 'review-customer');
+    const conversation = await customer.messaging.support.open({ title: '' }, { requestId: 'review-open' });
+    await customer.messaging.messages.send(conversation.id, { text: 'Synthetic review request.' }, { requestId: 'review-customer-turn' });
+    const until = Date.now() + 10000; let current = await customer.messaging.conversations.get(conversation.id);
+    while (current.owner !== 'triage' && Date.now() < until) { await Bun.sleep(50); current = await customer.messaging.conversations.get(conversation.id); }
+    expect(current.owner).toBe('triage'); expect(calls).toBe(1);
+    const claimed = await staff.messaging.support.claim(conversation.id, current.ownerEpoch, { requestId: 'review-staff-claim' });
+    await expect(customer.messaging.review.list(conversation.id)).rejects.toMatchObject({ status: 403 });
+    const items = await staff.messaging.review.list(conversation.id); expect(items.items).toHaveLength(1);
+    const old = items.items[0]!, detail = await staff.messaging.review.get(conversation.id, old.id);
+    expect(detail).toMatchObject({ reason: 'PROVIDER_OUTCOME_UNKNOWN', draftText: null }); expect(detail.history).toHaveLength(1);
+    await expect(staff.messaging.review.retry(conversation.id, old.id, claimed.ownerEpoch, false as true, { requestId: 'review-no-ack' })).rejects.toMatchObject({ status: 422 });
+    const options = { requestId: 'review-explicit-retry' }, accepted = await staff.messaging.review.retry(conversation.id, old.id, claimed.ownerEpoch, true, options);
+    expect(accepted.replacementJobId).not.toBe(old.id);
+    expect(await staff.messaging.review.retry(conversation.id, old.id, claimed.ownerEpoch, true, options)).toEqual(accepted);
+    release();
+    const deadline = Date.now() + 10000; let messages = await customer.messaging.messages.list(conversation.id);
+    while (!messages.items.some(row => row.authorKind === 'assistant') && Date.now() < deadline) { await Bun.sleep(50); messages = await customer.messaging.messages.list(conversation.id); }
+    expect(calls).toBe(2); expect(messages.items.filter(row => row.authorKind === 'assistant')).toHaveLength(1);
+    const retained = await staff.messaging.review.get(conversation.id, old.id);
+    expect(retained.reason).toBe(detail.reason); expect(retained.history).toEqual(detail.history); expect(retained.resolution).toEqual(accepted);
+    expect((await staff.messaging.review.list(conversation.id)).items).toEqual([]);
+    await f.zero.logging!.flush();
+    const evidence = await staff.logging.page('audit', { family: 'communications' });
+    expect(evidence.events.some(row => row.event.action === 'messaging.review.detail.prepared')).toBe(true);
+    expect(JSON.stringify(evidence)).not.toContain('Synthetic review request.'); expect(JSON.stringify(evidence)).not.toContain('Synthetic reviewed replacement answer.');
+  } finally { release(); staff.disconnect(); customer.disconnect(); await f.close(); await provider.stop(true); }
 }, 90000);
 
 /** Actual loopback provider transport; the real AI gateway, Torrent, Guardian and private actors remain in the path. */
@@ -212,4 +257,55 @@ test('strict audit admission gates native messaging and a healthy live stream ob
     expect(seen).toContain(sent.id); expect(errors).toEqual([]);
     bob.messaging.clear(); const retired = seen.length; await Bun.sleep(100); expect(seen.length).toBe(retired);
   } finally { stop?.(); alice.disconnect(); bob.disconnect(); await f.close(); }
+}, 90000);
+
+test('native sockets bind typing to canonical conversation/staff membership, actor tabs, short expiry and prompt membership revocation', async () => {
+  const f = await fixture(), alice = f.client(), bob = f.peer(), outsider = f.peer();
+  const sockets: Awaited<ReturnType<typeof messagingTypingSocket>>[] = [];
+  try {
+    await enroll(alice, 'typing-staff'); await enroll(bob, 'typing-customer'); await enroll(outsider, 'typing-outsider');
+    const token = async (client: TestClient, username: string) => {
+      const result = await client.login(username, PASSWORD);
+      if (!('accessToken' in result)) throw new Error('Synthetic single-tenant sign-in did not complete.');
+      return result.accessToken;
+    };
+    const staffToken = await token(alice, 'typing-staff'), customerToken = await token(bob, 'typing-customer'), outsiderToken = await token(outsider, 'typing-outsider');
+    const a = await messagingTypingSocket(f.origin, staffToken); sockets.push(a);
+    const b = await messagingTypingSocket(f.origin, customerToken); sockets.push(b);
+    const c = await messagingTypingSocket(f.origin, outsiderToken); sockets.push(c);
+    const support = await bob.messaging.support.open({ title: '' }, { requestId: 'typing-support' });
+    await alice.messaging.support.claim(support.id, support.ownerEpoch, { requestId: 'typing-claim' });
+    const publicTopic = 'typing:' + messagingTypingRoom(support.id), privateTopic = 'typing:' + messagingTypingRoom(support.id, 'staff');
+    for (const [peer, topic] of [[a, publicTopic], [b, publicTopic], [a, privateTopic]] as const) {
+      peer.send({ type: 'ephemeral.subscribe', topic });
+      await peer.wait(message => message.type === 'ephemeral.snapshot' && message.topic === topic);
+    }
+    b.send({ type: 'ephemeral.subscribe', topic: privateTopic });
+    expect(await b.wait(message => message.type === 'ephemeral.error' && message.topic === privateTopic)).toMatchObject({ code: 'EPHEMERAL_FORBIDDEN' });
+    c.send({ type: 'ephemeral.subscribe', topic: publicTopic });
+    expect(await c.wait(message => message.type === 'ephemeral.error' && message.topic === publicTopic)).toMatchObject({ code: 'EPHEMERAL_FORBIDDEN' });
+    const first = 'user:' + alice.user!.userId + ':session:tabone01', second = 'user:' + alice.user!.userId + ':session:tabtwo02';
+    const value = { userId: alice.user!.userId, label: 'Synthetic staff', since: 1, updatedAt: 1, metadata: { activity: 'typing' } };
+    a.send({ type: 'ephemeral.set', topic: publicTopic, key: first, value, ttl: 1000 });
+    expect(await b.wait(message => message.type === 'ephemeral.change' && message.topic === publicTopic && message.key === first)).toMatchObject({ value, freshness: { ttlMs: 1000 } });
+    a.send({ type: 'ephemeral.set', topic: publicTopic, key: second, value, ttl: 5000 });
+    await b.wait(message => message.type === 'ephemeral.change' && message.key === second && message.op === 'set');
+    a.send({ type: 'ephemeral.delete', topic: publicTopic, key: first });
+    await b.wait(message => message.type === 'ephemeral.change' && message.key === first && message.op === 'delete');
+    expect(b.messages.some(message => message.type === 'ephemeral.change' && message.key === second && message.op === 'delete')).toBe(false);
+    a.send({ type: 'ephemeral.set', topic: publicTopic, key: 'user:' + bob.user!.userId + ':session:forged01', value, ttl: 5000 });
+    expect(await a.wait(message => message.type === 'ephemeral.error' && message.key?.includes('forged01') === true)).toMatchObject({ code: 'EPHEMERAL_KEY_NOT_OWNED' });
+    a.send({ type: 'ephemeral.set', topic: publicTopic, key: first, value, ttl: 999 });
+    expect(await a.wait(message => message.type === 'ephemeral.error' && message.key === first)).toMatchObject({ code: 'EPHEMERAL_INVALID_TTL' });
+    a.send({ type: 'ephemeral.set', topic: privateTopic, key: first, value: { ...value, metadata: { activity: 'recording' } }, ttl: 1000 });
+    await a.wait(message => message.type === 'ephemeral.change' && message.topic === privateTopic && message.op === 'set');
+    await a.wait(message => message.type === 'ephemeral.change' && message.topic === privateTopic && message.op === 'delete');
+    expect(b.messages.some(message => message.type === 'ephemeral.change' && message.topic === privateTopic)).toBe(false);
+    const group = await alice.messaging.conversations.create({ kind: 'group', userIds: [bob.user!.userId] }, { requestId: 'typing-group' });
+    const groupTopic = 'typing:' + messagingTypingRoom(group.id);
+    b.send({ type: 'ephemeral.subscribe', topic: groupTopic });
+    await b.wait(message => message.type === 'ephemeral.snapshot' && message.topic === groupTopic);
+    await alice.messaging.conversations.removeParticipant(group.id, group.revision, bob.user!.userId, { requestId: 'typing-remove' });
+    expect(await b.wait(message => message.type === 'ephemeral.error' && message.topic === groupTopic && message.revoked === true)).toMatchObject({ code: 'EPHEMERAL_FORBIDDEN' });
+  } finally { await Promise.all(sockets.map(socket => socket.close())); alice.disconnect(); bob.disconnect(); outsider.disconnect(); await f.close(); }
 }, 90000);

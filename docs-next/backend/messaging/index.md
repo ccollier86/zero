@@ -22,6 +22,11 @@ customer assistant reachable through a web portal and Facebook Messenger, with
 explicit staff takeover. The same foundations must support user-to-user and
 organization conversations without weakening their different admission rules.
 
+The branch-only [durable review API](./review.md) documents explicit retry,
+current-owner admission, immutable prior outcomes and semantic read evidence.
+It is not available in an older stable archive merely because its version is
+also `2.6.0`.
+
 ## Implementation Status
 
 The packaged foundation implements session-scoped room typing over the
@@ -68,7 +73,7 @@ feature-branch example into an older archive based on the `2.6.0` label alone.
 | Fabric | Route each operation and subscription to its declared canonical realm; recover owner changes | No local SQL fallback to another realm; per-database serialized commits remain compatible with concurrent independent databases |
 | Rooms and ephemeral Sync | Authorized participant activity, typing and connection cleanup | Presence is not membership, a message receipt, a durable audit or proof of a user's attention |
 | Storage | Private staged bytes, quota/checksum/MIME admission, conversation attachments and authorized downloads | No binary blobs in chat rows, publicly guessed URLs, drive-wide tenant grants or client-selected ownership |
-| AI | Existing configured providers/models, BYOK, Guardian restrictions, streams and cancellation | No provider SDK or key in the browser; routing judgments cannot replace authorization |
+| AI | Trusted configured providers/models, Guardian restrictions, streams and cancellation; separately qualified BYOK when supported by the AI foundation | No provider SDK or key in the browser; routing judgments cannot replace authorization |
 | Torrent and database automations | Durable AI/channel/notification jobs, retries, idempotency and recovery | No untracked fire-and-forget callbacks; no network calls inside SQLite commits |
 | Notifications | Scoped unread alerts, mentions, assignments and customer/staff escalation | Explicit recipients and preferences; no disclosure to every tenant member by default |
 | KV/cache | Optional bounded rate limits, capability caches and coalescing | Never the sole durable source of membership, ownership, accepted sends or read receipts |

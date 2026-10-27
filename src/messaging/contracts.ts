@@ -34,6 +34,7 @@ export interface MessagingDirectoryEntry { readonly id: string; readonly name: s
 export interface MessagingReceipt { readonly requestId: string; readonly operation: string; readonly resourceId: string | null; readonly acceptedAt: number }
 export interface MessagingContact { readonly id: string; readonly userId: string; readonly direction: 'incoming' | 'outgoing'; readonly state: 'pending' | 'accepted' | 'declined' | 'blocked'; readonly revision: number; readonly updatedAt: number }
 export interface MessagingApi {
+  readonly review: import('./review-contracts').MessagingReviewApi;
   readonly attachments: MessagingAttachmentsApi;
   capabilities(): Promise<MessagingCapabilities>;
   directory(query?: { readonly after?: string; readonly limit?: number; readonly search?: string }, options?: MessagingReadOptions): Promise<MessagingPage<MessagingDirectoryEntry>>;

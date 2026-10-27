@@ -6,10 +6,11 @@ import { requireRequestServiceDataScope, serviceDataScopeKey, type ServiceDataSc
 import type { EphemeralTopicDecision, EphemeralTopicPolicyContext } from '../sync/ephemeral-policy';
 import { ZERO_MESSAGING } from './service';
 import { AuthError } from '../auth/types';
+import { parseMessagingTypingTopic } from './typing-topic';
 export async function authorizeMessagingTyping(runtime: ZeroAppRuntime, context: EphemeralTopicPolicyContext, scope: ServiceDataScope): Promise<EphemeralTopicDecision> {
   const deny = (): EphemeralTopicDecision => ({ ok: false, code: 'EPHEMERAL_FORBIDDEN', reason: 'Conversation typing is not available.' });
   const service = runtime.get(ZERO_MESSAGING), tokens = runtime.get(ZERO_AUTH_TOKEN_SERVICE), users = runtime.get(ZERO_AUTH_STORE), kernel = runtime.get(ZERO_AUTHORIZATION_KERNEL);
-  const auth = context.authContext, matched = /^typing:messaging:([A-Za-z0-9][A-Za-z0-9_.:-]{0,199}?)(:staff)?$/.exec(context.topic);
+  const auth = context.authContext, matched = parseMessagingTypingTopic(context.topic);
   if (!service || !tokens || !users || !kernel || !auth || !matched) return deny();
   const reference = tokens.captureAuthContextAuthority(auth); if (!reference) return deny();
   const accessFor = () => {
@@ -17,9 +18,9 @@ export async function authorizeMessagingTyping(runtime: ZeroAppRuntime, context:
     return createRequestAuthorizationAccess({ authContext: current, kernel, propertyStore: users, roleAssignments: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE), assertCurrentProfile: () => tokens.assertCurrentProfile() });
   };
   try {
-    const access = accessFor(), check = () => { if (serviceDataScopeKey(requireRequestServiceDataScope(accessFor(), () => kernel)) !== serviceDataScopeKey(scope)) throw new AuthError('Messaging scope changed.', 'AUTH_STATE_CHANGED', 409); };
+    const check = () => { if (serviceDataScopeKey(requireRequestServiceDataScope(accessFor(), () => kernel)) !== serviceDataScopeKey(scope)) throw new AuthError('Messaging scope changed.', 'AUTH_STATE_CHANGED', 409); };
     check();
-    if (!await service.typingMember({ access, scope, assertCurrentAuthoritySync: check }, matched[1]!, Boolean(matched[2]), context.operation !== 'subscribe')) return deny();
+    if (!await service.typingMember({ get access() { return accessFor(); }, scope, assertCurrentAuthoritySync: check }, matched.conversationId, matched.visibility === 'staff', context.operation !== 'subscribe')) return deny();
     const actorKey = 'user:' + auth.userId, session = context.key?.startsWith(actorKey + ':session:') && /^[A-Za-z0-9_-]{8,80}$/.test(context.key.slice((actorKey + ':session:').length));
     if (context.operation !== 'subscribe' && !session) return { ok: false, code: 'EPHEMERAL_KEY_NOT_OWNED', reason: 'Typing uses the current user and tab key.' };
     if (context.operation === 'set') {
@@ -30,6 +31,6 @@ export async function authorizeMessagingTyping(runtime: ZeroAppRuntime, context:
       if (metadata !== undefined && (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || Object.keys(metadata).some(key => key !== 'activity') || !['typing', 'recording', 'uploading'].includes(String(metadata.activity)))) return deny();
       if (Object.keys(value).some(key => !['userId', 'label', 'since', 'updatedAt', 'metadata'].includes(key)) || typeof value.label !== 'string' || value.label.length > 160 || !Number.isFinite(value.since) || !Number.isFinite(value.updatedAt)) return deny();
     }
-    check(); return { ok: true, namespace: serviceDataScopeKey(scope) + ':messaging:' + matched[1] + (matched[2] ? ':staff' : '') + ':typing', keyOwnership: 'actor' };
+    check(); return { ok: true, namespace: serviceDataScopeKey(scope) + ':messaging:' + JSON.stringify([matched.conversationId, matched.visibility]) + ':typing', keyOwnership: 'actor' };
   } catch (error) { if (error instanceof AuthError && error.status < 500) return deny(); throw error; }
 }

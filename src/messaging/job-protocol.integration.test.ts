@@ -51,6 +51,54 @@ test('a received private result resumes after restart without another invocation
   } finally { await f.close(); }
 }, 30000);
 
+test('explicit human review retains a private result and old failure, creates one fresh fenced job, and replays without another generation', async () => {
+  const f = await fixture();
+  const reviews = () => f.runtime.read<{ items: { id: string }[] }>(scope, 'messaging.reviews', { actor: staff, conversationId: 'support-one' }, guard);
+  try {
+    await f.send('review-turn'); const job = (await f.pending())[0]!;
+    await f.command('messaging.job.claim', claim(job.id, 'original'));
+    await f.command('messaging.job.call', ref(job.id, 'original'));
+    await f.command('messaging.job.receive', { ...ref(job.id, 'original'), text: 'PRIVATE_RETAINED_REVIEW_DRAFT', providerId: 'synthetic-received', maxMessageLength: 20000 });
+    await f.command('messaging.job.review', { ...ref(job.id, 'original'), code: 'PUBLICATION_REQUIRES_REVIEW' });
+    await expect(f.runtime.read(scope, 'messaging.review', { actor: customer, conversationId: 'support-one', id: job.id }, guard)).rejects.toMatchObject({ code: 'MESSAGING_FORBIDDEN' });
+    await expect(reviews()).rejects.toMatchObject({ code: 'MESSAGING_NOT_FOUND' });
+    await f.command('messaging.support.claim', { actor: staff, id: 'support-one', requestId: 'review-claim', expectedEpoch: 2, maxParticipants: 100 });
+    expect((await reviews()).items.map(row => row.id)).toEqual([job.id]);
+    const detail = await f.runtime.read<{ draftText: string; history: unknown[] }>(scope, 'messaging.review', { actor: staff, conversationId: 'support-one', id: job.id }, guard);
+    expect(detail.draftText).toBe('PRIVATE_RETAINED_REVIEW_DRAFT'); expect(detail.history).toHaveLength(1);
+    const retry = { actor: staff, conversationId: 'support-one', id: job.id, requestId: 'review-retry-once', action: 'retry', expectedOwnerEpoch: 3, acknowledgePossibleDuplicate: true, assistantPolicy: policy };
+    await expect(f.command('messaging.review.resolve', { ...retry, acknowledgePossibleDuplicate: false })).rejects.toMatchObject({ code: 'MESSAGING_INPUT_INVALID' });
+    await expect(f.command('messaging.review.resolve', { ...retry, expectedOwnerEpoch: 4 })).rejects.toMatchObject({ code: 'MESSAGING_OWNER_CONFLICT' });
+    const accepted = await f.command('messaging.review.resolve', retry);
+    expect(typeof accepted.replacementJobId).toBe('string'); expect(accepted.replacementJobId).not.toBe(job.id);
+    expect(await f.command('messaging.review.resolve', retry)).toEqual(accepted);
+    expect((await f.context(job.id)).job).toMatchObject({ state: 'needs-review', attempts: 1, error_code: 'PUBLICATION_REQUIRES_REVIEW' });
+    expect((await f.context(String(accepted.replacementJobId))).job).toMatchObject({ state: 'pending', attempts: 0, owner_epoch: 4 });
+    expect((await reviews()).items).toEqual([]);
+    await f.restart();
+    expect(await f.command('messaging.review.resolve', retry)).toEqual(accepted);
+    expect((await f.context(String(accepted.replacementJobId))).job.attempts).toBe(0);
+    await expect(f.runtime.read(scope, 'messaging.review', { actor: { ...staff, staff: false }, conversationId: 'support-one', id: job.id }, guard)).rejects.toMatchObject({ code: 'MESSAGING_NOT_FOUND' });
+  } finally { await f.close(); }
+}, 30000);
+
+test('a newer customer turn cannot be retried from an old review, while explicit dismissal preserves uncertainty instead of relabeling success', async () => {
+  const f = await fixture();
+  try {
+    await f.send('old-review-turn'); const job = (await f.pending())[0]!;
+    await f.command('messaging.job.claim', claim(job.id, 'unknown-attempt')); await f.command('messaging.job.call', ref(job.id, 'unknown-attempt'));
+    await f.restart(); await f.command('messaging.job.claim', claim(job.id, 'recover-unknown'));
+    await f.command('messaging.support.claim', { actor: staff, id: 'support-one', requestId: 'claim-unknown', expectedEpoch: 2, maxParticipants: 100 });
+    await f.send('new-review-turn');
+    const resolution = { actor: staff, conversationId: 'support-one', id: job.id, expectedOwnerEpoch: 3, requestId: 'resolve-unknown', action: 'retry', acknowledgePossibleDuplicate: true, assistantPolicy: policy };
+    await expect(f.command('messaging.review.resolve', resolution)).rejects.toMatchObject({ code: 'MESSAGING_STAGE_CONFLICT' });
+    const dismissed = await f.command('messaging.review.resolve', { ...resolution, requestId: 'dismiss-unknown', action: 'dismiss' });
+    expect(dismissed).toMatchObject({ jobId: job.id, action: 'dismiss', replacementJobId: null });
+    expect((await f.context(job.id)).job).toMatchObject({ state: 'needs-review', error_code: 'INVOCATION_UNKNOWN', attempts: 1 });
+    await expect(f.runtime.read(scope, 'messaging.review', { actor: { ...staff, scopeId: 'tenant:foreign' }, conversationId: 'support-one', id: job.id }, guard)).rejects.toMatchObject({ code: 'MESSAGING_NOT_FOUND' });
+  } finally { await f.close(); }
+}, 30000);
+
 test('a crash after invocation admission becomes review/triage rather than a second call', async () => {
   const f = await fixture();
   try {

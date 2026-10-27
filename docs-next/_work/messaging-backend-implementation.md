@@ -125,7 +125,7 @@ request controllers are not aborted.
 - [ ] Private Storage stage/upload/finalize/attach/download and orphan recovery.
 - [ ] Detailed typing bound to canonical membership, not a delayed room shadow.
 - [ ] Short durable job starts, independent Torrent/provider concurrency,
-  current BYOK/model rules, assistant epoch fences and private-note exclusion.
+  trusted configured model/provider policy, assistant epoch fences and private-note exclusion.
 - [ ] Notifications and verified Messenger ingress/outbox; unknown sends retain
   their identity and require reconciliation rather than automatic duplicate sends.
 - [ ] Native workspace live history/backfill, scroll anchoring, takeover,
@@ -181,6 +181,111 @@ accepted sends finish without waiting, and human takeover excludes the old
 reply. Provider completion retains its trusted origin/evidence and neither
 logs nor workflow records contain transcript, generated text or provider keys.
 All identities, messages, files and provider requests are synthetic and local.
+
+Assistant execution currently uses the trusted messaging configuration and the
+managed platform AI gateway. It does not implement database-managed credentials
+or automatically apply per-user/organization BYOK: those AI-foundation features
+are not established by this slice. Browser input cannot select a model/provider
+or supply keys. Do not advertise a general BYOK integration until the AI layer
+actually supports and qualifies that authority/cost boundary.
+
+### Next unqualified review/typing slice
+
+The following changes are still a working-tree slice, not an installed release:
+
+- Native typing topics now encode explicit conversation/staff visibility before
+  the opaque ID. The internal namespace encodes both fields, so an ID ending in
+  `:staff` cannot alias private-note typing. Native display labels are bounded
+  to the existing 160-character wire limit and do not fall back to private
+  email fields. Generic Room typing remains unchanged. Pure parser/label tests
+  pass; native socket, scope-change, revocation and multi-tab checks are pending.
+- Private messaging migration `004` adds immutable review resolutions and
+  indexed conversation-scoped review discovery; earlier private migrations are
+  unchanged. This is not the historical global/core migration `004`.
+- The draft `zero.messaging.review` / `client.messaging.review` facades supply
+  bounded `list`, `get`, `retry` and `dismiss` operations through native HTTP.
+  Reading a retained draft/attempt history requires current canonical staff
+  membership. Retrying/dismissing requires the current human owner and exact
+  ownership epoch; retry additionally requires an explicit possible-duplicate
+  acknowledgment and the still-current customer turn/context revision.
+- Retry creates a new assistant ownership epoch and job with the current
+  configured policy. The old failed/uncertain job and attempt history stay
+  unchanged, linked by a separate immutable resolution. Exact accepted command
+  replay cannot create another generation. Dismissal removes an item from the
+  unresolved view; it does not relabel an uncertain effect as successful.
+- Pure review wire/typing checks pass three tests / 22 assertions. Added native
+  review-protocol scenarios, HTTP acceptance, complete typecheck and bundled
+  source identity tests are still awaiting execution. Do not advertise those
+  as passed merely because the new modules exist.
+- Queue review additionally changes wake-up handling to retain an in-progress
+  per-scope scan and wrap after it finishes when new work arrives. Resetting the
+  page cursor on every completion could starve later pages under steady load.
+  The deterministic public-scheduler test now passes: an inserted head item
+  cannot displace the already-paged older item, and the scan wraps afterward.
+  Native queue/installed acceptance remains separate qualification.
+
+Before complete backend qualification, also instrument framework-owned semantic
+conversation/history/review reads through the existing configurable logging
+boundary. A tracked write is not evidence of a read, HTTP delivery or attention.
+Keep read events target-scoped and content-free, distinguish attempted/obtained/
+denied/failed outcomes, and avoid treating recurring projection/authority checks
+as human page views. This must not introduce a held SQL/auth lease across audit
+delivery or provider work. Verify transcript/draft/key absence in all logs.
+
+### Review/typing/read-evidence native checkpoint (2026-10-27)
+
+The six-file focused run passes private review protocol, scheduler fairness,
+read-audit stages, typing parsing, SDK review wire validation and native
+notification receiver receipts. The managed seven-scenario run passes all 88
+assertions with actual Guardian/HTTP/SDK, private Fabric, Logging, Storage,
+Torrent, loopback AI and typing sockets. It includes a failed provider attempt,
+explicit owner retry/duplicate replay, preserved old outcome, current human
+takeover, customer/staff review isolation, semantic history/review preparation
+and transcript/query/result absence from communications evidence.
+
+The real sockets exercise canonical conversation and private staff topics,
+independent tab keys, short expiry, forged-key/invalid-TTL rejection and prompt
+membership-removal revocation. A private-realm membership mutation now requests
+coalesced native Sync revalidation; it does not create a delayed room-membership
+shadow. Native policy facades are rebuilt after async boundaries so trusted
+property snapshots are not retained across a yielding read/release check.
+
+Explicit semantic reads now emit content-free admitted/prepared/denied/failed/
+unknown facts when communications capture is enabled. Final projections are
+freshly re-read after audit delivery. Live connection admission is audited once;
+automatic refresh/typing checks are not human page views. Post-mutation
+projection is not a second semantic read. No source lease spans audit I/O.
+
+The adjacent four-file run passes notification HTTP/scoped-service inventory,
+ephemeral channel and durable-change contracts. Core migration `051` plus the
+new native `notifyUsersOnce` receiver are a **foundation only**, not completed
+messaging notification delivery: the worker still sends notification jobs to
+review until its fixed-audience projection/receipt recovery is implemented.
+Receiver tests prove atomic rollback, exact input conflict, scope separation,
+empty-audience receipt and no resurrection after notice deletion. It stores no
+message text, and no real provider is contacted.
+
+The new endpoint/manual is [durable review](../backend/messaging/review.md).
+Full root typecheck, source/bundled identity, native deployment and all remaining
+backend features still gate any selected messaging release. Passing native
+protocol/HTTP scenarios is not an installed Linux/browser qualification.
+
+### Messenger contract review prerequisites
+
+The 2026-10-27 read-only review reached Meta's
+[official sample collection](https://github.com/fbsamples/messenger-platform-samples/blob/main/postman/messenger-platform-api.postman_collection.json).
+It demonstrates versioned Page message requests, recipient-scoped text/media
+shapes, sender actions and bearer authentication. Use those protocol contracts,
+not copied application code or sample credentials. Native ingress still needs
+current signature/policy, permanent dedup and delivery reconciliation proofs.
+
+Meta's [official iOS SDK changelog](https://github.com/facebook/facebook-ios-sdk/blob/main/CHANGELOG.md#1811)
+records its move to Graph v26.0. This supports an explicit version candidate;
+it is not proof of every current Messenger policy or the latest supported
+version. Direct Meta Messenger, Graph changelog and webhook documentation
+requests returned HTTP 429 in this review. Recheck those primary pages before
+claiming production channel qualification; never infer reply windows, approved
+tags, message-size limits or non-idempotent retry safety from an old sample.
 
 ## Fixed integration decisions
 

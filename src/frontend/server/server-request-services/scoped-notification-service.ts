@@ -12,6 +12,7 @@ import {
   notificationAudienceRoles,
 } from '../../../notifications/notification-access';
 import type { NotificationService } from '../../../notifications/notification-service';
+import type { NotificationEffectReceipt, NotificationOnceParams } from '../../../notifications/notification-effects';
 import type {
   CreateNotificationParams,
   NotificationReceiptRecord,
@@ -34,6 +35,7 @@ export interface ScopedNotificationService {
   broadcast(params: CreateNotificationParams): NotificationRecord;
   notify(userId: string, params: CreateNotificationParams): NotificationRecord;
   notifyUsers(userIds: string[], params: CreateNotificationParams): NotificationRecord;
+  notifyUsersOnce(effectId: string, userIds: readonly string[], params: NotificationOnceParams): NotificationEffectReceipt;
   notifyRole(role: string, params: CreateNotificationParams): NotificationRecord;
   getById(notificationId: string): NotificationRecord | null;
   get(notificationId: string): NotificationRecord | null;
@@ -119,6 +121,10 @@ export function createScopedNotificationService(
       requireCreateAuthority();
       assertCurrentAuthoritySync();
       return service.notifyUsers(userIds, params, auth?.userId, scope, assertCurrentAuthoritySync);
+    },
+    notifyUsersOnce(effectId, userIds, params) {
+      requireCreateAuthority(); assertCurrentAuthoritySync();
+      return service.notifyUsersOnce(effectId, userIds, params, auth?.userId, scope, assertCurrentAuthoritySync);
     },
     notifyRole(role, params) {
       requireCreateAuthority();

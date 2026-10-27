@@ -36,7 +36,7 @@ function capture({ db }: DatabaseWriteCommandContext, input: unknown, name: stri
   const actor = r.actor && typeof r.actor === 'object' ? r.actor as Record<string, unknown> : {};
   const actorId = typeof actor.id === 'string' ? actor.id : null;
   let id = typeof r.conversationId === 'string' ? r.conversationId : typeof r.id === 'string' ? r.id : null;
-  let privateNote = r.visibility === 'staff';
+  let privateNote = r.visibility === 'staff' || name === 'messaging.review.resolve' && r.action !== 'retry';
   if (name.startsWith('messaging.job.') && typeof r.id === 'string') {
     const job = db.get('messaging_jobs', r.id);
     if (typeof job?.conversation_id === 'string') id = job.conversation_id;

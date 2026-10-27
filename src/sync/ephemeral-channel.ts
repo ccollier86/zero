@@ -43,7 +43,8 @@ export interface EphemeralChannelOptions {
 export type EphemeralRevalidationTrigger =
   | 'authority-revision'
   | 'periodic'
-  | 'room-members-change';
+  | 'room-members-change'
+  | 'private-members-change';
 
 type EphemeralSocket = ServerWebSocket<SyncSocketData>;
 

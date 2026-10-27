@@ -11,3 +11,4 @@ export interface MessagingClient extends Omit<MessagingApi, 'attachments'> {
 }
 export type * from './contracts';
 export type * from './attachment-contracts';
+export type * from './review-contracts';

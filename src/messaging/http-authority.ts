@@ -16,6 +16,12 @@ export function currentMessagingRequest(config: MessagingPluginConfig, identity:
     if (!current || current.userId !== identity.userId || serviceDataScopeKey(requireRequestServiceDataScope(accessFor(current), () => kernel)) !== serviceDataScopeKey(scope)) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409);
     config.getLoggingRuntime?.()?.admission.assertCurrent({ auth: current, properties: config.authorization.getPropertyStore?.()?.getProperties(current.userId) ?? {} }, request);
   };
-  const authority = { access, scope, assertCurrentAuthoritySync };
+  // Each command/read/release may follow an audit or actor await. Rebuild the
+  // policy facade so cached trusted-property results cannot outlive that yield.
+  const authority = { get access() {
+    const current = tokens.resolveAuthContextAuthority(reference);
+    if (!current) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409);
+    return accessFor(current);
+  }, scope, assertCurrentAuthoritySync };
   return { service, authority, facade: service.forAuthority(authority) };
 }

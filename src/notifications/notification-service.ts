@@ -9,6 +9,7 @@
 import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { Row } from '../sync/types';
+import { publishNotificationOnce, type NotificationEffectReceipt, type NotificationOnceParams } from './notification-effects';
 import type {
   NotificationRecord,
   NotificationReceiptRecord,
@@ -152,6 +153,14 @@ export class NotificationService {
       scope,
       commitFence,
     );
+  }
+
+  /** Persist an exact-user effect once, even after its notice expires or is deleted. The caller owns a stable scoped effect identity. */
+  notifyUsersOnce(effectId: string, userIds: readonly string[], params: NotificationOnceParams, senderId?: string,
+    scope?: ServiceDataScope, commitFence?: NotificationCommitFence): NotificationEffectReceipt {
+    const boundary = this.requireScope(scope);
+    return publishNotificationOnce(this.db, effectId, userIds, params, senderId, boundary, commitFence,
+      (users, captured) => this.notifyUsers(users, captured, senderId, boundary, commitFence));
   }
 
   /** Notify all users with a specific role. */

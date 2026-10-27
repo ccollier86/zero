@@ -33,6 +33,7 @@ import {
   ZERO_OBSERVABILITY_RUNTIME,
   ZERO_SQLITE_SERVICE,
   ZERO_SYNC_DB,
+  ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED,
 } from '../runtime/service-keys';
 import {
   assertActorMutationValidatorMatchesTable,
@@ -275,7 +276,10 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     unregisterCompatibilityRuntime: () => compatibilityRegistration.unregister(),
     reportSyncCode,
   });
+  const revalidatePrivateMembership = () => runtime.ephemeralChannel?.requestRevalidation('private-members-change');
+  const clearPrivateMembership = () => config.runtime?.clear(ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED, revalidatePrivateMembership);
   const teardownLifecycle = (): readonly unknown[] => {
+    clearPrivateMembership();
     unstartedSyncRuntimes.delete(db);
     return lifecycle.teardown();
   };
@@ -288,6 +292,8 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   cleanupOnCompositionFailure.push(() => unstartedSyncRuntimes.delete(db));
 
   if (config.runtime) {
+    config.runtime.set(ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED, revalidatePrivateMembership);
+    cleanupOnCompositionFailure.push(clearPrivateMembership);
     config.runtime.set(ZERO_SYNC_DB, db);
     cleanupOnCompositionFailure.push(() => config.runtime?.clear(ZERO_SYNC_DB, db));
     if (sqlite) {
@@ -319,6 +325,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     })
 
     .onStop(() => {
+      clearPrivateMembership();
       unstartedSyncRuntimes.delete(db);
       lifecycle.stop();
     })

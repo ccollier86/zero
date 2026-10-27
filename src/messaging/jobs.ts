@@ -20,6 +20,7 @@ export class MessagingJobs {
   private readonly pool: MessagingWorkPool;
   private readonly pending = new Map<string, ServiceDataScope>();
   private readonly cursors = new Map<string, string>();
+  private readonly rescan = new Set<string>();
   private readonly scheduled = new Map<string, { scope: ServiceDataScope; workflowId: string | null }>();
   private pumping: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -39,7 +40,10 @@ export class MessagingJobs {
   }
   wake(scope: ServiceDataScope): void {
     if (this.stopped) return;
-    const key = serviceDataScopeKey(scope); this.pending.set(key, scope); this.cursors.delete(key);
+    // New work may sort before the current page, but must not reset an active
+    // scan on every completion. Finish that scan, then wrap once if dirtied;
+    // otherwise a busy conversation can starve older jobs on later pages.
+    const key = serviceDataScopeKey(scope); this.pending.set(key, scope); this.rescan.add(key);
     if (this.workflow && !this.timer && !this.pumping) this.arm(0);
   }
   execute(context: StepContext<{ jobId: string }>): Promise<{ jobId: string; state: MessagingJobState }> {
@@ -67,7 +71,7 @@ export class MessagingJobs {
   }
   async close(): Promise<void> {
     if (this.stopped) return; this.stopped = true; clearTimeout(this.timer); this.removeWorkflow?.(); this.removeWorkflow = null;
-    this.pending.clear(); this.cursors.clear();
+    this.pending.clear(); this.cursors.clear(); this.rescan.clear();
     try { await this.pool.close(); } finally { await this.pumping?.catch(() => {}); this.scheduled.clear(); }
   }
   diagnostics() { return { activeAndQueued: this.pool.size, admitted: this.scheduled.size, pendingScopes: this.pending.size, concurrency: this.pool.capacity, ready: this.workflow !== null && !this.stopped }; }
@@ -85,6 +89,7 @@ export class MessagingJobs {
         this.pending.delete(scopeId);
         try {
           const after = this.cursors.get(scopeId);
+          if (!after) this.rescan.delete(scopeId);
           const page = await this.deps.runtime.read<(MessagingJobRow & { workflow_id: string | null })[]>(scope, 'messaging.jobs.pending', { scopeId, ...(after ? { after } : {}), limit: 25 }, () => this.assertOpen());
           let processed = 0;
           for (const job of page) {
@@ -105,7 +110,10 @@ export class MessagingJobs {
             } catch (failure) { this.scheduled.delete(key); throw failure; }
           }
           if (page.length === 25 || processed < page.length) { this.pending.set(scopeId, scope); if (processed) this.cursors.set(scopeId, page[processed - 1]!.id); }
-          else this.cursors.delete(scopeId);
+          else {
+            this.cursors.delete(scopeId);
+            if (this.rescan.delete(scopeId)) this.pending.set(scopeId, scope);
+          }
         } catch { if (!this.stopped) { this.pending.set(scopeId, scope); this.cursors.delete(scopeId); failed = true; try { this.deps.dispatchFailed(); } catch { /* Diagnostics cannot change a durable effect. */ } break; } }
       }
       return failed;

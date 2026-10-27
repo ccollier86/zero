@@ -4,7 +4,7 @@ import type { ReactiveDB } from '../../sync/reactive-db';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import type { ResolvedConfig } from './types';
 import type { AuthMiddlewareAuthorizationOptions } from '../../auth/auth.middleware';
-import { ZERO_AUTH_STORE, ZERO_AUTH_TOKEN_SERVICE, ZERO_AUTH_TENANCY_SERVICE, ZERO_DATABASE_COMMIT_AUTHORITY, ZERO_DATABASE_MANAGER, ZERO_OBSERVABILITY_RUNTIME, ZERO_LOGGING_RUNTIME, ZERO_STORAGE_SERVICE, ZERO_AI_SERVICE } from '../../runtime/service-keys';
+import { ZERO_AUTH_STORE, ZERO_AUTH_TOKEN_SERVICE, ZERO_AUTH_TENANCY_SERVICE, ZERO_DATABASE_COMMIT_AUTHORITY, ZERO_DATABASE_MANAGER, ZERO_OBSERVABILITY_RUNTIME, ZERO_LOGGING_RUNTIME, ZERO_STORAGE_SERVICE, ZERO_AI_SERVICE, ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED } from '../../runtime/service-keys';
 import { ZERO_GUARDIAN_AVATARS } from '../../auth/auth-user-avatar-service';
 import { MessagingRuntime } from '../../messaging/runtime';
 import { ManagedMessagingDirectory } from '../../messaging/directory';
@@ -21,6 +21,7 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
   await input.startAuth();
   const authority = runtime.require(ZERO_DATABASE_COMMIT_AUTHORITY), logging = runtime.get(ZERO_LOGGING_RUNTIME), installAllowed = config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral';
   const content = await MessagingRuntime.open({ config: config.messaging, system: systemDB, installAllowed, authority, observability: runtime.require(ZERO_OBSERVABILITY_RUNTIME),
+    onMembershipChanged: () => runtime.get(ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED)?.(),
     ...(logging ? { source: coordinator => installMessagingLogging(logging, coordinator, authority.coordinator) } : {}) });
   runtime.addCleanup(() => content.close());
   const attachments = new MessagingAttachmentService({ db: systemDB, runtime: content, storage: runtime.require(ZERO_STORAGE_SERVICE), config: config.messaging, installAllowed,

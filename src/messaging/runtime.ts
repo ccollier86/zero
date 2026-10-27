@@ -32,6 +32,8 @@ export interface MessagingRuntimeOptions {
   authority: { coordinator: AuthorityCommitCoordinator; actorContext: DatabaseActorAuthorityContext | null };
   observability: PlatformObservabilityRuntime;
   source?: (coordinator: DatabaseCoordinator) => MessagingSourceOwner;
+  /** Coalesced native ephemeral revalidation, not a shadow membership projection. */
+  onMembershipChanged?(): void;
 }
 /** Setup infrastructure only; request code receives the service's closed, current-authority facade. */
 export class MessagingRuntime {
@@ -152,6 +154,11 @@ export class MessagingRuntime {
       if (value?.ok === false && MESSAGING_CODES.includes(value.code as typeof MESSAGING_CODES[number]) && [403, 404, 409, 422, 429].includes(value.status!)) throw new AuthError('The messaging request was not accepted.', value.code!, value.status!);
       if (value?.ok !== true || !Object.hasOwn(value, 'value')) throw unavailable('The messaging acknowledgment is invalid.');
       if (kind === 'command' && !('replayed' in result && result.replayed) && value.hint !== undefined) {
+        if (['messaging.conversation.change', 'messaging.support.claim', 'messaging.contact'].includes(name)) {
+          try { this.options.onMembershipChanged?.(); } catch {
+            try { emitPlatformCodeTo(this.options.observability, OBS_CODES.MESSAGING_OPERATION_REJECTED, { metadata: { operation: 'messaging.typing.revalidation', failureCode: 'MESSAGING_TYPING_REVALIDATION_FAILED' } }); } catch { /* Every actual publish/delivery also reauthorizes; diagnostic failure cannot rewrite the accepted commit. */ }
+          }
+        }
         let hint: ReturnType<typeof readMessagingCommitHint> | null = null;
         try { hint = readMessagingCommitHint(value.hint); } catch { /* Incompatible advisory metadata requests safe revalidation, never a guessed row result or changed commit outcome. */ }
         for (const entry of this.listeners.get(createDatabaseRef(id)) ?? []) if (hint === null || messagingHintMatches(hint, entry.filter)) try { entry.listener(); } catch { /* Advisory only; projections still reauthorize. */ }
