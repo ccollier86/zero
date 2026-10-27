@@ -4,6 +4,18 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Preserve accepted first-use profile completion when publishing the real
+  session unmounts its anonymous form. Cancellation/replacement before acceptance
+  remains enforced, and genuine committed synchronization failures keep their
+  explicit recovery contract. Added controller and actual-browser regressions.
+
+- Preserve the retained Select math helper facade, cache repeated source-only
+  Doctor resolution edges without raising inspection limits, and qualify old/new
+  public paths from real consumer resolution. Browser/package fixtures now emit
+  CSS separately instead of colliding with fixed JavaScript output names.
+  Historical UI snapshots explicitly identify approved additive changes while
+  protecting original theme bytes and app-owned copied files.
+
 - Updated Zod to 4.6.6 and the source qualification graph to patched Undici
   7.30.1/Vite 7.3.7 after the release audit reported upstream security advisories.
   No AI features, application schemas or historic migrations were changed.

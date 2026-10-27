@@ -1,6 +1,6 @@
 /** Real managed startup + native HTTP + file/WAL actors. All identities and content are synthetic, with no production service access. */
 import { expect, test } from 'bun:test';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createApp } from '../frontend/server/app-factory';
 import { defineEndpoint, defineZeroPlugin } from '../frontend/server/server-extensions';
@@ -32,7 +32,7 @@ async function fixture(features: { metrics?: boolean; compliance?: boolean; tena
   let origin = start();
   const client = () => createClient({ url: origin, auth: true, autoConnect: false });
   return {
-    root, client, get origin() { return origin; }, get zero() { return zero; },
+    root, configuration, client, get origin() { return origin; }, get zero() { return zero; },
     async restart() { await app.stop(true); app = await createApp(configuration); origin = start(); },
     async close() { await app.stop(true); },
   };
@@ -81,6 +81,35 @@ test('managed public facades preserve publication, private drafts, idempotency, 
     expect((await createPublicBlogClient(f.origin).posts('blog')).total).toBe(0);
     await expect(createPublicBlogClient(f.origin).post('blog', 'orchids')).rejects.toBeDefined();
   } finally { editor.disconnect(); await f.close(); }
+}, 90000);
+
+test('missing established Fabric content fails closed without replacement, and restoring the exact retained owner preserves drafts', async () => {
+  const f = await fixture(), client = f.client();
+  const contentRoot = join(f.root, 'data/zero.blog'), retainedRoot = join(f.root, 'retained-blog-recovery-copy');
+  let initialOpen = true, moved = false, restored: Awaited<ReturnType<typeof createApp>> | null = null;
+  try {
+    const authorId = await enroll(client, 'recovery-writer');
+    const post = await client.blog.posts.create(content(authorId), { requestId: 'retained-owner-draft' });
+    client.disconnect(); await f.close(); initialOpen = false;
+    // Move only this drained synthetic fixture's complete private root. Do not
+    // remove ledgers, clear owner rows or copy a live main DB without its WAL.
+    await rename(contentRoot, retainedRoot); moved = true;
+    await expect(createApp(f.configuration)).rejects.toMatchObject({ code: 'BLOG_NOT_READY' });
+    expect(await lstat(contentRoot).then(() => true, () => false)).toBe(false);
+    await rename(retainedRoot, contentRoot); moved = false;
+    restored = await createApp(f.configuration); restored.listen({ hostname: '127.0.0.1', port: 0 });
+    const reconnected = createClient({ url: `http://127.0.0.1:${restored.server!.port}`, auth: true, autoConnect: false });
+    try {
+      await reconnected.login('recovery-writer', PASSWORD);
+      expect((await reconnected.blog.posts.get(post.id)).revision).toBe(post.revision);
+      expect((await reconnected.blog.posts.revisions(post.id)).total).toBe(1);
+    } finally { reconnected.disconnect(); }
+  } finally {
+    client.disconnect();
+    if (moved) await rename(retainedRoot, contentRoot);
+    if (restored) await restored.stop(true);
+    if (initialOpen) await f.close();
+  }
 }, 90000);
 
 test('unassigned users, forged authority, missing request identity and unpublished author profiles fail closed', async () => {

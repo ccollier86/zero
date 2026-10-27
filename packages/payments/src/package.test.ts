@@ -46,7 +46,11 @@ test('optional payments and provider-free clients work from fresh installed arch
     await Bun.write(join(evidenceRoot, 'installed-archive-evidence.json'), JSON.stringify({ sourceSnapshot: source.dirty ? 'dirty' : 'clean', branch: source.branch, baseCommit: source.commit,
       framework: { version: frameworkManifest.version, archive: core, sha256: await sha(core) }, plugin: { version: pluginManifest.version, archive: plugin, sha256: await sha(plugin) },
       ...verified, verifiedAt: new Date().toISOString(), liveProviderOperations: false }, null, 2));
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    const started = Date.now(); console.info('Synthetic payments archive stage', { stage: 'cleanup-started' });
+    await rm(root, { recursive: true, force: true });
+    console.info('Synthetic payments archive stage', { stage: 'cleanup-completed', durationMs: Date.now() - started });
+  }
 }, 180000);
 
 async function sourceIdentity() {
@@ -60,13 +64,17 @@ async function sourceIdentity() {
 }
 
 async function command(args: string[], cwd: string): Promise<string> {
+  const started = Date.now();
   const child = Bun.spawn([process.execPath, '--no-env-file', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH, TMPDIR: scratch, BUN_INSTALL_CACHE_DIR: '/Volumes/code-bank/caches/bun/install-cache' } });
   const timeout = setTimeout(() => child.kill(), 110000);
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     if (code !== 0) throw new Error(`Payments archive qualification failed (${code}):\n${stdout}\n${stderr}`);
     return stdout;
-  } finally { clearTimeout(timeout); }
+  } finally {
+    clearTimeout(timeout);
+    console.info('Synthetic payments archive stage', { stage: args[0] === 'run' ? 'typecheck' : args[0], durationMs: Date.now() - started });
+  }
 }
 const CONSUMER = `
 import { stripePayments, StripePayments, squarePayments, getPayments, getStripePayments, getSquarePayments, type PaymentsOptions, type SquarePaymentsOptions } from '@zero/plugin-payments';

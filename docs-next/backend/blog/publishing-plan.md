@@ -16,8 +16,8 @@ maturity: planned
 
 This is the complete delivery plan, not a claim that all CMS work is released.
 The [publishing API](./publishing-api.md) describes the working backend on
-`feature/blog-publishing-backend`; public assembly/editor and final qualification
-remain in progress. Do not build a second app-specific backend around these
+`feature/blog-publishing-backend`, including the native workspace and default
+public reader. Final qualification remains in progress. Do not build a second app-specific backend around these
 owned framework contracts.
 
 ## Current Delivery Scope (2026-10-26)
@@ -42,12 +42,12 @@ contract and searchable text without accepting executable HTML.
 Execution gates:
 
 - [x] Merge the qualified main navigation/audit/avatar fixes into this branch.
-- [ ] Implement and qualify one private Fabric content database and final-edge
+- [x] Implement and focus-test one private Fabric content database and final-edge
   Guardian authority (including application-wide multi-tenant admission).
-- [ ] Validate rich documents, revisions, taxonomy and publication atomically.
-- [ ] Admit private Storage media and derive only published delivery references.
-- [ ] Implement indexed public/private search, metrics and accepted live changes.
-- [ ] Extend public request/browser facades and managed HTTP composition.
+- [x] Validate rich documents, revisions, taxonomy and publication atomically.
+- [x] Admit private Storage media and derive only published delivery references.
+- [x] Implement indexed public/private search, metrics and accepted live changes.
+- [x] Extend public request/browser facades and managed HTTP composition.
 - [ ] Add focused and installed/bundled Linux regression evidence and update
   configuration/API/upgrade documentation before selecting any new archive.
 

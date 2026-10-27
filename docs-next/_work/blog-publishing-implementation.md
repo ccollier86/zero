@@ -137,18 +137,48 @@ Qualification now uses independently installed frozen dependencies, not a
 dependency-directory symlink to an active development worktree. Rebuildable
 scratch symlinks were retired without changing their shared target files.
 
-## Remaining Gates
+Candidate `8bb62f1` has archive SHA-256
+`74b1026c3fc92cc0b84ccd3998a7ac3d8ba4a2e44710142396845cd554c42a17`
+at `/Volumes/code-bank/artifacts/zero-platform/dev/blog/8bb62f1/zero-framework.tgz`.
+Its fresh Linux/amd64 consumer completed installation, source preparation, the
+official build and two compiled server generations with strict audit admission,
+native image delivery, retained identities/history and private actor environments.
+This is a feature candidate, not a selected stable update or a latency guarantee.
 
-- [ ] Recovery/authority review: shutdown drain, media lease expiry and retained
+The expanded native editor browser flow now also covers taxonomy creation,
+actual image upload/normalization and alt text, anonymous image decode and live
+view observations, mobile-width editing, public-byline draft/publication and
+the live observations table (14 assertions, real APIs). It preserves the earlier
+dirty/conflicting-draft and formatting checks. Operational/recovery guidance now
+has a dedicated linked manual; it makes no automatic backup/erasure promises.
+
+The payment archive timeout was isolated to cold qualification work, not a
+provider/charge regression: installation/typecheck/runtime/cleanup completed
+in 97 seconds when admitted alone. Measured competing-run stages exceeded the
+original test's aggregate deadline. No production code, provider endpoint or
+test deadline was changed. Its stage diagnostics remain visible, and the final
+complete suite will use one process admission to avoid competing package/build
+I/O; a failed run is retained as failed rather than treated as a passing retry.
+
+## Focused Review And Remaining Release Gates
+
+- [x] Focused recovery/authority review: shutdown drain, media lease expiry and retained
   cleanup, strict audit admission and native scope ceilings.
-- [ ] Complete review of optional bounded aggregates/collection and current-authority UI;
+- [x] Review optional bounded aggregates/collection and current-authority UI;
   never claim unique people, attention or audit evidence.
-- [ ] Expanded public reader and editor/media/taxonomy/author browser checks;
-  existing passing flows do not establish every interaction or package shape.
-- [ ] Expanded single/multi-tenant and simple/advanced RBAC tests, disabled and
+- [x] Expanded public reader and editor/media/taxonomy/author browser checks;
+  these focused flows do not establish every optional interaction or package shape.
+- [x] Expanded single/multi-tenant and simple/advanced RBAC tests, disabled and
   migrate:false behavior, additive migrations and source/bundle identity.
 - [ ] Current API/configuration/operations/upgrade docs, browser evidence,
   installed Linux qualification, review and qualified release archive.
+
+The expanded managed suite passes 11 tests/95 assertions, including all four
+tenancy/RBAC combinations and a new retained-content recovery check: after a
+drained synthetic root is moved aside, startup rejects missing content without
+creating a replacement; restoring that exact root preserves drafts/history.
+No owner/ledger rows are cleared to obtain recovery. Final complete-suite and
+updater admission still remain separate release gates.
 
 Do not reset data, alter prior migration checksums, replace Guardian identities,
 publish private avatars, loosen admission or expose private Storage paths to

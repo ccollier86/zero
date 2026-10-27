@@ -55,6 +55,7 @@ Gutenberg interchange are not implemented or implied by the block editor.
 - [Existing-project upgrade](./upgrade.md): additive migrations, safe rollout,
   Doctor findings, preservation checks and disabling without deleting data.
 - [Publishing API](./publishing-api.md): posts, media, taxonomy, search, observations and worker ownership.
+- [Operations and recovery](./operations.md): supervised workers, retained state, failed writes, media and consistent recovery.
 - [Roadmap](./roadmap.md): remaining release gates and optional later extensions.
 - [Publishing implementation plan](./publishing-plan.md): design rationale and the retained safety/acceptance requirements.
 
@@ -67,7 +68,8 @@ Gutenberg interchange are not implemented or implied by the block editor.
 | Private profile | Existing own-profile service and adaptive settings UI; additional fields are opt-in outside blogging. |
 | Public byline | Explicit draft and publication, with an allowlisted anonymous projection. Private email/roles never supply public fallbacks. |
 | Photos | Existing normalized private avatar pipeline, plus an explicit optional public publication pointer. The Storage drive stays private. |
-| Storage location | Small identity-adjacent metadata in SYSTEM; no new customer tables, Fabric realm contributions or database placement changes. |
+| Author metadata | Small identity-adjacent metadata in SYSTEM; existing account/role and customer tables are not replaced. |
+| Content storage | One separate private, file/WAL Fabric database owned by the blog runtime. Drafts, revisions, publication, taxonomy and aggregates stay out of customer tables. |
 | Changes | Authorized coalesced SSE projections, supported SDK scope retirement and accepted snapshots. |
 | Audit | Guardian audit appended inside the author/privacy transaction; configured core Logging captures through its existing durable source bridge. |
 
