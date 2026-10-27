@@ -15,6 +15,10 @@ applies_to: ["feature/messaging-backend; not a selected stable update"]
 
 [Working index](./index.md) · [Messaging architecture](../backend/messaging/index.md) · [Implementation evidence](./messaging-backend-implementation.md)
 
+The later [native workspace review](./messaging-workspace-review.md) supersedes
+this note's older managed-controller completion status. Its source/browser and
+installed public-import proofs remain distinct from a stable deployment release.
+
 ## Confirmed product boundary
 
 Zero owns one optional messaging subsystem, not a Facebook/customer-support

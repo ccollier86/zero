@@ -14,7 +14,7 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
   const archive = process.env.ZERO_MESSAGING_ARCHIVE ?? join(root, 'framework.tgz');
   try {
     await mkdir(consumer);
-    if (!process.env.ZERO_MESSAGING_ARCHIVE) await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive, '--quiet'], process.cwd());
+    if (!process.env.ZERO_MESSAGING_ARCHIVE) { console.info('Messaging package proof: pack source'); await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive, '--quiet'], process.cwd()); }
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({ name: 'zero-messaging-consumer', private: true, type: 'module', dependencies: {
       '@zero/framework': `file:${archive}`, react: '19.2.4', 'react-dom': '19.2.4',
       typescript: '^5.9.3', '@types/bun': '1.3.14', '@types/react': '^19.2.14', '@types/react-dom': '^19.2.3',
@@ -24,18 +24,27 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
     await Bun.write(join(consumer, 'consumer.tsx'), CONSUMER);
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
     await Bun.write(join(consumer, 'zero.config.ts'), "throw new Error('MESSAGING_PACKAGE_MUST_NOT_LOAD_APP_CONFIG');\n");
+    console.info('Messaging package proof: install isolated consumer');
     await checked(['install', '--ignore-scripts'], consumer);
+    console.info('Messaging package proof: typecheck installed public facade');
     await checked(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
+    console.info('Messaging package proof: render SSR and build browser consumer');
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim());
     expect(result.browserBytes).toBeGreaterThan(0); expect(result.browserClean).toBe(true);
     expect(result.css).toBe(true); expect(result.publicAliases).toBe(true); expect(result.hookSsr).toBe(true);
     expect(result.html).toContain('Messaging workspace'); expect(result.html).toContain('Customer conversation');
     expect(result.html).toContain('aria-label="Message"'); expect(result.html).toContain('&lt;fixture text&gt;');
-    expect(result.html).not.toContain('href='); expect(result.privatePathsRejected).toBe(4);
+    expect(result.html).toContain('Connecting to messages');
+    expect(result.html).not.toContain('href='); expect(result.privatePathsRejected).toBe(6);
     const installed = join(consumer, 'node_modules/@zero/framework');
     for (const file of [
       'src/components/messaging/index.ts', 'src/components/messaging/messaging.css', 'src/components/messaging/use-conversation-typing.ts',
       'src/components/messaging/use-messaging-presence.ts', 'src/components/messaging/messaging-avatar.tsx',
+      'src/components/messaging/messaging-workspace.tsx', 'src/components/messaging/messaging-workspace-controller.ts',
+      'src/components/messaging/use-messaging-workspace.ts', 'src/components/messaging/workspace-send.ts', 'src/components/messaging/workspace-message-actions.tsx',
+      'src/frontend/client/messaging-watch.ts', 'src/messaging/client-contracts.ts', 'src/messaging/live-error.ts',
+      'src/messaging/contracts.ts', 'src/messaging/realm-queries.ts', 'src/components/messaging/workspace-transcript.ts',
+      'src/components/messaging/use-messaging-transcript.ts',
       'src/frontend/client/guardian-presence-presentation.ts', 'src/components/avatar-group/avatar-group.styles.css',
       'src/frontend/client/typing-indicator-hooks.ts', 'src/frontend/client/typing-indicator-model.ts',
       'src/sync/client/ephemeral-client.ts', 'src/sync/client/ephemeral-store.ts', 'src/sync/ephemeral-channel.ts',
@@ -47,7 +56,7 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
     await Bun.write(join(evidence, 'installed-archive-evidence.json'), JSON.stringify({
       commit, dirty, archive, sha256: createHash('sha256').update(new Uint8Array(await Bun.file(archive).arrayBuffer())).digest('hex'),
       version: result.version, verifiedAt: new Date().toISOString(), ...result,
-      scope: 'presentation and authorized room typing; durable chat backend is not implemented',
+      scope: 'installed public workspace/controller/typing/presence exports, SSR and browser build; no installed backend/Linux or stable-release claim',
       configTripwireNotExecuted: true, liveProviderOperations: false,
     }, null, 2));
   } finally {
@@ -81,16 +90,24 @@ import * as Frontend from '@zero/framework/react';
 import * as Parts from '@zero/framework/messaging';
 import * as Alias from '@zero/framework/components/messaging';
 import type { UseConversationTypingReturn, MessageBubbleProps, MessageDeliveryIndicatorProps, ConversationAssistantActivityProps,
-  MessagingComposerProps, MessagingAttachment, MessagingMessage } from '@zero/framework/messaging';
+  MessagingComposerProps, MessagingAttachment, MessagingMessage, MessagingWorkspaceProps, MessagingWorkspaceState } from '@zero/framework/messaging';
+import type { MessagingClient } from '@zero/framework/messaging/client';
 const names = ['MessagingLayout', 'ConversationList', 'ConversationListHeading', 'ConversationHeader', 'ConversationSeparator',
   'ConversationTypingIndicator', 'ConversationAssistantActivity', 'MessageBubble', 'MessageDeliveryIndicator', 'MessagingComposer',
-  'useConversationTyping', 'useMessagingPresence', 'conversationActivityLabel', 'conversationActivityMembers'] as const;
+  'useConversationTyping', 'useMessagingPresence', 'conversationActivityLabel', 'conversationActivityMembers',
+  'MessagingWorkspace', 'useMessagingWorkspace', 'MessagingWorkspaceController', 'MessagingLiveError'] as const;
 export const publicAliases = names.every(name => Parts[name] === Root[name] && Parts[name] === Frontend[name] && Parts[name] === Alias[name]);
 export const message: MessagingMessage = { id: 'fixture-message', author: { id: 'fixture-user', kind: 'user', label: 'Customer' },
   text: '<fixture text>', createdAt: Date.UTC(2026, 9, 24, 12), delivery: 'accepted' };
 const props: MessageBubbleProps = { message };
 const delivery: MessageDeliveryIndicatorProps = { state: 'accepted' };
 const assistant: ConversationAssistantActivityProps = { activity: null };
+const workspace: MessagingWorkspaceProps = { avatarShape: 'square', maxMessages: 500, readPolicy: 'visible-end' };
+export function nativeFacadeTypes(client: MessagingClient) {
+  void client.conversations.people('admitted-conversation');
+  void client.messages.get('admitted-conversation', 'accepted-message');
+  return client.watchContacts(page => { const name: string | undefined = page.items[0]?.name; }, { query: { limit: 50 } });
+}
 export let hookSsr = false;
 function Input() {
   const typing: UseConversationTypingReturn = Parts.useConversationTyping('room-fixture');
@@ -109,6 +126,7 @@ export function Consumer() {
       <Parts.ConversationSeparator>Today</Parts.ConversationSeparator><Parts.MessageBubble {...props} />
       <Parts.MessageDeliveryIndicator {...delivery} /><Parts.ConversationAssistantActivity {...assistant} />
     </Parts.MessagingLayout>
+    <Parts.MessagingWorkspace {...workspace} />
   </Root.AppProvider>;
 }
 `;
@@ -124,7 +142,8 @@ const scripts = await Promise.all(built.outputs.filter(output => output.path.end
 const styles = await Promise.all(built.outputs.filter(output => output.path.endsWith('.css')).map(output => output.text()));
 const browserClean = !/bun:sqlite|node:fs|nodemailer|imapflow|stripe-node/.test(scripts.join('\\n'));
 let privatePathsRejected = 0;
-for (const path of ['messaging/use-conversation-typing', 'messaging/messaging.browser-fixture', 'components/messaging/messaging.browser-fixture', 'components/messaging/messaging.package.test']) {
+for (const path of ['messaging/use-conversation-typing', 'messaging/messaging.browser-fixture', 'components/messaging/messaging.browser-fixture', 'components/messaging/messaging.package.test',
+  'messaging/workspace-send', 'components/messaging/workspace-transcript']) {
   try { Bun.resolveSync('@zero/framework/' + path, process.cwd()); } catch { privatePathsRejected++; }
 }
 console.log(JSON.stringify({ html, publicAliases, hookSsr, privatePathsRejected, version: manifest.version,

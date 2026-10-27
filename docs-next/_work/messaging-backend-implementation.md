@@ -17,6 +17,11 @@ applies_to: ["feature/messaging-backend; not a selected stable update"]
 
 ## Current scope correction (2026-10-27)
 
+The later [native workspace review](./messaging-workspace-review.md) records the
+implemented AppProvider/SDK organism and its actual browser/file/history/recovery
+checks. Earlier incomplete-controller checklists below are chronological, not
+the current ordinary-workspace implementation status.
+
 The [configuration correction](./messaging-configuration-correction.md) supersedes
 the support-only assistant and framework-owned Facebook assumptions in the older
 chronological notes below. The [configuration reference](../backend/messaging/configuration.md)

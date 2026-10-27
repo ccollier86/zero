@@ -16,8 +16,10 @@ applies_to: ["feature/messaging-backend development checkpoint; not a stable upd
 [Messaging index](./index.md) · [Implementation checkpoint](../../_work/messaging-backend-implementation.md)
 
 This is the development branch's real native review contract, not a promise that
-an older `2.6.0` archive contains it. The branch still needs its complete backend,
-workspace, installed/Linux/browser and release qualification. Do not replace the
+an older `2.6.0` archive contains it. The branch still needs public-support
+completion, its managed job-review UI and installed/Linux/full release
+qualification. The ordinary native [workspace](../../frontend/messaging/workspace.md)
+does not yet supply a job-review dashboard. Do not replace the
 managed service with custom SQL or infer an unknown provider outcome from UI.
 
 ## Why Work Needs Review

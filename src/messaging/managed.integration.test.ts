@@ -176,7 +176,10 @@ test('native messaging uses current identity, persists accepted messages/reactio
       throw error;
     });
     expect(created.kind).toBe('direct');
+    expect(created.participants.find(row => row.id === bobId)?.name).toBe('message-bob');
+    expect((await alice.messaging.conversations.people(created.id)).items.find(row => row.id === bobId)?.name).toBe('message-bob');
     const sent = await alice.messaging.messages.send(created.id, { text: 'Private synthetic orchid' }, { requestId: 'send-one' });
+    expect((await bob.messaging.messages.get(created.id, sent.id)).id).toBe(sent.id);
     expect((await bob.messaging.messages.list(created.id, { search: 'orchid' })).items[0]?.id).toBe(sent.id);
     expect((await alice.messaging.messages.send(created.id, { text: 'Private synthetic orchid' }, { requestId: 'send-one' })).id).toBe(sent.id);
     expect((await bob.messaging.conversations.get(created.id)).unreadCount).toBe(1);
@@ -243,7 +246,8 @@ test('configured groups reconcile trusted properties without contact requests, r
     // canonical membership at B. Rejoining applies the configured history rule.
     await setDepartment(userId, 'clinical'); await user.login('group-user', PASSWORD);
     expect((await user.messaging.conversations.get(clinical.id)).participants.map(row => row.id).sort()).toEqual([adminId, userId].sort());
-    expect((await user.messaging.messages.list(clinical.id)).items).toEqual([]);
+    const rejoinedHistory = await user.messaging.messages.list(clinical.id);
+    expect(rejoinedHistory.items).toEqual([]); expect(rejoinedHistory.history).toMatchObject({ from: 3, visibility: 'conversation' });
     await expect(user.messaging.attachments.download(clinical.id, attachment.id)).rejects.toMatchObject({ status: 404 });
     await admin.messaging.messages.send(clinical.id, { text: 'Synthetic new message after rejoin.' }, { requestId: 'clinical-after' });
     expect((await user.messaging.messages.list(clinical.id)).items.map(row => row.text)).toEqual(['Synthetic new message after rejoin.']);
@@ -392,12 +396,15 @@ test('exact transport replay cannot disclose a retained message after removal, s
     const input = { text: 'Synthetic retained private message' }, options = { requestId: 'private-replay-send' };
     const sent = await alice.messaging.messages.send(conversation.id, input, options);
     await owner.messaging.conversations.removeParticipant(conversation.id, conversation.revision, alice.user!.userId, { requestId: 'private-replay-remove' });
+    await expect(alice.messaging.messages.get(conversation.id, sent.id)).rejects.toMatchObject({ status: 404 });
+    await expect(alice.messaging.conversations.people(conversation.id)).rejects.toMatchObject({ status: 404 });
     await expect(alice.messaging.messages.send(conversation.id, input, options)).rejects.toMatchObject({ status: 409 });
     const receipt = await alice.messaging.receipt(options.requestId);
     expect(receipt).toMatchObject({ requestId: options.requestId, resourceId: sent.id }); expect(JSON.stringify(receipt)).not.toContain(input.text);
     const updated = await owner.messaging.conversations.get(conversation.id);
     await owner.messaging.conversations.addParticipant(conversation.id, updated.revision, alice.user!.userId, { requestId: 'private-replay-readmit' });
     expect((await alice.messaging.messages.list(conversation.id)).items).toEqual([]);
+    await expect(alice.messaging.messages.get(conversation.id, sent.id)).rejects.toMatchObject({ status: 404 });
     await expect(alice.messaging.messages.send(conversation.id, input, options)).rejects.toMatchObject({ status: 409 });
     const freshInput = { text: 'Synthetic current history' }, freshOptions = { requestId: 'private-replay-fresh' };
     const fresh = await alice.messaging.messages.send(conversation.id, freshInput, freshOptions);

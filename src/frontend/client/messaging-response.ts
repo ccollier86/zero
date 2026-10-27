@@ -18,11 +18,17 @@ export function assertMessagingConversation(value: unknown): asserts value is Co
   if (r.assistantId !== undefined && r.assistantId !== null) text(r.assistantId, 64);
   if (r.managedGroupId !== undefined && r.managedGroupId !== null) text(r.managedGroupId, 64);
   if (r.ownerId !== null) text(r.ownerId);
-  r.participants.forEach((item: unknown) => { const member = record(item); text(member.id); integer(member.joinedAt); if (!['user', 'external', 'assistant'].includes(member.kind) || !['owner', 'member', 'staff', 'customer'].includes(member.role)) bad(); });
+  r.participants.forEach((item: unknown) => { const member = record(item); text(member.id); integer(member.joinedAt); if (!['user', 'external', 'assistant'].includes(member.kind) || !['owner', 'member', 'staff', 'customer'].includes(member.role)) bad();
+    if (member.name !== undefined || member.avatarUrl !== undefined) assertMessagingDirectoryEntry({ id: member.id, name: member.name === undefined ? 'Member' : member.name, avatarUrl: member.avatarUrl ?? null });
+  });
   if (r.lastMessage !== null) { const preview = r.lastMessage as Record<string, unknown>; assertMessagingMessage(preview); if (typeof (preview as DurableMessage & { truncated?: unknown }).truncated !== 'boolean') bad(); }
 }
 export function assertMessagingPage<T>(value: unknown, item: (value: unknown) => void, maximum: number): asserts value is MessagingPage<T> {
   const r = record(value); if (!Array.isArray(r.items) || r.items.length > maximum || typeof r.hasMore !== 'boolean' || r.nextCursor !== null && typeof r.nextCursor !== 'string' || r.hasMore && !r.nextCursor || !r.hasMore && r.nextCursor !== null) bad();
+  if (r.history !== undefined) {
+    const history = record(r.history); integer(history.from); integer(history.revision);
+    if (history.from < 1 || history.revision < 1 || !['conversation', 'staff'].includes(history.visibility)) bad();
+  }
   r.items.forEach(item);
 }
 export function assertMessagingCapabilities(value: unknown): asserts value is MessagingCapabilities {
@@ -35,6 +41,10 @@ export function assertMessagingDirectoryEntry(value: unknown): asserts value is 
   const r = record(value); text(r.id); text(r.name, 241);
   if (r.avatarUrl !== null) { text(r.avatarUrl, 2000); if (!/^(?:\/(?!\/)|https?:\/\/)/.test(r.avatarUrl)) bad(); }
 }
+export function assertMessagingPerson(value: unknown): void {
+  assertMessagingDirectoryEntry(value);
+  if (!['user', 'external', 'assistant'].includes((value as unknown as Record<string, unknown>).kind as string)) bad();
+}
 export function assertMessagingAssistant(value: unknown): asserts value is MessagingAssistant {
   const r = record(value); text(r.id, 64); text(r.name, 120); text(r.description, 500);
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(r.id)) bad();
@@ -42,6 +52,7 @@ export function assertMessagingAssistant(value: unknown): asserts value is Messa
 export function assertMessagingContact(value: unknown): asserts value is MessagingContact {
   const r = record(value); text(r.id); text(r.userId); integer(r.revision); integer(r.updatedAt);
   if (!['incoming', 'outgoing'].includes(r.direction) || !['pending', 'accepted', 'declined', 'blocked'].includes(r.state)) bad();
+  if (r.name !== undefined || r.avatarUrl !== undefined) assertMessagingDirectoryEntry({ id: r.userId, name: r.name === undefined ? 'Member' : r.name, avatarUrl: r.avatarUrl ?? null });
 }
 export function assertMessagingReceipt(value: unknown): asserts value is MessagingReceipt | null {
   if (value === null) return; const r = record(value);

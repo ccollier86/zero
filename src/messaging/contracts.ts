@@ -7,7 +7,9 @@ export type ConversationKind = 'direct' | 'group' | 'support' | 'assistant';
 export type ConversationRole = 'owner' | 'member' | 'staff' | 'customer';
 export type ConversationOwner = 'triage' | 'human' | 'assistant';
 export const MESSAGING_REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '✅'] as const;
-export interface ConversationParticipant { readonly id: string; readonly kind: 'user' | 'external' | 'assistant'; readonly role: ConversationRole; readonly joinedAt: number }
+export interface ConversationParticipant { readonly id: string; readonly kind: 'user' | 'external' | 'assistant'; readonly role: ConversationRole; readonly joinedAt: number;
+  /** Optional admitted direct-conversation display; never a role/profile override. */
+  readonly name?: string; readonly avatarUrl?: string | null }
 export interface MessagingAssistant { readonly id: string; readonly name: string; readonly description: string }
 export interface ConversationRecord {
   readonly id: string; readonly kind: ConversationKind; readonly title: string; readonly revision: number;
@@ -27,16 +29,21 @@ export interface DurableMessage {
   readonly editedAt: number | null; readonly deleted: boolean; readonly attachmentIds: readonly string[];
   readonly reactions: readonly { readonly emoji: string; readonly count: number; readonly selected: boolean }[];
 }
-export interface MessagingPage<T> { readonly items: readonly T[]; readonly hasMore: boolean; readonly nextCursor: string | null }
+export interface MessagingPage<T> { readonly items: readonly T[]; readonly hasMore: boolean; readonly nextCursor: string | null;
+  /** Authorized history grant; revision orders stale responses without using a wall clock. Other/legacy pages omit it. */
+  readonly history?: { readonly from: number; readonly revision: number; readonly visibility: 'conversation' | 'staff' } }
 export interface MessageHistoryQuery { readonly before?: number; readonly after?: number; readonly limit?: number; readonly search?: string }
 export interface ConversationQuery { readonly after?: string; readonly limit?: number; readonly archived?: boolean }
 export interface MessagingCapabilities { readonly enabled: boolean; readonly directory: 'everyone' | 'contacts'; readonly canSupport: boolean; readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxUploadBytes: number;
   /** Configuration/capability, not a provider-delivery or current network-health claim. */
   readonly assistant?: boolean; readonly notifications?: boolean }
 export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null }
+/** Current admitted conversation identities; names/avatars are presentation, never membership proof. */
+export interface MessagingPerson extends MessagingDirectoryEntry { readonly kind: ConversationParticipant['kind'] }
 /** Reconciles an uncertain command without returning a message body after membership removal. */
 export interface MessagingReceipt { readonly requestId: string; readonly operation: string; readonly resourceId: string | null; readonly acceptedAt: number }
-export interface MessagingContact { readonly id: string; readonly userId: string; readonly direction: 'incoming' | 'outgoing'; readonly state: 'pending' | 'accepted' | 'declined' | 'blocked'; readonly revision: number; readonly updatedAt: number }
+export interface MessagingContact { readonly id: string; readonly userId: string; readonly direction: 'incoming' | 'outgoing'; readonly state: 'pending' | 'accepted' | 'declined' | 'blocked'; readonly revision: number; readonly updatedAt: number;
+  readonly name?: string; readonly avatarUrl?: string | null }
 export interface MessagingApi {
   readonly assistants: {
     list(options?: MessagingReadOptions): Promise<MessagingPage<MessagingAssistant>>;
@@ -50,6 +57,7 @@ export interface MessagingApi {
   conversations: {
     list(query?: ConversationQuery, options?: MessagingReadOptions): Promise<MessagingPage<ConversationRecord>>;
     get(id: string, options?: MessagingReadOptions): Promise<ConversationRecord>;
+    people(id: string, options?: MessagingReadOptions): Promise<MessagingPage<MessagingPerson>>;
     create(input: { readonly kind?: 'direct' | 'group'; readonly title?: string; readonly userIds: readonly string[] }, options: MessagingMutationOptions): Promise<ConversationRecord>;
     rename(id: string, expectedRevision: number, title: string, options: MessagingMutationOptions): Promise<ConversationRecord>;
     archive(id: string, expectedRevision: number, archived: boolean, options: MessagingMutationOptions): Promise<ConversationRecord>;
@@ -61,6 +69,7 @@ export interface MessagingApi {
     handBack(id: string, expectedEpoch: number, owner: 'assistant' | 'triage', options: MessagingMutationOptions): Promise<ConversationRecord>;
   };
   messages: {
+    get(conversationId: string, id: string, options?: MessagingReadOptions): Promise<DurableMessage>;
     list(conversationId: string, query?: MessageHistoryQuery, options?: MessagingReadOptions): Promise<MessagingPage<DurableMessage>>;
     send(conversationId: string, input: { readonly text: string; readonly attachmentIds?: readonly string[]; readonly visibility?: 'conversation' | 'staff'; readonly expectedOwnerEpoch?: number }, options: MessagingMutationOptions): Promise<DurableMessage>;
     edit(conversationId: string, id: string, expectedRevision: number, text: string, options: MessagingMutationOptions): Promise<DurableMessage>;

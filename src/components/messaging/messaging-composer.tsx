@@ -11,18 +11,19 @@ export interface MessagingComposerFile { id: string; name: string; state: 'uploa
 export interface MessagingComposerProps {
   value: string; onChange: (value: string) => void; onSubmit: () => void;
   disabled?: boolean; sending?: boolean; placeholder?: string; className?: string;
+  maxLength?: number;
   files?: readonly MessagingComposerFile[]; onAttach?: (files: readonly File[]) => void; onRemoveFile?: (id: string) => void;
   onTyping?: (text: string) => void; onStopTyping?: () => void;
   onCompositionStart?: () => void; onCompositionEnd?: (text: string) => void;
 }
 /** Controlled composer. Upload/acceptance is supplied by the real service owner, never faked by a timer. */
-export function MessagingComposer({ value, onChange, onSubmit, disabled, sending, placeholder = 'Message…', files = [], onAttach, onRemoveFile, onTyping, onStopTyping, onCompositionStart, onCompositionEnd, className }: MessagingComposerProps) {
+export function MessagingComposer({ value, onChange, onSubmit, disabled, sending, placeholder = 'Message…', maxLength, files = [], onAttach, onRemoveFile, onTyping, onStopTyping, onCompositionStart, onCompositionEnd, className }: MessagingComposerProps) {
   const input = React.useRef<HTMLInputElement>(null), composing = React.useRef(false);
   React.useEffect(() => { if (disabled || sending) onStopTyping?.(); }, [disabled, sending, onStopTyping]);
   const blocked = disabled || sending || files.some(file => file.state !== 'ready') || !value.trim() && !files.length;
   const submit = () => { if (!blocked) { onStopTyping?.(); onSubmit(); } };
   return <form data-slot="messaging-composer" className={cn('zero-messaging-composer', className)} onSubmit={event => { event.preventDefault(); submit(); }}>
-    <Textarea aria-label="Message" enterKeyHint="send" placeholder={placeholder} value={value} disabled={disabled || sending} rows={3}
+    <Textarea aria-label="Message" enterKeyHint="send" placeholder={placeholder} maxLength={maxLength} value={value} disabled={disabled || sending} rows={3}
       onChange={event => { onChange(event.target.value); onTyping?.(event.target.value); }} onBlur={() => onStopTyping?.()}
       onCompositionStart={() => { composing.current = true; onCompositionStart?.(); }} onCompositionEnd={event => { composing.current = false; onTyping?.(event.currentTarget.value); onCompositionEnd?.(event.currentTarget.value); }}
       onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && !composing.current) { event.preventDefault(); submit(); } }} />

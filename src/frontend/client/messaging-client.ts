@@ -3,7 +3,7 @@ import { MESSAGING_API, type MessagingMutationOptions } from '../../messaging/co
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { FetchInit } from './sdk';
 import { assertMessagingConversation, assertMessagingMessage, assertMessagingPage, assertMessagingCapabilities, assertMessagingDirectoryEntry, assertMessagingReceipt,
-  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem, assertMessagingAssistant } from './messaging-response';
+  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem, assertMessagingAssistant, assertMessagingPerson } from './messaging-response';
 import { watchMessagingProjection } from './messaging-watch';
 import { createMessagingAttachmentClient, type MessagingBinaryTransport } from './messaging-attachment-client';
 import { assertMessagingReviewItem, assertMessagingReviewDetail, assertMessagingReviewResolution } from './messaging-review-response';
@@ -40,6 +40,7 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
     conversations: Object.freeze<MessagingClient['conversations']>({
       list: (query = {}, opts) => call('/conversations' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingConversation, 25)),
       get: (id, opts) => call(thread(id), 'GET', undefined, opts?.signal, undefined, assertMessagingConversation),
+      people: (id, opts) => call(thread(id) + '/people', 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingPerson, 100)),
       create: (input, opts) => mutate('/conversations', 'POST', input, opts, assertMessagingConversation),
       rename: (id, expectedRevision, title, opts) => mutate(thread(id) + '/rename', 'POST', { expectedRevision, title }, opts, assertMessagingConversation),
       archive: (id, expectedRevision, archived, opts) => mutate(thread(id) + '/archive', 'POST', { expectedRevision, archived }, opts, assertMessagingConversation),
@@ -51,6 +52,7 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
       handBack: (id, expectedEpoch, owner, opts) => mutate(thread(id) + '/hand-back', 'POST', { expectedEpoch, owner }, opts, assertMessagingConversation),
     }),
     messages: Object.freeze<MessagingClient['messages']>({
+      get: (conversationId, id, opts) => call(msg(conversationId, id), 'GET', undefined, opts?.signal, undefined, assertMessagingMessage),
       list: (id, query = {}, opts) => call(thread(id) + '/messages' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingMessage, 50)),
       send: (id, input, opts) => mutate(thread(id) + '/messages', 'POST', input, opts, assertMessagingMessage),
       edit: (conversationId, id, expectedRevision, text, opts) => mutate(msg(conversationId, id), 'PUT', { expectedRevision, text }, opts, assertMessagingMessage),
@@ -70,6 +72,7 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
     }),
     watchConversations: (listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), '/conversations/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingConversation, 25), options),
     watchMessages: (id, listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), thread(id) + '/messages/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingMessage, 50), options),
+    watchContacts: (listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), '/contacts/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingContact, 50), options),
     clear() { epoch++; boundary.abort(); boundary = new AbortController(); },
   });
 }

@@ -338,6 +338,7 @@ export function AppProvider({
         {
           client: internal._syncClient,
           stateClient: internal.state,
+          ephemeralClient: internal.ephemeral,
           children: activityTree,
         }
       )

@@ -22,6 +22,9 @@ publication, search, and production agent bundles.
 - [Configurable messaging correction](./messaging-configuration-correction.md):
   directory/contact modes, manual/property-managed groups and independent internal
   assistants using existing Guardian, Fabric, AI, typing, Storage and presence.
+- [Native messaging workspace review](./messaging-workspace-review.md): real
+  provider/SDK workspace integration, exact intents, per-lane drafts, read policy,
+  bounded live history, native file/browser checks and remaining release gates.
 - [Public support continuation](./messaging-public-channels.md): planned
   visitor capabilities, native email association and human destinations;
   third-party channel adapters are application-owned, not framework gates.

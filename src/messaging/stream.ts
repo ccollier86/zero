@@ -2,6 +2,7 @@
 import type { ServiceDataScope } from '../auth/service-data-scope';
 import type { MessagingRuntime } from './runtime';
 import type { MessagingSubscription } from './commit-hints';
+import { projectMessagingHttpError } from './http-errors';
 export function messagingProjectionStream(runtime: MessagingRuntime, scope: ServiceDataScope, read: () => Promise<unknown>, signal: AbortSignal, filter: MessagingSubscription): ReadableStream<Uint8Array> {
   let controller!: ReadableStreamDefaultController<Uint8Array>, closed = false, reading = false, dirty = true, previous = '';
   let remove: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined, interval: ReturnType<typeof setInterval> | undefined, lifetime: ReturnType<typeof setTimeout> | undefined;
@@ -14,8 +15,9 @@ export function messagingProjectionStream(runtime: MessagingRuntime, scope: Serv
     try {
       const packet = JSON.stringify({ version: 1, value: await read() });
       if (!closed && !signal.aborted && packet !== previous) { controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + packet + '\n\n')); previous = packet; }
-    } catch {
-      if (!closed && !signal.aborted) controller.enqueue(new TextEncoder().encode('event: invalidated\ndata: {"version":1,"error":true}\n\n'));
+    } catch (error) {
+      const failure = projectMessagingHttpError(error, 'UNKNOWN');
+      if (!closed && !signal.aborted) controller.enqueue(new TextEncoder().encode('event: invalidated\ndata: ' + JSON.stringify({ version: 1, error: { status: failure.status } }) + '\n\n'));
       close();
     } finally { reading = false; if (dirty && !closed) changed(); }
   };

@@ -36,6 +36,15 @@ const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice,
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
 
+test('a private direct conversation cannot silently become a multi-person group', async () => {
+  const f = await fixture();
+  try {
+    expect((await f.command('messaging.conversation.create', { ...create(), kind: 'direct' })).ok).toBe(true);
+    expect((await f.command('messaging.conversation.change', { actor: alice, id: 'conversation-one', requestId: 'forbidden-direct-expansion', expectedRevision: 1, action: 'add', value: carol.id, contactsOnly: false, history: 'all', maxParticipants: 100 })).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.query('messaging.conversation', { actor: alice, id: 'conversation-one' })).value.participants).toHaveLength(2);
+  } finally { await f.close(); }
+}, 30000);
+
 test('concurrent accepted inserts have stable order, durable replay, scope isolation and monotonic read positions after restart', async () => {
   const f = await fixture();
   try {

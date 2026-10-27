@@ -22,8 +22,9 @@ provider connectors are app-owned, not Zero configuration or release gates.
 
 This is a feature-branch API reference. The source tests below do not make these
 APIs available in an older archive with the same `2.6.0` version string. Public
-visitor admission, email-backed support and the self-wired workspace are still
-separate implementation gates.
+visitor admission, email-backed support and final installed release qualification
+are still separate gates. The branch's [self-wired workspace](../../frontend/messaging/workspace.md)
+now uses this native facade.
 
 ## Directory And Tenancy
 
@@ -42,6 +43,30 @@ filters. In multi tenancy, the current Guardian organization selects the private
 messaging database and directory. No query/header/body tenant selector is trusted,
 and a platform administrator does not automatically gain private membership.
 
+The admitted directory excludes unfinished provisioning, suspended/disabled and
+other Guardian token-ineligible accounts. Exact display resolution is bounded
+and uses current eligible scope membership; it exposes names and optional
+published avatar URLs, never contact fields or a private avatar delivery grant.
+`conversations.people(id)` returns the current admitted participant display page;
+direct conversation pages may also contain optional `name`/`avatarUrl` on their
+canonical participant entries. These are presentation, not authority.
+`messages.get(conversationId, messageId)` supplies an authorized indexed point
+read, including for exact accepted-receipt reconciliation. Leaving/rejoining
+history policy and revocation still apply.
+
+Native `messages.list`/live pages include the current authorized
+`history: { from, revision, visibility }` boundary. The revision orders delayed
+snapshots; changing the lower bound or staff/public timeline invalidates the
+workspace's old cached view even if a remove/rejoin was coalesced. This is
+metadata over existing canonical membership, not a new migration or grant.
+
+The browser facade adds `watchContacts(listener, options)` alongside conversation
+and message watches. It uses the same native, current-scope no-store projection,
+bounded keyset page and owned cancellation; apps need not invent contact row
+events or poll private tables. `MessagingLiveError` distinguishes retryable
+transport failure from terminal permission/protocol invalidation. GET reconnect
+never retries a mutation.
+
 Single tenancy owns one private messaging Fabric database. Multi tenancy owns
 one per admitted organization. SYSTEM retains ownership receipts, Storage owns
 private bytes, and the existing logging subsystem owns its separate audit files
@@ -55,6 +80,10 @@ call `transferOwnership(id, expectedRevision, userId, mutationOptions)`. The old
 owner becomes a member and can then leave with `removeParticipant`; the last
 owner cannot be removed accidentally. Each mutation needs the current revision
 and stable request identity.
+
+A direct conversation remains private to its two participants. Use a new group
+conversation to include additional people; `addParticipant` rejects expansion of
+a direct conversation instead of silently exposing its prior private history.
 
 Configured groups are optional and independent of contact requests:
 
@@ -194,9 +223,12 @@ assemblies, or `livePresence={false}` for controlled-only presentation. See the
 This does not add a second presence tracker or make same-scope directory presence
 proof of contact/conversation access. Stale/retired feeds are omitted.
 
-The complete managed workspace/controller still must wire typing,
-attachments, read visibility and history/scroll continuity. Existing styled parts
-and source HTTP tests do not establish that finished browser integration.
+The branch's [managed workspace/controller](../../frontend/messaging/workspace.md)
+wires canonical typing, private uploads/downloads, per-visibility drafts,
+read-visibility policy and retained live/backfilled history. See its
+[evidence and limits](../../_work/messaging-workspace-review.md). Source browser
+integration is not a substitute for final installed Linux/worker/deployment
+qualification or public visitor/email implementation.
 
 ## Migration And Qualification
 

@@ -27,6 +27,7 @@ export function changeMessagingConversation(context: DatabaseWriteCommandContext
   return messagingCommand(context, () => {
     const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedRevision', 'action', 'value', 'maxParticipants', 'contactsOnly', 'history']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.id), action = messagingChoice(r.action, ['rename', 'archive', 'add', 'remove', 'transfer']);
+    if (conversation.kind === 'direct' && action === 'add') messagingFail('MESSAGING_FORBIDDEN', 403);
     if (conversation.managed_group_id) messagingFail('MESSAGING_FORBIDDEN', 403);
     const selfLeave = action === 'remove' && r.value === actor.id && member.role !== 'owner';
     if (member.role !== 'owner' && !selfLeave) messagingFail('MESSAGING_FORBIDDEN', 403);

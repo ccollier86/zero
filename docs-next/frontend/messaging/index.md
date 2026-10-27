@@ -11,16 +11,18 @@ maturity: experimental
 applies_to: ["2.6.0 source with the messaging presentation and typing exports"]
 ---
 
-# Messaging Components And Typing
+# Messaging Components, Workspace And Typing
 
 [Frontend index](../index.md) · [Full integration plan](../../backend/messaging/index.md)
 
 The initial messaging family provides composable presentation parts and real
 room-authorized typing. The branch-only [backend configuration](../../backend/messaging/configuration.md)
 adds durable messaging, groups and internal assistants independently of support.
-These parts are not yet the fully wired managed controller; public support/email
-and installed-browser qualification remain explicit gates. Third-party provider
-connectors are app-owned. Existing email/inbox remains separate.
+The branch now adds the [native managed workspace](./workspace.md), connecting
+those parts to the canonical facade, private files, history, read policy and
+typing. Public support/email and installed release qualification remain explicit
+gates. Third-party provider connectors are app-owned. Existing email/inbox
+remains separate.
 
 Import from `@zero/framework/messaging` or the identical
 `@zero/framework/components/messaging` facade. The documented parts are also
@@ -39,6 +41,10 @@ Source map: [layout](../../../src/components/messaging/messaging-layout.tsx),
 [activity presentation](../../../src/components/messaging/conversation-activity.tsx),
 [presentation records](../../../src/messaging/presentation.ts) and
 [component style roles](../../../src/components/messaging/messaging.css).
+
+For an ordinary app, start with `MessagingWorkspace` under the existing common
+AppProvider/AppShell. `useMessagingWorkspace` and `MessagingWorkspaceController`
+are the headless assembly/lifecycle API; see their [full manual](./workspace.md).
 
 ## Parts
 
@@ -169,10 +175,11 @@ function ConversationInput({ roomId, value, setValue, submitExistingIntent }: Co
 }
 ```
 
-This is presentation assembly, not a shipped `client.messaging.send` example.
-The host's submit callback must retain the same durable operation ID until its
-accepted/unknown result is resolved. The future managed controller owns that
-contract, including upload finalization and delivery errors.
+This is a controlled room-typing assembly, not a native conversation send example.
+For native conversations use `useMessagingTyping(conversationId)`; it derives
+the canonical messaging activity topic and visibility rather than requiring a
+RoomService ID. The managed workspace wires that hook and retains exact durable
+send identities, private upload readiness and explicit unknown-result recovery.
 
 `roomId` is the real admitted RoomService room ID, not an arbitrary chat label.
 The hook does not accept alternate topics or caller-selected actors. It reuses
@@ -232,9 +239,9 @@ and the full `UseConversationTypingReturn` are exported from the public facade.
 2. Use the app's existing Zero style entry (`@zero/framework/styles.css`) and
    AppShell/providers. Messaging styles ship with that entry and the component
    facade; do not copy colors or create another theme or connection owner.
-3. Compose the parts with an existing authorized conversation/message source, or
-   use them as local presentation while building that source. Retain stable keys,
-   scoped data, accepted-write receipts, file authorization and read-cursor rules.
+3. Use the [managed workspace](./workspace.md), or compose parts with the native
+   authorized facade. Retain stable keys, scoped data, accepted-write receipts,
+   file authorization and observed read-cursor rules in custom assemblies.
 4. Test desktop/narrow navigation, keyboard/IME, reduced motion, revoked room
    access, reconnect and two tabs in the consuming app.
 
@@ -293,5 +300,7 @@ tests cover no-queue transport and locally measured receipt times.
 aliases/types/styles, server-renders the real hook under AppProvider and builds
 a browser consumer without app config or live services. Durable chat, Storage
 binding, AI takeover and channel delivery remain separate completion gates.
-Production-build regressions also serve the actual components and styles from
-both a normal server bundle and the compiled executable.
+Production-build regressions also serve the earlier presentation parts and styles
+from both a normal server bundle and the compiled executable. The new native
+workspace has its own [evidence and qualification limits](../../_work/messaging-workspace-review.md);
+do not transfer those older fixture results to its complete runtime automatically.

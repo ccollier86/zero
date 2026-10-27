@@ -84,6 +84,7 @@ export function messagingSearch(value: unknown): string {
 export function listMessagingMessages({ database }: DatabaseReadQueryContext, input: unknown): unknown {
   const r = messagingRecord(input, ['actor', 'conversationId', 'query']), actor = captureMessagingActor(r.actor), { conversation, member } = readMessagingMembership(database, actor, messagingId(r.conversationId));
   const q = messagingRecord(r.query ?? {}, ['before', 'after', 'limit', 'search']), limit = messagingInteger(q.limit ?? 25, 1, 50), staff = staffTimeline(conversation, member), sequence = staff ? 'sequence' : 'public_sequence';
+  const history = { from: member.history_from, revision: conversation.revision, visibility: staff ? 'staff' : 'conversation' };
   if (q.before !== undefined && q.after !== undefined) messagingFail('MESSAGING_INPUT_INVALID', 422);
   const where = ['m.conversation_id=?', 'm.scope_id=?', `m.${sequence}>=?`], values: (string | number)[] = [conversation.id, actor.scopeId, member.history_from];
   if (!staff) where.push("m.visibility='conversation'");
@@ -92,7 +93,7 @@ export function listMessagingMessages({ database }: DatabaseReadQueryContext, in
   let join = '';
   if (q.search !== undefined) {
     const expression = messagingSearch(q.search);
-    if (!expression) return { items: [], hasMore: false, nextCursor: null };
+    if (!expression) return { items: [], hasMore: false, nextCursor: null, history };
     const index = staff ? 'messaging_staff_search' : 'messaging_public_search'; join = ` JOIN ${index} ON ${index}.rowid=m.rowid`; where.push(`${index} MATCH ?`); values.push(expression);
   }
   const rows = database.query<MessageRow>(`SELECT m.* FROM messaging_messages m${join} WHERE ${where.join(' AND ')} ORDER BY m.${sequence} ${q.after === undefined ? 'DESC' : 'ASC'} LIMIT ?`).all(...values, limit + 1);
@@ -102,7 +103,7 @@ export function listMessagingMessages({ database }: DatabaseReadQueryContext, in
     if (bytes + size > 384 * 1024) break; bytes += size; items.push(item);
   }
   const hasMore = rows.length > items.length;
-  return { items, hasMore, nextCursor: hasMore && items.length ? String(items.at(-1)!.sequence) : null };
+  return { items, hasMore, nextCursor: hasMore && items.length ? String(items.at(-1)!.sequence) : null, history };
 }
 export function listMessagingContacts({ database }: DatabaseReadQueryContext, input: unknown): unknown {
   const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit']);

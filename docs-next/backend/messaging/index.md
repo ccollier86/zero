@@ -37,6 +37,11 @@ attachments, contacts/groups, read cursors, support ownership, concurrent
 assistant jobs and duplicate-safe native notifications. It is not yet a
 complete, installed/browser-qualified messaging release.
 
+The branch now also supplies the [native managed workspace](../../frontend/messaging/workspace.md)
+with real AppProvider/SDK browser checks, not just a styled mock. Its
+[focused review](../../_work/messaging-workspace-review.md) distinguishes source
+browser, package-import and remaining installed deployment evidence.
+
 The [scope correction](../../_work/messaging-configuration-correction.md) removes
 the support-only AI assumption. Named internal assistants now have independent
 identities, Guardian policies and conversations; support need not be enabled.
@@ -48,11 +53,11 @@ and can transfer ownership before the old owner leaves.
 | Layer | Feature-branch source status | Remaining qualification/completion |
 | --- | --- | --- |
 | Contacts/directory/tenant scope | Implemented, default everyone; contact requests optional | Full installed/security matrix |
-| Ordinary groups | Create, add/remove, archive/rename, owner transfer | Managed controls and browser flows |
+| Ordinary groups | Native mutations plus managed create/name/archive/member/owner controls | Full installed/browser matrix |
 | Configured groups | Declarative Guardian rules, reconciliation, remove/rejoin history | Scale/resource and installed qualification |
-| Internal assistants | Named discovery/open, policy/identity-pinned jobs, owner review, support independent | Managed UI; group-bot participation is not implemented |
-| Typing/presence | Canonical messaging typing; existing Guardian presence/availability | Bind the existing fresh presence hooks in the managed workspace |
-| Messages/files/notifications | Canonical receipts/history, private bytes, targeted live updates, native notice recovery | Installed/browser/worker qualification |
+| Internal assistants | Named discovery/open, policy/identity-pinned jobs, owner review API, support independent | Job-review dashboard/run activity and group-bot participation are not implemented |
+| Typing/presence | Canonical messaging typing and existing Guardian availability bound through AppProvider/workspace | Full installed/real-device lifecycle matrix |
+| Messages/files/notifications | Canonical receipts/history/private bytes, native live workspace and notice recovery | Installed Linux/worker/deployment qualification |
 | Public support/email | Authenticated support claim/takeover/private notes exist | Visitor capabilities, configured human destinations and native email association |
 
 The [implementation checkpoint](../../_work/messaging-backend-implementation.md)
