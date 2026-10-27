@@ -260,3 +260,12 @@ No vector production behavior or timeout is changed. The failed attempt remains
 failed evidence; a fresh complete frozen-candidate run is still mandatory before
 selection. Root typecheck, external-output build, dependency audit (no reported
 vulnerabilities) and the 864-page documentation graph pass for the repair tree.
+
+The `2798578` archive also passes the complete package script and the exact normal
+updater/frozen-reinstall rehearsal. Its Linux proof is **failed**, not qualified:
+the SDK-only source preparer uses one initial audit acknowledgment and later hits
+required admission during its longer setup. An SDK client alone has no AppProvider
+collector. The fixture now maintains authenticated observation heartbeats at the
+actual returned policy interval, with no protected-operation retries, longer TTL
+or admission exception. The bundled stage still first proves an unacknowledged
+session is rejected. Exact-archive Linux/full-suite qualification remains required.

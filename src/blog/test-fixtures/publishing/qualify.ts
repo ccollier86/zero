@@ -2,6 +2,7 @@
 import { createClient } from '@zero/framework';
 import { createPublicBlogClient } from '@zero/framework/blog/client';
 import { unlink } from 'node:fs/promises';
+import { publishingAuditHeartbeat } from './audit-heartbeat';
 
 async function checked(args: string[]) {
   const child = Bun.spawn([process.execPath, '--no-env-file', ...args], { stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH, ZERO_SYNTHETIC_PROVIDER_SECRET: 'fixture-only' } });
@@ -19,6 +20,7 @@ for (let generation = 0; generation < 2; generation++) {
   const server = Bun.spawn([process.execPath, '--no-env-file', 'dist/server.js'], { stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH, ZERO_SYNTHETIC_PROVIDER_SECRET: 'fixture-only' } });
   const stdout = new Response(server.stdout).text(), stderr = new Response(server.stderr).text();
   let client: ReturnType<typeof createClient> | undefined;
+  let delivery: Awaited<ReturnType<typeof publishingAuditHeartbeat>> | undefined;
   try {
     const deadline = Date.now() + 60000;
     while (!await Bun.file('./state/ready.json').exists()) {
@@ -37,7 +39,7 @@ for (let generation = 0; generation < 2; generation++) {
     assert(rejected, 'Strict private admission must still reject a session without current delivery proof.');
     const signedPublic = await client.fetch<Response>('/blog/installed-publishing', { json: false });
     assert(signedPublic.status === 200 && (await signedPublic.text()).includes('Installed SEO title'), 'A selected public HTML route must not become an audit gate for a signed-in reader.');
-    const policy = await client.logging.collectionPolicy(); await client.logging.observe([], { policyVersion: policy.delivery!.policyVersion });
+    delivery = await publishingAuditHeartbeat(client);
     const post = await client.blog.posts.get(expected.postId);
     assert(post.revision === expected.revision, 'Retained revision must survive source-to-bundle.');
     const preview = await client.blog.media.imagePreview(expected.mediaId); assert(preview.type === 'image/webp' && preview.size > 0, 'Installed native image transport and private preview are required.');
@@ -46,9 +48,11 @@ for (let generation = 0; generation < 2; generation++) {
     const index = await (await fetch(origin + '/sitemap.xml')).text(); assert(index.includes('/blog/installed-publishing'), 'Installed public discovery is required.');
     assert((await client.blog.posts.revisions(expected.postId)).total === 2, 'Immutable history must survive restart.');
   } finally {
-    client?.disconnect(); server.kill('SIGTERM');
-    const timeout = setTimeout(() => server.kill('SIGKILL'), 10000);
-    await server.exited; clearTimeout(timeout); await stdout; await stderr;
+    try { await delivery?.stop(); } finally {
+      client?.disconnect(); server.kill('SIGTERM');
+      const timeout = setTimeout(() => server.kill('SIGKILL'), 10000);
+      await server.exited; clearTimeout(timeout); await stdout; await stderr;
+    }
   }
 }
 console.log(JSON.stringify({ publishingQualified: true, platform: process.platform, architecture: process.arch, generations: 2 }));
