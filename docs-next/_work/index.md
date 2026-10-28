@@ -17,6 +17,9 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Combined blog messaging and logging release](./combined-blog-messaging-logging-release.md):
+  current assessment, remaining product polish, shared runtime failures, exact
+  archive qualification and normal updater publication in execution order.
 - [Durable messaging implementation](./messaging-backend-implementation.md): actor
   persistence checkpoint, remaining service boundaries and release gates.
 - [Configurable messaging correction](./messaging-configuration-correction.md):
@@ -25,9 +28,10 @@ publication, search, and production agent bundles.
 - [Native messaging workspace review](./messaging-workspace-review.md): real
   provider/SDK workspace integration, exact intents, per-lane drafts, read policy,
   bounded live history, native file/browser checks and remaining release gates.
-- [Public support continuation](./messaging-public-channels.md): planned
-  visitor capabilities, native email association and human destinations;
-  third-party channel adapters are application-owned, not framework gates.
+- [Public support continuation](./messaging-public-channels.md): earlier visitor
+  and human-destination planning. The [current native support manual](../backend/messaging/website-support.md)
+  defines implemented sessions, routing and handoff; email/Facebook connectors
+  are app-owned and outside the approved Zero baseline.
 - [Blog publishing implementation](./blog-publishing-implementation.md): private Fabric
   content, publication snapshots, media, metrics and the remaining presentation,
   editing and release qualification gates. Unreleased feature work is not the
