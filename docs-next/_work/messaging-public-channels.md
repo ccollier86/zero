@@ -7,13 +7,20 @@ status: draft
 visibility: internal
 system: messaging
 feature: public-support
-maturity: planned
-applies_to: ["Public visitor continuation; authenticated support is implemented on the feature branch"]
+maturity: experimental
+applies_to: ["Native public visitor implementation on feature/messaging-backend; release selection is separate"]
 ---
 
 # Website And Customer-Portal Support Chat
 
 [Working index](./index.md) · [Scope correction](./messaging-configuration-correction.md) · [Configuration](../backend/messaging/configuration.md) · [Implementation checkpoint](./messaging-backend-implementation.md)
+
+The native continuation is implemented. Use the current
+[website-support reference](../backend/messaging/website-support.md) and
+[workspace qualification record](./messaging-workspace-review.md) for exact
+configuration, bounds and evidence. The design constraints below remain the
+contract; they are not a list of features still missing from source. Cross-origin
+embedding and third-party connectors are deliberately not implemented.
 
 ## Corrected Ownership
 

@@ -2,6 +2,7 @@
 import { beforeAll, afterAll, expect, test } from 'bun:test';
 import { mkdtemp, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { chromium } from 'playwright';
 import { createApp } from '../../frontend/server/app-factory';
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type PlaywrightTestBrowserLease } from '../../test-support/playwright-test-browser';
@@ -308,4 +309,42 @@ browserTest('visible-end reads require viewport visibility and dwell, respect an
     expect(await page.getByRole('textbox', { name: 'Message', exact: true }).count()).toBe(0);
     expect(errors).toEqual([]);
   } finally { await context.close(); await f.close(); }
+}, 90000);
+
+// Opt in on a workstation with a real window server. CI's headless event-fence
+// check above cannot establish actual tab visibility/focus behavior.
+const headedTest = playwrightTestBrowserAvailable && process.env.ZERO_MESSAGING_HEADED === '1' ? test : test.skip;
+headedTest('headed Chromium actual window focus interrupts read dwell and resumes only when visible and focused', async () => {
+  const f = await fixture();
+  const browser = await chromium.launch({ headless: false, ignoreDefaultArgs: ['--enable-automation'], timeout: 30000 });
+  const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' });
+  const page = await context.newPage(), other = await context.newPage();
+  const faults: string[] = []; page.on('pageerror', error => faults.push(error.message)); page.setDefaultTimeout(12000);
+  try {
+    // Explicitly disable the automation focus override, not the browser's real
+    // focus/visibility API. No synthetic blur, focus or visibility events.
+    for (const target of [page, other]) {
+      const cdp = await context.newCDPSession(target);
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    }
+    await page.goto(f.base + '/workspace'); await page.bringToFront();
+    const initialRead = page.waitForResponse(response => response.url().endsWith('/read') && response.request().method() === 'POST' && response.status() === 200);
+    await page.getByRole('button', { name: 'workspace-peer', exact: false }).click();
+    await page.getByRole('textbox', { name: 'Message', exact: true }).click(); await initialRead;
+    await other.goto('about:blank'); await other.bringToFront();
+    // Playwright opens separate native windows here. An unfocused window can
+    // remain visible; requiring "hidden" would test a false browser premise.
+    await page.waitForFunction(() => !document.hasFocus());
+    const unfocused = await page.evaluate(() => ({ visibility: document.visibilityState, focused: document.hasFocus() }));
+    await f.send('Synthetic unread while a real other window is active'); await page.waitForTimeout(1100);
+    expect((await f.call('GET', `/api/messaging/conversations/${f.conversation.id}`, undefined, f.admin.accessToken)).unreadCount).toBe(1);
+    const resumedRead = page.waitForResponse(response => response.url().endsWith('/read') && response.request().method() === 'POST' && response.status() === 200);
+    await page.bringToFront(); await page.getByRole('textbox', { name: 'Message', exact: true }).click();
+    await page.waitForFunction(() => document.visibilityState === 'visible' && document.hasFocus()); await resumedRead;
+    const visible = await page.evaluate(() => ({ visibility: document.visibilityState, focused: document.hasFocus() }));
+    expect((await f.call('GET', `/api/messaging/conversations/${f.conversation.id}`, undefined, f.admin.accessToken)).unreadCount).toBe(0);
+    expect(unfocused.focused).toBe(false); expect(visible).toEqual({ visibility: 'visible', focused: true }); expect(faults).toEqual([]);
+    await Bun.write(join(evidence, 'headed-window-lifecycle.json'), JSON.stringify({ platform: process.platform, arch: process.arch, headless: false,
+      syntheticLifecycleEvents: false, overriddenDocumentApis: false, unfocused, visible, unreadWhileUnfocused: 1, unreadAfterVisibleDwell: 0 }, null, 2));
+  } finally { await context.close(); await browser.close(); await f.close(); }
 }, 90000);

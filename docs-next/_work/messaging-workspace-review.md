@@ -68,6 +68,47 @@ The installed Linux fixture lives in
 archive before this branch is selected for normal updates. Unit/browser source
 success is not substituted for worker/process/bundled-package evidence.
 
+### Final Native/Deployment Continuation
+
+The committed runtime `3f7c12f` passes the isolated official-build Linux/amd64
+fixture on Bun 1.3.14. Evidence is in `linux-3f7c12f/`: source-prepared retained
+Guardian/messages/private bytes survive the official bundle, a killed private
+writer recovers with the same intent, two held provider calls overlap, and an
+ordinary foreground write completes while both wait. After main SIGKILL, the
+interrupted call is retained as unknown review/triage without provider repetition.
+Private bytes, exact once-only message replay and strict logging health survive
+restart. Both main boots are distinguished from 29 worker launches; matching
+source actors inherit neither the synthetic provider secret nor dotenv secret
+and never execute the main application entry.
+
+The first Linux attempt (`linux-cf7864f/`) is retained as failed evidence: it
+tried replacing a killed workflow owner before Torrent's normal 30-second lease
+expired. The corrected fixture waits 31 seconds; it does not clear the lease,
+steal ownership or relax runtime admission. The later passing run's 1,148ms
+foreground write is a five-second nonblocking acceptance result on the synthetic
+container, not a production throughput promise.
+
+`package-3f7c12f.log` passes the fresh installed public consumer (46 assertions),
+including types, aliases, SSR, browser isolation and matching packaged source.
+The archive SHA-256 for those two checks is
+`b9248f349a313d25adf4a42fcec979aff873f79c2e864725306ca6ab0c8259fb`.
+The final native/controller/protocol set in `completion-native-regressions-2.log`
+passes 87 tests/765 assertions in 21 files. Visitor lifecycle now has explicit
+bounded requests, aborted-body retirement and isolated cleanup observers.
+
+The opt-in real-window test (`ZERO_MESSAGING_HEADED=1`,
+`headed-lifecycle-2.log`) passes with no synthetic lifecycle event or overridden
+document API. Actual macOS Chromium window focus loss retains one unread message;
+returning visible/focused and completing dwell acknowledges it. The first attempt
+incorrectly required a separate native window to be hidden and is retained as a
+failed harness premise. This passing case qualifies real window focus, not every
+tab/minimize/mobile-device/browser lifecycle. The ordinary headless geometry,
+event-fence and revocation cases remain separate.
+
+Later changes in this continuation are documentation/test-only. Final frozen
+source/local release gates and updater selection remain explicit, not implied by
+this focused evidence or an unchanged `2.6.0` package version.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private

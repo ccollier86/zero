@@ -4,6 +4,21 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Completed the opt-in native messaging backend and managed workspace: private
+  per-scope Fabric state, Guardian-fenced contacts/directory and groups,
+  configured team membership, messages/reactions/read positions, private Storage
+  files, existing presence rings and bounded transient typing. Accepted keyed
+  rows remain visible during live updates and historical paging.
+- Added named internal assistants and website/customer-portal support with
+  concurrent Torrent jobs (bounded default/max 100), actual run activity,
+  ownership epochs, human-first/AI-first handling, explicit handoff, assigned
+  human resolve/reopen and retained operator review. Unknown dispatched calls
+  are never automatically repeated. Public entries use expiring same-origin
+  cookie capabilities, CSRF/session fences and entry-specific staff admission,
+  not fake Guardian users or general Sync access. No email/Facebook connector
+  is installed. Existing private migrations remain unchanged; queue/visitor
+  changes are additive. Update client/server together and enable deliberately.
+
 - Bind each Fabric writer-lane task to its submitting async context. A queued
   request or background delivery must not inherit a previous user's audit
   attribution or retired request lifetime. The deterministic regression fails

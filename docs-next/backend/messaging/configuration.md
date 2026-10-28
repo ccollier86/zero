@@ -278,12 +278,15 @@ wires canonical typing, private uploads/downloads, per-visibility drafts,
 read-visibility policy and retained live/backfilled history. See its
 [evidence and limits](../../_work/messaging-workspace-review.md). Source browser
 integration is not a substitute for final installed Linux/worker/deployment
-qualification or public visitor implementation. Email bridging is not a requirement.
+qualification. The [public visitor implementation](./website-support.md) is
+separate from authenticated SDK admission. Email bridging is not a requirement.
 
 ## Migration And Qualification
 
 Private migrations 006/007 add assistant identity and configured-group metadata;
-001–005 and prior outcomes remain unchanged. Use the reviewed managed migration
+008/009 add indexed queue order and restricted native visitor state. The existing
+001–007 definitions and prior outcomes remain unchanged by the visitor pass.
+Use the reviewed managed migration
 boundary for retained development files, never reset/replace a private database
 to bypass fingerprint or owner checks.
 

@@ -1,21 +1,21 @@
 ---
 id: zero.messaging
-type: architecture
+type: index
 audience: [developer, agent, maintainer]
 owner: messaging
 status: draft
 visibility: internal
 system: messaging
-feature: integration-plan
-maturity: planned
-applies_to: ["2.6.0 packaged presentation; configurable backend on feature/messaging-backend is not a selected update"]
+feature: native-messaging
+maturity: experimental
+applies_to: ["2.6.0 native messaging candidate; identify installed support by commit/archive hash"]
 ---
 
-# Messaging Foundation And Integration Plan
+# Messaging
 
 [Backend index](../index.md) · [Messaging components and typing](../../frontend/messaging/index.md)
 
-Build one optional messaging subsystem with a coherent Zero API. Contacts-based
+One optional messaging subsystem with a coherent Zero API. Contacts-based
 apps, everyone-in-directory apps, tenant-local messaging, ordinary and
 property-managed groups, internal assistants and support inboxes may coexist.
 The supplied visual reference uses the existing AppShell sidebar, a conversation
@@ -29,14 +29,36 @@ Email-to-conversation bridging is not a messaging requirement or release gate.
 [Configuration and facade](./configuration.md) · [Website support](./website-support.md) · [Review](./review.md) ·
 [Notifications](./notifications.md) · [Guardian presence](../guardian/presence.md)
 
-## Implementation Status
+## Start Here
 
-The selected stable archive supplies the presentation/typing foundation. The
-isolated feature branch also implements canonical Fabric persistence,
+1. Read [configuration and facade](./configuration.md), choose `everyone` or
+   `contacts`, and enable `messaging` in the existing Zero configuration. Disabled
+   messaging opens no private messaging database or worker.
+2. Put [MessagingWorkspace](../../frontend/messaging/workspace.md) inside the
+   existing AppShell and common auth-enabled AppProvider. Do not create a second
+   auth/Sync client, expose private tables or fabricate row-change events.
+3. Use [Guardian presence](../guardian/presence.md) for human availability. It is
+   separate from conversation permission, typing, read positions and AI activity.
+4. Add [named assistants](./configuration.md#internal-assistants-without-support)
+   only if wanted; they require Zero AI and Torrent. Add
+   [website support](./website-support.md) only for a deliberately public entry.
+5. Read [review/recovery](./review.md) and [notifications](./notifications.md)
+   before connecting app-specific effects. An unknown outcome is not failure or
+   permission to issue a fresh request ID.
+
+The package version alone is insufficient: older archives also say `2.6.0`.
+Record the selected updater commit and archive hash, and update client/server
+together. The [qualification record](../../_work/messaging-workspace-review.md)
+separates source, browser, installed-package and native process evidence.
+
+## Implemented Boundaries
+
+The native implementation supplies canonical Fabric persistence,
 Guardian-bound native HTTP/SDK, committed live projections, private Storage
 attachments, contacts/groups, read cursors, support ownership, concurrent
-assistant jobs and duplicate-safe native notifications. It is not yet a
-complete, installed/browser-qualified messaging release.
+assistant jobs and duplicate-safe native notifications. Deployment qualification
+and release selection are recorded separately; source availability is not proof
+an older installed archive has this backend.
 
 The branch now also supplies the [native managed workspace](../../frontend/messaging/workspace.md)
 with real AppProvider/SDK browser checks, not just a styled mock. Its
@@ -51,15 +73,15 @@ and canonical membership. A delayed reconciliation cannot preserve revoked
 history/file/typing access. Ordinary groups retain manual ownership/membership
 and can transfer ownership before the old owner leaves.
 
-| Layer | Feature-branch source status | Remaining qualification/completion |
+| Layer | Native implementation | Boundary/limit |
 | --- | --- | --- |
-| Contacts/directory/tenant scope | Implemented, default everyone; contact requests optional | Full installed/security matrix |
-| Ordinary groups | Native mutations plus managed create/name/archive/member/owner controls | Full installed/browser matrix |
-| Configured groups | Declarative Guardian rules, reconciliation, remove/rejoin history | Scale/resource and installed qualification |
+| Contacts/directory/tenant scope | Default everyone; optional contact requests/acceptance/blocks | Current Guardian scope; no cross-tenant directory or admin transcript bypass |
+| Ordinary groups | Native mutations plus managed create/name/archive/member/owner controls | Revision-fenced; a private direct chat cannot be expanded silently |
+| Configured groups | Declarative Guardian rules, reconciliation, remove/rejoin history | At most 32 groups, 100 members/group and 10,000 reconciliation candidates; excess fails visibly |
 | Internal assistants | Named discovery/open, pinned jobs, native owner-review UI and canonical run activity; support independent | Group-bot participation, general tools/RAG and token streaming are outside this baseline |
-| Typing/presence | Canonical messaging typing and existing Guardian availability bound through AppProvider/workspace | Full installed/real-device lifecycle matrix |
-| Messages/files/notifications | Canonical receipts/history/private bytes, native live workspace and notice recovery | Installed Linux/worker/deployment qualification |
-| Public website/portal support | Native widget, entry-routed staff admission, expiring visitor sessions, private files/typing, human/AI handoff, resolve/reopen | Installed Linux/update and broader device/resource qualification |
+| Typing/presence | Canonical transient typing and existing Guardian availability bound through AppProvider/workspace | No draft text, offline typing replay, invented online status or human-attention claim |
+| Messages/files/notifications | Canonical receipts/history/private bytes, native live workspace and notice recovery | Private files; exact request identity and current access remain mandatory |
+| Public website/portal support | Native widget, entry-routed staff admission, expiring visitor sessions, private files/typing, human/AI handoff, resolve/reopen | Exact same-origin entry; no cross-origin embed, email or third-party connector |
 
 The [implementation checkpoint](../../_work/messaging-backend-implementation.md)
 separates native source evidence from unfinished work. A feature-branch example
@@ -90,7 +112,7 @@ within one declared realm. Co-locate room authorization with that canonical
 membership or implement a fail-closed, versioned authorization bridge. A delayed
 room projection must not let a removed conversation member continue receiving
 activity or content. Existing room membership is sufficient for the current
-typing primitive; it is not a substitute for this future chat policy.
+typing primitive; native messaging adds its canonical conversation policy.
 
 Do not assume system, application and Fabric databases participate in one SQLite
 transaction. Use a committed outbox for cross-service projections and external
@@ -208,8 +230,8 @@ database. Long AI work belongs in a Torrent activity, not inline in the source
 handler. Use the additive [commit-acknowledged enqueue](../torrent/enqueue.md)
 for both starts and resumes; an eager `torrent.start`/`deliverEvent` can itself
 wait on initial activity execution. Await the enqueue receipt, then let the
-source delivery finish. This implementation does not make the planned messaging
-backend available; it supplies the underlying short handoff contract.
+source delivery finish. Native messaging uses this short handoff and bounded
+concurrent work rather than holding the database queue through a model call.
 
 Track the exact conversation/message, source sequence, workflow instance and
 ownership epoch in the durable domain command. A retry keeps its original
@@ -264,15 +286,14 @@ Shared sequence gaps or aggregate counts must not disclose hidden note activity.
 The dashboard distinguishes accepted incoming messages, queued/running AI work,
 committed replies, provider acceptance and actual supported delivery/read
 receipts. Private-note acceptance, human takeover and stale-run suppression
-need their own durable outcomes. These remain messaging backend acceptance
-requirements, not guarantees supplied by today's presentation/typing components.
+have distinct durable outcomes. A component never invents a delivery/read receipt
+that the native backend or an application-owned provider cannot establish.
 
 ## Support And Delivery
 
-Authenticated support already uses the managed Guardian facade. Public visitor
-admission and configured human destinations remain separate gates in the
-[public-support continuation](../../_work/messaging-public-channels.md). A visitor
-must receive a scoped expiring capability, not access to Guardian's internal
+Authenticated support uses the managed Guardian facade. Public visitor
+admission uses the [native website entry](./website-support.md). A visitor
+receives a scoped expiring capability, not access to Guardian's internal
 directory or app Sync. Current staff destination policy, canonical membership
 and ownership epochs govern triage/claim/transfer/handback.
 
@@ -288,37 +309,33 @@ permission, reply-window or media behavior is part of Zero's completion target.
 
 ## API And UI Assembly
 
-The feature-branch request-scoped server/browser facade is `zero.messaging` /
+The request-scoped server/browser facade is `zero.messaging` /
 `client.messaging`, with conversations, named assistants, messages, files,
 contacts, review and support commands. See [configuration](./configuration.md).
 Commands require stable operation IDs; reads and projections reauthorize after
 async boundaries. Disabled messaging installs no runtime/worker. Stable archives
 without the backend do not gain these APIs from documentation alone.
 
-The organism should compose independently documented parts: conversation sidebar,
+The organism composes independently documented parts: conversation sidebar,
 directory/search, header/presence, transcript, date/unread separators, message
 bubbles, reactions, attachments, activity, composer and takeover controls.
 The existing AppShell remains the primary sidebar. Shared menus and modal
 manager handle commands and confirmations; shared ScrollArea owns overflow.
 Magnetic hover highlights belong in the conversation/contact/menu lists.
 
-## Implementation Order And Release Gates
+## Acceptance And Deployment
 
-1. Typing protocol, identity-safe aggregation, presentation records and reusable
-   parts. This is the implemented first slice, not the full service.
-2. Canonical realm/schema, Guardian conversation authority, directory/contact
-   admission, durable message commands, paging and accepted receipts.
-3. Managed HTTP/SDK and committed live projection; explicit scope replacement,
-   reconnect, scroll continuity and read/unread semantics.
-4. Zero Storage upload/attach/download/cleanup vertical slice, including crash
-   recovery and revocation during upload/download.
-5. AI execution and human takeover with ownership fences, durable workflow jobs,
-   notifications and safe observability.
-6. Configurable groups/internal assistants and capability-bound public support,
-   using existing Guardian/presence/services.
-7. Full organism/browser/accessibility polish and installed-archive qualification,
-   then the normal reviewed archive/full-suite release. Third-party channel
-   connectors are app-owned, not a prerequisite.
+Use matching retained source/dependencies for explicitly configured source
+actors when deploying the official bundled server. Actors use an empty child
+environment plus explicit approved values; they must never boot the main app or
+implicitly load dotenv/provider secrets. Source-to-bundle migration fingerprints
+remain checked. Preserve retained database/Storage identities and receipts.
+
+After an ungraceful main-process death, Torrent's normal 30-second ownership
+lease can defer replacement startup. Supervision needs bounded backoff; do not
+clear the lease, steal a live generation or weaken admission. Graceful stop
+releases only its exact owned generation. An interrupted dispatched AI call goes
+to review/triage, not an automatic duplicate provider request.
 
 Required tests include same actor in multiple tabs, spoofed typing identity,
 cross-tenant IDs, removed membership while subscribed, unauthorized contact
@@ -329,7 +346,7 @@ slow-reader backpressure, reduced motion, IME input, keyboard and narrow layouts
 Qualify actual file/hot/Fabric modes and fresh installed packages explicitly;
 no synthetic fixture or visual screenshot proves a production channel is wired.
 
-## First Slice Qualification
+## Presentation Qualification And Deliberate Limits
 
 The component/browser fixtures contain synthetic, non-sensitive data and block
 external network requests. Browser qualification covers one shared desktop/mobile
@@ -346,9 +363,18 @@ packaged sources, types/styles, public import aliases, browser isolation and
 the real hook under AppProvider's SSR fallback. None of those checks claim a
 durable messaging backend or external channel is running.
 
-That packaged presentation-only slice deliberately had no messaging migration or
-new private database. The current feature branch has additive private migrations
-and dedicated Fabric files, but no production data changes. Updating the package exposes the documented parts
-without provisioning an unfinished messaging subsystem. The merged payment,
+The older presentation-only slice had no messaging migration or new private
+database. Native messaging has additive private migrations and dedicated Fabric
+files, with no production data changes performed by qualification. Enabling it
+is deliberate; updating the package alone does not enable messaging. The payment,
 SMTP/IMAP and email-inbox features retain their own opt-in configuration and
 release/installation contracts.
+
+The managed conversation search filters the current list page, not every
+transcript. Group assistants, attachment-reading/RAG, general AI tools and
+token-by-token output are outside this baseline. The only optional built-in
+assistant tool is the bounded support human-handoff request. Presence/typing and
+the visible-end read policy are not legal evidence of human comprehension.
+Maximum-scale throughput, every browser/device lifecycle and production
+application acceptance are separate qualifications, never inferred from a
+synthetic screenshot or a passing unit test.

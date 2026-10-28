@@ -114,8 +114,9 @@ An explicit claim joins the conversation; taking an already human-owned request
 uses the shared confirmation manager. Unknown claims/handoffs retain the same
 pending-command reconciliation UI as other management changes. The queue opens
 one scoped stream while displayed and releases it on departure; it does not
-subscribe once per request or expose private notes. It is not the unfinished
-anonymous website widget or a priority/SLA queue. Requests are indexed oldest-first.
+subscribe once per request or expose private notes. The separate
+[native website widget](../../backend/messaging/website-support.md) serves
+visitors; neither surface is a priority/SLA queue. Requests are indexed oldest-first.
 
 The current assigned human can resolve/reopen a support request from conversation
 options. Retained messages remain and both transitions fence older AI work.
@@ -182,6 +183,10 @@ late callbacks cannot restore the previous user's data.
 | `avatarShape` | `circle` (default), `rounded` or `square`; perimeter follows the same shape. |
 | `readPolicy` | `visible-end` (default) or `manual`, as defined above. |
 | `publishTyping` | Default true for the active pane; privacy control, not observation authority. |
+| `layout` | `workspace` (default) or `conversation`; the latter omits the conversation sidebar. |
+| `conversationId` | Select this conversation through ordinary canonical admission; it never confers access. |
+| `conversationOptions` | Default true; false hides native management/review controls, not server authorization. |
+| `nativeTyping`, `externalTyping` | Advanced activity adapter. Public `SupportChat` supplies its restricted visitor publisher instead of using any surrounding signed-in Guardian identity. |
 | `maxMessages` | Default 500; integer 50–1000. Bounded retained transcript, not a server retention setting. |
 | `participantFor(id)` | Optional admitted identity presentation override; cannot create membership or permission. |
 | `sidebarAction` | Optional replacement for the default new-conversation control. |
