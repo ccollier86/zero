@@ -9,8 +9,11 @@ test('packed phone input browser-builds and SSR-renders with canonical form and 
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(`${SCRATCH}/phone-package-`);
   const consumer = `${root}/consumer`, archive = `${root}/framework.tgz`;
+  const started = performance.now();
+  const stage = (name: string) => console.info('Phone package stage', { stage: name, elapsedMs: Math.round(performance.now() - started) });
   try {
     await mkdir(consumer);
+    stage('pack');
     await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
     await Bun.write(`${consumer}/package.json`, JSON.stringify({
       name: 'zero-phone-public-consumer', private: true, type: 'module',
@@ -18,7 +21,9 @@ test('packed phone input browser-builds and SSR-renders with canonical form and 
     }));
     await Bun.write(`${consumer}/consumer.tsx`, CONSUMER);
     await Bun.write(`${consumer}/verify.ts`, VERIFY);
+    stage('install');
     await checked(['install', '--ignore-scripts'], consumer);
+    stage('verify');
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim()) as {
       browserBytes: number; html: string; valid: boolean; invalid: boolean; sql: string;
     };
@@ -33,9 +38,12 @@ test('packed phone input browser-builds and SSR-renders with canonical form and 
     expect(result.html).toContain('id="public-phone"');
     expect(result.html).toContain('readOnly=""');
     expect(result.html).not.toContain('wrapperClassName=');
+    stage('assertions-complete');
   } finally {
     // Only the fresh test-owned consumer/archive is disposable; no application data is opened.
+    stage('cleanup');
     await rm(root, { recursive: true, force: true });
+    stage('retired');
   }
 }, 120_000);
 

@@ -23,13 +23,29 @@ beforeAll(async () => {
   lease = await acquirePlaywrightTestBrowser();
 },60_000);
 afterAll(() => lease?.release());
-async function open(width=1100,reduced=true,siblings=false) {
+async function open(width=1100,reduced=true,siblings=false,layout?: 'empty' | 'wrapped') {
   const page=await lease!.browser.newPage({viewport:{width,height:800},reducedMotion:reduced?'reduce':'no-preference'});
   page.setDefaultTimeout(5000);
-  await page.setContent(`<!doctype html><div id="root"${siblings ? ' data-siblings="true"' : ''}></div>`);
+  await page.setContent(`<!doctype html><div id="root"${siblings ? ' data-siblings="true"' : ''}${layout ? ` data-layout="${layout}"` : ''}></div>`);
   await page.addStyleTag({content:css}); await page.addScriptTag({content:bundle});
-  await page.getByRole('button',{name:siblings?'Open first owner':'Open content',exact:true}).waitFor(); return page;
+  if (layout) await page.getByTestId('layout-viewport').waitFor({ state: 'attached' });
+  else await page.getByRole('button',{name:siblings?'Open first owner':'Open content',exact:true}).waitFor();
+  return page;
 }
+
+test('empty modal hosts preserve flex siblings while content surfaces bridge full-height workspaces', async () => {
+  for (const layout of ['empty', 'wrapped'] as const) {
+    const page = await open(1100, true, false, layout);
+    try {
+      const viewport = page.getByTestId('layout-viewport');
+      expect((await viewport.boundingBox())!.height).toBe(layout === 'empty' ? 280 : 320);
+      expect(await viewport.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      await viewport.evaluate(element => { element.scrollTop = 120; });
+      expect(await viewport.evaluate(element => element.scrollTop)).toBe(120);
+      if (layout === 'empty') expect((await page.locator('[data-zero-modal-surface]').boundingBox())!.height).toBe(0);
+    } finally { await page.close(); }
+  }
+}, 30_000);
 
 test('standard shell reserves close controls, submits the exact owned native form and restores focus',async()=>{
   const page=await open();

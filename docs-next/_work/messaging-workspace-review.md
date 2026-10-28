@@ -187,6 +187,33 @@ reported as a payments behavior failure or a whole-suite pass. The release guide
 now requires the plugin's own frozen, script-free install before the complete
 inventory; no files, assertions or deadlines are excluded or relaxed.
 
+### Complete-inventory follow-up
+
+The prepared `a14abe4` run caught a real shared-layout regression: the full-height
+recession bridge also applied to empty host-only managers. A controlled dialog's
+fallback host could therefore consume its flex parent's height and collapse the
+Data Studio grid. The bridge now applies only to nonempty surfaces. A new native
+Chromium regression checks both zero-height empty hosts and bounded scrolling in
+wrapped full-height content. The unchanged nine-case Data Studio workspace browser
+file then passes (50 assertions), rather than relaxing its visibility checks.
+Evidence: `modal-empty-host-focused.log` and `modal-studio-layout-after.log`.
+
+The preservation guard removes only the exact admitted CSS appendix and still
+checks the original stylesheet hash; the installed-scroll guard pins the entire
+corrected file. The machine-service projection test now includes the additive
+`messaging` facade and asserts it is null when absent. The migration freeze adds
+only the already-introduced 049–051 definitions. No earlier migration definition,
+checksum, identity or application state is changed. Those three guard files pass
+11 tests/66 assertions in `final-preservation-guards.log`.
+
+The native messaging browser and fresh installed consumer pass in the prepared
+run, including 49 installed-consumer assertions. The complete run also reports
+a phone-consumer timeout after all 11 functional assertions; its awaited cleanup
+remains required and the failed result is retained. Added payload-free stage
+timings distinguish pack/install/verify/assertions/retirement without raising
+the existing deadline. Final qualification and stable selection remain pending;
+these follow-up successes are not a replacement whole-suite pass.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private

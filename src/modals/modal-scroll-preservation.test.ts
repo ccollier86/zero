@@ -12,6 +12,9 @@ const originals = {
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
   'src/frontend/styles/globals.css': '1c1669a61ea3a1cc22f91d3621b95822a814d7af15a050ec90ff33703b511ce5',
 };
+const layoutBridge = '/* Bridge full-height app/workspace children without letting a host-only manager\n'
+  + '   consume a flex slot and collapse its siblings. Auto-height parents stay auto. */\n'
+  + '[data-zero-modal-surface]:not(:empty) { height: 100%; min-height: 0; }\n';
 // Shared ScrollArea/helpers and the next supplement were intentionally updated
 // for table edge chaining/hidden-axis fades and picker trigger polish (Oct 13).
 // Their behavior and installed/source identity are qualified separately; the
@@ -21,10 +24,15 @@ const originals = {
 
 afterEach(() => modals.discardAll());
 
-test('modal scroll adoption keeps every original shell/skin/legacy-theme byte until approved retirement', async () => {
+test('modal scroll adoption retains original skin bytes with only the qualified nonempty layout bridge', async () => {
   for (const [path, hash] of Object.entries(originals)) {
-    const source = path === 'src/frontend/styles/globals.css'
+    let source: string | ArrayBuffer = path === 'src/frontend/styles/globals.css'
       ? originalThemeBeforeBlogStyles(await Bun.file(new URL(path, root)).text()) : await Bun.file(new URL(path, root)).arrayBuffer();
+    if (path === 'src/modals/modal-shell.css') {
+      const css = await Bun.file(new URL(path, root)).text();
+      expect(css).toEndWith(layoutBridge);
+      source = css.slice(0, -layoutBridge.length);
+    }
     expect(new Bun.CryptoHasher('sha256').update(source).digest('hex'), path).toBe(hash);
   }
 });

@@ -125,6 +125,7 @@ describe('request tenant-database projection', () => {
     });
 
     expect(new Set(Object.keys(zero))).toEqual(new Set([
+      'messaging',
       'blog',
       'logging',
       'payments',
@@ -139,6 +140,7 @@ describe('request tenant-database projection', () => {
       'workflows',
       'pdf',
     ]));
+    expect(zero.messaging).toBeNull();
     expect(zero.blog).toBeNull();
     expect(zero.logging).toBeNull();
     expect(zero.payments).toBeNull();

@@ -77,6 +77,6 @@
 }
 @media (pointer: coarse) { .zero-modal__close { min-width: 44px; min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .zero-modal__tab, .zero-modal__indicator { transition-duration: 1ms; } }
-/* The optional receding surface is a layout-transparent height bridge for
-   full-height app/workspace children. Auto-height document parents stay auto. */
-[data-zero-modal-surface] { height: 100%; min-height: 0; }
+/* Bridge full-height app/workspace children without letting a host-only manager
+   consume a flex slot and collapse its siblings. Auto-height parents stay auto. */
+[data-zero-modal-surface]:not(:empty) { height: 100%; min-height: 0; }

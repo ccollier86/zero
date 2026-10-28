@@ -32,6 +32,18 @@ function SiblingDemo() {
   </>;
 }
 
+function LayoutDemo({ wrapped }: { wrapped: boolean }) {
+  const content = <div data-testid="layout-viewport" style={{ flex: 1, minHeight: 0, height: wrapped ? '100%' : undefined, overflow: 'auto' }}>
+    <div style={{ height: 900 }}>Synthetic scrollable workspace</div>
+  </div>;
+  return <section style={{ display: 'flex', flexDirection: 'column', height: 320 }}>
+    {wrapped ? <ModalManager>{content}</ModalManager> : <>
+      <header style={{ height: 40, flexShrink: 0 }}>Workspace toolbar</header>
+      {content}<ModalManager />
+    </>}
+  </section>;
+}
+
 function Fields({ context }: { context: ModalContext }) {
   const [commandOpen, setCommandOpen] = React.useState(false);
   return <form id={`fields-${context.id}`} onChange={() => context.setDirty(true)}>
@@ -83,4 +95,6 @@ function Demo() {
   </main></ModalManager>;
 }
 const root = document.getElementById('root')!;
-createRoot(root).render(<React.StrictMode>{root.dataset.siblings ? <SiblingDemo /> : <Demo />}</React.StrictMode>);
+createRoot(root).render(<React.StrictMode>{root.dataset.layout
+  ? <LayoutDemo wrapped={root.dataset.layout === 'wrapped'} />
+  : root.dataset.siblings ? <SiblingDemo /> : <Demo />}</React.StrictMode>);

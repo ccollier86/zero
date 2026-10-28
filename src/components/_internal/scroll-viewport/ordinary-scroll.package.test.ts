@@ -20,10 +20,14 @@ const ORIGINALS = {
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
   'src/frontend/styles/globals.css': 'af1682801435cc0ceef66a2a472099b7adc25e9e55b626ce56d1815a9e2a282d',
 } as const;
-// The reviewed 120ms entrance fix is not an unchanged original. Retain its
-// historical hash above, pin the repair explicitly and keep all other skins frozen.
+// Reviewed repairs are not unchanged originals. Retain their historical hashes
+// above, pin the repairs explicitly and keep all other skins frozen.
 const APPROVED_SOURCE_REPAIRS: Record<string, string> = {
   'src/components/context-menu/context-menu-surface.tsx': '5a373879953c91039eb32df4eb4f1eb84ee0d089babddbeee7fa3234072d9066',
+  // The height bridge applies only to nonempty receding surfaces: full-height
+  // workspaces retain their pane, host-only managers cannot collapse siblings.
+  // Modal skin/motion is unchanged; both layout cases have native browser tests.
+  'src/modals/modal-shell.css': 'f413a5dc455827355410c72ac8e7a3b2b87973f732881fd6ee7040a99c08ed74',
 };
 // New families are additive imports, not permission to rewrite legacy tokens.
 const APPROVED_STYLE_IMPORTS = ['../../components/messaging/messaging.css', '../../components/email-inbox/email-inbox.css',
@@ -145,7 +149,7 @@ test('fresh installed ordinary-scroll archive retains public identity, native SS
       expect(hashes[path], `Installed/source identity: ${path}`).toBe(await sha256(join(SOURCE_ROOT, path)));
     }
     for (const [path, hash] of Object.entries(ORIGINALS)) {
-      if (APPROVED_SOURCE_REPAIRS[path]) expect(hashes[path], `Explicitly qualified entrance repair: ${path}`).toBe(APPROVED_SOURCE_REPAIRS[path]);
+      if (APPROVED_SOURCE_REPAIRS[path]) expect(hashes[path], `Explicitly qualified repair: ${path}`).toBe(APPROVED_SOURCE_REPAIRS[path]);
       else if (path !== 'src/frontend/styles/globals.css') expect(hashes[path], `Retained original: ${path}`).toBe(hash);
       else {
         const css = await Bun.file(join(installed, path)).text(), lines = css.split('\n');
