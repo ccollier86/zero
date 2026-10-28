@@ -19,16 +19,23 @@ Sounds are **off by default**. AppProvider installs one persistent, current-scop
 feedback owner over the same SDK/Sync client. Enable either category or both:
 
 ```tsx
-<AppProvider url={url} tables={tables} auth
-  notificationSounds={{ chat: true, notifications: true, volume: 0.5 }}>
-  <NotificationProvider>
-    <MessagingWorkspace />
-    <Toaster />
-  </NotificationProvider>
-</AppProvider>
+import { AppProvider, NotificationProvider } from '@zero/framework/react';
+import { MessagingWorkspace } from '@zero/framework/messaging';
+import { Toaster } from '@zero/framework/components/ui/sonner';
+
+export function NativeMessages() {
+  return <AppProvider url="https://app.example.test" tables={{}} auth
+    notificationSounds={{ chat: true, notifications: true, volume: 0.5 }}>
+    <NotificationProvider>
+      <MessagingWorkspace />
+      <Toaster />
+    </NotificationProvider>
+  </AppProvider>;
+}
 ```
 
-These components/hooks are exported by `@zero/framework/react`. Keep one
+Notification hooks/provider are exported by `@zero/framework/react`; the example
+also demonstrates focused native component imports. Keep one
 NotificationProvider/Toaster at the application level, not inside each row.
 Backend messaging notification generation must separately be enabled; a sound
 setting does not create a recipient, turn on a service or grant access.
