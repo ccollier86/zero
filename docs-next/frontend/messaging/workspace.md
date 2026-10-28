@@ -115,7 +115,14 @@ uses the shared confirmation manager. Unknown claims/handoffs retain the same
 pending-command reconciliation UI as other management changes. The queue opens
 one scoped stream while displayed and releases it on departure; it does not
 subscribe once per request or expose private notes. It is not the unfinished
-anonymous website widget, a global priority queue or a provider-job dashboard.
+anonymous website widget or a priority/SLA queue. Requests are indexed oldest-first.
+
+The current assigned human can resolve/reopen a support request from conversation
+options. Retained messages remain and both transitions fence older AI work.
+Eligible owners/staff get a live Review control with retained attempt details,
+explicit dismiss/retry confirmations and original-key unknown-result recovery.
+Customers do not receive the review count/drafts. Actual current job state drives
+queued/thinking/responding assistant activity; no timer invents model progress.
 
 New-chat, member and message menus reuse Zero Popover, magnetic directory
 highlight, ScrollArea/PopoverViewport, buttons, inputs, avatars and modal
@@ -242,9 +249,14 @@ retired callbacks, visibility-separated drafts, historical live updates and
 bounded memory. The package consumer separately checks public aliases, SSR and
 browser import cleanliness. See [current implementation evidence](../../_work/messaging-workspace-review.md).
 
-This workspace does **not** yet supply public visitor admission, a provider-job
-review dashboard, group-bot participation, global conversation search or live
-assistant-run activity projection. Their existing APIs/plans and applicable
-server protections are not replaced by fake UI behavior. Third-party messaging
+The separate `SupportChat` widget supplies restricted public visitor admission
+and reuses this same single-conversation transcript/composer. See
+[website support](../../backend/messaging/website-support.md) for fixed entry
+configuration, visitor sessions, typed browser API and lifecycle/resource bounds.
+For embedded authenticated threads, use `layout="conversation"` and
+`conversationId`; the ordinary default still provides the conversation sidebar.
+
+Group-bot participation, global conversation search, general AI tools/RAG and
+token streaming remain outside this baseline. Third-party messaging
 connectors remain application-owned. A source browser pass is not installed
 Linux/worker/deployment or stable-update qualification.

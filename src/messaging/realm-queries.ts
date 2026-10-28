@@ -2,7 +2,7 @@
 import type { DatabaseReadQueryConnection, DatabaseReadQueryContext } from '../databases/database-realm';
 import type { ConversationRecord, DurableMessage, MessagingContact } from './contracts';
 import type { Row } from '../sync/types';
-import { assertMessagingMember, captureMessagingActor, memberKey, projectMessage, staffTimeline, type ConversationRow, type MemberRow, type MessageRow, type MessagingActor } from './realm-model';
+import { assertMessagingMember, canReviewMessagingConversation, captureMessagingActor, memberKey, projectMessage, staffTimeline, type ConversationRow, type MemberRow, type MessageRow, type MessagingActor } from './realm-model';
 import { messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 
 export function readMessagingMembership(database: DatabaseReadQueryConnection, actor: MessagingActor, id: string) {
@@ -21,11 +21,16 @@ export function projectMessagingConversation(database: DatabaseReadQueryConnecti
   const original = last ? projectMessage(last, staff) : null;
   // A summary is an explicitly bounded preview; full text comes only from paged history.
   const summary = original ? { ...original, text: original.text.length > 240 ? original.text.slice(0, 240) + '…' : original.text, truncated: original.text.length > 240 } : null;
+  const job = conversation.owner === 'assistant' && !conversation.archived ? database.query<{ id: string; state: string }>("SELECT id,state FROM messaging_jobs WHERE conversation_id=? AND kind='assistant' AND owner_epoch=? AND context_revision=? AND message_id=? AND state IN ('pending','claimed','calling','received') ORDER BY created_at DESC,id DESC LIMIT 1")
+    .get(conversation.id, conversation.owner_epoch, conversation.context_revision ?? 0, conversation.customer_turn_id ?? '') : null;
+  const assistantActivity = job ? { runId: job.id, state: job.state === 'pending' ? 'queued' as const : job.state === 'received' ? 'responding' as const : 'thinking' as const } : null;
+  const reviewCount = canReviewMessagingConversation(actor, conversation, member) ? database.query<{ count: number }>("SELECT count(*) AS count FROM messaging_jobs j WHERE j.scope_id=? AND j.conversation_id=? AND j.state='needs-review' AND NOT EXISTS(SELECT 1 FROM messaging_job_resolutions r WHERE r.job_id=j.id)").get(actor.scopeId, conversation.id)!.count : undefined;
   return { id: conversation.id, kind: conversation.kind, title: conversation.title, revision: conversation.revision, createdAt: conversation.created_at,
     updatedAt: staff ? conversation.updated_at : conversation.public_updated_at, archived: conversation.archived === 1,
     owner: conversation.owner, ownerId: conversation.owner_id, ownerEpoch: conversation.owner_epoch,
     assistantId: conversation.assistant_id ?? null,
     managedGroupId: conversation.managed_group_id ?? null,
+    assistantActivity, ...(reviewCount === undefined ? {} : { reviewCount }),
     participants: participants.map(row => ({ id: row.participant_id, kind: row.kind, role: row.role, joinedAt: row.joined_at })), lastMessage: summary, unreadCount: unread };
 }
 export function readMessagingConversation({ database }: DatabaseReadQueryContext, input: unknown): unknown {
@@ -53,6 +58,8 @@ export function listMessagingConversations({ database }: DatabaseReadQueryContex
   const where = ['m.scope_id=?', 'm.participant_id=?', 'm.active=1', 'c.scope_id=m.scope_id', 'c.archived=?'];
   const values: (string | number)[] = [actor.scopeId, actor.id, q.archived ? 1 : 0];
   if (!actor.staff) where.push("m.role!='staff'");
+  const channels = Object.keys(actor.supportPolicies ?? {});
+  where.push(channels.length ? `(m.role!='staff' OR c.support_entry_id IS NULL OR c.support_entry_id IN (${channels.map(() => '?').join(',')}))` : "(m.role!='staff' OR c.support_entry_id IS NULL)"); values.push(...channels);
   const assistants = Object.keys(actor.assistantPolicies ?? {});
   where.push(assistants.length ? `(c.kind!='assistant' OR c.assistant_id IN (${assistants.map(() => '?').join(',')}))` : "c.kind!='assistant'");
   values.push(...assistants);
@@ -127,12 +134,24 @@ export function listMessagingContacts({ database }: DatabaseReadQueryContext, in
 export function listMessagingSupportQueue({ database }: DatabaseReadQueryContext, input: unknown): unknown {
   const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit', 'owner']);
   if (!actor.staff || actor.kind !== 'user') messagingFail('MESSAGING_FORBIDDEN', 403);
-  const limit = messagingInteger(q.limit ?? 25, 1, 50), after = q.after === undefined ? '' : messagingId(q.after);
+  const limit = messagingInteger(q.limit ?? 25, 1, 50);
   const owner = q.owner === undefined ? null : messagingChoice(q.owner, ['triage', 'assistant', 'human']);
-  const rows = database.query<ConversationRow>("SELECT id,owner,owner_epoch,created_at FROM messaging_conversations WHERE scope_id=? AND kind='support' AND archived=0 AND id>?" + (owner === null ? '' : ' AND owner=?') + ' ORDER BY id LIMIT ?')
-    .all(actor.scopeId, after, ...(owner === null ? [] : [owner]), limit + 1);
+  const values: (string | number)[] = [actor.scopeId], where = ["scope_id=?", "kind='support'", 'archived=0'];
+  const channels = Object.keys(actor.supportPolicies ?? {});
+  where.push(channels.length ? `(support_entry_id IS NULL OR support_entry_id IN (${channels.map(() => '?').join(',')}))` : 'support_entry_id IS NULL'); values.push(...channels);
+  if (owner !== null) { where.push('owner=?'); values.push(owner); }
+  if (q.after !== undefined) {
+    const cursor = messagingText(q.after, 512); let parsed: unknown;
+    try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { messagingFail('MESSAGING_INPUT_INVALID', 422); }
+    if (!Array.isArray(parsed) || parsed.length !== 3 || parsed[0] !== owner) messagingFail('MESSAGING_INPUT_INVALID', 422);
+    const stamp = messagingInteger(parsed[1], 0), id = messagingId(parsed[2]);
+    where.push('(created_at>? OR (created_at=? AND id>?))'); values.push(stamp, stamp, id);
+  }
+  const rows = database.query<ConversationRow>('SELECT id,owner,owner_epoch,created_at FROM messaging_conversations WHERE ' + where.join(' AND ') + ' ORDER BY created_at,id LIMIT ?')
+    .all(...values, limit + 1);
   const items = rows.slice(0, limit).map(row => ({ id: row.id, owner: row.owner, ownerEpoch: row.owner_epoch, createdAt: row.created_at }));
-  return { items, hasMore: rows.length > limit, nextCursor: rows.length > limit ? items.at(-1)!.id : null };
+  const last = items.at(-1);
+  return { items, hasMore: rows.length > limit, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify([owner, last.createdAt, last.id])).toString('base64url') : null };
 }
 /** Current identity/scope may read its own content-free acknowledgment, never the retained result payload. */
 export function readMessagingReceipt({ database }: DatabaseReadQueryContext, input: unknown): unknown {

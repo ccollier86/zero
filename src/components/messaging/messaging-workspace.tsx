@@ -23,9 +23,18 @@ import { WorkspaceStart } from './workspace-start';
 import { WorkspaceManage } from './workspace-manage';
 import { WorkspaceSupportQueue } from './workspace-support-queue';
 import { WorkspaceSupportActions } from './workspace-support-actions';
+import { WorkspaceReview } from './workspace-review';
+import { ConversationAssistantActivity } from './conversation-activity';
+import type { MessagingWorkspaceTyping } from './use-support-typing';
 
 export interface MessagingWorkspaceProps extends UseMessagingWorkspaceOptions {
   className?: string; avatarShape?: AvatarGroupShape;
+  conversationId?: string;
+  layout?: 'workspace' | 'conversation';
+  /** Anonymous support must not publish with a surrounding signed-in user's Sync identity. */
+  nativeTyping?: boolean;
+  conversationOptions?: boolean;
+  externalTyping?: MessagingWorkspaceTyping;
   /** Override admitted identity presentation, never membership or access checks. */
   participantFor?: (id: string) => MessagingParticipant | undefined;
   /** Visible-end acknowledges the displayed latest sequence only after focus/visibility/dwell checks. */
@@ -41,9 +50,10 @@ export function MessagingWorkspace(props: MessagingWorkspaceProps) {
   if (state.status === 'error') return <div role="alert" className="zero-messaging-workspace-empty"><p>{state.error ?? 'Messaging is unavailable.'}</p><Button onClick={() => { void controller.retry(); }}><RotateCw aria-hidden="true" />Retry messaging</Button></div>;
   return <ReadyWorkspace {...props} controller={controller} state={state} />;
 }
-function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPolicy = 'visible-end', publishTyping = true, sidebarAction, headerActions, className }: MessagingWorkspaceProps & { controller: MessagingWorkspaceController; state: MessagingWorkspaceState }) {
+function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPolicy = 'visible-end', publishTyping = true, sidebarAction, headerActions, className, conversationId, layout = 'workspace', nativeTyping = true, conversationOptions = true, externalTyping }: MessagingWorkspaceProps & { controller: MessagingWorkspaceController; state: MessagingWorkspaceState }) {
   const [mobileView, setMobileView] = useState<'list' | 'conversation'>('list'), [query, setQuery] = useState(''), [supportQueue, setSupportQueue] = useState(false);
   useEffect(() => { if (state.selectedId) setMobileView('conversation'); }, [state.selectedId]);
+  useEffect(() => { if (conversationId && controller.current()) void controller.select(conversationId); }, [controller, conversationId]);
   const transcript = useMessagingTranscript(controller, state, readPolicy);
   const baseline = useRef({ id: null as string | null, last: 0, ready: false }), previous = baseline.current;
   useLayoutEffect(() => { baseline.current = { id: state.selectedId, last: state.messages.at(-1)?.sequence ?? 0, ready: !!state.conversation && !state.loading }; },
@@ -51,7 +61,7 @@ function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPo
   const person = (id: string, display?: ConversationParticipant): MessagingParticipant => {
     const custom = participantFor?.(id); if (custom) return custom;
     const profile = state.people[id] ?? (display?.name ? { ...display, name: display.name, avatarUrl: display.avatarUrl ?? null } : undefined), kind = profile?.kind ?? (id.startsWith('assistant:') ? 'assistant' : 'user');
-    const label = profile?.name ?? (id === controller.userId ? 'You' : 'Member');
+    const label = profile?.name ?? (id === controller.userId ? 'You' : kind === 'assistant' ? state.conversation?.assistantName ?? 'Assistant' : 'Member');
     return { id, kind, label, avatarShape, ...(profile?.avatarUrl ? { avatar: <Avatar><AvatarImage src={profile.avatarUrl} alt="" /><AvatarFallback>{label.slice(0, 1)}</AvatarFallback></Avatar> } : {}) };
   };
   const title = (conversation: NonNullable<MessagingWorkspaceState['conversation']>): MessagingParticipant => {
@@ -66,7 +76,7 @@ function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPo
   const selected = state.conversation;
   const queue = supportQueue && state.capabilities?.canSupport === true;
   return <MessagingLayout className={cn('zero-messaging-workspace', className)} viewportRef={transcript.viewportRef}
-    mobileView={mobileView} onBack={() => setMobileView('list')}
+    hideSidebar={layout === 'conversation'} mobileView={mobileView} onBack={layout === 'conversation' ? undefined : () => setMobileView('list')}
     sidebarHeader={<ConversationListHeading title={queue ? 'Support queue' : 'Messages'} action={<span className="zero-messaging-workspace-tools">
       {state.capabilities?.canSupport && <Button size="icon-sm" variant={queue ? 'secondary' : 'ghost'} aria-label={queue ? 'Back to messages' : 'Open support queue'} aria-pressed={queue} onClick={() => setSupportQueue(value => !value)}>{queue ? <MessageSquare aria-hidden="true" /> : <MessageCircle aria-hidden="true" />}</Button>}
       {!queue && (sidebarAction ?? <WorkspaceStart controller={controller} state={state} shape={avatarShape} />)}</span>} query={queue ? undefined : query} onQueryChange={queue ? undefined : setQuery} />}
@@ -79,11 +89,12 @@ function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPo
       {query && <p className="zero-messaging-workspace-hint">Filters the current conversation page.</p>}</>}
     sidebarFooter={queue ? undefined : <>{state.listError && <p role="status" className="zero-messaging-workspace-hint">{state.listError}<Button size="xs" variant="ghost" onClick={() => controller.latestConversations()}>Retry conversation list</Button></p>}<Button size="xs" variant="ghost" onClick={() => controller.latestConversations(!state.showArchived)}>{state.showArchived ? 'Active conversations' : 'Archived conversations'}</Button><div className="zero-messaging-workspace-tools"><Button size="xs" variant="ghost" disabled={!state.conversationPage || state.loadingConversations} onClick={() => controller.previousConversations()}>Previous</Button>
       <span className="zero-messaging-workspace-hint">Page {state.conversationPage + 1}</span><Button size="xs" variant="ghost" disabled={!state.conversationsCursor || state.loadingConversations} onClick={() => { void controller.moreConversations(); }}>Next</Button></div></>}
-    header={selected ? <ConversationHeader participant={title(selected)} subtitle={selected.archived ? 'Archived conversation' : state.live === 'connected' ? 'Private conversation' : state.live === 'unavailable' ? 'Live updates unavailable' : 'Connecting live updates…'} actions={<><WorkspaceSupportActions controller={controller} state={state} /><WorkspaceManage controller={controller} state={state} />{headerActions?.(selected, controller)}</>} /> : <span>{state.loading ? 'Loading conversation…' : 'Messages'}</span>}
+    header={selected ? <ConversationHeader participant={title(selected)} subtitle={selected.archived ? 'Archived conversation' : state.live === 'connected' ? 'Private conversation' : state.live === 'unavailable' ? 'Live updates unavailable' : 'Connecting live updates…'} actions={<><WorkspaceSupportActions controller={controller} state={state} />{conversationOptions && <><WorkspaceReview key={selected.id} controller={controller} state={state} /><WorkspaceManage controller={controller} state={state} /></>}{headerActions?.(selected, controller)}</>} /> : <span>{state.loading ? 'Loading conversation…' : 'Messages'}</span>}
     composer={selected ? <>{staff && <label className="zero-messaging-workspace-note"><Checkbox checked={visibility === 'staff'} disabled={busy || !!state.uploads.length} onCheckedChange={checked => controller.setVisibility(checked === true ? 'staff' : 'conversation', selected.id)} />Private team note</label>}
       {needsClaim && <p className="zero-messaging-workspace-notice" role="status">Take ownership before sending a public support reply. Private notes remain separate.</p>}
+      {visibility === 'conversation' && <ConversationAssistantActivity activity={selected.assistantActivity ? { ...selected.assistantActivity, label: selected.assistantName ?? 'Assistant' } : null} />}
       <WorkspaceComposer key={`${selected.id}:${visibility}`} controller={controller} state={state} visibility={visibility} disabled={selected.archived || needsClaim}
-        publish={publishTyping && mobileView === 'conversation'} participantFor={person} /></> : undefined}>
+        nativeTyping={nativeTyping} externalTyping={externalTyping} publish={publishTyping && (layout === 'conversation' || mobileView === 'conversation')} participantFor={person} /></> : undefined}>
     {state.error && <div role="alert" className="zero-messaging-workspace-notice">{state.error}<Button size="sm" variant="ghost" onClick={() => { void controller.retry(); }}>Retry conversation</Button></div>}
     {state.command && <div role={state.command.error ? 'alert' : 'status'} className="zero-messaging-workspace-notice">
       {state.command.phase === 'running' ? `${state.command.label}…` : state.command.error}

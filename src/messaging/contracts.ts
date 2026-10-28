@@ -16,8 +16,13 @@ export interface ConversationRecord {
   readonly createdAt: number; readonly updatedAt: number; readonly archived: boolean;
   readonly owner: ConversationOwner; readonly ownerId: string | null; readonly ownerEpoch: number;
   readonly assistantId?: string | null;
+  readonly assistantName?: string;
   /** Non-null means membership/name are configured by Guardian policy rather than manually editable. */
   readonly managedGroupId?: string | null;
+  /** Canonical current assistant work only; never a simulated typing timer. */
+  readonly assistantActivity?: { readonly runId: string; readonly state: 'queued' | 'thinking' | 'responding' } | null;
+  /** Omitted for customers/non-reviewers; neither private drafts nor attempt details are included. */
+  readonly reviewCount?: number;
   readonly participants: readonly ConversationParticipant[];
   readonly lastMessage: (DurableMessage & { readonly truncated: boolean }) | null; readonly unreadCount: number;
 }

@@ -6,7 +6,7 @@ import { messagingArray, messagingFail, messagingId, messagingRecord } from './v
 export interface MessagingCommitHint { readonly conversationId: string | null; readonly recipientIds: readonly string[]; readonly supportQueue?: true }
 export interface MessagingSubscription { readonly actorId: string; readonly conversationId?: string; readonly supportQueue?: true }
 type Before = { conversation: ConversationRow | null; recipients: string[]; staff: string[]; privateNote: boolean; actorId: string | null; peerId: string | null; queueKey: string };
-const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire', 'messaging.job.dispatch', 'messaging.job.call', 'messaging.notification.complete', 'messaging.notification.redispatch']);
+const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire', 'messaging.job.dispatch', 'messaging.notification.complete', 'messaging.notification.redispatch']);
 
 /** The parent strips this envelope before returning the ordinary public command result. Exact transport replay is not a new change. */
 export function withMessagingCommitHints(commands: DatabaseWriteCommandRegistry): DatabaseWriteCommandRegistry {
@@ -52,6 +52,9 @@ function capture({ db }: DatabaseWriteCommandContext, input: unknown, name: stri
     if (message) { id = message.conversation_id; privateNote = message.visibility === 'staff'; }
   }
   const conversation = id ? db.get('messaging_conversations', id) as ConversationRow | null : null;
+  // Review evidence belongs to staff (or an internal bot's human owner), not
+  // the customer stream. Ordinary current job activity is public and truthful.
+  if (conversation?.kind === 'assistant' && name === 'messaging.review.resolve') privateNote = false;
   const recipients = conversation ? conversationMembers(conversation) : [], staff = conversation ? recipients.filter(id => {
     const member = db.get('messaging_members', memberKey(conversation.id, id)) as MemberRow | null;
     return member?.active === 1 && member.role === 'staff';

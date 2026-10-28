@@ -19,18 +19,25 @@ beforeAll(async () => {
   await mkdir(evidence, { recursive: true }); lease = await acquirePlaywrightTestBrowser();
 }, 90000);
 afterAll(() => lease?.release());
-async function fixture(support = false) {
+async function fixture(support: boolean | 'website' | 'review' = false) {
   const root = await mkdtemp(join(scratch, 'messaging-workspace-native-')); await mkdir(join(root, 'app'));
   const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('Synthetic port reservation') });
   const port = reservation.port!; await reservation.stop(true); const base = 'http://127.0.0.1:' + port;
+  let providerCalls = 0;
+  const provider = support === 'review' ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
+    if (++providerCalls === 1) return Response.json({ error: { message: 'Synthetic provider failure' } }, { status: 503 });
+    return Response.json({ id: 'synthetic-reviewed-answer', object: 'chat.completion', created: 1, model: 'chat', choices: [{ index: 0, message: { role: 'assistant', content: 'SYNTHETIC_REVIEWED_BROWSER_ANSWER' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 } });
+  } }) : null;
   const app = await createApp({ projectRoot: root, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     app: { publicUrl: base },
     db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
-    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support ? {} : false }, logging: false,
-    ai: false, email: false, workflows: false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
+    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : support ? {} : false, ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}) }, logging: false,
+    ai: provider ? { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-test-key', baseURL: 'http://127.0.0.1:' + provider.port + '/v1' } } } : false,
+    email: false, workflows: provider ? {} : false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false });
   app.get('/fixture.js', () => new Response(script, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } }));
   app.get('/workspace', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;height:100dvh}#root{box-sizing:border-box;padding:12px}</style><div id="root"></div><script>window.__PLATFORM_CONFIG__={auth:true,presence:true,logging:false,stateSync:false,routeAuth:'protected-by-default',publicPaths:['/workspace']}</script><script src="/fixture.js"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
+  app.get('/support', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;min-height:100dvh}#root{box-sizing:border-box;padding:12px;max-width:560px;margin:auto}</style><div id="root"></div><script src="/fixture.js"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
   app.listen({ hostname: '127.0.0.1', port });
   const call = async (method: string, path: string, body?: unknown, token?: string, key?: string) => {
     const response = await fetch(base + path, { method, headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(key ? { 'Idempotency-Key': key } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -42,8 +49,76 @@ async function fixture(support = false) {
   const conversation = await call('POST', '/api/messaging/conversations', { userIds: [peer.user.userId] }, admin.accessToken, 'native-workspace-chat');
   const send = (text: string, key: string = crypto.randomUUID()) => call('POST', `/api/messaging/conversations/${conversation.id}/messages`, { text }, peer.accessToken, key);
   for (let i = 1; i <= 55; i++) await send('Synthetic native history ' + i, 'history-' + i);
-  return { base, app, call, admin, peer, other, conversation, send, close: () => app.stop(true) };
+  return { base, app, call, admin, peer, other, conversation, send, close: async () => { await app.stop(true); await provider?.stop(true); } };
 }
+browserTest('the native operator review surface inspects retained failure and explicitly confirms one new AI attempt', async () => {
+  const f = await fixture('review'), staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' });
+  staff.setDefaultTimeout(12000); const errors: string[] = []; staff.on('pageerror', error => errors.push(error.message));
+  try {
+    const opened = await f.call('POST', '/api/messaging/support', {}, f.peer.accessToken, 'browser-review-open');
+    await f.call('POST', '/api/messaging/conversations/' + opened.id + '/messages', { text: 'SYNTHETIC_REVIEW_BROWSER_QUESTION' }, f.peer.accessToken, 'browser-review-turn');
+    await staff.goto(f.base + '/workspace?manual'); await staff.getByRole('button', { name: 'Open support queue', exact: true }).click();
+    await staff.getByRole('button', { name: /^Claim support request / }).click();
+    await staff.getByRole('button', { name: 'Review messaging work (1)', exact: true }).click();
+    await staff.getByRole('button', { name: 'Inspect', exact: true }).click();
+    const detail = staff.getByRole('dialog', { name: 'Review messaging work', exact: true }); await detail.waitFor();
+    await detail.getByText('provider outcome unknown', { exact: true }).waitFor();
+    await detail.getByRole('button', { name: 'Review and retry', exact: true }).click();
+    const confirm = staff.getByRole('alertdialog', { name: 'Retry this work?', exact: true });
+    await confirm.getByRole('button', { name: 'Acknowledge risk and retry', exact: true }).click();
+    await detail.getByText('Resolved: a new attempt was requested. The original evidence is retained.', { exact: true }).waitFor();
+    expect((await f.call('GET', '/api/messaging/conversations/' + opened.id + '/review', undefined, f.admin.accessToken)).items).toHaveLength(0);
+    const rows = await f.call('GET', '/api/messaging/conversations/' + opened.id + '/messages', undefined, f.peer.accessToken);
+    expect(rows.items.filter((row: any) => row.text === 'SYNTHETIC_REVIEWED_BROWSER_ANSWER')).toHaveLength(1);
+    expect(errors).toEqual([]); await staff.screenshot({ path: join(evidence, 'operator-review-native.png') });
+  } finally { await staff.close(); await f.close(); }
+}, 90000);
+browserTest('the anonymous website widget uses native cookies, private file stages and the same reactive staff handoff without a Guardian account', async () => {
+  const f = await fixture('website'), staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' });
+  const guestContext = await lease!.browser.newContext({ viewport: { width: 390, height: 760 }, reducedMotion: 'reduce' }), guest = await guestContext.newPage();
+  const errors: string[] = []; for (const page of [staff, guest]) { page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(12000); }
+  try {
+    await staff.goto(f.base + '/workspace?manual'); await staff.getByRole('button', { name: 'Open support queue', exact: true }).click();
+    await staff.getByText('No requests waiting on this page.', { exact: true }).waitFor();
+    await guest.goto(f.base + '/support'); await guest.getByRole('button', { name: 'Start a conversation', exact: true }).click();
+    await guest.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
+    expect(await guest.getByRole('complementary', { name: 'Conversations' }).count()).toBe(0);
+    expect(await guest.evaluate(() => document.cookie)).not.toContain('zero_support_');
+    const cookie = (await guestContext.cookies()).find(value => value.name === 'zero_support_website')!;
+    expect(cookie.httpOnly).toBe(true); expect(cookie.sameSite).toBe('Strict');
+    await guest.getByRole('textbox', { name: 'Message', exact: true }).fill('SYNTHETIC_ANONYMOUS_QUESTION');
+    await guest.getByRole('button', { name: 'Send message', exact: true }).click();
+    await staff.getByRole('button', { name: /^Claim support request / }).click();
+    await staff.locator('.zero-messaging-transcript').getByText('SYNTHETIC_ANONYMOUS_QUESTION', { exact: true }).waitFor();
+    await guest.bringToFront(); await guest.getByRole('textbox', { name: 'Message', exact: true }).click();
+    expect(await guest.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState }))).toEqual({ focused: true, visibility: 'visible' });
+    const typingResponse = guest.waitForResponse(response => new URL(response.url()).pathname.endsWith('/typing') && response.request().method() === 'POST');
+    await guest.getByRole('textbox', { name: 'Message', exact: true }).fill('ACTIVITY_TEXT_MUST_NOT_LEAVE_TYPING');
+    expect((await typingResponse).status()).toBe(200);
+    await staff.getByText('Visitor is typing…', { exact: true }).waitFor();
+    await guest.getByRole('textbox', { name: 'Message', exact: true }).fill('');
+    await staff.bringToFront(); await staff.getByRole('textbox', { name: 'Message', exact: true }).click();
+    await staff.getByRole('textbox', { name: 'Message', exact: true }).fill('SYNTHETIC_PUBLIC_HUMAN_REPLY');
+    await guest.getByText('workspace-admin is typing…', { exact: true }).waitFor();
+    await staff.getByRole('button', { name: 'Send message', exact: true }).click();
+    await guest.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PUBLIC_HUMAN_REPLY', { exact: true }).waitFor();
+    await guest.locator('input[type=file]').setInputFiles({ name: 'website-note.txt', mimeType: 'text/plain', buffer: Buffer.from('Synthetic website bytes') });
+    await guest.getByText('Ready', { exact: true }).waitFor(); await guest.getByRole('button', { name: 'Send message', exact: true }).click();
+    await staff.getByRole('button', { name: 'website-note.txt', exact: false }).waitFor();
+    await guest.reload(); await guest.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
+    await guest.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PUBLIC_HUMAN_REPLY', { exact: true }).waitFor();
+    expect((await guestContext.cookies()).find(value => value.name === 'zero_support_website')!.value).toBe(cookie.value);
+    await staff.getByRole('button', { name: 'Conversation options', exact: true }).click();
+    await staff.getByRole('button', { name: 'Resolve support request', exact: true }).click();
+    await staff.getByRole('alertdialog').getByRole('button', { name: 'Resolve support request', exact: true }).click();
+    await guest.getByText('Archived conversation', { exact: true }).waitFor(); expect(await guest.getByRole('textbox', { name: 'Message', exact: true }).isDisabled()).toBe(true);
+    expect(await guest.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect(errors).toEqual([]); await guest.screenshot({ path: join(evidence, 'public-support-native.png') });
+    await guest.getByRole('button', { name: 'End chat', exact: true }).click(); await guest.getByRole('alertdialog').getByRole('button', { name: 'End session', exact: true }).click();
+    await guest.getByRole('button', { name: 'Reconnect to support', exact: true }).waitFor();
+    expect((await guestContext.cookies()).some(value => value.name === 'zero_support_website')).toBe(false);
+  } finally { await guestContext.close(); await staff.close(); await f.close(); }
+}, 90000);
 browserTest('native human-first support enters a live content-free staff queue and claims the same customer conversation', async () => {
   const f = await fixture(true), staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' }), customer = await lease!.browser.newPage({ viewport: { width: 390, height: 760 }, reducedMotion: 'reduce' });
   const errors: string[] = []; for (const page of [staff, customer]) { page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(12000); }

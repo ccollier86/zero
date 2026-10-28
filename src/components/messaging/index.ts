@@ -9,6 +9,8 @@ export { useMessagingTyping } from './use-messaging-typing';
 export { useMessagingPresence } from './use-messaging-presence';
 export { MessagingLiveError } from '../../messaging/live-error';
 export { MessagingWorkspace, type MessagingWorkspaceProps } from './messaging-workspace';
+export { SupportChat, type SupportChatProps } from './support-chat';
+export { useSupportTyping, type MessagingWorkspaceTyping } from './use-support-typing';
 export { useMessagingWorkspace, type UseMessagingWorkspaceOptions } from './use-messaging-workspace';
 export { MessagingWorkspaceController } from './messaging-workspace-controller';
 export type { MessagingWorkspaceState, MessagingWorkspaceDraft, MessagingWorkspaceUpload, MessagingWorkspaceControllerOptions } from './workspace-state';

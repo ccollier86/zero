@@ -27,6 +27,12 @@ export function createMessagingActorResolver(authority: MessagingAuthority, conf
       try { if (group.members !== undefined) access.authorize(group.members); groupPolicies[group.id] = group.policyHash; }
       catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
     }
-    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, assistantPolicies, groupPolicies };
+    const supportPolicies: Record<string, string> = Object.create(null);
+    if (staff) for (const entry of Object.values(config.supportEntries ?? {})) {
+      if (entry.tenantId !== authority.scope.tenantId) continue;
+      try { if (entry.staff !== undefined) access.authorize(entry.staff); supportPolicies[entry.id] = entry.policyHash; }
+      catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
+    }
+    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, assistantPolicies, groupPolicies, supportPolicies };
   };
 }

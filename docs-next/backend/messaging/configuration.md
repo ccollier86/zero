@@ -22,8 +22,8 @@ provider connectors are app-owned, not Zero configuration or release gates.
 
 This is a feature-branch API reference. The source tests below do not make these
 APIs available in an older archive with the same `2.6.0` version string. Public
-visitor admission, the support workspace and final installed release qualification
-are still separate gates. The branch's [self-wired workspace](../../frontend/messaging/workspace.md)
+visitor admission and the support workspace are implemented on the feature branch;
+final installed release qualification remains separate. The branch's [self-wired workspace](../../frontend/messaging/workspace.md)
 now uses this native facade.
 
 ## Directory And Tenancy
@@ -185,16 +185,17 @@ automation queues. No SQL/auth lease spans provider or audit network I/O.
 
 The current assistant context is the bounded recent public text window (20
 messages, at most 128 KiB). It excludes private staff notes and does not read
-attachment contents, execute tools or perform RAG. Those require deliberate AI
-capability integration; uploading a file is not evidence a model read it.
+attachment contents or perform RAG. The only optional built-in tool is the
+bounded support `requestHuman` tool enabled by `humanHandoff: true`. General tools
+require deliberate AI integration; a file upload is not evidence a model read it.
 
 ## Support Compatibility And Review
 
 ### Website/Portal Handling Modes
 
 Authenticated portal users can start support with the configured assistant or
-ask for a person directly. Public anonymous visitor admission is a separate,
-unfinished boundary; these examples require the ordinary authenticated SDK.
+ask for a person directly. [Public anonymous admission](./website-support.md)
+uses a restricted cookie transport; these examples use the authenticated SDK.
 Email-to-conversation bridging is not part of this feature.
 
 ```ts
@@ -220,11 +221,18 @@ Staff use `support.queue({ owner: 'triage', limit: 25 })` or
 `watchSupportQueue(listener, { query: { owner: 'triage', limit: 25 } })`.
 Filters are `triage`, `assistant`, `human`, or omitted for all. The queue contains
 only IDs, owner state/epoch and creation time. It is scoped and paged, not global
-transcript access or a priority-order guarantee. Staff explicitly call
+transcript access. Ordering is indexed oldest-first (creation time then ID), not
+a priority/SLA guarantee; cursors are bound to the owner filter. Staff explicitly call
 `support.claim(id, ownerEpoch, mutationOptions)` to become a member. Current
 Guardian staff policy still applies at every read, commit and stream release.
 The live queue uses a dedicated committed, content-free hint: ordinary messages
 and private-note activity do not fan out to unjoined queue observers.
+
+The assigned human may resolve/reopen using
+`conversations.archive(id, revision, archived, mutationOptions)`. Both transitions
+advance the owner epoch and revision; reopen cannot resurrect stale AI work. A
+former owner cannot hand back another person's chat. Native review controls and
+actual job activity are described in the [workspace guide](../../frontend/messaging/workspace.md).
 
 The native workspace exposes this queue to admitted staff and customer support
 actions through the existing components. `capabilities.support` indicates that

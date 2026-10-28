@@ -29,15 +29,21 @@ export function WorkspaceManage({ controller, state }: { controller: MessagingWo
       confirmLabel: label, variant: action === 'transfer' ? 'default' : 'destructive', trigger })) return;
     if (controller.current() && controller.getSnapshot().selectedId === id) { setOpen(false); await controller.manage(action, value); }
   };
+  const takeover = async (trigger: HTMLElement) => {
+    const id = conversation.id;
+    if (conversation.owner === 'human' && !await modals.confirm({ title: 'Take over this support request?', description: 'Another person currently owns this chat. Their old ownership state can no longer send a public reply after you take over.', confirmLabel: 'Take ownership', trigger })) return;
+    if (controller.current() && controller.getSnapshot().selectedId === id) { setOpen(false); await controller.manage('takeover'); }
+  };
   return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Conversation options"><Settings aria-hidden="true" /></Button></PopoverTrigger>
     <PopoverContent align="end" className="zero-messaging-start" aria-label="Conversation settings"><h3>Conversation settings</h3><PopoverViewport className="zero-messaging-start-body" style={{ maxHeight: 'min(36rem, calc(var(--radix-popover-content-available-height, 100dvh) - 4rem))' }}>
       {configured && <p className="zero-messaging-workspace-hint">Membership and name are managed by organization policy.</p>}
       {owner && !configured && <><Input aria-label="Conversation name" value={title} maxLength={200} disabled={busy} onChange={event => setEdit({ id: conversation.id, value: event.target.value })} />
         <Button size="sm" variant="outline" disabled={busy || title === conversation.title} onClick={() => { void controller.manage('rename', title).then(() => { if (controller.current() && !controller.getSnapshot().command) setEdit(null); }); }}>Save conversation name</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={event => { void destructive('archive', undefined, conversation.archived ? 'Restore conversation' : 'Archive conversation', event.currentTarget); }}>{conversation.archived ? 'Restore conversation' : 'Archive conversation'}</Button></>}
-      {staff && <div className="zero-messaging-start-section"><Button size="sm" variant="outline" disabled={busy || conversation.owner === 'human' && conversation.ownerId === controller.userId} onClick={() => { void controller.manage('takeover'); }}>Take ownership</Button>
-        <Button size="sm" variant="ghost" disabled={busy || conversation.owner !== 'human' || conversation.ownerId !== controller.userId} onClick={() => { void controller.manage('hand-back', 'triage'); }}>Return to triage</Button>
-        {conversation.assistantId && <Button size="sm" variant="ghost" disabled={busy || conversation.owner !== 'human' || conversation.ownerId !== controller.userId} onClick={() => { void controller.manage('hand-back', 'assistant'); }}>Return to assistant</Button>}</div>}
+      {staff && <div className="zero-messaging-start-section"><Button size="sm" variant="outline" disabled={busy || conversation.archived || conversation.owner === 'human' && conversation.ownerId === controller.userId} onClick={event => { void takeover(event.currentTarget); }}>Take ownership</Button>
+        {conversation.owner === 'human' && conversation.ownerId === controller.userId && <Button size="sm" variant="ghost" disabled={busy} onClick={event => { void destructive('archive', undefined, conversation.archived ? 'Reopen support request' : 'Resolve support request', event.currentTarget); }}>{conversation.archived ? 'Reopen support request' : 'Resolve support request'}</Button>}
+        <Button size="sm" variant="ghost" disabled={busy || conversation.archived || conversation.owner !== 'human' || conversation.ownerId !== controller.userId} onClick={() => { void controller.manage('hand-back', 'triage'); }}>Return to triage</Button>
+        {conversation.assistantId && <Button size="sm" variant="ghost" disabled={busy || conversation.archived || conversation.owner !== 'human' || conversation.ownerId !== controller.userId} onClick={() => { void controller.manage('hand-back', 'assistant'); }}>Return to assistant</Button>}</div>}
       <h4>Participants</h4><ScrollArea className="zero-messaging-start-scroll" style={{ height: Math.min(240, conversation.participants.length * 56) }}><div>{conversation.participants.map(member => {
         const name = state.people[member.id]?.name ?? member.name ?? (member.kind === 'assistant' ? 'Assistant' : 'Member');
         return <div key={member.id} className="zero-messaging-member-row" data-participant-id={member.id}><span>{name}<small>{member.role}</small></span>

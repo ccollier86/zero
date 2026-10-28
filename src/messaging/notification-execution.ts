@@ -32,6 +32,7 @@ export async function executeMessagingNotification(deps: MessagingJobExecutionDe
     return deps.notifications!.notifyUsersOnce('zero.messaging:' + jobId, source.recipients.map(recipient => recipient.id),
       { title: 'New message', actionUrl: source.path + '?conversation=' + encodeURIComponent(source.job.conversation_id) }, undefined, scope, check,
       id => members.has(id) && deps.directory.notificationRecipient(scope, id, recipients.get(id)!.staff)
+        && (!source.supportEntryId || !recipients.get(id)!.staff || deps.directory.supportRecipient?.(scope, id, source.supportEntryId) === true)
         && (!source.managedGroupId || deps.directory.groupRecipient?.(scope, id, source.managedGroupId) === true)
         && (!source.internalAssistantId || deps.directory.assistantRecipient?.(scope, id, source.internalAssistantId) === true));
   }, { signal });

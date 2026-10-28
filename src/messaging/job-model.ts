@@ -33,7 +33,12 @@ export function liveAssistantTurn(job: MessagingJobRow, conversation: JobConvers
     && !!message && message.scope_id === job.scope_id && message.conversation_id === conversation.id && message.visibility === 'conversation' && !message.deleted;
 }
 export function currentAssistantTurn(context: DatabaseWriteCommandContext, job: MessagingJobRow): boolean {
-  return liveAssistantTurn(job, context.db.get('messaging_conversations', job.conversation_id) as JobConversation | null, context.db.get('messaging_messages', job.message_id) as MessageRow | null);
+  const conversation = context.db.get('messaging_conversations', job.conversation_id) as JobConversation | null;
+  if (conversation?.visitor_session_id) {
+    const session = context.db.get('messaging_sessions', conversation.visitor_session_id);
+    if (!session || session.revoked || typeof session.expires_at !== 'number' || session.expires_at <= Date.now()) return false;
+  }
+  return liveAssistantTurn(job, conversation, context.db.get('messaging_messages', job.message_id) as MessageRow | null);
 }
 export function jobAttemptId(job: MessagingJobRow, nonce: string): string { return messagingHash([job.id, nonce]); }
 /** Terminal attempt facts are not rewritten when an operator elects to create a later attempt. */

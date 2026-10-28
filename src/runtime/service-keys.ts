@@ -36,6 +36,8 @@ export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
 );
 /** Internal coalesced admission invalidation for canonical membership outside the main Sync database. */
 export const ZERO_SYNC_PRIVATE_MEMBERSHIP_CHANGED = createZeroRuntimeServiceKey<() => void>('Private membership Sync revalidation');
+/** Internal app-local pool capability. A service must separately prove current membership before use. */
+export const ZERO_SYNC_EPHEMERAL_CHANNEL = createZeroRuntimeServiceKey<import('../sync/ephemeral-channel').EphemeralChannel>('Native app ephemeral channel');
 
 export const ZERO_SQLITE_SERVICE = createZeroRuntimeServiceKey<PlatformSQLiteService>(
   'Application SQLite service',

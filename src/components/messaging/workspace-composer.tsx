@@ -9,10 +9,22 @@ import type { MessagingParticipant } from '../../messaging/presentation';
 import { MessagingComposer, type MessagingComposerProps } from './messaging-composer';
 import { ConversationTypingIndicator } from './conversation-activity';
 import { Button } from '../ui/button';
-interface Props { controller: MessagingWorkspaceController; state: MessagingWorkspaceState; visibility: 'conversation' | 'staff'; disabled: boolean; publish: boolean; participantFor(id: string): MessagingParticipant }
+import type { MessagingWorkspaceTyping } from './use-support-typing';
+interface Props { controller: MessagingWorkspaceController; state: MessagingWorkspaceState; visibility: 'conversation' | 'staff'; disabled: boolean; publish: boolean; nativeTyping?: boolean; externalTyping?: MessagingWorkspaceTyping; participantFor(id: string): MessagingParticipant }
 export function WorkspaceComposer(props: Props) {
   const client = useClientMaybe() as InternalClient | null;
-  return client?.auth ? <NativeComposer {...props} /> : <ComposerBody {...props} />;
+  if (props.externalTyping) return <ExternalComposer {...props} typing={props.externalTyping} />;
+  return client?.auth && props.nativeTyping !== false ? <NativeComposer {...props} /> : <ComposerBody {...props} />;
+}
+function ExternalComposer(props: Props & { typing: MessagingWorkspaceTyping }) {
+  const uploading = props.state.uploads.some(file => file.state === 'uploading');
+  useEffect(() => { if (props.disabled || !props.publish) props.typing.clearTyping(); }, [props.disabled, props.publish, props.typing.clearTyping]);
+  useEffect(() => { if (!uploading || props.disabled || !props.publish) return;
+    props.typing.markTyping('uploading'); const timer = setInterval(() => props.typing.markTyping('uploading'), 1500);
+    return () => { clearInterval(timer); props.typing.clearTyping(); };
+  }, [uploading, props.disabled, props.publish, props.typing.markTyping, props.typing.clearTyping]);
+  return <><ConversationTypingIndicator participants={props.typing.participants} participantFor={props.participantFor} />
+    {props.typing.error && <p role="status" className="zero-messaging-workspace-notice">{props.typing.error}</p>}<ComposerBody {...props} /></>;
 }
 function NativeComposer(props: Props) {
   const uploading = props.state.uploads.some(file => file.state === 'uploading');
@@ -27,7 +39,7 @@ function NativeComposer(props: Props) {
     {typing.error && <p className="zero-messaging-workspace-notice" role="status">Typing is unavailable. Message sending has its own authorization.<Button size="xs" variant="ghost" onClick={() => { typing.resetError(); }}>Retry typing connection</Button></p>}
     <ComposerBody {...props} typing={typing} /></>;
 }
-function ComposerBody({ controller, state, visibility, disabled, typing }: Props & { typing?: ReturnType<typeof useMessagingTyping> }) {
+function ComposerBody({ controller, state, visibility, disabled, typing }: Props & { typing?: Pick<MessagingWorkspaceTyping, 'onTextChange' | 'clearTyping' | 'onCompositionStart' | 'onCompositionEnd'> }) {
   const pending = state.draft.phase === 'sending' || state.draft.phase === 'unknown';
   const safe = (work: Promise<unknown>) => { void work.catch(() => {}); };
   const composer: MessagingComposerProps = { value: state.draft.text, onChange: text => controller.edit(text, state.selectedId, visibility),

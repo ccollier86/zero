@@ -12,6 +12,7 @@ import {
 import {
   ZERO_SQLITE_SERVICE,
   ZERO_SYNC_DB,
+  ZERO_SYNC_EPHEMERAL_CHANNEL,
 } from '../runtime/service-keys';
 import { EphemeralChannel } from './ephemeral-channel';
 import { EphemeralStateManager } from './ephemeral-manager';
@@ -151,6 +152,8 @@ export function createSyncPluginLifecycle(
           },
         );
 
+        if (config.runtime) config.runtime.set(ZERO_SYNC_EPHEMERAL_CHANNEL, runtime.ephemeralChannel);
+
         durableChanges.startReplicaPolling();
         socketAuth.start();
 
@@ -239,6 +242,7 @@ export function createSyncPluginLifecycle(
     if (stateManager) attempt(() => stateManager.dispose());
     const ephemeralChannel = runtime.ephemeralChannel;
     runtime.ephemeralChannel = null;
+    if (ephemeralChannel) attempt(() => config.runtime?.clear(ZERO_SYNC_EPHEMERAL_CHANNEL, ephemeralChannel));
     if (ephemeralChannel) attempt(() => ephemeralChannel.dispose());
     const ephemeralManager = runtime.ephemeralManager;
     runtime.ephemeralManager = null;

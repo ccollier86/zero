@@ -10,13 +10,16 @@ import type { AsyncDatabaseOperationExecutor, DatabaseSerializableValue } from '
 import { messagingRealm } from './realm';
 import { MESSAGING_ACTOR_FLAG } from './actor-bootstrap';
 import { readMessagingActorRejection } from './realm-errors';
+import { Database } from 'bun:sqlite';
+import { resolveDatabaseFile } from '../databases/database-file';
+import { legacyMessagingRealm } from './test-support/legacy-realm';
 
-async function fixture() {
+async function fixture(legacy = false) {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-realm-'));
   let owner!: DatabaseCoordinator, lease!: Awaited<ReturnType<DatabaseCoordinator['acquire']>>;
   const open = async () => {
-    owner = new DatabaseCoordinator({ rootDirectory: root, realm: messagingRealm, sqlite: { synchronous: 'FULL' }, maxDatabases: 1, readers: true, sweepIntervalMs: false,
-      createExecutor: createSubprocessDatabaseExecutorFactory({ launch: { kind: 'source', entrypoint: new URL('./actor-entry.ts', import.meta.url) }, actorFlag: MESSAGING_ACTOR_FLAG, env: {} }) });
+    owner = new DatabaseCoordinator({ rootDirectory: root, realm: legacy ? legacyMessagingRealm : messagingRealm, sqlite: { synchronous: 'FULL' }, maxDatabases: 1, readers: true, sweepIntervalMs: false,
+      createExecutor: createSubprocessDatabaseExecutorFactory({ launch: { kind: 'source', entrypoint: new URL(legacy ? './test-support/legacy-actor-entry.ts' : './actor-entry.ts', import.meta.url) }, actorFlag: MESSAGING_ACTOR_FLAG, env: {} }) });
     owner.start(); lease = await owner.acquire('messaging:content'); return createAsyncDatabaseClient({ executor: lease as AsyncDatabaseOperationExecutor });
   };
   let data = await open();
@@ -26,7 +29,9 @@ async function fixture() {
       catch (error) { const domain = readMessagingActorRejection(error); if (!domain) throw error; return { ok: false, code: domain.code, status: domain.status }; }
     },
     async query(name: string, input: unknown): Promise<any> { return (await data.query(name, input as DatabaseSerializableValue, { consistency: { mode: 'strong' } })).value; },
-    async restart() { lease.release(); await owner.close(); data = await open(); },
+    async restart() { lease.release(); await owner.close(); legacy = false; data = await open(); },
+    /** Synthetic offline clock/quota fault injection only, never an application migration or a public escape hatch. */
+    async fault(run: (db: Database) => void) { lease.release(); await owner.close(); const database = new Database(resolveDatabaseFile(root, 'messaging:content').path); try { run(database); } finally { database.close(); } data = await open(); },
     async close() { lease.release(); await owner.close(); },
   };
 }
@@ -35,6 +40,96 @@ const bob = { ...alice, id: 'user-bob' }, carol = { ...alice, id: 'user-carol' }
 const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice, id: 'external-one', kind: 'external' };
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
+
+test('retained v7 messages, identities, reactions and exact receipts survive additive queue/visitor migrations without reinitializing their database', async () => {
+  const f = await fixture(true);
+  try {
+    expect(legacyMessagingRealm.migrationChecksums).toEqual(messagingRealm.migrationChecksums.slice(0, 7));
+    await f.command('messaging.conversation.create', create()); await f.command('messaging.message.send', send(1));
+    await f.command('messaging.message.react', { actor: bob, conversationId: 'conversation-one', id: 'message-1', requestId: 'legacy-reaction', emoji: '👍', selected: true });
+    const receipt = (await f.query('messaging.receipt', { actor: alice, requestId: 'send-1' })).value;
+    await f.restart();
+    const message = (await f.query('messaging.messages', { actor: bob, conversationId: 'conversation-one' })).value.items[0];
+    expect(message).toMatchObject({ id: 'message-1', authorId: alice.id, sequence: 1, text: 'Synthetic message 1', reactions: [{ emoji: '👍', count: 1, selected: true }] });
+    expect((await f.query('messaging.receipt', { actor: alice, requestId: 'send-1' })).value).toEqual(receipt);
+    expect((await f.command('messaging.message.send', send(1))).value.id).toBe('message-1');
+    expect((await f.query('messaging.messages', { actor: alice, conversationId: 'conversation-one' })).value.items).toHaveLength(1);
+    await f.fault(db => {
+      expect(db.query("SELECT name FROM sqlite_schema WHERE name='messaging_support_queue'").get()).toBeTruthy();
+      expect(db.query("SELECT name FROM sqlite_schema WHERE name='messaging_visitor_budgets'").get()).toBeTruthy();
+    });
+    expect((await f.command('messaging.message.send', send(2))).value.sequence).toBe(2);
+  } finally { await f.close(); }
+}, 30000);
+
+test('canonical visitor capabilities enforce entry routing, current expiry/revocation, rollback and duplicate-safe durable quotas', async () => {
+  const f = await fixture(), hash = 'a'.repeat(64), token = 'b'.repeat(64);
+  const input = { scopeId: 'application', entryId: 'website', policyHash: hash, id: 'session-one', customerId: 'visitor-one', conversationId: 'conversation-one', tokenHash: token, ttlSeconds: 60, maxVisitors: 1, title: 'Website', owner: 'triage', assistantId: null };
+  try {
+    expect((await f.command('messaging.visitor.create', input)).ok).toBe(true);
+    const session = (await f.query('messaging.visitor.session', { scopeId: 'application', entryId: 'website', policyHash: hash, id: 'session-one', tokenHash: token })).value;
+    const guest = session.actor;
+    expect((await f.command('messaging.visitor.create', { ...input, id: 'another-session', customerId: 'another-visitor', conversationId: 'another-chat' })).code).toBe('MESSAGING_CAPACITY');
+    expect((await f.query('messaging.support.queue', { actor: staff })).value.items).toHaveLength(0);
+    expect((await f.command('messaging.support.claim', { actor: staff, id: 'conversation-one', requestId: 'unrouted', expectedEpoch: 1, maxParticipants: 100 })).code).toBe('MESSAGING_NOT_FOUND');
+    const routed = { ...staff, supportPolicies: { website: hash } };
+    expect((await f.query('messaging.support.queue', { actor: routed })).value.items).toHaveLength(1);
+    await f.command('messaging.support.claim', { actor: routed, id: 'conversation-one', requestId: 'routed', expectedEpoch: 1, maxParticipants: 100 });
+    expect((await f.query('messaging.messages', { actor: staff, conversationId: 'conversation-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.command('messaging.conversation.create', create(guest))).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.command('messaging.message.send', { ...send(1, guest), text: '' })).code).toBe('MESSAGING_INPUT_INVALID');
+    await f.fault(db => db.query('UPDATE messaging_sessions SET write_window=?,write_count=119 WHERE id=?').run(Math.floor(Date.now() / 60000), 'session-one'));
+    expect((await f.command('messaging.message.send', send(1, guest))).ok).toBe(true);
+    expect((await f.command('messaging.message.send', send(1, guest))).ok).toBe(true); // A known accepted intent does not consume quota twice.
+    expect((await f.command('messaging.message.send', send(2, guest))).code).toBe('MESSAGING_CAPACITY');
+    expect((await f.query('messaging.messages', { actor: guest, conversationId: 'conversation-one' })).value.items).toHaveLength(1);
+    await f.fault(db => db.query('UPDATE messaging_sessions SET expires_at=? WHERE id=?').run(Date.now() - 1, 'session-one'));
+    expect((await f.query('messaging.messages', { actor: guest, conversationId: 'conversation-one' })).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.command('messaging.message.send', send(1, guest))).code).toBe('MESSAGING_FORBIDDEN'); // Receipts are not an expiry bypass.
+    await f.fault(db => db.query('UPDATE messaging_sessions SET expires_at=?,revoked=1 WHERE id=?').run(Date.now() + 60000, 'session-one'));
+    expect((await f.query('messaging.receipt', { actor: guest, requestId: 'send-1' })).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.query('messaging.messages', { actor: routed, conversationId: 'conversation-one' })).value.items).toHaveLength(1); // Retained staff history is not deleted.
+  } finally { await f.close(); }
+}, 30000);
+
+test('only the current human support owner can resolve/reopen; stale staff cannot hand the conversation back', async () => {
+  const f = await fixture(), second = { ...staff, id: 'staff-two' };
+  const change = (actor: typeof staff, requestId: string, revision: number, archived: boolean) => f.command('messaging.conversation.change', { actor, id: 'conversation-one', requestId, expectedRevision: revision, action: 'archive', value: archived });
+  try {
+    await f.command('messaging.support.open', { actor: customer, id: 'conversation-one', requestId: 'support-one', title: '', owner: 'triage', channelId: null });
+    await f.command('messaging.support.claim', { actor: staff, id: 'conversation-one', requestId: 'first-claim', expectedEpoch: 1, maxParticipants: 100 });
+    await f.command('messaging.support.claim', { actor: second, id: 'conversation-one', requestId: 'take-over', expectedEpoch: 2, maxParticipants: 100 });
+    expect((await change(staff, 'old-owner-close', 3, true)).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.command('messaging.conversation.owner', { actor: staff, id: 'conversation-one', requestId: 'old-owner-handback', expectedEpoch: 3, owner: 'triage' })).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await change(second, 'resolve', 3, true)).value).toMatchObject({ revision: 4 });
+    expect((await f.query('messaging.conversation', { actor: customer, id: 'conversation-one' })).value).toMatchObject({ archived: true, ownerEpoch: 4 });
+    expect((await f.query('messaging.support.queue', { actor: staff })).value.items).toHaveLength(0);
+    expect((await f.command('messaging.message.send', send(1, customer))).code).toBe('MESSAGING_ARCHIVED');
+    expect((await f.command('messaging.conversation.owner', { actor: second, id: 'conversation-one', requestId: 'closed-handback', expectedEpoch: 4, owner: 'assistant' })).code).toBe('MESSAGING_ARCHIVED');
+    expect((await change(second, 'stale-reopen', 3, false)).code).toBe('MESSAGING_REVISION_CONFLICT');
+    expect((await change(second, 'reopen', 4, false)).value).toMatchObject({ revision: 5 });
+    expect((await f.query('messaging.conversation', { actor: customer, id: 'conversation-one' })).value).toMatchObject({ archived: false, ownerEpoch: 5, ownerId: second.id });
+    await f.restart();
+    expect((await f.query('messaging.receipt', { actor: second, requestId: 'resolve' })).value).toMatchObject({ operation: 'archive', resourceId: 'conversation-one' });
+    expect((await change(second, 'resolve', 3, true)).ok).toBe(true); // Receipt replay does not resolve the reopened conversation again.
+    expect((await f.query('messaging.conversation', { actor: customer, id: 'conversation-one' })).value.archived).toBe(false);
+  } finally { await f.close(); }
+}, 30000);
+
+test('support queue is oldest-first with bounded filter-bound keyset cursors rather than random identity order', async () => {
+  const f = await fixture();
+  try {
+    for (const id of ['z-oldest', 'm-middle', 'a-newest']) await f.command('messaging.support.open', { actor: customer, id, requestId: 'open-' + id, title: '', owner: 'triage', channelId: null });
+    const first = (await f.query('messaging.support.queue', { actor: staff, query: { owner: 'triage', limit: 1 } })).value;
+    expect(first.items.map((row: any) => row.id)).toEqual(['z-oldest']); expect(first.hasMore).toBe(true);
+    const second = (await f.query('messaging.support.queue', { actor: staff, query: { owner: 'triage', limit: 1, after: first.nextCursor } })).value;
+    expect(second.items.map((row: any) => row.id)).toEqual(['m-middle']);
+    expect((await f.query('messaging.support.queue', { actor: staff, query: { owner: 'human', after: first.nextCursor } })).code).toBe('MESSAGING_INPUT_INVALID');
+    expect((await f.query('messaging.support.queue', { actor: staff, query: { after: 'not-a-cursor' } })).code).toBe('MESSAGING_INPUT_INVALID');
+    const third = (await f.query('messaging.support.queue', { actor: staff, query: { owner: 'triage', limit: 1, after: second.nextCursor } })).value;
+    expect(third.items.map((row: any) => row.id)).toEqual(['a-newest']); expect(third.nextCursor).toBeNull();
+  } finally { await f.close(); }
+}, 30000);
 
 test('customer escalation preserves the conversation, fences AI ownership and cannot assign or displace a human', async () => {
   const f = await fixture();

@@ -30,12 +30,23 @@ export function changeMessagingConversation(context: DatabaseWriteCommandContext
     if (conversation.kind === 'direct' && action === 'add') messagingFail('MESSAGING_FORBIDDEN', 403);
     if (conversation.managed_group_id) messagingFail('MESSAGING_FORBIDDEN', 403);
     const selfLeave = action === 'remove' && r.value === actor.id && member.role !== 'owner';
-    if (member.role !== 'owner' && !selfLeave) messagingFail('MESSAGING_FORBIDDEN', 403);
+    const supportOwner = action === 'archive' && conversation.kind === 'support' && actor.kind === 'user' && actor.staff
+      && member.role === 'staff' && conversation.owner === 'human' && conversation.owner_id === actor.id;
+    if (member.role !== 'owner' && !selfLeave && !supportOwner) messagingFail('MESSAGING_FORBIDDEN', 403);
     return messagingIntent(context, actor, r.requestId, [action, conversation.id, r.expectedRevision, r.value], () => {
       assertRevision(conversation, r.expectedRevision);
       const updates: Partial<ConversationRow> = { revision: conversation.revision + 1, updated_at: Date.now(), public_updated_at: Date.now() };
       if (action === 'rename') updates.title = messagingText(r.value, 200, true);
-      else if (action === 'archive') { if (typeof r.value !== 'boolean') messagingFail('MESSAGING_INPUT_INVALID', 422); updates.archived = r.value ? 1 : 0; }
+      else if (action === 'archive') {
+        if (typeof r.value !== 'boolean') messagingFail('MESSAGING_INPUT_INVALID', 422);
+        updates.archived = r.value ? 1 : 0;
+        // Closing or reopening support is an ownership boundary too. A result
+        // dispatched before resolution must not publish after a later reopen.
+        if (conversation.kind === 'support') {
+          if (conversation.owner_epoch >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
+          updates.owner_epoch = conversation.owner_epoch + 1;
+        }
+      }
       else {
         if (conversation.kind !== 'group') messagingFail('MESSAGING_FORBIDDEN', 403);
         const user = messagingId(r.value), members = conversationMembers(conversation), key = memberKey(conversation.id, user);
@@ -80,6 +91,8 @@ export function ownMessagingConversation(context: DatabaseWriteCommandContext, i
     const owner = messagingChoice(r.owner, ['human', 'assistant', 'triage']);
     const internal = conversation.kind === 'assistant' && actor.kind === 'user' && member.role === 'owner';
     if (!internal && (!actor.staff || member.role !== 'staff' || conversation.kind !== 'support')) messagingFail('MESSAGING_FORBIDDEN', 403);
+    if (conversation.archived) messagingFail('MESSAGING_ARCHIVED');
+    if (!internal && owner !== 'human' && conversation.owner === 'human' && conversation.owner_id !== actor.id) messagingFail('MESSAGING_FORBIDDEN', 403);
     if (internal && owner === 'triage') messagingFail('MESSAGING_INPUT_INVALID', 422);
     return messagingIntent(context, actor, r.requestId, ['ownership', conversation.id, r.expectedEpoch, owner], () => {
       if (conversation.owner_epoch !== messagingInteger(r.expectedEpoch)) messagingFail('MESSAGING_OWNER_CONFLICT');

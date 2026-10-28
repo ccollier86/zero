@@ -6,6 +6,7 @@ import { currentMessagingRequest } from './http-authority';
 import { projectMessagingHttpError } from './http-errors';
 import { readMessagingBody, readMessagingQuery } from './http-input';
 import { messagingId, messagingInteger, messagingRecord } from './validation';
+import { messagingProjectionStream } from './stream';
 
 export function createMessagingReviewRoutes(config: MessagingPluginConfig) {
   return new Elysia({ name: 'zero-messaging-review' })
@@ -15,6 +16,13 @@ export function createMessagingReviewRoutes(config: MessagingPluginConfig) {
     .get('/conversations/:conversationId/review', ({ access, params, request }) => {
       const user = access.requireUser();
       return currentMessagingRequest(config, user, request).facade.review.list(params.conversationId, readMessagingQuery(request, ['after', 'limit']) as never, { signal: request.signal });
+    })
+    .get('/conversations/:conversationId/review/live', async ({ access, params, request }) => {
+      const captured = currentMessagingRequest(config, access.requireUser(), request), id = messagingId(params.conversationId), query = readMessagingQuery(request, ['after', 'limit']) as never;
+      await captured.facade.review.list(id, { ...query as object, limit: 1 }, { signal: request.signal });
+      const projection = captured.service.projectionForAuthority(captured.authority);
+      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => projection.review.list(id, query, { signal: request.signal }), request.signal,
+        { actorId: captured.authority.access.requireUser().userId, conversationId: id }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
     })
     .get('/conversations/:conversationId/review/:jobId', ({ access, params, request }) => {
       const user = access.requireUser(); readMessagingQuery(request, []);

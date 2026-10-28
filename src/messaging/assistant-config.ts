@@ -11,6 +11,8 @@ export interface MessagingAssistantConfig {
   instructions?: string;
   maxOutputTokens?: number;
   timeoutMs?: number;
+  /** Give a support bot one bounded, fenced request-human tool. Never gives it staff/member assignment powers. */
+  humanHandoff?: boolean;
 }
 export interface ResolvedMessagingAssistant {
   readonly id: string;
@@ -22,6 +24,7 @@ export interface ResolvedMessagingAssistant {
   readonly maxOutputTokens: number;
   readonly timeoutMs: number;
   readonly policyHash: string;
+  readonly humanHandoff: boolean;
 }
 export function messagingAssistantId(value: unknown): string {
   return messagingCatalogId(value);
@@ -35,7 +38,8 @@ export function resolveMessagingAssistants(input: Record<string, unknown>, auth:
   const add = (id: string, value: unknown, legacy = false) => {
     messagingAssistantId(id);
     if (Object.hasOwn(registry, id)) throw new Error('[messaging] Duplicate assistant identifier.');
-    const r = messagingRecord(value, ['name', 'description', 'access', 'model', 'instructions', 'maxOutputTokens', 'timeoutMs']);
+    const r = messagingRecord(value, ['name', 'description', 'access', 'model', 'instructions', 'maxOutputTokens', 'timeoutMs', 'humanHandoff']);
+    if (r.humanHandoff !== undefined && typeof r.humanHandoff !== 'boolean') throw new Error('[messaging] humanHandoff must be boolean.');
     const access = r.access === undefined ? undefined : structuredClone(r.access) as AccessRequirement;
     if (access !== undefined) kernel.compile(access, { user: 'required', credentials: ['session'] });
     const policy = { model: messagingText(r.model ?? 'smart', 200),
@@ -44,9 +48,10 @@ export function resolveMessagingAssistants(input: Record<string, unknown>, auth:
     // Retain the old support configuration's fingerprint when its original
     // fields/default instructions are unchanged. Existing jobs gain no new policy.
     if (legacy && r.instructions === undefined) policy.instructions = 'Help the customer using this conversation. Do not claim to have completed external actions. Ask for human assistance when the issue cannot be resolved from the available information.';
-    registry[id] = freeze({ ...policy, id, name: messagingText(r.name ?? (id === 'default' ? 'Assistant' : id), 120),
+    const policyHash = legacy && access === undefined ? messagingHash(policy) : messagingHash([id, policy, access ?? null]);
+    registry[id] = freeze({ ...policy, id, humanHandoff: r.humanHandoff === true, name: messagingText(r.name ?? (id === 'default' ? 'Assistant' : id), 120),
       description: messagingText(r.description ?? '', 500, true), ...(access === undefined ? {} : { access }),
-      policyHash: legacy && access === undefined ? messagingHash(policy) : messagingHash([id, policy, access ?? null]) });
+      policyHash: r.humanHandoff === true ? messagingHash(['support-human-handoff-v1', policyHash]) : policyHash });
   };
   if (input.assistants !== undefined) {
     const entries = Object.entries(messagingRegistry(input.assistants, 32));

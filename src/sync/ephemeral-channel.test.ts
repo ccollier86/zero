@@ -34,6 +34,23 @@ afterEach(() => {
 });
 
 describe('managed ephemeral topic authorization', () => {
+  test('a trusted native transport shares the bounded pool and live subscriber policy without inventing a second presence service', async () => {
+    let admitted = true, now = 1000, wakeups = 0;
+    const manager = new EphemeralStateManager(0, () => now); managers.push(manager);
+    const channel = new EphemeralChannel(manager, { async authorize() { return admitted ? { ok: true, namespace: 'native-support', keyOwnership: 'actor' } : { ok: false, code: 'EPHEMERAL_FORBIDDEN', reason: 'Synthetic membership withdrawn' }; } }, { revalidateIntervalMs: 0 }); channels.push(channel);
+    const reader = createSocket('support-reader', 'staff'); await channel.subscribe(reader.ws, 'typing:support');
+    const stop = channel.observeForService('native-support', () => wakeups++);
+    await expect(channel.writeForService('native-support', 'user:visitor:session:one', 'visitor', { label: 'Visitor' }, 5000, async () => { throw new Error('Synthetic revoked capability'); })).rejects.toThrow();
+    expect(wakeups).toBe(0); expect(channel.snapshotForService('native-support')).toEqual({});
+    await channel.writeForService('native-support', 'user:visitor:session:one', 'visitor', { label: 'Visitor' }, 5000, async () => {});
+    expect(reader.messages.at(-1)).toMatchObject({ type: 'ephemeral.change', userId: 'visitor', freshness: { ttlMs: 5000, ageMs: 0 } });
+    expect(wakeups).toBe(1);
+    await expect(channel.writeForService('native-support', 'user:visitor:session:one', 'other', { label: 'Other' }, 5000, async () => {})).rejects.toThrow();
+    admitted = false; await channel.writeForService('native-support', 'user:visitor:session:one', 'visitor', { label: 'Visitor' }, 5000, async () => {});
+    expect(reader.messages.at(-1)).toMatchObject({ type: 'ephemeral.error', revoked: true });
+    now += 5001; manager.getEntry('native-support', 'user:visitor:session:one'); expect(wakeups).toBe(3); expect(channel.snapshotForService('native-support')).toEqual({});
+    stop(); await channel.writeForService('native-support', 'user:visitor:session:one', 'visitor', null, 5000, async () => {}); expect(wakeups).toBe(3);
+  });
   test('snapshot dictionaries preserve an admitted prototype-named key as data', async () => {
     const channel = createLegacyChannel(), publisher = createSocket('proto-writer', null), reader = createSocket('proto-reader', null);
     await channel.set(publisher.ws, { topic: 'legacy', key: '__proto__', value: 'ordinary data', ttl: 1000 });

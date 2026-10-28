@@ -15,7 +15,7 @@ import { allocateMessagingAttachment, acceptMessagingAttachment, retireMessaging
 import { readMessagingAttachment, pendingMessagingAttachments } from './attachment-queries';
 import { withMessagingCommitHints } from './commit-hints';
 import { MESSAGING_JOB_TABLES } from './job-model';
-import { claimMessagingJob, beginMessagingJobCall, receiveMessagingJobResult, publishMessagingJobResult, reviewMessagingJob, bindMessagingJobDispatch } from './job-commands';
+import { claimMessagingJob, beginMessagingJobCall, receiveMessagingJobResult, publishMessagingJobResult, reviewMessagingJob, bindMessagingJobDispatch, handoffMessagingJob } from './job-commands';
 import { pendingMessagingJobs, readMessagingJobContext } from './job-queries';
 import { MESSAGING_REVIEW_TABLES } from './review-model';
 import { listMessagingReviews, readMessagingReview } from './review-queries';
@@ -25,17 +25,20 @@ import { readMessagingNotification } from './notification-queries';
 import { completeMessagingNotification, redispatchMessagingNotification } from './notification-commands';
 import { openMessagingAssistant } from './assistant-commands';
 import { reconcileMessagingGroup } from './group-commands';
+import { createMessagingVisitor, guardMessagingVisitorRead, readMessagingVisitor, revokeMessagingVisitor, withMessagingVisitorGuards } from './visitor-session';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
-    try { return { ok: true, value: handler(context, input) } as never; }
+    try { guardMessagingVisitorRead(context, input); return { ok: true, value: handler(context, input) } as never; }
     catch (error) { if (error instanceof AuthError && error.code.startsWith('MESSAGING_')) return { ok: false, code: error.code, status: error.status }; throw error; }
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '7', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
+  name: 'zero-messaging', version: '9', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
+    messaging_visitor_budgets: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', entry_id: 'TEXT NOT NULL', visitor_count: 'INTEGER NOT NULL' },
+    messaging_sessions: { ...MESSAGING_TABLES.messaging_sessions!, entry_id: 'TEXT', policy_hash: 'TEXT', write_window: 'INTEGER NOT NULL DEFAULT 0', write_count: 'INTEGER NOT NULL DEFAULT 0', message_count: 'INTEGER NOT NULL DEFAULT 0' },
     messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" },
-    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT', managed_group_id: 'TEXT', group_policy_hash: 'TEXT' },
+    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT', managed_group_id: 'TEXT', group_policy_hash: 'TEXT', support_entry_id: 'TEXT', visitor_session_id: 'TEXT' },
     messaging_jobs: { ...MESSAGING_TABLES.messaging_jobs!, context_revision: 'INTEGER NOT NULL DEFAULT 0', policy_hash: 'TEXT', dispatch_generation: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT' } },
   migrations: [{ version: '001', description: 'Canonical scoped conversations, messages, contacts, private attachments and durable delivery', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(MESSAGING_TABLES)) database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
@@ -102,8 +105,24 @@ export const messagingRealm = defineDatabaseRealm({
     database.run('ALTER TABLE messaging_conversations ADD COLUMN managed_group_id TEXT');
     database.run('ALTER TABLE messaging_conversations ADD COLUMN group_policy_hash TEXT');
     database.run('CREATE UNIQUE INDEX messaging_configured_group ON messaging_conversations(scope_id,managed_group_id)');
+  } }, { version: '008', description: 'Indexed oldest-first support discovery with stable timestamp and identity cursors', safety: 'safe', up(database) {
+    database.run('CREATE INDEX messaging_support_queue ON messaging_conversations(scope_id,kind,archived,created_at,id)');
+    database.run('CREATE INDEX messaging_support_owner_queue ON messaging_conversations(scope_id,kind,archived,owner,created_at,id)');
+  } }, { version: '009', description: 'Native public support entries and bounded expiring single-conversation visitor capabilities', safety: 'safe', up(database) {
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN support_entry_id TEXT');
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN visitor_session_id TEXT');
+    database.run('ALTER TABLE messaging_sessions ADD COLUMN entry_id TEXT');
+    database.run('ALTER TABLE messaging_sessions ADD COLUMN policy_hash TEXT');
+    database.run('ALTER TABLE messaging_sessions ADD COLUMN write_window INTEGER NOT NULL DEFAULT 0');
+    database.run('ALTER TABLE messaging_sessions ADD COLUMN write_count INTEGER NOT NULL DEFAULT 0');
+    database.run('ALTER TABLE messaging_sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0');
+    database.run('CREATE TABLE messaging_visitor_budgets (id TEXT PRIMARY KEY,scope_id TEXT NOT NULL,entry_id TEXT NOT NULL,visitor_count INTEGER NOT NULL)');
+    database.run('CREATE INDEX messaging_visitor_conversation ON messaging_sessions(scope_id,conversation_id,customer_id,expires_at)');
+    // Earlier experimental session rows are retained but have no entry policy
+    // hash. They cannot silently acquire the new public admission capability.
   } }],
-  commands: withMessagingCommitHints({
+  commands: withMessagingCommitHints(withMessagingVisitorGuards({
+    'messaging.visitor.create': createMessagingVisitor, 'messaging.visitor.revoke': revokeMessagingVisitor,
     'messaging.owner.bind': (context, input) => messagingCommand(context, () => {
       const ownerId = messagingId(messagingRecord(input, ['ownerId']).ownerId), prior = context.db.get('_messaging_owner', 'application');
       if (prior && prior.owner_id !== ownerId) messagingFail('MESSAGING_OWNER_INVALID');
@@ -120,10 +139,13 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.attachment.allocate': allocateMessagingAttachment, 'messaging.attachment.accept': acceptMessagingAttachment, 'messaging.attachment.retire': retireMessagingAttachment,
     'messaging.job.claim': claimMessagingJob, 'messaging.job.call': beginMessagingJobCall, 'messaging.job.receive': receiveMessagingJobResult,
     'messaging.job.publish': publishMessagingJobResult, 'messaging.job.review': reviewMessagingJob, 'messaging.job.dispatch': bindMessagingJobDispatch,
+    'messaging.job.handoff': handoffMessagingJob,
     'messaging.review.resolve': resolveMessagingReview,
     'messaging.notification.complete': completeMessagingNotification, 'messaging.notification.redispatch': redispatchMessagingNotification,
-  }),
-  queries: { 'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
+  })),
+  // Session resolution is a closed server transport query, never general Sync.
+  queries: { 'messaging.visitor.session': query(readMessagingVisitor),
+    'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
     'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments),
     'messaging.jobs.pending': query(pendingMessagingJobs), 'messaging.job.context': query(readMessagingJobContext),
     'messaging.reviews': query(listMessagingReviews), 'messaging.review': query(readMessagingReview), 'messaging.notification.context': query(readMessagingNotification) },

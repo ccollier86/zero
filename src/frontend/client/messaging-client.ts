@@ -34,6 +34,7 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
       retry: (id, jobId, expectedOwnerEpoch, acknowledgePossibleDuplicate, opts) => mutate(thread(id) + '/review/' + encodeURIComponent(jobId) + '/retry', 'POST', { expectedOwnerEpoch, acknowledgePossibleDuplicate }, opts, assertMessagingReviewResolution),
       dismiss: (id, jobId, expectedOwnerEpoch, opts) => mutate(thread(id) + '/review/' + encodeURIComponent(jobId) + '/dismiss', 'POST', { expectedOwnerEpoch }, opts, assertMessagingReviewResolution),
     }),
+    watchReview: (id, listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), thread(id) + '/review/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingReviewItem, 50), options),
     attachments: createMessagingAttachmentClient(call, raw, () => boundary.signal),
     capabilities: () => call('/config', 'GET', undefined, undefined, undefined, assertMessagingCapabilities), directory: (query = {}, opts) => call('/directory' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingDirectoryEntry, 50)),
     receipt: (id, opts) => call('/receipts/' + encodeURIComponent(id), 'GET', undefined, opts?.signal, undefined, assertMessagingReceipt),

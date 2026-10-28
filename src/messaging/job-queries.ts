@@ -27,6 +27,8 @@ export function readMessagingJobContext({ database }: DatabaseReadQueryContext, 
   const messages: { role: 'assistant' | 'user'; content: string }[] = []; let bytes = 0;
   for (const row of rows) { const size = new TextEncoder().encode(row.text).byteLength; if (bytes + size > 128 * 1024) break; bytes += size;
     messages.push({ role: row.author_kind === 'assistant' ? 'assistant' : 'user', content: row.text }); }
+  const visitor = conversation?.visitor_session_id ? database.query<{ policy_hash: string | null; expires_at: number; revoked: number }>('SELECT policy_hash,expires_at,revoked FROM messaging_sessions WHERE id=? AND scope_id=? AND conversation_id=?').get(conversation.visitor_session_id, scope, conversation.id) : null;
   return { job, valid, conversationKind: conversation?.kind ?? null, assistantId: job.assistant_id ?? 'default', customerId: turn?.author_id ?? null, customerKind: turn?.author_kind ?? null,
+    supportEntryId: conversation?.support_entry_id ?? null, visitorPolicyHash: visitor?.policy_hash ?? null, visitorExpiresAt: visitor && !visitor.revoked ? visitor.expires_at : null,
     messages: messages.reverse(), result, attachmentOnly: !!turn && !turn.text.trim() && JSON.parse(turn.attachment_ids).length > 0 };
 }

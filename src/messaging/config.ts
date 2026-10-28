@@ -10,6 +10,8 @@ import { MESSAGING_ACTOR_FLAG } from './actor-bootstrap';
 import { messagingNotificationPath } from './notification-link';
 import { resolveMessagingAssistants, type MessagingAssistantConfig, type ResolvedMessagingAssistant } from './assistant-config';
 import { resolveMessagingGroups, type MessagingGroupConfig, type ResolvedMessagingGroup } from './group-config';
+import { resolveMessagingSupportEntries, type MessagingSupportEntryConfig, type ResolvedMessagingSupportEntry } from './support-entry-config';
+export type { MessagingSupportEntryConfig } from './support-entry-config';
 export type { MessagingAssistantConfig } from './assistant-config';
 export type { MessagingGroupConfig } from './group-config';
 
@@ -23,7 +25,7 @@ export interface MessagingConfig {
   maxActiveDatabases?: number;
   maxDatabaseFiles?: number;
   maxUploadBytes?: number;
-  support?: false | { staff?: AccessRequirement; assistant?: string | false };
+  support?: false | { staff?: AccessRequirement; assistant?: string | false; entries?: Readonly<Record<string, MessagingSupportEntryConfig>> };
   /** Compatibility alias for the named `default` assistant; support is not required. */
   assistant?: false | MessagingAssistantConfig;
   assistants?: Readonly<Record<string, MessagingAssistantConfig>>;
@@ -37,6 +39,7 @@ export interface ResolvedMessagingConfig {
   readonly createExecutor: SubprocessDatabaseExecutorFactory; readonly defaultActorEntrypoint: string | null;
   readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxActiveDatabases: number; readonly maxDatabaseFiles: number; readonly maxUploadBytes: number;
   readonly support: false | { readonly staff: AccessRequirement };
+  readonly supportEntries: Readonly<Record<string, ResolvedMessagingSupportEntry>>;
   readonly assistant: ResolvedMessagingAssistant | false;
   readonly assistants: Readonly<Record<string, ResolvedMessagingAssistant>>;
   readonly groups: Readonly<Record<string, ResolvedMessagingGroup>>;
@@ -50,7 +53,7 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
   if (r.rootDirectory !== undefined && (typeof r.rootDirectory !== 'string' || !r.rootDirectory.trim() || r.rootDirectory.includes('\0'))) throw new Error('[messaging] Invalid private messaging root.');
   const entry = r.actors === undefined ? packagedMessagingActor(projectRoot) : null;
   const actors = r.actors === undefined ? { launch: { kind: 'source' as const, entrypoint: entry! }, env: {} } : messagingRecord(r.actors, ['launch', 'env', 'executor']);
-  const support = r.support === undefined || r.support === false ? false : messagingRecord(r.support, ['staff', 'assistant']);
+  const support = r.support === undefined || r.support === false ? false : messagingRecord(r.support, ['staff', 'assistant', 'entries']);
   const staff = support === false ? null : structuredClone(support.staff ?? (auth.tenancy.mode === 'multi' ? { permission: 'tenant.members:manage' } : 'admin')) as AccessRequirement;
   if (staff !== null) {
     const compiled = createAuthorizationKernel(auth).compile(staff, { user: 'required', credentials: ['session'] });
@@ -60,6 +63,7 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
   // catalog bounded; core Logging still enforces its aggregate source budget.
   const maxActiveDatabases = messagingInteger(r.maxActiveDatabases ?? 4, 1, 64), maxDatabaseFiles = messagingInteger(r.maxDatabaseFiles ?? 1000, maxActiveDatabases, 10000);
   const assistantConfiguration = resolveMessagingAssistants(r, auth);
+  const supportEntries = resolveMessagingSupportEntries(support === false ? undefined : support.entries, auth, assistantConfiguration.assistants, assistantConfiguration.assistant ? assistantConfiguration.assistant.id : null);
   const notice = r.notifications === undefined || r.notifications === false ? false : r.notifications === true ? {} : messagingRecord(r.notifications, ['path']);
   const notificationPath = messagingNotificationPath(notice === false ? '/messages' : notice.path ?? '/messages');
   const jobs = r.jobs === undefined ? {} : messagingRecord(r.jobs, ['concurrency']);
@@ -69,7 +73,7 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
     createExecutor: createSubprocessDatabaseExecutorFactory({ ...actors, actorFlag: MESSAGING_ACTOR_FLAG } as unknown as SubprocessDatabaseExecutorFactoryOptions), defaultActorEntrypoint: entry,
     maxMessageLength: messagingInteger(r.maxMessageLength ?? 20000, 1, 20000), maxParticipants: messagingInteger(r.maxParticipants ?? 100, 2, 100), maxActiveDatabases, maxDatabaseFiles,
     maxUploadBytes: messagingInteger(r.maxUploadBytes ?? 16 * 1024 * 1024, 1024, 256 * 1024 * 1024), support: staff === null ? false : Object.freeze({ staff: deepFreeze(staff) }),
-    ...assistantConfiguration, groups: resolveMessagingGroups(r.groups, auth), notifications: notice !== false, notificationPath, jobConcurrency });
+    ...assistantConfiguration, supportEntries, groups: resolveMessagingGroups(r.groups, auth), notifications: notice !== false, notificationPath, jobConcurrency });
 }
 function packagedMessagingActor(projectRoot: string): string {
   const adjacent = fileURLToPath(new URL('./actor-entry.ts', import.meta.url)); if (existsSync(adjacent)) return adjacent;

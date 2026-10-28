@@ -15,6 +15,59 @@ applies_to: ["feature/messaging-backend; source and isolated synthetic tests, no
 
 [Work index](./index.md) · [Frontend manual](../frontend/messaging/workspace.md) · [Backend configuration](../backend/messaging/configuration.md) · [Earlier correction](./messaging-configuration-correction.md)
 
+## Current Completion Pass (2026-10-28)
+
+The continuation adds native [website support](../backend/messaging/website-support.md),
+entry-specific Guardian staff routing, expiring single-conversation visitor
+capabilities, private file integration, shared-pool bidirectional typing, real
+assistant job activity, explicit model-requested human handoff, operator review
+UI and assigned-human resolve/reopen. It remains on the feature branch pending
+the installed/archive/release gates below; the older chronological remaining-work
+lists are not claims that these new source capabilities are still absent.
+
+The support archive bug was real: support members have customer/staff roles, not
+group-owner roles. Only the current human owner may resolve/reopen, and both
+transitions advance the owner epoch. Former staff owners cannot hand back another
+person's chat. Queue pagination is now indexed oldest-first and filter-bound.
+Private migrations 008/009 are additive; 001–007 remain unchanged. A real retained
+v7-shape actor test preserves messages, reactions, identities and exact receipts.
+
+Public website entries do not reuse the legacy external-delivery `channel_id`;
+doing so would invent provider delivery jobs. They have a separate native entry
+field, fixed configured origin/scope, cookie-only random capability, in-memory
+CSRF/session fences and private source-transaction admission/quota checks.
+No fake Guardian user, directory, generic Sync grant or email bridge is created.
+Expiry/revocation also fence provider publication inside the source transaction.
+
+Review details use the existing modal manager and bounded ScrollArea. Live review
+projections and optional private review counts do not expose drafts to customers.
+Retries preserve immutable attempts, explicitly acknowledge uncertainty/possible
+cost and choose the conversation's named bot, not the unrelated support default.
+Current job state, rather than timers, drives assistant activity. An optional
+empty-argument model tool can request triage, never select a staff/tenant/member.
+
+Source evidence is retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/messaging-support-review/`.
+`completion-native-regressions-1.log` records 83 tests/746 assertions in 20 files;
+`completion-browser-sync-regressions-1.log` records 28 tests/300 assertions in four
+files, including the five native browser flows, existing ephemeral policy and
+icon catalog guard. These sets overlap other focused checks; they are not summed
+into an invented full-suite total. Root TypeScript and the 873-page reachable
+documentation graph passed at that checkpoint. Later source changes require
+their final reruns.
+
+The browser continuation caught a real typing-burst bug: clearing after Send did
+not reset the throttle timestamp, so a fresh immediate draft could be missed.
+Clear now resets that timestamp. Initial focus/cookie-selector attempts and their
+failed logs are retained. The final two-way native browser case proves visitor
+activity reaches staff and normal staff activity reaches the restricted visitor
+projection. It does not claim real operating-system focus/device qualification.
+
+The installed Linux fixture lives in
+`src/messaging/test-support/managed-deployment/`. It must pass against the final
+archive before this branch is selected for normal updates. Unit/browser source
+success is not substituted for worker/process/bundled-package evidence.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private

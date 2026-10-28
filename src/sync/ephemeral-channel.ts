@@ -70,6 +70,7 @@ const EPHEMERAL_ERROR_CODES = new Set<EphemeralErrorCode>([
  * policy can be rechecked before a change crosses the socket boundary.
  */
 export class EphemeralChannel {
+  private readonly serviceObservers = new Map<string, Set<() => void>>();
   private readonly bindings = new Map<string, Map<string, EphemeralTopicBinding>>();
   private readonly sockets = new Map<string, EphemeralSocket>();
   private readonly revalidationTimer: ReturnType<typeof setInterval> | null;
@@ -86,6 +87,7 @@ export class EphemeralChannel {
   ) {
     this.removeExpirationListener = manager.onExpired(expiration => {
       if (this.disposed) return;
+      this.notifyServiceObservers(expiration.namespace);
       void this.broadcast(expiration.namespace, {
         type: 'ephemeral.change', topic: '', key: expiration.key, value: null,
         userId: expiration.entry.userId, op: 'delete',
@@ -246,6 +248,7 @@ export class EphemeralChannel {
     }
 
     const entry = this.manager.set(decision.namespace, key, value, actorId, ttl, valueSize);
+    this.notifyServiceObservers(decision.namespace);
     await this.broadcast(decision.namespace, {
       type: 'ephemeral.change',
       topic,
@@ -304,6 +307,7 @@ export class EphemeralChannel {
       return;
     }
     if (!this.manager.delete(decision.namespace, key)) return;
+    this.notifyServiceObservers(decision.namespace);
 
     await this.broadcast(decision.namespace, {
       type: 'ephemeral.change',
@@ -374,6 +378,38 @@ export class EphemeralChannel {
     this.removeExpirationListener();
     this.bindings.clear();
     this.sockets.clear();
+    this.serviceObservers.clear();
+  }
+
+  /** @internal Native services must prove their own current canonical authority. Not exposed by HTTP/Sync request facades. */
+  snapshotForService(namespace: string) {
+    if (this.disposed || !validateEphemeralNamespace(namespace).ok) throw new Error('Ephemeral service namespace is unavailable.');
+    return this.manager.getSnapshot(namespace, true);
+  }
+  /** Content-free wakeup only. The observer must reauthorize before releasing a projection. */
+  observeForService(namespace: string, changed: () => void): () => void {
+    if (this.disposed || !validateEphemeralNamespace(namespace).ok || [...this.serviceObservers.values()].reduce((n, listeners) => n + listeners.size, 0) >= 256) throw new Error('Ephemeral service observation is unavailable.');
+    let listeners = this.serviceObservers.get(namespace); if (!listeners) this.serviceObservers.set(namespace, listeners = new Set()); listeners.add(changed);
+    return () => { listeners!.delete(changed); if (!listeners!.size) this.serviceObservers.delete(namespace); };
+  }
+  /** Trusted narrow transports share the exact native pool, limits, TTL and per-subscriber reauthorization. */
+  async writeForService(namespace: string, key: string, actorId: string, value: JsonValue | null, ttl: number, assertCurrent: () => Promise<void>): Promise<void> {
+    if (!validateEphemeralNamespace(namespace).ok || !validateEphemeralKey(key).ok || !validateEphemeralTTL(ttl).ok || typeof actorId !== 'string' || !actorId || actorId.length > 256 || value !== null && !validateEphemeralValue(value).ok) throw new Error('Ephemeral service input is invalid.');
+    await assertCurrent(); if (this.disposed) throw new Error('Ephemeral service is closed.');
+    const existing = this.manager.getEntry(namespace, key);
+    if (existing && existing.userId !== actorId) throw new Error('Ephemeral service key is not owned.');
+    if (value === null) {
+      if (!this.manager.delete(namespace, key)) return;
+      this.notifyServiceObservers(namespace);
+      await this.broadcast(namespace, { type: 'ephemeral.change', topic: '', key, value: null, userId: actorId, op: 'delete' }); return;
+    }
+    const size = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    if (!this.hasWriteCapacity(namespace, actorId, existing, size)) throw new Error('Ephemeral service capacity is exhausted.');
+    const entry = this.manager.set(namespace, key, value, actorId, ttl, size); this.notifyServiceObservers(namespace);
+    await this.broadcast(namespace, { type: 'ephemeral.change', topic: '', key, value, userId: actorId, op: 'set' }, entry);
+  }
+  private notifyServiceObservers(namespace: string): void {
+    for (const listener of this.serviceObservers.get(namespace) ?? []) { try { listener(); } catch { /* Wakeups grant no data and cannot change an accepted ephemeral write. */ } }
   }
 
   private async performRevalidation(): Promise<void> {

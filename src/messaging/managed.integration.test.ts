@@ -31,10 +31,11 @@ function peer(origin: string): TestClient {
   const authenticate = async (path: string, body: unknown) => { const result = await call<any>(path, { method: 'POST', body }); token = result.accessToken; user = result.user; return result; };
   return { messaging, logging, fetch: call, get user() { return user; }, register: input => authenticate('/auth/register', input), login: (username, password) => authenticate('/auth/login', { username, password }), disconnect() { messaging.clear(); logging.clear(); token = null; user = null; } };
 }
-async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false, overrides: Pick<Partial<AppConfig>, 'messaging' | 'auth'> = {}) {
+async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false, overrides: Pick<Partial<AppConfig>, 'messaging' | 'auth'> = {}, website = false) {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
   let zero!: ServerRouteServices;
   const diagnostics = new MemoryEventStore();
+  const reservation = website ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 503 }) }) : null, reservedPort = reservation?.port ?? 0;
   const configuration: AppConfig = { projectRoot: root, db: { mode: 'file', path: join(root, 'app.db'), synchronous: 'FULL' }, systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' }, tables: {},
     auth: { bootstrap: 'public' }, messaging: { support: {}, history, ...(notifications ? { notifications: { path: '/app/messages' } } : {}),
       ...(providerBaseURL ? { assistant: { model: 'synthetic/chat', timeoutMs: 30000 }, jobs: { concurrency: 2 } } : {}) }, logging: { preset: compliance ? 'compliance' : 'detailed', rootDirectory: join(root, 'logs') },
@@ -47,7 +48,9 @@ async function fixture(compliance = false, history: 'all' | 'since-join' = 'all'
     serverExtensions: [defineZeroPlugin({ name: 'messaging-fixture', setup(context) { zero = context.zero; } }), defineEndpoint({ method: 'GET', path: '/proof/messaging', auth: 'user', handler: ({ zero }) => zero.messaging!.capabilities() })],
     ...overrides,
   };
-  let app = await createApp(configuration); const listen = () => { app.listen({ hostname: '127.0.0.1', port: 0 }); return 'http://127.0.0.1:' + app.server!.port; }; let origin = listen();
+  if (website) configuration.messaging = { ...configuration.messaging as object, support: { entries: { website: { origin: 'http://127.0.0.1:' + reservedPort } } } };
+  let app = await createApp(configuration); await reservation?.stop(true);
+  const listen = () => { app.listen({ hostname: '127.0.0.1', port: reservedPort }); return 'http://127.0.0.1:' + app.server!.port; }; let origin = listen();
   const client = () => createClient({ url: origin, auth: true, autoConnect: false });
   return { root, diagnostics, configuration, client, peer: () => peer(origin), get zero() { return zero; }, get origin() { return origin; }, async restart() { await app.stop(true); app = await createApp(configuration); origin = listen(); }, async close() { await app.stop(true); } };
 }
@@ -55,6 +58,67 @@ async function enroll(client: TestClient, name: string) {
   await client.register({ username: name, email: name + '@example.test', password: PASSWORD });
   const policy = await client.logging.collectionPolicy(); if (policy.delivery) await client.logging.observe([], { policyVersion: policy.delivery.policyVersion });
 }
+
+test('public native support binds a private expiring cookie to one entry and conversation; files, live human replies and restart use the same native services', async () => {
+  const f = await fixture(true, 'all', undefined, false, {}, true), admin = f.client();
+  const base = '/api/messaging/public/website'; let cookie = '', csrf = '', sessionId = '';
+  const call = (path: string, method = 'GET', body?: unknown, extra: HeadersInit = {}) => {
+    const headers = new Headers({ Origin: f.origin, 'X-Zero-Support-Client': '1', ...extra });
+    if (cookie) headers.set('Cookie', cookie); if (csrf) headers.set('X-Zero-Support-CSRF', csrf);
+    if (sessionId) headers.set('X-Zero-Support-Session', sessionId);
+    if (method !== 'GET') headers.set('Idempotency-Key', 'guest-' + crypto.randomUUID());
+    if (body !== undefined) headers.set('Content-Type', 'application/json');
+    return fetch(f.origin + base + path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  };
+  try {
+    await enroll(admin, 'website-support-admin');
+    expect((await call('/session')).status).toBe(403);
+    const started = await call('/session', 'POST', { mode: 'human' }); expect(started.status).toBe(200);
+    const setCookie = started.headers.get('Set-Cookie')!; cookie = setCookie.split(';')[0]!;
+    expect(setCookie).toContain('HttpOnly'); expect(setCookie).toContain('SameSite=Strict'); expect(setCookie).toContain('Path=' + base);
+    const session = await started.json() as { sessionId: string; userId: string; conversationId: string; csrf: string; expiresAt: number }; csrf = session.csrf; sessionId = session.sessionId;
+    expect(JSON.stringify(session)).not.toContain(cookie.split('=')[1]!);
+    const id = session.conversationId, thread = '/conversations/' + id;
+    const send = await call(thread + '/messages', 'POST', { text: 'SYNTHETIC_PUBLIC_QUESTION' }); expect(send.status).toBe(200);
+    const sent = await send.json() as { id: string };
+    expect((await call('/directory')).status).toBe(404);
+    expect((await call('/conversations/foreign/messages')).status).toBe(404);
+    expect((await call(thread + '/messages', 'POST', { text: 'PRIVATE_NOTE_ATTEMPT', visibility: 'staff' })).status).toBe(403);
+    expect((await fetch(f.origin + base + thread + '/messages', { method: 'POST', headers: { Cookie: cookie, Origin: f.origin, 'X-Zero-Support-Client': '1', 'Content-Type': 'application/json', 'Idempotency-Key': 'no-csrf' }, body: JSON.stringify({ text: 'MISSING_CSRF' }) })).status).toBe(403);
+    expect((await fetch(f.origin + base + '/session', { headers: { Cookie: cookie, Origin: 'https://hostile.example', 'X-Zero-Support-Client': '1' } })).status).toBe(403);
+    expect((await fetch(f.origin + base + '/session', { headers: { Cookie: cookie } })).status).toBe(403);
+    const other = await fetch(f.origin + base + '/session', { method: 'POST', headers: { Origin: f.origin, 'X-Zero-Support-Client': '1', 'Content-Type': 'application/json' }, body: '{}' });
+    const otherCookie = other.headers.get('Set-Cookie')!.split(';')[0]!;
+    const otherSession = await other.json() as { sessionId: string };
+    expect((await fetch(f.origin + base + thread, { headers: { Cookie: otherCookie, Origin: f.origin, 'X-Zero-Support-Client': '1', 'X-Zero-Support-Session': otherSession.sessionId } })).status).toBe(404);
+    expect((await fetch(f.origin + base + thread, { headers: { Cookie: otherCookie, Origin: f.origin, 'X-Zero-Support-Client': '1', 'X-Zero-Support-Session': sessionId } })).status).toBe(403);
+    const queue = await admin.messaging.support.queue(); expect(queue.items.some(row => row.id === id)).toBe(true);
+    await expect(admin.messaging.messages.list(id)).rejects.toMatchObject({ status: 404 });
+    const claim = await admin.messaging.support.claim(id, 1, { requestId: 'website-claim' });
+    expect(claim.reviewCount).toBe(0);
+    await admin.messaging.messages.send(id, { text: 'SYNTHETIC_PRIVATE_WEBSITE_NOTE', visibility: 'staff' }, { requestId: 'website-note' });
+    await admin.messaging.messages.send(id, { text: 'SYNTHETIC_HUMAN_WEBSITE_REPLY', expectedOwnerEpoch: claim.ownerEpoch }, { requestId: 'website-reply' });
+    const history = await (await call(thread + '/messages')).json() as any;
+    expect(history.items.map((row: any) => row.sequence)).toEqual([2, 1]);
+    expect(JSON.stringify(history)).not.toContain('SYNTHETIC_PRIVATE_WEBSITE_NOTE');
+    const conversation = await (await call(thread)).json() as any; expect(conversation.reviewCount).toBeUndefined();
+    const bytes = new TextEncoder().encode('Synthetic private website attachment'), checksum = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    const allocated = await call(thread + '/attachments', 'POST', { fileName: 'website.txt', mimeType: 'text/plain', sizeBytes: bytes.byteLength, checksum }); expect(allocated.status).toBe(200);
+    const asset = await allocated.json() as { id: string };
+    const uploaded = await fetch(f.origin + base + thread + '/attachments/' + asset.id + '/content', { method: 'PUT', headers: { Cookie: cookie, Origin: f.origin, 'X-Zero-Support-Client': '1', 'X-Zero-Support-CSRF': csrf, 'X-Zero-Support-Session': sessionId, 'Content-Type': 'application/octet-stream', 'Idempotency-Key': 'website-upload' }, body: bytes });
+    expect(uploaded.status).toBe(200);
+    expect((await call(thread + '/messages', 'POST', { text: '', attachmentIds: [asset.id] })).status).toBe(200);
+    expect(await (await call(thread + '/attachments/' + asset.id + '/content')).text()).toBe(new TextDecoder().decode(bytes));
+    // External-provider delivery was not invented for this native website chat.
+    expect((await f.zero.messaging!.runtime.read<any[]>(applicationServiceDataScope(), 'messaging.jobs.pending', { scopeId: 'application' }, () => {})).some(row => row.kind === 'delivery')).toBe(false);
+    await f.restart();
+    const restored = await (await call('/session')).json() as any; expect(restored.userId).toBe(session.userId); expect(restored.conversationId).toBe(id);
+    expect((await call(thread + '/messages/' + sent.id)).status).toBe(200);
+    const ended = await call('/session', 'DELETE'); expect(ended.status).toBe(200); expect(ended.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    expect((await call(thread + '/messages')).status).toBe(403);
+    expect((await call(thread + '/attachments/' + asset.id + '/content')).status).toBe(403);
+  } finally { admin.disconnect(); await f.close(); }
+}, 90000);
 
 test('native support permits human-first requests and customer escalation fences a real held model call', async () => {
   let release!: () => void, entered = 0;
@@ -81,9 +145,11 @@ test('native support permits human-first requests and customer escalation fences
     const chat = await customer.messaging.support.open({ mode: 'assistant' }, { requestId: 'support-ai-first' });
     await customer.messaging.messages.send(chat.id, { text: 'Synthetic question needing a person' }, { requestId: 'support-customer-turn' });
     await until(() => entered > 0, 12000);
+    expect((await customer.messaging.conversations.get(chat.id)).assistantActivity).toMatchObject({ state: 'thinking' });
     await expect(admin.messaging.messages.list(chat.id)).rejects.toMatchObject({ status: 404 });
     const waiting = await customer.messaging.support.requestHuman(chat.id, chat.ownerEpoch, { requestId: 'support-human-request' });
     expect(waiting).toMatchObject({ id: chat.id, owner: 'triage', ownerEpoch: 2 });
+    expect(waiting.assistantActivity).toBeNull(); expect(waiting.reviewCount).toBeUndefined();
     // The deadline is shorter than periodic stream rechecks: a committed native
     // hint, not polling or an app-invented row event, must wake this staff view.
     await until(() => snapshots.at(-1)?.some(row => row.id === chat.id && row.owner === 'triage') === true);
@@ -103,6 +169,37 @@ test('native support permits human-first requests and customer escalation fences
     expect(entered).toBe(1);
     await expect(customer.fetch('/api/messaging/support/' + direct.id + '/request-human', { method: 'POST', headers: { 'Idempotency-Key': 'forged-human-destination' }, body: { expectedEpoch: 1, userId: admin.user!.userId } })).rejects.toMatchObject({ status: 422 });
   } finally { release(); stop?.(); admin.disconnect(); customer.disconnect(); await f.close(); await provider.stop(true); }
+}, 90000);
+
+test('an explicitly enabled assistant can request human triage through a bounded tool; a held stale handoff cannot displace the human owner', async () => {
+  let entered = false, release!: () => void, calls = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    const body = await request.json() as any; calls++;
+    expect(body.tools.map((value: any) => value.function.name)).toEqual(['requestHuman']);
+    if (JSON.stringify(body.messages).includes('SYNTHETIC_HELD_HANDOFF')) { entered = true; await held; }
+    return Response.json({ id: 'synthetic-tool-handoff', object: 'chat.completion', created: 1, model: 'chat', choices: [{ index: 0, message: { role: 'assistant', content: null,
+      tool_calls: [{ id: 'handoff-tool-call', type: 'function', function: { name: 'requestHuman', arguments: '{}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } });
+  } });
+  const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1', false, { messaging: { support: {}, assistant: { model: 'synthetic/chat', humanHandoff: true, timeoutMs: 30000 } } }), staff = f.client(), customer = f.peer();
+  const until = async (ready: () => Promise<boolean> | boolean) => { const end = Date.now() + 12000; while (!await ready()) { if (Date.now() >= end) throw new Error('Synthetic handoff deadline.'); await Bun.sleep(30); } };
+  try {
+    await enroll(staff, 'tool-support-admin'); await enroll(customer, 'tool-support-customer');
+    const first = await customer.messaging.support.open({}, { requestId: 'tool-open-one' });
+    await customer.messaging.messages.send(first.id, { text: 'SYNTHETIC_REQUEST_A_PERSON' }, { requestId: 'tool-first-turn' });
+    await until(async () => (await customer.messaging.conversations.get(first.id)).owner === 'triage');
+    const waiting = await customer.messaging.conversations.get(first.id); expect(waiting).toMatchObject({ owner: 'triage', ownerId: null, ownerEpoch: 2 });
+    expect((await customer.messaging.messages.list(first.id)).items).toHaveLength(1);
+    const owned = await staff.messaging.support.claim(first.id, waiting.ownerEpoch, { requestId: 'tool-claim-one' }); expect(owned.reviewCount).toBe(0);
+    const second = await customer.messaging.support.open({}, { requestId: 'tool-open-two' });
+    await customer.messaging.messages.send(second.id, { text: 'SYNTHETIC_HELD_HANDOFF' }, { requestId: 'tool-held-turn' });
+    await until(() => entered);
+    const takeover = await staff.messaging.support.claim(second.id, second.ownerEpoch, { requestId: 'tool-held-takeover' });
+    release();
+    await until(async () => (await f.zero.messaging!.runtime.read<any[]>(applicationServiceDataScope(), 'messaging.jobs.pending', { scopeId: 'application' }, () => {})).length === 0);
+    expect(await customer.messaging.conversations.get(second.id)).toMatchObject({ owner: 'human', ownerId: staff.user!.userId, ownerEpoch: takeover.ownerEpoch });
+    expect((await customer.messaging.messages.list(second.id)).items).toHaveLength(1); expect(calls).toBe(2);
+  } finally { release(); staff.disconnect(); customer.disconnect(); await f.close(); await provider.stop(true); }
 }, 90000);
 
 test('Guardian availability and messaging share native sockets without confusing presence, typing, membership or read receipts', async () => {
@@ -355,6 +452,9 @@ test('native review HTTP and SDK retain the failed attempt, require an explicit 
     return Response.json({ id: 'synthetic-review-reply', object: 'chat.completion', created: 1, model: 'chat', choices: [{ index: 0, message: { role: 'assistant', content: 'Synthetic reviewed replacement answer.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } });
   } });
   const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1'), staff = f.client(), customer = f.peer();
+  let stopReview: (() => void) | undefined;
+  const reviewSnapshots: string[][] = [];
+  const waitReview = async (ready: () => boolean) => { const until = Date.now() + 5000; while (!ready()) { if (Date.now() >= until) throw new Error('Native review live deadline.'); await Bun.sleep(20); } };
   try {
     await enroll(staff, 'review-staff'); await enroll(customer, 'review-customer');
     const conversation = await customer.messaging.support.open({ title: '' }, { requestId: 'review-open' });
@@ -363,6 +463,9 @@ test('native review HTTP and SDK retain the failed attempt, require an explicit 
     while (current.owner !== 'triage' && Date.now() < until) { await Bun.sleep(50); current = await customer.messaging.conversations.get(conversation.id); }
     expect(current.owner).toBe('triage'); expect(calls).toBe(1);
     const claimed = await staff.messaging.support.claim(conversation.id, current.ownerEpoch, { requestId: 'review-staff-claim' });
+    expect(claimed.reviewCount).toBe(1); expect(current.reviewCount).toBeUndefined();
+    stopReview = staff.messaging.watchReview(conversation.id, page => reviewSnapshots.push(page.items.map(value => value.id)));
+    await waitReview(() => reviewSnapshots.at(-1)?.length === 1);
     await expect(customer.messaging.review.list(conversation.id)).rejects.toMatchObject({ status: 403 });
     const items = await staff.messaging.review.list(conversation.id); expect(items.items).toHaveLength(1);
     const old = items.items[0]!, detail = await staff.messaging.review.get(conversation.id, old.id);
@@ -371,6 +474,7 @@ test('native review HTTP and SDK retain the failed attempt, require an explicit 
     const options = { requestId: 'review-explicit-retry' }, accepted = await staff.messaging.review.retry(conversation.id, old.id, claimed.ownerEpoch, true, options);
     expect(accepted.replacementJobId).not.toBe(old.id);
     expect(await staff.messaging.review.retry(conversation.id, old.id, claimed.ownerEpoch, true, options)).toEqual(accepted);
+    await waitReview(() => reviewSnapshots.at(-1)?.length === 0);
     release();
     const deadline = Date.now() + 10000; let messages = await customer.messaging.messages.list(conversation.id);
     while (!messages.items.some(row => row.authorKind === 'assistant') && Date.now() < deadline) { await Bun.sleep(50); messages = await customer.messaging.messages.list(conversation.id); }
@@ -382,7 +486,7 @@ test('native review HTTP and SDK retain the failed attempt, require an explicit 
     const evidence = await staff.logging.page('audit', { family: 'communications' });
     expect(evidence.events.some(row => row.event.action === 'messaging.review.detail.prepared')).toBe(true);
     expect(JSON.stringify(evidence)).not.toContain('Synthetic review request.'); expect(JSON.stringify(evidence)).not.toContain('Synthetic reviewed replacement answer.');
-  } finally { release(); staff.disconnect(); customer.disconnect(); await f.close(); await provider.stop(true); }
+  } finally { release(); stopReview?.(); staff.disconnect(); customer.disconnect(); await f.close(); await provider.stop(true); }
 }, 90000);
 
 /** Actual loopback provider transport; the real AI gateway, Torrent, Guardian and private actors remain in the path. */

@@ -18,6 +18,8 @@ import { OBS_CODES } from '../../observability/codes';
 import { createMessagingRecipientPolicy, createMessagingAccessPolicy } from '../../messaging/recipient-policy';
 import { assertNotificationEffectSchema } from '../../notifications/notification-effect-schema';
 import { ManagedMessagingGroups } from '../../messaging/groups';
+import { createMessagingVisitorRoutes } from '../../messaging/visitor-routes';
+import { ZERO_SYNC_EPHEMERAL_CHANNEL } from '../../runtime/service-keys';
 export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroAppRuntime; systemDB: ReactiveDB; config: ResolvedConfig; authorization: AuthMiddlewareAuthorizationOptions; startAuth(): Promise<void> }): Promise<void> {
   const { app, runtime, systemDB, config, authorization } = input;
   if (!config.messaging || config.auth === false) return;
@@ -37,6 +39,7 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
   const directory = new ManagedMessagingDirectory({ db: systemDB, users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
     assistantRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.assistants[id] && accessPolicy(scope, userId, config.messaging.assistants[id].access)),
     groupRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.groups[id] && accessPolicy(scope, userId, config.messaging.groups[id].members)),
+    supportEntryRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.supportEntries[id] && config.messaging.supportEntries[id].tenantId === scope.tenantId && accessPolicy(scope, userId, config.messaging.supportEntries[id].staff)),
     supportRecipient: createMessagingRecipientPolicy({ users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
       kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null, support: config.messaging.support,
       assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile() }),
@@ -49,7 +52,8 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
     ai: runtime.get(ZERO_AI_SERVICE) ?? null, logging: logging ?? null, notifications: config.messaging.notifications ? runtime.require(ZERO_NOTIFICATION_SERVICE) : runtime.get(ZERO_NOTIFICATION_SERVICE) ?? null,
     dispatchFailed: () => { try { emitPlatformCodeTo(runtime.require(ZERO_OBSERVABILITY_RUNTIME), OBS_CODES.MESSAGING_JOB_DISPATCH_RETRY); } catch { /* Durable work retains its original identity. */ } } }) : null;
   if (jobs) { runtime.set(ZERO_MESSAGING_JOBS, jobs); runtime.addCleanup(async () => { runtime.clear(ZERO_MESSAGING_JOBS, jobs); await jobs.close(); }); }
-  const service = new MessagingService({ runtime: content, config: config.messaging, directory, attachments, groups, ...(logging ? { logging } : {}), ...(jobs ? { jobs } : {}) });
+  const service = new MessagingService({ runtime: content, config: config.messaging, directory, attachments, groups, getEphemeral: () => runtime.get(ZERO_SYNC_EPHEMERAL_CHANNEL) ?? null, ...(logging ? { logging } : {}), ...(jobs ? { jobs } : {}) });
   runtime.set(ZERO_MESSAGING, service); runtime.addCleanup(() => { runtime.clear(ZERO_MESSAGING, service); });
+  app.use(createMessagingVisitorRoutes(() => runtime.get(ZERO_MESSAGING) ?? null));
   app.use(createMessagingPlugin({ getService: () => runtime.get(ZERO_MESSAGING) ?? null, getTokenService: () => runtime.get(ZERO_AUTH_TOKEN_SERVICE) ?? null, authorization, getLoggingRuntime: () => runtime.get(ZERO_LOGGING_RUNTIME) ?? null }));
 }

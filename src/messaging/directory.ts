@@ -9,7 +9,7 @@ import { messagingFail, messagingId, messagingInteger, messagingRecord, messagin
 import { AuthError } from '../auth/types';
 import { MESSAGING_DIRECTORY_ELIGIBLE } from './directory-eligibility';
 
-interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean }
+interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; supportEntryRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean }
 /** The server owns Guardian relationships and published avatar descriptors; caller-selected identity metadata is ignored. */
 export class ManagedMessagingDirectory implements MessagingDirectory {
   constructor(private readonly deps: DirectoryDependencies) {}
@@ -42,6 +42,9 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
   assistantRecipient(scope: ServiceDataScope, userId: string, assistantId: string): boolean {
     try { this.assertRecipient(scope, userId); return this.deps.assistantRecipient?.(scope, userId, assistantId) === true; }
     catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
+  }
+  supportRecipient(scope: ServiceDataScope, userId: string, entryId: string): boolean {
+    return this.notificationRecipient(scope, userId, true) && this.deps.supportEntryRecipient?.(scope, userId, entryId) === true;
   }
   groupRecipient(scope: ServiceDataScope, userId: string, groupId: string): boolean {
     try { this.assertRecipient(scope, userId); return this.deps.groupRecipient?.(scope, userId, groupId) === true; }

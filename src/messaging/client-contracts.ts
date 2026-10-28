@@ -10,7 +10,10 @@ export interface MessagingClient extends Omit<MessagingApi, 'attachments'> {
   watchMessages(conversationId: string, listener: (page: MessagingPage<DurableMessage>) => void, options?: MessagingWatchOptions<MessageHistoryQuery>): () => void;
   watchContacts(listener: (page: MessagingPage<MessagingContact>) => void, options?: MessagingWatchOptions<{ after?: string; limit?: number }>): () => void;
   watchSupportQueue(listener: (page: MessagingPage<MessagingSupportQueueItem>) => void, options?: MessagingWatchOptions<MessagingSupportQueueQuery>): () => void;
+  watchReview(conversationId: string, listener: (page: MessagingPage<import('./review-contracts').MessagingReviewItem>) => void, options?: MessagingWatchOptions<{ after?: string; limit?: number }>): () => void;
 }
 export type * from './contracts';
 export type * from './attachment-contracts';
 export type * from './review-contracts';
+export { createSupportChatClient, forgetExpiredSupportChat } from './visitor-client';
+export type { SupportChatClient, SupportChatConnectOptions } from './visitor-client';

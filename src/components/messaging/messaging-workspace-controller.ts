@@ -177,6 +177,17 @@ export class MessagingWorkspaceController {
     async receipt => { if (receipt.operation !== 'contact') throw new Error(); return null; }, () => {}); }
   checkCommand(): Promise<void> { return this.commands.check(); }
   retryCommand(): Promise<void> { return this.commands.retry(); }
+  resolveReview(jobId: string, action: 'retry' | 'dismiss'): Promise<void> {
+    const conversation = this.state.conversation; if (!conversation || !this.current()) return Promise.resolve();
+    const id = conversation.id, epoch = conversation.ownerEpoch, selection = this.selection;
+    return this.commands.execute(action === 'retry' ? 'Retry reviewed work' : 'Dismiss reviewed work', options => action === 'retry'
+      ? this.source.review.retry(id, jobId, epoch, true, options) : this.source.review.dismiss(id, jobId, epoch, options), async receipt => {
+        if (receipt.operation !== 'review.' + action) throw new Error();
+        const detail = await this.source.review.get(id, jobId, { signal: this.abort.signal });
+        if (!detail.resolution || detail.resolution.id !== receipt.resourceId || detail.resolution.action !== action) throw new Error();
+        return detail.resolution;
+      }, () => { if (selection === this.selection) void this.refreshSelected(selection); });
+  }
   dispose(): void { this.abort.abort(); this.selectedAbort?.abort(); this.stopList?.(); this.stopHead?.(); this.transcript?.close(); this.uploads.clear(); this.sends.clear(); this.commands.clear(); this.listeners.clear(); this.state = initialEmpty; }
   private canEdit(): boolean { return this.current() && !!this.state.conversation && !['sending', 'unknown'].includes(this.state.draft.phase); }
   private draftChanged(): void { const id = this.state.selectedId; if (id) this.set({ draft: this.sends.draft(id, this.state.visibility), uploads: this.uploads.snapshot(id, this.state.visibility) }); }

@@ -16,7 +16,10 @@ export function assertMessagingConversation(value: unknown): asserts value is Co
   const r = record(value); text(r.id); text(r.title, 200); for (const key of ['revision', 'createdAt', 'updatedAt', 'ownerEpoch', 'unreadCount']) integer(r[key]);
   if (!['direct', 'group', 'support', 'assistant'].includes(r.kind) || !['human', 'assistant', 'triage'].includes(r.owner) || typeof r.archived !== 'boolean' || !Array.isArray(r.participants) || r.participants.length > 100) bad();
   if (r.assistantId !== undefined && r.assistantId !== null) text(r.assistantId, 64);
+  if (r.assistantName !== undefined) text(r.assistantName, 120);
   if (r.managedGroupId !== undefined && r.managedGroupId !== null) text(r.managedGroupId, 64);
+  if (r.reviewCount !== undefined) integer(r.reviewCount);
+  if (r.assistantActivity !== undefined && r.assistantActivity !== null) { const activity = record(r.assistantActivity); text(activity.runId); if (!['queued', 'thinking', 'responding'].includes(activity.state)) bad(); }
   if (r.ownerId !== null) text(r.ownerId);
   r.participants.forEach((item: unknown) => { const member = record(item); text(member.id); integer(member.joinedAt); if (!['user', 'external', 'assistant'].includes(member.kind) || !['owner', 'member', 'staff', 'customer'].includes(member.role)) bad();
     if (member.name !== undefined || member.avatarUrl !== undefined) assertMessagingDirectoryEntry({ id: member.id, name: member.name === undefined ? 'Member' : member.name, avatarUrl: member.avatarUrl ?? null });

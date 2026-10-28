@@ -66,3 +66,22 @@ test('configured groups reuse Guardian policy-trusted fields and keep ordinary c
   expect(config && config.groups.team!.policyHash).toMatch(/^[a-f0-9]{64}$/);
   expect(() => resolveMessagingConfig({ groups: { invalid: { members: { properties: { untrusted: 'yes' } } } } }, '/synthetic', auth)).toThrow();
 });
+
+test('public support entries require a fixed secure origin, explicit tenant ownership and a deliberately public assistant', () => {
+  const auth = resolveAuthBehaviorConfig(), resolve = (entries: unknown) => resolveMessagingConfig({ support: { entries: entries as never } }, '/synthetic', auth);
+  const entry = resolve({ website: { origin: 'https://support.example.test' } });
+  expect(entry && entry.supportEntries.website).toMatchObject({ tenantId: null, assistantId: null, sessionTtlSeconds: 86400, maxVisitors: 10000 });
+  expect(entry && entry.supportEntries.website!.policyHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(resolve({ local: { origin: 'http://127.0.0.1:4317' } })).toBeTruthy();
+  for (const value of [
+    { origin: 'https://support.example.test/' }, { origin: 'http://support.example.test' }, { origin: 'https://user:password@support.example.test' },
+    { origin: 'https://support.example.test#secret' }, { origin: 'https://support.example.test', tenantId: 'foreign' },
+    { origin: 'https://support.example.test', sessionTtlSeconds: 59 }, { origin: 'https://support.example.test', maxVisitors: Infinity },
+  ]) expect(() => resolve({ website: value })).toThrow();
+  const multi = resolveAuthBehaviorConfig({ tenancy: 'multi' });
+  expect(() => resolveMessagingConfig({ support: { entries: { website: { origin: 'https://support.example.test' } } } }, '/synthetic', multi)).toThrow();
+  expect(resolveMessagingConfig({ support: { entries: { website: { origin: 'https://support.example.test', tenantId: 'known-tenant' } } } }, '/synthetic', multi)).toBeTruthy();
+  expect(() => resolveMessagingConfig({ assistants: { private: { access: 'admin' } }, support: { entries: { website: { origin: 'https://support.example.test', assistant: 'private' } } } }, '/synthetic', auth)).toThrow();
+  let invoked = false; const accessor = Object.defineProperty({}, 'website', { enumerable: true, get() { invoked = true; return {}; } });
+  expect(() => resolve(accessor)).toThrow(); expect(invoked).toBe(false);
+});

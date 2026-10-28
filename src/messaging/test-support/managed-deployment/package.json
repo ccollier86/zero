@@ -1,0 +1,10 @@
+{
+  "name": "zero-messaging-managed-deployment-proof",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@zero/framework": "file:/input/framework.tgz",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  }
+}

@@ -48,6 +48,22 @@ export function receiveMessagingJobResult(context: DatabaseWriteCommandContext, 
     return { state: 'received' };
   });
 }
+/** A model may request triage, never choose staff, expose notes or publish a stale owner result. */
+export function handoffMessagingJob(context: DatabaseWriteCommandContext, input: unknown): unknown {
+  return messagingCommand(context, () => {
+    const r = messagingRecord(input, ['scopeId', 'id', 'nonce', 'policyHash', 'providerId']), job = jobInScope(context, r.id, r.scopeId);
+    if (job.kind !== 'assistant' || job.state !== 'calling' || job.lease_nonce !== messagingId(r.nonce) || job.policy_hash !== r.policyHash || !job.lease_expires || job.lease_expires <= Date.now()) messagingFail('MESSAGING_JOB_CONFLICT');
+    if (!currentAssistantTurn(context, job)) return terminalJob(context, job, 'cancelled', 'TURN_SUPERSEDED');
+    const conversation = context.db.get('messaging_conversations', job.conversation_id) as JobConversation;
+    if (conversation.kind !== 'support') messagingFail('MESSAGING_FORBIDDEN', 403);
+    if (conversation.owner_epoch >= Number.MAX_SAFE_INTEGER - 2 || conversation.revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
+    const providerId = r.providerId === null ? null : messagingText(r.providerId, 200), now = Date.now();
+    finishJobAttempt(context, job, 'completed', null, providerId);
+    context.db.update('messaging_conversations', conversation.id, { owner: 'triage', owner_id: null, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1, updated_at: now, public_updated_at: now });
+    context.db.update('messaging_jobs', job.id, { state: 'accepted', provider_id: providerId, lease_nonce: null, lease_expires: null, updated_at: now });
+    return { state: 'accepted' };
+  });
+}
 export function publishMessagingJobResult(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
     const r = messagingRecord(input, ['scopeId', 'id', 'nonce', 'notificationsEnabled', 'notificationPath']), job = jobInScope(context, r.id, r.scopeId);

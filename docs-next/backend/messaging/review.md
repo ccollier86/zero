@@ -103,6 +103,18 @@ The managed HTTP/SDK scenario uses only a loopback synthetic provider and real
 Guardian, private Fabric, Logging, Torrent and AI services. No real provider,
 production app or live identity is used.
 
-Those focused results do not qualify a complete messaging release. The managed
-review workspace, native notification/channel delivery, public customer
-admission and final installed/Linux/browser/update checks remain separate work.
+The managed workspace now exposes live review discovery and shared-origin-morph
+detail/confirmation dialogs. `watchReview(conversationId, listener, options)`
+uses authorized committed projections, not raw job-table Sync or polling.
+`reviewCount` is omitted for customers. Details include bounded retained attempts
+and a saved provider draft clearly labeled **not sent**. Retry requires explicit
+duplicate/cost-risk acknowledgment, uses the conversation's named bot policy and
+creates one new fenced job; dismiss never pretends the old attempt succeeded.
+Unconfirmed results remain in the workspace's original-key command recovery UI.
+Canonical `assistantActivity` supplies queued/thinking/responding state from real
+current jobs, not timers. Neither run activity nor a successful job proves that
+a person read a message.
+
+Native HTTP/SDK and the actual operator browser flow exercise this surface.
+Installed/Linux/update qualification and full device/resource coverage remain
+separate gates. Public website support is documented [separately](./website-support.md).

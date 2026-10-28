@@ -8,7 +8,8 @@ import type { MessagingRuntime } from './runtime';
 import type { MessagingDirectory } from './service';
 import type { LoggingRuntime } from '../logging/logging-runtime';
 import { runWithLoggingAttribution } from '../logging/logging-attribution';
-import { messagingHash, messagingId } from './validation';
+import { messagingHash, messagingId, messagingRecord } from './validation';
+import { aiTool, defineAITools } from '../ai/ai-toolkit';
 import type { MessagingJobRow, MessagingJobState } from './job-model';
 import { TERMINAL_MESSAGING_JOBS } from './job-model';
 import { AuthError } from '../auth/types';
@@ -18,6 +19,7 @@ import { executeMessagingNotification } from './notification-execution';
 export interface MessagingJobContext {
   job: MessagingJobRow; valid: boolean; customerId: string | null; customerKind: 'user' | 'external' | 'assistant' | null;
   conversationKind?: string | null; assistantId?: string;
+  supportEntryId?: string | null; visitorPolicyHash?: string | null; visitorExpiresAt?: number | null;
   attachmentOnly: boolean; messages: { role: 'user' | 'assistant'; content: string }[]; result: { text: string; provider_id: string | null } | null;
 }
 export interface MessagingJobExecutionDependencies {
@@ -43,6 +45,10 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
     let failureCode = 'ADMISSION_REQUIRES_REVIEW';
     const current = () => {
       check();
+      if (captured.supportEntryId && captured.customerKind === 'external') {
+        const entry = deps.config.supportEntries[captured.supportEntryId];
+        if (!entry || entry.tenantId !== scope.tenantId || entry.assistantId !== assistantId || entry.policyHash !== captured.visitorPolicyHash || !captured.visitorExpiresAt || captured.visitorExpiresAt <= Date.now()) throw new AuthError('Public support admission changed.', 'MESSAGING_FORBIDDEN', 403);
+      }
       if (captured.customerKind === 'user' && captured.customerId) {
         deps.directory.assertRecipient(scope, captured.customerId);
         if (captured.conversationKind === 'assistant' && deps.directory.assistantRecipient?.(scope, captured.customerId, assistantId) !== true) throw new AuthError('Messaging assistant access changed.', 'MESSAGING_FORBIDDEN', 403);
@@ -61,10 +67,18 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
         const calling = await write<{ state: MessagingJobState }>('messaging.job.call', {}, current);
         if (calling.state !== 'calling') return result(calling.state);
         current(); failureCode = 'PROVIDER_OUTCOME_UNKNOWN';
+        const handoff = policy.humanHandoff && captured.conversationKind === 'support';
+        const tools = handoff ? defineAITools({ requestHuman: aiTool({ description: 'Request an authorized human support team member for this same conversation when the customer asks for a person or you cannot safely help. This only enters the waiting queue; it does not assign a person or send a reply.', input: { type: 'object', properties: {}, additionalProperties: false } }) }) : undefined;
         const response = await deps.ai.generateText({ model: policy.model, instructions: policy.instructions, messages: captured.messages,
-          maxOutputTokens: policy.maxOutputTokens, maxRetries: 0, abortSignal: AbortSignal.any([signal, AbortSignal.timeout(policy.timeoutMs)]) });
+          ...(tools ? { tools } : {}), maxOutputTokens: policy.maxOutputTokens, maxRetries: 0, abortSignal: AbortSignal.any([signal, AbortSignal.timeout(policy.timeoutMs)]) });
         current(); failureCode = 'RESULT_REQUIRES_REVIEW';
         const providerId = typeof response.response.id === 'string' && response.response.id.length <= 200 ? response.response.id : null;
+        if (response.toolCalls.length) {
+          if (!handoff || response.toolCalls.length !== 1 || response.toolCalls[0]!.toolName !== 'requestHuman') throw new AuthError('The assistant result requires review.', 'MESSAGING_JOB_CONFLICT', 409);
+          messagingRecord(response.toolCalls[0]!.input, []);
+          const transferred = await write<{ state: MessagingJobState }>('messaging.job.handoff', { policyHash: policy.policyHash, providerId }, current);
+          return result(transferred.state);
+        }
         const received = await write<{ state: MessagingJobState }>('messaging.job.receive', { text: response.text, providerId, maxMessageLength: deps.config.maxMessageLength }, current);
         if (received.state !== 'received') return result(received.state);
       }

@@ -23,10 +23,10 @@ sidebar and a main conversation area.
 
 Facebook Messenger was an application-specific example, not a Zero feature.
 Third-party provider connectors are application-owned and do not gate the
-framework. Native public website/portal support has its own remaining work.
+framework. [Native website/portal support](./website-support.md) has its own restricted admission.
 Email-to-conversation bridging is not a messaging requirement or release gate.
 
-[Configuration and facade](./configuration.md) · [Review](./review.md) ·
+[Configuration and facade](./configuration.md) · [Website support](./website-support.md) · [Review](./review.md) ·
 [Notifications](./notifications.md) · [Guardian presence](../guardian/presence.md)
 
 ## Implementation Status
@@ -56,10 +56,10 @@ and can transfer ownership before the old owner leaves.
 | Contacts/directory/tenant scope | Implemented, default everyone; contact requests optional | Full installed/security matrix |
 | Ordinary groups | Native mutations plus managed create/name/archive/member/owner controls | Full installed/browser matrix |
 | Configured groups | Declarative Guardian rules, reconciliation, remove/rejoin history | Scale/resource and installed qualification |
-| Internal assistants | Named discovery/open, policy/identity-pinned jobs, owner review API, support independent | Job-review dashboard/run activity and group-bot participation are not implemented |
+| Internal assistants | Named discovery/open, pinned jobs, native owner-review UI and canonical run activity; support independent | Group-bot participation, general tools/RAG and token streaming are outside this baseline |
 | Typing/presence | Canonical messaging typing and existing Guardian availability bound through AppProvider/workspace | Full installed/real-device lifecycle matrix |
 | Messages/files/notifications | Canonical receipts/history/private bytes, native live workspace and notice recovery | Installed Linux/worker/deployment qualification |
-| Public website/portal support | Authenticated support claim/takeover/private notes exist | Visitor capabilities, configured human destinations and native support workspace |
+| Public website/portal support | Native widget, entry-routed staff admission, expiring visitor sessions, private files/typing, human/AI handoff, resolve/reopen | Installed Linux/update and broader device/resource qualification |
 
 The [implementation checkpoint](../../_work/messaging-backend-implementation.md)
 separates native source evidence from unfinished work. A feature-branch example

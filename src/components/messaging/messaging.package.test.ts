@@ -45,6 +45,8 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
       'src/frontend/client/messaging-watch.ts', 'src/messaging/client-contracts.ts', 'src/messaging/live-error.ts',
       'src/messaging/contracts.ts', 'src/messaging/realm-queries.ts', 'src/components/messaging/workspace-transcript.ts',
       'src/components/messaging/use-messaging-transcript.ts',
+      'src/components/messaging/support-chat.tsx', 'src/components/messaging/workspace-review.tsx', 'src/components/messaging/use-support-typing.ts',
+      'src/messaging/visitor-client.ts', 'src/messaging/visitor-service.ts', 'src/messaging/visitor-session.ts', 'src/messaging/visitor-routes.ts',
       'src/frontend/client/guardian-presence-presentation.ts', 'src/components/avatar-group/avatar-group.styles.css',
       'src/frontend/client/typing-indicator-hooks.ts', 'src/frontend/client/typing-indicator-model.ts',
       'src/sync/client/ephemeral-client.ts', 'src/sync/client/ephemeral-store.ts', 'src/sync/ephemeral-channel.ts',
@@ -95,7 +97,7 @@ import type { MessagingClient } from '@zero/framework/messaging/client';
 const names = ['MessagingLayout', 'ConversationList', 'ConversationListHeading', 'ConversationHeader', 'ConversationSeparator',
   'ConversationTypingIndicator', 'ConversationAssistantActivity', 'MessageBubble', 'MessageDeliveryIndicator', 'MessagingComposer',
   'useConversationTyping', 'useMessagingPresence', 'conversationActivityLabel', 'conversationActivityMembers',
-  'MessagingWorkspace', 'useMessagingWorkspace', 'MessagingWorkspaceController', 'MessagingLiveError'] as const;
+  'MessagingWorkspace', 'useMessagingWorkspace', 'MessagingWorkspaceController', 'MessagingLiveError', 'SupportChat', 'useSupportTyping'] as const;
 export const publicAliases = names.every(name => Parts[name] === Root[name] && Parts[name] === Frontend[name] && Parts[name] === Alias[name]);
 export const message: MessagingMessage = { id: 'fixture-message', author: { id: 'fixture-user', kind: 'user', label: 'Customer' },
   text: '<fixture text>', createdAt: Date.UTC(2026, 9, 24, 12), delivery: 'accepted' };
@@ -106,6 +108,7 @@ const workspace: MessagingWorkspaceProps = { avatarShape: 'square', maxMessages:
 export function nativeFacadeTypes(client: MessagingClient) {
   void client.conversations.people('admitted-conversation');
   void client.messages.get('admitted-conversation', 'accepted-message');
+  void client.watchReview('admitted-conversation', page => { const count: number = page.items.length; });
   return client.watchContacts(page => { const name: string | undefined = page.items[0]?.name; }, { query: { limit: 50 } });
 }
 export let hookSsr = false;
@@ -127,6 +130,7 @@ export function Consumer() {
       <Parts.MessageDeliveryIndicator {...delivery} /><Parts.ConversationAssistantActivity {...assistant} />
     </Parts.MessagingLayout>
     <Parts.MessagingWorkspace {...workspace} />
+    <Parts.SupportChat entry="website" resume={false} />
   </Root.AppProvider>;
 }
 `;
