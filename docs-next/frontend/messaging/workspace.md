@@ -102,6 +102,21 @@ pass a tenant ID from a URL, selector, participant record or search field.
   avatars use a shape-matched perimeter by default, including square/rounded
   avatars. A group, assistant or visitor is not assigned a fake human status.
 
+Configured support adds “Talk to a person” and, when admitted, “Ask the support
+assistant” to new conversations. A customer in an assistant-owned support chat
+can request a human from its header. The same conversation/history is retained;
+the waiting/assigned label reflects canonical ownership, not invented staff
+presence or proof anyone read the request.
+
+Admitted staff receive an “Open support queue” sidebar action. Its bounded live
+pages filter waiting/AI/assigned requests and expose only content-free metadata.
+An explicit claim joins the conversation; taking an already human-owned request
+uses the shared confirmation manager. Unknown claims/handoffs retain the same
+pending-command reconciliation UI as other management changes. The queue opens
+one scoped stream while displayed and releases it on departure; it does not
+subscribe once per request or expose private notes. It is not the unfinished
+anonymous website widget, a global priority queue or a provider-job dashboard.
+
 New-chat, member and message menus reuse Zero Popover, magnetic directory
 highlight, ScrollArea/PopoverViewport, buttons, inputs, avatars and modal
 confirmations. Overflow is bounded on narrow screens; a short member list does
@@ -227,8 +242,7 @@ retired callbacks, visibility-separated drafts, historical live updates and
 bounded memory. The package consumer separately checks public aliases, SSR and
 browser import cleanliness. See [current implementation evidence](../../_work/messaging-workspace-review.md).
 
-This workspace does **not** yet supply a managed content-free support queue,
-public visitor admission, native email conversation association, a provider-job
+This workspace does **not** yet supply public visitor admission, a provider-job
 review dashboard, group-bot participation, global conversation search or live
 assistant-run activity projection. Their existing APIs/plans and applicable
 server protections are not replaced by fake UI behavior. Third-party messaging

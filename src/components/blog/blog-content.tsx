@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink } from '../animate-ui/icons/external-link';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverTrigger, PopoverContent, PopoverViewport } from '../surfaces/popover';

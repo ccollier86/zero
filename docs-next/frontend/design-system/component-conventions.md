@@ -89,3 +89,21 @@ Server/domain services still enforce Guardian authority. Use established safe
 observability/error presentation; showing a toast is not a receipt. See
 [external feedback surfaces](./external-surfaces.md),
 [tokens](./tokens.md) and [runtime providers](../runtime/index.md).
+## Icon Source Rule
+
+Use Zero's named animated icons first. An external icon is permitted only when
+the current Zero catalog has no suitable glyph for that meaning. Different
+export spelling is not a gap: refresh uses `RotateCw`, spinner uses `Loader`,
+settings uses `Settings`, and trash/user variants use `Trash`/`User`.
+
+Within framework source, import the existing named implementation; consuming
+apps use `@zero/framework/icons`. This preserves the shared Button animation
+context, sizes and accessibility conventions. Do not create another icon set or
+replace native icons with static Lucide copies during component migration.
+
+The recent messaging, blog, logging, command-palette, presence-settings and
+pagination consumers are checked against the actual registry by
+`src/components/animate-ui/icons/native-consumers.test.ts`. Its explicit fallback
+list documents missing semantic glyphs and fails when a native replacement
+becomes available. It does not claim that all legacy framework UI has been
+converted. See [named icons](./icons.md) and [animation](./icon-animation.md).

@@ -30,6 +30,35 @@ async function fixture() {
 }
 const group = (actor: unknown, requestId: string) => ({ actor, id: 'group-one', requestId, kind: 'group', title: 'Synthetic group', userIds: ['user-bob'], contactsOnly: false, maxParticipants: 100 });
 
+test('a dedicated support-queue hint reaches non-member staff without ordinary message or private-note fanout', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), customer = f.actor(scope), staff = { ...customer, id: 'queue-staff', staff: true }, guard = () => {};
+  let changes = 0, ordinary = 0;
+  const stop = f.runtime.subscribe(scope, () => { changes++; }, { actorId: staff.id, supportQueue: true });
+  const stopOrdinary = f.runtime.subscribe(scope, () => { ordinary++; }, { actorId: staff.id });
+  try {
+    const open = { actor: customer, id: 'support-one', requestId: 'open', title: 'PRIVATE_QUEUE_TITLE', owner: 'assistant', channelId: null };
+    await f.runtime.write(scope, 'messaging.support.open', open, 'queue-open', guard);
+    expect(changes).toBe(1); expect(ordinary).toBe(0);
+    const queue = await f.runtime.read<{ items: object[] }>(scope, 'messaging.support.queue', { actor: staff }, guard);
+    expect(Object.keys(queue.items[0]!).sort()).toEqual(['createdAt', 'id', 'owner', 'ownerEpoch']);
+    expect(JSON.stringify(queue)).not.toContain('PRIVATE_QUEUE_TITLE');
+    await expect(f.runtime.read(scope, 'messaging.messages', { actor: staff, conversationId: 'support-one' }, guard)).rejects.toMatchObject({ code: 'MESSAGING_NOT_FOUND' });
+    await f.runtime.write(scope, 'messaging.message.send', { actor: customer, conversationId: 'support-one', id: 'message-one', requestId: 'message', text: 'Private message', maxMessageLength: 20000 }, 'queue-message', guard);
+    expect(changes).toBe(1); expect(ordinary).toBe(0);
+    const escalate = { actor: customer, id: 'support-one', requestId: 'person', expectedEpoch: 1 };
+    await f.runtime.write(scope, 'messaging.support.request-human', escalate, 'queue-escalate', guard);
+    expect(changes).toBe(2);
+    await f.runtime.write(scope, 'messaging.support.request-human', escalate, 'queue-escalate', guard);
+    expect(changes).toBe(2);
+    await f.runtime.write(scope, 'messaging.support.claim', { actor: staff, id: 'support-one', requestId: 'claim', expectedEpoch: 2, maxParticipants: 100 }, 'queue-claim', guard);
+    expect(changes).toBe(3);
+    await f.runtime.write(scope, 'messaging.message.send', { actor: staff, conversationId: 'support-one', id: 'note-one', requestId: 'note', visibility: 'staff', text: 'PRIVATE_QUEUE_NOTE', maxMessageLength: 20000 }, 'queue-note', guard);
+    expect(changes).toBe(3);
+    await f.runtime.write(trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'other' }), 'messaging.support.open', { ...open, actor: { ...customer, scopeId: 'tenant:other' } }, 'queue-other-scope', guard);
+    expect(changes).toBe(3);
+  } finally { stop(); stopOrdinary(); await f.close(); }
+}, 30000);
+
 test('managed ownership retains separate concurrent tenant files and accepted receipts across restart without granting another scope', async () => {
   const f = await fixture(), first = trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'org-one' }), second = trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'org-two' });
   const guard = () => {};

@@ -22,7 +22,7 @@ provider connectors are app-owned, not Zero configuration or release gates.
 
 This is a feature-branch API reference. The source tests below do not make these
 APIs available in an older archive with the same `2.6.0` version string. Public
-visitor admission, email-backed support and final installed release qualification
+visitor admission, the support workspace and final installed release qualification
 are still separate gates. The branch's [self-wired workspace](../../frontend/messaging/workspace.md)
 now uses this native facade.
 
@@ -190,6 +190,48 @@ capability integration; uploading a file is not evidence a model read it.
 
 ## Support Compatibility And Review
 
+### Website/Portal Handling Modes
+
+Authenticated portal users can start support with the configured assistant or
+ask for a person directly. Public anonymous visitor admission is a separate,
+unfinished boundary; these examples require the ordinary authenticated SDK.
+Email-to-conversation bridging is not part of this feature.
+
+```ts
+const chat = await client.messaging.support.open(
+  { mode: 'human' }, // 'assistant' explicitly requests the admitted support bot
+  { requestId: crypto.randomUUID() },
+);
+// An existing customer conversation can request a human without changing IDs.
+await client.messaging.support.requestHuman(chat.id, chat.ownerEpoch, {
+  requestId: crypto.randomUUID(),
+});
+```
+
+Keep each mutation's original request ID when checking an interrupted result;
+the fresh IDs above represent separate deliberate actions, not retry code.
+Omitting `mode` uses the admitted support assistant if configured, otherwise
+triage. Human-first admission never dispatches an AI call. Asking for a person
+moves assistant ownership to triage and fences old work; it cannot select a
+staff ID or displace an already assigned person. A stale epoch is a conflict,
+not permission to retry with guessed current ownership.
+
+Staff use `support.queue({ owner: 'triage', limit: 25 })` or
+`watchSupportQueue(listener, { query: { owner: 'triage', limit: 25 } })`.
+Filters are `triage`, `assistant`, `human`, or omitted for all. The queue contains
+only IDs, owner state/epoch and creation time. It is scoped and paged, not global
+transcript access or a priority-order guarantee. Staff explicitly call
+`support.claim(id, ownerEpoch, mutationOptions)` to become a member. Current
+Guardian staff policy still applies at every read, commit and stream release.
+The live queue uses a dedicated committed, content-free hint: ordinary messages
+and private-note activity do not fan out to unjoined queue observers.
+
+The native workspace exposes this queue to admitted staff and customer support
+actions through the existing components. `capabilities.support` indicates that
+support is configured; `supportAssistant` indicates an admitted support-bot
+configuration. Neither is a provider-health or human-online claim. Old capability
+projections may omit those optional fields.
+
 The existing `assistant: { model, instructions, ... }` configuration is retained
 as the named `default` assistant. It no longer requires support. When support is
 enabled, it remains the compatibility support assistant. Alternatively choose a
@@ -228,7 +270,7 @@ wires canonical typing, private uploads/downloads, per-visibility drafts,
 read-visibility policy and retained live/backfilled history. See its
 [evidence and limits](../../_work/messaging-workspace-review.md). Source browser
 integration is not a substitute for final installed Linux/worker/deployment
-qualification or public visitor/email implementation.
+qualification or public visitor implementation. Email bridging is not a requirement.
 
 ## Migration And Qualification
 

@@ -135,6 +135,17 @@ export class MessagingWorkspaceController {
     const intent = structuredClone(input); return this.conversationCommand('Start conversation', 'conversation.create', options => this.source.conversations.create(intent, options));
   }
   openAssistant(id: string): Promise<void> { return this.conversationCommand('Open assistant', 'assistant.open', options => this.source.assistants.open(id, {}, options)); }
+  openSupport(mode?: 'assistant' | 'human'): Promise<void> {
+    return this.conversationCommand('Contact support', 'support.open', options => this.source.support.open(mode ? { mode } : {}, options));
+  }
+  claimSupport(id: string, expectedEpoch: number): Promise<void> {
+    return this.conversationCommand('Take support ownership', 'support.claim', options => this.source.support.claim(id, expectedEpoch, options), id);
+  }
+  requestHuman(): Promise<void> {
+    const conversation = this.state.conversation;
+    if (!conversation || !this.current() || conversation.kind !== 'support') return Promise.resolve();
+    return this.conversationCommand('Request human support', 'support.request-human', options => this.source.support.requestHuman(conversation.id, conversation.ownerEpoch, options), conversation.id);
+  }
   manage(action: 'rename' | 'archive' | 'add' | 'remove' | 'transfer' | 'takeover' | 'hand-back', value?: string): Promise<void> {
     const conversation = this.state.conversation; if (!conversation || !this.current()) return Promise.resolve();
     const id = conversation.id, revision = conversation.revision, epoch = conversation.ownerEpoch, selection = this.selection;

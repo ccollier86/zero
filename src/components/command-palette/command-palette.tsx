@@ -2,7 +2,8 @@
 
 /** Rich, instance-local command presentation. cmdk owns selection; Zero's manager owns the dialog. */
 import * as React from 'react';
-import { Search, ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
+import { Search } from '../animate-ui/icons/search';
 import { ControlledModal } from '../../modals/modal-controlled';
 import type { ModalContext } from '../../modals/modal-system.types';
 import { Command, CommandInput, CommandList, CommandItem } from '../ui/command';

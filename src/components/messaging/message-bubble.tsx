@@ -1,7 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { Check, CheckCheck, Clock3, CircleAlert, File, LoaderCircle } from 'lucide-react';
+// Double-check delivery, indeterminate warning and generic file glyphs are not
+// present in Zero's current catalog. Do not add covered icons to this fallback.
+import { CheckCheck, CircleAlert, File } from 'lucide-react';
+import { Check } from '../animate-ui/icons/check';
+import { Clock } from '../animate-ui/icons/clock';
+import { Loader } from '../animate-ui/icons/loader';
 import { MessagingAvatar } from './messaging-avatar';
 import { cn } from '../../lib/utils';
 import type { MessageDeliveryState, MessagingAttachment, MessagingAttachmentDisplay, MessagingMessageDisplay, NativeMessagingAttachmentDisplay } from '../../messaging/presentation';
@@ -10,7 +15,7 @@ import './messaging.css';
 const DELIVERY_LABELS: Record<MessageDeliveryState, string> = { queued: 'Queued', sending: 'Sending', accepted: 'Saved by server', delivered: 'Delivered', read: 'Read', failed: 'Failed', unknown: 'Delivery not confirmed' };
 export interface MessageDeliveryIndicatorProps { state: MessageDeliveryState }
 export function MessageDeliveryIndicator({ state }: MessageDeliveryIndicatorProps) {
-  const Icon = state === 'read' || state === 'delivered' ? CheckCheck : state === 'accepted' ? Check : state === 'sending' ? LoaderCircle : state === 'failed' || state === 'unknown' ? CircleAlert : Clock3;
+  const Icon = state === 'read' || state === 'delivered' ? CheckCheck : state === 'accepted' ? Check : state === 'sending' ? Loader : state === 'failed' || state === 'unknown' ? CircleAlert : Clock;
   return <span data-slot="message-delivery" data-state={state} className="zero-messaging-delivery"><Icon aria-hidden="true" className="size-3" /><span>{DELIVERY_LABELS[state]}</span></span>;
 }
 interface MessageBubbleDisplayProps<Attachment extends MessagingAttachmentDisplay> {

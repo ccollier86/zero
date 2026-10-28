@@ -2,7 +2,7 @@
 
 /** Self-wired publishing organism. Existing AppProvider/Guardian choose authority; DataTable owns query presentation and native facades own persistence. */
 import * as React from 'react';
-import { Plus } from 'lucide-react';
+import { Plus } from '../animate-ui/icons/plus';
 import { useClientMaybe } from '../../frontend/client/client-context';
 import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import type { Client } from '../../frontend/client/sdk';

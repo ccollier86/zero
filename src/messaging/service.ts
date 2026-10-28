@@ -112,6 +112,7 @@ export class MessagingService {
       action === 'add' || action === 'transfer' ? [messagingId(value)] : []), () => conversation(target, options.signal));
     };
     const assistantPolicy = this.deps.config.assistant ? this.deps.config.assistant.policyHash : null;
+    const supportAssistant = () => !!this.deps.config.support && !!this.deps.config.assistant && !!actor().assistantPolicies?.[this.deps.config.assistant.id];
     const ownership = (id: string, expectedEpoch: number, owner: 'human' | 'assistant' | 'triage', options: MessagingMutationOptions) => {
       if (owner === 'assistant' && !assistantPolicy && !Object.keys(actor(true).assistantPolicies ?? {}).length) messagingFail('MESSAGING_FORBIDDEN', 403);
       return afterCommit(write('messaging.conversation.owner', { id: messagingId(id), expectedEpoch: messagingInteger(expectedEpoch), owner, assistantPolicy,
@@ -148,7 +149,7 @@ export class MessagingService {
         options: mutation, read, write: (name, input, options, fence) => write(name, input, options, [], fence),
         run: (options, operation) => { const captured = actor(true), opts = mutation(options); return attributed(captured, opts, final(captured, true), operation); } }),
       capabilities: async () => ({ enabled: true, directory: this.deps.config.directory, canSupport: actor().staff, maxMessageLength: this.deps.config.maxMessageLength, maxParticipants: this.deps.config.maxParticipants, maxUploadBytes: this.deps.config.maxUploadBytes,
-        assistant: Object.keys(actor().assistantPolicies ?? {}).length > 0, notifications: this.deps.config.notifications }),
+        assistant: Object.keys(actor().assistantPolicies ?? {}).length > 0, notifications: this.deps.config.notifications, support: !!this.deps.config.support, supportAssistant: supportAssistant() }),
       directory: (query = {}, options) => audit('directory', null, async () => { const captured = actor(), check = final(captured); check(); options?.signal?.throwIfAborted();
         const page = this.deps.directory.list(scope, captured.id, query); check(); return page; }),
       receipt: (requestId, options) => read('messaging.receipt', { requestId: messagingId(requestId) }, options?.signal),
@@ -207,12 +208,19 @@ export class MessagingService {
       support: {
         open: (input, options) => {
           if (!this.deps.config.support) messagingFail('MESSAGING_FORBIDDEN', 403);
-          const r = messagingRecord(input, ['title']), opts = mutation(options), id = 'conversation_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40);
-          return afterCommit(write('messaging.support.open', { id, title: messagingText(r.title ?? '', 200, true), owner: assistantPolicy ? 'assistant' : 'triage', channelId: null,
+          const r = messagingRecord(input, ['title', 'mode']), opts = mutation(options), id = 'conversation_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40);
+          const mode = r.mode === undefined ? undefined : messagingChoice(r.mode, ['assistant', 'human']);
+          const automated = supportAssistant();
+          if (mode === 'assistant' && !automated) messagingFail('MESSAGING_FORBIDDEN', 403);
+          return afterCommit(write('messaging.support.open', { id, title: messagingText(r.title ?? '', 200, true), owner: mode !== 'human' && automated ? 'assistant' : 'triage', channelId: null,
             assistantId: this.deps.config.assistant ? this.deps.config.assistant.id : null }, opts), () => conversation(id, opts.signal));
         },
         queue: (query = {}, opts) => audit('support.queue', null, () => read('messaging.support.queue', { query }, opts?.signal)),
         claim: (id, epoch, opts) => afterCommit(write('messaging.support.claim', { id: messagingId(id), expectedEpoch: messagingInteger(epoch), maxParticipants: this.deps.config.maxParticipants }, opts), () => conversation(id, opts.signal)),
+        requestHuman: (id, epoch, opts) => {
+          if (!this.deps.config.support) messagingFail('MESSAGING_FORBIDDEN', 403);
+          return afterCommit(write('messaging.support.request-human', { id: messagingId(id), expectedEpoch: messagingInteger(epoch) }, opts), () => conversation(id, opts.signal));
+        },
       },
     };
     return Object.freeze({ ...api, assistants: Object.freeze(api.assistants), review: Object.freeze(api.review), conversations: Object.freeze(api.conversations), messages: Object.freeze(api.messages), contacts: Object.freeze(api.contacts), support: Object.freeze(api.support) });

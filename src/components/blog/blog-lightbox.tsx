@@ -1,7 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronLeft, ChevronRight, Minus, Plus, ScanSearch } from 'lucide-react';
+import { Minus, ScanSearch } from 'lucide-react';
+import { ChevronLeft } from '../animate-ui/icons/chevron-left';
+import { ChevronRight } from '../animate-ui/icons/chevron-right';
+import { Plus } from '../animate-ui/icons/plus';
 import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
 import { ControlledModal } from '../../modals/modal-controlled';

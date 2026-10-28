@@ -8,7 +8,7 @@ import { watchMessagingProjection } from './messaging-watch';
 import { createMessagingAttachmentClient, type MessagingBinaryTransport } from './messaging-attachment-client';
 import { assertMessagingReviewItem, assertMessagingReviewDetail, assertMessagingReviewResolution } from './messaging-review-response';
 export function messagingQueryString(input: object = {}): string {
-  const query = new URLSearchParams(); for (const key of ['before', 'after', 'limit', 'search', 'archived']) { const value = (input as Record<string, unknown>)[key]; if (value !== undefined) query.set(key, String(value)); }
+  const query = new URLSearchParams(); for (const key of ['before', 'after', 'limit', 'search', 'archived', 'owner']) { const value = (input as Record<string, unknown>)[key]; if (value !== undefined) query.set(key, String(value)); }
   return query.size ? '?' + query : '';
 }
 export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit) => Promise<T>, raw?: MessagingBinaryTransport): MessagingClient {
@@ -69,10 +69,12 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
     support: Object.freeze<MessagingClient['support']>({
       open: (input, opts) => mutate('/support', 'POST', input, opts, assertMessagingConversation), queue: (query = {}, opts) => call('/support/queue' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingSupportQueueItem, 50)),
       claim: (id, expectedEpoch, opts) => mutate('/support/' + encodeURIComponent(id) + '/claim', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
+      requestHuman: (id, expectedEpoch, opts) => mutate('/support/' + encodeURIComponent(id) + '/request-human', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
     }),
     watchConversations: (listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), '/conversations/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingConversation, 25), options),
     watchMessages: (id, listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), thread(id) + '/messages/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingMessage, 50), options),
     watchContacts: (listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), '/contacts/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingContact, 50), options),
+    watchSupportQueue: (listener, options = {}) => watchMessagingProjection((path, signal) => fetch<Response>(MESSAGING_API + path, { signal, json: false }), '/support/queue/live' + messagingQueryString(options.query), boundary.signal, listener, value => assertMessagingPage(value, assertMessagingSupportQueueItem, 50), options),
     clear() { epoch++; boundary.abort(); boundary = new AbortController(); },
   });
 }

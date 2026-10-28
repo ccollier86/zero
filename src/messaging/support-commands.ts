@@ -1,7 +1,7 @@
 /** Trusted support admission and atomic staff claim. Customer IDs/connections are established by the server transport. */
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import { messagingCommand } from './realm-errors';
-import { captureMessagingActor, conversationMembers, memberKey, messagingIntent, type ConversationRow, type MemberRow } from './realm-model';
+import { captureMessagingActor, conversationMember, conversationMembers, memberKey, messagingIntent, type ConversationRow, type MemberRow } from './realm-model';
 import { messagingChoice, messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 
 export function openMessagingSupport(context: DatabaseWriteCommandContext, input: unknown): unknown {
@@ -40,6 +40,25 @@ export function claimMessagingSupport(context: DatabaseWriteCommandContext, inpu
       context.db.update('messaging_conversations', conversation.id, { owner: 'human', owner_id: actor.id, owner_epoch: conversation.owner_epoch + 1, revision: conversation.revision + 1,
         updated_at: Date.now(), public_updated_at: Date.now(), members_json: JSON.stringify(members) });
       return { id: conversation.id, ownerEpoch: conversation.owner_epoch + 1 };
+    });
+  });
+}
+
+/** The customer can stop automatic replies, never choose staff or displace a human owner. */
+export function requestMessagingHuman(context: DatabaseWriteCommandContext, input: unknown): unknown {
+  return messagingCommand(context, () => {
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedEpoch']), actor = captureMessagingActor(r.actor);
+    const { conversation, member } = conversationMember(context, actor, r.id), epoch = messagingInteger(r.expectedEpoch);
+    if (conversation.kind !== 'support' || member.role !== 'customer' || actor.kind === 'assistant') messagingFail('MESSAGING_FORBIDDEN', 403);
+    return messagingIntent(context, actor, r.requestId, ['support.request-human', conversation.id, epoch], () => {
+      if (conversation.owner_epoch !== epoch) messagingFail('MESSAGING_OWNER_CONFLICT');
+      if (conversation.archived) messagingFail('MESSAGING_ARCHIVED');
+      if (conversation.owner !== 'assistant') return { id: conversation.id, ownerEpoch: epoch };
+      if (epoch >= Number.MAX_SAFE_INTEGER - 2 || conversation.revision >= Number.MAX_SAFE_INTEGER - 2) messagingFail('MESSAGING_CAPACITY', 429);
+      context.db.update('messaging_conversations', conversation.id, { owner: 'triage', owner_id: null, owner_epoch: epoch + 1,
+        revision: conversation.revision + 1, updated_at: Date.now(), public_updated_at: Date.now() });
+      // The old provider call may finish, but its epoch can no longer publish.
+      return { id: conversation.id, ownerEpoch: epoch + 1 };
     });
   });
 }

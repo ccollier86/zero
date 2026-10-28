@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { MessageSquare, Search } from 'lucide-react';
+import { MessageSquare } from '../animate-ui/icons/message-square';
+import { Search } from '../animate-ui/icons/search';
 import type { AvatarPresence } from '../avatar-group/avatar-group-types';
 import { Input } from '../ui/input';
 import { MenuActiveHighlight } from '../overlays/menu-active-highlight';

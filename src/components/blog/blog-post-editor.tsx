@@ -2,7 +2,10 @@
 
 /** Acknowledged native publishing workspace for one article. Reuses Zero save/leave guards, media, rich blocks and owned dialogs. */
 import * as React from 'react';
-import { ArrowLeft, History, Eye, Save, Send } from 'lucide-react';
+import { History, Save } from 'lucide-react';
+import { ArrowLeft } from '../animate-ui/icons/arrow-left';
+import { Eye } from '../animate-ui/icons/eye';
+import { Send } from '../animate-ui/icons/send';
 import type { BlogClient } from '../../blog/client-contracts';
 import type { BlogAuthorRecord } from '../../blog/types';
 import type { BlogPostContent, BlogPostRecord, BlogTaxonomyTerm, BlogPage, BlogRevisionRecord } from '../../blog/content-types';

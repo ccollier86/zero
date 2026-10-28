@@ -1,7 +1,8 @@
 'use client';
 /** Closed-AND investigation controls composed from the native morphing controls. */
 import * as React from 'react';
-import { SlidersHorizontal, X } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
+import { X } from '../animate-ui/icons/x';
 import type { LoggingQuery } from '../../logging/logging-contracts';
 import { LOGGING_FAMILIES, LOGGING_LEVELS, LOGGING_OUTCOMES } from '../../logging/logging-contracts';
 import { Button } from '../ui/button';

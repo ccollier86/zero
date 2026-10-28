@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Settings2 } from 'lucide-react';
+import { Settings } from '../animate-ui/icons/settings';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger, PopoverViewport } from '../popover';
@@ -29,7 +29,7 @@ export function WorkspaceManage({ controller, state }: { controller: MessagingWo
       confirmLabel: label, variant: action === 'transfer' ? 'default' : 'destructive', trigger })) return;
     if (controller.current() && controller.getSnapshot().selectedId === id) { setOpen(false); await controller.manage(action, value); }
   };
-  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Conversation options"><Settings2 /></Button></PopoverTrigger>
+  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Conversation options"><Settings aria-hidden="true" /></Button></PopoverTrigger>
     <PopoverContent align="end" className="zero-messaging-start" aria-label="Conversation settings"><h3>Conversation settings</h3><PopoverViewport className="zero-messaging-start-body" style={{ maxHeight: 'min(36rem, calc(var(--radix-popover-content-available-height, 100dvh) - 4rem))' }}>
       {configured && <p className="zero-messaging-workspace-hint">Membership and name are managed by organization policy.</p>}
       {owner && !configured && <><Input aria-label="Conversation name" value={title} maxLength={200} disabled={busy} onChange={event => setEdit({ id: conversation.id, value: event.target.value })} />

@@ -2,7 +2,7 @@
 
 /** Account availability controls observe the SDK tracker; they never start another activity lease. */
 import { useEffect, useId, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RotateCw as RefreshCw } from '../animate-ui/icons/rotate-cw';
 import { useGuardianPresence } from '../../frontend/client/guardian-presence-hooks';
 import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { Label } from '../ui/label';

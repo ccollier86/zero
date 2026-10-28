@@ -9,7 +9,7 @@ import { createMessagingConversation, changeMessagingConversation, markMessaging
 import { changeMessagingContact } from './contact-commands';
 import { changeMessagingMessage, reactMessagingMessage, sendMessagingMessage } from './message-commands';
 import { listMessagingContacts, listMessagingConversations, listMessagingMessages, listMessagingSupportQueue, readMessagingConversation, readMessagingMessage, readMessagingReceipt, readMessagingTypingMembership } from './realm-queries';
-import { openMessagingSupport, claimMessagingSupport } from './support-commands';
+import { openMessagingSupport, claimMessagingSupport, requestMessagingHuman } from './support-commands';
 import { MESSAGING_ATTACHMENT_TABLES } from './attachment-model';
 import { allocateMessagingAttachment, acceptMessagingAttachment, retireMessagingAttachment } from './attachment-commands';
 import { readMessagingAttachment, pendingMessagingAttachments } from './attachment-queries';
@@ -115,6 +115,7 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.conversation.read': markMessagingRead, 'messaging.conversation.owner': ownMessagingConversation,
     'messaging.contact': changeMessagingContact, 'messaging.message.send': sendMessagingMessage,
     'messaging.support.open': openMessagingSupport, 'messaging.support.claim': claimMessagingSupport,
+    'messaging.support.request-human': requestMessagingHuman,
     'messaging.message.change': changeMessagingMessage, 'messaging.message.react': reactMessagingMessage,
     'messaging.attachment.allocate': allocateMessagingAttachment, 'messaging.attachment.accept': acceptMessagingAttachment, 'messaging.attachment.retire': retireMessagingAttachment,
     'messaging.job.claim': claimMessagingJob, 'messaging.job.call': beginMessagingJobCall, 'messaging.job.receive': receiveMessagingJobResult,

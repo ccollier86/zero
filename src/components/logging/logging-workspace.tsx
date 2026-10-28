@@ -1,7 +1,9 @@
 'use client';
 /** Self-wired, scope-masked investigation organism composed from Zero DataTable, Select, ScrollArea and managed dialogs. */
 import * as React from 'react';
-import { Activity, CircleHelp, Download, RefreshCw, SearchX, ShieldCheck } from 'lucide-react';
+import { Activity, CircleHelp, SearchX, ShieldCheck } from 'lucide-react';
+import { Download } from '../animate-ui/icons/download';
+import { RotateCw as RefreshCw } from '../animate-ui/icons/rotate-cw';
 import { DataTable } from '../data-table';
 import { Button } from '../ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';

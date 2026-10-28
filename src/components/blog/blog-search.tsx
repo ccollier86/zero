@@ -2,7 +2,8 @@
 
 /** Blog-specific result projection into the reusable Zero command palette. No fetching or shared global stores. */
 import * as React from 'react';
-import { FileText, User, Tag, Folder } from 'lucide-react';
+import { FileText, Tag, Folder } from 'lucide-react';
+import { User } from '../animate-ui/icons/user';
 import { CommandPalette, type CommandPaletteProps, type CommandPaletteItem } from '../command-palette';
 import { safeBlogHref } from './blog-utils';
 import { useBlogPostHref } from './blog-provider';

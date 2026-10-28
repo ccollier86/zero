@@ -3,7 +3,7 @@ import type { DatabaseReadQueryConnection, DatabaseReadQueryContext } from '../d
 import type { ConversationRecord, DurableMessage, MessagingContact } from './contracts';
 import type { Row } from '../sync/types';
 import { assertMessagingMember, captureMessagingActor, memberKey, projectMessage, staffTimeline, type ConversationRow, type MemberRow, type MessageRow, type MessagingActor } from './realm-model';
-import { messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
+import { messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 
 export function readMessagingMembership(database: DatabaseReadQueryConnection, actor: MessagingActor, id: string) {
   const conversation = database.query<ConversationRow>('SELECT * FROM messaging_conversations WHERE id=? AND scope_id=?').get(id, actor.scopeId);
@@ -125,10 +125,12 @@ export function listMessagingContacts({ database }: DatabaseReadQueryContext, in
 }
 /** Deliberate triage discovery is narrower than reading every private conversation or its transcript. */
 export function listMessagingSupportQueue({ database }: DatabaseReadQueryContext, input: unknown): unknown {
-  const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit']);
+  const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit', 'owner']);
   if (!actor.staff || actor.kind !== 'user') messagingFail('MESSAGING_FORBIDDEN', 403);
   const limit = messagingInteger(q.limit ?? 25, 1, 50), after = q.after === undefined ? '' : messagingId(q.after);
-  const rows = database.query<ConversationRow>("SELECT id,owner,owner_epoch,created_at FROM messaging_conversations WHERE scope_id=? AND kind='support' AND archived=0 AND id>? ORDER BY id LIMIT ?").all(actor.scopeId, after, limit + 1);
+  const owner = q.owner === undefined ? null : messagingChoice(q.owner, ['triage', 'assistant', 'human']);
+  const rows = database.query<ConversationRow>("SELECT id,owner,owner_epoch,created_at FROM messaging_conversations WHERE scope_id=? AND kind='support' AND archived=0 AND id>?" + (owner === null ? '' : ' AND owner=?') + ' ORDER BY id LIMIT ?')
+    .all(actor.scopeId, after, ...(owner === null ? [] : [owner]), limit + 1);
   const items = rows.slice(0, limit).map(row => ({ id: row.id, owner: row.owner, ownerEpoch: row.owner_epoch, createdAt: row.created_at }));
   return { items, hasMore: rows.length > limit, nextCursor: rows.length > limit ? items.at(-1)!.id : null };
 }

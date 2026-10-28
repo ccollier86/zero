@@ -2,7 +2,8 @@
 
 /** Images and instance-local galleries. The shared manager owns focus, stacking, scroll lock and origin motion. */
 import * as React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft } from '../animate-ui/icons/chevron-left';
+import { ChevronRight } from '../animate-ui/icons/chevron-right';
 import { Button, type ButtonProps } from '../ui/button';
 import { cn } from '../../lib/utils';
 import { safeBlogHref } from './blog-utils';

@@ -1,7 +1,11 @@
 'use client';
 
 import * as React from 'react';
-import { Bot, Mic, Upload } from 'lucide-react';
+// Zero's current catalog has no robot or microphone glyph. Only those two
+// semantic gaps use Lucide; the catalog guard requires removing this fallback
+// when the corresponding native icons become available.
+import { Bot, Mic } from 'lucide-react';
+import { Upload } from '../animate-ui/icons/upload';
 import { MessagingAvatar } from './messaging-avatar';
 import { cn } from '../../lib/utils';
 import { conversationActivityLabel, type ConversationActivityMember } from '../../messaging/activity';

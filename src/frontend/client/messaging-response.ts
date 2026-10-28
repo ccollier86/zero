@@ -34,7 +34,7 @@ export function assertMessagingPage<T>(value: unknown, item: (value: unknown) =>
 export function assertMessagingCapabilities(value: unknown): asserts value is MessagingCapabilities {
   const r = record(value);
   if (typeof r.enabled !== 'boolean' || !['everyone', 'contacts'].includes(r.directory) || typeof r.canSupport !== 'boolean') bad();
-  for (const key of ['assistant', 'notifications']) if (r[key] !== undefined && typeof r[key] !== 'boolean') bad();
+  for (const key of ['assistant', 'notifications', 'support', 'supportAssistant']) if (r[key] !== undefined && typeof r[key] !== 'boolean') bad();
   for (const [key, maximum] of [['maxMessageLength', 20000], ['maxParticipants', 100], ['maxUploadBytes', 256 * 1024 * 1024]] as const) { integer(r[key]); if (r[key] < 1 || r[key] > maximum) bad(); }
 }
 export function assertMessagingDirectoryEntry(value: unknown): asserts value is MessagingDirectoryEntry {

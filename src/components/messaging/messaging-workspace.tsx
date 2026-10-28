@@ -1,7 +1,9 @@
 'use client';
 /** Managed organism over Zero's existing parts and native facade; renders inside, not instead of, AppShell. */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { MessageSquare, RefreshCw } from 'lucide-react';
+import { MessageCircle } from '../animate-ui/icons/message-circle';
+import { MessageSquare } from '../animate-ui/icons/message-square';
+import { RotateCw } from '../animate-ui/icons/rotate-cw';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
@@ -19,6 +21,8 @@ import type { MessagingWorkspaceController } from './messaging-workspace-control
 import type { MessagingWorkspaceState } from './workspace-state';
 import { WorkspaceStart } from './workspace-start';
 import { WorkspaceManage } from './workspace-manage';
+import { WorkspaceSupportQueue } from './workspace-support-queue';
+import { WorkspaceSupportActions } from './workspace-support-actions';
 
 export interface MessagingWorkspaceProps extends UseMessagingWorkspaceOptions {
   className?: string; avatarShape?: AvatarGroupShape;
@@ -34,11 +38,11 @@ export function MessagingWorkspace(props: MessagingWorkspaceProps) {
   const { controller, state } = useMessagingWorkspace(props);
   if (!controller || state.status === 'loading') return <div role="status" className="zero-messaging-workspace-empty">Connecting to messages…</div>;
   if (state.status === 'disabled') return <div role="status" className="zero-messaging-workspace-empty">Messaging is not enabled for this application.</div>;
-  if (state.status === 'error') return <div role="alert" className="zero-messaging-workspace-empty"><p>{state.error ?? 'Messaging is unavailable.'}</p><Button onClick={() => { void controller.retry(); }}><RefreshCw />Retry messaging</Button></div>;
+  if (state.status === 'error') return <div role="alert" className="zero-messaging-workspace-empty"><p>{state.error ?? 'Messaging is unavailable.'}</p><Button onClick={() => { void controller.retry(); }}><RotateCw aria-hidden="true" />Retry messaging</Button></div>;
   return <ReadyWorkspace {...props} controller={controller} state={state} />;
 }
 function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPolicy = 'visible-end', publishTyping = true, sidebarAction, headerActions, className }: MessagingWorkspaceProps & { controller: MessagingWorkspaceController; state: MessagingWorkspaceState }) {
-  const [mobileView, setMobileView] = useState<'list' | 'conversation'>('list'), [query, setQuery] = useState('');
+  const [mobileView, setMobileView] = useState<'list' | 'conversation'>('list'), [query, setQuery] = useState(''), [supportQueue, setSupportQueue] = useState(false);
   useEffect(() => { if (state.selectedId) setMobileView('conversation'); }, [state.selectedId]);
   const transcript = useMessagingTranscript(controller, state, readPolicy);
   const baseline = useRef({ id: null as string | null, last: 0, ready: false }), previous = baseline.current;
@@ -60,19 +64,22 @@ function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPo
   const needsClaim = staff && visibility === 'conversation' && (state.conversation?.owner !== 'human' || state.conversation.ownerId !== controller.userId);
   const busy = state.draft.phase === 'sending' || state.draft.phase === 'unknown';
   const selected = state.conversation;
+  const queue = supportQueue && state.capabilities?.canSupport === true;
   return <MessagingLayout className={cn('zero-messaging-workspace', className)} viewportRef={transcript.viewportRef}
     mobileView={mobileView} onBack={() => setMobileView('list')}
-    sidebarHeader={<ConversationListHeading title="Messages" action={sidebarAction ?? <WorkspaceStart controller={controller} state={state} shape={avatarShape} />} query={query} onQueryChange={setQuery} />}
-    sidebar={<><ConversationList loading={state.loadingConversations} activeId={state.selectedId} onSelect={id => { setMobileView('conversation'); void controller.select(id); }}
+    sidebarHeader={<ConversationListHeading title={queue ? 'Support queue' : 'Messages'} action={<span className="zero-messaging-workspace-tools">
+      {state.capabilities?.canSupport && <Button size="icon-sm" variant={queue ? 'secondary' : 'ghost'} aria-label={queue ? 'Back to messages' : 'Open support queue'} aria-pressed={queue} onClick={() => setSupportQueue(value => !value)}>{queue ? <MessageSquare aria-hidden="true" /> : <MessageCircle aria-hidden="true" />}</Button>}
+      {!queue && (sidebarAction ?? <WorkspaceStart controller={controller} state={state} shape={avatarShape} />)}</span>} query={queue ? undefined : query} onQueryChange={queue ? undefined : setQuery} />}
+    sidebar={queue ? <WorkspaceSupportQueue controller={controller} state={state} onOpen={() => setMobileView('conversation')} /> : <><ConversationList loading={state.loadingConversations} activeId={state.selectedId} onSelect={id => { setMobileView('conversation'); void controller.select(id); }}
       conversations={state.conversations.map(conversation => ({ id: conversation.id, participant: title(conversation), unreadCount: conversation.unreadCount,
         preview: conversation.lastMessage?.deleted ? 'Message removed' : conversation.lastMessage?.text || 'No messages yet',
         channelLabel: conversation.kind === 'assistant' ? 'AI assistant' : conversation.kind === 'group' ? 'Group' : conversation.kind === 'support' ? 'Support' : undefined,
         updatedAtLabel: new Date(conversation.updatedAt).toISOString().slice(0, 10),
       })).filter(row => !query || `${row.participant.label} ${row.preview}`.toLowerCase().includes(query.toLowerCase()))} />
       {query && <p className="zero-messaging-workspace-hint">Filters the current conversation page.</p>}</>}
-    sidebarFooter={<>{state.listError && <p role="status" className="zero-messaging-workspace-hint">{state.listError}<Button size="xs" variant="ghost" onClick={() => controller.latestConversations()}>Retry conversation list</Button></p>}<Button size="xs" variant="ghost" onClick={() => controller.latestConversations(!state.showArchived)}>{state.showArchived ? 'Active conversations' : 'Archived conversations'}</Button><div className="zero-messaging-workspace-tools"><Button size="xs" variant="ghost" disabled={!state.conversationPage || state.loadingConversations} onClick={() => controller.previousConversations()}>Previous</Button>
+    sidebarFooter={queue ? undefined : <>{state.listError && <p role="status" className="zero-messaging-workspace-hint">{state.listError}<Button size="xs" variant="ghost" onClick={() => controller.latestConversations()}>Retry conversation list</Button></p>}<Button size="xs" variant="ghost" onClick={() => controller.latestConversations(!state.showArchived)}>{state.showArchived ? 'Active conversations' : 'Archived conversations'}</Button><div className="zero-messaging-workspace-tools"><Button size="xs" variant="ghost" disabled={!state.conversationPage || state.loadingConversations} onClick={() => controller.previousConversations()}>Previous</Button>
       <span className="zero-messaging-workspace-hint">Page {state.conversationPage + 1}</span><Button size="xs" variant="ghost" disabled={!state.conversationsCursor || state.loadingConversations} onClick={() => { void controller.moreConversations(); }}>Next</Button></div></>}
-    header={selected ? <ConversationHeader participant={title(selected)} subtitle={selected.archived ? 'Archived conversation' : state.live === 'connected' ? 'Private conversation' : state.live === 'unavailable' ? 'Live updates unavailable' : 'Connecting live updates…'} actions={<><WorkspaceManage controller={controller} state={state} />{headerActions?.(selected, controller)}</>} /> : <span>{state.loading ? 'Loading conversation…' : 'Messages'}</span>}
+    header={selected ? <ConversationHeader participant={title(selected)} subtitle={selected.archived ? 'Archived conversation' : state.live === 'connected' ? 'Private conversation' : state.live === 'unavailable' ? 'Live updates unavailable' : 'Connecting live updates…'} actions={<><WorkspaceSupportActions controller={controller} state={state} /><WorkspaceManage controller={controller} state={state} />{headerActions?.(selected, controller)}</>} /> : <span>{state.loading ? 'Loading conversation…' : 'Messages'}</span>}
     composer={selected ? <>{staff && <label className="zero-messaging-workspace-note"><Checkbox checked={visibility === 'staff'} disabled={busy || !!state.uploads.length} onCheckedChange={checked => controller.setVisibility(checked === true ? 'staff' : 'conversation', selected.id)} />Private team note</label>}
       {needsClaim && <p className="zero-messaging-workspace-notice" role="status">Take ownership before sending a public support reply. Private notes remain separate.</p>}
       <WorkspaceComposer key={`${selected.id}:${visibility}`} controller={controller} state={state} visibility={visibility} disabled={selected.archived || needsClaim}

@@ -2,7 +2,8 @@
 
 /** Native private media selection/upload using the supplied Zero facade and owned modal. Never exposes Storage paths or constructs upload grants. */
 import * as React from 'react';
-import { FileImage, FileAudio, FileVideo, Upload } from 'lucide-react';
+import { FileImage, FileAudio, FileVideo } from 'lucide-react';
+import { Upload } from '../animate-ui/icons/upload';
 import { Button } from '../ui/button';
 import { ControlledModal } from '../../modals/modal-controlled';
 import type { ModalContext } from '../../modals/modal-system.types';

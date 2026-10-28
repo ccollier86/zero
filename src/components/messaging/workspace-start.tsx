@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus } from '../animate-ui/icons/plus';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger, PopoverViewport } from '../popover';
@@ -65,6 +65,10 @@ export function WorkspaceStart({ controller, state, shape }: { controller: Messa
       {bots.length > 0 && <div className="zero-messaging-start-section"><h4>Assistants</h4>{bots.map(bot => <Button key={bot.id} size="sm" variant="ghost" disabled={locked} onClick={() => {
         void controller.openAssistant(bot.id).then(() => { if (controller.current() && !controller.getSnapshot().command) setOpen(false); });
       }}>{bot.name}</Button>)}</div>}
+      {state.capabilities?.support && <div className="zero-messaging-start-section"><h4>Support</h4>
+        {state.capabilities.supportAssistant && <Button size="sm" variant="ghost" disabled={locked} onClick={() => { void controller.openSupport('assistant').then(() => { if (controller.current() && !controller.getSnapshot().command) setOpen(false); }); }}>Ask the support assistant</Button>}
+        <Button size="sm" variant="outline" disabled={locked} onClick={() => { void controller.openSupport('human').then(() => { if (controller.current() && !controller.getSnapshot().command) setOpen(false); }); }}>Talk to a person</Button>
+      </div>}
       {contacts.filter(row => row.state === 'pending' && row.direction === 'incoming').map(row => <div key={row.id} className="zero-messaging-start-section"><span>{row.name ?? 'Contact request'}</span><div>
         <Button size="xs" variant="outline" disabled={locked} onClick={() => { void controller.respondContact(row.userId, row.revision, true); }}>Accept {row.name ?? 'contact'}</Button>
         <Button size="xs" variant="ghost" disabled={locked} onClick={() => { void controller.respondContact(row.userId, row.revision, false); }}>Decline {row.name ?? 'contact'}</Button></div></div>)}

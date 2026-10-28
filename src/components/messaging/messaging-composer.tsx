@@ -1,7 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { Paperclip, Send, X } from 'lucide-react';
+import { Paperclip } from '../animate-ui/icons/paperclip';
+import { Send } from '../animate-ui/icons/send';
+import { X } from '../animate-ui/icons/x';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 import { cn } from '../../lib/utils';

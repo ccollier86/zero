@@ -19,14 +19,14 @@ beforeAll(async () => {
   await mkdir(evidence, { recursive: true }); lease = await acquirePlaywrightTestBrowser();
 }, 90000);
 afterAll(() => lease?.release());
-async function fixture() {
+async function fixture(support = false) {
   const root = await mkdtemp(join(scratch, 'messaging-workspace-native-')); await mkdir(join(root, 'app'));
   const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('Synthetic port reservation') });
   const port = reservation.port!; await reservation.stop(true); const base = 'http://127.0.0.1:' + port;
   const app = await createApp({ projectRoot: root, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     app: { publicUrl: base },
     db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
-    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: false }, logging: false,
+    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support ? {} : false }, logging: false,
     ai: false, email: false, workflows: false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false });
   app.get('/fixture.js', () => new Response(script, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } }));
@@ -44,6 +44,39 @@ async function fixture() {
   for (let i = 1; i <= 55; i++) await send('Synthetic native history ' + i, 'history-' + i);
   return { base, app, call, admin, peer, other, conversation, send, close: () => app.stop(true) };
 }
+browserTest('native human-first support enters a live content-free staff queue and claims the same customer conversation', async () => {
+  const f = await fixture(true), staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' }), customer = await lease!.browser.newPage({ viewport: { width: 390, height: 760 }, reducedMotion: 'reduce' });
+  const errors: string[] = []; for (const page of [staff, customer]) { page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(12000); }
+  try {
+    await staff.goto(f.base + '/workspace?manual');
+    await staff.getByRole('button', { name: 'Open support queue', exact: true }).click();
+    await staff.getByText('No requests waiting on this page.', { exact: true }).waitFor();
+    await customer.goto(f.base + '/workspace?user=peer&manual');
+    await customer.getByRole('button', { name: 'New conversation', exact: true }).click();
+    await customer.getByRole('button', { name: 'Talk to a person', exact: true }).click();
+    await customer.getByText('Waiting for a person', { exact: true }).waitFor();
+    await customer.getByRole('textbox', { name: 'Message', exact: true }).fill('SYNTHETIC_CUSTOMER_SUPPORT_QUESTION');
+    await customer.getByRole('button', { name: 'Send message', exact: true }).click();
+    const claim = staff.getByRole('button', { name: /^Claim support request / });
+    await claim.waitFor(); expect(await staff.getByText('SYNTHETIC_CUSTOMER_SUPPORT_QUESTION', { exact: true }).count()).toBe(0);
+    await claim.click();
+    await staff.getByText('SYNTHETIC_CUSTOMER_SUPPORT_QUESTION', { exact: true }).waitFor();
+    await customer.getByText('Assigned to support', { exact: true }).waitFor();
+    await staff.getByRole('textbox', { name: 'Message', exact: true }).fill('SYNTHETIC_NATIVE_HUMAN_REPLY');
+    await staff.getByRole('button', { name: 'Send message', exact: true }).click();
+    await customer.locator('.zero-messaging-transcript').getByText('SYNTHETIC_NATIVE_HUMAN_REPLY', { exact: true }).waitFor();
+    await staff.getByRole('checkbox', { name: 'Private team note' }).check();
+    await staff.getByRole('textbox', { name: 'Message', exact: true }).fill('SYNTHETIC_PRIVATE_SUPPORT_NOTE');
+    await staff.getByRole('button', { name: 'Send message', exact: true }).click();
+    await staff.getByText('SYNTHETIC_PRIVATE_SUPPORT_NOTE', { exact: true }).waitFor();
+    expect(await customer.getByText('SYNTHETIC_PRIVATE_SUPPORT_NOTE', { exact: true }).count()).toBe(0);
+    expect(await customer.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect(await customer.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(761);
+    expect(errors).toEqual([]);
+    await customer.screenshot({ path: join(evidence, 'support-human-native.png') });
+  } finally { await staff.close(); await customer.close(); await f.close(); }
+}, 90000);
+
 browserTest('default AppProvider workspace loads real identities, retains rows on live append, backfills and privately uploads native attachments', async () => {
   const f = await fixture(), page = await lease!.browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' });
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(12000);

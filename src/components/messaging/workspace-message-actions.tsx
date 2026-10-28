@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+// The compact overflow/ellipsis glyph is not in Zero's current icon catalog.
 import { Ellipsis } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';

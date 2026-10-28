@@ -1,5 +1,7 @@
 import * as React from "react"
-import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
+import { MoreHorizontal } from "lucide-react"
+import { ChevronLeft } from "../animate-ui/icons/chevron-left"
+import { ChevronRight } from "../animate-ui/icons/chevron-right"
 
 import { cn } from "#zero/lib/utils"
 import { buttonVariants } from "#zero/components/ui/button"

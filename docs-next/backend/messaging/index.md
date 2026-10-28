@@ -23,7 +23,8 @@ sidebar and a main conversation area.
 
 Facebook Messenger was an application-specific example, not a Zero feature.
 Third-party provider connectors are application-owned and do not gate the
-framework. Native public-support/email integration has its own remaining work.
+framework. Native public website/portal support has its own remaining work.
+Email-to-conversation bridging is not a messaging requirement or release gate.
 
 [Configuration and facade](./configuration.md) · [Review](./review.md) ·
 [Notifications](./notifications.md) · [Guardian presence](../guardian/presence.md)
@@ -58,7 +59,7 @@ and can transfer ownership before the old owner leaves.
 | Internal assistants | Named discovery/open, policy/identity-pinned jobs, owner review API, support independent | Job-review dashboard/run activity and group-bot participation are not implemented |
 | Typing/presence | Canonical messaging typing and existing Guardian availability bound through AppProvider/workspace | Full installed/real-device lifecycle matrix |
 | Messages/files/notifications | Canonical receipts/history/private bytes, native live workspace and notice recovery | Installed Linux/worker/deployment qualification |
-| Public support/email | Authenticated support claim/takeover/private notes exist | Visitor capabilities, configured human destinations and native email association |
+| Public website/portal support | Authenticated support claim/takeover/private notes exist | Visitor capabilities, configured human destinations and native support workspace |
 
 The [implementation checkpoint](../../_work/messaging-backend-implementation.md)
 separates native source evidence from unfinished work. A feature-branch example
@@ -269,17 +270,17 @@ requirements, not guarantees supplied by today's presentation/typing components.
 ## Support And Delivery
 
 Authenticated support already uses the managed Guardian facade. Public visitor
-admission and email association remain separate gates in the
+admission and configured human destinations remain separate gates in the
 [public-support continuation](../../_work/messaging-public-channels.md). A visitor
 must receive a scoped expiring capability, not access to Guardian's internal
 directory or app Sync. Current staff destination policy, canonical membership
 and ownership epochs govern triage/claim/transfer/handback.
 
-Use Zero's configured SMTP/Resend/IMAP/inbox services for optional email support.
-Accepted chat state, provider acceptance, receipt and human attention are distinct.
-Unknown sends retain their identity for reconciliation/review. Reuse private
-Storage and safe email HTML rendering; never put provider credentials, private
-notes or upload grants into a public conversation.
+The entry can be AI-first, AI-to-human escalation or human-first. Accepted chat
+state and human attention are distinct. Unknown sends retain their identity for
+reconciliation/review. Reuse private Storage; never put private notes or upload
+grants into a public conversation. Email/inbox is a separate subsystem, not a
+required transport or threading bridge for these conversations.
 
 External provider adapters belong to the application and must use supported
 public facades rather than private SQL. No Facebook-specific SDK, webhook,
@@ -313,8 +314,8 @@ Magnetic hover highlights belong in the conversation/contact/menu lists.
    recovery and revocation during upload/download.
 5. AI execution and human takeover with ownership fences, durable workflow jobs,
    notifications and safe observability.
-6. Configurable groups/internal assistants, capability-bound public support and
-   optional native email association, using existing Guardian/presence/services.
+6. Configurable groups/internal assistants and capability-bound public support,
+   using existing Guardian/presence/services.
 7. Full organism/browser/accessibility polish and installed-archive qualification,
    then the normal reviewed archive/full-suite release. Third-party channel
    connectors are app-owned, not a prerequisite.
@@ -323,7 +324,7 @@ Required tests include same actor in multiple tabs, spoofed typing identity,
 cross-tenant IDs, removed membership while subscribed, unauthorized contact
 discovery, accepted-send replay, concurrent insertion/order, reconnect/backfill
 scroll anchors, orphan blob recovery, attachment revocation, worker death,
-stale AI reply after takeover, property revocation/rejoin, native email duplicate/reordering, unknown delivery,
+stale AI reply after takeover, property revocation/rejoin, unknown delivery,
 slow-reader backpressure, reduced motion, IME input, keyboard and narrow layouts.
 Qualify actual file/hot/Fabric modes and fresh installed packages explicitly;
 no synthetic fixture or visual screenshot proves a production channel is wired.

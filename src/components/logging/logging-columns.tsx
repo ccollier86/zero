@@ -1,6 +1,7 @@
 'use client';
 /** Native DataTable cells; the retained row identity and live-update engine stay unchanged. */
-import { ArrowUpRight, Bot, FileText, UserRound } from 'lucide-react';
+import { ArrowUpRight, Bot, FileText } from 'lucide-react';
+import { User as UserRound } from '../animate-ui/icons/user';
 import type { DataTableColumnOverrides } from '../data-table/use-data-table';
 import type { LoggingTableRow } from './logging-table-source';
 import { Badge } from '../ui/badge';

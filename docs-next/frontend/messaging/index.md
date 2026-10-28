@@ -20,7 +20,7 @@ room-authorized typing. The branch-only [backend configuration](../../backend/me
 adds durable messaging, groups and internal assistants independently of support.
 The branch now adds the [native managed workspace](./workspace.md), connecting
 those parts to the canonical facade, private files, history, read policy and
-typing. Public support/email and installed release qualification remain explicit
+typing. Public website support and installed release qualification remain explicit
 gates. Third-party provider connectors are app-owned. Existing email/inbox
 remains separate.
 

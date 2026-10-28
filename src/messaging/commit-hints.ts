@@ -1,11 +1,11 @@
 /** Private canonical invalidation sideband. No transcript, metadata values, row event or browser-supplied recipient list crosses it. */
 import type { DatabaseWriteCommandContext, DatabaseWriteCommandHandler, DatabaseWriteCommandRegistry } from '../databases/database-realm';
 import { conversationMembers, memberKey, type ConversationRow, type MemberRow, type MessageRow } from './realm-model';
-import { messagingArray, messagingId, messagingRecord } from './validation';
+import { messagingArray, messagingFail, messagingId, messagingRecord } from './validation';
 
-export interface MessagingCommitHint { readonly conversationId: string | null; readonly recipientIds: readonly string[] }
-export interface MessagingSubscription { readonly actorId: string; readonly conversationId?: string }
-type Before = { conversation: ConversationRow | null; recipients: string[]; staff: string[]; privateNote: boolean; actorId: string | null; peerId: string | null };
+export interface MessagingCommitHint { readonly conversationId: string | null; readonly recipientIds: readonly string[]; readonly supportQueue?: true }
+export interface MessagingSubscription { readonly actorId: string; readonly conversationId?: string; readonly supportQueue?: true }
+type Before = { conversation: ConversationRow | null; recipients: string[]; staff: string[]; privateNote: boolean; actorId: string | null; peerId: string | null; queueKey: string };
 const NO_PUBLIC_CHANGE = new Set(['messaging.owner.bind', 'messaging.attachment.allocate', 'messaging.attachment.accept', 'messaging.attachment.retire', 'messaging.job.dispatch', 'messaging.job.call', 'messaging.notification.complete', 'messaging.notification.redispatch']);
 
 /** The parent strips this envelope before returning the ordinary public command result. Exact transport replay is not a new change. */
@@ -18,17 +18,23 @@ export function withMessagingCommitHints(commands: DatabaseWriteCommandRegistry)
     const recipientIds = [...new Set(privateNote ? [...before.staff, ...after.staff] : [...before.recipients, ...after.recipients])];
     if (!before.conversation && !after.conversation && name === 'messaging.contact') recipientIds.push(...[before.actorId, before.peerId].filter((id): id is string => id !== null));
     const conversationId = after.conversation?.id ?? before.conversation?.id ?? null;
-    return { ...(result as object), hint: { conversationId, recipientIds: [...new Set(recipientIds)] } } as never;
+    // Non-member staff observe only a content-free queue-change bit. Private
+    // notes/read cursors/messages never disclose their activity to that queue.
+    const supportQueue = !privateNote && before.queueKey !== after.queueKey;
+    return { ...(result as object), hint: { conversationId, recipientIds: [...new Set(recipientIds)], ...(supportQueue ? { supportQueue: true } : {}) } } as never;
   }) satisfies DatabaseWriteCommandHandler]));
 }
 
 /** Defensive parsing also prevents an incompatible child image from turning a private hint into scope-wide fanout. */
 export function readMessagingCommitHint(value: unknown): MessagingCommitHint {
-  const r = messagingRecord(value, ['conversationId', 'recipientIds']);
-  return { conversationId: r.conversationId === null ? null : messagingId(r.conversationId), recipientIds: [...new Set(messagingArray(r.recipientIds, 200).map(messagingId))] };
+  const r = messagingRecord(value, ['conversationId', 'recipientIds', 'supportQueue']);
+  if (r.supportQueue !== undefined && r.supportQueue !== true) messagingFail('MESSAGING_INPUT_INVALID', 422);
+  return { conversationId: r.conversationId === null ? null : messagingId(r.conversationId), recipientIds: [...new Set(messagingArray(r.recipientIds, 200).map(messagingId))], ...(r.supportQueue === true ? { supportQueue: true as const } : {}) };
 }
 export function messagingHintMatches(hint: MessagingCommitHint, filter: MessagingSubscription | undefined): boolean {
-  return filter === undefined || hint.recipientIds.includes(filter.actorId) && (filter.conversationId === undefined || filter.conversationId === hint.conversationId);
+  if (filter === undefined) return true;
+  if (filter.supportQueue === true) return hint.supportQueue === true;
+  return hint.recipientIds.includes(filter.actorId) && (filter.conversationId === undefined || filter.conversationId === hint.conversationId);
 }
 
 function capture({ db }: DatabaseWriteCommandContext, input: unknown, name: string): Before {
@@ -50,5 +56,6 @@ function capture({ db }: DatabaseWriteCommandContext, input: unknown, name: stri
     const member = db.get('messaging_members', memberKey(conversation.id, id)) as MemberRow | null;
     return member?.active === 1 && member.role === 'staff';
   }) : [];
-  return { conversation, recipients, staff, privateNote, actorId, peerId: typeof r.userId === 'string' ? r.userId : null };
+  const queueKey = conversation?.kind === 'support' ? JSON.stringify([conversation.id, conversation.owner, conversation.owner_epoch, conversation.archived, conversation.created_at]) : '';
+  return { conversation, recipients, staff, privateNote, actorId, peerId: typeof r.userId === 'string' ? r.userId : null, queueKey };
 }

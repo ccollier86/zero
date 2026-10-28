@@ -56,6 +56,55 @@ async function enroll(client: TestClient, name: string) {
   const policy = await client.logging.collectionPolicy(); if (policy.delivery) await client.logging.observe([], { policyVersion: policy.delivery.policyVersion });
 }
 
+test('native support permits human-first requests and customer escalation fences a real held model call', async () => {
+  let release!: () => void, entered = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch() {
+    entered++; await held;
+    return Response.json({ id: 'synthetic-support-answer', object: 'chat.completion', created: 1, model: 'chat',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'STALE_SUPPORT_ANSWER' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } });
+  } });
+  const f = await fixture(false, 'all', 'http://127.0.0.1:' + provider.port + '/v1'), admin = f.client(), customer = f.peer();
+  let stop: (() => void) | undefined;
+  const snapshots: Array<readonly { id: string; owner: string; ownerEpoch: number }[]> = [];
+  const until = async (ready: () => boolean | Promise<boolean>, timeout = 5000) => {
+    const deadline = Date.now() + timeout;
+    while (!await ready()) { if (Date.now() >= deadline) throw new Error('Synthetic native support progress deadline.'); await Bun.sleep(20); }
+  };
+  try {
+    await enroll(admin, 'support-admin'); await enroll(customer, 'support-customer');
+    expect(await customer.messaging.capabilities()).toMatchObject({ support: true, supportAssistant: true, canSupport: false });
+    await expect(customer.messaging.support.queue()).rejects.toMatchObject({ status: 403 });
+    stop = admin.messaging.watchSupportQueue(page => { snapshots.push(page.items); }, { query: { owner: 'triage' } });
+    await until(() => snapshots.length > 0);
+    const chat = await customer.messaging.support.open({ mode: 'assistant' }, { requestId: 'support-ai-first' });
+    await customer.messaging.messages.send(chat.id, { text: 'Synthetic question needing a person' }, { requestId: 'support-customer-turn' });
+    await until(() => entered > 0, 12000);
+    await expect(admin.messaging.messages.list(chat.id)).rejects.toMatchObject({ status: 404 });
+    const waiting = await customer.messaging.support.requestHuman(chat.id, chat.ownerEpoch, { requestId: 'support-human-request' });
+    expect(waiting).toMatchObject({ id: chat.id, owner: 'triage', ownerEpoch: 2 });
+    // The deadline is shorter than periodic stream rechecks: a committed native
+    // hint, not polling or an app-invented row event, must wake this staff view.
+    await until(() => snapshots.at(-1)?.some(row => row.id === chat.id && row.owner === 'triage') === true);
+    expect(Object.keys(snapshots.at(-1)![0]!).sort()).toEqual(['createdAt', 'id', 'owner', 'ownerEpoch']);
+    const claimed = await admin.messaging.support.claim(chat.id, waiting.ownerEpoch, { requestId: 'support-staff-claim' });
+    expect(claimed).toMatchObject({ owner: 'human', ownerId: admin.user!.userId });
+    await until(() => snapshots.at(-1)?.every(row => row.id !== chat.id) === true);
+    release();
+    await until(async () => (await f.zero.messaging!.runtime.read<any[]>(applicationServiceDataScope(), 'messaging.jobs.pending', { scopeId: 'application' }, () => {})).length === 0, 12000);
+    expect((await customer.messaging.messages.list(chat.id)).items.every(row => row.authorKind !== 'assistant')).toBe(true);
+    await admin.messaging.messages.send(chat.id, { text: 'Synthetic human reply', expectedOwnerEpoch: claimed.ownerEpoch }, { requestId: 'support-human-reply' });
+    expect((await customer.messaging.messages.list(chat.id)).items[0]!.text).toBe('Synthetic human reply');
+    const direct = await customer.messaging.support.open({ mode: 'human' }, { requestId: 'support-human-first' });
+    expect(direct.owner).toBe('triage');
+    await customer.messaging.messages.send(direct.id, { text: 'Direct human request' }, { requestId: 'support-direct-turn' });
+    await until(() => snapshots.at(-1)?.some(row => row.id === direct.id) === true);
+    expect(entered).toBe(1);
+    await expect(customer.fetch('/api/messaging/support/' + direct.id + '/request-human', { method: 'POST', headers: { 'Idempotency-Key': 'forged-human-destination' }, body: { expectedEpoch: 1, userId: admin.user!.userId } })).rejects.toMatchObject({ status: 422 });
+  } finally { release(); stop?.(); admin.disconnect(); customer.disconnect(); await f.close(); await provider.stop(true); }
+}, 90000);
+
 test('Guardian availability and messaging share native sockets without confusing presence, typing, membership or read receipts', async () => {
   const f = await fixture(false, 'all', undefined, false, { auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: false } });
   const alice = f.client(), bob = f.peer(), outsider = f.peer(), sockets: Awaited<ReturnType<typeof messagingTypingSocket>>[] = [];

@@ -103,11 +103,10 @@ release gate; no production-only override of `hasFocus()` was added.
 
 1. Installed Linux/amd64/native worker/restart and full package/update release
    qualification. A source run and a public-import consumer are different facts.
-2. Managed support queue/discovery and job-review dashboard. The native APIs and
-   current-owner guards exist, but ordinary workspace options do not make the
-   content-free queue or review dashboard complete.
-3. Public visitor capability, configured human destinations and native email
-   conversation association. Do not add an external-provider connector to Zero
+2. The later support continuation below adds native content-free queue/discovery
+   and customer handoff. A provider-job review dashboard remains incomplete.
+3. Public visitor capability and configured human destinations. Email bridging
+   is not required. Do not add an external-provider connector to Zero
    to stand in for these requirements; such connectors are app-owned.
 4. Group assistant participation, admitted live assistant-run status and broader
    AI context/tools/RAG. Current native assistants have their own conversations
@@ -121,3 +120,49 @@ release gate; no production-only override of `hasFocus()` was added.
 Keep the stable updater untouched until those applicable release requirements
 are satisfied. Do not delete the old presentation APIs or reset retained private
 database files to make acceptance easier.
+
+## Support And Icon Continuation (2026-10-28)
+
+The clarified scope is website/customer-portal chat with AI-first, human-first
+or AI-to-human escalation. Email threading/bridging is not a requirement. This
+pass adds authenticated customer handoff and a scoped, live, content-free staff
+queue through the existing native facade, ownership epochs, canonical Fabric,
+AppProvider and workspace. It does not implement anonymous visitor capabilities
+or select a stable archive. Private migration definitions remain unchanged.
+
+Native backend evidence includes a real loopback model call held across a
+customer escalation: its stale answer cannot publish after human takeover.
+Native browser evidence covers human-first creation, live non-member queue
+discovery without transcript disclosure, explicit claim, human reply, private
+note isolation and a narrow-screen conversation. A first browser attempt failed
+because its text locator matched both the legitimate sidebar preview and the
+transcript; the corrected assertion targets the transcript, not fewer outcomes.
+
+The icon audit corrects covered imports throughout messaging and blog. Small
+already-completed icon-only corrections to logging, command palette, presence
+settings and pagination are retained. The central native-consumer regression
+reads the actual Zero catalog, admits only explicit missing-glyph exceptions
+and rejects covered aliases such as refresh/spinner/trash/user variants. The
+remaining older framework consumers have not been mass-converted. No new
+parallel icon set, theme, auth client or email bridge is introduced.
+
+Evidence for this pass is under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/messaging-support-review/`.
+The completed focused checks are:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Native messaging/runtime/SDK/controller regression set | 74 tests, 624 assertions, no failures; includes the held real loopback AI response and native queue/handoff | `native-regressions.log` |
+| Icon policy and affected presentation/controller cases | 35 tests, 617 assertions, no failures | `icon-consumers.log` |
+| Native AppProvider/workspace browser | 3 tests, 32 assertions, no failures | `native-browser.log` |
+| Blog and logging browser consumers | 20 tests, 83 assertions, no failures | `icon-browser.log` |
+| Root TypeScript and documentation graph | TypeScript passed; 872 pages/IDs reachable, no problems | `typecheck.log`, `docs.log` |
+
+The sets overlap and are not summed into a fictitious unique full-suite count.
+These are focused source checks, not a fresh installed/archive or Linux proof.
+The native support queue remains a bounded discovery/claim surface; dedicated
+review/resolve dashboards, configurable destination routing, queue prioritization
+and the public visitor/widget admission boundary require further work.
+
+The source/browser evidence remains distinct from the pending installed
+Linux/worker/restart, full resource/device matrix and final updater qualification.

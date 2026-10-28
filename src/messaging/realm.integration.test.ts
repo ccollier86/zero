@@ -36,6 +36,33 @@ const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice,
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
 
+test('customer escalation preserves the conversation, fences AI ownership and cannot assign or displace a human', async () => {
+  const f = await fixture();
+  const request = { actor: customer, id: 'conversation-one', requestId: 'ask-person', expectedEpoch: 1 };
+  try {
+    await f.command('messaging.support.open', { actor: customer, id: 'conversation-one', requestId: 'support-one', title: 'Synthetic question', owner: 'assistant', channelId: null });
+    await f.command('messaging.message.send', send(1, customer));
+    expect((await f.command('messaging.support.request-human', { ...request, actor: carol })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.command('messaging.support.request-human', { ...request, actor: { ...customer, scopeId: 'tenant:other' } })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.command('messaging.support.request-human', request)).value).toMatchObject({ id: 'conversation-one', ownerEpoch: 2 });
+    const waiting = (await f.query('messaging.conversation', { actor: customer, id: 'conversation-one' })).value;
+    expect(waiting).toMatchObject({ owner: 'triage', ownerId: null, ownerEpoch: 2, revision: 2 });
+    expect(waiting.participants).toHaveLength(1);
+    expect((await f.query('messaging.support.queue', { actor: staff, query: { owner: 'triage' } })).value.items).toHaveLength(1);
+    expect((await f.query('messaging.support.queue', { actor: staff, query: { owner: 'assistant' } })).value.items).toEqual([]);
+    expect((await f.query('messaging.support.queue', { actor: customer })).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.query('messaging.messages', { actor: customer, conversationId: 'conversation-one' })).value.items.map((row: any) => row.id)).toEqual(['message-1']);
+    await f.command('messaging.support.claim', { actor: staff, id: 'conversation-one', requestId: 'claim-waiting', expectedEpoch: 2, maxParticipants: 100 });
+    expect((await f.command('messaging.support.request-human', request)).value.ownerEpoch).toBe(2); // Replay acknowledges the old intent, not another transition.
+    expect((await f.command('messaging.support.request-human', { ...request, requestId: 'stale-human', expectedEpoch: 2 })).code).toBe('MESSAGING_OWNER_CONFLICT');
+    expect((await f.command('messaging.support.request-human', { ...request, requestId: 'already-human', expectedEpoch: 3 })).value.ownerEpoch).toBe(3);
+    expect((await f.query('messaging.conversation', { actor: customer, id: 'conversation-one' })).value).toMatchObject({ owner: 'human', ownerId: staff.id, ownerEpoch: 3 });
+    await f.restart();
+    expect((await f.query('messaging.receipt', { actor: customer, requestId: 'ask-person' })).value).toMatchObject({ operation: 'support.request-human', resourceId: 'conversation-one' });
+    expect((await f.command('messaging.support.request-human', { ...request, requestId: 'forged-person', expectedEpoch: 3, userId: carol.id })).code).toBe('MESSAGING_INPUT_INVALID');
+  } finally { await f.close(); }
+}, 30000);
+
 test('a private direct conversation cannot silently become a multi-person group', async () => {
   const f = await fixture();
   try {

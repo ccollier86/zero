@@ -29,8 +29,9 @@ not require enabling support or assigning its human user the customer role.
 
 Facebook Messenger and other third-party channel adapters are application-owned.
 The older channel research is not a framework requirement or release gate. Use
-the existing Zero email services for optional email-backed support, rather than
-adding an alternative SMTP/IMAP stack.
+the existing Zero services. Email-to-conversation bridging is not part of the
+confirmed messaging scope; website/portal support can be AI-first, escalate to
+humans, or start with a person directly. Email/inbox remains independent.
 
 ## Preserve and extend
 
@@ -54,7 +55,7 @@ No network call may hold a database transaction or authority lease.
    Define creation, owner transfer, leave/remove and history-on-rejoin explicitly.
 3. **Support.** Keep staff claim, handback, private notes and ownership epochs.
    Finish capability-bound visitor admission, configured authorized destinations,
-   and optional native email association without exposing the internal directory,
+   without exposing the internal directory,
    making a visitor a Guardian user, leaking private notes or guessing delivery.
 4. **Workspace.** Wire existing tokenized components to the actual facade and
    live projections. Preserve accepted messages and scroll anchors on append and
@@ -64,7 +65,7 @@ No network call may hold a database transaction or authority lease.
 ## Correction and qualification order
 
 Implement named assistants and their native facade first, then group policy and
-membership lifecycle, then public-support/email boundaries and the managed UI.
+membership lifecycle, then public-support boundaries and the managed UI.
 Use additive private migrations; do not edit committed migration 001–005 or
 unrelated SYSTEM migrations. Every stage records actual tests separately from
 unimplemented requirements. A passing source test is not installed qualification.
@@ -129,7 +130,7 @@ Exact source logs are retained under
 relabeled as a passing installed qualification. The final root typecheck is
 recorded in `messaging-correction-qualified-typecheck.log`.
 
-Public visitor/email support, configured human destination routing, the full
+Public visitor support, configured human destination routing, the full
 managed workspace and installed/Linux/full-release qualification remain
 incomplete. The list/header presence binding is now implemented as described
 below; this is not qualification of the entire managed workspace. These

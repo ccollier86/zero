@@ -8,10 +8,10 @@ visibility: internal
 system: messaging
 feature: public-support
 maturity: planned
-applies_to: ["Planning only; not an implemented public visitor or email adapter"]
+applies_to: ["Public visitor continuation; authenticated support is implemented on the feature branch"]
 ---
 
-# Public Support And Native Email Continuation
+# Website And Customer-Portal Support Chat
 
 [Working index](./index.md) · [Scope correction](./messaging-configuration-correction.md) · [Configuration](../backend/messaging/configuration.md) · [Implementation checkpoint](./messaging-backend-implementation.md)
 
@@ -24,10 +24,15 @@ provider research must not become a Zero implementation or release gate.
 Applications own third-party connectors; do not add provider credentials, SDKs,
 webhook verification or delivery-window logic to Zero for that example.
 
-Public support and optional native email-backed conversations remain framework
-work. Reuse Guardian, Fabric, the configured Zero AI gateway, Torrent, existing
-SMTP/Resend/IMAP services, Storage, notifications, logging and presence. Do not
-create a separate messaging auth, email stack, avatar status tracker or UI system.
+The confirmed product is website/customer-portal chat: AI answers, AI hands the
+same conversation to an authorized person, or the conversation starts directly
+with human support. Email-to-conversation bridging was an incorrect inference,
+not a messaging requirement or release gate. Email/inbox remains independent;
+applications may compose it later without changing the core messaging contract.
+
+Reuse Guardian, Fabric, the configured Zero AI gateway, Torrent, Storage,
+notifications, logging and presence. Do not create a separate account system,
+avatar status tracker or UI system. Third-party connectors remain app-owned.
 
 ## Public Visitor Admission
 
@@ -63,19 +68,18 @@ ownership change or policy withdrawal prevents stale publication even if a
 remote call ignores cancellation. Uncertain effects retain their identity and
 require reconciliation/review, not an automatic resend or overwritten outcome.
 
-## Native Email Association
+## Direct Human Support And Escalation
 
-Optional email-backed support must use Zero's actual configured email/inbox
-services. Link admitted mailbox/conversation and received-message identities
-server-side, preserve native email receipt/dedup semantics, and do not infer
-thread identity from subject text or a client-selected sender address.
-Provider acceptance, mailbox receipt and human attention remain different facts.
+Authenticated portal users use the same canonical support facade as the staff
+workspace. A caller may select human-first support even if an assistant is
+configured. A customer request for a human moves assistant ownership to triage
+atomically and fences the old AI job; it never selects a staff ID, grants staff
+membership, displaces an already assigned human or fabricates an accepted reply.
 
-Attachments use the existing private Storage pipeline and declared limits.
-Untrusted HTML is rendered through the existing isolated email viewer, not
-inserted into the messaging document. Private notes never become reply bodies.
-Unknown sends must use native email reconciliation or explicit review; an
-accepted chat row alone is not evidence an email was delivered.
+Authorized staff discover content-free queue entries and explicitly claim a
+conversation before reading its private transcript. Queue updates are committed
+projections; private-note activity is not broadcast to unjoined staff. Keep
+unknown commands and their original request IDs available for reconciliation.
 
 ## Managed Workspace And Acceptance
 
@@ -93,7 +97,7 @@ sidebar mounted or display unsupported delivered/read acknowledgments.
 Required gates: capability/origin/CSRF isolation, expired/revoked/reconnected
 visitors, no tenant/identity spoofing, contacts/group/assistant scope isolation,
 private-note/file non-disclosure, current authorized human routing, duplicate
-ingress/send reconciliation, real native email loopback, and full desktop/narrow
+send reconciliation, customer escalation, direct-human admission, and full desktop/narrow
 browser flows. Installed Linux/bundled-actor and normal archive/full-suite
 qualification remain mandatory. Unit tests or visual fixtures are not a complete
 product or provider-delivery proof.

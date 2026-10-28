@@ -1,7 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { Play, Pause, Volume2, VolumeX, Repeat, Maximize, Minimize, SkipBack, SkipForward } from 'lucide-react';
+import { VolumeX, Repeat, SkipBack, SkipForward } from 'lucide-react';
+import { Play } from '../animate-ui/icons/play';
+import { Pause } from '../animate-ui/icons/pause';
+import { Volume2 } from '../animate-ui/icons/volume-2';
+import { Maximize } from '../animate-ui/icons/maximize';
+import { Minimize } from '../animate-ui/icons/minimize';
 import { Button, type ButtonProps } from '../ui/button';
 import { cn } from '../../lib/utils';
 import { useBlogMedia, formatMediaTime, mediaClamp } from './blog-media-controller';

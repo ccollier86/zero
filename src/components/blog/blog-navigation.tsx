@@ -1,7 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronDown, Copy, Check, Search } from 'lucide-react';
+import { ChevronDown } from '../animate-ui/icons/chevron-down';
+import { Copy } from '../animate-ui/icons/copy';
+import { Check } from '../animate-ui/icons/check';
+import { Search } from '../animate-ui/icons/search';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';

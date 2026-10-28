@@ -2,7 +2,10 @@
 
 /** Canonical block assembly with stable IDs. Uses Zero controls and the isolated inline editor; never writes a database. */
 import * as React from 'react';
-import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { ArrowUp } from '../animate-ui/icons/arrow-up';
+import { ArrowDown } from '../animate-ui/icons/arrow-down';
+import { Trash as Trash2 } from '../animate-ui/icons/trash';
+import { Plus } from '../animate-ui/icons/plus';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
