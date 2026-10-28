@@ -84,6 +84,21 @@ examples. The frozen original frontend contract digest remains unchanged; the
 new logging types and prior notification-audio exports have explicit additive
 assertions rather than being folded into a new baseline.
 
+The exact clean source commit `1849e34ae7a36fbfaa07ea05aa946ae38a1b347c`
+repeats the 43-test/287-assertion regression set successfully in
+`logging-readable-committed-regressions.log`. Its original combined compiler
+run hit the existing 60-second public-type guard and was interrupted before
+the other compiler checks finished; this failed/incomplete evidence is retained
+in `logging-readable-committed-public-docs.log`. No timeout, assertion or
+contract baseline was changed. Separate serial runs on the same clean commit
+pass the two public-contract tests (28 assertions, 20.44 seconds), the actual UI
+Markdown examples (95 assertions, 18.20 seconds), and root TypeScript:
+`logging-readable-committed-public-contract-serial.log`,
+`logging-readable-committed-ui-docs-serial.log`, and
+`logging-readable-committed-types-serial.log`. The documentation graph also
+passes: 874 pages/IDs reachable, no structural problems. This records controlled
+source verification, not a diagnosis of the earlier timeout or a full-suite pass.
+
 This is feature-branch evidence, not a qualified selected archive. The separate
 pending messaging/native-worker release gates remain in
 [the messaging review](./messaging-workspace-review.md). Do not promote the UI

@@ -8,15 +8,15 @@ visibility: internal
 system: logging
 feature: scoped-api
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.6.0 source builds containing the people-first LoggingWorkspace directory and presentation APIs"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "b866dac1bf18fbfaa21430e182555debc6119842"
-  snapshot: dirty
+  commit: "1849e34ae7a36fbfaa07ea05aa946ae38a1b347c"
+  snapshot: clean
   date: "2026-10-28"
-  evidence_level: source-observed
+  evidence_level: implementation-verified
 ---
 
 # Logging Server and Client APIs
