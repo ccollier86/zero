@@ -51,6 +51,8 @@ browserTest('hover and keyboard descriptions, exact actions, no duplicate focus 
     await page.keyboard.press('Escape'); await page.getByRole('tooltip').waitFor({ state: 'hidden' });
     const original = await ada.elementHandle();
     await page.evaluate(() => window.__avatarGroupFixture.reorder());
+    expect(await group.locator('.zero-avatar-group-member').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))))
+      .toEqual(['Alan Turing', 'Grace Hopper', 'Ada Lovelace']);
     expect(await original!.evaluate((node) => node.isConnected && document.activeElement === node)).toBe(true);
     const count = group.getByRole('button', { name: '5 more members', exact: true });
     await count.focus(); await count.press('Enter');

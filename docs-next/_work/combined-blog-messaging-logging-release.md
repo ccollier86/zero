@@ -323,6 +323,25 @@ These follow-ups change no production runtime or API. Freeze their committed
 source, then rerun the complete gate and the remaining installed/native/update
 checks before selecting a package. The failed 547094c archive stays private.
 
+### 7348180 complete sweep and committed fixture boundary
+
+Frozen `7348180f57b38c0a8728a39c52033dddd45a14c4` runs the same complete inventory:
+1,375 pass, one fails, none are omitted, exit 1, 39m28s
+(`frozen-7348180-suite.{jsonl,stderr.log}`). Both prior review/test corrections
+pass, including the generated session/audit browser flow in its real full-suite
+slot. That archive remains unqualified and private.
+
+The sole new finding is an imperative avatar fixture calling a concurrent React
+setter and immediately inspecting the old DOM. The production add control
+already derives disabled/busy directly from its pending prop; it is not changed.
+Make the fixture's four imperative mutations commit before returning with the
+same `flushSync` pattern used by existing native messaging/DataTable drivers.
+Also require the actual reversed roster before checking retained DOM/focus; the
+old check could pass before any reorder had committed. No deadline or assertion
+is removed or relaxed. `avatar-committed-driver.log` passes all three browser
+cases / 21 assertions, including presence/radii/theme, keyboard/touch and reduced
+motion. The exact final committed checkout still needs its complete clean gate.
+
 - [x] Assess current feature source, public components and release evidence.
 - [x] Confirm the selected saved update and preserve the combined source on a
   feature branch.

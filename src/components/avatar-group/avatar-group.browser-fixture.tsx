@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { AvatarGroup } from './avatar-group';
 import type { AvatarGroupMember, AvatarGroupShape } from './avatar-group-types';
 
@@ -29,8 +30,12 @@ function Fixture() {
   const [adds, setAdds] = useState(0);
   const [counts, setCounts] = useState(0);
   window.__avatarGroupFixture = {
-    enablePresence, shape: setShape, pending: setPending,
-    reorder: () => setMembers((current) => [...current].reverse()),
+    // This imperative test driver promises committed presentation, not merely
+    // an enqueued concurrent React update. Production event handling is unchanged.
+    enablePresence: value => flushSync(() => enablePresence(value)),
+    shape: value => flushSync(() => setShape(value)),
+    pending: value => flushSync(() => setPending(value)),
+    reorder: () => flushSync(() => setMembers((current) => [...current].reverse())),
   };
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
