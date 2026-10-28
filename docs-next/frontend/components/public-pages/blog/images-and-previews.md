@@ -118,11 +118,16 @@ and Escape dismisses its own dropdown. It supports:
   or defaultOpen;
 - filterMode local (default) or manual for caller-retrieved records;
 - maxResults6 (finite1–100), match all (default) or any, showPreviewtrue;
-- loading, empty, className, awaited onSelect(post,{signal}) and onError.
+- loading, empty, className, awaited onSelect(post,{signal}) and onError;
+- error/onRetry for retrieval failure, and catalogEmpty for an authoritative
+  manual source's genuinely unpublished catalog (combined working candidate).
 
 Local matching ranks title/excerpt/categories/tags, limits query matching to256
 characters, preserves stable ties and never modifies the source.
 Manual mode does not start requests. The preview panel hides on narrow screens.
+Pending reads use the shared blog skeleton, never old selectable options. Failed
+reads show a safe alert with an actual Retry callback when supplied. Empty input,
+an empty catalog and a query without matches remain distinct from that failure.
 
 Selection is duplicate-guarded. false retains the opening; a rejection displays
 a generic retryable message, not exception contents. Query/data/opening retirement

@@ -60,32 +60,33 @@ public search failure without a retry action in
 [the managed reader](../../src/components/blog/blog-public-page.tsx), and
 initial publishing capability failures with no explicit recovery control in
 [the management workspace](../../src/components/blog/blog-workspace.tsx).
-The first implementation slice has already corrected current-article and
-duplicate recommendations and the usable-recent fallback; sparse layout and
-the other state work remain open.
+The first implementation slice corrected current-article and duplicate
+recommendations and the usable-recent fallback. The following working-source
+pass completes sparse layouts and read-recovery states; final combined archive
+qualification remains separate.
 
-- [ ] Exercise zero, one, two, three and many published posts, with and without
+- [x] Exercise zero, one, two, three and many published posts, with and without
   images. A single article must look deliberate; two should use balanced space.
-- [ ] Remove redundant featured/grid cards in the default composition without
+- [x] Remove redundant featured/grid cards in the default composition without
   losing articles or corrupting server pagination/counts. Hide unnecessary
   headings and pagination when there is no additional section/page.
-- [ ] Use shared tokenized skeletons for initial loading. Preserve accessible
+- [x] Use shared tokenized skeletons for initial loading. Preserve accessible
   status text, reduced motion and consistent layout; do not display a false
   zero count while the result is unknown.
-- [ ] Give first publication, empty category/tag, no search matches and failed
+- [x] Give first publication, empty category/tag, no search matches and failed
   retrieval distinct states. Provide clear/reset/retry only when an actual
   callback or native navigation can execute the action.
-- [ ] Related/recent sections exclude the current article, deduplicate identities
+- [x] Related/recent sections exclude the current article, deduplicate identities
   and use a real fallback. No blank heading, self-link or endless skeleton when
   nothing else is published. Support one/two recommendations without empty slots.
-- [ ] Cover both the command-palette and anchored search. Loading, no results,
+- [x] Cover both the command-palette and anchored search. Loading, no results,
   empty catalog and transport failure must remain distinct. Late/old-query
   responses cannot become selectable results for a new query. Retry repeats
   the current read without requiring the user to alter their search.
-- [ ] Keep the managed reader's SSR/no-JavaScript search, pagination, canonical
+- [x] Keep the managed reader's SSR/no-JavaScript search, pagination, canonical
   metadata and sitemap behavior. Failed search must not masquerade as a genuine
   empty publication set.
-- [ ] Review management first-run states for no active loaded author, no draft,
+- [x] Review management first-run states for no active loaded author, no draft,
   filtered empty table, empty media and revision history. Reuse `BlogWorkspace`
   and its native DataTable; expose no action beyond server capabilities and
   never infer a globally empty directory from one bounded page.
@@ -225,6 +226,17 @@ replacement is added to this completion pass.
   `excludePostId` for standalone composition. The focused related/default SSR
   set passes 10 tests / 62 assertions, and root TypeScript passes; this is not the complete state/browser
   acceptance pass (`blog-related-states-first.log` in the existing diagnostics).
+- [x] Implement phase-one sparse/loading/empty/error/retry states. The focused
+  canonical set passes all 14 files (`blog-polish-focused.jsonl`); subsequent
+  composed-search and first-author additions also pass. The final candidate will
+  rerun the whole set against one clean commit rather than combine these into a
+  frozen-release claim. The real editor covers first-author discovery, failed
+  capabilities/media/history reads, exact retries, private upload, selection
+  formatting, accepted publication, dirty-draft recovery, profile save and live
+  observations. Native SSR/FTS/privacy and the 15-case original UI suite pass.
+- [x] Update the layout/search/token/workspace guides and changelog. The docs
+  structural gate sees 875 reachable unique pages without problems. No blog
+  persistence or migration changes were added in this polish pass.
 - [ ] Complete phases one through five and replace this status with exact final
   release evidence when the normal updater is actually ready.
 

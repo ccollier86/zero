@@ -31,7 +31,7 @@ export interface CommandPaletteProps<T = unknown> {
   /** Explicit opt-in: multiple palettes must not compete for a global shortcut. Editable fields are excluded. */
   shortcut?: boolean;
   query?: string; onQueryChange?: (query: string) => void;
-  filterMode?: 'client' | 'manual'; loading?: boolean; empty?: React.ReactNode; maxResults?: number;
+  filterMode?: 'client' | 'manual'; loading?: boolean; loadingContent?: React.ReactNode; empty?: React.ReactNode; maxResults?: number;
   sidebarExtra?: React.ReactNode; footer?: React.ReactNode; className?: string; style?: React.CSSProperties;
   renderItem?: (item: CommandPaletteItem<T>) => React.ReactNode;
   onSelect?: (item: CommandPaletteItem<T>, context: { signal: AbortSignal }) => void | boolean | Promise<void | boolean>;
@@ -101,7 +101,7 @@ function CommandPaletteSurface<T>({ context, ...props }: CommandPaletteProps<T> 
   const searchable = prefix?.prefix ? query.slice(prefix.prefix.length) : query;
   const results = filterCommandPaletteItems(props.items, props.filterMode === 'manual' ? '' : searchable, active, props.maxResults);
   const select = async (item: CommandPaletteItem<T>) => {
-    if (selecting.current || item.disabled || context.signal.aborted) return;
+    if (selecting.current || props.loading || item.disabled || context.signal.aborted) return;
     selecting.current = true;
     setError(false); setPending(true); context.setBusy(true);
     try { const result = await props.onSelect?.(item, { signal: context.signal }); if (result !== false && !context.signal.aborted) context.accept(item.id); }
@@ -120,7 +120,7 @@ function CommandPaletteSurface<T>({ context, ...props }: CommandPaletteProps<T> 
         {props.sidebarExtra}
       </div></ScrollArea>}
       <div className="zero-command-palette-results-frame"><CommandList className="zero-command-palette-results" aria-busy={props.loading || pending}>
-        {props.loading ? <p role="status" className="zero-command-palette-empty">Searching…</p> : results.length ? results.map(item => <CommandItem key={item.id} value={item.id} disabled={pending || item.disabled} onSelect={() => { void select(item); }} className="zero-command-palette-result">
+        {props.loading ? props.loadingContent ?? <p role="status" className="zero-command-palette-empty">Searching…</p> : results.length ? results.map(item => <CommandItem key={item.id} value={item.id} disabled={pending || item.disabled} onSelect={() => { void select(item); }} className="zero-command-palette-result">
           {props.renderItem ? props.renderItem(item) : <><span className="zero-command-palette-result-icon">{item.image ?? item.icon}</span><span className="zero-command-palette-result-copy"><strong>{item.label}</strong>{item.description && <span>{item.description}</span>}</span>{item.trailing ?? <ArrowUpRight aria-hidden="true" />}</>}
         </CommandItem>) : <div role="status" className="zero-command-palette-empty">{props.empty ?? 'No results found. Try another search.'}</div>}
       </CommandList></div>

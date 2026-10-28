@@ -21,6 +21,7 @@ import { BlogProvider } from './blog-provider';
 import { presentBlogDocument } from '../../blog/presentation';
 import { BlogPrivateImage } from './blog-media-picker';
 import { BlockRenderer } from './blog-blocks';
+import { BlogReadError } from './blog-states';
 
 export interface BlogPostEditorProps {
   client: BlogClient;
@@ -34,21 +35,25 @@ export interface BlogPostEditorProps {
   canPublish: boolean;
   /** Immutable incarnation of the authenticated target. Workspace keys the editor to this value. */
   boundaryKey: string;
+  /** Mask same-scope read interruption without discarding the draft. Authority changes must still key/retire the editor. */
+  accessReady?: boolean;
   onBack(): void;
   /** Optional draft-only save delay; false (default) keeps persistence explicitly user initiated. */
   autoSave?: false | number;
   renderSelectionMenu?: BlogInlineInputProps['renderSelectionMenu'];
 }
 /** Publication always uses an accepted clean stored revision, never the browser's current unsaved body. */
-export function BlogPostEditor({ client, initial, record = null, authors, terms, moreAuthors, moreTerms, directoryError, canPublish, boundaryKey, onBack, autoSave = false, renderSelectionMenu }: BlogPostEditorProps) {
+export function BlogPostEditor({ client, initial, record = null, authors, terms, moreAuthors, moreTerms, directoryError, canPublish, boundaryKey, accessReady = true, onBack, autoSave = false, renderSelectionMenu }: BlogPostEditorProps) {
   const [draft] = React.useState(() => new BlogDraftController(client.posts, initial, record));
   const state = React.useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const [preview, setPreview] = React.useState(false), [history, setHistory] = React.useState(false), [message, setMessage] = React.useState<string | null>(null);
-  const [readable, setReadable] = React.useState(true);
+  const [readable, setReadable] = React.useState(true), [readVersion, setReadVersion] = React.useState(0);
+  const access = React.useRef(accessReady && readable); access.current = accessReady && readable;
   const alive = React.useRef(true), current = React.useRef(state); current.current = state;
   React.useEffect(() => { alive.current = true; return () => { alive.current = false; queueMicrotask(() => { if (!alive.current) draft.close(); }); }; }, [draft]);
   const save = useFormSave({ scopeKey: boundaryKey, form: { boundaryKey, isDirty: state.dirty || state.uncertain, isSubmitting: state.busy, submitError: state.error,
-    submit: () => state.uncertain ? draft.retry() : draft.save(), reset: () => draft.reset() } });
+    submit: () => !access.current ? Promise.resolve({ kind: 'blocked' as const }) : state.uncertain ? draft.retry() : draft.save(), reset: () => draft.reset() } });
+  React.useEffect(() => { if (!accessReady || !readable) { setPreview(false); setHistory(false); } }, [accessReady, readable]);
   React.useEffect(() => {
     if (!state.record) return;
     const owner = new AbortController();
@@ -56,29 +61,30 @@ export function BlogPostEditor({ client, initial, record = null, authors, terms,
     const stop = client.watchPost(state.record.id, post => { if (!owner.signal.aborted) { draft.incoming(post); setReadable(true); } },
       { signal: owner.signal, onError: () => { if (!owner.signal.aborted) setReadable(false); } });
     return () => { owner.abort(); stop(); };
-  }, [client, draft, state.record?.id]);
+  }, [client, draft, state.record?.id, readVersion]);
   React.useEffect(() => {
-    if (autoSave === false || !state.dirty || state.busy || state.uncertain || state.conflict) return;
+    if (!accessReady || !readable || autoSave === false || !state.dirty || state.busy || state.uncertain || state.conflict) return;
     const timer = setTimeout(() => { void save.save(); }, Math.max(500, Math.min(60000, autoSave)));
     return () => clearTimeout(timer);
-  }, [autoSave, state.content, state.dirty, state.busy, state.uncertain, state.conflict, save.save]);
+  }, [accessReady, readable, autoSave, state.content, state.dirty, state.busy, state.uncertain, state.conflict, save.save]);
   const action = async (kind: 'publish' | 'withdraw' | 'trash', trigger: Element) => {
-    if (!state.record || state.busy || state.uncertain || state.dirty) return;
+    if (!access.current || !state.record || state.busy || state.uncertain || state.dirty) return;
     if (!await modals.confirm({ title: kind === 'publish' ? 'Publish this article?' : kind === 'withdraw' ? 'Withdraw this article?' : 'Move this draft to trash?',
       description: kind === 'publish' ? 'The accepted stored revision becomes public. Later edits remain private until you publish again.' : kind === 'withdraw' ? 'The public article and its publication-bound media stop being delivered. Drafts and revision history remain.' : 'The draft and its immutable history are retained. Published articles must be withdrawn first.',
       confirmLabel: kind === 'publish' ? 'Publish article' : kind === 'withdraw' ? 'Withdraw article' : 'Move to trash', variant: kind === 'publish' ? undefined : 'destructive', trigger })) return;
-    if (!alive.current || current.current !== state) return;
+    if (!alive.current || !access.current || current.current !== state) return;
     const result = await draft.act(kind);
     if (alive.current && result.kind === 'accepted') setMessage(kind === 'publish' ? 'Article published.' : kind === 'withdraw' ? 'Article withdrawn.' : 'Draft moved to trash.');
   };
   const reload = async (trigger: Element) => {
-    if (!state.record || state.busy || state.uncertain) return;
+    if (!access.current || !state.record || state.busy || state.uncertain) return;
     if (state.dirty && !await modals.confirm({ title: 'Discard this local draft and reload?', description: 'Your unsaved local changes will be replaced by the currently stored revision.', confirmLabel: 'Discard and reload', variant: 'destructive', trigger })) return;
-    if (!alive.current || current.current !== state) return;
-    try { const stored = await client.posts.get(state.record.id); if (alive.current) { draft.reload(stored); setMessage('Current stored revision loaded.'); } }
+    if (!alive.current || !access.current || current.current !== state) return;
+    try { const stored = await client.posts.get(state.record.id); if (alive.current && access.current) { draft.reload(stored); setMessage('Current stored revision loaded.'); } }
     catch { if (alive.current) setMessage('The current article could not be reloaded. Your draft is preserved.'); }
   };
-  if (!readable) return <section className="zero-blog zero-blog-editor" role="status">Article access is being revalidated. Your local draft is retained, but its contents and actions stay hidden until a current authorized read succeeds.</section>;
+  if (!accessReady || !readable) return <>{accessReady && <section className="zero-blog zero-blog-editor"><BlogReadError title="Article access could not be confirmed"
+    description="Your local draft is retained. Its contents and actions stay hidden until a current authorized read succeeds." onRetry={() => setReadVersion(value => value + 1)} /></section>}<UnsavedChangesDialog controller={save} /></>;
   return <div className="zero-blog zero-blog-editor" aria-label="Article editor">
     <header className="zero-blog-workspace-toolbar"><Button type="button" variant="ghost" onClick={() => { void save.requestLeave(onBack); }}><ArrowLeft />All articles</Button>
       <span role="status">{state.busy ? 'Waiting for acknowledgment…' : state.uncertain ? 'Outcome needs reconciliation' : state.conflict ? 'Revision conflict' : state.dirty ? 'Unsaved draft' : state.record ? `Saved · revision ${state.record.revision} · ${state.record.status}` : 'New article'}</span>
@@ -98,7 +104,7 @@ export function BlogPostEditor({ client, initial, record = null, authors, terms,
     <FormSaveBar controller={save} saveLabel={state.uncertain ? 'Retry original operation' : 'Save draft'} placement="inline" /><UnsavedChangesDialog controller={save} />
     <ControlledModal open={preview} onOpenChange={setPreview} descriptor={{ title: 'Private article preview', size: 'full', body: <PrivatePreview content={state.content} client={client} authorName={authors.find(author => author.id === state.content.authorId)?.profile.displayName} /> }} />
     <ControlledModal open={history} onOpenChange={setHistory} descriptor={{ title: 'Article revision history', size: 'lg', body: context => state.record ? <RevisionHistory client={client} id={state.record.id} signal={context.signal} disabled={state.dirty || state.busy || state.uncertain}
-      restore={async revision => { const result = await draft.act('restore', revision); if (result.kind === 'accepted') context.accept(undefined); }} /> : null }} />
+      restore={async revision => { if (!access.current) return; const result = await draft.act('restore', revision); if (result.kind === 'accepted') context.accept(undefined); }} /> : null }} />
   </div>;
 }
 function PrivatePreview({ content, client, authorName }: { content: BlogPostContent; client: BlogClient; authorName?: string }) {
@@ -114,16 +120,17 @@ function PrivatePreview({ content, client, authorName }: { content: BlogPostCont
     })}</>} /></BlogProvider>;
 }
 function RevisionHistory({ client, id, signal, restore, disabled }: { client: BlogClient; id: string; signal: AbortSignal; restore(revision: number): Promise<void>; disabled: boolean }) {
-  const [page, setPage] = React.useState<BlogPage<BlogRevisionRecord> | null>(null), [offsets, setOffsets] = React.useState([0]), [error, setError] = React.useState(false), [busy, setBusy] = React.useState(false);
+  const [page, setPage] = React.useState<BlogPage<BlogRevisionRecord> | null>(null), [offsets, setOffsets] = React.useState([0]), [error, setError] = React.useState(false), [busy, setBusy] = React.useState(false), [version, setVersion] = React.useState(0);
   const offset = offsets.at(-1)!;
   React.useEffect(() => { const owner = new AbortController(), combined = AbortSignal.any([signal, owner.signal]); setPage(null); setError(false);
     void client.posts.revisions(id, { limit: 10, offset }, { signal: combined }).then(value => { if (!combined.aborted) setPage(value); }).catch(() => { if (!combined.aborted) setError(true); });
-    return () => owner.abort(); }, [client, id, offset, signal]);
-  return <div className="zero-blog-revision-history">{disabled && <p>Save or reconcile the current draft before restoring a revision.</p>}{error && <p role="alert">History could not be loaded.</p>}{!page && !error && <p role="status">Loading immutable revisions…</p>}
+    return () => owner.abort(); }, [client, id, offset, signal, version]);
+  return <div className="zero-blog-revision-history">{disabled && <p>Save or reconcile the current draft before restoring a revision.</p>}{error && <BlogReadError compact title="History could not be loaded" description="Your current draft has not changed." onRetry={() => setVersion(value => value + 1)} />}{!page && !error && <p role="status">Loading immutable revisions…</p>}
+    {page && !page.items.length && <p role="status">{offset ? 'No older revisions on this page.' : 'No saved revisions yet.'}</p>}
     {page?.items.map(item => <section key={item.id}><div><strong>Revision {item.revision} · {item.action}</strong><p>{item.content.title}</p><time>{new Date(item.createdAt).toLocaleString()}</time></div><Button type="button" variant="outline" disabled={disabled || busy} onClick={async event => {
       if (!await modals.confirm({ title: 'Restore this revision as a draft?', description: 'This creates a new revision; it does not change the current public article.', confirmLabel: 'Restore as draft', trigger: event.currentTarget })) return;
       if (signal.aborted) return; setBusy(true); try { await restore(item.revision); } finally { if (!signal.aborted) setBusy(false); }
     }}>Restore draft</Button></section>)}
-    <nav aria-label="Revision pages"><Button type="button" variant="ghost" disabled={offsets.length < 2 || busy || !page} onClick={() => setOffsets(previous => previous.slice(0, -1))}>Newer</Button><Button type="button" variant="ghost" disabled={!page?.hasMore || !page.items.length || busy} onClick={() => setOffsets(previous => [...previous, offset + page!.items.length])}>Older</Button></nav>
+    {(offsets.length > 1 || page?.hasMore) && <nav aria-label="Revision pages"><Button type="button" variant="ghost" disabled={offsets.length < 2 || busy || !page} onClick={() => setOffsets(previous => previous.slice(0, -1))}>Newer</Button><Button type="button" variant="ghost" disabled={!page?.hasMore || !page.items.length || busy} onClick={() => setOffsets(previous => [...previous, offset + page!.items.length])}>Older</Button></nav>}
   </div>;
 }

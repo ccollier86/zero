@@ -32,14 +32,16 @@ export function BlogCard({ post, variant = 'default', baseUrl, showCategory = tr
 }
 export interface BlogCardGridProps extends Omit<BlogCardProps, 'post'> { posts: readonly BlogPost[]; columns?: 2 | 3 | 4; emptyMessage?: string; empty?: React.ReactNode }
 export function BlogCardGrid({ posts, columns = 3, emptyMessage, empty, ...props }: BlogCardGridProps) {
-  if (!posts.length) return empty === undefined ? <EmptyState title={emptyMessage ?? 'No articles yet'} /> : empty;
-  return <div className="zero-blog-grid" data-columns={columns}>{posts.map(post => <BlogCard key={post.id} post={post} {...props} />)}</div>;
+  const unique = uniqueBlogPosts(posts);
+  if (!unique.length) return empty === undefined ? <EmptyState title={emptyMessage ?? 'No articles yet'} description="New stories will appear here when they are published." /> : empty;
+  return <div className="zero-blog-grid" data-columns={Math.min(columns, unique.length)} data-count={unique.length} data-card-variant={props.variant ?? 'default'}>{unique.map(post => <BlogCard key={post.id} post={post} {...props} />)}</div>;
 }
 export function RecentPostsHero({ posts, title = 'Recent blog posts', baseUrl, onCategoryClick, className, maxCategories = 2, showEmptyState = true, empty }: { posts: readonly BlogPost[]; title?: string; baseUrl?: string; onCategoryClick?: (category: BlogCategory) => void; className?: string; maxCategories?: number; showEmptyState?: boolean; empty?: React.ReactNode }) {
-  if (!posts.length) return showEmptyState ? empty ?? <EmptyBlogHero /> : null;
+  const recent = uniqueBlogPosts(posts).slice(0, 3);
+  if (!recent.length) return showEmptyState ? empty === undefined ? <EmptyBlogHero /> : empty : null;
   return <section className={cn('zero-blog-recent', className)} aria-label={title}>
-    <Typography variant="h2">{title}</Typography><div className="zero-blog-recent-grid" data-count={Math.min(posts.length, 3)}>
-      {posts.slice(0, 3).map((post, index) => <BlogCard key={post.id} post={post} baseUrl={baseUrl} maxCategories={maxCategories} variant={index && posts.length >= 3 ? 'horizontal' : 'editorial'} onCategoryClick={onCategoryClick} />)}
+    <Typography variant="h2">{title}</Typography><div className="zero-blog-recent-grid" data-count={recent.length}>
+      {recent.map((post, index) => <BlogCard key={post.id} post={post} baseUrl={baseUrl} maxCategories={maxCategories} variant={index && recent.length >= 3 ? 'horizontal' : 'editorial'} onCategoryClick={onCategoryClick} />)}
     </div>
   </section>;
 }

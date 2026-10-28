@@ -26,7 +26,7 @@ function MediaLibrary({ api, kind, context, onSelect }: { api: BlogBrowserMediaA
   const pending = React.useRef<{ file: File; allocation: string; upload: string; id?: string } | null>(null), alive = React.useRef(true);
   React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   React.useEffect(() => {
-    const owner = new AbortController(), signal = AbortSignal.any([owner.signal, context.signal]); setPage(null);
+    const owner = new AbortController(), signal = AbortSignal.any([owner.signal, context.signal]); setPage(null); setError(null);
     void api.list({ kind, limit: 12, offset }, { signal }).then(result => { if (!signal.aborted) setPage(result); }).catch(() => { if (!signal.aborted) setError('The private media library could not be loaded.'); });
     return () => owner.abort();
   }, [api, kind, offset, version, context.signal]);
@@ -51,8 +51,8 @@ function MediaLibrary({ api, kind, context, onSelect }: { api: BlogBrowserMediaA
     {!page && !error && <p role="status">Loading private media…</p>}
     {page && <><ul>{page.items.map(asset => <li key={asset.id}><div><strong>{asset.fileName}</strong><span>{asset.state}{asset.sizeBytes !== null ? ` · ${Math.round(asset.sizeBytes / 1024)} KiB` : ''}{asset.width ? ` · ${asset.width} × ${asset.height}` : ''}</span></div>
       <Button type="button" variant="outline" size="sm" disabled={asset.state !== 'ready' || Boolean(progress)} onClick={() => onSelect(asset.id)}>Use {kind}</Button></li>)}</ul>
-      {!page.items.length && <p>No media yet. Upload the first {kind}.</p>}
-      <nav aria-label="Media pages"><Button type="button" variant="ghost" disabled={offset === 0 || Boolean(progress)} onClick={() => setOffset(Math.max(0, offset - 12))}>Previous</Button><Button type="button" variant="ghost" disabled={!page.hasMore || Boolean(progress)} onClick={() => setOffset(offset + 12)}>Next</Button></nav>
+      {!page.items.length && <p>{offset ? 'No more media on this page. Return to the previous page or upload a file.' : `No media yet. Upload the first ${kind}.`}</p>}
+      {(offset > 0 || page.hasMore) && <nav aria-label="Media pages"><Button type="button" variant="ghost" disabled={offset === 0 || Boolean(progress)} onClick={() => setOffset(Math.max(0, offset - 12))}>Previous</Button><Button type="button" variant="ghost" disabled={!page.hasMore || Boolean(progress)} onClick={() => setOffset(offset + 12)}>Next</Button></nav>}
     </>}
   </div>;
 }

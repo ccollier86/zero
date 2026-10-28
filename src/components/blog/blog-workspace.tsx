@@ -22,6 +22,7 @@ import { BlogAuthorsPanel } from './blog-authors-panel';
 import { BlogTaxonomiesPanel } from './blog-taxonomies-panel';
 import { BlogMetricsPanel } from './blog-metrics-panel';
 import type { BlogInlineInputProps } from './blog-inline-input';
+import { BlogReadError } from './blog-states';
 
 const schema = defineSchema({ title: field.text({ label: 'Article' }), status: field.text({ label: 'Status' }), author: field.text({ label: 'Author' }), updated: field.text({ label: 'Updated' }), changes: field.text({ label: 'Publication' }) });
 type PostRow = { id: string; title: string; status: string; author: string; updated: string; changes: string };
@@ -37,15 +38,20 @@ function PublishingWorkspace({ client, boundaryKey, className = '', autoSave, re
   const [snapshot, setSnapshot] = React.useState<BlogLiveSnapshot | null>(null), [capabilities, setCapabilities] = React.useState<BlogPublishingCapabilities | null>(null);
   const [terms, setTerms] = React.useState<readonly BlogTaxonomyTerm[]>([]), [tab, setTab] = React.useState<'posts' | 'authors' | 'taxonomies' | 'metrics'>('posts');
   const [selected, setSelected] = React.useState<BlogPostRecord | 'new' | null>(null), [error, setError] = React.useState<string | null>(null), [ready, setReady] = React.useState(false), [version, setVersion] = React.useState(0);
+  const [capabilityError, setCapabilityError] = React.useState(false), [streamError, setStreamError] = React.useState(false);
   const [extraAuthors, setExtraAuthors] = React.useState<readonly BlogAuthorRecord[]>([]), [authorCursor, setAuthorCursor] = React.useState<string | null | undefined>();
   const [termOffset, setTermOffset] = React.useState<number | null>(null), [loadingDirectory, setLoadingDirectory] = React.useState<'authors' | 'terms' | null>(null);
   const lifetime = React.useRef(new AbortController());
-  React.useEffect(() => { if (lifetime.current.signal.aborted) lifetime.current = new AbortController(); const owned = lifetime.current; return () => owned.abort(); }, []);
+  const opening = React.useRef<AbortController | null>(null);
+  React.useEffect(() => { if (lifetime.current.signal.aborted) lifetime.current = new AbortController(); const owned = lifetime.current; return () => { owned.abort(); opening.current?.abort(); }; }, []);
   React.useEffect(() => {
     const owner = new AbortController();
-    setExtraAuthors([]); setAuthorCursor(undefined);
-    void client.blog.posts.capabilities().then(value => { if (!owner.signal.aborted) setCapabilities(value); }).catch(() => { if (!owner.signal.aborted) setError('Publishing capabilities could not be loaded.'); });
-    const stop = client.blog.watch(value => { if (!owner.signal.aborted) { setSnapshot(value); setReady(true); } }, { signal: owner.signal, onError: () => { if (!owner.signal.aborted) setReady(false); } });
+    // A normal directory refresh is not an authority failure. Keep its owned
+    // profile/editor surfaces mounted; actual denied/failed reads mask them.
+    setError(null);
+    setExtraAuthors([]); setAuthorCursor(undefined); setLoadingDirectory(null);
+    void client.blog.posts.capabilities().then(value => { if (!owner.signal.aborted) { setCapabilities(value); setCapabilityError(false); } }).catch(() => { if (!owner.signal.aborted) { setCapabilities(null); setCapabilityError(true); } });
+    const stop = client.blog.watch(value => { if (!owner.signal.aborted) { setSnapshot(value); setReady(true); setStreamError(false); } }, { signal: owner.signal, onError: () => { if (!owner.signal.aborted) { setReady(false); setStreamError(true); } } });
     const load = async () => {
       const page = await client.blog.taxonomies.list({ limit: 100 }, { signal: owner.signal });
       if (!owner.signal.aborted) { setTerms(page.items); setTermOffset(page.hasMore ? page.offset + page.items.length : null); }
@@ -68,34 +74,42 @@ function PublishingWorkspace({ client, boundaryKey, className = '', autoSave, re
         if (!signal.aborted && generation === directoryGeneration.current) { setTerms(previous => [...new Map([...previous, ...page.items].map(term => [term.id, term])).values()]); setTermOffset(page.hasMore ? page.offset + page.items.length : null); }
       }
     } catch { if (!signal.aborted && generation === directoryGeneration.current) setError('More directory choices could not be loaded. Retry without changing your draft.'); }
-    finally { if (!signal.aborted) setLoadingDirectory(null); }
+    finally { if (!signal.aborted && generation === directoryGeneration.current) setLoadingDirectory(null); }
   };
   const moreAuthors = nextAuthor ? <Button type="button" variant="ghost" disabled={Boolean(loadingDirectory)} onClick={() => { void loadDirectory('authors'); }}>{loadingDirectory === 'authors' ? 'Loading authors…' : 'Load more authors'}</Button> : null;
   const moreTerms = termOffset !== null ? <Button type="button" variant="ghost" disabled={Boolean(loadingDirectory)} onClick={() => { void loadDirectory('terms'); }}>{loadingDirectory === 'terms' ? 'Loading categories and tags…' : 'Load more categories and tags'}</Button> : null;
   const open = async (id: string) => {
-    try { const post = await client.blog.posts.get(id, { signal: lifetime.current.signal }); if (!lifetime.current.signal.aborted) setSelected(post); }
-    catch { if (!lifetime.current.signal.aborted) setError('The article could not be opened under the current permissions.'); }
+    opening.current?.abort(); const owner = new AbortController(); opening.current = owner;
+    const signal = AbortSignal.any([lifetime.current.signal, owner.signal]);
+    try { const post = await client.blog.posts.get(id, { signal }); if (!signal.aborted && opening.current === owner) setSelected(post); }
+    catch { if (!signal.aborted && opening.current === owner) setError('The article could not be opened under the current permissions.'); }
   };
-  if (!ready || !snapshot || !capabilities) return <section className="zero-blog" role="status">{error ?? 'Verifying publishing access…'}</section>;
-  if (snapshot.capabilities.state !== 'ready') return <section className="zero-blog" role="status">Blogging is disabled or requires its reviewed migration.</section>;
+  const createDraft = () => { opening.current?.abort(); setSelected('new'); };
+  const admitted = Boolean(ready && snapshot && capabilities?.state === 'ready' && snapshot.capabilities.state === 'ready');
+  const gate = <section className="zero-blog">{capabilityError || streamError ? <BlogReadError title="Publishing access could not be confirmed"
+    description="Your local draft is retained. Its contents and actions stay hidden until a fresh authorized read succeeds." onRetry={() => { setReady(false); setCapabilities(null); setCapabilityError(false); setStreamError(false); setVersion(value => value + 1); }} />
+    : <p role="status">{ready && snapshot && capabilities ? 'Blogging is disabled or requires its reviewed migration.' : 'Verifying publishing access…'}</p>}</section>;
   if (selected) {
     const initial = selected === 'new' ? newPost(authors.find(author => author.status === 'active')?.id ?? '') : selected.content;
-    return <BlogPostEditor key={selected === 'new' ? 'new' : selected.id} client={client.blog} boundaryKey={boundaryKey} initial={initial} record={selected === 'new' ? null : selected} authors={authors} terms={terms}
-      moreAuthors={moreAuthors} moreTerms={moreTerms} directoryError={error} canPublish={capabilities.canPublishOwn} autoSave={autoSave} renderSelectionMenu={renderSelectionMenu} onBack={() => { setSelected(null); setVersion(value => value + 1); }} />;
+    // Preserve the controller through same-scope transport loss, never protected DOM or actions.
+    // The outer boundary still retires the entire workspace on an identity/scope change.
+    return <>{!admitted && gate}<BlogPostEditor key={selected === 'new' ? 'new' : selected.id} client={client.blog} boundaryKey={boundaryKey} accessReady={admitted} initial={initial} record={selected === 'new' ? null : selected} authors={authors} terms={terms}
+      moreAuthors={moreAuthors} moreTerms={moreTerms} directoryError={error} canPublish={capabilities?.canPublishOwn ?? false} autoSave={autoSave} renderSelectionMenu={renderSelectionMenu} onBack={() => { setSelected(null); setVersion(value => value + 1); }} /></>;
   }
+  if (!admitted || !snapshot || !capabilities) return gate;
   return <section className={`zero-blog zero-blog-workspace ${className}`} aria-label="Blog publishing">
     <header className="zero-blog-workspace-toolbar"><div><h2>{snapshot.capabilities.site?.name ?? 'Blog publishing'}</h2><p className="zero-blog-muted">Draft privately. Publish an accepted revision. Keep every previous revision.</p></div>
-      {capabilities.canCreate && <Button type="button" disabled={!authors.some(author => author.status === 'active')} onClick={() => setSelected('new')}><Plus />New article</Button>}</header>
+      {capabilities.canCreate && <Button type="button" disabled={!authors.some(author => author.status === 'active')} onClick={createDraft}><Plus />New article</Button>}</header>
     <nav className="zero-blog-workspace-tabs" aria-label="Publishing sections">{(['posts', 'authors', 'metrics', ...(capabilities.canManage ? ['taxonomies'] : [])] as const).map(value => <Button key={value} type="button" variant={tab === value ? 'secondary' : 'ghost'} aria-pressed={tab === value} onClick={() => setTab(value as typeof tab)}>{value === 'posts' ? 'Articles' : value === 'authors' ? 'Authors and profiles' : value === 'metrics' ? 'Observations' : 'Categories and tags'}</Button>)}</nav>
     {error && <p role="alert">{error}</p>}
     {!authors.some(author => author.status === 'active') && <div className="zero-blog-editor-notice"><p>No active author is in the loaded directory. Load more authors or ask an administrator to enroll an existing user. Complete and explicitly publish the public byline before publishing an article.</p>{moreAuthors}</div>}
-    {tab === 'posts' && <PostsTable client={client} authors={authors} onOpen={id => { void open(id); }} />}
+    {tab === 'posts' && <PostsTable client={client} authors={authors} onCreate={capabilities.canCreate && authors.some(author => author.status === 'active') ? createDraft : undefined} onOpen={id => { void open(id); }} />}
     {tab === 'authors' && <BlogAuthorsPanel client={client} capabilities={snapshot.capabilities} authors={authors} moreAuthors={moreAuthors} onRefresh={() => setVersion(value => value + 1)} />}
     {tab === 'taxonomies' && <BlogTaxonomiesPanel client={client.blog} candidates={terms} moreTerms={moreTerms} onChange={() => setVersion(value => value + 1)} />}
     {tab === 'metrics' && <BlogMetricsPanel client={client.blog} />}
   </section>;
 }
-function PostsTable({ client, authors, onOpen }: { client: Client; authors: readonly BlogAuthorRecord[]; onOpen(id: string): void }) {
+function PostsTable({ client, authors, onOpen, onCreate }: { client: Client; authors: readonly BlogAuthorRecord[]; onOpen(id: string): void; onCreate?: () => void }) {
   const [status, setStatus] = React.useState('all'), [revision, setRevision] = React.useState(0), [readable, setReadable] = React.useState(true);
   const [tableState, setTableState] = React.useState<Partial<DataTableState>>({ pagination: { pageIndex: 0, pageSize: 20 }, globalFilter: '' });
   const currentAuthors = React.useRef(authors); currentAuthors.current = authors;
@@ -118,7 +132,9 @@ function PostsTable({ client, authors, onOpen }: { client: Client; authors: read
     } } }), [client, status]);
   return <><div className="zero-blog-workspace-toolbar"><Select value={status} onValueChange={value => { setStatus(value); setTableState(previous => ({ ...previous, pagination: { pageIndex: 0, pageSize: previous.pagination?.pageSize ?? 20 } })); }}><SelectTrigger aria-label="Article status"><SelectValue /></SelectTrigger><SelectContent>{['all', 'draft', 'published', 'withdrawn', 'trashed'].map(value => <SelectItem key={value} value={value}>{value === 'all' ? 'All statuses' : value}</SelectItem>)}</SelectContent></Select></div>
     {readable ? <DataTable schema={schema} source={source} refreshKey={revision} primaryKey="id" columns={schema.fieldNames as string[]} searchable sortable={false} filterable={false} paginated={{ pageSize: 20 }} state={tableState} onStateChange={value => setTableState(previous => JSON.stringify(previous) === JSON.stringify(value) ? previous : value)}
-      showExport={false} cellMotion={false} onRowClick={row => onOpen(row.id)} emptyState={<div className="zero-blog-empty">No articles match. Start a draft or adjust the search.</div>} /> : <p role="status">Article access is being revalidated. Retained rows remain hidden until a fresh authorized snapshot succeeds.</p>}
+      showExport={false} cellMotion={false} onRowClick={row => onOpen(row.id)} emptyState={<div className="zero-blog-empty"><strong>{status !== 'all' || tableState.globalFilter?.trim() ? 'No matching articles' : onCreate ? 'Start your first article' : 'No articles yet'}</strong>
+        <p>{status !== 'all' || tableState.globalFilter?.trim() ? 'Try another search or show all statuses.' : onCreate ? 'Create a private draft, add your story and preview it before publishing.' : 'An authorized author can create a private draft when the publishing profile is ready.'}</p>
+        {status === 'all' && !tableState.globalFilter?.trim() && onCreate && <Button type="button" variant="outline" onClick={onCreate}>Create a draft</Button>}</div>} /> : <p role="status">Article access is being revalidated. Retained rows remain hidden until a fresh authorized snapshot succeeds.</p>}
   </>;
 }
 function newPost(authorId: string): BlogPostContent {

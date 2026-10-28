@@ -1,0 +1,23 @@
+/* State geometry reuses the editorial tokens and Zero's shared Skeleton motion. */
+.zero-blog-grid[data-columns="1"] { grid-template-columns: minmax(0,1fr); }
+.zero-blog-grid[data-count="1"]:not([data-card-variant="horizontal"]) { max-width: var(--zero-blog-single-feature-width); width: 100%; margin-inline: auto; }
+.zero-blog-loading, .zero-blog-skeleton-copy { display: grid; gap: var(--zero-blog-space-4); }
+.zero-blog-skeleton-card { overflow: hidden; border: var(--zero-blog-border-width) solid var(--zero-blog-border); border-radius: var(--zero-blog-radius); background: var(--zero-blog-surface); }
+.zero-blog-skeleton { background: var(--zero-blog-muted); border-radius: var(--zero-blog-radius-small); }
+.zero-blog-skeleton-media { aspect-ratio: var(--zero-blog-media-aspect); border-radius: 0; }
+.zero-blog-skeleton-copy { padding: var(--zero-blog-space-5); }
+.zero-blog-skeleton-line { width: 100%; height: var(--zero-blog-type-small); }
+.zero-blog-skeleton-title { width: var(--zero-blog-skeleton-title-width); height: var(--zero-blog-type-card-title); }
+.zero-blog-skeleton-line[data-width="short"] { width: var(--zero-blog-skeleton-short-width); }
+.zero-blog-skeleton-line[data-width="medium"] { width: var(--zero-blog-skeleton-medium-width); }
+.zero-blog-search-skeleton { padding: var(--zero-blog-space-4); display: grid; gap: var(--zero-blog-space-5); }
+.zero-blog-search-skeleton > div { display: flex; gap: var(--zero-blog-space-3); align-items: center; }
+.zero-blog-skeleton-thumbnail { width: var(--zero-blog-avatar); height: var(--zero-blog-avatar); flex: none; }
+.zero-blog-search-skeleton > div > span { flex: 1; display: grid; gap: var(--zero-blog-space-2); }
+.zero-blog-read-error { display: grid; gap: var(--zero-blog-space-3); color: var(--zero-blog-text); }
+.zero-blog-read-error p { margin: 0; color: var(--zero-blog-secondary); font-size: var(--zero-blog-type-small); }
+.zero-blog-read-error:not(.zero-blog-empty) { padding: var(--zero-blog-space-4); }
+.zero-blog-read-error > button { justify-self: center; }
+.zero-blog-search-empty { display: grid; gap: var(--zero-blog-space-3); padding: var(--zero-blog-space-4); text-align: center; justify-items: center; }
+.zero-blog-search-empty p { margin: 0; color: var(--zero-blog-secondary); font-size: var(--zero-blog-type-small); }
+@media (prefers-reduced-motion: reduce) { .zero-blog-skeleton { animation: none; } }

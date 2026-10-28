@@ -82,6 +82,7 @@ named override points in the canonical
 | leading-body / leading-prose / leading-heading / weight-* / tracking-heading | Reading rhythm, emphasis and heading spacing. |
 | space-1 through space-16 | Layout spacing with Zero spacing aliases where available. |
 | page-width / prose-width / toc-width / sidebar-top | Magazine measure and centered article/sidebar geometry. |
+| single-feature-width / skeleton-title-width / skeleton-short-width / skeleton-medium-width | Deliberate sparse-card width and native loading-line proportions; no independent skeleton colors or timing engine. |
 | radius / radius-small / border-width / shadow / focus-width | Shared material and focus treatment. |
 | avatar* / icon / control-height / disabled-opacity | Compact identity/control geometry. |
 | media-aspect / hero-aspect / feature-aspect / lightbox-height / player-seek-min-width / waveform-height / volume-width | Media and player geometry. |

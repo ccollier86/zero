@@ -60,6 +60,20 @@ is present, it supplies an owned `ModalManager`; otherwise it joins the current
 host. Guardian still enforces every operation server-side. Mounting a component
 or hiding an action is not permission admission.
 
+The combined candidate distinguishes first-use from filtered-empty lists and
+provides a real Retry when publishing capabilities or live reads fail. Same-scope
+read interruption masks the editor and disables save/autosave/publication without
+discarding its local draft. Fresh authorized reads restore it; a Guardian identity
+or scope replacement still retires the workspace and its drafts immediately.
+Ordinary author/directory refresh does not dismiss an open managed profile dialog.
+Media and revision history also provide explicit read retry and omit empty paging
+controls. No transient failure creates an author, publishes a byline or resets data.
+
+For smaller custom compositions, `BlogPostEditor.accessReady` defaults to true.
+Pass false for the enclosing source's same-scope interruption; continue to key
+the editor to the immutable `boundaryKey` and unmount it when authority retires.
+It is a masking/lifecycle input, never a substitute for server authorization.
+
 The default workspace provides:
 
 - Server-paged articles with full-text search and status filtering, preserving

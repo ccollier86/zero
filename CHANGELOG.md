@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Polish growing-blog layouts and recovery: unique featured/page slots, balanced
+  sparse grids, native loading skeletons, distinct empty/filter/failure states,
+  real retry/reset controls and query-generation fences for public search.
+  Publishing read interruptions retain but mask unsaved drafts; save/autosave and
+  publication remain blocked until authorized reads recover. Ordinary directory
+  refresh preserves managed author dialogs. Media/history have explicit read
+  retry and first-run states. Existing persistence and publication rules remain.
+
 - Blog recommendations omit the current article and duplicate identities, and
   correctly fall back to recent articles after removing unusable suggestions.
   Standalone RelatedPosts accepts an optional excludePostId; no publication,

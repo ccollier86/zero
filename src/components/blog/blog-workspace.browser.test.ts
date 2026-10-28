@@ -8,6 +8,7 @@ import { createClient } from '../../frontend/client/sdk';
 import { createPublicBlogClient } from '../../frontend/client/blog-client';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable } from '../../test-support/playwright-test-browser';
 import sharp from 'sharp';
+import { buildBrowserFixture } from '../../test-support/build-browser-fixture';
 
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 /** Observe accepted read state only; never replay an uncertain mutation. */
@@ -23,10 +24,7 @@ async function waitForAccepted<T>(read: () => Promise<T>, accepted: (value: T) =
 browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect live observations and preserve dirty drafts through the real workspace', async () => {
   const root = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/blog-authoring-'); await mkdir(join(root, 'app'));
   await symlink(join(import.meta.dir, '../../../node_modules'), join(root, 'node_modules'), 'dir');
-  const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'blog-workspace.browser-fixture.tsx')], target: 'browser', format: 'iife' });
-  if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
-  const script = await build.outputs.find(file => file.path.endsWith('.js'))!.text();
-  const css = (await Promise.all(build.outputs.filter(file => file.path.endsWith('.css')).map(file => file.text()))).join('\n');
+  const { script, css } = await buildBrowserFixture(join(import.meta.dir, 'blog-workspace.browser-fixture.tsx'));
   const app = await createApp({ projectRoot: root, db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
     auth: { bootstrap: 'public' }, blog: { authors: { requireAvatar: false }, siteName: 'The editorial desk', content: { metrics: { enabled: true } } }, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false,
@@ -35,6 +33,10 @@ browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect li
       return context.app.get('/proof/editor', () => new Response(`<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="${context.frontend.cssPath}"><link rel="stylesheet" href="/proof/editor.css"></head><body><div id="root"></div><script src="/proof/editor.js"></script></body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }))
         .get('/proof/editor.js', () => new Response(script, { headers: { 'Content-Type': 'text/javascript; charset=utf-8' } })).get('/proof/editor.css', () => new Response(css, { headers: { 'Content-Type': 'text/css; charset=utf-8' } }));
     } })],
+  }).catch(error => {
+    // Preserve the native failure and its compiler diagnostics in this isolated fixture.
+    if (error instanceof Error && error.cause instanceof AggregateError) for (const diagnostic of error.cause.errors) console.error(diagnostic);
+    throw error;
   });
   app.listen({ hostname: '127.0.0.1', port: 0 }); const origin = 'http://127.0.0.1:' + app.server!.port;
   const client = createClient({ url: origin, auth: true, autoConnect: false });
@@ -43,13 +45,24 @@ browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect li
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   try {
     await client.register({ username: 'workspace-writer', email: 'workspace-writer@example.test', password: 'Synthetic-workspace-password-123' });
-    const me = client.user!.userId, assigned = await client.blog.authors.assign({ userId: me, expectedRevision: 0 });
-    const profile = await client.blog.authors.updateProfile(me, { expectedRevision: assigned.revision, changes: { displayName: 'Editorial Writer', slug: 'editorial-writer', avatar: null } });
-    await client.blog.authors.publishProfile(me, profile.revision);
+    const me = client.user!.userId;
     const response = await page.goto(origin + '/proof/editor'); expect(response?.status()).toBe(200);
     try { await page.waitForFunction(() => Boolean(document.getElementById('root')?.childElementCount), undefined, { timeout: 10000 }); }
     catch { throw new Error(JSON.stringify({ stage: 'synthetic-workspace-mount', errors, url: page.url(), rootCount: await page.locator('#root').count() })); }
+    let failCapabilities = true;
+    await page.route('**/api/blog/posts/config', route => failCapabilities ? route.fulfill({ status: 503, body: 'PRIVATE_CAPABILITY_DETAIL' }) : route.continue());
     await page.getByRole('button', { name: 'Open synthetic author workspace', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Publishing access could not be confirmed' }).waitFor();
+    expect(await page.getByRole('button', { name: 'New article', exact: true }).count()).toBe(0);
+    expect(await page.locator('body').textContent()).not.toContain('PRIVATE_CAPABILITY_DETAIL');
+    failCapabilities = false; await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.getByText('No active author is in the loaded directory.', { exact: false }).waitFor();
+    expect(await page.getByRole('button', { name: 'New article', exact: true }).isDisabled()).toBe(true);
+    const assigned = await client.blog.authors.assign({ userId: me, expectedRevision: 0 });
+    const profile = await client.blog.authors.updateProfile(me, { expectedRevision: assigned.revision, changes: { displayName: 'Editorial Writer', slug: 'editorial-writer', avatar: null } });
+    await client.blog.authors.publishProfile(me, profile.revision);
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLButtonElement>('button')].some(button => button.textContent === 'New article' && !button.disabled));
+    await page.getByText('Start your first article', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Categories and tags', exact: true }).click();
     await page.getByRole('button', { name: 'Add category or tag', exact: true }).click();
     const taxonomy = page.getByRole('dialog', { name: 'New taxonomy', exact: true });
@@ -66,8 +79,13 @@ browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect li
     await page.getByRole('checkbox', { name: 'Garden notes', exact: true }).check();
     await page.locator('summary').filter({ hasText: /^Heading image$/ }).click();
     await page.getByRole('button', { name: 'Add heading image', exact: true }).click();
+    let failMedia = true;
+    await page.route('**/api/blog/media?*', route => failMedia ? route.fulfill({ status: 503, body: 'PRIVATE_MEDIA_DETAIL' }) : route.continue());
     await page.getByRole('button', { name: 'Choose image', exact: true }).click();
     const media = page.getByRole('dialog', { name: 'Image library', exact: true });
+    await media.getByRole('alert').waitFor(); expect(await media.textContent()).not.toContain('PRIVATE_MEDIA_DETAIL');
+    failMedia = false; await media.getByRole('button', { name: 'Retry', exact: true }).click(); await media.getByText('No media yet. Upload the first image.', { exact: true }).waitFor();
+    expect(await media.getByRole('navigation', { name: 'Media pages', exact: true }).count()).toBe(0);
     const image = await sharp({ create: { width: 120, height: 80, channels: 3, background: '#596d55' } }).png().toBuffer();
     await media.getByLabel('Upload image', { exact: true }).setInputFiles({ name: 'synthetic-garden.png', mimeType: 'image/png', buffer: image });
     await media.waitFor({ state: 'detached' });
@@ -86,6 +104,14 @@ browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect li
     expect(post.content.categoryIds).toEqual([terms.items[0]!.id]);
     expect(post.content.featuredImage).toMatchObject({ alt: 'A synthetic green garden image' });
     expect((await client.blog.media.list()).items[0]).toMatchObject({ state: 'ready', mimeType: 'image/webp', width: 120, height: 80 });
+    let failHistory = true;
+    await page.route('**/api/blog/posts/*/revisions?*', route => failHistory ? route.fulfill({ status: 503, body: 'PRIVATE_HISTORY_DETAIL' }) : route.continue());
+    await toolbar.getByRole('button', { name: 'History', exact: true }).click();
+    const history = page.getByRole('dialog', { name: 'Article revision history', exact: true });
+    await history.getByRole('alert').waitFor(); expect(await history.textContent()).not.toContain('PRIVATE_HISTORY_DETAIL');
+    failHistory = false; await history.getByRole('button', { name: 'Try again', exact: true }).click(); await history.getByText('Revision 1 · create', { exact: true }).waitFor();
+    expect(await history.getByRole('navigation', { name: 'Revision pages', exact: true }).count()).toBe(0);
+    await page.keyboard.press('Escape'); await history.waitFor({ state: 'detached' });
     await toolbar.getByRole('button', { name: 'Publish', exact: true }).click();
     await page.getByRole('alertdialog', { name: 'Publish this article?', exact: true }).getByRole('button', { name: 'Publish article', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'Article published.' }).waitFor();
@@ -103,6 +129,15 @@ browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect li
       expect(await waitForAccepted(async () => (await client.blog.metrics.page({ postId: post.id })).items[0]?.views ?? 0, views => views === 1)).toBe(1);
     } finally { await reader.close(); }
     await page.getByLabel('Article title', { exact: true }).fill('Unsaved local title');
+    await page.getByRole('button', { name: 'Interrupt synthetic publishing stream', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Publishing access could not be confirmed' }).waitFor();
+    expect(await page.getByLabel('Article title', { exact: true }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Save draft', exact: true }).count()).toBe(0);
+    await page.getByRole('button', { name: 'Restore synthetic publishing transport', exact: true }).click();
+    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.getByLabel('Article title', { exact: true }).waitFor();
+    expect(await page.getByLabel('Article title', { exact: true }).inputValue()).toBe('Unsaved local title');
+    expect((await client.blog.posts.get(post.id)).content.title).toBe('An article from the editorial desk');
     await page.getByRole('button', { name: 'All articles', exact: true }).click();
     const leave = page.getByRole('alertdialog', { name: 'Save your changes?', exact: true }); await leave.waitFor();
     await leave.getByRole('button', { name: 'Stay', exact: true }).click(); await leave.waitFor({ state: 'detached' });

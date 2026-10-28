@@ -71,6 +71,16 @@ falls back to the configured post href; other records
 use their explicit href or remain open when no action is available. No data is
 fetched and there is no history persistence or fake recent-search list.
 
+The combined working candidate adds native skeleton loading, `error`, `onRetry`
+and `catalogEmpty` to both rich search forms. A failed read never becomes “No
+matching results”; stale options cannot be selected during loading or failure.
+Retry calls the source without requiring a query edit. Local empty input,
+unpublished catalog and no matching query have distinct defaults. For manual
+retrieval, supply `catalogEmpty` only when the source knows the entire catalog is
+empty, not merely because the current page is empty. Controlled query reset needs
+its real `onQueryChange`; no inert Clear action is invented. The managed public
+reader owns abortable query generations and repeats the same query on Retry.
+
 SearchBar is the shared Zero input with value/onChange, optional loading state
 and native input props. CategoryFilter accepts categories, selectedCategory,
 onCategoryChange and allLabel. Omitted selection is local; supplied selection is

@@ -8,6 +8,9 @@ import { CommandPalette, type CommandPaletteProps, type CommandPaletteItem } fro
 import { safeBlogHref } from './blog-utils';
 import { useBlogPostHref } from './blog-provider';
 import type { BlogPost, BlogAuthor, BlogCategory, BlogTag } from './blog.types';
+import { BlogReadError, BlogSearchSkeleton } from './blog-states';
+import { Button } from '../ui/button';
+import { cn } from '../../lib/utils';
 
 type BlogSearchData = { kind: 'post'; value: BlogPost } | { kind: 'author'; value: BlogAuthor } | { kind: 'category'; value: BlogCategory } | { kind: 'tag'; value: BlogTag };
 type SelectRecord<T> = (value: T, context: { signal: AbortSignal }) => void | boolean | Promise<void | boolean>;
@@ -15,9 +18,19 @@ export interface BlogSearchPaletteProps extends Omit<CommandPaletteProps<BlogSea
   posts: readonly BlogPost[]; authors?: readonly BlogAuthor[]; categories?: readonly BlogCategory[]; tags?: readonly BlogTag[]; baseUrl?: string;
   onSelectPost?: SelectRecord<BlogPost>; onSelectAuthor?: SelectRecord<BlogAuthor>;
   onSelectCategory?: SelectRecord<BlogCategory>; onSelectTag?: SelectRecord<BlogTag>;
+  error?: boolean; onRetry?: () => void;
+  /** Explicit for a manual source: an empty result page is not proof the whole blog is empty. */
+  catalogEmpty?: boolean;
 }
-export function BlogSearchPalette({ posts, authors = [], categories = [], tags = [], baseUrl, onSelectPost, onSelectAuthor, onSelectCategory, onSelectTag, ...props }: BlogSearchPaletteProps) {
+export function BlogSearchPalette({ posts, authors = [], categories = [], tags = [], baseUrl, onSelectPost, onSelectAuthor, onSelectCategory, onSelectTag, error = false, onRetry, catalogEmpty, ...props }: BlogSearchPaletteProps) {
   const hrefForPost = useBlogPostHref();
+  const [observedQuery, setObservedQuery] = React.useState('');
+  const query = props.query ?? observedQuery;
+  React.useEffect(() => { if (props.open === false) setObservedQuery(''); }, [props.open]);
+  const noCatalog = catalogEmpty ?? (!posts.length && !authors.length && !categories.length && !tags.length && props.filterMode !== 'manual');
+  const empty = props.empty !== undefined ? props.empty : <div className="zero-blog-search-empty"><strong>{!query.trim() ? noCatalog ? 'No articles yet' : 'Search articles' : 'No matching results'}</strong>
+    <p>{query.trim() ? 'Try a different search or explore another category.' : 'Search published articles by title or topic.'}</p>
+    {query.trim() && props.query !== undefined && props.onQueryChange && <Button type="button" variant="outline" onClick={() => props.onQueryChange?.('')}>Clear search</Button>}</div>;
   const items: CommandPaletteItem<BlogSearchData>[] = [
     ...posts.map(post => ({ id: `post:${post.id}`, group: 'posts', label: post.title, description: post.excerpt, keywords: [post.author?.name ?? '', ...(post.tags ?? []).map(tag => tag.name), ...(post.categories ?? []).map(category => category.name)],
       icon: <FileText />, image: safeBlogHref(post.featuredImage) ? <img src={safeBlogHref(post.featuredImage)} alt="" loading="lazy" /> : undefined, data: { kind: 'post' as const, value: post } })),
@@ -25,7 +38,12 @@ export function BlogSearchPalette({ posts, authors = [], categories = [], tags =
     ...categories.map(category => ({ id: `category:${category.id}`, group: 'categories', label: category.name, description: category.description, icon: <Folder />, data: { kind: 'category' as const, value: category } })),
     ...tags.map(tag => ({ id: `tag:${tag.id}`, group: 'tags', label: tag.name, icon: <Tag />, data: { kind: 'tag' as const, value: tag } })),
   ];
-  return <CommandPalette {...props} title={props.title ?? 'Search articles'} items={items} groups={[
+  return <CommandPalette {...props} className={cn('zero-blog-overlay', props.className)} title={props.title ?? 'Search articles'} items={error ? [] : items}
+    loading={props.loading && !error}
+    onQueryChange={value => { setObservedQuery(value); props.onQueryChange?.(value); }}
+    onOpenChange={open => { if (!open) setObservedQuery(''); props.onOpenChange?.(open); }}
+    empty={error ? <BlogReadError compact title="Search is unavailable" description="Your query has been kept. Try again or change your search." onRetry={onRetry} /> : empty}
+    loadingContent={props.loadingContent ?? <BlogSearchSkeleton />} groups={[
     { id: 'posts', label: 'Posts', icon: <FileText /> },
     ...(authors.length ? [{ id: 'authors', label: 'Authors', icon: <User />, prefix: '@' }] : []),
     ...(tags.length ? [{ id: 'tags', label: 'Tags', icon: <Tag />, prefix: '#' }] : []),

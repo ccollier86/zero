@@ -8,6 +8,8 @@ import { cn } from '../../lib/utils';
 import { useBlogPostHref } from './blog-provider';
 import { safeBlogHref } from './blog-utils';
 import type { BlogPost } from './blog.types';
+import { BlogReadError, BlogSearchSkeleton } from './blog-states';
+import { Button } from '../ui/button';
 
 /** Pure local matching; manual mode leaves retrieval/ranking with the application's source. */
 export function searchBlogPosts(posts: readonly BlogPost[], query: string, limit = 6, match: 'all' | 'any' = 'all'): BlogPost[] {
@@ -26,20 +28,21 @@ export interface SearchWithResultsProps {
   open?: boolean; defaultOpen?: boolean; onOpenChange?: (open: boolean) => void;
   filterMode?: 'local' | 'manual'; match?: 'all' | 'any'; loading?: boolean; empty?: React.ReactNode; className?: string; size?: 'sm' | 'default' | 'lg';
   onSelect?: (post: BlogPost, context: { signal: AbortSignal }) => void | boolean | Promise<void | boolean>; onError?: (error: unknown) => void;
+  error?: boolean; onRetry?: () => void; catalogEmpty?: boolean;
 }
 export function SearchWithResults({ posts, baseUrl, maxResults = 6, showPreview = true, placeholder = 'Search articles…', label = 'Search articles', query: controlledQuery, defaultQuery = '', onQueryChange,
-  open: controlledOpen, defaultOpen = false, onOpenChange, filterMode = 'local', match = 'all', loading = false, empty, className, size = 'default', onSelect, onError }: SearchWithResultsProps) {
+  open: controlledOpen, defaultOpen = false, onOpenChange, filterMode = 'local', match = 'all', loading = false, empty, className, size = 'default', onSelect, onError, error = false, onRetry, catalogEmpty }: SearchWithResultsProps) {
   const [localQuery, setQuery] = React.useState(defaultQuery), [localOpen, setOpen] = React.useState(defaultOpen), [active, setActive] = React.useState(''), [pending, setPending] = React.useState(false), [failed, setFailed] = React.useState(false);
   const operation = React.useRef<AbortController | null>(null), hrefFor = useBlogPostHref();
   const query = controlledQuery ?? localQuery, open = controlledOpen ?? localOpen;
-  const results = filterMode === 'manual' ? posts.slice(0, Math.max(1, Math.min(100, Number.isFinite(maxResults) ? Math.floor(maxResults) : 6))) : searchBlogPosts(posts, query, maxResults, match);
+  const results = loading || error ? [] : filterMode === 'manual' ? posts.slice(0, Math.max(1, Math.min(100, Number.isFinite(maxResults) ? Math.floor(maxResults) : 6))) : searchBlogPosts(posts, query, maxResults, match);
   const preview = results.find(post => post.id === active) ?? results[0];
   const changeOpen = (value: boolean) => { if (!value) operation.current?.abort(); if (controlledOpen === undefined) setOpen(value); onOpenChange?.(value); };
   React.useEffect(() => { operation.current?.abort(); operation.current = null; setPending(false); setFailed(false); }, [query, posts]);
   React.useEffect(() => { if (!open) { operation.current?.abort(); operation.current = null; setPending(false); } }, [open]);
   React.useEffect(() => () => operation.current?.abort(), []);
   const select = async (post: BlogPost) => {
-    if (operation.current || loading) return;
+    if (operation.current || loading || error) return;
     const controller = new AbortController(); operation.current = controller; setPending(true); setFailed(false);
     try { const result = onSelect ? await onSelect(post, { signal: controller.signal }) : window.location.assign(hrefFor(post, baseUrl)); if (!controller.signal.aborted && result !== false) changeOpen(false); }
     catch (error) { if (!controller.signal.aborted) { setFailed(true); try { onError?.(error); } catch { /* Observer only. */ } } }
@@ -52,11 +55,12 @@ export function SearchWithResults({ posts, baseUrl, maxResults = 6, showPreview 
         onKeyDown={event => { if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); changeOpen(false); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') changeOpen(true); }} />
     </div></PopoverAnchor>
       <PopoverContent className="zero-blog-overlay zero-blog-search-dropdown" align="start" side="bottom" onOpenAutoFocus={event => event.preventDefault()} onCloseAutoFocus={event => event.preventDefault()}>
-        <div className="zero-blog-search-panels"><div className="zero-blog-search-list-frame"><CommandList aria-busy={pending || loading}>
-          {loading ? <p role="status">Searching…</p> : results.length ? results.map(post => <CommandItem key={post.id} value={post.id} disabled={pending} onSelect={() => { void select(post); }}>
+        <div className="zero-blog-search-panels"><div className="zero-blog-search-list-frame"><CommandList aria-busy={pending || loading && !error}>
+          {error ? <BlogReadError compact title="Search is unavailable" description="Your query has been kept. Try again or change your search." onRetry={onRetry} /> : loading ? <BlogSearchSkeleton /> : results.length ? results.map(post => <CommandItem key={post.id} value={post.id} disabled={pending} onSelect={() => { void select(post); }}>
             {safeBlogHref(post.featuredImage) ? <img className="zero-blog-search-result-image" src={safeBlogHref(post.featuredImage)} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
             <span><strong>{post.title}</strong>{post.excerpt && <span>{post.excerpt}</span>}</span><ArrowUpRight aria-hidden="true" />
-          </CommandItem>) : <p role="status">{empty ?? (query ? 'No matching articles.' : 'Type to search articles.')}</p>}
+          </CommandItem>) : empty !== undefined ? empty : <div role="status" className="zero-blog-search-empty"><strong>{query.trim() ? 'No matching articles' : (catalogEmpty ?? (!posts.length && filterMode === 'local')) ? 'No articles yet' : 'Search articles'}</strong>
+            <p>{query.trim() ? 'Try a different search.' : 'Type a title or topic to find published articles.'}</p>{query.trim() && (controlledQuery === undefined || onQueryChange) && <Button type="button" variant="outline" onClick={() => { if (controlledQuery === undefined) setQuery(''); onQueryChange?.(''); }}>Clear search</Button>}</div>}
         </CommandList></div>
           {showPreview && preview && !loading && <aside aria-label="Article preview" className="zero-blog-search-preview"><PopoverViewport>
             {safeBlogHref(preview.featuredImage) && <img src={safeBlogHref(preview.featuredImage)} alt={preview.featuredImageAlt ?? ''} />}<strong>{preview.title}</strong>{preview.excerpt && <p>{preview.excerpt}</p>}

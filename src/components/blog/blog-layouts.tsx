@@ -12,6 +12,9 @@ import { safeBlogHref, blogBlockToc, blogHeadingId, blogDate } from './blog-util
 import { BlockRenderer } from './blog-blocks';
 import type { BlogPost, BlogCategory, BlogFilterState, BlogPaginationState, BlogTocItem } from './blog.types';
 import { uniqueBlogPosts } from './blog-post-list';
+import { blogListModel } from './blog-list-model';
+import { BlogGridSkeleton, BlogReadError } from './blog-states';
+import { Button } from '../ui/button';
 
 export interface BlogHeroProps {
   title: string; excerpt?: string; featuredImage?: string; featuredImageAlt?: string;
@@ -49,37 +52,45 @@ export interface BlogListPageProps {
   searchProps?: Omit<BlogSearchPaletteProps, 'posts' | 'categories'>;
   headerActions?: React.ReactNode; sidebar?: React.ReactNode; children?: React.ReactNode;
   empty?: React.ReactNode;
+  /** Retrieval failure is not an empty publication set. Callbacks belong to the actual source. */
+  error?: boolean; onRetry?: () => void; onClearFilters?: () => void;
 }
 export function BlogListPage({ posts, recentPosts, categories = [], title = 'Our blog', description, variant = 'magazine', columns = 3, baseUrl, className,
-  showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, hrefForPage, filterMode = 'local', search = 'palette', searchProps, searchResultProps, headerActions, sidebar, children, empty }: BlogListPageProps) {
+  showRecentHero = true, pagination, pageSize = 9, filters, isLoading = false, onSearchChange, onCategoryChange, onPageChange, hrefForPage, filterMode = 'local', search = 'palette', searchProps, searchResultProps, headerActions, sidebar, children, empty, error = false, onRetry, onClearFilters }: BlogListPageProps) {
   const scoped = useBlogScope();
   const [localFilters, setFilters] = React.useState<BlogFilterState>({}), [localPage, setPage] = React.useState(1);
-  const state = filters ?? localFilters, query = state.search ?? '', category = state.category ?? null, author = state.author, tag = state.tag;
-  const size = Math.max(1, Math.min(100, Number.isFinite(pageSize) ? Math.floor(pageSize) : 9));
-  const filtered = React.useMemo(() => filterMode === 'manual' ? posts : posts.filter(post => (!category || post.categories?.some(value => value.id === category))
-    && (!author || post.author?.id === author) && (!tag || post.tags?.some(value => value.id === tag))
-    && (!query || [post.title, post.excerpt, post.author?.name, ...(post.tags ?? []).map(value => value.name)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase()))), [posts, filterMode, category, author, tag, query]);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / size)), page = Math.max(1, Math.min(totalPages, localPage));
-  const visible = pagination || filterMode === 'manual' ? filtered : filtered.slice((page - 1) * size, page * size);
-  const current = pagination ?? { currentPage: page, totalPages, totalItems: filtered.length, itemsPerPage: size };
+  const state = filters ?? localFilters, query = state.search ?? '', category = state.category ?? null;
+  const { current, hero, grid, active } = blogListModel({ posts, recentPosts, filters: state, pageSize, localPage, pagination, mode: filterMode,
+    showHero: showRecentHero && variant !== 'minimal' && !isLoading && !error });
   const changeSearch = (value: string) => { if (filters === undefined) setFilters(previous => ({ ...previous, search: value })); setPage(1); onSearchChange?.(value); };
   const changeCategory = (id: string | null) => { if (filters === undefined) setFilters(previous => ({ ...previous, category: id })); setPage(1); onCategoryChange?.(id); };
   const changePage = (value: number) => { if (!pagination) setPage(value); onPageChange?.(value); };
-  const hero = recentPosts ?? posts.slice(0, 3);
-  return <div className={cn(!scoped && 'zero-blog', 'zero-public zero-blog-list', className)} data-variant={variant} aria-busy={isLoading}>
+  const clearable = filters === undefined || Boolean(onClearFilters) || !state.author && !state.tag
+    && (Boolean(query.trim()) && !category && Boolean(onSearchChange) || Boolean(category) && !query.trim() && Boolean(onCategoryChange));
+  const clear = () => {
+    setPage(1);
+    if (filters === undefined) setFilters({});
+    if (onClearFilters) { onClearFilters(); return; }
+    if (query.trim()) onSearchChange?.(''); if (category) onCategoryChange?.(null);
+  };
+  const clearAction = active && clearable ? <Button type="button" variant="outline" onClick={clear}>Show all articles</Button> : undefined;
+  const emptyState = empty !== undefined ? empty : <EmptyState title={active ? query.trim() ? 'No matching articles' : category ? 'No articles in this category' : 'No articles match these filters' : 'No articles yet'}
+    description={active ? 'Try a different search or explore all articles.' : 'New stories will appear here when they are published.'} action={clearAction} />;
+  return <div className={cn(!scoped && 'zero-blog', 'zero-public zero-blog-list', className)} data-variant={variant} aria-busy={isLoading && !error}>
     <header className="zero-blog-list-header"><div><Typography variant="h1" balance>{title}</Typography>{description && <Typography variant="lead" color="secondary">{description}</Typography>}</div>{headerActions}</header>
     <div className="zero-blog-list-toolbar">
       {!!categories.length && <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}
-      {search && <div className="zero-blog-list-search">{search === 'inline' ? <SearchBar value={query} onChange={changeSearch} isLoading={isLoading} /> : search === 'dropdown' ? <SearchWithResults {...searchResultProps} posts={posts} baseUrl={baseUrl ?? searchResultProps?.baseUrl} /> : <BlogSearchPalette {...searchProps} baseUrl={baseUrl ?? searchProps?.baseUrl} posts={posts} categories={categories}
+      {search && <div className="zero-blog-list-search">{search === 'inline' ? <SearchBar value={query} onChange={changeSearch} isLoading={isLoading && !error} /> : search === 'dropdown' ? <SearchWithResults {...searchResultProps} loading={searchResultProps?.loading ?? isLoading} error={searchResultProps?.error ?? error} onRetry={searchResultProps?.onRetry ?? onRetry} posts={posts} baseUrl={baseUrl ?? searchResultProps?.baseUrl} /> : <BlogSearchPalette {...searchProps} loading={searchProps?.loading ?? isLoading} error={searchProps?.error ?? error} onRetry={searchProps?.onRetry ?? onRetry} baseUrl={baseUrl ?? searchProps?.baseUrl} posts={posts} categories={categories}
         onSelectCategory={searchProps?.onSelectCategory ?? (value => changeCategory(value.id))} />}</div>}
     </div>
-    {showRecentHero && variant !== 'minimal' && !query && !category && !author && !tag && !!hero.length && <RecentPostsHero posts={hero} baseUrl={baseUrl} onCategoryClick={value => changeCategory(value.id)} />}
-    <div className="zero-blog-list-body">{variant === 'sidebar' && <aside>{sidebar ?? <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}</aside>}
-      <section className="zero-blog-all-posts"><div className="zero-blog-section-heading"><Typography variant="h2">{query ? `Results for “${query}”` : 'All blog posts'}</Typography><span className="zero-blog-muted">{current.totalItems ?? filtered.length} articles</span></div>
-        {isLoading ? <div role="status" className="zero-blog-empty">Loading articles…</div> : <BlogCardGrid posts={visible} columns={columns} baseUrl={baseUrl} variant={variant === 'list' ? 'horizontal' : 'default'} onCategoryClick={value => changeCategory(value.id)} empty={empty} emptyMessage={query ? 'No matching articles' : undefined} />}
-        <BlogPagination {...current} onPageChange={changePage} hrefForPage={hrefForPage} />
+    {!!hero.length && <RecentPostsHero posts={hero} baseUrl={baseUrl} onCategoryClick={value => changeCategory(value.id)} />}
+    {(grid.length > 0 || hero.length === 0) && <div className="zero-blog-list-body">{variant === 'sidebar' && <aside>{sidebar ?? <CategoryFilter categories={categories} selectedCategory={category} onCategoryChange={changeCategory} />}</aside>}
+      <section className="zero-blog-all-posts"><div className="zero-blog-section-heading"><Typography variant="h2">{query.trim() ? `Results for “${query}”` : hero.length ? 'More articles' : 'All blog posts'}</Typography>{!isLoading && !error && <span className="zero-blog-muted">{current.totalItems === undefined ? `${grid.length + hero.length} on this page` : `${current.totalItems} ${current.totalItems === 1 ? 'article' : 'articles'}${hero.length ? ' in total' : ''}`}</span>}</div>
+        {error ? <BlogReadError onRetry={onRetry} /> : isLoading ? <BlogGridSkeleton count={Math.min(3, current.itemsPerPage ?? 3)} columns={columns} />
+          : <BlogCardGrid posts={grid} columns={columns} baseUrl={baseUrl} variant={variant === 'list' ? 'horizontal' : 'default'} onCategoryClick={value => changeCategory(value.id)} empty={emptyState} />}
       </section>
-    </div>{children}
+    </div>}
+    {!isLoading && !error && current.totalPages > 1 && <BlogPagination {...current} onPageChange={changePage} hrefForPage={hrefForPage} />}{children}
   </div>;
 }
 export function BlogListPageSidebar(props: Omit<BlogListPageProps, 'variant'>) { return <BlogListPage {...props} variant="sidebar" />; }

@@ -39,7 +39,7 @@ alternative; do not configure those defaults again in every consuming app.
 | --- | --- |
 | title / description | Our blog / omitted. Description is not fabricated. |
 | variant | magazine; alternatives sidebar, list and minimal. |
-| recentPosts / showRecentHero | First three input posts / true. Hidden during filtering and in minimal mode. |
+| recentPosts / showRecentHero | First three unique articles on the first page / true. Hidden on later pages, during filtering, loading or failure, and in minimal mode. |
 | categories | Empty; category controls appear only when supplied. |
 | columns | 3; accepts 2, 3 or 4, collapsing responsively. List mode uses horizontal rows. |
 | baseUrl | Provider default, otherwise /blog. Explicit post hrefs or provider postHref take precedence. |
@@ -48,10 +48,12 @@ alternative; do not configure those defaults again in every consuming app.
 | searchResultProps | SearchWithResults options when search='dropdown'; caller selection/query/source options. |
 | filterMode | local; filters and pages the supplied array. manual displays exactly supplied rows and makes no request. |
 | filters | Optional controlled search/category/author/tag state. Category, author and tag values match IDs. Omitted state stays instance-local; manual mode leaves filtering to the caller. |
-| pagination | Optional controlled page counts. Omitted counts derive from local data. |
+| pagination | Optional authoritative controlled page counts. Omitted counts derive only from local data; an uncounted manual page does not invent a global total. |
 | pageSize | 9; finite values clamp to 1–100 in local mode. |
 | onSearchChange / onCategoryChange / onPageChange | Optional intent callbacks, not persistence or a query transport. |
-| isLoading | false; shows an accessible loading state instead of the grid. |
+| isLoading | false; native tokenized skeletons replace articles while the read is pending. No false zero count. |
+| error / onRetry | false / omitted; failure replaces loading/empty content with a safe alert. Retry appears only with a real source callback. |
+| onClearFilters | Optional single reset callback for controlled filters. Local state clears itself; a controlled author/tag/multi-filter state needs this callback to offer Show all articles. |
 | empty | Optional React node replacing the grid's default empty presentation. |
 | headerActions / sidebar / children | Optional application-owned presentation slots. No theme switch is inserted. |
 | className | Additional outer layout classes. |
@@ -60,6 +62,26 @@ For already paginated server results, use `filterMode="manual"` and provide the
 authoritative pagination/filter state. Otherwise the browser cannot know counts
 outside the supplied array. Changing external data does not replace a global
 store or automatically rerun a server query.
+
+### Growing and recovering blogs
+
+The following state polish is part of the combined working candidate; it is not
+present in the older artifact identified in this page's historical review header.
+Featured cards consume their real page slots and are not repeated in the grid.
+One article is centered, two have balanced columns, and no unused heading or
+pagination is shown when there is no additional content. Additional pages keep
+their authoritative count and links, including when a one-item first page is
+entirely featured. Standalone grids also deduplicate IDs and size actual columns.
+
+No publications, an empty category/filter, no search matches and retrieval failure
+have different messages. Skeletons appear only during actual `isLoading` and
+respect reduced motion. They never fill a completed empty layout with fake posts.
+`empty` still overrides a genuine empty result; it does not suppress a failure.
+The focused blog entry exports `BlogCardSkeleton`, `BlogGridSkeleton`,
+`BlogSearchSkeleton` and `BlogReadError` for a custom composition. These parts do
+not fetch, choose filters or infer publication state. `BlogGridSkeleton` bounds
+its count to 1–12 and announces loading once; `BlogReadError` only offers Retry
+when `onRetry` can actually repeat the source read.
 
 `BlogListPageSidebar`, `BlogListPageList` and `BlogListPageMinimal` are convenient
 variant wrappers over that same prop contract.
@@ -79,7 +101,7 @@ treated as raw HTML or automatically parsed Markdown.
 | showHero / showToc / showAuthor / showRelated | true; each section still requires its relevant data. |
 | shareUrl | Omitted; no sharing section or floating copy control appears without a URL. |
 | showFloatingShare | true when a share URL exists; hidden on narrow screens. |
-| relatedPosts / recentPosts | Empty; related wins when populated, otherwise recent is a fallback. |
+| relatedPosts / recentPosts | Empty; both exclude the current article and duplicate IDs. Related wins when usable, otherwise real recent articles are a fallback. |
 | relatedPlacement | content (inside the reading column); wide opts into full-width related content. |
 | baseUrl | Related-post link prefix, subject to provider/post overrides. |
 | headerActions / sidebar / newsletter / footer | Application-owned nodes; absent slots create no placeholder feature. |
@@ -116,8 +138,8 @@ className. BlogCardGrid adds posts, 2/3/4 columns and emptyMessage.
 RecentPostsHero uses up to three articles in the asymmetrical Magazine layout;
 one article is centered and two use equal editorial cards. maxCategories
 defaults 2; showEmptyState defaults true with an optional empty node.
-RelatedPosts accepts an article list, title and baseUrl. Empty hero/related lists
-do not invent articles.
+RelatedPosts accepts an article list, title, baseUrl and optional excludePostId.
+Empty hero/related lists do not invent articles or leave an empty related heading.
 
 ## Related Guides And Next Steps
 

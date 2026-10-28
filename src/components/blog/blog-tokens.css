@@ -87,6 +87,9 @@
   --zero-blog-hero-aspect: 2 / 1;
   --zero-blog-hero-width: 72rem;
   --zero-blog-single-feature-width: 42rem;
+  --zero-blog-skeleton-title-width: 76%;
+  --zero-blog-skeleton-short-width: 42%;
+  --zero-blog-skeleton-medium-width: 68%;
   --zero-blog-hero-height: 26.25rem;
   --zero-blog-hero-small-height: 20rem;
   --zero-blog-hero-medium-height: 24rem;
