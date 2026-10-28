@@ -104,32 +104,35 @@ for (const scenario of ['fresh', 'blocked', 'retry-session'] as const) browserTe
         // Real append notifications after hydration, not a mock table source.
         await page.getByText('No retained events match these filters.', { exact: true }).waitFor();
         await page.getByRole('button', { name: 'Record synthetic activity', exact: true }).click();
-        const first = page.getByRole('cell', { name: 'report · proof.1', exact: true }); await first.waitFor();
-        const retained = await first.elementHandle();
+        // Inspect controls retain an exact event identity while visible cells
+        // use readable resource/person labels. Do not restore raw-ID columns.
+        const inspect = (id: string) => page.getByRole('button', { name: `Inspect event ${id}`, exact: true });
+        const first = inspect('proof.1'); await first.waitFor();
+        const retained = await first.evaluateHandle(element => element.closest('[data-row-id]'));
         await page.getByRole('button', { name: 'Record synthetic activity', exact: true }).click();
-        await page.getByRole('cell', { name: 'report · proof.2', exact: true }).waitFor();
-        expect(await retained!.evaluate(element => element.isConnected)).toBe(true);
+        await inspect('proof.2').waitFor();
+        expect(await retained.evaluate(element => element?.isConnected)).toBe(true);
         expect(await page.locator('[data-slot="data-table-skeleton-body"]').count()).toBe(0);
         await page.getByRole('button', { name: 'Record synthetic burst', exact: true }).click();
-        await page.getByRole('cell', { name: 'report · proof.32', exact: true }).waitFor();
+        await inspect('proof.32').waitFor();
         await page.getByRole('button', { name: 'Next page', exact: true }).click(); await first.waitFor();
         await page.getByRole('button', { name: 'Record synthetic activity', exact: true }).click();
         // The preceding concurrent burst can still have buffered visual
         // arrivals; use the standard control's current count, not an assumed 1.
         const incoming = page.getByRole('button', { name: /^Reveal \d+ new records$/ });
         await incoming.waitFor().catch(async cause => { throw new Error(JSON.stringify({ proof, visible: await page.locator('body').innerText() }), { cause }); });
-        expect(await page.getByRole('cell', { name: 'report · proof.33', exact: true }).count()).toBe(0);
+        expect(await inspect('proof.33').count()).toBe(0);
         await incoming.click();
-        const newest = page.getByRole('cell', { name: 'report · proof.33', exact: true }); await newest.waitFor();
+        const newest = inspect('proof.33'); await newest.waitFor();
         const filter = async (actor: string, resource = '') => {
           await page.getByRole('button', { name: /^More filters/ }).click();
-          await page.getByLabel('Actor ID', { exact: true }).fill(actor);
-          await page.getByLabel('Resource ID', { exact: true }).fill(resource);
+          await page.getByLabel('User ID', { exact: true }).fill(actor);
+          await page.getByLabel('Record ID', { exact: true }).fill(resource);
           await page.keyboard.press('Escape'); await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
         };
         await filter('absent-fixture-user'); await page.getByText('No retained events match these filters.', { exact: true }).waitFor();
         await filter(account.user.userId, 'proof.33'); await newest.waitFor();
-        expect(await page.getByRole('cell', { name: 'report · proof.32', exact: true }).count()).toBe(0);
+        expect(await inspect('proof.32').count()).toBe(0);
         await newest.click(); await page.getByRole('dialog', { name: 'Event evidence', exact: true }).waitFor();
         await page.getByRole('button', { name: 'Close', exact: true }).click();
 
@@ -150,14 +153,14 @@ for (const scenario of ['fresh', 'blocked', 'retry-session'] as const) browserTe
           expect(await tab.getByTestId('session-audit-workspace').getAttribute('data-server-viewer')).toBe(account.user.userId);
           expect(await tab.getByRole('button', { name: 'Retry session', exact: true }).count()).toBe(0);
         } finally { await tab.close(); }
-        await page.getByRole('cell', { name: 'report · proof.33', exact: true }).waitFor();
-        await page.getByRole('cell', { name: 'report · proof.33', exact: true }).click();
+        await inspect('proof.33').waitFor();
+        await inspect('proof.33').click();
         await page.getByRole('dialog', { name: 'Event evidence', exact: true }).waitFor();
         await page.screenshot({ path: join(artifacts, 'session-audit-recovery-live-evidence.png') });
         services!.auth.store!.updateUser(account.user.userId, { role: 'user' });
         await page.getByRole('dialog', { name: 'Event evidence', exact: true }).waitFor({ state: 'detached' });
         await page.getByTestId('session-audit-workspace').waitFor({ state: 'detached' });
-        expect(await page.getByRole('cell', { name: 'report · proof.33', exact: true }).count()).toBe(0);
+        expect(await inspect('proof.33').count()).toBe(0);
       }
       expect(errors).toEqual([]);
       await page.screenshot({ path: join(artifacts, 'session-audit-recovery-' + scenario + (scenario === 'fresh' ? '-revoked.png' : '-ready.png')) });

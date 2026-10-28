@@ -20,7 +20,8 @@ const FALLBACKS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   'blog/blog-cards.tsx': { ArrowUpRight: 'arrow-up-right' },
   'blog/blog-media-controls.tsx': { VolumeX: 'volume-x', Repeat: 'repeat', SkipBack: 'skip-back', SkipForward: 'skip-forward' },
   'logging/logging-columns.tsx': { ArrowUpRight: 'arrow-up-right', Bot: 'bot', FileText: 'file-text' },
-  'logging/logging-event-detail.tsx': { FileText: 'file-text', Fingerprint: 'fingerprint', Info: 'info', ShieldCheck: 'shield-check' },
+  // Same missing non-human identity glyph already reviewed for the activity cell.
+  'logging/logging-event-detail.tsx': { Bot: 'bot', FileText: 'file-text', Fingerprint: 'fingerprint', Info: 'info', ShieldCheck: 'shield-check' },
   'logging/logging-workspace.tsx': { Activity: 'activity', CircleHelp: 'circle-help', SearchX: 'search-x', ShieldCheck: 'shield-check' },
   'logging/logging-filters.tsx': { SlidersHorizontal: 'sliders-horizontal' },
   'command-palette/command-palette.tsx': { ArrowUpRight: 'arrow-up-right' },

@@ -292,6 +292,37 @@ This includes the deterministic negative focus/blur/synthetic-input checks and
 the unchanged actual OS-focus/audio cases. Types and all 875 documentation links
 also pass. It is still source evidence, not selection of the failed old archive.
 
+### Complete 547094c sweep and review follow-up
+
+The next frozen inventory runs all 1,376 files exactly once: 1,374 pass, two
+fail, none are omitted, exit 1 (`frozen-547094c-suite.{jsonl,stderr.log}`). Its
+36m49s failed run is retained; subsequent focused corrections do not turn it
+into a pass. The unchanged grouped-menu package consumer passes with all cleanup
+in 32.866s under coordinated admission and its original deadline. Legacy-state,
+compiled/Fabric logging, hot auth and installed messaging checks also pass.
+
+The two findings are exact review/test integration gaps:
+
+- The logging detail's `Bot` fallback lacked an explicit per-file entry in the
+  native icon guard. The actual `bot` glyph is absent from Zero's registry and
+  already admitted for the activity cell. Review that same exact missing-glyph
+  fallback for the detail view; keep the guard that rejects a fallback whenever
+  Zero gains the glyph. `native-icons-review.log` reproduces the failure;
+  `native-icons-reviewed-fallback.log` passes 170 assertions after correction.
+- The generated session/audit test still looks for old visible `report · id`
+  cells and Actor/Resource labels. Its sign-in, required acknowledgment and
+  blocked/session retry assertions already pass. Adapt only the UI locators to
+  current exact Inspect controls and User ID/Record ID labels, retaining the
+  actual row-DOM identity, live insert/burst/paging, native incoming-record
+  handling, filters, modal, reload/new-tab and revocation assertions.
+  `session-audit-current-ui.log` passes three scenarios / 43 assertions. Its
+  deliberate final role revocation emits `AUTH_STATE_CHANGED` as the old stream
+  retires; that is a tested closed authority boundary, not a failed login.
+
+These follow-ups change no production runtime or API. Freeze their committed
+source, then rerun the complete gate and the remaining installed/native/update
+checks before selecting a package. The failed 547094c archive stays private.
+
 - [x] Assess current feature source, public components and release evidence.
 - [x] Confirm the selected saved update and preserve the combined source on a
   feature branch.
