@@ -18,7 +18,7 @@ import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable } from '..
     // Other managed-app tests can install server TSX hooks in this process.
     // Compile in the normal CLI's clean process shape, not through those hooks.
     const compiler = Bun.spawn([process.execPath, '--no-env-file', '-e',
-      `const built = await Bun.build({ entrypoints: [${JSON.stringify(join(import.meta.dir, 'test-fixtures/logging-app-provider.tsx'))}], target: 'browser', format: 'iife' });
+      `const built = await Bun.build({ entrypoints: [${JSON.stringify(join(import.meta.dir, 'test-fixtures/logging-app-provider.tsx'))}], target: 'browser', format: 'esm' });
        if (!built.success) throw new Error(built.logs.map(log => log.message).join('\\n'));
        process.stdout.write(await built.outputs[0].text());`], { stdout: 'pipe', stderr: 'pipe' });
     const [compiled, bundle, buildError] = await Promise.all([compiler.exited, new Response(compiler.stdout).text(), new Response(compiler.stderr).text()]);
@@ -26,7 +26,7 @@ import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable } from '..
     const html = () => '<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div>'
       + '<script>window.__PLATFORM_CONFIG__=' + JSON.stringify({ auth: true, logging: true, loggingRequired: true,
         loggingPolicyVersion: services!.logging!.config.policyVersion, stateSync: false, presence: false })
-      + ';</script><script src="/fixture.js"></script></body></html>';
+      + ';</script><script type="module" src="/fixture.js"></script></body></html>';
     app = await createApp({ projectRoot: root,
       db: { mode: 'file', path: join(root, 'app.db'), synchronous: 'FULL' }, systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' }, tables: {},
       auth: { bootstrap: 'public', registration: { mode: 'public' }, accountEmails: { passwordReset: false } },

@@ -140,7 +140,7 @@ The two documentation/public-export findings have focused corrections; the
 failed run remains failed. Four browser files and the Linux startup failure
 still require reconciliation before another archive can be selected.
 
-- [ ] Reproduce and diagnose authorization-scope, logging AppProvider,
+- [x] Reproduce and diagnose authorization-scope, logging AppProvider,
   page-session restart and session-recovery browser failures. Distinguish actual
   runtime/UX defects from fixture admission/lifecycle problems before fixing
   them. Keep document-navigation, scope, blocked-delivery and recovery assertions.
@@ -237,6 +237,18 @@ replacement is added to this completion pass.
 - [x] Update the layout/search/token/workspace guides and changelog. The docs
   structural gate sees 875 reachable unique pages without problems. No blog
   persistence or migration changes were added in this polish pass.
+- [x] Reconcile the four recovery browser failures. Real Chromium rejects the
+  old classic-script fixtures at parse time with `Cannot use 'import.meta'
+  outside a module` after the lazy optional sound asset module enters their
+  dependency graph. The browser never reaches the auth harness. Compile/load
+  those fixtures as ESM, matching the official Zero build; do not alter production
+  session/admission behavior. All four files now pass: 36 browser cases, including
+  strict blocked delivery, cookie-only SSR, persisted restart, cross-tab ordering,
+  bounded failure/retry and revocation. Case/assertion/deadline semantics are
+  unchanged. Evidence: `recovery-classic-script-browser.log` and
+  `recovery-esm-regression.{jsonl,stderr.log}`. The earlier diagnostic was
+  interrupted after reproducing the same pre-harness failures and remains an
+  interrupted run, not a pass. The original full frozen inventory remains failed.
 - [ ] Complete phases one through five and replace this status with exact final
   release evidence when the normal updater is actually ready.
 

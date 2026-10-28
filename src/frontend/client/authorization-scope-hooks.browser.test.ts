@@ -276,7 +276,7 @@ async function buildAppProviderFixture(
     'build',
     entrypoint,
     '--target=browser',
-    '--format=iife',
+    '--format=esm',
     '--outdir',
     dirname(output),
     '--entry-naming',
@@ -314,7 +314,7 @@ async function openAppProviderHarness(): Promise<Page> {
   await page.goto('http://zero.test/login?redirect=%2F');
   const css = appBundlePath.replace(/\.js$/u, '.css');
   if (await Bun.file(css).exists()) await page.addStyleTag({ path: css });
-  await page.addScriptTag({ path: appBundlePath });
+  await page.addScriptTag({ type: 'module', path: appBundlePath });
   await page.waitForFunction(() => (
     typeof window.__appProviderAuthorizationHarness === 'object'
       && document.querySelector('form[aria-label="Sign in"]') !== null

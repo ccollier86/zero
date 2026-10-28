@@ -21,7 +21,7 @@ beforeAll(async () => {
   buildDirectory = await mkdtemp(join(scratch, 'persisted-session-restart-build-'));
   const output = join(buildDirectory, 'fixture.js');
   const build = Bun.spawn([process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'test-fixtures/session-recovery-app-provider.tsx'),
-    '--target=browser', '--format=iife', '--outdir', buildDirectory, '--entry-naming', 'fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+    '--target=browser', '--format=esm', '--outdir', buildDirectory, '--entry-naming', 'fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
   if (code !== 0) throw new Error(`Persisted restart fixture build failed (${code}): ${stderr || stdout}`);
   bundle = await Bun.file(output).text();
@@ -59,7 +59,7 @@ for (const invalidated of [false, true]) browserTest(
       if (!auth && route === '/') return new Response(null, { status: 302, headers: { Location: '/login', ...(clear ? { 'Set-Cookie': clear } : {}) } });
       return new Response(`<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div>
         <script>window.__ROUTE_DATA__=${JSON.stringify({ authorizationBoundary: boundary })};window.__sessionRecoveryLoader=${JSON.stringify(boundary)};</script>
-        <script src="/fixture.js"></script></body></html>`, { headers: { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store', ...(clear ? { 'Set-Cookie': clear } : {}) } });
+        <script type="module" src="/fixture.js"></script></body></html>`, { headers: { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store', ...(clear ? { 'Set-Cookie': clear } : {}) } });
     } });
     let server = serve(0); const port = server.port!, origin = server.url.origin;
     const context = await lease.browser.newContext(), page = await context.newPage(), pageErrors: string[] = [];
@@ -208,7 +208,7 @@ browserTest('two SDK tabs serialize sign-in HTTP behind an older held logout res
     const boundary = createRouteAuthorizationBoundary(auth, access);
     return new Response(`<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div>
       <script>window.__ROUTE_DATA__=${JSON.stringify({ authorizationBoundary: boundary })};window.__sessionRecoveryLoader=${JSON.stringify(boundary)};</script>
-      <script src="/fixture.js"></script></body></html>`, {
+      <script type="module" src="/fixture.js"></script></body></html>`, {
       headers: { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store' },
     });
   } });
@@ -336,7 +336,7 @@ browserTest('two SDK tabs cannot issue competing sign-in cookies before the firs
     const boundary = createRouteAuthorizationBoundary(auth, access);
     return new Response(`<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div>
       <script>window.__ROUTE_DATA__=${JSON.stringify({ authorizationBoundary: boundary })};window.__sessionRecoveryLoader=${JSON.stringify(boundary)};</script>
-      <script src="/fixture.js"></script></body></html>`, {
+      <script type="module" src="/fixture.js"></script></body></html>`, {
       headers: { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store' },
     });
   } });

@@ -31,7 +31,7 @@ beforeAll(async () => {
   buildDir = await mkdtemp(join(scratchRoot, 'session-recovery-browser-'));
   const output = join(buildDir, 'fixture.js');
   const build = Bun.spawn([process.execPath, '--no-env-file', 'build', join(import.meta.dir, 'test-fixtures/session-recovery-app-provider.tsx'),
-    '--target=browser', '--format=iife', '--outdir', buildDir, '--entry-naming', 'fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+    '--target=browser', '--format=esm', '--outdir', buildDir, '--entry-naming', 'fixture.[ext]'], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [code, stdout, stderr] = await Promise.all([build.exited, new Response(build.stdout).text(), new Response(build.stderr).text()]);
   if (code !== 0) throw new Error(`Session fixture build failed (${code}): ${stderr || stdout}`);
   bundle = await Bun.file(output).text();
@@ -571,7 +571,7 @@ async function openHarness(options: Partial<AuthorityState> & { cookie?: string 
       const loader = boundary(state, state.persistentMismatch && cookieUser ? 'user-a' : cookieUser);
       return new Response(`<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div>
         <script>window.__ROUTE_DATA__=${JSON.stringify({ authorizationBoundary: loader })};window.__sessionRecoveryLoader=${JSON.stringify(loader)};</script>
-        <script src="/fixture.js"></script></body></html>`, { headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } });
+        <script type="module" src="/fixture.js"></script></body></html>`, { headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } });
     },
   });
   const origin = server.url.origin;
