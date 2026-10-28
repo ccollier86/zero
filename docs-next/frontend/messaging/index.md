@@ -71,7 +71,7 @@ on their independently configured local clocks or locales.
 
 ## Guardian Presence And Avatar Shape
 
-The current feature branch binds `ConversationList` and `ConversationHeader` to
+The native implementation binds `ConversationList` and `ConversationHeader` to
 the existing [Guardian presence service](../../backend/guardian/presence.md) by
 default when an SDK is supplied by AppProvider/ClientProvider. Enable
 `auth.presence.enabled`; the ordinary AppProvider manifest owns tracker enablement.
@@ -246,7 +246,7 @@ and the full `UseConversationTypingReturn` are exported from the public facade.
    access, reconnect and two tabs in the consuming app.
 
 Importing presentation parts does not run a migration, provision a chat service,
-enable AI/uploads or rewrite application source. The branch-only
+enable AI/uploads or rewrite application source. The opt-in
 [native backend](../../backend/messaging/configuration.md) exposes `zero.messaging`
 and `client.messaging` when configured, with its own admitted private migrations.
 Do not assume an older selected 2.6.0 archive has that facade. Presence refinements
@@ -272,7 +272,9 @@ with staggered dots; it is a component role, not a replacement global theme.
 Activity, message acceptance, channel delivery and read receipts remain separate.
 No component invents online status, infers delivery from a timeout or activates
 an AI provider. File chips expose callbacks rather than bypass Storage authority.
-The backend plan records the full remaining cross-service work and tests.
+The [backend reference](../../backend/messaging/configuration.md) records the
+native cross-service contract; its qualification record separates tested
+boundaries from deliberate limits.
 
 ## Verification And Limits
 

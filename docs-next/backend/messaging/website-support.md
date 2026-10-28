@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: public-support
 maturity: experimental
-applies_to: ["feature/messaging-backend; verify the selected commit/archive before use"]
+applies_to: ["2.6.0 native website support; verify the selected commit/archive before use"]
 ---
 
 # Native Website Support
@@ -45,10 +45,13 @@ Enable Zero AI and Torrent for assistants. Human-first chat needs neither AI nor
 a model call. An assistant-owned new chat is rejected if its executor is disabled.
 
 `origin` is one exact same origin without a trailing slash, path, credentials,
-query or fragment. HTTPS is required; HTTP is allowed only on loopback. Preserve
-the correct request origin through the admitted reverse proxy. Zero does not
-trust browser-supplied forwarded-host/origin overrides. Cross-origin iframe or
-third-party-cookie embedding is not supported by this entry.
+query or fragment. HTTPS is required; HTTP is allowed only on loopback. A TLS
+terminator may forward HTTP on its **private** backend hop while preserving the
+configured public Host/port. The browser Origin must still match the exact
+configured HTTPS origin, and cookies remain Secure. Keep that backend port
+private and preserve Host rather than inventing an internal origin. Arbitrary
+`X-Forwarded-Host`/`X-Forwarded-Proto` headers cannot override admission. Cross-origin
+iframe or third-party-cookie embedding is not supported by this entry.
 
 In multi tenancy an entry's `tenantId` must identify an existing active
 organization. It is required in multi mode and forbidden in single mode. The

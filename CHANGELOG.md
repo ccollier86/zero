@@ -18,6 +18,10 @@ All notable Zero Platform changes are tracked here.
   not fake Guardian users or general Sync access. No email/Facebook connector
   is installed. Existing private migrations remain unchanged; queue/visitor
   changes are additive. Update client/server together and enable deliberately.
+- Native peer-notification failures are discoverable through sender-only live
+  review/counts and explicit dismissal. Group ownership does not expose another
+  sender's work; current membership/history still applies, no provider draft is
+  released, and dismissal never resends or fabricates delivery.
 
 - Bind each Fabric writer-lane task to its submitting async context. A queued
   request or background delivery must not inherit a previous user's audit

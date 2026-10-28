@@ -41,6 +41,44 @@ const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice,
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
 
+test('peer notification reviews are sender-only, history-bound and dismissible without granting group-owner operator powers', async () => {
+  const f = await fixture();
+  const query = (name: string, actor: typeof alice, extra: object = {}) => f.query(name, { actor, conversationId: 'conversation-one', ...extra });
+  try {
+    await f.command('messaging.conversation.create', create());
+    await f.command('messaging.message.send', { ...send(1), notificationsEnabled: true });
+    await f.command('messaging.message.send', { ...send(2, bob), notificationsEnabled: true });
+    const jobs = (await f.query('messaging.jobs.pending', { scopeId: 'application' })).value as { id: string; message_id: string }[];
+    const first = jobs.find(job => job.message_id === 'message-1')!, second = jobs.find(job => job.message_id === 'message-2')!;
+    for (const [index, job] of [first, second].entries()) {
+      const ref = { scopeId: 'application', id: job.id, nonce: 'review-' + index };
+      await f.command('messaging.job.claim', { ...ref, policyHash: null, leaseMs: 30000 });
+      await f.command('messaging.job.review', { ...ref, code: 'NOTIFICATIONS_DISABLED' });
+    }
+    expect((await query('messaging.reviews', alice)).value.items.map((job: any) => job.id)).toEqual([first.id]);
+    expect((await query('messaging.reviews', bob)).value.items.map((job: any) => job.id)).toEqual([second.id]);
+    expect((await query('messaging.review', alice, { id: second.id })).code).toBe('MESSAGING_NOT_FOUND'); // Even the group owner cannot inspect another sender.
+    expect((await query('messaging.review', bob, { id: first.id })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.conversation', { actor: alice, id: 'conversation-one' })).value.reviewCount).toBe(1);
+    expect((await query('messaging.review', alice, { id: first.id })).value.draftText).toBeNull();
+    const dismiss = { actor: alice, conversationId: 'conversation-one', id: first.id, expectedOwnerEpoch: 1, action: 'dismiss', requestId: 'dismiss-own-notice' };
+    expect((await f.command('messaging.review.resolve', { ...dismiss, action: 'retry', acknowledgePossibleDuplicate: true })).code).toBe('MESSAGING_STAGE_CONFLICT');
+    expect((await f.command('messaging.review.resolve', { ...dismiss, actor: bob })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.command('messaging.review.resolve', dismiss)).ok).toBe(true);
+    expect((await query('messaging.reviews', alice)).value.items).toHaveLength(0);
+    expect((await query('messaging.reviews', bob)).value.items).toHaveLength(1);
+    await f.restart();
+    expect((await f.command('messaging.review.resolve', dismiss)).ok).toBe(true);
+    const detail = (await query('messaging.review', alice, { id: first.id })).value;
+    expect(detail.reason).toBe('NOTIFICATIONS_DISABLED'); expect(detail.resolution.action).toBe('dismiss');
+    expect((await f.command('messaging.conversation.change', { actor: alice, id: 'conversation-one', requestId: 'remove-notice-author', expectedRevision: 1, action: 'remove', value: bob.id })).ok).toBe(true);
+    expect((await query('messaging.reviews', bob)).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.command('messaging.conversation.change', { actor: alice, id: 'conversation-one', requestId: 'rejoin-notice-author', expectedRevision: 2, action: 'add', value: bob.id, contactsOnly: false, history: 'since-join', maxParticipants: 100 })).ok).toBe(true);
+    expect((await query('messaging.reviews', bob)).value.items).toHaveLength(0);
+    expect((await query('messaging.review', bob, { id: second.id })).code).toBe('MESSAGING_NOT_FOUND');
+  } finally { await f.close(); }
+}, 30000);
+
 test('retained v7 messages, identities, reactions and exact receipts survive additive queue/visitor migrations without reinitializing their database', async () => {
   const f = await fixture(true);
   try {

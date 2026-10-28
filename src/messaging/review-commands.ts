@@ -5,6 +5,7 @@ import { messagingCommand } from './realm-errors';
 import { messagingChoice, messagingFail, messagingHash, messagingInteger, messagingRecord } from './validation';
 import { jobInScope, type JobConversation } from './job-model';
 import { queueMessagingAssistant } from './message-commands';
+import { canReviewMessagingPeerJob, peerMessagingReview } from './review-model';
 
 export function resolveMessagingReview(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
@@ -13,10 +14,15 @@ export function resolveMessagingReview(context: DatabaseWriteCommandContext, inp
     if (!canReviewMessagingConversation(actor, conversation, member)) messagingFail('MESSAGING_FORBIDDEN', 403);
     const job = jobInScope(context, r.id, actor.scopeId), action = messagingChoice(r.action, ['dismiss', 'retry']);
     if (job.conversation_id !== conversation.id || job.state !== 'needs-review') messagingFail('MESSAGING_NOT_FOUND', 404);
+    const peer = peerMessagingReview(conversation);
+    if (peer && !canReviewMessagingPeerJob(actor, conversation, member, job, context.db.get('messaging_messages', job.message_id) as MessageRow | null)) messagingFail('MESSAGING_NOT_FOUND', 404);
+    // A native notification alert may be inspected/dismissed by its sender,
+    // never turned into a generic external resend or a new notification effect.
+    if (peer && action !== 'dismiss') messagingFail('MESSAGING_STAGE_CONFLICT');
     const expected = messagingInteger(r.expectedOwnerEpoch);
     if (action === 'retry' && r.acknowledgePossibleDuplicate !== true) messagingFail('MESSAGING_INPUT_INVALID', 422);
     return messagingIntent(context, actor, r.requestId, ['review.' + action, job.id, expected, r.acknowledgePossibleDuplicate ?? null], () => {
-      if (conversation.archived || conversation.owner_epoch !== expected || conversation.kind !== 'assistant' && (conversation.owner !== 'human' || conversation.owner_id !== actor.id)) messagingFail('MESSAGING_OWNER_CONFLICT');
+      if (conversation.archived || conversation.owner_epoch !== expected || !peer && conversation.kind !== 'assistant' && (conversation.owner !== 'human' || conversation.owner_id !== actor.id)) messagingFail('MESSAGING_OWNER_CONFLICT');
       const id = 'resolution_' + messagingHash(job.id).slice(0, 40);
       if (context.db.get('messaging_job_resolutions', id)) messagingFail('MESSAGING_STAGE_CONFLICT');
       let replacementJobId: string | null = null;

@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: native-notifications
 maturity: experimental
-applies_to: ["feature/messaging-backend; not a selected stable archive"]
+applies_to: ["2.6.0 native messaging notifications; verify the selected commit/archive hash"]
 ---
 
 # Native Messaging Notifications
@@ -110,9 +110,15 @@ commit proves one notice survives reconciliation while the failed workflow is
 retained. Separate source/receiver tests exercise scope separation, empty
 audiences, conflicting effects, rollback and missing immutable schema controls.
 
-This is not installed Linux/amd64 or complete browser/workspace qualification.
-The existing review facade is a support-staff/current-owner contract; normal
-peer conversations still need their own safe native-delivery review/discovery
-path before the complete backend can ship. Public portal capabilities, verified
-Messenger ingress/outbox/media, managed workspace binding and the full selected
-release remain separate unfinished gates.
+Ordinary peer conversations also have sender-only review/discovery through the
+same [review facade](./review.md) and native workspace. Only the current original
+sender can inspect/dismiss their native-notification alert, within current
+membership/history. Even a group owner cannot inspect someone else's work.
+Dismissal never resends a notice or changes its earlier outcome. Support and
+internal assistants retain their separate staff/current-owner review admission.
+
+The [qualification record](../../_work/messaging-workspace-review.md) records real
+browser, fresh package and Linux/amd64 source-to-bundle/worker recovery evidence
+separately. Native [website support](./website-support.md) is implemented;
+Messenger ingress/outbox/media and email bridging are not requirements or
+framework connectors. A source test does not select an updater archive.

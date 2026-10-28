@@ -48,9 +48,10 @@ export function assertMessagingMember(actor: MessagingActor, conversation: Conve
   if (actor.visitor && (conversation.id !== actor.visitor.conversationId || conversation.support_entry_id !== actor.visitor.entryId || conversation.kind !== 'support' || member.role !== 'customer')) messagingFail('MESSAGING_NOT_FOUND', 404);
 }
 export function staffTimeline(conversation: ConversationRow, member: MemberRow): boolean { return conversation.kind === 'support' && member.role === 'staff'; }
-/** A bot conversation's human owner may inspect its own recovery facts without global support authority. */
+/** Conversation admission only; ordinary peers additionally have a per-job sender filter. */
 export function canReviewMessagingConversation(actor: MessagingActor, conversation: ConversationRow, member: MemberRow): boolean {
-  return actor.kind === 'user' && (actor.staff && staffTimeline(conversation, member) || conversation.kind === 'assistant' && member.role === 'owner');
+  return actor.kind === 'user' && (actor.staff && staffTimeline(conversation, member) || conversation.kind === 'assistant' && member.role === 'owner'
+    || conversation.kind === 'direct' || conversation.kind === 'group');
 }
 export function assertRevision(row: { revision: number }, expected: unknown): void {
   if (row.revision !== messagingInteger(expected)) messagingFail('MESSAGING_REVISION_CONFLICT');

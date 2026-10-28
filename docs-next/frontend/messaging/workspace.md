@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: managed-workspace
 maturity: experimental
-applies_to: ["feature/messaging-backend; not a selected stable update"]
+applies_to: ["2.6.0 native messaging workspace; identify installed support by release commit/archive hash"]
 ---
 
 # Native Messaging Workspace
@@ -21,7 +21,7 @@ composer, identity/presence, typing, menus and shared confirmations over
 create a second application sidebar, authenticate a second client, copy the
 theme, expose private tables or require fabricated row-change events.
 
-This is a feature-branch contract. Check the selected archive's commit/hash
+This is the native contract. Check the selected archive's commit/hash
 before using it; an older package labeled `2.6.0` may not contain these exports.
 
 ## Ordinary Integration
@@ -124,6 +124,9 @@ Eligible owners/staff get a live Review control with retained attempt details,
 explicit dismiss/retry confirmations and original-key unknown-result recovery.
 Customers do not receive the review count/drafts. Actual current job state drives
 queued/thinking/responding assistant activity; no timer invents model progress.
+Ordinary peer chats show Review only when the current sender has an unresolved
+native-notification alert (or its review is open). That surface cannot inspect
+another sender's work, read provider drafts or resend an uncertain effect.
 
 New-chat, member and message menus reuse Zero Popover, magnetic directory
 highlight, ScrollArea/PopoverViewport, buttons, inputs, avatars and modal

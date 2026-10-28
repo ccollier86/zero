@@ -39,7 +39,12 @@ export class MessagingVisitors {
   /** Exact Origin plus a non-simple request header; cross-site forms/images cannot start or read a session. No CORS is enabled here. */
   requestEntry(id: string, request: Request, write: boolean): ResolvedMessagingSupportEntry {
     const entry = this.entry(id), origin = request.headers.get('Origin'), fetchSite = request.headers.get('Sec-Fetch-Site');
-    if (new URL(request.url).origin !== entry.origin || request.headers.get('X-Zero-Support-Client') !== '1' || origin !== null && origin !== entry.origin
+    const incoming = new URL(request.url), expected = new URL(entry.origin);
+    // A normal TLS terminator preserves public Host but forwards HTTP on its
+    // private backend connection. Origin/CSRF remain exact HTTPS browser proofs;
+    // never infer authority from arbitrary X-Forwarded-* headers.
+    const transport = incoming.origin === entry.origin || expected.protocol === 'https:' && incoming.protocol === 'http:' && incoming.host === expected.host;
+    if (!transport || request.headers.get('X-Zero-Support-Client') !== '1' || origin !== null && origin !== entry.origin
       || write && origin !== entry.origin || fetchSite && !['same-origin', 'none'].includes(fetchSite)) messagingFail('MESSAGING_FORBIDDEN', 403);
     return entry;
   }

@@ -31,12 +31,13 @@ export function WorkspaceReview({ controller, state }: { controller: MessagingWo
     });
     return () => { abort.abort(); stop(); };
   }, [controller, id, key, open, count === undefined]);
-  if (count === undefined) return null;
+  const peer = state.conversation!.kind === 'direct' || state.conversation!.kind === 'group';
+  if (count === undefined || peer && count === 0 && !open) return null;
   const inspect = (job: MessagingReviewItem, trigger: HTMLElement) => modals.show({ title: 'Review messaging work', description: 'Retained attempts are preserved. A later retry never rewrites an earlier failure.', size: 'lg', trigger,
     body: <ReviewDetail controller={controller} conversationId={id} jobId={job.id} /> });
   return <Popover open={open} onOpenChange={value => { setOpen(value); if (!value) setCursor(undefined); }}><PopoverTrigger asChild><Button size="sm" variant="ghost" aria-label={`Review messaging work (${count})`}><Eye aria-hidden="true" />Review{count ? ` (${count})` : ''}</Button></PopoverTrigger>
     <PopoverContent align="end" className="zero-messaging-start" aria-label="Messaging work requiring review"><h3>Work requiring review</h3><PopoverViewport className="zero-messaging-start-body">
-      <p className="zero-messaging-workspace-hint">Uncertain provider outcomes are not automatically resent. Only the current owner can resolve them.</p>
+      <p className="zero-messaging-workspace-hint">Uncertain provider outcomes are not automatically resent. Peer chats show only your own native notification work; assistant/support resolution requires the current owner.</p>
       {value?.error && <p role="alert">{value.error}<Button size="xs" variant="ghost" onClick={() => setRetry(n => n + 1)}>Retry review updates</Button></p>}
       {!value && <p role="status">Loading retained work…</p>}
       {value?.page?.items.map(job => <div key={job.id} className="zero-messaging-member-row"><span>{job.kind === 'assistant' ? 'Assistant response' : job.kind === 'notification' ? 'Notification' : 'Delivery'}<small>{job.reason?.replaceAll('_', ' ').toLowerCase() ?? 'Manual review required'} · {job.attempts} attempt{job.attempts === 1 ? '' : 's'}</small></span><Button size="xs" variant="outline" onClick={event => inspect(job, event.currentTarget)}>Inspect</Button></div>)}
@@ -62,7 +63,8 @@ function ReviewDetail({ controller, conversationId, jobId }: { controller: Messa
     if (!confirmed || !active()) return; setBusy(true);
     try { await controller.resolveReview(jobId, action); if (active()) setRevision(n => n + 1); } finally { setBusy(false); }
   };
-  const conversation = state.conversation, owner = conversation?.kind === 'assistant' || conversation?.owner === 'human' && conversation.ownerId === controller.userId;
+  const conversation = state.conversation, peer = conversation?.kind === 'direct' || conversation?.kind === 'group';
+  const owner = peer ? detail?.kind === 'notification' : conversation?.kind === 'assistant' || conversation?.owner === 'human' && conversation.ownerId === controller.userId;
   if (!active()) return <p role="alert">This review is no longer admitted. Close it and recheck the current conversation.</p>;
   return <div className="zero-messaging-start-body">{error && <p role="alert">{error}<Button size="sm" variant="ghost" onClick={() => setRevision(n => n + 1)}>Recheck review</Button></p>}
     {!detail && !error && <p role="status">Loading review evidence…</p>}

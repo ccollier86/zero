@@ -8,19 +8,19 @@ visibility: internal
 system: messaging
 feature: durable-review
 maturity: experimental
-applies_to: ["feature/messaging-backend development checkpoint; not a stable update"]
+applies_to: ["2.6.0 native messaging review; verify the selected commit/archive hash"]
 ---
 
 # Durable Messaging Review
 
 [Messaging index](./index.md) · [Implementation checkpoint](../../_work/messaging-backend-implementation.md)
 
-This is the development branch's real native review contract, not a promise that
-an older `2.6.0` archive contains it. The branch still needs public-support
-completion, its managed job-review UI and installed/Linux/full release
-qualification. The ordinary native [workspace](../../frontend/messaging/workspace.md)
-does not yet supply a job-review dashboard. Do not replace the
-managed service with custom SQL or infer an unknown provider outcome from UI.
+This is the native review contract, not a promise that an older `2.6.0` archive
+contains it. The [managed workspace](../../frontend/messaging/workspace.md) has a
+live Review control, retained-attempt modal and explicit resolution confirmations.
+The [qualification record](../../_work/messaging-workspace-review.md) distinguishes
+source/browser/package/deployment evidence. Do not replace the managed service
+with custom SQL or infer an unknown provider outcome from UI.
 
 ## Why Work Needs Review
 
@@ -40,6 +40,14 @@ support role. A failure retains the old job/attempt and advances its epoch; a ne
 explicit human turn may proceed, but the uncertain old call is not automatically
 retried. The same explicit retry/context/duplicate-acknowledgment rules apply.
 
+In ordinary direct/group chats, a current user may inspect and dismiss only the
+native-notification work for their **own** public messages within their current
+history boundary. A group owner cannot inspect another sender's work. Removal
+or since-join readmission withdraws old access. Counts, lists, point reads and
+canonical resolution use that same boundary; no provider draft is exposed.
+Dismissal records acknowledgment of the operational problem, not delivery or a
+new notification. There is no generic notification/external resend action.
+
 ## One Public Facade
 
 Both the request-scoped `zero.messaging.review` and authenticated
@@ -47,10 +55,10 @@ Both the request-scoped `zero.messaging.review` and authenticated
 
 | Method | Contract |
 | --- | --- |
-| `list(conversationId, { after?, limit? }, options?)` | Current support staff members, or the internal bot conversation's admitted human owner; unresolved items, stable ID cursor, default 25/max 50, real `hasMore`/`nextCursor`. |
+| `list(conversationId, { after?, limit? }, options?)` | Current support staff members, the internal bot conversation's human owner, or a peer's own native-notification work; stable ID cursor, default 25/max 50, real `hasMore`/`nextCursor`. |
 | `get(conversationId, jobId, options?)` | Same current conversation admission; safe reason, optional retained private draft, up to 25 attempt summaries, explicit `historyTruncated` and resolution. |
 | `retry(conversationId, jobId, expectedOwnerEpoch, true, mutationOptions)` | Current human owner only; exact epoch, explicit possible-duplicate acknowledgment, still-current customer turn/context and configured assistant policy. |
-| `dismiss(conversationId, jobId, expectedOwnerEpoch, mutationOptions)` | Current human owner only; records deliberate resolution without calling a provider. |
+| `dismiss(conversationId, jobId, expectedOwnerEpoch, mutationOptions)` | Current human owner for assistant/support work; current original sender for admitted peer notification work. Records deliberate resolution without calling a provider. |
 
 Mutation options require a stable `requestId`; optional `signal` cancellation
 does not prove rollback. Reconcile an interrupted mutation through its original

@@ -3,6 +3,7 @@ import type { DatabaseReadQueryConnection, DatabaseReadQueryContext } from '../d
 import type { ConversationRecord, DurableMessage, MessagingContact } from './contracts';
 import type { Row } from '../sync/types';
 import { assertMessagingMember, canReviewMessagingConversation, captureMessagingActor, memberKey, projectMessage, staffTimeline, type ConversationRow, type MemberRow, type MessageRow, type MessagingActor } from './realm-model';
+import { messagingReviewAudience } from './review-model';
 import { messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 
 export function readMessagingMembership(database: DatabaseReadQueryConnection, actor: MessagingActor, id: string) {
@@ -24,7 +25,8 @@ export function projectMessagingConversation(database: DatabaseReadQueryConnecti
   const job = conversation.owner === 'assistant' && !conversation.archived ? database.query<{ id: string; state: string }>("SELECT id,state FROM messaging_jobs WHERE conversation_id=? AND kind='assistant' AND owner_epoch=? AND context_revision=? AND message_id=? AND state IN ('pending','claimed','calling','received') ORDER BY created_at DESC,id DESC LIMIT 1")
     .get(conversation.id, conversation.owner_epoch, conversation.context_revision ?? 0, conversation.customer_turn_id ?? '') : null;
   const assistantActivity = job ? { runId: job.id, state: job.state === 'pending' ? 'queued' as const : job.state === 'received' ? 'responding' as const : 'thinking' as const } : null;
-  const reviewCount = canReviewMessagingConversation(actor, conversation, member) ? database.query<{ count: number }>("SELECT count(*) AS count FROM messaging_jobs j WHERE j.scope_id=? AND j.conversation_id=? AND j.state='needs-review' AND NOT EXISTS(SELECT 1 FROM messaging_job_resolutions r WHERE r.job_id=j.id)").get(actor.scopeId, conversation.id)!.count : undefined;
+  const audience = messagingReviewAudience(actor, conversation, member);
+  const reviewCount = canReviewMessagingConversation(actor, conversation, member) ? database.query<{ count: number }>("SELECT count(*) AS count FROM messaging_jobs j WHERE j.scope_id=? AND j.conversation_id=? AND j.state='needs-review' AND NOT EXISTS(SELECT 1 FROM messaging_job_resolutions r WHERE r.job_id=j.id)" + audience.sql).get(actor.scopeId, conversation.id, ...audience.values)!.count : undefined;
   return { id: conversation.id, kind: conversation.kind, title: conversation.title, revision: conversation.revision, createdAt: conversation.created_at,
     updatedAt: staff ? conversation.updated_at : conversation.public_updated_at, archived: conversation.archived === 1,
     owner: conversation.owner, ownerId: conversation.owner_id, ownerEpoch: conversation.owner_epoch,

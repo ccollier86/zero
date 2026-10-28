@@ -15,6 +15,7 @@ import type { ServerRouteServices } from '../frontend/server/server-services';
 import { messagingTypingSocket } from './test-support/typing-socket';
 import { messagingTypingRoom } from './typing-topic';
 import { applicationServiceDataScope } from '../auth/service-data-scope';
+import { AuthError } from '../auth/types';
 const PASSWORD = 'Synthetic-messaging-password-123';
 type TestClient = Pick<Client, 'register' | 'login' | 'messaging' | 'logging' | 'fetch' | 'disconnect' | 'user'>;
 /** Another actual native HTTP identity, not a second forbidden global browser Client singleton. */
@@ -118,6 +119,24 @@ test('public native support binds a private expiring cookie to one entry and con
     expect((await call(thread + '/messages')).status).toBe(403);
     expect((await call(thread + '/attachments/' + asset.id + '/content')).status).toBe(403);
   } finally { admin.disconnect(); await f.close(); }
+}, 90000);
+
+test('native HTTPS website admission accepts a Host-preserving private TLS-terminator hop but rejects spoofed origins and hosts', async () => {
+  const f = await fixture(false, 'all', undefined, false, {}, true), externalOrigin = 'https://support.example.test';
+  f.configuration.messaging = { support: { entries: { website: { origin: externalOrigin, assistant: false } } } };
+  try {
+    await f.restart();
+    const base = f.origin + '/api/messaging/public/website', headers = { Host: 'support.example.test', Origin: externalOrigin, 'X-Zero-Support-Client': '1', 'Content-Type': 'application/json' };
+    const created = await fetch(base + '/session', { method: 'POST', headers, body: JSON.stringify({ mode: 'human' }) });
+    expect(created.status).toBe(200); expect(created.headers.get('Set-Cookie')).toContain('; Secure');
+    const cookie = created.headers.get('Set-Cookie')!.split(';')[0]!, session = await created.json() as { sessionId: string; conversationId: string; csrf: string };
+    const active = { ...headers, Cookie: cookie, 'X-Zero-Support-CSRF': session.csrf, 'X-Zero-Support-Session': session.sessionId };
+    expect((await fetch(base + '/session', { headers: active })).status).toBe(200);
+    expect((await fetch(base + '/conversations/' + session.conversationId + '/messages', { method: 'POST', headers: { ...active, 'Idempotency-Key': 'proxy-native-send' }, body: JSON.stringify({ text: 'Synthetic private proxy question' }) })).status).toBe(200);
+    expect((await fetch(base + '/session', { headers: { ...active, Origin: 'null' } })).status).toBe(403);
+    expect((await fetch(base + '/session', { headers: { ...active, Origin: 'https://hostile.example' } })).status).toBe(403);
+    expect((await fetch(base + '/session', { headers: { ...active, Host: 'foreign.example.test', 'X-Forwarded-Host': 'support.example.test', 'X-Forwarded-Proto': 'https' } })).status).toBe(403);
+  } finally { await f.close(); }
 }, 90000);
 
 test('native support permits human-first requests and customer escalation fences a real held model call', async () => {
@@ -723,5 +742,31 @@ test('a native notification error after its real receiver commit is reconciled o
     expect(runs.filter(run => run.name === 'zero.messaging.job.v1' && run.status === 'completed')).toHaveLength(1);
     expect(JSON.stringify(runs)).not.toContain('PRIVATE_NATIVE_NOTICE_RECOVERY_SOURCE');
     expect(JSON.stringify(runs)).not.toContain('Synthetic error after the native receiver committed.');
+  } finally { service.notifyUsersOnce = publish; alice.disconnect(); bob.disconnect(); await f.close(); }
+}, 90000);
+
+test('native HTTP and SDK expose an unrecoverable peer notice only to its sender and dismiss it without resending', async () => {
+  const f = await fixture(false, 'all', undefined, true), alice = f.client(), bob = f.peer();
+  const service = f.zero.notifications!, publish = service.notifyUsersOnce.bind(service); let calls = 0;
+  service.notifyUsersOnce = () => { calls++; throw new AuthError('Synthetic invalid native notice, no real user data.', 'NOTIFICATION_INPUT_INVALID', 422); };
+  try {
+    await enroll(alice, 'notice-review-alice'); await enroll(bob, 'notice-review-bob');
+    const conversation = await alice.messaging.conversations.create({ userIds: [bob.user!.userId] }, { requestId: 'notice-review-chat' });
+    await alice.messaging.messages.send(conversation.id, { text: 'PRIVATE_PEER_NOTICE_SOURCE' }, { requestId: 'notice-review-send' });
+    let page = await alice.messaging.review.list(conversation.id); const deadline = Date.now() + 12000;
+    while (!page.items.length && Date.now() < deadline) { await Bun.sleep(30); page = await alice.messaging.review.list(conversation.id); }
+    expect(page.items).toHaveLength(1); expect(calls).toBe(1);
+    expect((await alice.messaging.conversations.get(conversation.id)).reviewCount).toBe(1);
+    expect((await bob.messaging.review.list(conversation.id)).items).toHaveLength(0);
+    await expect(bob.messaging.review.get(conversation.id, page.items[0]!.id)).rejects.toMatchObject({ status: 404 });
+    const detail = await alice.messaging.review.get(conversation.id, page.items[0]!.id);
+    expect(detail.kind).toBe('notification'); expect(detail.draftText).toBeNull();
+    expect(JSON.stringify(detail)).not.toContain('PRIVATE_PEER_NOTICE_SOURCE');
+    expect(JSON.stringify(detail)).not.toContain('Synthetic invalid native notice');
+    const intent = { requestId: 'notice-review-dismiss' };
+    const resolution = await alice.messaging.review.dismiss(conversation.id, detail.id, conversation.ownerEpoch, intent);
+    expect(await alice.messaging.review.dismiss(conversation.id, detail.id, conversation.ownerEpoch, intent)).toEqual(resolution);
+    expect((await alice.messaging.review.list(conversation.id)).items).toHaveLength(0); expect(calls).toBe(1);
+    expect((await bob.messaging.messages.list(conversation.id)).items).toHaveLength(1);
   } finally { service.notifyUsersOnce = publish; alice.disconnect(); bob.disconnect(); await f.close(); }
 }, 90000);

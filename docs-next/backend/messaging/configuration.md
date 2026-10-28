@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: configurable-messaging
 maturity: experimental
-applies_to: ["feature/messaging-backend correction; not a selected stable archive"]
+applies_to: ["2.6.0 native messaging; identify installed support by release commit/archive hash"]
 ---
 
 # Configurable Messaging
@@ -20,11 +20,11 @@ groups, internal assistants and support conversations. These can coexist; AI is
 not synonymous with customer support. Facebook Messenger and other external
 provider connectors are app-owned, not Zero configuration or release gates.
 
-This is a feature-branch API reference. The source tests below do not make these
-APIs available in an older archive with the same `2.6.0` version string. Public
-visitor admission and the support workspace are implemented on the feature branch;
-final installed release qualification remains separate. The branch's [self-wired workspace](../../frontend/messaging/workspace.md)
-now uses this native facade.
+This is the native API reference. These APIs are not available in every older
+archive with the same `2.6.0` version string; verify the selected commit/hash.
+Public visitor admission and the [self-wired workspace](../../frontend/messaging/workspace.md)
+use this facade. Source, browser, installed-package and deployment qualification
+are recorded separately in the [review](../../_work/messaging-workspace-review.md).
 
 ## Directory And Tenancy
 
@@ -253,7 +253,10 @@ job is inspectable/resolvable only by that conversation's currently admitted
 human owner, without requiring support staff authority. A new explicit human
 turn can proceed; an uncertain old call is never automatically retried. Explicit
 retry requires its current epoch/context and possible-duplicate acknowledgment;
-old job/attempt outcomes are retained. See [review](./review.md).
+old job/attempt outcomes are retained. Ordinary peer chats expose only the current
+sender's native-notification alerts, which can be inspected/dismissed without
+granting group-owner visibility into another sender's work or any resend power.
+See [review](./review.md).
 
 ## Presence And Presentation
 

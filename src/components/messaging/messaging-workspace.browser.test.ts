@@ -4,6 +4,8 @@ import { mkdtemp, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { createApp } from '../../frontend/server/app-factory';
+import { defineZeroPlugin } from '../../frontend/server/server-extensions';
+import { AuthError } from '../../auth/types';
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type PlaywrightTestBrowserLease } from '../../test-support/playwright-test-browser';
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
@@ -20,11 +22,12 @@ beforeAll(async () => {
   await mkdir(evidence, { recursive: true }); lease = await acquirePlaywrightTestBrowser();
 }, 90000);
 afterAll(() => lease?.release());
-async function fixture(support: boolean | 'website' | 'review' = false) {
+async function fixture(support: boolean | 'website' | 'review' | 'notice-review' = false) {
   const root = await mkdtemp(join(scratch, 'messaging-workspace-native-')); await mkdir(join(root, 'app'));
   const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('Synthetic port reservation') });
   const port = reservation.port!; await reservation.stop(true); const base = 'http://127.0.0.1:' + port;
   let providerCalls = 0;
+  const noticeReview = support === 'notice-review';
   const provider = support === 'review' ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
     if (++providerCalls === 1) return Response.json({ error: { message: 'Synthetic provider failure' } }, { status: 503 });
     return Response.json({ id: 'synthetic-reviewed-answer', object: 'chat.completion', created: 1, model: 'chat', choices: [{ index: 0, message: { role: 'assistant', content: 'SYNTHETIC_REVIEWED_BROWSER_ANSWER' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 } });
@@ -32,9 +35,12 @@ async function fixture(support: boolean | 'website' | 'review' = false) {
   const app = await createApp({ projectRoot: root, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     app: { publicUrl: base },
     db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
-    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : support ? {} : false, ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}) }, logging: false,
+    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : support && !noticeReview ? {} : false, ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}), ...(noticeReview ? { notifications: true } : {}) }, logging: false,
     ai: provider ? { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-test-key', baseURL: 'http://127.0.0.1:' + provider.port + '/v1' } } } : false,
-    email: false, workflows: provider ? {} : false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
+    email: false, workflows: provider || noticeReview ? {} : false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
+    ...(noticeReview ? { serverExtensions: [defineZeroPlugin({ name: 'synthetic-notice-review', setup({ zero }) {
+      zero.notifications!.notifyUsersOnce = () => { throw new AuthError('Synthetic invalid native notice.', 'NOTIFICATION_INPUT_INVALID', 422); };
+    } })] } : {}),
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false });
   app.get('/fixture.js', () => new Response(script, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } }));
   app.get('/workspace', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;height:100dvh}#root{box-sizing:border-box;padding:12px}</style><div id="root"></div><script>window.__PLATFORM_CONFIG__={auth:true,presence:true,logging:false,stateSync:false,routeAuth:'protected-by-default',publicPaths:['/workspace']}</script><script src="/fixture.js"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
@@ -49,7 +55,7 @@ async function fixture(support: boolean | 'website' | 'review' = false) {
   const other = await call('POST', '/auth/register', { username: 'workspace-other', email: 'workspace-other@example.test', password: 'Synthetic-workspace-password-123' });
   const conversation = await call('POST', '/api/messaging/conversations', { userIds: [peer.user.userId] }, admin.accessToken, 'native-workspace-chat');
   const send = (text: string, key: string = crypto.randomUUID()) => call('POST', `/api/messaging/conversations/${conversation.id}/messages`, { text }, peer.accessToken, key);
-  for (let i = 1; i <= 55; i++) await send('Synthetic native history ' + i, 'history-' + i);
+  for (let i = 1; i <= (noticeReview ? 0 : 55); i++) await send('Synthetic native history ' + i, 'history-' + i);
   return { base, app, call, admin, peer, other, conversation, send, close: async () => { await app.stop(true); await provider?.stop(true); } };
 }
 browserTest('the native operator review surface inspects retained failure and explicitly confirms one new AI attempt', async () => {
@@ -73,6 +79,26 @@ browserTest('the native operator review surface inspects retained failure and ex
     expect(rows.items.filter((row: any) => row.text === 'SYNTHETIC_REVIEWED_BROWSER_ANSWER')).toHaveLength(1);
     expect(errors).toEqual([]); await staff.screenshot({ path: join(evidence, 'operator-review-native.png') });
   } finally { await staff.close(); await f.close(); }
+}, 90000);
+browserTest('peer senders inspect and dismiss native notification failures without a support role or resend control', async () => {
+  const f = await fixture('notice-review'), page = await lease!.browser.newPage({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' });
+  const faults: string[] = []; page.on('pageerror', error => faults.push(error.message)); page.setDefaultTimeout(12000);
+  try {
+    await page.goto(f.base + '/workspace?manual'); await page.getByRole('button', { name: 'workspace-peer', exact: false }).click();
+    expect(await page.getByRole('button', { name: /^Review messaging work/ }).count()).toBe(0);
+    await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Synthetic peer message with a failed native notice');
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await page.getByRole('button', { name: 'Review messaging work (1)', exact: true }).click();
+    await page.getByRole('button', { name: 'Inspect', exact: true }).click();
+    const detail = page.getByRole('dialog', { name: 'Review messaging work', exact: true }); await detail.waitFor();
+    expect(await detail.getByRole('button', { name: 'Review and retry', exact: true }).count()).toBe(0);
+    await detail.getByRole('button', { name: 'Dismiss', exact: true }).click();
+    await page.getByRole('alertdialog', { name: 'Dismiss this work?', exact: true }).getByRole('button', { name: 'Dismiss work', exact: true }).click();
+    await detail.getByText('Resolved: dismissed. The original evidence is retained.', { exact: true }).waitFor();
+    expect((await f.call('GET', '/api/messaging/conversations/' + f.conversation.id + '/review', undefined, f.admin.accessToken)).items).toHaveLength(0);
+    expect((await f.call('GET', '/api/messaging/conversations/' + f.conversation.id + '/messages', undefined, f.peer.accessToken)).items).toHaveLength(1);
+    expect(faults).toEqual([]);
+  } finally { await page.close(); await f.close(); }
 }, 90000);
 browserTest('the anonymous website widget uses native cookies, private file stages and the same reactive staff handoff without a Guardian account', async () => {
   const f = await fixture('website'), staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' });

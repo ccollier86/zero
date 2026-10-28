@@ -105,9 +105,42 @@ failed harness premise. This passing case qualifies real window focus, not every
 tab/minimize/mobile-device/browser lifecycle. The ordinary headless geometry,
 event-fence and revocation cases remain separate.
 
-Later changes in this continuation are documentation/test-only. Final frozen
-source/local release gates and updater selection remain explicit, not implied by
-this focused evidence or an unchanged `2.6.0` package version.
+### Peer Notification Recovery Correction
+
+The final cross-reference review found a real remaining gap rather than merely
+stale wording: ordinary peer notification failures could reach `needs-review`
+without a sender-visible recovery surface. Native count/list/point queries now
+share a sender/history-bound predicate; the write repeats that boundary inside
+the canonical transaction. Only a sender's own public native-notification job is
+admitted. A group owner cannot inspect another sender's work, provider drafts
+are never returned, and explicit dismissal records a resolution without resend
+or rewriting the old job outcome. Existing support and internal-bot authority
+is unchanged. The native workspace hides this peer control when no work exists.
+
+`peer-review-canonical-2.log` passes the actual actor test (19 assertions),
+including a non-owner sender, owner non-disclosure, removal/rejoin history and
+retained exact dismissal replay. `peer-review-native-1.log` passes actual
+HTTP/SDK/Torrent failure discovery and no-resend dismissal (13 assertions).
+`peer-review-browser-1.log` passes the real AppProvider/workspace/modal flow
+(five assertions), not a fake populated review array. The first actor test
+omitted its add-member `contactsOnly` input and failed; it is retained, and the
+corrected fixture asserts both removal and readmission succeeded.
+
+The early frozen `ef73511` full run was intentionally interrupted while this
+gap was corrected; its output/summary is retained and is not a full-suite pass.
+New source/package/Linux qualification is required after the peer admission
+change. Final frozen source/local release gates and updater selection remain
+explicit, not implied by focused evidence or an unchanged `2.6.0` version.
+
+The deployment review also reproduced a real TLS-termination gap: an exact
+configured HTTPS origin was rejected on a legitimate private HTTP hop with its
+public Host preserved. The corrected parser admits that transport shape while
+retaining exact browser Origin, CSRF/session and host admission, Secure cookies
+and canonical source checks. It does not trust arbitrary forwarded headers.
+`public-proxy-origin-before.log` retains the failing regression; the corrected
+parser and actual native HTTP/session/send tests are recorded separately in
+`public-proxy-origin-after.log` and `public-proxy-native.log`. This is backend-hop
+qualification, not a claim about an operator's external proxy/certificate setup.
 
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
