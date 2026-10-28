@@ -179,6 +179,14 @@ that every earlier unconfirmed-acknowledgment/shutdown failure had this cause.
 The `9681220` whole-suite attempt was interrupted for that fixture correction;
 its retained partial result is not a full-suite pass.
 
+The `3998e11` frozen run then exposed an omitted qualification prerequisite:
+the separate payments plugin's committed lockfile dependencies were not installed
+by the root install. Five native plugin files failed on a missing `stripe` import
+before their assertions could run. The run is retained as failed/partial, not
+reported as a payments behavior failure or a whole-suite pass. The release guide
+now requires the plugin's own frozen, script-free install before the complete
+inventory; no files, assertions or deadlines are excluded or relaxed.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private

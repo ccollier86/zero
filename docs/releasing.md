@@ -387,6 +387,21 @@ check is a different gate and needs its own frozen dependencies; its development
 framework fixture is not evidence against the real core release. The Rust/Tauri
 preview is not imported by this TypeScript documentation check.
 
+The complete source inventory also includes the optional payments plugin's
+Stripe/Square tests. It has a separate committed lockfile, rather than root
+workspace dependencies. In a clean qualification checkout, materialize those
+declared dependencies before running the complete inventory:
+
+```txt
+bun install --cwd packages/payments --frozen-lockfile --ignore-scripts
+```
+
+A root frozen install alone does not install that plugin's SDKs. Missing
+`stripe`/`square` imports are failed fixture admission, not successful provider
+tests; retain that failed run and rerun the complete inventory after preparation.
+Do not exclude the plugin files or copy a developer's dependency tree. The
+framework archive still does not bundle the separately installed payments plugin.
+
 The source/local qualification inventory includes any admitted preview tests and
 reports them explicitly. Do not silently discard them through Git-ignore rules,
 and do not claim those private `0.0.0` previews were shipped in the framework
