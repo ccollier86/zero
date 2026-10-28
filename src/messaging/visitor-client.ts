@@ -42,11 +42,14 @@ export async function createSupportChatClient(entry: string, options: SupportCha
     if (!path.startsWith(MESSAGING_API + '/')) throw new Error('Unsupported support request.');
     const headers = new Headers(init.headers); headers.set('X-Zero-Support-Client', '1');
     if (csrf) headers.set('X-Zero-Support-CSRF', csrf); if (sessionId) headers.set('X-Zero-Support-Session', sessionId);
+    const signal = AbortSignal.any([abort.signal, ...(init.signal ? [init.signal] : [])]); signal.throwIfAborted();
     return fetcher(root + path.slice(MESSAGING_API.length), { ...init, credentials: 'same-origin', cache: 'no-store', headers,
-      signal: AbortSignal.any([abort.signal, ...(init.signal ? [init.signal] : [])]) });
+      signal });
   };
   const json = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
-    const response = await raw(path, init), value = await readSupportJson(response, init.signal ?? abort.signal);
+    const active = AbortSignal.any([abort.signal, ...(init.signal ? [init.signal] : [])]);
+    const response = await raw(path, { ...init, signal: active }), value = await readSupportJson(response, active);
+    active.throwIfAborted();
     if (!response.ok) {
       const r = value && typeof value === 'object' ? value as Record<string, unknown> : {};
       throw Object.assign(new Error('The support request was not accepted.'), { status: response.status,
@@ -64,6 +67,7 @@ export async function createSupportChatClient(entry: string, options: SupportCha
     if (options.resumeOnly || !(failure && typeof failure === 'object' && 'status' in failure && failure.status === 403)) throw failure;
     metadata = await json(MESSAGING_API + '/session', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options.mode ? { mode: options.mode } : {}) });
   }
+  signal.throwIfAborted();
   const m = metadata as Record<string, unknown> | null;
   if (!m || typeof m !== 'object' || !['sessionId', 'userId', 'conversationId'].every(key => typeof m[key] === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(m[key] as string))
     || typeof m.csrf !== 'string' || !/^[a-f0-9]{64}$/.test(m.csrf) || !Number.isSafeInteger(m.expiresAt) || (m.expiresAt as number) <= Date.now()) throw new Error('The support session response is invalid.');
@@ -76,13 +80,20 @@ export async function createSupportChatClient(entry: string, options: SupportCha
   }, raw);
   const channel = typeof BroadcastChannel !== 'undefined' && typeof window !== 'undefined' ? new BroadcastChannel('zero.support.' + entry) : null;
   const listeners = new Set<() => void>();
-  const clear = () => { if (retired) return; retired = true; abort.abort(); source.clear(); channel?.close(); csrf = ''; for (const listener of listeners) listener(); listeners.clear(); };
+  const clear = () => {
+    if (retired) return; retired = true; abort.abort(); source.clear(); channel?.close(); csrf = '';
+    // One consumer's cleanup must not prevent every other mounted view from
+    // retiring an ended/revoked session. Never leak its exception or contents.
+    for (const listener of [...listeners]) { try { listener(); } catch { /* Isolate observers. */ } }
+    listeners.clear();
+  };
   const client: SupportChatClient = Object.freeze({ userId: m.userId as string, conversationId: m.conversationId as string, scopeKey: 'support:' + entry + ':' + sessionId, expiresAt: m.expiresAt as number,
     capabilities: source.capabilities, receipt: source.receipt, conversations: Object.freeze({ get: source.conversations.get, people: source.conversations.people, markRead: source.conversations.markRead }),
     messages: source.messages, attachments: source.attachments, support: Object.freeze({ requestHuman: source.support.requestHuman }), watchMessages: source.watchMessages,
     typing: Object.freeze({
       async set(tabId: string, activity: MessagingActivity | null, opts?: { signal?: AbortSignal }) {
-        const value = await json<{ accepted: boolean }>(MESSAGING_API + '/typing', { method: 'POST', signal: opts?.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tabId, activity }) });
+        const signal = AbortSignal.any([AbortSignal.timeout(10000), ...(opts?.signal ? [opts.signal] : [])]);
+        const value = await json<{ accepted: boolean }>(MESSAGING_API + '/typing', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tabId, activity }) });
         if (value.accepted !== true) throw new Error('Typing publication is unconfirmed.');
       },
       watch: (listener: (entries: Readonly<Record<string, EphemeralWireEntry>>) => void, opts: { signal?: AbortSignal; onError?(error: unknown): void } = {}) => watchMessagingProjection((path, signal) => raw(MESSAGING_API + path, { signal }), '/typing/live', abort.signal, listener, assertSupportTyping, opts),
@@ -90,7 +101,8 @@ export async function createSupportChatClient(entry: string, options: SupportCha
     get active() { return !retired; }, subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async end(opts: MessagingMutationOptions) {
       if (!opts || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(opts.requestId)) throw new Error('A stable end-session request identity is required.');
-      const value = await json<{ ended: boolean }>(MESSAGING_API + '/session', { method: 'DELETE', signal: opts.signal, headers: { 'Idempotency-Key': opts.requestId } });
+      const signal = AbortSignal.any([AbortSignal.timeout(30000), ...(opts.signal ? [opts.signal] : [])]);
+      const value = await json<{ ended: boolean }>(MESSAGING_API + '/session', { method: 'DELETE', signal, headers: { 'Idempotency-Key': opts.requestId } });
       if (value.ended !== true) throw new Error('Support session end is unconfirmed.'); channel?.postMessage({ ended: sessionId }); clear();
     }, clear });
   if (channel) channel.onmessage = event => { if (event.data?.ended === sessionId) clear(); };

@@ -24,6 +24,12 @@ The five-second write ceiling is a nonblocking acceptance bound, not a productio
 throughput/latency benchmark. Recovery retries in this fixture are explicit and
 retain the original key; they are not hidden production retries.
 
+After main-process SIGKILL the fixture waits 31 seconds for Torrent's normal
+30-second ownership lease. A live lease correctly rejects immediate restart;
+the fixture never clears it or takes ownership early. Production supervision
+must likewise allow bounded startup retry/backoff after an ungraceful death.
+Graceful shutdown releases the exact generation without this crash grace.
+
 Reports/logs exclude the generated synthetic credential file. Only newly created
 container state is used. Do not mount app data, production volumes, Docker socket,
 provider keys or a host home directory. `--init` reaps orphaned fixture workers so

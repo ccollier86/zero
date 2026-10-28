@@ -4,6 +4,10 @@ import { unlink } from 'node:fs/promises';
 import { request, acknowledge, until } from './transport';
 let child: ReturnType<typeof Bun.spawn> | null = null;
 const output: Promise<string>[] = [], held = new Map<number, () => void>(); let providerCalls = 0;
+// Normal Torrent ownership is a 30-second durable lease. A hard-killed main
+// cannot release it. Honor its full expiry rather than stealing ownership or
+// weakening runtime admission to make the restart test pass.
+const crashLeaseGraceMs = 31_000;
 const provider = Bun.serve({ hostname: '127.0.0.1', port: 4120, async fetch() {
   const call = ++providerCalls; await new Promise<void>(resolve => held.set(call, resolve));
   return Response.json({ id: 'synthetic-installed-answer-' + call, object: 'chat.completion', created: 1, model: 'chat',
@@ -51,6 +55,8 @@ try {
   await request(origin, '/api/messaging/conversations/' + interrupted.id + '/messages', peer, { text: 'Synthetic interrupted invocation' }, 'installed-interrupted-send');
   await until(() => providerCalls === 3, 'Invocation before main death');
   await stop('SIGKILL'); held.get(3)!();
+  console.log('Waiting for the normal workflow ownership lease after main SIGKILL.');
+  await Bun.sleep(crashLeaseGraceMs);
   origin = await launch(); await acknowledge(origin, admin); await acknowledge(origin, peer);
   await until(async () => (await request(origin, '/api/messaging/conversations/' + interrupted.id, peer)).owner === 'triage', 'Unknown invocation recovery');
   expect(providerCalls).toBe(3); // Recovery must never repeat a dispatched external call automatically.
@@ -69,7 +75,7 @@ try {
   expect(boots).toHaveLength(2); expect(actors.every(probe => !probe.providerSecret && !probe.dotenvSecret)).toBe(true);
   const report = { platform: process.platform, arch: process.arch, bun: Bun.version, mainBoots: boots.length, workerLaunches: actors.length,
     officialBuild: true, sourcePreparedState: true, sourceActor: true, emptyChildEnvironment: true, noActorAppBoot: true, writerSigkillRecovery: true,
-    recoveryAttempts, concurrentProviderCalls: 2, foregroundWriteMs, uncertainInvocationNotRepeated: true, retainedReview: true, privateFileAfterRestart: true,
+    recoveryAttempts, crashLeaseGraceMs, concurrentProviderCalls: 2, foregroundWriteMs, uncertainInvocationNotRepeated: true, retainedReview: true, privateFileAfterRestart: true,
     exactReplayCount: 1, complianceReady: true };
   await Bun.write('./qualification-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
