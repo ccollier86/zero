@@ -57,7 +57,10 @@ from messaging's conversation read cursor.
 | Private job completion | The native receipt was reconciled; not a human read or external-provider delivery. |
 
 The notice contains `New message` and an opaque conversation link, not message
-text, file names, a preview, provider output or arbitrary metadata. Opening the
+text, file names, a preview, provider output or arbitrary metadata. New notices
+carry only versioned, opaque conversation/message IDs for the shared
+[sound and active-conversation policy](../../frontend/notifications/sounds.md).
+This is not an authorization capability. Opening the
 conversation always reauthorizes against canonical private membership.
 
 The two files are **not** one distributed transaction. The final current-account
@@ -74,6 +77,12 @@ the destination path after a configuration update. The first native publication
 can only narrow candidates. Receipt replay does not reevaluate that policy into
 a new notice. Deleting or expiring the visible notice does not delete its
 permanent effect receipt or grant permission to resend it.
+
+The typed presentation tuple is part of new permanent effect fingerprints.
+Legacy receipts without a tuple can reconcile against their exact original
+payload; this returns the original receipt without rewriting the notice,
+changing its audience, resurrecting a deleted row or adding a second alert.
+Unknown metadata, accessors and content-bearing cue fields remain rejected.
 
 Only this native destination has the receiver guarantee that permits automatic
 reconciliation after an interrupted call. A failed native Torrent generation can

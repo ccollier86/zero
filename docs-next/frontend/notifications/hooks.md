@@ -8,7 +8,7 @@ visibility: internal
 system: notifications
 feature: state-and-provider
 maturity: supported
-applies_to: ["2.1.1 development source; not package-qualified"]
+applies_to: ["2.6.0 messaging development branch; verify the selected archive"]
 modes: [guardian-enabled, single-tenant, multi-tenant]
 reviewed_against:
   package: "@zero/framework"
@@ -47,11 +47,12 @@ Browser global-role matching would incorrectly hide additive tenant roles.
 
 ## Arrival Callbacks And Toasts
 
-`useOnNewNotification(callback)` pre-seeds IDs present at each committed
-scope initialization and invokes the callback for later new IDs, not all
-records every render. IDs are retired on identity/tenant/authority boundary
-change. It does not promise distributed exactly-once delivery or replay an
-offline history as new toast events.
+`useOnNewNotification(callback)` consumes accepted live `sync.change` INSERTs
+for notifications targeted to the current admitted user. Snapshots, reconnect
+catchup, local cache hydration, UPDATEs and receipt changes do not trigger it.
+A bounded ID set is retired on identity/tenant/authority boundary change.
+It does not promise distributed exactly-once delivery. A notice first learned
+through history/catchup remains in the inbox without replaying an interruption.
 
 `NotificationProvider` takes children, `autoToast` (true),
 `toastDuration` (5000 ms) and optional `renderToast(notification)`.
@@ -59,6 +60,15 @@ Returning null suppresses that custom toast. Render the application's Toaster
 normally; provider state is not a second canonical notification store.
 `useNotificationContext()` returns the same hook result and throws outside
 NotificationProvider.
+
+AppProvider owns one persistent `NotificationFeedbackProvider`. NotificationProvider
+uses that owner for toast admission; a custom ClientProvider host gets a silent
+fallback owner unless it explicitly wraps its notification/workspace tree in
+NotificationFeedbackProvider. Do not mount independent alert owners per row.
+The [sound and active-conversation policy](./sounds.md) suppresses native chat
+interruptions only, never canonical unread/seen/read state. Raw arrival callbacks
+remain data events: custom desktop/toast integrations must apply the same policy
+rather than using a raw callback as permission to interrupt the current chat.
 
 ## Verification And Related Guides
 

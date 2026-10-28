@@ -705,7 +705,8 @@ test('accepted public sends create one generic native notification for eligible 
     while (!page.length && Date.now() < deadline) { await Bun.sleep(50); page = await notices(bob); }
     expect(page).toHaveLength(1);
     const notice = page[0]!;
-    expect(notice).toMatchObject({ title: 'New message', body: null, metadata: null, action_url: '/app/messages?conversation=' + conversation.id, receipt: null });
+    expect(notice).toMatchObject({ title: 'New message', body: null, action_url: '/app/messages?conversation=' + conversation.id, receipt: null });
+    expect(JSON.parse(notice.metadata!)).toEqual({ zero: { version: 1, kind: 'chat', conversationId: conversation.id, messageId: sent.id } });
     expect(JSON.parse(notice.target_value)).toEqual([bob.user!.userId]); expect(JSON.stringify(page)).not.toContain(message.text);
     expect(await notices(alice)).toEqual([]); expect(await notices(outsider)).toEqual([]);
     await bob.messaging.conversations.markRead(conversation.id, sent.sequence, { requestId: 'notice-chat-read' });

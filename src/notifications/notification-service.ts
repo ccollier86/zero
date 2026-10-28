@@ -163,6 +163,7 @@ export class NotificationService {
     const boundary = this.requireScope(scope);
     return publishNotificationOnce(this.db, effectId, userIds, params, senderId, boundary, commitFence,
       (users, captured, fence) => {
+        const { presentation, ...notice } = captured;
         // A trusted subsystem can only narrow the accepted candidates. It runs
         // inside the same SYSTEM commit and is not reevaluated on receipt replay.
         const admitted = recipientFilter ? users.filter(id => {
@@ -170,7 +171,9 @@ export class NotificationService {
           if (typeof result !== 'boolean') throw new AuthError('Notification recipient policy is invalid.', 'NOTIFICATION_INPUT_INVALID', 422);
           return result;
         }) : users;
-        return admitted.length ? this.notifyUsers(admitted, captured, senderId, boundary, fence) : null;
+        return admitted.length ? this.notifyUsers(admitted, { ...notice,
+          ...(presentation ? { metadata: { zero: { version: 1, ...presentation } } } : {}),
+        }, senderId, boundary, fence) : null;
       });
   }
 

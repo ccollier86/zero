@@ -12,6 +12,7 @@ export { NOTIFICATION_TABLES } from './types';
 // ─── Service ─────────────────────────────────────────────────────────────────
 export { NotificationService } from './notification-service';
 export type { NotificationOnceParams, NotificationEffectReceipt } from './notification-effects';
+export type { NotificationChatPresentation } from './presentation';
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
 export { createNotificationPlugin, getNotificationService } from './notification.plugin';

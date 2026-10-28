@@ -30,7 +30,8 @@ export async function executeMessagingNotification(deps: MessagingJobExecutionDe
   const receipt = await withReactiveDBCommitAdmission(deps.system, () => {
     check();
     return deps.notifications!.notifyUsersOnce('zero.messaging:' + jobId, source.recipients.map(recipient => recipient.id),
-      { title: 'New message', actionUrl: source.path + '?conversation=' + encodeURIComponent(source.job.conversation_id) }, undefined, scope, check,
+      { title: 'New message', actionUrl: source.path + '?conversation=' + encodeURIComponent(source.job.conversation_id),
+        presentation: { kind: 'chat', conversationId: source.job.conversation_id, messageId: source.job.message_id } }, undefined, scope, check,
       id => members.has(id) && deps.directory.notificationRecipient(scope, id, recipients.get(id)!.staff)
         && (!source.supportEntryId || !recipients.get(id)!.staff || deps.directory.supportRecipient?.(scope, id, source.supportEntryId) === true)
         && (!source.managedGroupId || deps.directory.groupRecipient?.(scope, id, source.managedGroupId) === true)

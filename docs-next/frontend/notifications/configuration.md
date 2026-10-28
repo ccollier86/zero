@@ -42,4 +42,5 @@ must agree with the server; copying a schema alone does not authorize data.
 Use the [SDK](../sdk/index.md) rather than raw socket shortcuts.
 
 - [Hooks](./hooks.md) explains pending authorization and scope retirement.
+- [Optional sounds](./sounds.md) covers AppProvider settings, gesture admission and quiet active chats.
 - [Backend configuration](../../backend/notifications/configuration.md) owns actual startup/cleanup behavior.

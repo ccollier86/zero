@@ -8,11 +8,15 @@ import { AuthError } from '../auth/types';
 import { invokeSynchronousAuthCallback } from '../auth/auth-synchronous-callback';
 import { assertNotificationEffectSchema } from './notification-effect-schema';
 import type { CreateNotificationParams, NotificationRecord } from './types';
+import { isNotificationChatPresentation, type NotificationChatPresentation } from './presentation';
 
-export type NotificationOnceParams = Omit<CreateNotificationParams, 'metadata'>;
+export type NotificationOnceParams = Omit<CreateNotificationParams, 'metadata'> & {
+  /** Only opaque native chat identities; arbitrary metadata/content is still rejected. */
+  presentation?: NotificationChatPresentation;
+};
 export interface NotificationEffectReceipt { readonly notificationId: string | null; readonly duplicate: boolean; readonly retained: boolean }
 const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
-/** Metadata-free, bounded destination effect. Empty audiences are remembered without broadcasting an empty notice. */
+/** Content-free, bounded destination effect. Empty audiences are remembered without broadcasting an empty notice. */
 export function publishNotificationOnce(db: ReactiveDB, effectId: string, userIds: readonly string[], params: NotificationOnceParams,
   senderId: string | undefined, scope: ServiceDataScope, check: (() => void) | undefined,
   publish: (users: string[], captured: NotificationOnceParams, fence: () => void) => NotificationRecord | null): NotificationEffectReceipt {
@@ -21,12 +25,16 @@ export function publishNotificationOnce(db: ReactiveDB, effectId: string, userId
   const fence = () => { if (check) invokeSynchronousAuthCallback(check, { component: 'notifications', invariant: 'effect-commit-authority', message: 'Notification effect authority must be synchronous.', createError: invalid }); };
   const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
   const id = digest([scopeId, effectId]), fingerprint = digest([scopeId, users, captured, senderId ?? null]);
+  // Old receipts have no presentation field. A matching old payload may be
+  // replayed, never rewritten/enriched/resurrected. New receipts bind the cue.
+  const { presentation, ...legacy } = captured;
+  const legacyFingerprint = presentation ? digest([scopeId, users, legacy, senderId ?? null]) : fingerprint;
   return db.transaction(() => {
     fence();
     assertNotificationEffectSchema(db);
     const existing = db.prepare('SELECT request_hash,notification_id FROM _notification_effect_receipts WHERE id=? AND scope_id=?').get(id, scopeId) as { request_hash: string; notification_id: string | null } | null;
     if (existing) {
-      if (existing.request_hash !== fingerprint) throw new AuthError('The notification effect identity was reused with different input.', 'NOTIFICATION_EFFECT_CONFLICT', 409);
+      if (existing.request_hash !== fingerprint && existing.request_hash !== legacyFingerprint) throw new AuthError('The notification effect identity was reused with different input.', 'NOTIFICATION_EFFECT_CONFLICT', 409);
       const retained = existing.notification_id !== null && !!db.prepare('SELECT 1 FROM notifications WHERE notification_id=? AND tenant_id IS ?').get(existing.notification_id, scope.tenantId);
       fence(); return { notificationId: existing.notification_id, duplicate: true, retained };
     }
@@ -37,9 +45,18 @@ export function publishNotificationOnce(db: ReactiveDB, effectId: string, userId
 }
 function capture(value: NotificationOnceParams): NotificationOnceParams {
   if (!value || typeof value !== 'object' || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) throw invalid();
-  const descriptors = Object.getOwnPropertyDescriptors(value), allowed = ['type', 'priority', 'title', 'body', 'actionUrl', 'expiresAt'];
+  const descriptors = Object.getOwnPropertyDescriptors(value), allowed = ['type', 'priority', 'title', 'body', 'actionUrl', 'expiresAt', 'presentation'];
   for (const key of Reflect.ownKeys(descriptors)) if (typeof key !== 'string' || !allowed.includes(key) || !descriptors[key]!.enumerable || !('value' in descriptors[key]!)) throw invalid();
   const r = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+  if (r.presentation !== undefined) {
+    const p = r.presentation;
+    if (!p || typeof p !== 'object' || types.isProxy(p) || Object.getPrototypeOf(p) !== Object.prototype) throw invalid();
+    const properties = Object.getOwnPropertyDescriptors(p);
+    if (Reflect.ownKeys(properties).some(key => typeof key !== 'string' || !properties[key]!.enumerable || !('value' in properties[key]!))) throw invalid();
+    const copy = Object.fromEntries(Object.entries(properties).map(([key, property]) => [key, property.value]));
+    if (!isNotificationChatPresentation(copy)) throw invalid();
+    r.presentation = Object.freeze({ kind: 'chat', conversationId: copy.conversationId, messageId: copy.messageId });
+  }
   const text = (item: unknown, max: number) => typeof item === 'string' && item.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(item);
   if (!text(r.title, 200) || !(r.title as string).trim() || r.body !== undefined && !text(r.body, 1000)
     || r.type !== undefined && !['info', 'warning', 'success', 'error', 'system'].includes(r.type)
@@ -47,7 +64,8 @@ function capture(value: NotificationOnceParams): NotificationOnceParams {
     || r.actionUrl !== undefined && (!text(r.actionUrl, 1024) || !r.actionUrl.startsWith('/') || r.actionUrl.startsWith('//') || /[\\\r\n]/u.test(r.actionUrl))
     || r.expiresAt !== undefined && (!Number.isSafeInteger(r.expiresAt) || r.expiresAt < 0)) throw invalid();
   return Object.freeze({ title: r.title, type: r.type ?? 'info', priority: r.priority ?? 'normal', ...(r.body === undefined ? {} : { body: r.body }),
-    ...(r.actionUrl === undefined ? {} : { actionUrl: r.actionUrl }), ...(r.expiresAt === undefined ? {} : { expiresAt: r.expiresAt }) });
+    ...(r.actionUrl === undefined ? {} : { actionUrl: r.actionUrl }), ...(r.expiresAt === undefined ? {} : { expiresAt: r.expiresAt }),
+    ...(r.presentation === undefined ? {} : { presentation: r.presentation }) });
 }
 function captureUsers(value: readonly string[]): string[] {
   if (!value || typeof value !== 'object' || types.isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw invalid();

@@ -26,6 +26,8 @@ import { WorkspaceSupportActions } from './workspace-support-actions';
 import { WorkspaceReview } from './workspace-review';
 import { ConversationAssistantActivity } from './conversation-activity';
 import type { MessagingWorkspaceTyping } from './use-support-typing';
+import { useNotificationConversation } from '../../frontend/client/notification-feedback-provider';
+import { isConversationSurfaceActive } from '../../frontend/client/notification-feedback';
 
 export interface MessagingWorkspaceProps extends UseMessagingWorkspaceOptions {
   className?: string; avatarShape?: AvatarGroupShape;
@@ -50,11 +52,13 @@ export function MessagingWorkspace(props: MessagingWorkspaceProps) {
   if (state.status === 'error') return <div role="alert" className="zero-messaging-workspace-empty"><p>{state.error ?? 'Messaging is unavailable.'}</p><Button onClick={() => { void controller.retry(); }}><RotateCw aria-hidden="true" />Retry messaging</Button></div>;
   return <ReadyWorkspace {...props} controller={controller} state={state} />;
 }
-function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPolicy = 'visible-end', publishTyping = true, sidebarAction, headerActions, className, conversationId, layout = 'workspace', nativeTyping = true, conversationOptions = true, externalTyping }: MessagingWorkspaceProps & { controller: MessagingWorkspaceController; state: MessagingWorkspaceState }) {
+function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPolicy = 'visible-end', publishTyping = true, sidebarAction, headerActions, className, conversationId, layout = 'workspace', nativeTyping = true, conversationOptions = true, externalTyping, source }: MessagingWorkspaceProps & { controller: MessagingWorkspaceController; state: MessagingWorkspaceState }) {
   const [mobileView, setMobileView] = useState<'list' | 'conversation'>('list'), [query, setQuery] = useState(''), [supportQueue, setSupportQueue] = useState(false);
   useEffect(() => { if (state.selectedId) setMobileView('conversation'); }, [state.selectedId]);
   useEffect(() => { if (conversationId && controller.current()) void controller.select(conversationId); }, [controller, conversationId]);
   const transcript = useMessagingTranscript(controller, state, readPolicy);
+  useNotificationConversation(!source && state.conversation && !state.loading ? state.selectedId : null,
+    () => controller.current() && isConversationSurfaceActive(transcript.viewport));
   const baseline = useRef({ id: null as string | null, last: 0, ready: false }), previous = baseline.current;
   useLayoutEffect(() => { baseline.current = { id: state.selectedId, last: state.messages.at(-1)?.sequence ?? 0, ready: !!state.conversation && !state.loading }; },
     [state.selectedId, state.messages, state.loading, state.conversation?.id]);

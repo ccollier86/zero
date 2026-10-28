@@ -30,6 +30,7 @@ items/callbacks and do not authenticate or perform persistence themselves.
 - [Hooks and provider](./hooks.md): current-user state, void receipt actions, new-arrival callbacks and optional toasts.
 - [Components](./components.md): bell/popover/list/item/badge composition and exact props.
 - [Configuration](./configuration.md): provider placement, table availability and presentation defaults.
+- [Sounds and quiet conversations](./sounds.md): optional shared cues, mute and browser admission; no receipt side effects.
 - [Roadmap](./roadmap.md): prospective Comms interfaces, not current guarantees.
 - [Backend notifications](../../backend/notifications/index.md): canonical targeting/authority/receipt contracts.
 

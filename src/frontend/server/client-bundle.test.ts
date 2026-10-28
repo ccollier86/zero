@@ -2,17 +2,41 @@
  * client-bundle.test.ts
  *
  * Verifies Zero's app-owned client generation contracts. These tests cover
- * generated route manifest and client entry output only; they do not exercise
- * browser hydration or static asset serving.
+ * generated route artifacts plus browser asset emission/static serving. These
+ * are not a substitute for installed official-build or real hydration checks.
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { generateClientEntry, generateRouteManifest } from './client-bundle';
+import { Elysia } from 'elysia';
+import { createRouterPlugin } from './router-plugin';
 
 describe('client bundle generated artifacts', () => {
+  test('optional native sound assets keep their bytes and are served by the normal public build route', async () => {
+    const root = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/notification-public-assets-');
+    const appDir = join(root, 'app'), outDir = join(root, 'build');
+    try {
+      await mkdir(appDir);
+      const result = await Bun.build({ entrypoints: [join(import.meta.dir, '../client/notification-sound-assets.ts')],
+        target: 'browser', format: 'esm', splitting: true, naming: 'client.[hash].js', outdir: outDir });
+      expect(result.success).toBe(true);
+      const assets = result.outputs.filter(output => output.path.endsWith('.mp3'));
+      expect(assets).toHaveLength(2);
+      const app = new Elysia().use(createRouterPlugin({ appDir, outDir }));
+      for (const output of assets) {
+        const response = await app.handle(new Request('http://localhost/_build/' + basename(output.path)));
+        expect(response.status).toBe(200); expect(response.headers.get('Content-Type')).toBe('audio/mpeg');
+        expect(response.headers.get('Cache-Control')).toContain('immutable');
+        const source = output.path.includes('chat-message-') ? 'chat-message.mp3' : 'notification.mp3';
+        const hash = (value: ArrayBuffer) => new Bun.CryptoHasher('sha256').update(value).digest('hex');
+        expect(hash(await response.arrayBuffer())).toBe(hash(await Bun.file(join(import.meta.dir, '../client/sounds', source)).arrayBuffer()));
+      }
+      expect(await result.outputs.find(output => output.kind === 'entry-point')!.text()).toContain('import.meta.url');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   test('writes route manifest and client entry into the app generated directory', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'zero-client-bundle-'));
     const appDir = join(rootDir, 'app');

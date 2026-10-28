@@ -234,6 +234,93 @@ All other files, including the separate admitted Chrome source-preview tests,
 run normally. The corrected candidate requires its own frozen verification;
 this failed inventory is not described as a release pass.
 
+### Notification feedback and final qualification continuation
+
+The next complete frozen checkpoint, `ee161375dfbd3cf9d0d76ca39a999dcca14ef7f5`,
+finishes all 1,370 files once: 1,368 pass, two fail, none are unrun
+(3,010,632ms). Its isolated candidate passes Linux/amd64 official-build/native
+worker/restart qualification and the real saved-updater smoke, but the failed
+full inventory means it is **not selected as stable**. Retain
+`frozen-ee16137-suite.jsonl` and `.stderr.log` as failed evidence.
+
+The two remaining findings have different boundaries:
+
+- The installed publishing source preparation reports
+  `DATABASE_EXECUTOR_START_FAILED`. The old error has no safe lifecycle phase,
+  so it does not establish whether this was a spawn, startup deadline,
+  handshake, disconnect or early exit. New diagnostics preserve only those five
+  allowlisted phase literals, never a command, path, environment or raw cause.
+  Dedicated source fixtures now use the additive `logging/actor` and
+  `messaging/actor` package subpaths rather than app/server barrels. A package
+  graph regression verifies that these entries do not pull in the app factory,
+  React or AI service. Deadlines, leases and authority checks are unchanged.
+  This avoids unnecessary worker imports; it is not proof of the original
+  unclassified failure's cause. Fresh installed source preparation, official
+  build and two publishing generations pass in the focused follow-up.
+- The adaptive-profile installed consumer prints its qualification and finishes
+  all 30 functional assertions before its combined 180s lifecycle deadline
+  expires during dependency retirement. Like the two previously identified
+  consumers, it now awaits its exact owned fixture's cleanup in a separate 120s
+  afterAll hook. Its existing 180s functional/90s child budgets are unchanged;
+  failure still fails the file and holds the slot. The focused follow-up records
+  60,048ms functional work and 13,967ms cleanup. This is not a database-speed
+  improvement, skipped cleanup, or a claim that the earlier inventory passed.
+
+`actor-profile-retirement-source.jsonl` records both focused installed consumers
+passing (173,505ms). These are source-tree archive checks, not a replacement for
+the next exact committed/frozen candidate's full inventory.
+
+The user additionally requested optional, distinct chat/general audio and no
+interruptions from the conversation currently being used. One AppProvider-owned,
+scope-fenced feedback arbiter now handles native message notices and optional
+NotificationProvider toasts. Chat classification uses only an opaque, versioned
+conversation/message tuple, not title/URL guessing. New permanent effect hashes
+bind that tuple; exact old receipts reconcile without rewriting/resending them.
+The browser suppresses sound/toast for the actual visible/focused transcript,
+not merely a selected ID. It does not write read/seen/dismiss receipts.
+
+Both cues default off, load as same-origin hashed assets, obey mute/volume and
+browser user-gesture admission, and share a 750ms burst fence. There is no audio
+backlog or replay on unlock, reconnect or unmute. Live arrival hooks consume
+only admitted notification INSERTs, not snapshot/catchup/cache/receipt history.
+Cross-tab device-wide arbitration and browser desktop notifications are not
+claimed. The [public guide](../frontend/notifications/sounds.md) documents the
+API, scope, composition, assets and limits.
+
+Focused source evidence under the same external `messaging-support-review`
+directory is deliberately reported separately:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Audio/presentation/receipt unit boundary | 11 tests / 83 assertions, no failures | `notification-policy-audio-unit.log` |
+| Worker admission/diagnostics, public imports and native job-protocol set | All seven files pass, no excluded file or retry | `notification-worker-focused-regressions.jsonl` / `.stderr.log` |
+| Managed native HTTP/SDK lifecycle, peer notices and current authorization | 18 tests / 251 assertions, no failures | `notification-managed-browser-copy.stderr.log` |
+| Actual AppProvider/workspace browser, public support, uploads, review, both media files and quiet active/mobile/background cases | All nine tests / 90 assertions pass, including the two workstation opt-in cases | `notification-managed-browser-copy.jsonl` / `.stderr.log` |
+| Public source-copy boundaries | Both selected files pass | `notification-managed-browser-copy.jsonl` |
+| Normal browser asset emission/static route and unchanged route-generation cases | 4 tests / 30 assertions, no failures | `notification-build-static-assets.log` |
+| TypeScript and documentation graph | TypeScript passes; 874 pages/IDs reachable, no problems | `notification-reviewed-final-types.log`, `notification-reviewed-final-docs.log` |
+
+The original optional headed test's second CDP session did not reliably retire
+Playwright's own focus emulation. Failed focus/attachment attempts are retained
+in the `notification-headed*`, `notification-real-window*` and related diagnostic
+logs, not reported as passing browser evidence. Workstation qualification now
+launches a disposable native Chromium profile and uses Playwright's public CDP
+transport with `noDefaults: true` on its actual default context. A second new
+context would reintroduce the override. Both real-window tests pass without
+replacing document getters or emitting synthetic lifecycle events; the audio
+case minimizes/restores its real test window. The old and new read/dwell/security
+assertions remain. `notification-native-cdp-transport.log` records the separate
+two-case 23-assertion check; it overlaps the later nine-case run and is not added
+to that count. No user browser/profile, application, provider or production data
+is used.
+
+Per the latest user direction, the logging UI is queued for a joint design and
+usability review **after blogging and messaging are finished**. Existing logging
+functionality/tests remain; this continuation does not redesign that screen or
+treat the current presentation as approved. Final frozen release gates and
+normal updater selection remain required before calling the whole feature
+deployment-ready.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private

@@ -3,6 +3,10 @@
 // ─── Notifications: Provider ─────────────────────────────────────────────
 export { NotificationProvider, useNotificationContext } from '../../client/notification-provider';
 export type { NotificationProviderProps } from '../../client/notification-provider';
+export { NotificationFeedbackProvider, useNotificationSounds, useNotificationConversation, useNotificationInterruption } from '../../client/notification-feedback-provider';
+export type { NotificationFeedbackProviderProps } from '../../client/notification-feedback-provider';
+export type { NotificationSoundOptions, NotificationSoundStatus } from '../../client/notification-audio';
+export { isConversationSurfaceActive } from '../../client/notification-feedback';
 
 // ─── Notifications: UI Components ────────────────────────────────────────
 export { NotificationBadge } from '../../../components/ui/notification-badge';

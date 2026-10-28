@@ -5,7 +5,8 @@ import { useCollection } from './data-hooks';
 import type { Row } from '../../sync/types';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from './observability';
-import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
+import { readAuthorizationScopeBoundaryKey, useAuthorizationScopeBoundary } from './authorization-scope-hooks';
+import type { InternalClient } from './sdk';
 
 // ─── Client-Side Types (snake_case — matches SQLite columns) ─────────────────
 
@@ -224,9 +225,9 @@ export function useUnreadCount(): number {
 
 /**
  * Fires callback when a new notification arrives for this user.
- * Uses a seenIds set to deduplicate — all notifications present at mount
- * are pre-seeded, so only genuinely new arrivals trigger the callback.
- * No timestamp comparison avoids clock-skew issues between server and client.
+ * Only accepted live Sync INSERTs trigger this callback. Initial snapshots,
+ * reconnect catchup/history, local cache loads and receipt updates never alert.
+ * No browser/server clock comparison is needed to identify a new arrival.
  */
 export function useOnNewNotification(
   callback: (n: Notification) => void,
@@ -235,39 +236,30 @@ export function useOnNewNotification(
   const client = useClientMaybe();
   const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const userId = authorizationBoundary.ready ? user?.userId ?? '' : '';
-  const notifs = useCollection<Notification & Row>('notifications');
-
-  const seenIds = useRef(new Set<string>());
   const callbackRef = useRef(callback);
-  const initializedBoundaryKeyRef = useRef<string | null>(null);
+  const latest = useRef(authorizationBoundary); latest.current = authorizationBoundary;
   callbackRef.current = callback;
-
-  // Pre-seed each committed scope independently. IDs from one account or
-  // tenant must neither suppress callbacks nor be retained in another.
-  if (initializedBoundaryKeyRef.current !== authorizationBoundary.key) {
-    seenIds.current = new Set<string>();
-    initializedBoundaryKeyRef.current = null;
-  }
-  if (authorizationBoundary.ready && initializedBoundaryKeyRef.current === null) {
-    for (const n of notifs.data) {
-      seenIds.current.add(n.notification_id);
-    }
-    initializedBoundaryKeyRef.current = authorizationBoundary.key;
-  }
-
   useEffect(() => {
-    if (!authorizationBoundary.ready
-      || initializedBoundaryKeyRef.current !== authorizationBoundary.key
-      || !userId) return;
+    const sync = (client as InternalClient | null)?._syncClient;
+    if (!authorizationBoundary.ready || !userId || !sync) return;
+    const key = authorizationBoundary.key, seen = new Set<string>();
+    return sync.onMessage(message => {
+      if (!latest.current.ready || latest.current.key !== key
+        || readAuthorizationScopeBoundaryKey((client as InternalClient | null)?.auth ?? null, (client as InternalClient | null)?._authorizationDataBoundary?.revision ?? 0) !== key) return;
+      const n = liveNotificationInsert(message);
+      if (!n || seen.has(n.notification_id) || !isForUser(n, userId)) return;
+      seen.add(n.notification_id);
+      if (seen.size > 2048) seen.delete(seen.values().next().value!);
+      callbackRef.current(n);
+    });
+  }, [authorizationBoundary.key, authorizationBoundary.ready, client, userId]);
+}
 
-    for (const n of notifs.data) {
-      if (
-        !seenIds.current.has(n.notification_id) &&
-        isForUser(n, userId)
-      ) {
-        seenIds.current.add(n.notification_id);
-        callbackRef.current(n);
-      }
-    }
-  }, [authorizationBoundary.key, authorizationBoundary.ready, notifs.data, userId]);
+/** The Sync transport has already validated/admitted this envelope and applied the canonical row. */
+export function liveNotificationInsert(message: { type: string; [key: string]: unknown }): Notification | null {
+  if (message.type !== 'sync.change' || message.table !== 'notifications' || message.op !== 'INSERT'
+    || !message.row || typeof message.row !== 'object') return null;
+  const row = message.row as Notification;
+  return typeof row.notification_id === 'string' && typeof row.title === 'string' && typeof row.target_type === 'string'
+    && (row.metadata === null || typeof row.metadata === 'string') && (row.expires_at === null || typeof row.expires_at === 'number') ? row : null;
 }

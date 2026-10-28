@@ -1,33 +1,39 @@
 /** Native browser acceptance: actual Guardian, public SDK, AppProvider, Fabric, private bytes and live streams. No external provider or app data. */
 import { beforeAll, afterAll, expect, test } from 'bun:test';
 import { mkdtemp, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { chromium } from 'playwright';
+import { basename, join } from 'node:path';
+import type { Browser, BrowserContext } from 'playwright';
 import { createApp } from '../../frontend/server/app-factory';
 import { defineZeroPlugin } from '../../frontend/server/server-extensions';
 import { AuthError } from '../../auth/types';
 import { buildPlatformStyles } from '../../frontend/server/style-bundle';
 import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type PlaywrightTestBrowserLease } from '../../test-support/playwright-test-browser';
+import { launchNativeWindowBrowser } from '../../test-support/playwright-native-window';
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 const scratch = '/Volumes/code-bank/tmp/scratch/zero-platform', evidence = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/blog-publishing/messaging-workspace-browser';
-let lease: PlaywrightTestBrowserLease | undefined, script = '', css = '';
+let lease: PlaywrightTestBrowserLease | undefined, scriptPath = '', css = '';
+const browserAssets = new Map<string, { contents: Blob; type: string }>();
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   const root = await mkdtemp(join(scratch, 'messaging-workspace-build-'));
   const styles = await buildPlatformStyles(root, join(root, 'absent-app')); css = await Bun.file(styles.cssPath).text();
-  const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'messaging-workspace.browser-fixture.tsx')], target: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': JSON.stringify('test') } });
+  const build = await Bun.build({ entrypoints: [join(import.meta.dir, 'messaging-workspace.browser-fixture.tsx')], outdir: join(root, 'browser'),
+    target: 'browser', format: 'esm', splitting: true, define: { 'process.env.NODE_ENV': JSON.stringify('test') } });
   if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'));
-  script = await build.outputs.find(file => file.path.endsWith('.js'))!.text();
+  scriptPath = '/_fixture/' + basename(build.outputs.find(file => file.kind === 'entry-point')!.path);
+  for (const output of build.outputs) browserAssets.set('/_fixture/' + basename(output.path), { contents: output,
+    type: output.path.endsWith('.mp3') ? 'audio/mpeg' : output.path.endsWith('.css') ? 'text/css' : 'application/javascript' });
   for (const output of build.outputs.filter(file => file.path.endsWith('.css'))) css += '\n' + await output.text();
   await mkdir(evidence, { recursive: true }); lease = await acquirePlaywrightTestBrowser();
 }, 90000);
 afterAll(() => lease?.release());
-async function fixture(support: boolean | 'website' | 'review' | 'notice-review' = false) {
+async function fixture(support: boolean | 'website' | 'review' | 'notice-review' | 'notices' = false) {
   const root = await mkdtemp(join(scratch, 'messaging-workspace-native-')); await mkdir(join(root, 'app'));
   const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('Synthetic port reservation') });
   const port = reservation.port!; await reservation.stop(true); const base = 'http://127.0.0.1:' + port;
   let providerCalls = 0;
   const noticeReview = support === 'notice-review';
+  const notices = support === 'notices', hasSupport = !!support && !noticeReview && !notices;
   const provider = support === 'review' ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
     if (++providerCalls === 1) return Response.json({ error: { message: 'Synthetic provider failure' } }, { status: 503 });
     return Response.json({ id: 'synthetic-reviewed-answer', object: 'chat.completion', created: 1, model: 'chat', choices: [{ index: 0, message: { role: 'assistant', content: 'SYNTHETIC_REVIEWED_BROWSER_ANSWER' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 } });
@@ -35,16 +41,17 @@ async function fixture(support: boolean | 'website' | 'review' | 'notice-review'
   const app = await createApp({ projectRoot: root, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     app: { publicUrl: base },
     db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
-    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : support && !noticeReview ? {} : false, ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}), ...(noticeReview ? { notifications: true } : {}) }, logging: false,
+    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : hasSupport ? {} : false, ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}), ...(noticeReview || notices ? { notifications: true } : {}) }, logging: false,
     ai: provider ? { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-test-key', baseURL: 'http://127.0.0.1:' + provider.port + '/v1' } } } : false,
-    email: false, workflows: provider || noticeReview ? {} : false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
+    email: false, workflows: provider || noticeReview || notices ? {} : false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
     ...(noticeReview ? { serverExtensions: [defineZeroPlugin({ name: 'synthetic-notice-review', setup({ zero }) {
       zero.notifications!.notifyUsersOnce = () => { throw new AuthError('Synthetic invalid native notice.', 'NOTIFICATION_INPUT_INVALID', 422); };
     } })] } : {}),
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false });
-  app.get('/fixture.js', () => new Response(script, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } }));
-  app.get('/workspace', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;height:100dvh}#root{box-sizing:border-box;padding:12px}</style><div id="root"></div><script>window.__PLATFORM_CONFIG__={auth:true,presence:true,logging:false,stateSync:false,routeAuth:'protected-by-default',publicPaths:['/workspace']}</script><script src="/fixture.js"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
-  app.get('/support', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;min-height:100dvh}#root{box-sizing:border-box;padding:12px;max-width:560px;margin:auto}</style><div id="root"></div><script src="/fixture.js"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
+  app.get('/_fixture/*', ({ request }) => { const asset = browserAssets.get(new URL(request.url).pathname);
+    return asset ? new Response(asset.contents, { headers: { 'Content-Type': asset.type } }) : new Response('Missing synthetic asset', { status: 404 }); });
+  app.get('/workspace', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;height:100dvh}#root{box-sizing:border-box;padding:12px}#root:has([data-testid=sound-status]){display:flex;flex-direction:column}.zero-messaging-workspace{flex:1;min-height:0}</style><div id="root"></div><script>window.__PLATFORM_CONFIG__={auth:true,presence:true,logging:false,stateSync:false,routeAuth:'protected-by-default',publicPaths:['/workspace']}</script><script type="module" src="${scriptPath}"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
+  app.get('/support', () => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\nhtml,body,#root{margin:0;min-height:100dvh}#root{box-sizing:border-box;padding:12px;max-width:560px;margin:auto}</style><div id="root"></div><script type="module" src="${scriptPath}"></script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }));
   app.listen({ hostname: '127.0.0.1', port });
   const call = async (method: string, path: string, body?: unknown, token?: string, key?: string) => {
     const response = await fetch(base + path, { method, headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(key ? { 'Idempotency-Key': key } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -55,8 +62,103 @@ async function fixture(support: boolean | 'website' | 'review' | 'notice-review'
   const other = await call('POST', '/auth/register', { username: 'workspace-other', email: 'workspace-other@example.test', password: 'Synthetic-workspace-password-123' });
   const conversation = await call('POST', '/api/messaging/conversations', { userIds: [peer.user.userId] }, admin.accessToken, 'native-workspace-chat');
   const send = (text: string, key: string = crypto.randomUUID()) => call('POST', `/api/messaging/conversations/${conversation.id}/messages`, { text }, peer.accessToken, key);
-  for (let i = 1; i <= (noticeReview ? 0 : 55); i++) await send('Synthetic native history ' + i, 'history-' + i);
+  for (let i = 1; i <= (noticeReview || notices ? 0 : 55); i++) await send('Synthetic native history ' + i, 'history-' + i);
   return { base, app, call, admin, peer, other, conversation, send, close: async () => { await app.stop(true); await provider?.stop(true); } };
+}
+browserTest('native alert policy suppresses the active chat, chooses exactly one correct sound, and never replays history or muted alerts', () => qualifyAlertPolicy(lease!.browser), 120000);
+async function qualifyAlertPolicy(browser: Browser, realBackground = false, nativeContext?: BrowserContext) {
+  const f = await fixture('notices'), context = nativeContext ?? await browser.newContext({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' }), page = await context.newPage();
+  await page.setViewportSize({ width: 1100, height: 800 });
+  page.setDefaultTimeout(12000); const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  try {
+    await f.send('SYNTHETIC_BEFORE_SUBSCRIPTION', 'audio-history');
+    const waitNotices = async (count: number) => {
+      const until = Date.now() + 12000;
+      while ((await f.call('GET', '/notifications', undefined, f.admin.accessToken)).notifications.length < count) {
+        if (Date.now() >= until) throw new Error('Synthetic native notice did not complete.');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    };
+    await waitNotices(1);
+    await page.addInitScript(() => {
+      const target = window as unknown as { __played: string[] }; target.__played = [];
+      const original = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        const audible = this.volume > 0, src = this.src;
+        const result = original.call(this);
+        void result.then(() => { if (audible) target.__played.push(src); }).catch(() => {});
+        return result;
+      };
+    });
+    const played = () => page.evaluate(() => (window as unknown as { __played: string[] }).__played);
+    await page.goto(f.base + '/workspace?manual&sounds');
+    await page.getByTestId('notice-count').getByText('1', { exact: true }).waitFor();
+    await page.getByTestId('sound-status').getByText('locked', { exact: true }).waitFor();
+    expect(await played()).toEqual([]); expect(await page.locator('[data-sonner-toast]').count()).toBe(0);
+    await page.getByRole('button', { name: 'Enable test sounds', exact: true }).click();
+    await page.getByTestId('sound-status').getByText('ready', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'workspace-peer', exact: false }).click();
+    await page.getByRole('textbox', { name: 'Message', exact: true }).click();
+    expect(await page.evaluate(() => document.hasFocus() && document.visibilityState === 'visible')).toBe(true);
+    await f.send('SYNTHETIC_ACTIVE_QUIET', 'audio-active');
+    await page.getByTestId('notice-count').getByText('2', { exact: true }).waitFor();
+    await page.locator('.zero-messaging-transcript').getByText('SYNTHETIC_ACTIVE_QUIET', { exact: true }).waitFor();
+    expect(await played()).toEqual([]); expect(await page.locator('[data-sonner-toast]').count()).toBe(0);
+    const other = await f.call('POST', '/api/messaging/conversations', { userIds: [f.other.user.userId] }, f.admin.accessToken, 'audio-other');
+    await f.call('POST', `/api/messaging/conversations/${other.id}/messages`, { text: 'SYNTHETIC_OTHER_ALERT' }, f.other.accessToken, 'audio-other-message');
+    await page.waitForFunction(() => (window as unknown as { __played: string[] }).__played.length === 1);
+    expect((await played())[0]).toMatch(/\/chat-message-[a-z0-9]+\.mp3$/);
+    await page.getByTestId('notice-count').getByText('3', { exact: true }).waitFor();
+    expect(await page.locator('[data-sonner-toast]').count()).toBe(1);
+    // This grace exceeds the deliberate 750ms burst coalescing interval; it is
+    // not a retry of failed publication or a way to make the active chat quiet.
+    await page.waitForTimeout(800);
+    await f.call('POST', '/notifications', { title: 'SYNTHETIC_GENERAL_ALERT', targetType: 'user', targetValue: f.admin.user.userId }, f.admin.accessToken);
+    await page.waitForFunction(() => (window as unknown as { __played: string[] }).__played.length === 2);
+    expect((await played())[1]).toMatch(/\/notification-[a-z0-9]+\.mp3$/);
+    await page.getByRole('button', { name: 'Mute test sounds', exact: true }).click();
+    await page.getByTestId('sound-status').getByText('disabled', { exact: true }).waitFor();
+    await f.call('POST', '/notifications', { title: 'SYNTHETIC_MUTED_ALERT', targetType: 'user', targetValue: f.admin.user.userId }, f.admin.accessToken);
+    await page.getByTestId('notice-count').getByText('5', { exact: true }).waitFor();
+    expect(await played()).toHaveLength(2);
+    await page.getByRole('button', { name: 'Unmute test sounds', exact: true }).click();
+    await page.getByTestId('sound-status').getByText('locked', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Enable test sounds', exact: true }).click();
+    await page.getByTestId('sound-status').getByText('ready', { exact: true }).waitFor();
+    expect(await played()).toHaveLength(2);
+    const current = await f.call('GET', '/api/messaging/conversations/' + f.conversation.id, undefined, f.admin.accessToken);
+    expect(current.unreadCount).toBeGreaterThan(0); // Quiet is not a fabricated read acknowledgment.
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.getByRole('button', { name: 'Back to conversations', exact: true }).click();
+    expect(await page.locator('.zero-messaging-main').isVisible()).toBe(false);
+    await f.send('SYNTHETIC_HIDDEN_MOBILE_PANE', 'audio-mobile-list');
+    await page.getByTestId('notice-count').getByText('6', { exact: true }).waitFor();
+    await page.waitForFunction(() => (window as unknown as { __played: string[] }).__played.length === 3);
+    expect((await played())[2]).toMatch(/\/chat-message-[a-z0-9]+\.mp3$/);
+    await page.setViewportSize({ width: 1100, height: 800 });
+    // Headless pages do not model native-window visibility/focus. Minimize the
+    // actual headed window; never replace a getter or dispatch lifecycle events.
+    if (realBackground) {
+      const cdp = await context.newCDPSession(page);
+      const { windowId } = await cdp.send('Browser.getWindowForTarget');
+      try {
+        await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+        await page.waitForFunction(() => document.visibilityState !== 'visible' || !document.hasFocus());
+        expect(await page.evaluate(() => document.visibilityState === 'visible' && document.hasFocus())).toBe(false);
+        await page.waitForTimeout(800);
+        await f.send('SYNTHETIC_BACKGROUND_CHAT', 'audio-background');
+        await page.getByTestId('notice-count').getByText('7', { exact: true }).waitFor();
+        await page.waitForFunction(() => (window as unknown as { __played: string[] }).__played.length === 4);
+        expect((await played())[3]).toMatch(/\/chat-message-[a-z0-9]+\.mp3$/);
+        await Bun.write(join(evidence, 'notification-real-window.json'), JSON.stringify({ headless: false, lifecycle: 'native-window-minimized',
+          overriddenDocumentApis: false, syntheticLifecycleEvents: false, state: await page.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState })),
+          audio: (await played()).map(src => basename(new URL(src).pathname)) }, null, 2));
+      } finally { await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }); }
+    }
+    await page.bringToFront(); await page.reload(); await page.getByTestId('notice-count').getByText(realBackground ? '7' : '6', { exact: true }).waitFor();
+    expect(await played()).toEqual([]); expect(await page.locator('[data-sonner-toast]').count()).toBe(0);
+    expect(errors).toEqual([]);
+  } finally { if (nativeContext) await page.close(); else await context.close(); await f.close(); }
 }
 browserTest('the native operator review surface inspects retained failure and explicitly confirms one new AI attempt', async () => {
   const f = await fixture('review'), staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' });
@@ -74,6 +176,9 @@ browserTest('the native operator review surface inspects retained failure and ex
     const confirm = staff.getByRole('alertdialog', { name: 'Retry this work?', exact: true });
     await confirm.getByRole('button', { name: 'Acknowledge risk and retry', exact: true }).click();
     await detail.getByText('Resolved: a new attempt was requested. The original evidence is retained.', { exact: true }).waitFor();
+    // Resolution accepts a new durable attempt; it is not proof that the
+    // asynchronous provider reply has already committed. Observe that separately.
+    await staff.locator('.zero-messaging-transcript').getByText('SYNTHETIC_REVIEWED_BROWSER_ANSWER', { exact: true }).waitFor();
     expect((await f.call('GET', '/api/messaging/conversations/' + opened.id + '/review', undefined, f.admin.accessToken)).items).toHaveLength(0);
     const rows = await f.call('GET', '/api/messaging/conversations/' + opened.id + '/messages', undefined, f.peer.accessToken);
     expect(rows.items.filter((row: any) => row.text === 'SYNTHETIC_REVIEWED_BROWSER_ANSWER')).toHaveLength(1);
@@ -340,19 +445,19 @@ browserTest('visible-end reads require viewport visibility and dwell, respect an
 // Opt in on a workstation with a real window server. CI's headless event-fence
 // check above cannot establish actual tab visibility/focus behavior.
 const headedTest = playwrightTestBrowserAvailable && process.env.ZERO_MESSAGING_HEADED === '1' ? test : test.skip;
+headedTest('headed Chromium qualifies native background-window admission and both notification audio files', async () => {
+  const native = await launchNativeWindowBrowser();
+  try { await qualifyAlertPolicy(native.browser, true, native.context); } finally { await native.close(); }
+}, 120000);
 headedTest('headed Chromium actual window focus interrupts read dwell and resumes only when visible and focused', async () => {
   const f = await fixture();
-  const browser = await chromium.launch({ headless: false, ignoreDefaultArgs: ['--enable-automation'], timeout: 30000 });
-  const context = await browser.newContext({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' });
+  const native = await launchNativeWindowBrowser(), context = native.context;
   const page = await context.newPage(), other = await context.newPage();
+  await page.setViewportSize({ width: 1100, height: 760 });
   const faults: string[] = []; page.on('pageerror', error => faults.push(error.message)); page.setDefaultTimeout(12000);
   try {
-    // Explicitly disable the automation focus override, not the browser's real
-    // focus/visibility API. No synthetic blur, focus or visibility events.
-    for (const target of [page, other]) {
-      const cdp = await context.newCDPSession(target);
-      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
-    }
+    // Native default context with Playwright noDefaults: no focus emulation,
+    // synthetic blur/focus/visibility events or overridden document getters.
     await page.goto(f.base + '/workspace'); await page.bringToFront();
     const initialRead = page.waitForResponse(response => response.url().endsWith('/read') && response.request().method() === 'POST' && response.status() === 200);
     await page.getByRole('button', { name: 'workspace-peer', exact: false }).click();
@@ -372,5 +477,5 @@ headedTest('headed Chromium actual window focus interrupts read dwell and resume
     expect(unfocused.focused).toBe(false); expect(visible).toEqual({ visibility: 'visible', focused: true }); expect(faults).toEqual([]);
     await Bun.write(join(evidence, 'headed-window-lifecycle.json'), JSON.stringify({ platform: process.platform, arch: process.arch, headless: false,
       syntheticLifecycleEvents: false, overriddenDocumentApis: false, unfocused, visible, unreadWhileUnfocused: 1, unreadAfterVisibleDwell: 0 }, null, 2));
-  } finally { await context.close(); await browser.close(); await f.close(); }
+  } finally { await native.close(); await f.close(); }
 }, 90000);

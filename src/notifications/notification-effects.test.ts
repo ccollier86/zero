@@ -6,6 +6,7 @@ import { NotificationService } from './notification-service';
 import { migration } from '../migrations/definitions/051_notification_effect_receipts';
 import { applicationServiceDataScope, trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import type { Database } from 'bun:sqlite';
+import { notificationChatPresentation } from './presentation';
 
 function fixture() {
   const db = createReactiveDB({ mode: 'memory' }); defineNotificationTables(db);
@@ -79,5 +80,29 @@ test('missing or changed immutable receipt controls fail before native publicati
     expect(() => service.notifyUsersOnce('missing-control', ['user-a'], { title: 'New message' })).toThrow('reviewed SYSTEM migration');
     expect(db.prepare('SELECT COUNT(*) AS count FROM notifications').get()).toEqual({ count: 1 });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='notification_effect_receipt_no_delete'").get()).toBeNull();
+  } finally { db.dispose(); }
+});
+
+test('chat cues bind opaque identities, reject content/accessors and preserve old receipts unchanged', () => {
+  const { db, service } = fixture();
+  try {
+    const presentation = { kind: 'chat' as const, conversationId: 'conversation-one', messageId: 'message-one' };
+    const first = service.notifyUsersOnce('chat-cue', ['user-a'], { title: 'New message', presentation });
+    expect(notificationChatPresentation(service.getById(first.notificationId!)!.metadata)).toEqual(presentation);
+    expect(service.notifyUsersOnce('chat-cue', ['user-a'], { title: 'New message', presentation }).duplicate).toBe(true);
+    expect(service.notifyUsersOnce('chat-cue', ['user-a'], { title: 'New message', presentation: { messageId: 'message-one', conversationId: 'conversation-one', kind: 'chat' } }).duplicate).toBe(true);
+    expect(() => service.notifyUsersOnce('chat-cue', ['user-a'], { title: 'New message', presentation: { ...presentation, messageId: 'message-two' } })).toThrow('different input');
+    const legacy = service.notifyUsersOnce('old-cue', ['user-a'], { title: 'New message' });
+    expect(service.notifyUsersOnce('old-cue', ['user-a'], { title: 'New message', presentation })).toEqual({ ...legacy, duplicate: true });
+    expect(service.getById(legacy.notificationId!)!.metadata).toBeNull();
+    service.deleteNotification(legacy.notificationId!);
+    expect(service.notifyUsersOnce('old-cue', ['user-a'], { title: 'New message', presentation })).toEqual({ ...legacy, duplicate: true, retained: false });
+    let invoked = false;
+    expect(() => service.notifyUsersOnce('cue-getter', ['user-a'], { title: 'New', presentation: { ...presentation, get messageId() { invoked = true; return 'message-two'; } } })).toThrow('invalid');
+    expect(invoked).toBe(false);
+    expect(() => service.notifyUsersOnce('cue-content', ['user-a'], { title: 'New', presentation: { ...presentation, text: 'Never cross the private boundary' } } as never)).toThrow('invalid');
+    expect(notificationChatPresentation('{"zero":{"version":9,"kind":"chat","conversationId":"c","messageId":"m"}}')).toBeNull();
+    expect(notificationChatPresentation('not-json')).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM notifications').get()).toEqual({ count: 1 });
   } finally { db.dispose(); }
 });

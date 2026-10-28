@@ -22,6 +22,16 @@ All notable Zero Platform changes are tracked here.
   review/counts and explicit dismissal. Group ownership does not expose another
   sender's work; current membership/history still applies, no provider draft is
   released, and dismissal never resends or fabricates delivery.
+- Add opt-in, independently configurable chat/general notification sounds over
+  one scoped feedback owner. The active, visible/focused native conversation is
+  quiet; other conversations may alert. A chat notice selects only its own cue.
+  Initial snapshots, reconnect history and muted/blocked media are never replayed.
+  Toast suppression does not fabricate read/seen receipts. Existing native
+  notification-effect receipts reconcile without rewriting or resending them.
+- Add focused logging/messaging actor bootstrap exports so dedicated source
+  entries need not import the app factory and unrelated services. Keep the
+  existing exports compatible. Startup errors now retain only an allowlisted
+  lifecycle phase for safe diagnosis; actor deadlines/admission are unchanged.
 - Limit the modal recession height bridge to nonempty content surfaces. Empty
   controlled-dialog hosts no longer consume a flex slot and collapse neighboring
   workspace grids; existing modal skin and motion remain unchanged.

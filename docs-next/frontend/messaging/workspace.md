@@ -24,6 +24,11 @@ theme, expose private tables or require fabricated row-change events.
 This is the native contract. Check the selected archive's commit/hash
 before using it; an older package labeled `2.6.0` may not contain these exports.
 
+Optional [notification sounds and quiet active conversations](../notifications/sounds.md)
+are owned by AppProvider's shared feedback policy. The native workspace registers
+its real visible transcript, not a per-row audio player or a second Sync client.
+This does not change the chosen read policy or native unread/notification receipts.
+
 ## Ordinary Integration
 
 Enable the [native backend](../../backend/messaging/configuration.md) in the

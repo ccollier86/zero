@@ -3,7 +3,6 @@
 import {
   createContext,
   useContext,
-  useRef,
   createElement,
 } from 'react';
 import type { ReactNode } from 'react';
@@ -14,9 +13,9 @@ import {
 } from './notification-hooks';
 import type {
   Notification,
-  NotificationWithStatus,
   UseNotificationsResult,
 } from './notification-hooks';
+import { NotificationFeedbackProvider, useNotificationFeedbackMaybe } from './notification-feedback-provider';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -63,18 +62,28 @@ export interface NotificationProviderProps {
  * </ClientProvider>
  * ```
  */
-export function NotificationProvider({
+export function NotificationProvider(props: NotificationProviderProps) {
+  const feedback = useNotificationFeedbackMaybe();
+  // Custom ClientProvider hosts get the same policy without another Sync client.
+  return feedback
+    ? createElement(NotificationStateProvider, props)
+    : createElement(NotificationFeedbackProvider, { children: createElement(NotificationStateProvider, props) });
+}
+
+function NotificationStateProvider({
   autoToast = true,
   toastDuration = 5000,
   renderToast,
   children,
 }: NotificationProviderProps) {
   const result = useNotifications();
+  const feedback = useNotificationFeedbackMaybe()!;
 
   // Auto-toast on new notifications
   // Hook must be called unconditionally (Rules of Hooks) — guard inside the callback
   useOnNewNotification((n: Notification) => {
-    if (!autoToast) return;
+    feedback.feedback.observe(n);
+    if (!autoToast || !feedback.feedback.claimToast(n)) return;
     if (renderToast) {
       const content = renderToast(n);
       if (content !== null) {

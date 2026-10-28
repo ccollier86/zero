@@ -67,6 +67,8 @@ import {
   normalizeConfiguredAuthPath,
 } from '../router/auth-navigation';
 import { AuthorizationHintRecovery } from './authorization-hint-recovery';
+import { NotificationFeedbackProvider } from './notification-feedback-provider';
+import type { NotificationSoundOptions } from './notification-audio';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -157,6 +159,8 @@ export interface AppProviderProps {
   stateSync?: boolean;
   /** Defaults to the server's Guardian presence policy; false suppresses this browser's tracker/feed. */
   presence?: boolean;
+  /** Optional chat/general cues. Off by default; browser user-gesture admission still applies. */
+  notificationSounds?: boolean | NotificationSoundOptions;
   /** Initial URL pathname from SSR. */
   initialPathname?: string;
   /** Initial route params from SSR. */
@@ -190,7 +194,7 @@ export interface AppProviderProps {
  * 2. RouterProvider — client-side navigation (works in SSR via initialPathname)
  * 3. ClientProvider — SDK client (auth, collections, state) [client only]
  * 4. SyncProvider — wired to the same SyncClient [client only]
- * 5. Persistent audit/session owners with separate display gates [client only]
+ * 5. Persistent notification feedback and audit/session owners with separate display gates [client only]
  * 6. ModalManager — scoped modal stack and `modals.*` portal beneath both gates [client only]
  *
  * @example
@@ -211,6 +215,7 @@ export function AppProvider({
   auth,
   stateSync,
   presence,
+  notificationSounds,
   initialPathname,
   initialParams,
   publicPaths,
@@ -339,7 +344,7 @@ export function AppProvider({
           client: internal._syncClient,
           stateClient: internal.state,
           ephemeralClient: internal.ephemeral,
-          children: activityTree,
+          children: createElement(NotificationFeedbackProvider, { sounds: notificationSounds, children: activityTree }),
         }
       )
     }

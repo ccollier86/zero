@@ -65,7 +65,7 @@ export function useMessagingTranscript(controller: MessagingWorkspaceController,
   }, [viewport, controller, state.selectedId, state.conversation?.unreadCount, state.loading, last, readPolicy, readAttempt]);
   const latest = () => { if (controller.getSnapshot().selectedId !== state.selectedId) return;
     position.current.following = true; controller.setFollowing(true, state.selectedId); controller.latest(state.selectedId); if (viewport) viewport.scrollTop = viewport.scrollHeight; };
-  return { viewportRef: setViewport, endRef: end, following, latest, retryRead: () => setReadAttempt(value => value + 1) };
+  return { viewport, viewportRef: setViewport, endRef: end, following, latest, retryRead: () => setReadAttempt(value => value + 1) };
 }
 function visibleAnchor(viewport: HTMLElement, top: number): HTMLElement | undefined {
   const rows = viewport.querySelectorAll<HTMLElement>('[data-message-id]'); let low = 0, high = rows.length;
