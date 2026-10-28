@@ -33,7 +33,7 @@ try {
   expect((await request(origin, '/api/messaging/conversations/' + seed.conversation.id + '/messages', peer)).items[0].id).toBe(seed.message.id);
   // Terminate only this fixture's proven live private writer. A known crash may
   // reject an operation; explicit same-key recovery must not duplicate an intent.
-  const writer = (await probes()).findLast(probe => probe.kind === 'messaging' && probe.role === 'writer' && alive(probe.pid)); expect(writer).toBeTruthy();
+  const writer = (await probes()).filter(probe => probe.kind === 'messaging' && probe.role === 'writer' && alive(probe.pid)).at(-1); expect(writer).toBeTruthy();
   process.kill(writer!.pid, 'SIGKILL'); await until(() => !alive(writer!.pid), 'Private writer death');
   let recoveryAttempts = 0;
   await until(async () => {
@@ -74,6 +74,7 @@ try {
   await Bun.write('./qualification-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   for (const release of held.values()) release();
-  if (child && child.exitCode === null) { child.kill('SIGKILL'); await child.exited; }
+  const active = child as ReturnType<typeof Bun.spawn> | null;
+  if (active && active.exitCode === null) { active.kill('SIGKILL'); await active.exited; }
   await provider.stop(true); await Bun.write('./server-output.log', (await Promise.all(output)).join('\n'));
 }
