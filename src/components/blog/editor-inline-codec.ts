@@ -31,11 +31,15 @@ export function blogInlineFromEditor(document: JSONContent): BlogInlineText[] {
     for (const node of paragraph.content ?? []) {
       if (node.type !== 'hardBreak' && (node.type !== 'text' || typeof node.text !== 'string')) throw new Error('Unsupported inline content.');
       const run: BlogInlineText = { text: node.type === 'hardBreak' ? '\n' : node.text! };
+      const marks = new Set<string>(); let link: string | undefined;
       for (const mark of node.marks ?? []) {
-        if (['bold', 'italic', 'underline', 'strike', 'code'].includes(mark.type)) run[mark.type as 'bold'] = true;
-        else if (mark.type === 'link') { const href = safeBlogHref(mark.attrs?.href); if (!href) throw new Error('Unsupported inline link.'); run.href = href; }
+        if (['bold', 'italic', 'underline', 'strike', 'code'].includes(mark.type)) marks.add(mark.type);
+        else if (mark.type === 'link') { const href = safeBlogHref(mark.attrs?.href); if (!href) throw new Error('Unsupported inline link.'); link = href; }
         else throw new Error('Unsupported inline formatting.');
       }
+      // ProseMirror orders marks by its schema; the wire document uses a stable canonical order.
+      for (const name of ['bold', 'italic', 'underline', 'strike', 'code'] as const) if (marks.has(name)) run[name] = true;
+      if (link) run.href = link;
       append(run);
     }
   }

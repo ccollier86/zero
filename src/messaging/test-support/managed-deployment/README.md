@@ -50,6 +50,10 @@ request bodies, provider results or app databases. The optional
 `probe-source-lifecycle.ts` repeats eight **fresh** source setup/stop sequences
 and stops at the first failure; it never retries a failed setup. Its separate
 `probe-executor-wrapper.ts` inspects the installed implementation solely for
-internal lifecycle diagnostics. That wrapper is not a public import recipe,
+internal lifecycle diagnostics. It records bounded, payload-free start/bind/
+operation stage timings and fixed error/health codes so a ready handshake can
+be distinguished from a timed-out database bind. No request bodies, result rows,
+database identifiers, paths or arbitrary exception text are inspected.
+That wrapper is not a public import recipe,
 application scaffold, runtime fix or replacement for the unmodified deployment
 qualification.

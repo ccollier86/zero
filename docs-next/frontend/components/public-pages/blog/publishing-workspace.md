@@ -111,6 +111,10 @@ not only the current management-table page; the server still validates ancestry.
 Save is explicit by default. `autoSave={1500}` opts into draft-only debounce;
 it never publishes. A newly accepted server revision is the only basis for
 Publish/Withdraw/Trash/Restore. Edits made while a save is pending remain dirty.
+Equivalent JSON property/mark ordering is not an edit: the accepted save stays
+clean after an editor round-trip, including combined links and inline formatting.
+Actual changed text, formatting values and ordered blocks/taxonomy choices still
+require saving.
 Another writer's revision does not overwrite a local draft. The existing
 Save/Discard/Stay controller protects router navigation and the native unload
 warning protects refresh/tab close.

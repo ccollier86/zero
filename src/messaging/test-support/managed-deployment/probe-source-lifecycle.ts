@@ -18,7 +18,7 @@ for (let attempt = 1; attempt <= 8; attempt++) {
   const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]); clearTimeout(timer);
   await Bun.write(join(destination, 'source-state.log'), out + '\n' + err);
-  for (const name of ['safe-observations.ndjson', 'executor-failures.ndjson', 'actor-probes.ndjson']) if (await Bun.file(join(cwd, name)).exists()) await Bun.write(join(destination, name), await Bun.file(join(cwd, name)).text());
+  for (const name of ['safe-observations.ndjson', 'executor-failures.ndjson', 'executor-stages.ndjson', 'actor-probes.ndjson']) if (await Bun.file(join(cwd, name)).exists()) await Bun.write(join(destination, name), await Bun.file(join(cwd, name)).text());
   console.log(JSON.stringify({ attempt, code }));
   if (code !== 0) throw new Error('Fresh source lifecycle failed. See safe retained diagnostics.');
 }

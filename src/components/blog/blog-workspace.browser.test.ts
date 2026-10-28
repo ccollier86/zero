@@ -96,11 +96,16 @@ browserTest('writers manage taxonomy/media/bylines, compose, publish, inspect li
     const bubble = page.locator('.zero-blog-selection-menu'); await bubble.waitFor(); await bubble.getByRole('button', { name: 'Bold', exact: true }).click();
     await bubble.getByRole('button', { name: 'Italic', exact: true }).click();
     await bubble.getByRole('button', { name: 'Inline code', exact: true }).click();
+    await bubble.getByRole('button', { name: 'Add or edit link', exact: true }).click();
+    await page.getByLabel('Link URL', { exact: true }).fill('javascript:alert(1)');
+    expect(await page.getByRole('button', { name: 'Apply', exact: true }).isDisabled()).toBe(true);
+    await page.getByLabel('Link URL', { exact: true }).fill('https://example.test/editorial-reference');
+    await page.getByRole('button', { name: 'Apply', exact: true }).click();
     const toolbar = page.locator('.zero-blog-editor > header');
     await toolbar.getByRole('button', { name: 'Save draft', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'Saved · revision 1 · draft' }).waitFor();
     const list = await client.blog.posts.list(), post = await client.blog.posts.get(list.items[0]!.id);
-    expect(post.content.document.blocks[0]).toMatchObject({ type: 'paragraph', content: [{ text: 'A considered story with orchids and thoughtful details.', bold: true, italic: true, code: true }] });
+    expect(post.content.document.blocks[0]).toMatchObject({ type: 'paragraph', content: [{ text: 'A considered story with orchids and thoughtful details.', bold: true, italic: true, code: true, href: 'https://example.test/editorial-reference' }] });
     expect(post.content.categoryIds).toEqual([terms.items[0]!.id]);
     expect(post.content.featuredImage).toMatchObject({ alt: 'A synthetic green garden image' });
     expect((await client.blog.media.list()).items[0]).toMatchObject({ state: 'ready', mimeType: 'image/webp', width: 120, height: 80 });

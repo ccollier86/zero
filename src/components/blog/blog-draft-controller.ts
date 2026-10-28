@@ -29,7 +29,7 @@ export class BlogDraftController {
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   setContent(content: BlogPostContent): void {
     if (this.lifetime.signal.aborted) return;
-    this.set({ content: structuredClone(content), dirty: JSON.stringify(content) !== JSON.stringify(this.state.record?.content ?? this.initial) });
+    this.set({ content: structuredClone(content), dirty: contentKey(content) !== contentKey(this.state.record?.content ?? this.initial) });
   }
   /** An authoritative competing revision is a warning, not permission to replace an unsaved draft. */
   incoming(record: BlogPostRecord): void {
@@ -73,9 +73,9 @@ export class BlogDraftController {
       const accepted = await attempt.execute(this.lifetime.signal);
       if (this.lifetime.signal.aborted) return { kind: 'retired' };
       this.attempt = null;
-      const editedDuringSave = JSON.stringify(this.state.content) !== JSON.stringify(attempt.content);
+      const editedDuringSave = contentKey(this.state.content) !== contentKey(attempt.content);
       const content = editedDuringSave ? this.state.content : accepted.content;
-      this.set({ record: accepted, content, dirty: JSON.stringify(content) !== JSON.stringify(accepted.content), busy: false, uncertain: false, conflict: false, incomingRevision: null, error: null });
+      this.set({ record: accepted, content, dirty: contentKey(content) !== contentKey(accepted.content), busy: false, uncertain: false, conflict: false, incomingRevision: null, error: null });
       return this.accepted(accepted);
     } catch (error) {
       if (this.lifetime.signal.aborted) return { kind: 'retired' };
@@ -92,6 +92,11 @@ export class BlogDraftController {
   private accepted(record: BlogPostRecord): FormSubmitResult { return { kind: 'accepted', values: { id: record.id, revision: record.revision }, revision: record.revision }; }
   private adopt(record: BlogPostRecord) { this.attempt = null; this.set({ record, content: structuredClone(record.content), dirty: false, incomingRevision: null, conflict: false, uncertain: false, error: null }); }
   private set(changes: Partial<BlogDraftState>) { this.state = { ...this.state, ...changes }; for (const listener of this.listeners) listener(); }
+}
+/** JSON object insertion order is not an edit; text, marks, values and array order still are. No server-only imports. */
+function contentKey(content: BlogPostContent): string {
+  return JSON.stringify(content, (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
 }
 function failure(error: unknown): { code: string; status: number } {
   if (!error || typeof error !== 'object') return { code: '', status: 0 };

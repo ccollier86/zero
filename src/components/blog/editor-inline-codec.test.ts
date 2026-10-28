@@ -13,3 +13,10 @@ test('paragraph paste normalizes explicitly while unsupported nodes and links fa
   expect(() => blogInlineFromEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'image', attrs: { src: 'https://example.test' } }] }] })).toThrow();
   expect(() => blogInlineFromEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'bad', marks: [{ type: 'link', attrs: { href: 'javascript:alert(1)' } }] }] }] })).toThrow();
 });
+test('editor mark ordering cannot create a false edit or split identical adjacent runs', () => {
+  const mark = (text: string, reverse: boolean) => ({ type: 'text', text, marks: (reverse ?
+    [{ type: 'link', attrs: { href: 'https://example.test/reference' } }, { type: 'code' }, { type: 'bold' }] :
+    [{ type: 'bold' }, { type: 'code' }, { type: 'link', attrs: { href: 'https://example.test/reference' } }]) });
+  const actual = blogInlineFromEditor({ type: 'doc', content: [{ type: 'paragraph', content: [mark('One ', true), mark('story', false)] }] });
+  expect(JSON.stringify(actual)).toBe(JSON.stringify([{ text: 'One story', bold: true, code: true, href: 'https://example.test/reference' }]));
+});

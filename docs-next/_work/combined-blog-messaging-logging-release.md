@@ -215,6 +215,43 @@ part of this baseline. They do not become release blockers merely because an
 older roadmap mentions them. No broad component reorganization or global theme
 replacement is added to this completion pass.
 
+## Source integration continuation
+
+The current source integration pass is separate from the final frozen release.
+All 16 selected messaging/logging files pass in
+`combined-integration-polish.{jsonl,stderr.log}`. The real-window workspace run
+passes all nine cases / 90 assertions with `ZERO_MESSAGING_HEADED=1`
+(`combined-polish-native-window.log`): it covers actual OS focus/minimization,
+unread dwell, both real decoded sounds, quiet active conversations, duplicate
+suppression and scope retirement, without overriding document lifecycle APIs.
+Native managed tests cover tenant/private-file boundaries, retained state,
+assistant/human takeover and two held loopback AI calls plus a foreground write.
+These are overlapping focused checks, not a complete release inventory.
+
+`logging-native-avatar-complete.log` exercises native sign-in, strict blocked
+delivery/retry and cookie-only reload, then native profile upload/crop → Storage
+grant/upload/finalize → private photo delivery → the same private photo and
+current name in the real LoggingWorkspace. Authenticated native health reports
+ready compliance delivery and no bridge failure. There is no photo adapter or
+directly minted administrator token in that test.
+
+The selection-link browser case exposed a real JSON ordering defect: the
+accepted write succeeded, but ProseMirror's different mark/key order made the
+round-trip appear dirty. `blog-link-order-before.log` records the two failing
+unit reproducers. Stable inline mark order and content-value comparisons repair
+it without weakening unsafe-link rejection, uncertain intent or concurrent-edit
+protection. `blog-link-order-corrected.log` passes eight tests / 50 assertions,
+including real selected text, invalid URL rejection, link application, native
+save and publication, private media and dirty-draft recovery.
+
+The isolated old Linux archive still has an unexplained historical first-bind
+timeout; it is not declared fixed. The payload-free diagnostic observer records
+start/bind stages without changing execution, retries or deadlines. Eight fresh
+source setup/stop probes of that unchanged archive pass, with first binds taking
+992–1,461ms. No failed start was retried. The original failed evidence remains;
+`linux-7c182b2-stages/` and its summary do not substitute for the final archive's
+unmodified official-build/crash qualification or establish the old root cause.
+
 ## Execution status
 
 - [x] Assess current feature source, public components and release evidence.

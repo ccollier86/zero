@@ -4,6 +4,11 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Correct a rich-text round-trip that treated JSON key order as a new edit after
+  an accepted save. Link/format combinations now remain clean; actual text,
+  mark/value and array-order changes still require saving. Normalize editor mark
+  order before merging adjacent runs; unsafe link schemes remain rejected.
+
 - Polish growing-blog layouts and recovery: unique featured/page slots, balanced
   sparse grids, native loading skeletons, distinct empty/filter/failure states,
   real retry/reset controls and query-generation fences for public search.

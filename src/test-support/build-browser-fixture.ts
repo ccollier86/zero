@@ -1,9 +1,9 @@
 /** Compile synthetic UI separately from the test process's imported server/React graph.
  * Native app/plugin builds still run normally in the parent; this owns fixture bytes only.
  */
-export async function buildBrowserFixture(entry: string): Promise<{ script: string; css: string }> {
+export async function buildBrowserFixture(entry: string, format: 'iife' | 'esm' = 'iife'): Promise<{ script: string; css: string }> {
   const source = `try {
-    const result = await Bun.build({ entrypoints: [${JSON.stringify(entry)}], target: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': JSON.stringify('test') } });
+    const result = await Bun.build({ entrypoints: [${JSON.stringify(entry)}], target: 'browser', format: ${JSON.stringify(format)}, define: { 'process.env.NODE_ENV': JSON.stringify('test') } });
     if (!result.success) throw new Error(result.logs.map(item => item.message).join('\\n'));
     const script = await result.outputs.find(item => item.path.endsWith('.js')).text();
     const css = (await Promise.all(result.outputs.filter(item => item.path.endsWith('.css')).map(item => item.text()))).join('\\n');

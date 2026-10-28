@@ -32,3 +32,14 @@ test('edits during an admitted save remain dirty and retired acknowledgments can
   expect(draft.getSnapshot()).toMatchObject({ dirty: true, content: { title: 'Typing continued' }, record: { revision: 2 } });
   const second = draft.save(); draft.close(); resolve(record({ ...content, title: 'Typing continued' }, 3)); expect((await second).kind).toBe('retired'); expect(draft.getSnapshot().record?.revision).toBe(2);
 });
+test('equivalent editor and canonical key orders remain clean without hiding real edits or array reordering', async () => {
+  const canonical: BlogPostContent = { ...content, document: { version: 1, blocks: [{ id: 'paragraph', type: 'paragraph', content: [{ text: 'One story', bold: true, code: true, href: 'https://example.test/reference' }] }] } };
+  const edited: BlogPostContent = { ...canonical, document: { blocks: [{ type: 'paragraph', id: 'paragraph', content: [{ href: 'https://example.test/reference', code: true, bold: true, text: 'One story' }] }], version: 1 } };
+  const api = { create: async () => record(canonical) } as unknown as BlogPostsApi;
+  const draft = new BlogDraftController(api, content); draft.setContent(edited);
+  expect((await draft.save()).kind).toBe('accepted');
+  draft.setContent(edited); expect(draft.getSnapshot().dirty).toBe(false);
+  draft.setContent({ ...edited, title: 'A real edit' }); expect(draft.getSnapshot().dirty).toBe(true);
+  draft.reload(record({ ...canonical, tagIds: ['one', 'two'] }));
+  draft.setContent({ ...canonical, tagIds: ['two', 'one'] }); expect(draft.getSnapshot().dirty).toBe(true);
+});
