@@ -211,7 +211,14 @@ run, including 49 installed-consumer assertions. The complete run also reports
 a phone-consumer timeout after all 11 functional assertions; its awaited cleanup
 remains required and the failed result is retained. Added payload-free stage
 timings distinguish pack/install/verify/assertions/retirement without raising
-the existing deadline. Final qualification and stable selection remain pending;
+the existing functional deadline. The Resource-array consumer likewise finishes
+its four assertions before its combined lifecycle deadline. Both now retire
+their captured synthetic consumers in an independently awaited 120s hook; the
+functional/child deadlines remain unchanged, and hook failure still fails the
+file and holds its installed-consumer slot. This explicitly separates fixture
+retirement budgets, not a claim that aggregate execution fits the old single
+deadline or that production database performance improved. Final qualification
+and stable selection remain pending;
 these follow-up successes are not a replacement whole-suite pass.
 
 This pass completes the ordinary managed conversation workspace over the

@@ -491,6 +491,13 @@ git diff --check
    not an extension of its native-entry or application-start deadline. The
    document editor's dependency-tree retirement is an awaited bounded hook;
    unsuccessful cleanup still fails the file and retains its resource slot.
+   The phone and Resource-array installed consumers use the same explicit
+   retirement boundary: their original 120s/180s functional tests and 90s/120s
+   child-operation bounds remain, with an awaited 120s dependency-tree cleanup
+   hook. Payload-free stage timings expose where time is spent. This separately
+   budgets fixture retirement; it does not claim the aggregate package lifecycle
+   still fits the former single deadline or that application operations became
+   faster. Hook failure remains a failed file, with no retry or excluded case.
    The native FTS migration fixture independently bounds old dense-corpus
    preparation, migration verification, and awaited native/file retirement at
    20s each. Preparation retains the legacy dense-bridge checks; migration

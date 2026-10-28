@@ -1,9 +1,21 @@
 /** Verifies installed public phone/schema/base-input facades without an application, DOM or live service. */
 // Bun has no native mkdtemp/mkdir/rm API; filesystem compatibility is limited to disposable fixture directories.
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
+const consumers = new Map<string, (name: string) => void>();
+// Retire the exact captured fixture even after a failed test. This awaited hook
+// has its own 120s bound, not an extension of the facade's functional deadline.
+// A failed hook still fails the file and retains its installed-consumer slot.
+afterAll(async () => {
+  for (const [root, stage] of consumers) {
+    stage('cleanup');
+    await rm(root, { recursive: true, force: true });
+    consumers.delete(root);
+    stage('retired');
+  }
+}, 120_000);
 
 test('packed phone input browser-builds and SSR-renders with canonical form and schema validation', async () => {
   await mkdir(SCRATCH, { recursive: true });
@@ -11,6 +23,7 @@ test('packed phone input browser-builds and SSR-renders with canonical form and 
   const consumer = `${root}/consumer`, archive = `${root}/framework.tgz`;
   const started = performance.now();
   const stage = (name: string) => console.info('Phone package stage', { stage: name, elapsedMs: Math.round(performance.now() - started) });
+  consumers.set(root, stage);
   try {
     await mkdir(consumer);
     stage('pack');
@@ -40,10 +53,8 @@ test('packed phone input browser-builds and SSR-renders with canonical form and 
     expect(result.html).not.toContain('wrapperClassName=');
     stage('assertions-complete');
   } finally {
-    // Only the fresh test-owned consumer/archive is disposable; no application data is opened.
-    stage('cleanup');
-    await rm(root, { recursive: true, force: true });
-    stage('retired');
+    // Cleanup is always awaited by the file's bounded hook, including on failure.
+    stage('functional-phase-ended');
   }
 }, 120_000);
 

@@ -14,6 +14,9 @@ const ORIGINALS = {
   'src/components/_internal/scroll-viewport/scroll-viewport.css': '8fb6b6ed8845afd8547a70dc08bc6bed4e6444de77f8d6c08cacadd9e3e992e5',
   'src/frontend/styles/globals.css': '1c1669a61ea3a1cc22f91d3621b95822a814d7af15a050ec90ff33703b511ce5',
 } as const;
+const LAYOUT_BRIDGE = '/* Bridge full-height app/workspace children without letting a host-only manager\n'
+  + '   consume a flex slot and collapse its siblings. Auto-height parents stay auto. */\n'
+  + '[data-zero-modal-surface]:not(:empty) { height: 100%; min-height: 0; }\n';
 // Oct 13 intentionally fixes shared table scroll policy and picker trigger
 // presentation. Keep those files in archive/source identity qualification, not
 // the frozen original modal-shell/skin/legacy-theme rollback set.
@@ -128,8 +131,13 @@ test('fresh installed modal scroll archive qualifies public types, original SSR 
       sourceHashes[path] = installedHash;
     }
     for (const [path, hash] of Object.entries(ORIGINALS)) {
-      const original = path === 'src/frontend/styles/globals.css'
+      let original = path === 'src/frontend/styles/globals.css'
         ? createHash('sha256').update(originalThemeBeforeBlogStyles(await Bun.file(join(installed, path)).text())).digest('hex') : sourceHashes[path];
+      if (path === 'src/modals/modal-shell.css') {
+        const css = await Bun.file(join(installed, path)).text();
+        expect(css).toEndWith(LAYOUT_BRIDGE);
+        original = createHash('sha256').update(css.slice(0, -LAYOUT_BRIDGE.length)).digest('hex');
+      }
       expect(original, `Original theme bytes remain preserved after the exact approved style imports: ${path}`).toBe(hash);
     }
     const metadata = await Bun.file(join(installed, 'package.json')).json();
@@ -142,7 +150,8 @@ test('fresh installed modal scroll archive qualifies public types, original SSR 
       publicFacadeIdentity: true, publicTypeIdentity: true, publicTypes: PUBLIC_TYPES,
       strictProductionAndConsumerTypes: true, sourceOnlyNamedExports: true, privateAdaptersRemainPrivate: true,
       ssrOriginalParity: true, ssrComparisons: result.ssrComparisons, commandsInvoked: result.commandsInvoked,
-      originalFilesByteIdentical: Object.keys(ORIGINALS).length - 1, approvedAdditiveStyleImports: 3, originalThemeRetained: true,
+      originalFilesByteIdentical: Object.keys(ORIGINALS).length - 2, approvedAdditiveStyleImports: 3, originalThemeRetained: true,
+      originalModalSkinRetained: true, approvedLayoutBridge: LAYOUT_BRIDGE,
       browserFromInstalledArchive: true, browserCss: true, browserBytes: result.browserBytes,
       copiedCliBuild: true, copiedCustomOriginalsRetained: true, copiedTestFiles: result.copiedTestFiles,
       configTripwireNotExecuted: true, installScriptsNotExecuted: true, environmentNotLoaded: true, databaseFiles: 0,

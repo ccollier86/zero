@@ -22,6 +22,9 @@ All notable Zero Platform changes are tracked here.
   review/counts and explicit dismissal. Group ownership does not expose another
   sender's work; current membership/history still applies, no provider draft is
   released, and dismissal never resends or fabricates delivery.
+- Limit the modal recession height bridge to nonempty content surfaces. Empty
+  controlled-dialog hosts no longer consume a flex slot and collapse neighboring
+  workspace grids; existing modal skin and motion remain unchanged.
 
 - Bind each Fabric writer-lane task to its submitting async context. A queued
   request or background delivery must not inherit a previous user's audit
