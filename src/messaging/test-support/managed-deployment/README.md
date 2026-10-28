@@ -35,3 +35,13 @@ container state is used. Do not mount app data, production volumes, Docker socke
 provider keys or a host home directory. `--init` reaps orphaned fixture workers so
 the shutdown checks can distinguish a live child from a zombie process. Record
 the final archive commit/hash and run this again if runtime source changes.
+
+The normal runner retains fixed-code observations, safe actor boot probes and
+kernel memory/process counters on failure. It never exports `seed.json`, raw
+request bodies, provider results or app databases. The optional
+`probe-source-lifecycle.ts` repeats eight **fresh** source setup/stop sequences
+and stops at the first failure; it never retries a failed setup. Its separate
+`probe-executor-wrapper.ts` inspects the installed implementation solely for
+internal lifecycle diagnostics. That wrapper is not a public import recipe,
+application scaffold, runtime fix or replacement for the unmodified deployment
+qualification.

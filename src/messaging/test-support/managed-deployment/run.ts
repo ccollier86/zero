@@ -26,7 +26,15 @@ try {
   await Bun.write(join(evidence, 'qualification-report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {
-  for (const name of ['server-output.log', 'safe-observations.ndjson']) {
+  for (const name of ['server-output.log', 'safe-observations.ndjson', 'executor-failures.ndjson', 'actor-probes.ndjson', 'main-boots.ndjson']) {
     const path = join(root, name); if (await Bun.file(path).exists()) await Bun.write(join(evidence, name), await Bun.file(path).text());
   }
+  // Fixed kernel counters only. Distinguish an actual protocol failure from
+  // fixture cgroup OOM/thread exhaustion without exporting any runtime data.
+  const resources: Record<string, string | null> = {};
+  for (const name of ['pids.current', 'pids.max', 'pids.peak', 'pids.events', 'memory.max', 'memory.peak', 'memory.events']) {
+    try { const value = await Bun.file('/sys/fs/cgroup/' + name).text(); resources[name] = /^[a-z0-9_ \n]+$/.test(value) && value.length < 2048 ? value.trim() : null; }
+    catch { resources[name] = null; }
+  }
+  await Bun.write(join(evidence, 'resource-counters.json'), JSON.stringify(resources, null, 2));
 }

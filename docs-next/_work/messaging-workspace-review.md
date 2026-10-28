@@ -142,6 +142,32 @@ parser and actual native HTTP/session/send tests are recorded separately in
 `public-proxy-origin-after.log` and `public-proxy-native.log`. This is backend-hop
 qualification, not a claim about an operator's external proxy/certificate setup.
 
+### Intermittent Linux Gate, Not A Hidden Pass
+
+The final peer/proxy runtime pack `eb54817` passes its installed public consumer,
+clean physical-dependency typecheck/build/docs and dependency audit. Its Linux
+attempt fails with `LOGGING_OUTCOME_UNKNOWN`; the pre-diagnostic fixture did not
+identify the exact stage. A diagnostic-only follow-up (`da86922`) then reaches
+source-prepared state but reports an incomplete messaging coordinator shutdown.
+Both are retained failures, not a demonstrated fix or a reason to weaken audit
+admission or accept an unacknowledged actor close.
+
+The same `da86922` runtime subsequently passes the full source-to-bundle/crash
+fixture with resource counters (`linux-da86922-resources/`): two main boots,
+29 worker launches, retained private bytes/review, no repeated uncertain call and
+a 776ms foreground write during two held provider calls. That synthetic run peaks
+near 2.37 GB and 135 tasks with no OOM/process-limit events. It does not prove the
+earlier failures were resource exhaustion. The fresh source lifecycle probe also
+passes eight independent setup/stop sequences. That diagnostic wrapper preserves
+failure outcomes and deadlines, but is not a substitute for the normal runner.
+The first probe attempt used an unavailable import alias and is retained as a
+failed diagnostic harness attempt, not a framework failure.
+
+An intermittent failure with no confirmed cause must remain visible. These
+focused successes do not by themselves select the stable updater or establish a
+complete frozen-framework release pass. Existing applications/production and
+the current stable archive remain untouched.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private
