@@ -4,6 +4,11 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- Blog recommendations omit the current article and duplicate identities, and
+  correctly fall back to recent articles after removing unusable suggestions.
+  Standalone RelatedPosts accepts an optional excludePostId; no publication,
+  Storage or persistence behavior changes.
+
 - LoggingWorkspace now presents current authorized people/photos and readable
   activity/table labels, with server-backed user/activity/table filters and
   app-authored `presentation` mappings. Exact retained IDs/codes move to a

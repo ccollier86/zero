@@ -218,6 +218,11 @@ replacement is added to this completion pass.
 - [x] Confirm the selected saved update and preserve the combined source on a
   feature branch.
 - [x] Confirm that native blog management and selection formatting already exist.
+- [x] Start phase one with current-article exclusion, stable recommendation
+  deduplication and the recent-article fallback. `RelatedPosts` also accepts
+  `excludePostId` for standalone composition. The focused related/default SSR
+  set passes 10 tests / 62 assertions; this is not the complete state/browser
+  acceptance pass (`blog-related-states-first.log` in the existing diagnostics).
 - [ ] Complete phases one through five and replace this status with exact final
   release evidence when the normal updater is actually ready.
 

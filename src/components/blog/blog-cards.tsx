@@ -8,6 +8,7 @@ import { BlogLink, useBlogPostHref } from './blog-provider';
 import { Typography, CategoryBadges, BlogPostMeta, EmptyState, EmptyBlogHero } from './blog-primitives';
 import { safeBlogHref } from './blog-utils';
 import type { BlogPost, BlogCategory } from './blog.types';
+import { uniqueBlogPosts } from './blog-post-list';
 
 export interface BlogCardProps {
   post: BlogPost; variant?: 'default' | 'featured' | 'compact' | 'horizontal' | 'editorial'; baseUrl?: string;
@@ -42,7 +43,8 @@ export function RecentPostsHero({ posts, title = 'Recent blog posts', baseUrl, o
     </div>
   </section>;
 }
-export function RelatedPosts({ posts, baseUrl, title = 'Related articles' }: { posts: readonly BlogPost[]; baseUrl?: string; title?: string }) {
-  if (!posts.length) return null;
-  return <section className="zero-blog-related"><Typography variant="h2">{title}</Typography><BlogCardGrid posts={posts} baseUrl={baseUrl} /></section>;
+export function RelatedPosts({ posts, baseUrl, title = 'Related articles', excludePostId }: { posts: readonly BlogPost[]; baseUrl?: string; title?: string; excludePostId?: string }) {
+  const related = uniqueBlogPosts(posts, excludePostId);
+  if (!related.length) return null;
+  return <section className="zero-blog-related"><Typography variant="h2">{title}</Typography><BlogCardGrid posts={related} baseUrl={baseUrl} /></section>;
 }

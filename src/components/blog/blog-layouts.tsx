@@ -11,6 +11,7 @@ import { BlogLink, useBlogScope } from './blog-provider';
 import { safeBlogHref, blogBlockToc, blogHeadingId, blogDate } from './blog-utils';
 import { BlockRenderer } from './blog-blocks';
 import type { BlogPost, BlogCategory, BlogFilterState, BlogPaginationState, BlogTocItem } from './blog.types';
+import { uniqueBlogPosts } from './blog-post-list';
 
 export interface BlogHeroProps {
   title: string; excerpt?: string; featuredImage?: string; featuredImageAlt?: string;
@@ -111,7 +112,9 @@ export function BlogPostPage({ post, content, tocItems, relatedPosts = [], recen
     read(); const observer = new MutationObserver(read); observer.observe(contentRoot, { subtree: true, childList: true, characterData: true });
     return () => observer.disconnect();
   }, [contentRoot, suppliedToc, seed, showToc, post.id]);
-  const entries = suppliedToc ?? autoToc, withSidebar = variant === 'with-sidebar', related = relatedPosts.length ? relatedPosts : recentPosts;
+  const entries = suppliedToc ?? autoToc, withSidebar = variant === 'with-sidebar';
+  const recommendations = uniqueBlogPosts(relatedPosts, post.id), recent = uniqueBlogPosts(recentPosts, post.id);
+  const related = recommendations.length ? recommendations : recent;
   return <article className={cn(!scoped && 'zero-blog', 'zero-public zero-blog-post', className)} data-variant={variant}>
     {headerActions && <div className="zero-blog-header-actions">{headerActions}</div>}
     {showHero && <BlogHero {...heroProps} title={post.title} excerpt={post.excerpt} featuredImage={post.featuredImage} featuredImageAlt={post.featuredImageAlt}
@@ -126,11 +129,11 @@ export function BlogPostPage({ post, content, tocItems, relatedPosts = [], recen
         {canShare && <section className="zero-blog-share-section"><Typography variant="label">Share this article</Typography><SocialShare url={share} title={post.title} /></section>}
         {showAuthor && post.author && <AuthorCardFeatured author={post.author} />}
         {newsletter}
-        {showRelated && relatedPlacement === 'content' && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={relatedPosts.length ? 'Related articles' : 'Recent articles'} />}
+        {showRelated && relatedPlacement === 'content' && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={recommendations.length ? 'Related articles' : 'Recent articles'} />}
       </div>
       {withSidebar && <aside className="zero-blog-article-sidebar">{showToc && <TableOfContentsSidebar items={entries} contentRoot={contentRoot} />}{sidebar}</aside>}
     </div>
-    {showRelated && relatedPlacement === 'wide' && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={relatedPosts.length ? 'Related articles' : 'Recent articles'} />}
+    {showRelated && relatedPlacement === 'wide' && !!related.length && <RelatedPosts posts={related} baseUrl={baseUrl} title={recommendations.length ? 'Related articles' : 'Recent articles'} />}
     {showFloatingShare && canShare && <aside className="zero-blog-floating-share" aria-label="Article sharing"><SocialShare url={share} title={post.title} platforms={[]} /></aside>}
     {footer}
   </article>;
