@@ -62,6 +62,11 @@ families are listed in the [backend index](./backend/index.md).
   Zero 2.6.0 capabilities are not silently available in older packages.
 - **Existing app:** read [upgrade](./guides/upgrade.md); a dependency refresh is
   not a data split, tenant conversion or workflow-definition migration.
+- **Blog, chat or audit workspace:** the combined 2.7.0 source/local update adds
+  [native publishing](./backend/blog/index.md), [messaging](./backend/messaging/index.md)
+  and the [people-first audit workspace](./frontend/components/logging.md).
+  Use the [upgrade checklist](./guides/upgrade.md#combined-270-ui-and-services-update)
+  and exact selected archive; do not create parallel clients, auth or data planes.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
   canonical feature/config page. Respect the app's actual instructions and scope.
 - **Markdown documentation:** install and declare the optional

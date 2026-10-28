@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: native-messaging
 maturity: experimental
-applies_to: ["2.6.0 native messaging candidate; identify installed support by commit/archive hash"]
+applies_to: ["2.7.0 source/local package; identify installed support by commit/archive hash"]
 ---
 
 # Messaging

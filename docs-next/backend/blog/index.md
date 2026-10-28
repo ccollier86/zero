@@ -8,7 +8,7 @@ visibility: internal
 system: blog
 feature: author-foundation
 maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+applies_to: ["2.7.0 source/local package; use the qualified selected commit/archive"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 ---
 
@@ -16,23 +16,25 @@ modes: [managed-server, single-simple, single-advanced, multi-simple, multi-adva
 
 [Backend index](../index.md) · [Blog UI](../../frontend/components/public-pages/blog/index.md)
 
-## Publishing Work In Progress
+## Native Publishing
 
-The `feature/blog-publishing-backend` implementation includes private Fabric
+The 2.7.0 implementation includes private Fabric
 posts, revisions, explicit publication, taxonomy, Storage media, indexed search,
 optional aggregate observations, managed Magazine/article routes and a native
 authoring workspace. See the [publishing API](./publishing-api.md),
 [workspace and reader](../../frontend/components/public-pages/blog/publishing-workspace.md)
 and [execution checkpoint](../../_work/blog-publishing-implementation.md).
-Source and real-browser checks are not an installed Linux release qualification.
-The normal updater remains on qualified main until the final candidate is admitted.
+Source and real-browser checks alone are not installed release qualification.
+Use the qualified main archive identified by `zero-release --status`; the
+[combined release record](../../_work/combined-blog-messaging-logging-release.md)
+retains pending gates and historical failures instead of hiding them.
 
 ## Earlier Qualified Author Foundation
 
 The retained author-only preview and its package evidence remain historical.
 See the [continuation qualification](../../_work/audits/blog-author-foundation.md#resumed-continuation-2026-10-26)
 and [preview migration boundary](./upgrade.md#earlier-feature-branch-preview).
-The normal updater still selects main, not this blog branch.
+The normal updater selects committed main, never an unqualified blog branch.
 
 Enable `blog: true` in managed app configuration to add user-backed author
 enrollment, separate draft/public bylines and Guardian-scoped management. It

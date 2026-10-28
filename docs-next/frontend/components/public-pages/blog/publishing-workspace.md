@@ -8,16 +8,17 @@ visibility: internal
 system: blog
 feature: publishing-workspace
 maturity: experimental
-applies_to: ["feature/blog-publishing-backend working source; final archive qualification pending"]
+applies_to: ["2.7.0 source/local package; use the qualified selected commit/archive"]
 ---
 
 # Managed Reader And Publishing Workspace
 
 [Blog UI index](./index.md) · [Backend configuration](../../../../backend/blog/configuration.md) · [Publishing API](../../../../backend/blog/publishing-api.md)
 
-These are working-source components, not a claim that the current main updater
-already contains them. Use the exact final qualified archive when this feature
-is released. The older author-only preview is not the publishing package.
+Use the exact qualified 2.7.0 archive selected by `zero-release --status`, not a
+moving source branch. The [combined release record](../../../../_work/combined-blog-messaging-logging-release.md)
+distinguishes pending gates and historical evidence from a selected update.
+The older author-only preview is not the publishing package.
 
 ## Enable The Defaults
 

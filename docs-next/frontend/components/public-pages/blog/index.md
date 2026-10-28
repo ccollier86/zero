@@ -8,7 +8,7 @@ visibility: internal
 system: frontend-components
 feature: blog-ui
 maturity: preview
-applies_to: ["2.6.0 UI source on feature/blog-foundation; not the selected main archive"]
+applies_to: ["2.7.0 source/local package; use the qualified selected commit/archive"]
 modes: [browser, SSR, public-pages]
 reviewed_against:
   package: "@zero/framework"

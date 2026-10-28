@@ -8,17 +8,18 @@ visibility: internal
 system: blog
 feature: publishing
 maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+applies_to: ["2.7.0 source/local package; use the qualified selected commit/archive"]
 ---
 
 # Publishing Backend And Facades
 
 [Blog index](./index.md) · [Implementation checkpoint](../../_work/blog-publishing-implementation.md)
 
-This guide describes implemented feature-branch APIs. The earlier qualified
-author-only archive does not contain them. Public pages/editor have real-browser
-checks; final installed Linux qualification remains in progress. Do not select this working
-tree as a production update.
+This guide describes the 2.7.0 native publishing API. The earlier author-only
+archive does not contain it. Use the qualified main archive selected by
+`zero-release --status`, never a working tree as a production update. The
+[combined release record](../../_work/combined-blog-messaging-logging-release.md)
+distinguishes final gates and retained failures from focused source checks.
 
 ## Ownership And Enablement
 

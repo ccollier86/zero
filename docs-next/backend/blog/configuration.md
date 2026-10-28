@@ -8,7 +8,7 @@ visibility: internal
 system: blog
 feature: configuration
 maturity: experimental
-applies_to: ["feature/blog-publishing-backend working implementation; not a selected release"]
+applies_to: ["2.7.0 source/local package; use the qualified selected commit/archive"]
 modes: [managed-server, single-simple, single-advanced, multi-simple, multi-advanced]
 ---
 

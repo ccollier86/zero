@@ -59,6 +59,55 @@ with changed activity behavior.
 Independently versioned native SDKs and app-copied UI must be checked explicitly.
 A core framework version does not update a sibling repository or copied component.
 
+## Combined 2.7.0 UI And Services Update
+
+The combined source/local package contains publishing, native messaging,
+optional notification sounds and the redesigned LoggingWorkspace. Confirm the
+selected commit/archive with `zero-release --status`; only a qualified main
+archive is the update target. Feature-branch source and older archives labeled
+2.6.0 are not interchangeable with it.
+
+1. Create an app feature branch, retain its working archive/lockfile and back up
+   state consistently. Run `zero-update /absolute/app/path --dry-run`, inspect,
+   then `zero-update /absolute/app/path`. The updater must not boot the app,
+   migrate data, overwrite app/public tokens or deploy anything.
+2. Update the app's client/server together and run the normal locked install,
+   checks and official build. Review additive SYSTEM/private-service migrations
+   against a restored disposable copy before production. Never reset migration
+   ledgers, existing identities, Storage drives or logging custody.
+3. Logging stays on its existing configuration and private Fabric/worker plane.
+   The existing `LoggingWorkspace` now resolves authorized names/private photos,
+   readable activities and real user/table/action filters. Existing audit
+   admission and evidence remain authoritative. Optional `presentation` labels
+   dress up events; they do not create or rewrite retained evidence. See the
+   [workspace manual](../frontend/components/logging.md).
+4. Blogging is opt-in. Follow [configuration](../backend/blog/configuration.md)
+   and [existing-project rollout](../backend/blog/upgrade.md), then place
+   `BlogWorkspace` from `@zero/framework/blog` inside the existing protected
+   shell/provider. Managed public pages use Magazine and sidebar-TOC defaults;
+   route collisions fail instead of replacing an app page. No existing private
+   photo/byline is silently published. The [editor manual](../frontend/components/public-pages/blog/publishing-workspace.md)
+   covers blocks, media, inline selection formatting, drafts and publication.
+5. Messaging is also opt-in. Choose [directory/contact and tenancy policy](../backend/messaging/configuration.md),
+   then compose the [native workspace](../frontend/messaging/workspace.md) under
+   the existing provider. It reuses Guardian, presence, private Storage,
+   ReactiveDB/Fabric and Torrent; do not add a second chat database/auth client
+   by hand. Website support and named internal assistants are explicit optional
+   configurations, not automatically enabled bots or external connectors.
+6. Sounds are off by default and require browser permission/user interaction.
+   Follow [notification feedback](../frontend/notifications/sounds.md);
+   one event selects one cue, active visible conversations stay quiet, and
+   reconnect history is not replayed. Do not wrap this with a second app sound
+   listener that duplicates the native cue.
+
+Finally exercise real sign-in/reload, protected client navigation, audit blocked
+delivery/recovery, private photos/files and the app's permitted user/tenant
+paths in a browser. A framework test pass or health HTTP 200 is not acceptance
+of that app. Keep existing tenancy/public design and app-owned copied components
+unless separately approved. Scheduled publishing, Gutenberg interchange,
+group-bot participation, RAG/general bot tools, token streaming, Facebook/email
+connectors and session recording/backups are not part of this release baseline.
+
 ## Validate Before Cutover
 
 ### Minimum App Migration Checklist

@@ -4,6 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.7.0 - 2026-10-28
+
+Combined source/local release: native blogging and messaging, optional
+notification sounds, and the people-first LoggingWorkspace. Features remain
+opt-in. The saved release identity and SHA-256, not a moving branch or this
+heading alone, identify the qualified archive. No existing application is
+migrated, reconfigured or deployed by updating its package.
+
 - Correct a rich-text round-trip that treated JSON key order as a new edit after
   an accepted save. Link/format combinations now remain clean; actual text,
   mark/value and array-order changes still require saving. Normalize editor mark

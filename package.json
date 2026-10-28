@@ -1,6 +1,6 @@
 {
   "name": "@zero/framework",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Bun/Elysia full-stack app framework with Guardian auth, ReactiveDB Fabric, Torrent workflow orchestration, reactive data, and reusable React UI.",
   "type": "module",
   "engines": {
@@ -309,8 +309,14 @@
       "types": "./src/email/index.ts",
       "import": "./src/email/index.ts"
     },
-    "./payments/client": { "types": "./src/payments/client.ts", "import": "./src/payments/client.ts" },
-    "./payments": { "types": "./src/payments/index.ts", "import": "./src/payments/index.ts" },
+    "./payments/client": {
+      "types": "./src/payments/client.ts",
+      "import": "./src/payments/client.ts"
+    },
+    "./payments": {
+      "types": "./src/payments/index.ts",
+      "import": "./src/payments/index.ts"
+    },
     "./email-inbox": {
       "types": "./src/components/email-inbox/index.ts",
       "import": "./src/components/email-inbox/index.ts"
