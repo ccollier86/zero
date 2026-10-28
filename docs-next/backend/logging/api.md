@@ -13,10 +13,10 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6"
-  snapshot: clean
-  date: "2026-10-25"
-  evidence_level: implementation-verified
+  commit: "b866dac1bf18fbfaa21430e182555debc6119842"
+  snapshot: dirty
+  date: "2026-10-28"
+  evidence_level: source-observed
 ---
 
 # Logging Server and Client APIs
@@ -151,6 +151,9 @@ const page = await client.logging.page('audit', {
 
 Each page contains `events`, `highWaterOrdinal`, `hasMore`, and
 `nextBeforeOrdinal`. Each entry contains `event`, `ordinal`, and `ingestedAt`.
+Managed pages also carry an optional `people` projection: minimal current
+Guardian names/usernames/revisions for the page's human identities. This sits
+outside retained events and is not part of their signed/exported evidence.
 Continue with both `highWaterOrdinal` and `beforeOrdinal` to preserve a
 reading snapshot. New arrivals do not move an older page boundary.
 
@@ -175,6 +178,38 @@ default; export additionally requires read, and review additionally requires rea
 Browser observations require a session, not log-read permission. The built-in
 HTTP routes accept sessions, not arbitrary API-key credentials; an app-owned
 machine endpoint must explicitly admit its credential and use the scoped facade.
+
+### Investigation display directory
+
+`client.logging.people({ search?, after?, limit? }, { signal? })` searches the
+current authorized Guardian directory by name or username. Search is bounded to
+100 characters, limit is 1–50 (default 25), and `after` is the returned opaque
+user-ID cursor. The result is `{ items, nextCursor, hasMore }`; each item is
+`{ id, name, username, revision? }`. These are current presentation fields, not
+contact details, credentials, full profiles or historical identity snapshots.
+The same operation is available through the scoped server facade.
+
+`client.logging.tables({ signal? })` / `zero.logging.tables()` returns the
+declared table catalog as `{ type, names }[]`, using the exact target identities
+already captured by Zero. Tenant catalog entries come only from registered
+tenant resources. It does not discover arbitrary Fabric realms or enumerate
+their rows; removed/unregistered types remain filterable by exact `targetType`.
+Legacy normalization aliases are grouped under their actual retained type.
+
+Both APIs require the configured **logging read** authority and current strict
+admission, not merely a signed-in user. Scope is derived by the facade and
+cannot be passed in query JSON. Tenant people must still have an active
+membership in the current active tenant. Pending provisioning, removed members
+and cross-tenant profiles are excluded; suspended users can still be identified
+as historical participants. Avatars use the separate native private avatar
+directory/delivery checks; a logging read grant does not publish an image or
+bypass avatar authorization.
+
+User search uses POST and an audited, bounded investigation window; search
+text is not copied into audit metadata (only a criteria digest). Reads recheck
+live authority before releasing results. SDK requests are aborted/fenced across
+auth-generation changes, like ordinary event reads. Disabling adaptive profile
+fields or avatars does not disable readable core names or the activity table.
 
 ## Streaming Committed Projections
 

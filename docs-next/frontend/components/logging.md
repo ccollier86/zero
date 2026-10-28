@@ -13,10 +13,10 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
-  snapshot: clean
-  date: "2026-10-25"
-  evidence_level: implementation-verified
+  commit: "b866dac1bf18fbfaa21430e182555debc6119842"
+  snapshot: dirty
+  date: "2026-10-28"
+  evidence_level: source-observed
 ---
 
 # Logging Workspace and Activity Hooks
@@ -48,7 +48,7 @@ date/outcome filters run on the server and apply to live arrivals as well as
 pages. This is an initial filter, not permission for a user to view audit logs
 or a server-enforced self-only access policy; Guardian still authorizes reads.
 
-Props are `className`, `defaultStream` (`audit` by default),
+Props are `className`, `presentation` (optional app-authored labels), `defaultStream` (`audit` by default),
 `initialQuery`, `allowExport` (true), and `scope` (`current` by
 default, or `platform`). Platform mode uses the separately authorized
 cross-tenant/control-plane read and does not expose the current-scope export
@@ -66,10 +66,17 @@ highlight. The header reports the live connection state, not audit integrity or
 compliance health. No ornamental global totals or success-rate cards infer
 completion from the currently loaded page.
 
-Family and outcome remain compact. More filters opens a standard morphing
-Popover with actor ID, session ID, exact action, resource type/ID, severity and
-source-time constraints; overflowing content uses the shared ScrollArea
-treatment. All criteria combine with AND. Applied criteria have individually
+The first-line controls are **User**, **Activity**, **Table**, and **Outcome**.
+User searches the authorized Guardian directory, not only names present on the
+loaded page. Creating, editing and deleting records use actual retained actions
+(`record.created`, `record.updated`, `record.deleted`); the table picker uses
+the exact retained `table.*` target, not a client-side text filter.
+
+More filters opens a standard morphing Popover with category, user/session IDs,
+exact activity code, resource type/record ID, severity and source-time
+constraints; overflowing content uses the shared ScrollArea treatment.
+All criteria combine with AND. Draft choices do not change the investigation
+until Apply filters. Applied criteria have individually
 removable chips. Invalid codes and reversed date ranges produce local feedback
 without issuing an invalid page query; server validation remains authoritative.
 Times are interpreted in the investigator's local timezone and the end time is
@@ -104,10 +111,67 @@ failed revalidation hides protected evidence until a fresh authorized snapshot
 succeeds. Filters stay in local state, not URLs or analytics. Export failures
 are shown safely without raw exceptions/provider data.
 
+## People and readable activity
+
+The main table shows **When / Who / Activity / Table or resource / Result**,
+with a separate evidence-source column. Human entries show the current name,
+username and authorized private avatar. Repeated rows share photo reads; scope
+retirement masks and releases the old image URLs. No public avatar permission
+or image URL is created just for the logs. Disabled, absent or inaccessible
+photos fall back to initials; an unavailable/deleted/out-of-scope user has a
+neutral placeholder and its exact retained identity remains in the details.
+
+Service/API-key, system and anonymous activity have their own labels. They
+are never presented as a signed-in person, and the logs do not invent a
+historical presence indicator. Current profile presentation is **not** a
+historical name/photo snapshot and is not inserted into immutable evidence,
+signatures or exports.
+
+Common operations have built-in plain-language labels. Apps can translate their
+own stable actions and table names through `presentation` without rewriting
+events or creating a private logging UI:
+
+```tsx
+import { LoggingWorkspace, type LoggingPresentation } from '@zero/framework/react';
+
+const language = {
+  actions: {
+    'clinical.plan.reviewed': {
+      label: 'Reviewed a treatment plan',
+      description: 'The application recorded its authorized review stage.',
+    },
+  },
+  tables: { treatment_plans: 'Treatment plans' },
+  resources: { document: 'Document' },
+} satisfies LoggingPresentation;
+
+export default function AuditPage() {
+  return <LoggingWorkspace defaultStream="audit" presentation={language} />;
+}
+```
+
+`actions` keys are exact action codes. `tables` keys are declared table names or
+exact retained types such as `table.treatment-plans`; `resources` keys are exact
+non-table target types. Labels/descriptions are plain React text, not HTML or
+format strings that interpolate record contents. Overrides change presentation
+only: selecting a friendly activity/table still sends the original exact code.
+Do not use a label that claims human viewing, final provider delivery, or
+workflow success when the named stage establishes only preparation/acceptance.
+
+The table catalog uses registered app/resource schemas, not a scan of private
+database files. Tenant viewers receive only declared tenant table names. Old,
+removed or custom/unregistered targets can still be investigated by exact type
+in More filters, and exact retained types can have display overrides. Existing
+normalization can map two raw table names to the same retained type; they are
+grouped together, not falsely offered as distinguishable filters. No migration
+or evidence rewrite is required for these presentation additions.
+
 ## Reusable Parts
 
-- `LoggingFilters({ value, onApply })` owns the closed server filter criteria.
-- `LoggingEventDetail({ stored, scopeKey })` renders safe metadata and evidence
+- `LoggingFilters({ value, onApply, tables?, presentation?, selectedPerson?, onPersonChange? })`
+  owns the closed server filter criteria. The workspace supplies its scoped
+  catalog and selected current profile automatically.
+- `LoggingEventDetail({ stored, scopeKey, person?, tables?, presentation? })` renders safe metadata and evidence
   meaning, in a bounded ScrollArea. It refuses to render outside its captured
   ready scope. The workspace opens it through the managed modal API.
 - `createLoggingTableSource(client.logging, stream, query)` provides the standard
@@ -132,8 +196,10 @@ Use normal keyboard table navigation, labelled filter controls and shared
 dialog focus management. Each row also has an explicit Inspect event button.
 The modern managed evidence dialog morphs from that initiating control (or the
 native row), and groups outcome, evidence meaning, source/ingestion times,
-actor/resource identity, provenance and allowed metadata. Exact action codes
-remain visible in detail alongside friendly table labels. Missing values are
+current person/resource presentation, provenance and allowed metadata. Exact
+action codes, user/service/session/record IDs and allowed metadata live in the
+collapsed **Technical details** section, using Zero's keyboard-accessible
+Collapsible. Missing values are
 labelled Not recorded, not silently inferred. The standard components provide compact light/dark,
 touch, narrow-layout and reduced-motion behavior. Long IDs wrap in detail;
 there is no HTML execution or raw provider payload dump. Narrow screens retain

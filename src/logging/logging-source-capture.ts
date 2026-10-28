@@ -8,6 +8,7 @@ import { LoggingSourceOutbox } from './logging-source-outbox';
 import type { LoggingRuntime } from './logging-runtime';
 import { loggingDigest } from './logging-hash';
 import { currentLoggingAttribution } from './logging-attribution';
+import { loggingTableTarget } from './logging-table-target';
 
 /** Install before source admission; invoke close before closing log/source owners. */
 export function installLoggingSourceCapture(logging: LoggingRuntime, application: ReactiveDB, system: ReactiveDB,
@@ -39,8 +40,7 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
       if (attribution && (attribution.scope.kind !== 'tenant' || attribution.scope.tenantId !== tenant)) throw new Error('Audit mutation scope does not match admitted authority.');
     }
     const c = { ...base, scope };
-    const name = change.table.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const type = name && name.length <= 110 ? 'table.' + name : 'table.' + loggingDigest(change.table);
+    const type = loggingTableTarget(change.table);
     app.enqueue(captureLoggingEvent(c, { id: crypto.randomUUID(), family: 'records', action: 'record.' + ({ INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' }[change.op]),
       outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: change.ts,
       target: { type, id: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(change.rowId) ? change.rowId : 'hash:' + loggingDigest(change.rowId) },

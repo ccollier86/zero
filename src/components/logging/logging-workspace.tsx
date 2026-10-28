@@ -18,23 +18,40 @@ import { LoggingEventDetail, LoggingFilters } from './logging-parts';
 import { loggingColumns } from './logging-columns';
 import type { LoggingTableRow } from './logging-table-source';
 import { cn } from '../../lib/utils';
+import type { LoggingPerson, LoggingTableChoice } from '../../logging/logging-directory-contracts';
+import type { LoggingPresentation } from './logging-readable-activity';
 
-const schema = defineSchema({ time: field.text({ label: 'Occurred' }), action: field.text({ label: 'Activity' }), actor: field.text({ label: 'Actor' }), target: field.text({ label: 'Resource' }), outcome: field.text({ label: 'Outcome' }), evidence: field.text({ label: 'Evidence' }), inspect: field.text({ label: 'Inspect' }) });
+const schema = defineSchema({ time: field.text({ label: 'When' }), actor: field.text({ label: 'Who' }), action: field.text({ label: 'Activity' }), target: field.text({ label: 'Table / resource' }), outcome: field.text({ label: 'Result' }), evidence: field.text({ label: 'Recorded by' }), inspect: field.text({ label: 'Inspect' }) });
 const ACCESS_ERROR = 'Activity access could not be revalidated. Evidence is hidden until a fresh authorized snapshot succeeds.';
-export interface LoggingWorkspaceProps { className?: string; defaultStream?: LoggingStream; initialQuery?: LoggingQuery; allowExport?: boolean; scope?: 'current' | 'platform' }
+const EMPTY_TABLE_CHOICES: readonly LoggingTableChoice[] = Object.freeze([]);
+export interface LoggingWorkspaceProps { className?: string; defaultStream?: LoggingStream; initialQuery?: LoggingQuery; allowExport?: boolean; scope?: 'current' | 'platform'; presentation?: LoggingPresentation }
 /** UI capability flags affect presentation only. Guardian enforces every read and export on the server. */
 export function LoggingWorkspace(props: LoggingWorkspaceProps) {
   const hosted = useModalHostPresent();
   return hosted ? <Workspace {...props} /> : <ModalManager><Workspace {...props} /></ModalManager>;
 }
-function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allowExport = true, scope = 'current' }: LoggingWorkspaceProps) {
+function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allowExport = true, scope = 'current', presentation }: LoggingWorkspaceProps) {
   const client = useClientMaybe(), boundary = useAuthorizationScopeBoundary(client);
   const [stream, setStream] = React.useState(defaultStream), [query, setQuery] = React.useState(initialQuery), [revision, setRevision] = React.useState(0);
+  const [directory, setDirectory] = React.useState<{ key: string; tables: readonly LoggingTableChoice[]; error: boolean } | null>(null);
+  const [directoryRevision, setDirectoryRevision] = React.useState(0);
+  const [person, setPerson] = React.useState<{ key: string; value?: LoggingPerson } | null>(null);
   const [error, setError] = React.useState<{ key: string; message: string } | null>(null), [busyKey, setBusyKey] = React.useState<string | null>(null);
   const [blockedKey, setBlockedKey] = React.useState<string | null>(null);
   const [connection, setConnection] = React.useState<{ key: string; status: 'connecting' | 'live' | 'reconnecting' } | null>(null);
   const [pendingExport, setPendingExport] = React.useState<{ key: string; id: string } | null>(null);
   const key = JSON.stringify([boundary.key, scope, stream, query]), current = React.useRef(key); current.current = key;
+  const directoryKey = JSON.stringify([boundary.key, scope]), directoryCurrent = React.useRef(directoryKey); directoryCurrent.current = directoryKey;
+  const tables = directory?.key === directoryKey ? directory.tables : EMPTY_TABLE_CHOICES;
+  const selectedPerson = person?.key === directoryKey ? person.value : undefined;
+  React.useEffect(() => {
+    if (!client || !boundary.ready) return;
+    const abort = new AbortController(), captured = directoryKey;
+    void Promise.resolve().then(() => client.logging.tables({ signal: abort.signal })).then(tables => {
+      if (!abort.signal.aborted && directoryCurrent.current === captured) setDirectory({ key: captured, tables, error: false });
+    }).catch(() => { if (!abort.signal.aborted && directoryCurrent.current === captured) setDirectory({ key: captured, tables: [], error: true }); });
+    return () => abort.abort();
+  }, [client, boundary.ready, directoryKey, directoryRevision]);
   const lifetime = React.useRef(0);
   React.useEffect(() => () => { lifetime.current++; }, []);
   const busy = busyKey === key;
@@ -90,21 +107,27 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
   const rowTrigger = React.useRef<Element | null>(null);
   const inspect = React.useCallback((row: LoggingTableRow, trigger: Element | null) => {
     modals.show({ title: 'Event evidence', description: 'Retained activity · current authorized scope', icon: <Activity className="size-4" />, size: 'lg', trigger,
-      body: <LoggingEventDetail stored={row.stored} scopeKey={boundary.key} /> });
-  }, [boundary.key]);
-  const columns = React.useMemo(() => loggingColumns(inspect), [inspect]);
+      body: <LoggingEventDetail stored={row.stored} scopeKey={boundary.key} person={row.person} tables={tables} presentation={presentation} /> });
+  }, [boundary.key, tables, presentation]);
+  const filterUser = React.useCallback((id: string, resolved: LoggingPerson | null) => {
+    setPerson({ key: directoryKey, value: resolved ?? undefined }); setQuery(query => ({ ...query, actorId: id })); setRevision(n => n + 1);
+  }, [directoryKey]);
+  const columns = React.useMemo(() => loggingColumns(inspect, { tables, presentation, onUser: filterUser }), [inspect, tables, presentation, filterUser]);
   if (!client || !source || !boundary.ready || !boundary.stable) return <section role="status" className="p-4 text-sm text-muted-foreground">Logging requires a ready authenticated AppProvider.</section>;
   const status = connection?.key === key ? connection.status : 'connecting';
   return <section data-slot="logging-workspace" className={cn('min-w-0 space-y-4', className)} aria-label="Logging investigation">
-    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3"><div className="rounded-xl border border-primary/15 bg-primary/5 p-2.5 text-primary"><Activity className="size-5" /></div><div><h2 className="text-lg font-semibold tracking-tight">Activity and evidence</h2><p className="mt-0.5 text-xs text-muted-foreground">Investigate retained events, people and resources.</p></div></div><div className="flex flex-wrap items-center gap-2">
-      <Button variant="outline" size="sm" onClick={refresh}><RefreshCw className="size-3.5" />Refresh</Button>
+    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3"><div className="rounded-xl border border-primary/15 bg-primary/5 p-2 text-primary"><Activity className="size-5" /></div><div><h2 className="text-lg font-semibold tracking-tight">Activity</h2><p className="mt-0.5 text-sm text-muted-foreground">See who did what, when, and what happened.</p></div></div><div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" size="sm" onClick={() => { refresh(); setDirectoryRevision(n => n + 1); }}><RefreshCw className="size-3.5" />Refresh</Button>
       {allowExport && scope !== 'platform' && <Button variant="outline" size="sm" disabled={busy} onClick={() => { void exportEvents(); }}><Download className="size-3.5" />{busy ? 'Exporting…' : pendingExport?.key === key ? 'Check export' : 'Export'}</Button>}
     </div></header>
     <Tabs value={stream} onValueChange={value => { setStream(value as LoggingStream); refresh(); }}>
     <div className="flex flex-wrap items-center justify-between gap-2"><TabsList aria-label="Log stream"><TabsTrigger value="audit"><ShieldCheck className="size-3.5" />Audit activity</TabsTrigger><TabsTrigger value="operational"><Activity className="size-3.5" />Diagnostics</TabsTrigger></TabsList>
       <span role="status" aria-label="Activity connection" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><span aria-hidden="true" className={cn('size-1.5 rounded-full', source.live && status === 'live' ? 'bg-success' : 'bg-muted-foreground')} />{!source.live ? 'Snapshot only' : status === 'live' ? 'Live updates connected' : status === 'connecting' ? 'Connecting to live updates…' : 'Revalidating access…'}</span></div>
     <TabsContent value={stream} className="mt-2 space-y-3">
-    <div className="rounded-xl border border-border bg-card p-3"><LoggingFilters value={query} onApply={next => { setQuery(next); refresh(); }} /></div>
+    <div className="rounded-xl border border-border bg-card p-3"><LoggingFilters value={query} tables={tables} presentation={presentation} selectedPerson={selectedPerson}
+      onPersonChange={value => setPerson({ key: directoryKey, value })} onApply={next => { setQuery(next); refresh(); }} />
+      {directory?.key === directoryKey && directory.error && <p role="status" className="mt-2 text-xs text-muted-foreground">Table choices could not be loaded. Existing filters remain active; refresh to retry.</p>}
+    </div>
     {error?.key === key && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error.message}</p>}
     {!busy && pendingExport?.key === key && error?.key !== key && <p role="status" className="text-xs text-muted-foreground">Your private export request is retained. Use Check export to download it when ready.</p>}
     {blockedKey === key ? <div role="status" className="rounded-xl border border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">Protected evidence is hidden while the connection is revalidated.</div> : <div

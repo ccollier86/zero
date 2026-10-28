@@ -1,10 +1,12 @@
 /** Private Fabric logging mapped onto the standard live server-DataTable adapter. */
 import type { LoggingClient } from '../../logging/logging-api-contracts';
 import type { LoggingQuery, LoggingStream, StoredLoggingEvent } from '../../logging/logging-contracts';
+import type { LoggingPerson } from '../../logging/logging-directory-contracts';
 import type { DataTableServerChange, DataTableServerQuery, DataTableServerSource } from '../data-table/data-table-server-types';
 
 export interface LoggingTableRow extends Record<string, unknown> {
   id: string; time: string; actor: string; action: string; target: string; outcome: string; evidence: string; stored: StoredLoggingEvent;
+  person: LoggingPerson | null;
 }
 type Status = 'connecting' | 'live' | 'reconnecting';
 export interface LoggingTableSource extends DataTableServerSource<LoggingTableRow> {
@@ -12,10 +14,11 @@ export interface LoggingTableSource extends DataTableServerSource<LoggingTableRo
   watchStatus(listener: (status: Status) => void): () => void;
 }
 const identity = (stored: StoredLoggingEvent) => JSON.stringify([stored.event.sourceId, stored.event.id]);
-export function loggingTableRow(stored: StoredLoggingEvent): LoggingTableRow {
+export function loggingTableRow(stored: StoredLoggingEvent, people: readonly LoggingPerson[] = []): LoggingTableRow {
   const e = stored.event;
   return { id: identity(stored), time: new Date(e.occurredAt).toLocaleString(), actor: e.actor.id ?? e.actor.kind,
-    action: e.action, target: e.target ? `${e.target.type} · ${e.target.id}` : '—', outcome: e.outcome, evidence: e.evidence, stored };
+    action: e.action, target: e.target ? `${e.target.type} · ${e.target.id}` : '—', outcome: e.outcome, evidence: e.evidence, stored,
+    person: e.actor.kind === 'user' ? people.find(person => person.id === e.actor.id) ?? null : null };
 }
 
 /** One scoped connection; actual INSERTs drive DataTable's existing motion, membership and incoming-record handling. */
@@ -97,7 +100,7 @@ export function createLoggingTableSource(client: Pick<LoggingClient, 'page'> & P
         // so new head inserts cannot turn a page transition into a new initial load.
         const page = await client.page(stream, { ...filters,
           ...(before === undefined ? {} : { beforeOrdinal: Math.min(before, filters.beforeOrdinal ?? before) }), limit: query.pagination.pageSize }, { signal });
-        return { rows: page.events.map(loggingTableRow), page: { mode: 'cursor', hasMore: page.hasMore, nextCursor: page.nextBeforeOrdinal === null ? null : String(page.nextBeforeOrdinal) } };
+        return { rows: page.events.map(event => loggingTableRow(event, page.people)), page: { mode: 'cursor', hasMore: page.hasMore, nextCursor: page.nextBeforeOrdinal === null ? null : String(page.nextBeforeOrdinal) } };
       },
       async confirmInsertedRows(query, rowIds, { signal }) {
         validate(query);

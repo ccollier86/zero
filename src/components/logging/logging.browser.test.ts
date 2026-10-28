@@ -29,33 +29,34 @@ browserTest('native live inserts preserve rows and pagination, use the existing 
   await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div></body></html>' }) : route.abort());
   try {
     await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).evaluate(e => { (window as any).__loggingRow = e; });
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).evaluate(e => { (window as any).__loggingRow = e.closest('[data-row-id]'); });
     await page.getByRole('button', { name: 'Add synthetic activity', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-66', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-66', exact: true }).waitFor();
     expect(await page.evaluate(() => (window as any).__loggingRow.isConnected)).toBe(true);
     expect(await page.getByRole('button', { name: 'New activity available · show latest', exact: true }).count()).toBe(0);
     expect(await page.locator('[data-slot="data-table-skeleton-body"]').count()).toBe(0);
     expect(await page.locator('[data-row-id=\'["fixture-source","event-66"]\']').getAttribute('data-table-fresh')).toBe('');
     await page.getByRole('button', { name: 'Next page', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-41', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-41', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Add synthetic activity', exact: true }).click();
     await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).waitFor();
-    expect(await page.getByRole('cell', { name: 'record · record-41', exact: true }).count()).toBe(1);
-    expect(await page.getByRole('cell', { name: 'record · record-67', exact: true }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Inspect event event-41', exact: true }).count()).toBe(1);
+    expect(await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).count()).toBe(0);
     await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-67', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).waitFor();
     const directory = process.env.LOGGING_SCREENSHOTS;
     if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: join(directory, 'logging-workspace-desktop.png'), fullPage: true }); }
     await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).click();
     await page.getByRole('dialog', { name: 'Event evidence', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Technical details', exact: true }).click();
     await page.getByRole('heading', { name: 'Trace and provenance', exact: true }).waitFor();
     await page.getByText('This is one retained event, not proof that an entire workflow completed.', { exact: false }).waitFor({ state: 'attached' });
     await page.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running'));
     if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: join(directory, 'logging-evidence-desktop.png'), fullPage: true }); }
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: 'Change synthetic scope', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-67', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).waitFor();
     expect(await page.getByRole('cell', { name: 'tenant-a-user', exact: true }).count()).toBe(0);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
@@ -79,7 +80,7 @@ browserTest('native row keyboard inspection restores focus and masks an already-
     await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
     const row = page.locator('[data-row-id]').first(); await row.waitFor(); await row.focus(); await page.keyboard.press('Enter');
     const dialog = page.getByRole('dialog', { name: 'Event evidence', exact: true }); await dialog.waitFor();
-    await page.getByRole('heading', { name: 'Actor and resource', exact: true }).waitFor();
+    await dialog.getByRole('heading', { name: 'Record read', exact: true }).waitFor();
     await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
     // Logical dismissal precedes scene cleanup and its owned focus return.
     await page.waitForFunction(() => document.activeElement?.matches('[data-row-id]'));
@@ -99,32 +100,32 @@ browserTest('disconnected evidence masks, reconnects and uses real filter gramma
   await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
   try {
     await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Toggle live connection', exact: true }).click();
     await page.getByText('Protected evidence is hidden while the connection is revalidated.', { exact: true }).waitFor();
-    expect(await page.getByRole('cell', { name: 'record · record-65', exact: true }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).count()).toBe(0);
     await page.getByRole('button', { name: 'Toggle live connection', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     await page.getByRole('button', { name: 'More filters', exact: true }).click();
-    await page.getByLabel('Exact action', { exact: true }).fill('Record.READ');
+    await page.getByLabel('Exact activity code', { exact: true }).fill('Record.READ');
     await page.keyboard.press('Escape');
     const before = await page.evaluate(() => (window as any).__loggingQueries.length);
     await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
-    await page.getByText('Exact action must be an exact lowercase code, such as record.read.', { exact: true }).waitFor();
+    await page.getByText('Activity must be an exact lowercase code, such as record.read.', { exact: true }).waitFor();
     expect(await page.evaluate(() => (window as any).__loggingQueries.length)).toBe(before);
     await page.getByRole('button', { name: 'More filters', exact: true }).click();
-    await page.getByLabel('Exact action', { exact: true }).fill('record.read');
-    await page.getByLabel('Resource type', { exact: true }).fill('record');
+    await page.getByLabel('Exact activity code', { exact: true }).fill('record.read');
+    await page.getByLabel('Exact resource type', { exact: true }).fill('record');
     await page.getByLabel('Session ID', { exact: true }).fill('fixture-session');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     await page.getByRole('button', { name: 'Remove Session ID filter', exact: true }).waitFor();
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.targetType === 'record' && q.sessionId === 'fixture-session' && q.action === 'record.read'))).toBe(true);
     await page.getByRole('button', { name: 'Remove Session ID filter', exact: true }).click();
     expect(await page.getByRole('button', { name: 'Remove Session ID filter', exact: true }).count()).toBe(0);
     await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
-    await page.getByRole('tabpanel').getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('tabpanel').getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
   } finally { await page.close(); }
 }, 30000);
 
@@ -134,12 +135,12 @@ browserTest('a committed burst refreshes one native page without blanking retain
   await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
   try {
     await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
-    const retained = page.getByRole('cell', { name: 'record · record-65', exact: true });
-    await retained.waitFor(); await retained.evaluate(element => { (window as any).__retainedLoggingCell = element; });
+    const retained = page.getByRole('button', { name: 'Inspect event event-65', exact: true });
+    await retained.waitFor(); await retained.evaluate(element => { (window as any).__retainedLoggingCell = element.closest('[data-row-id]'); });
     const count = () => page.evaluate(() => (window as any).__loggingQueries.filter((query: any) => query.limit === 25 && !query.eventIds).length);
     const before = await count();
     await page.getByRole('button', { name: 'Add synthetic burst', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-68', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-68', exact: true }).waitFor();
     expect(await count()).toBe(before + 1);
     expect(await page.evaluate(() => (window as any).__retainedLoggingCell.isConnected)).toBe(true);
     expect(await page.locator('[data-slot="data-table-skeleton-body"]').count()).toBe(0);
@@ -153,24 +154,101 @@ browserTest('individual-user filters apply to live arrivals without exposing the
   await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
   try {
     await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     const filter = async (actor: string) => {
       await page.getByRole('button', { name: /^More filters/ }).click();
-      await page.getByLabel('Actor ID', { exact: true }).fill(actor);
+      await page.getByLabel('User ID', { exact: true }).fill(actor);
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     };
     await filter('tenant-a-user');
-    await page.getByRole('cell', { name: 'record · record-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Add synthetic activity', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-66', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-66', exact: true }).waitFor();
     await filter('tenant-b-user');
     await page.getByText('No retained events match these filters.', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Add synthetic activity', exact: true }).click();
-    expect(await page.getByRole('cell', { name: 'record · record-67', exact: true }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).count()).toBe(0);
     await page.getByRole('button', { name: 'Change synthetic scope', exact: true }).click();
-    await page.getByRole('cell', { name: 'record · record-67', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).waitFor();
     expect(await page.getByRole('cell', { name: 'tenant-a-user', exact: true }).count()).toBe(0);
-    expect(await page.getByRole('cell', { name: 'tenant-b-user', exact: true }).count()).toBeGreaterThan(0);
+    expect(await page.getByRole('button', { name: 'Show activity by Jordan Example', exact: true }).count()).toBeGreaterThan(0);
+  } finally { await page.close(); }
+}, 30000);
+
+browserTest('readable user photos and activity/table choices filter server results while exact evidence stays behind technical details', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(7000); page.on('pageerror', error => faults.push(error.message));
+  await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div></body></html>' }) : route.abort());
+  try {
+    await page.goto('https://zero-logging.invalid/?readable=1'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
+    await page.locator('img[src^="blob:"]').first().waitFor();
+    expect(await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).count()).toBeGreaterThan(0);
+    expect(await page.getByRole('cell', { name: 'System automation Not a signed-in person', exact: true }).count()).toBeGreaterThan(0);
+    expect(await page.getByRole('cell', { name: 'tenant-a-user', exact: true }).count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).__loggingPhotos.deliveries)).toBe(2);
+    const directory = process.env.LOGGING_SCREENSHOTS;
+    await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== 'running'));
+    if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: join(directory, 'logging-readable-desktop.png'), fullPage: true }); }
+    await page.getByRole('combobox', { name: 'Activity', exact: true }).click();
+    await page.getByRole('option', { name: 'Created a record', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Table', exact: true }).click();
+    await page.getByRole('option', { name: 'Projects', exact: true }).click();
+    await page.getByRole('button', { name: 'Filter by user', exact: true }).click();
+    await page.getByLabel('Search users', { exact: true }).fill('Blair');
+    await page.getByRole('option', { name: /Blair Example/ }).click();
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.actorId === 'tenant-a-second'))).toBe(false);
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await page.getByRole('button', { name: 'Inspect event event-63', exact: true }).waitFor();
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.action === 'record.created' && q.targetType === 'table.items' && q.actorId === 'tenant-a-second'))).toBe(true);
+    expect(await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).count()).toBe(0);
+    await page.getByRole('button', { name: 'Inspect event event-63', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Event evidence', exact: true }); await dialog.waitFor();
+    await dialog.getByRole('heading', { name: 'Created a record', exact: true }).waitFor();
+    expect(await dialog.getByText('tenant-a-second', { exact: true }).count()).toBe(0);
+    expect(await dialog.getByText('Blair Example', { exact: true }).count()).toBe(1);
+    await dialog.getByRole('button', { name: 'Technical details', exact: true }).click();
+    await dialog.getByText('tenant-a-second', { exact: true }).waitFor();
+    expect(await dialog.getByText('record.created', { exact: true }).count()).toBe(1);
+    if (directory) await page.screenshot({ path: join(directory, 'logging-readable-evidence.png'), fullPage: true });
+    await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Remove User filter', exact: true }).waitFor();
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.actorId === 'tenant-a-user'))).toBe(true);
+    await page.getByRole('button', { name: 'Remove User filter', exact: true }).click();
+    const revocations = await page.evaluate(() => (window as any).__loggingPhotos.revoked);
+    await page.getByRole('button', { name: 'Change synthetic scope', exact: true }).click();
+    await page.getByRole('button', { name: 'Show activity by Jordan Example', exact: true }).first().waitFor();
+    expect(await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).__loggingPhotos.revoked)).toBeGreaterThan(revocations);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+  } finally { await page.close(); }
+}, 30000);
+
+browserTest('private photo failure does not hide names and a late retired-scope image can never acquire a display URL', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(7000); page.on('pageerror', error => faults.push(error.message));
+  await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
+  const open = async (query: string) => { await page.goto('https://zero-logging.invalid/' + query); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle }); };
+  try {
+    await open('?no-photos=1');
+    await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).first().waitFor();
+    expect(await page.locator('img[src^="blob:"]').count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).count()).toBe(1);
+    await open('?hold-photos=1');
+    await page.waitForFunction(() => (window as any).__loggingPhotos.deliveries > 0);
+    expect(await page.locator('img[src^="blob:"]').count()).toBe(0);
+    await page.getByRole('button', { name: 'Change synthetic scope', exact: true }).click();
+    await page.getByRole('button', { name: 'Show activity by Jordan Example', exact: true }).first().waitFor();
+    await page.locator('img[src^="blob:"]').first().waitFor();
+    const created = await page.evaluate(() => (window as any).__loggingPhotos.created);
+    await page.evaluate(() => (window as any).__releaseLoggingPhotos());
+    await page.waitForFunction(() => (window as any).__loggingPhotos.completed === (window as any).__loggingPhotos.deliveries);
+    expect(await page.evaluate(() => (window as any).__loggingPhotos.created)).toBe(created);
+    expect(await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).count()).toBe(0);
   } finally { await page.close(); }
 }, 30000);

@@ -4,7 +4,8 @@ export type { LoggingEvent, LoggingPage, LoggingQuery, LoggingReceipt, LoggingSt
 export { createLoggingCollector, type LoggingCollector } from '../../client/logging-collector';
 export { LoggingActivityProvider, useLoggingActivity, useLoggingView, useLoggingEvents } from '../../client/logging-hooks';
 export { LoggingWorkspace, LoggingFilters, LoggingEventDetail, createLoggingTableSource } from '../../../components/logging';
-export type { LoggingWorkspaceProps, LoggingTableRow } from '../../../components/logging';
+export type { LoggingWorkspaceProps, LoggingTableRow, LoggingPresentation, LoggingActivityLabel } from '../../../components/logging';
+export type { LoggingPerson, LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from '../../../logging/logging-directory-contracts';
 export type { LoggingCheckpoint, LoggingVerification, LoggingExport, LoggingHold, LoggingReview, LoggingEvidenceCursor, LoggingEvidencePage } from '../../../logging/logging-evidence-contracts';
 export type { LoggingExportJob, LoggingExportRequest } from '../../../logging/logging-export-contracts';
 export type { LoggingAdmissionReceipt } from '../../../logging/logging-admission-contracts';

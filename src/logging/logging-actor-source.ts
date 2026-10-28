@@ -4,6 +4,7 @@ import { registerReactiveDBMutationContribution } from '../sync/reactive-db-muta
 import type { LoggingContext, LoggingEvent, LoggingScope } from './logging-contracts';
 import { captureLoggingEvent, loggingArray, loggingByteLength, loggingId, loggingRecord, normalizeLoggingEvent } from './logging-validation';
 import { loggingDigest } from './logging-hash';
+import { loggingTableTarget } from './logging-table-target';
 import { LoggingSourceOutbox } from './logging-source-outbox';
 import { LoggingError } from './logging-error';
 import { DatabaseError } from '../databases/database-error';
@@ -73,11 +74,10 @@ export class LoggingActorSource {
       const context: LoggingContext = { ...(this.current ?? { origin: 'system', scope: policy.scope,
         actor: { kind: 'system', id: 'zero.database', sessionId: null, initiatorId: null }, requestId: null, correlationId: null }),
         sourceId: this.outbox.sourceId, policyVersion: policy.policyVersion };
-      const name = change.table.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       try { this.outbox.enqueue(captureLoggingEvent(context, { id: crypto.randomUUID(), family: 'records',
         action: 'record.' + ({ INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' }[change.op]),
         outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: change.ts,
-        target: { type: 'table.' + (name && name.length <= 110 ? name : loggingDigest(change.table)),
+        target: { type: loggingTableTarget(change.table),
           id: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(change.rowId) ? change.rowId : 'hash:' + loggingDigest(change.rowId) },
         metadata: { sequence: change.seq } }, ['sequence'])); }
       catch (error) {

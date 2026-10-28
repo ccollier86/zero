@@ -4,6 +4,13 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+- LoggingWorkspace now presents current authorized people/photos and readable
+  activity/table labels, with server-backed user/activity/table filters and
+  app-authored `presentation` mappings. Exact retained IDs/codes move to a
+  collapsed technical section; evidence, scope, admission and live DataTable
+  semantics remain unchanged. Adds scoped `logging.people()` / `tables()`
+  presentation APIs without a schema migration or public avatar publication.
+
 - Completed the opt-in native messaging backend and managed workspace: private
   per-scope Fabric state, Guardian-fenced contacts/directory and groups,
   configured team membership, messages/reactions/read positions, private Storage

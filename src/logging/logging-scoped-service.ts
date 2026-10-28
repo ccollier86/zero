@@ -14,6 +14,7 @@ import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
 import { AuthError } from '../auth/types';
 import { readOwnedLoggingExport } from './logging-export-validation';
 import { LOGGING_EXPORT_NAMESPACE } from './logging-export-manager';
+import { normalizeLoggingPeopleQuery } from './logging-person-directory';
 
 const rateWindows = new WeakMap<LoggingRuntime, Map<string, { start: number; count: number }>>();
 const readWindows = new WeakMap<LoggingRuntime, Map<string, { expires: number; admission: Promise<void> }>>();
@@ -76,9 +77,23 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       }
     };
     await revalidate(); await authorize(); await readAdmission((platform ? 'platform.' : '') + stream, investigationCriteria(admitted.query));
-    const result = await runtime.page(stream, admitted.scope, admitted.query); await revalidate(); await authorize(); return result;
+    const result = await runtime.page(stream, admitted.scope, admitted.query); await revalidate(); await authorize();
+    const ids = [...new Set(result.events.flatMap(({ event }) => event.actor.kind === 'user' && event.actor.id ? [event.actor.id] : []))];
+    const people = runtime.directory?.lookup(admitted.scope, ids) ?? [];
+    assertCurrent(); return { ...result, people };
   };
   return Object.freeze({
+    async people(query = {}) {
+      const captured = normalizeLoggingPeopleQuery(query);
+      await revalidate(); permit('read'); await readAdmission('people', { search: captured.search ?? null });
+      await revalidate(); permit('read');
+      const result = runtime.directory?.people(readScope, captured) ?? { items: [], hasMore: false, nextCursor: null };
+      assertCurrent(); return result;
+    },
+    async tables() {
+      await revalidate(); permit('read');
+      const result = runtime.directory?.tables(readScope) ?? []; assertCurrent(); return result;
+    },
     page: (stream, query = {}) => readPage(stream, query),
     platformPage: (stream, query = {}) => readPage(stream, query, true),
     async stream(stream, query, signal, platform = false, afterOrdinal) {

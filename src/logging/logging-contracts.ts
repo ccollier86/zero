@@ -112,6 +112,8 @@ export interface LoggingPage {
   readonly highWaterOrdinal: number;
   readonly hasMore: boolean;
   readonly nextBeforeOrdinal: number | null;
+  /** Current scoped labels, never part of a signed/historical event envelope. */
+  readonly people?: readonly import('./logging-directory-contracts').LoggingPerson[];
 }
 
 /** Genuine retained appends in increasing ingestion order, with an explicit resumable cursor. */

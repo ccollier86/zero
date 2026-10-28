@@ -3,6 +3,7 @@ import type { LoggingChangePage, LoggingEventInput, LoggingFamily, LoggingPage, 
 import type { LoggingCheckpoint, LoggingEvidenceCursor, LoggingEvidencePage, LoggingHoldReceipt, LoggingReviewReceipt, LoggingExport, LoggingVerification } from './logging-evidence-contracts';
 import type { LoggingAdmissionReceipt } from './logging-admission-contracts';
 import type { LoggingExportJob, LoggingExportRequest } from './logging-export-contracts';
+import type { LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from './logging-directory-contracts';
 
 export interface LoggingObservationResult { readonly accepted: number; readonly admission?: LoggingAdmissionReceipt }
 
@@ -47,6 +48,8 @@ export interface LoggingHealth {
 }
 /** Query projections never accept a tenant, actor, database ref or raw SQL selector. */
 export interface ScopedLogging {
+  people(query?: LoggingPeopleQuery): Promise<LoggingPeoplePage>;
+  tables(): Promise<readonly LoggingTableChoice[]>;
   page(stream: LoggingStream, query?: LoggingQuery): Promise<LoggingPage>;
   platformPage(stream: LoggingStream, query?: LoggingQuery): Promise<LoggingPage>;
   stream(stream: LoggingStream, query: LoggingQuery, signal: AbortSignal, platform?: boolean, afterOrdinal?: number): Promise<ReadableStream<Uint8Array>>;
@@ -70,6 +73,8 @@ export interface ScopedLogging {
   verify(stream: LoggingStream, afterOrdinal?: number, checkpoint?: LoggingCheckpoint): Promise<LoggingVerification>;
 }
 export interface LoggingClient {
+  people(query?: LoggingPeopleQuery, options?: { signal?: AbortSignal }): Promise<LoggingPeoplePage>;
+  tables(options?: { signal?: AbortSignal }): Promise<readonly LoggingTableChoice[]>;
   /** Pin a collector to the current auth generation before any asynchronous observation occurs. */
   bindObservations(): Pick<LoggingClient, 'observe'>;
   page(stream: LoggingStream, query?: LoggingQuery, options?: { signal?: AbortSignal }): Promise<LoggingPage>;

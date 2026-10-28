@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: investigation-ui
 maturity: experimental
-applies_to: ["feature/logging-workspace-polish; not yet a selected stable update"]
+applies_to: ["feature/logging-human-readable-workspace; source/UI qualification, not a selected stable update"]
 ---
 
 # Logging investigation UI repair
@@ -26,6 +26,68 @@ the initial-load animation, or label a connected stream as verified compliance.
 The prior interface had a flat raw-code table, buried exact filters, a legacy
 modal with no visible managed header, and undifferentiated metadata. Its live
 DataTable foundation was functional and must remain so.
+
+## People-first continuation (2026-10-28)
+
+The user rejected raw actor IDs/punctuation-expanded action codes as the normal
+investigation interface. The current pass adds:
+
+- Current minimal Guardian names/usernames and authorized private avatar reads;
+  system, API-key/service and anonymous activity remain visibly different.
+- Plain-language record create/edit/delete/read-stage and browser activities,
+  plus `LoggingPresentation` mappings for app-specific actions, tables and
+  resources. Exact IDs/codes remain in the default-collapsed native Collapsible.
+- Server-backed User / Activity / Table / Outcome controls, current-scope remote
+  user search, click-a-person investigation, and friendly applied chips. Drafts
+  do not change the query until Apply; technical/date/category criteria remain
+  available without pretending to support free-text or OR queries.
+- A minimal logging-read-protected directory and declared schema catalog.
+  Tenant names require current active membership, table catalogs exclude
+  platform-only schemas, and pending provisioning is not discoverable.
+  Suspended identities remain identifiable without implying avatar access.
+- Existing capture/catalog table identities now share the exact same
+  legacy-compatible normalizer. No retained target, migration or ledger changes.
+
+Current presentation is separate from signed historical events and exports.
+Missing/deleted/out-of-scope people remain unavailable rather than being invented
+or resolving to an unrelated current account. Images use native authenticated
+directory/delivery, shared per scope/user/revision. Effect replacement shares one
+cleanup turn; zero-reference scope retirement aborts and revokes URLs. There is
+no timed cross-account image cache or public-image publication.
+
+The actual browser pass found dynamic native form controls resetting invalid
+draft criteria, duplicated photo fetches during cell replacement, and cmdk's
+hidden label overriding the intended user-search name. The explicit Apply
+boundary, reference-counted image ownership and correct command label address
+those cases. Failing attempts remain in the diagnostic directory; they are not
+described as passing checks.
+
+The focused combined run passes **43 tests / 287 assertions across 10 files**,
+including seven Chromium scenarios and a real managed `createApp` HTTP test of
+Guardian directory/read authority, minimal responses and exact table/activity/
+user filters. SQL tests cover literal wildcard search, cursor bounds, current
+membership/provisioning isolation, legacy core users without profile revisions,
+normalized aliases and descriptor-safe validation. Browser checks cover actual
+filter interactions, retained live rows, keyboard modal/focus recovery, mobile
+width, photo fallback, URL retirement and a deliberately late old-scope photo.
+The browser's directory/photo responses are **synthetic adapters**, not evidence
+of a deployed Linux avatar service; that is distinct from the native managed
+HTTP/backend checks. No production data or private app was accessed.
+
+Evidence: `logging-readable-combined.log`,
+`logging-readable-typecheck-complete.log`, `logging-readable-public-docs.log`
+and `logging-readable-ui/` under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/messaging-support-review/`.
+Root TypeScript passes. Three public-export/documentation checks pass (123
+assertions), including compilation of the two actual LoggingWorkspace Markdown
+examples. The frozen original frontend contract digest remains unchanged; the
+new logging types and prior notification-audio exports have explicit additive
+assertions rather than being folded into a new baseline.
+
+This is feature-branch evidence, not a qualified selected archive. The separate
+pending messaging/native-worker release gates remain in
+[the messaging review](./messaging-workspace-review.md). Do not promote the UI
+branch by bypassing those gates or imply a successful stable update.
 
 ## Implementation
 

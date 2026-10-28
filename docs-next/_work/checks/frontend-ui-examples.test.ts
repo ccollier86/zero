@@ -16,6 +16,7 @@ const selected: Record<string, number[]> = {
   'frontend/data-controls/data-table/motion-and-live-updates.md': [0, 1],
   'frontend/components/primitives/inputs.md': [0],
   'frontend/components/phone-input.md': [0, 1, 2],
+  'frontend/components/logging.md': [0, 1],
   'frontend/components/avatar-group.md': [0, 1],
   'frontend/components/kbd.md': [0, 1, 2],
   'frontend/components/settings-matrix.md': [0],

@@ -13,6 +13,7 @@ import type { ReactiveDB } from '../../sync/reactive-db';
 import type { ResourceRegistry } from '../../resources/resource-registry';
 import type { DatabaseManager } from '../../databases/database-manager';
 import { installLoggingFabricCapture } from '../../logging/logging-fabric-capture';
+import { createLoggingPersonDirectory } from '../../logging/logging-person-directory';
 
 /** Publish only after both actors are ready. Shutdown detaches diagnostics before draining/closing Fabric. */
 export async function installManagedAppLogging(config: ResolvedConfig, runtime: ZeroAppRuntime, observability: PlatformObservabilityRuntime,
@@ -41,6 +42,9 @@ export async function installManagedAppLogging(config: ResolvedConfig, runtime: 
       catch (error) { emitPlatformCodeTo(fallback, OBS_CODES.LOGGING_STOP_FAILED); throw error; }
     });
     if (sources) {
+      if (config.auth !== false) logging.directory = createLoggingPersonDirectory(sources.system,
+        [...Object.keys(config.tables), ...sources.resources.list().map(resource => resource.table)],
+        sources.resources.list().filter(resource => resource.storage.kind === 'tenant').map(resource => resource.table));
       const fields: Record<string, string> = {};
       for (const resource of sources.resources.list()) {
         if (resource.storage.kind === 'tenant' && resource.storage.isolation === 'shared-row') fields[resource.table] = resource.storage.field;

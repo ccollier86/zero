@@ -77,8 +77,15 @@ test('curated facades preserve every original ordered named/type/star source con
       'DocumentEditorProps', 'DocumentEditorHandle', 'DocumentFormat', 'DocumentSourceChange', 'DocumentParseResult'].includes(item.name));
   const documentAdditive = result.records.filter(documentPart);
   const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts', 'src/logging/logging-export-contracts', 'src/logging/logging-admission-contracts',
-    'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
+    'src/logging/logging-directory-contracts', 'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
   const loggingAdditive = result.records.filter(record => loggingTargets.has(record.target));
+  const feedbackTargets = new Set(['src/frontend/client/notification-feedback-provider', 'src/frontend/client/notification-audio', 'src/frontend/client/notification-feedback']);
+  const feedbackAdditive = result.records.filter(record => feedbackTargets.has(record.target));
+  expect(feedbackAdditive).toHaveLength(4);
+  expect(feedbackAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
+    'NotificationFeedbackProvider', 'NotificationFeedbackProviderProps', 'NotificationSoundOptions', 'NotificationSoundStatus',
+    'isConversationSurfaceActive', 'useNotificationConversation', 'useNotificationInterruption', 'useNotificationSounds',
+  ].sort());
   const domainPart = (record: ExportRecord) => !record.type && record.clause === null && ['src/components/email-inbox', 'src/components/messaging'].includes(record.target);
   expect(result.records.filter(domainPart)).toHaveLength(2);
   const drawerPart = (record: ExportRecord) => record.target === 'src/drawers';
@@ -114,12 +121,12 @@ test('curated facades preserve every original ordered named/type/star source con
     { name: 'PopoverAnchorProps', local: 'PopoverAnchorProps', type: false, declarationType: true },
   ]);
   const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record)
-    && !loggingTargets.has(record.target) && !domainPart(record) && !drawerPart(record) && !blogPart(record) && !palettePart(record))
+    && !loggingTargets.has(record.target) && !feedbackTargets.has(record.target) && !domainPart(record) && !drawerPart(record) && !blogPart(record) && !palettePart(record))
     .map(record => Array.isArray(record.clause) && (record.target === popoverTarget || record.target === appShellTarget)
       ? { ...record, clause: record.clause.filter(item => record.target === popoverTarget ? !anchorNames.has(item.name) : item.name !== 'AppShellLinkProps') } : record);
-  expect(loggingAdditive).toHaveLength(9);
+  expect(loggingAdditive).toHaveLength(10);
   expect(loggingAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
-    'LoggingActivityProvider', 'LoggingAdmissionReceipt', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingEvidenceCursor', 'LoggingEvidencePage', 'LoggingExport', 'LoggingExportJob', 'LoggingExportRequest', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
+    'LoggingActivityLabel', 'LoggingActivityProvider', 'LoggingAdmissionReceipt', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingEvidenceCursor', 'LoggingEvidencePage', 'LoggingExport', 'LoggingExportJob', 'LoggingExportRequest', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingPeoplePage', 'LoggingPeopleQuery', 'LoggingPerson', 'LoggingPresentation', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableChoice', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
   ].sort());
   expect(additive).toHaveLength(2);
   expect(additive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([

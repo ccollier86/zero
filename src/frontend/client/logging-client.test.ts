@@ -20,6 +20,29 @@ test('request bodies detach before yielding and invalid policy cannot create agg
   expect(calls[0].body.observations[0].id).toBe('a');
   await expect(client.collectionPolicy()).rejects.toThrow('Invalid logging collection policy');
 });
+test('people and table directories use authenticated generation-owned transport and bounded minimal projections', async () => {
+  const person = { id: 'user-a', name: 'Avery Example', username: 'avery', revision: 2 };
+  const calls: any[] = [];
+  const client = createLoggingClient(async (path, init) => {
+    calls.push({ path, ...init });
+    return (path.endsWith('/people') ? { items: [person], hasMore: false, nextCursor: null } : [{ type: 'table.tasks', names: ['tasks'] }]) as any;
+  });
+  expect((await client.people({ search: 'Avery', limit: 25 })).items).toEqual([person]);
+  expect(calls[0]).toMatchObject({ path: '/api/_zero/logging/people', method: 'POST', body: { search: 'Avery', limit: 25 } });
+  expect(await client.tables()).toEqual([{ type: 'table.tasks', names: ['tasks'] }]);
+  for (const value of [{ items: [person, person], hasMore: false, nextCursor: null }, { items: [person], hasMore: true, nextCursor: 'other' }, { items: [{ ...person, revision: 0 }], hasMore: false, nextCursor: null }]) {
+    await expect(createLoggingClient(async () => value as any).people()).rejects.toThrow('Invalid logging people');
+  }
+  let resolve!: (value: any) => void;
+  const scoped = createLoggingClient(async () => new Promise(r => { resolve = r; }));
+  const pending = scoped.people(); scoped.clear(); resolve({ items: [person], hasMore: false, nextCursor: null });
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+});
+test('page identity enrichment cannot attach a profile to a different retained user or to automation', async () => {
+  const event = loggingEvent('one'), person = { id: 'different-user', name: 'Avery', username: 'avery' };
+  const page = { events: [{ ordinal: 1, ingestedAt: 1, event }], highWaterOrdinal: 1, hasMore: false, nextBeforeOrdinal: null, people: [person] };
+  await expect(createLoggingClient(async () => page as any).page('audit')).rejects.toThrow('Invalid logging people projection');
+});
 
 test('committed SSE projections stream through the existing SDK transport, validate packets and cancel ownership', async () => {
   let sender!: ReadableStreamDefaultController<Uint8Array>, ready!: () => void;

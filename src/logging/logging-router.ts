@@ -36,6 +36,12 @@ export function createLoggingRouter(options: { pageRecovery?: (request: Request)
     }
   };
   const routes = [
+    defineEndpoint({ method: 'POST', path: '/people', body: t.Object({ search: t.Optional(t.String({ maxLength: 100 })), after: t.Optional(t.String({ maxLength: 200 })), limit: t.Optional(t.Integer({ minimum: 1, maximum: 50 })) }, { additionalProperties: false }), handler: ({ zero, body }) => run(() => {
+      if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.'); return zero.logging.people(body);
+    }) }),
+    defineEndpoint({ method: 'GET', path: '/tables', handler: ({ zero }) => run(() => {
+      if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.'); return zero.logging.tables();
+    }) }),
     defineEndpoint({ method: 'POST', path: '/stream', body: t.Object({ stream, query, platform: t.Optional(t.Boolean()), afterOrdinal: t.Optional(t.Integer({ minimum: 0 })) }, { additionalProperties: false }), handler: ({ zero, body, request }) => run(async () => {
       if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.');
       const data = await zero.logging.stream(body.stream, body.query as NonNullable<Parameters<NonNullable<typeof zero.logging>['page']>[1]>, request.signal, body.platform, body.afterOrdinal);

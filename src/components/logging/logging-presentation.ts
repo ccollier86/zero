@@ -30,8 +30,8 @@ export function loggingLocalDate(value?: number): string {
   return Number.isNaN(local.getTime()) ? '' : local.toISOString().slice(0, 16);
 }
 export const loggingFilterLabels = {
-  family: 'Family', outcome: 'Outcome', actorId: 'Actor ID', action: 'Exact action', targetId: 'Resource ID',
-  sessionId: 'Session ID', targetType: 'Resource type', level: 'Severity', since: 'From', until: 'Before',
+  family: 'Category', outcome: 'Outcome', actorId: 'User', action: 'Activity', targetId: 'Record ID',
+  sessionId: 'Session ID', targetType: 'Table / resource', level: 'Severity', since: 'From', until: 'Before',
 } as const;
 export type LoggingFilterKey = keyof typeof loggingFilterLabels;
 /** Clear editable criteria only, not caller-supplied pinned windows or identities. */

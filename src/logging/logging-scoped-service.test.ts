@@ -20,8 +20,24 @@ function fixture() {
     async page(stream: string, scope: unknown, query: unknown) { reads.push({ stream, scope, query }); return { events: [], hasMore: false, nextBeforeOrdinal: null, highWaterOrdinal: 0 }; },
   } as unknown as LoggingRuntime;
   const service = createScopedLoggingService(runtime, access, { scopeKind: 'tenant', tenantId: 'tenant-a' } as ServiceDataScope, async () => { await gate; assert(); }, assert);
-  return { service, events, reads, revoke() { valid = false; }, deny() { admin = false; }, gate(p: Promise<void>) { gate = p; } };
+  return { service, runtime, events, reads, revoke() { valid = false; }, deny() { admin = false; }, gate(p: Promise<void>) { gate = p; } };
 }
+test('people and table presentation APIs retain logging-read admission, scope and final authority fences', async () => {
+  const f = fixture(), calls: unknown[] = [];
+  f.runtime.directory = {
+    people(scope, query) { calls.push({ scope, query }); return { items: [{ id: 'user-a', name: 'Avery Example', username: 'avery' }], nextCursor: null, hasMore: false }; },
+    lookup() { return []; }, tables(scope) { calls.push(scope); return [{ type: 'table.items', names: ['items'] }]; },
+  };
+  expect((await f.service.people({ search: 'Avery' })).items[0]?.name).toBe('Avery Example');
+  expect(calls[0]).toEqual({ scope: { kind: 'tenant', tenantId: 'tenant-a' }, query: { search: 'Avery', limit: 25 } });
+  expect(JSON.stringify(f.events)).not.toContain('Avery');
+  expect(await f.service.tables()).toEqual([{ type: 'table.items', names: ['items'] }]);
+  f.deny(); await expect(f.service.people()).rejects.toThrow('Forbidden'); await expect(f.service.tables()).rejects.toThrow('Forbidden');
+  expect(calls).toHaveLength(2);
+  const g = fixture(); g.runtime.directory = { people() { g.revoke(); return { items: [], nextCursor: null, hasMore: false }; }, lookup() { return []; }, tables() { return []; } };
+  await expect(g.service.people()).rejects.toThrow('Authority changed');
+  const h = fixture(); expect(await h.service.people()).toEqual({ items: [], nextCursor: null, hasMore: false }); expect(await h.service.tables()).toEqual([]);
+});
 test('read scopes cannot be replaced, permission failure does not read, and delayed revocation blocks release', async () => {
   const f = fixture(); await f.service.page('audit', { actorId: 'user-b' });
   expect(f.reads[0].scope).toEqual({ kind: 'tenant', tenantId: 'tenant-a' });

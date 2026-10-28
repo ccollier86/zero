@@ -4,6 +4,16 @@ import { LOGGING_FAMILIES, LOGGING_EVIDENCE, LOGGING_OUTCOMES } from '../../logg
 import type { LoggingChangePage, LoggingPage } from '../../logging/logging-contracts';
 import type { FetchInit } from './sdk';
 import { readLoggingExportJob } from '../../logging/logging-export-result';
+import type { LoggingPerson, LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from '../../logging/logging-directory-contracts';
+
+function validPeople(value: unknown, maximum: number): value is readonly LoggingPerson[] {
+  return Array.isArray(value) && value.length <= maximum && new Set(value.map(person => person?.id)).size === value.length
+    && value.every(person => person && Object.keys(person).every(key => ['id', 'name', 'username', 'revision'].includes(key))
+      && typeof person.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(person.id)
+      && typeof person.name === 'string' && person.name.length > 0 && person.name.length <= 241
+      && typeof person.username === 'string' && person.username.length <= 200
+      && (person.revision === undefined || Number.isSafeInteger(person.revision) && person.revision > 0));
+}
 
 export function createLoggingClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>): LoggingClient {
   let generation = 0, boundary = new AbortController();
@@ -23,6 +33,7 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
       before = row.ordinal;
     }
     if (result.hasMore ? !result.events.length || result.nextBeforeOrdinal !== result.events.at(-1)!.ordinal : result.nextBeforeOrdinal !== null) throw new Error('Invalid logging cursor.');
+    if (result.people !== undefined && (!validPeople(result.people, 100) || result.people.some(person => !result.events.some(({ event }) => event.actor.kind === 'user' && event.actor.id === person.id)))) throw new Error('Invalid logging people projection.');
     return result;
   };
   const request = async <T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> => {
@@ -48,6 +59,22 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     return result;
   };
   return Object.freeze({
+    async people(query: LoggingPeopleQuery = {}, options?: { signal?: AbortSignal }) {
+      const limit = query.limit ?? 25, after = query.after ?? '';
+      const value = await request<LoggingPeoplePage>('/people', query, options?.signal);
+      if (!value || !validPeople(value.items, Math.min(limit, 50)) || typeof value.hasMore !== 'boolean'
+        || value.items.some((person, i) => person.id <= (i ? value.items[i - 1]!.id : after))
+        || (value.hasMore ? !value.items.length || value.nextCursor !== value.items.at(-1)!.id : value.nextCursor !== null)) throw new Error('Invalid logging people directory.');
+      return value;
+    },
+    async tables(options?: { signal?: AbortSignal }) {
+      const value = await request<readonly LoggingTableChoice[]>('/tables', undefined, options?.signal);
+      if (!Array.isArray(value) || value.length > 10000 || new Set(value.map(table => table?.type)).size !== value.length
+        || value.some(table => !table || typeof table.type !== 'string' || !/^table\.[a-z0-9][a-z0-9.-]*$/.test(table.type) || table.type.length > 120
+        || !Array.isArray(table.names) || !table.names.length || new Set(table.names).size !== table.names.length
+        || table.names.some((name: unknown) => typeof name !== 'string' || !name || name.length > 1024))) throw new Error('Invalid logging table directory.');
+      return value;
+    },
     clear() { generation++; boundary.abort(); boundary = new AbortController(); },
     bindObservations() {
       const epoch = generation, signal = boundary.signal;

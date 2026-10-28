@@ -24,11 +24,14 @@ import type { StoragePrivateObjects } from '../storage/storage-private-objects';
 import { markLocalLoggingIdentityEstablished, openLocalLoggingIdentity } from './logging-local-identity';
 import { createLocalLoggingCustody } from './logging-local-custody';
 import type { LoggingHealth } from './logging-api-contracts';
+import type { LoggingDirectoryPort } from './logging-person-directory';
 
 interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store: LoggingFabricStore }
 
 /** Private composition service, not an authorization facade. Callers must supply trusted attribution and query scope. */
 export class LoggingRuntime {
+  /** @internal Minimal current identity presentation, not another log-file identity store. */
+  directory: LoggingDirectoryPort | null = null;
   readonly admission: LoggingAdmission;
   private custody: LoggingCheckpointCustody | null = null;
   private custodyLease: DatabaseCoordinatorLease | null = null;

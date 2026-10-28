@@ -17,6 +17,32 @@ applies_to: ["feature/messaging-backend; source and isolated synthetic tests, no
 
 ## Current Completion Pass (2026-10-28)
 
+### Latest release gate, not a selected update
+
+The later frozen `7c182b2ecbee25addb6213cbe39248d0abd3f7d1` inventory completed:
+1,371 files, 1,365 passed, six failed, none omitted. Retained evidence is
+`frozen-7c182b2-suite.jsonl` / `.stderr.log`. Failures were the service-document
+example guard, frontend public-export guard, authorization-scope browser,
+logging AppProvider browser, page-session restart browser and session-recovery
+browser. The document guard/example is corrected in `b866dac`; the additive
+audio export inventory is corrected alongside the subsequent logging UI work.
+Those focused fixes do not turn the frozen failed run into a full pass or
+establish the cause of the remaining browser failures.
+
+The exact frozen private archive also fails the isolated Linux source-state
+setup at `LoggingRuntime.open`: coordinator lease acquisition reports
+`DATABASE_OPERATION_TIMEOUT`, outcome `unknown`. `linux-7c182b2/` and its run
+log retain the failure. Recorded peak memory was 1,429,827,584 bytes under the
+6 GiB cap, peak tasks 41 under the 512 cap, with no OOM/process-limit events.
+These counters do not prove a resource cause. The ordinary saved updater proof
+passes independently (`saved-update-7c182b2.json`), but is not worker/runtime
+qualification. The archive is private candidate evidence, not a new stable
+selection. Existing app data, main and the public updater stay untouched.
+
+The user-requested [people-first logging UI](./logging-workspace-polish.md) is
+isolated on `feature/logging-human-readable-workspace`. It preserves this
+release work rather than replacing or hiding its pending gates.
+
 The continuation adds native [website support](../backend/messaging/website-support.md),
 entry-specific Guardian staff routing, expiring single-conversation visitor
 capabilities, private file integration, shared-pool bidirectional typing, real
