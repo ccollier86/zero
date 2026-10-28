@@ -1,5 +1,5 @@
 /** Explicit matching-package source launch, with no main-app bootstrap or inherited synthetic provider secret. */
-import { runLoggingActorIfRequested } from '@zero/framework/server';
+import { runLoggingActorIfRequested } from '@zero/framework/logging/actor';
 import { appendFile } from 'node:fs/promises';
 const probe = (stage: string, error?: unknown) => appendFile(new URL('../actor-probes.ndjson', import.meta.url), JSON.stringify({ stage, pid: process.pid, time: Date.now(),
   code: typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : undefined,

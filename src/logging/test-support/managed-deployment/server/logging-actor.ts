@@ -1,7 +1,7 @@
 /** Exact installed package actor; must not import app/server or inherit provider/dotenv secrets. */
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runLoggingActorIfRequested } from '@zero/framework/server';
+import { runLoggingActorIfRequested } from '@zero/framework/logging/actor';
 
 const providerSecret = process.env.ZERO_SYNTHETIC_PROVIDER_SECRET !== undefined;
 const dotenvSecret = process.env.ZERO_SYNTHETIC_DOTENV_SECRET !== undefined;

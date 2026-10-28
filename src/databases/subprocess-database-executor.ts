@@ -251,6 +251,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
         'Database executor startup timed out.',
         {
           details: {
+            startupPhase: 'deadline',
             generation: this.generation,
             slot: this.slot,
           },
@@ -296,6 +297,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
           'Database executor could not start.',
           {
             details: {
+              startupPhase: 'spawn',
               generation: this.generation,
               slot: this.slot,
             },
@@ -319,6 +321,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
             'Database executor handshake could not be sent.',
             {
               details: {
+                startupPhase: 'handshake',
                 generation: this.generation,
                 slot: this.slot,
               },
@@ -560,6 +563,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
         'Database executor disconnected during startup.',
         {
           details: {
+            startupPhase: 'disconnect',
             generation: this.generation,
             slot: this.slot,
           },
@@ -587,6 +591,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
         'Database executor exited during startup.',
         {
           details: {
+            startupPhase: 'exit',
             generation: this.generation,
             slot: this.slot,
           },

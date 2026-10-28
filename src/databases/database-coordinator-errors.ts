@@ -81,6 +81,8 @@ const SAFE_COORDINATOR_SNAPSHOT_REASONS = new Set([
 ]);
 
 const SAFE_COORDINATOR_CAPACITY_TYPES = new Set(['files', 'receipts']);
+// Diagnose startup without transporting a command, path, environment or raw cause.
+const SAFE_COORDINATOR_STARTUP_PHASES = new Set(['deadline', 'spawn', 'handshake', 'disconnect', 'exit']);
 
 export function safeCoordinatorError(value: unknown): DatabaseError {
   const source = normalizeDatabaseError(value);
@@ -94,6 +96,11 @@ export function safeCoordinatorError(value: unknown): DatabaseError {
     details.capacityLimit = source.details.capacityLimit as number;
   }
   for (const [key, detail] of Object.entries(source.details)) {
+    if (source.code === 'DATABASE_EXECUTOR_START_FAILED' && key === 'startupPhase'
+      && typeof detail === 'string' && SAFE_COORDINATOR_STARTUP_PHASES.has(detail)) {
+      details.startupPhase = detail;
+      continue;
+    }
     if (source.code === 'DATABASE_CONFLICT' && key === 'domainCode'
       && Number.isSafeInteger(detail) && Number(detail) >= 1 && Number(detail) <= 4095) {
       details.domainCode = Number(detail);

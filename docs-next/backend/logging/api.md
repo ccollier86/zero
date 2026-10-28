@@ -33,6 +33,14 @@ Types are available from `@zero/framework/logging`. Server configuration,
 exported from `@zero/framework/server`. Do not import the private runtime,
 realm, writer or source-outbox classes into application routes.
 
+Dedicated worker entries should instead import `runLoggingActorIfRequested`
+from `@zero/framework/logging/actor`. That focused entry avoids loading the
+application/server service barrel just to answer the actor handshake. Existing
+`/server` imports remain compatible. Shared app/worker entries should dynamically
+import `createApp` only after the actor helper returns false, as shown in the
+[launch recipe](./configuration.md). The helper does not relax realm, audit,
+environment or startup-deadline checks.
+
 ## Declared Server Actions
 
 Use the request's `zero.logging` facade after ordinary domain authorization.

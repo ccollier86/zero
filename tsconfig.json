@@ -48,6 +48,8 @@
       "@zero/framework/messaging": ["./src/components/messaging"],
       "@zero/framework/messaging/client": ["./src/messaging/client-contracts.ts"],
       "@zero/framework/messaging/server": ["./src/messaging/index.ts"],
+      "@zero/framework/messaging/actor": ["./src/messaging/actor-bootstrap.ts"],
+      "@zero/framework/logging/actor": ["./src/logging/logging-actor-bootstrap.ts"],
       "@zero/framework/blog": ["./src/components/blog"],
       "@zero/framework/components/blog": ["./src/components/blog"],
       "@zero/framework/components/command-palette": ["./src/components/command-palette"],

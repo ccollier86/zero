@@ -177,7 +177,7 @@ required crash-persistent evidence. The dedicated log sink remains file/FULL.
 The default actor is a private package source file run through Bun with
 `--no-env-file`. A missing source actor fails startup with a safe configuration
 error. Shared-entry/compiled deployments can call the public
-`runLoggingActorIfRequested()` before app startup and point `logging.actors.launch`
+`runLoggingActorIfRequested()` from `@zero/framework/logging/actor` before app startup and point `logging.actors.launch`
 at that entry. The helper handles both the delivery process and fixed-realm
 database actors with distinct private markers; never boot the app in either
 child. A custom entry that handles only the older database marker is no longer
@@ -186,9 +186,10 @@ realm/build fingerprints; do not weaken the check to mix separately built
 implementations. The shared-entry pattern is:
 
 ```ts
-import { createApp, runLoggingActorIfRequested } from '@zero/framework/server';
+import { runLoggingActorIfRequested } from '@zero/framework/logging/actor';
 
 if (!await runLoggingActorIfRequested()) {
+  const { createApp } = await import('@zero/framework/server');
   const app = await createApp({
     db: { mode: 'file', path: './data/application.db' },
     tables: {},

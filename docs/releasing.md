@@ -491,8 +491,8 @@ git diff --check
    not an extension of its native-entry or application-start deadline. The
    document editor's dependency-tree retirement is an awaited bounded hook;
    unsuccessful cleanup still fails the file and retains its resource slot.
-   The phone and Resource-array installed consumers use the same explicit
-   retirement boundary: their original 120s/180s functional tests and 90s/120s
+   The phone, Resource-array and adaptive-profile installed consumers use the same explicit
+   retirement boundary: their original 120s/180s/180s functional tests and 90s/120s/90s
    child-operation bounds remain, with an awaited 120s dependency-tree cleanup
    hook. Payload-free stage timings expose where time is spent. This separately
    budgets fixture retirement; it does not claim the aggregate package lifecycle

@@ -265,6 +265,10 @@
       "types": "./src/logging/index.ts",
       "import": "./src/logging/index.ts"
     },
+    "./logging/actor": {
+      "types": "./src/logging/logging-actor-bootstrap.ts",
+      "import": "./src/logging/logging-actor-bootstrap.ts"
+    },
     "./components/logging": {
       "types": "./src/components/logging/index.ts",
       "import": "./src/components/logging/index.ts"
@@ -318,6 +322,10 @@
     "./messaging/server": {
       "types": "./src/messaging/index.ts",
       "import": "./src/messaging/index.ts"
+    },
+    "./messaging/actor": {
+      "types": "./src/messaging/actor-bootstrap.ts",
+      "import": "./src/messaging/actor-bootstrap.ts"
     },
     "./messaging/client": {
       "types": "./src/messaging/client-contracts.ts",

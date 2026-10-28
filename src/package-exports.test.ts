@@ -8,7 +8,7 @@
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 const smokeDir = join(process.cwd(), '.zero/package-export-smoke');
 
@@ -70,6 +70,32 @@ describe('package exports', () => {
 
   test('native auth package subpath builds without React or server imports', async () => {
     await buildSmokeEntry('native.ts', nativeSmokeSource, 'browser');
+  }, 120_000);
+
+  test('dedicated worker subpaths do not load the app factory or browser/AI services', async () => {
+    const probe = join(smokeDir, 'worker-graph.ts');
+    await writeFile(probe, `
+      const result = await Bun.build({
+        entrypoints: [${JSON.stringify(join(smokeDir, 'worker-entry.ts'))}],
+        target: 'bun', metafile: true, write: false,
+      });
+      if (!result.success) throw new Error(String(result.logs));
+      console.log(typeof result.metafile === 'string' ? result.metafile : JSON.stringify(result.metafile));
+    `);
+    await writeFile(join(smokeDir, 'worker-entry.ts'), `
+      export { runLoggingActorIfRequested } from '@zero/framework/logging/actor';
+      export { runMessagingActorIfRequested } from '@zero/framework/messaging/actor';
+    `);
+    const child = Bun.spawn([process.execPath, '--no-env-file', probe], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+    const timeout = setTimeout(() => child.kill(), 110_000);
+    try {
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(code, stderr).toBe(0);
+      const paths = Object.keys(JSON.parse(stdout).inputs) as string[];
+      expect(paths.some(path => path.endsWith('logging-actor-bootstrap.ts'))).toBe(true);
+      expect(paths.some(path => path.endsWith('messaging/actor-bootstrap.ts'))).toBe(true);
+      expect(paths.filter(path => /frontend\/server\/app-factory|\/ai\/ai-service|node_modules\/(react|react-dom)\//.test(path))).toEqual([]);
+    } finally { clearTimeout(timeout); }
   }, 120_000);
 });
 

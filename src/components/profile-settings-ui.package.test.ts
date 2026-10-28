@@ -4,13 +4,22 @@
  */
 // Bun has no direct directory-creation/temp-directory/removal API.
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
+const ownedFixtures = new Set<string>();
+afterAll(async () => {
+  for (const root of ownedFixtures) {
+    const started = performance.now();
+    await rm(root, { recursive: true, force: true }); ownedFixtures.delete(root);
+    console.info(JSON.stringify({ qualification: 'adaptive-profile-fixture-retired', durationMs: Math.round(performance.now() - started) }));
+  }
+}, 120_000);
 
 test('installed adaptive profile facades browser/server-build, typecheck and render without domain services', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(`${SCRATCH}/profile-settings-package-`);
+  ownedFixtures.add(root);
   const consumer = `${root}/consumer`, archive = `${root}/framework.tgz`;
   try {
     await mkdir(consumer);
@@ -63,10 +72,7 @@ test('installed adaptive profile facades browser/server-build, typecheck and ren
     const manifest = await Bun.file(`${consumer}/node_modules/@zero/framework/package.json`).json() as { version: string };
     console.info(JSON.stringify({ qualification: 'adaptive-profile-installed-working-archive', version: manifest.version,
       archiveSha256, browserBytes: result.browserBytes, serverBytes: result.serverBytes }));
-  } finally {
-    // Only this freshly allocated fixture is disposable; no app data is opened.
-    await rm(root, { recursive: true, force: true });
-  }
+  } finally { /* afterAll awaits retirement separately; failure still fails this file and holds its admission slot. */ }
 // Packing, installation, two full facade builds and an installed type program
 // have separate bounded child budgets; allow their total on slower CI/storage.
 }, 180_000);

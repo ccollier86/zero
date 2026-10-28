@@ -326,7 +326,13 @@ Magnetic hover highlights belong in the conversation/contact/menu lists.
 ## Acceptance And Deployment
 
 Use matching retained source/dependencies for explicitly configured source
-actors when deploying the official bundled server. Actors use an empty child
+actors when deploying the official bundled server. Dedicated source actor entries
+can import `runMessagingActorIfRequested` from `@zero/framework/messaging/actor`
+and `runLoggingActorIfRequested` from `@zero/framework/logging/actor`. These focused
+subpaths avoid loading the main app factory and unrelated browser/AI services.
+The existing server exports remain compatible. In a shared entry, dynamically
+import the main app only after neither actor bootstrap accepts its flag.
+Actors use an empty child
 environment plus explicit approved values; they must never boot the main app or
 implicitly load dotenv/provider secrets. Source-to-bundle migration fingerprints
 remain checked. Preserve retained database/Storage identities and receipts.

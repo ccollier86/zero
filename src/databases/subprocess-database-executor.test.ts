@@ -262,11 +262,13 @@ describe('SubprocessDatabaseExecutor', () => {
       startupTimeoutMs: 30,
     });
     try {
+      const opening = executor.start();
       await expectDatabaseError(
-        executor.start(),
+        opening,
         'DATABASE_EXECUTOR_START_FAILED',
         'not-started',
       );
+      await expect(opening).rejects.toMatchObject({ details: { startupPhase: 'deadline' } });
       expect(executor.diagnostics()).toMatchObject({
         state: 'failed',
         inFlight: 0,

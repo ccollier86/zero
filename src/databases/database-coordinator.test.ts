@@ -2088,6 +2088,25 @@ describe('DatabaseCoordinator', () => {
     expect(error.details).toEqual({});
   });
 
+  test('startup diagnostics admit only fixed lifecycle reasons on startup failures', () => {
+    for (const startupPhase of ['deadline', 'spawn', 'handshake', 'disconnect', 'exit']) {
+      const source = new DatabaseError('DATABASE_EXECUTOR_START_FAILED', 'private cause must not cross', {
+        details: { startupPhase, command: '/private/command', environment: 'private-secret' },
+      });
+      const safe = safeCoordinatorError(source);
+      expect(safe.details).toEqual({ startupPhase });
+      expect(JSON.stringify(safe)).not.toContain('private');
+    }
+    for (const startupPhase of ['/private/path', 'private-secret', 1, null]) {
+      expect(safeCoordinatorError(new DatabaseError('DATABASE_EXECUTOR_START_FAILED', 'Rejected', {
+        details: { startupPhase },
+      })).details).toEqual({});
+    }
+    expect(safeCoordinatorError(new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Rejected', {
+      details: { startupPhase: 'deadline' },
+    })).details).toEqual({});
+  });
+
   test('reports aggregate shutdown state without retaining close causes', async () => {
     const store = new MemoryEventStore();
     const harness = createHarness(roots, {
