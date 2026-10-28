@@ -12,6 +12,12 @@ opt-in. The saved release identity and SHA-256, not a moving branch or this
 heading alone, identify the qualified archive. No existing application is
 migrated, reconfigured or deployed by updating its package.
 
+- Restore visible-end chat read admission after a delayed browser focus getter
+  or missed focus event. A transition-bound animation frame or trusted input
+  rechecks actual focus; blur cancels it. Full visibility/viewport/dwell and
+  current-conversation checks remain required, and synthetic input cannot
+  reopen the blur fence.
+
 - Correct a rich-text round-trip that treated JSON key order as a new edit after
   an accepted save. Link/format combinations now remain clean; actual text,
   mark/value and array-order changes still require saving. Normalize editor mark

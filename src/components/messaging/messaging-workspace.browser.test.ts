@@ -442,6 +442,40 @@ browserTest('visible-end reads require viewport visibility and dwell, respect an
   } finally { await context.close(); await f.close(); }
 }, 90000);
 
+browserTest('read focus resamples a delayed getter, cancels on blur and requires trusted activity to recover a missed focus event', async () => {
+  const f = await fixture(), page = await lease!.browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(12000);
+  try {
+    await page.goto(f.base + '/workspace');
+    const initial = page.waitForResponse(response => response.url().endsWith('/read') && response.request().method() === 'POST' && response.status() === 200);
+    await page.getByRole('button', { name: 'workspace-peer', exact: false }).click(); await page.getByRole('textbox', { name: 'Message', exact: true }).click(); await initial;
+    // Deterministic event-order regression only, not OS-focus qualification.
+    await page.evaluate(() => {
+      let focused = false;
+      Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => focused });
+      Object.assign(window, { __syntheticFocus: (value: boolean) => { focused = value; } });
+      window.dispatchEvent(new FocusEvent('blur'));
+    });
+    await f.send('Synthetic delayed focus getter');
+    await page.locator('.zero-messaging-transcript').getByText('Synthetic delayed focus getter', { exact: true }).waitFor();
+    const resumed = page.waitForResponse(response => response.url().endsWith('/read') && response.request().method() === 'POST' && response.status() === 200);
+    await page.evaluate(() => { window.dispatchEvent(new FocusEvent('focus')); (window as any).__syntheticFocus(true); }); await resumed;
+    expect((await f.call('GET', `/api/messaging/conversations/${f.conversation.id}`, undefined, f.admin.accessToken)).unreadCount).toBe(0);
+    await page.evaluate(() => { (window as any).__syntheticFocus(false); window.dispatchEvent(new FocusEvent('blur')); });
+    await f.send('Synthetic blur cancels the pending frame');
+    await page.locator('.zero-messaging-transcript').getByText('Synthetic blur cancels the pending frame', { exact: true }).waitFor();
+    await page.evaluate(() => { window.dispatchEvent(new FocusEvent('focus')); (window as any).__syntheticFocus(true); window.dispatchEvent(new FocusEvent('blur')); });
+    await page.waitForTimeout(1000);
+    expect((await f.call('GET', `/api/messaging/conversations/${f.conversation.id}`, undefined, f.admin.accessToken)).unreadCount).toBe(1);
+    await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+    await page.waitForTimeout(1000);
+    expect((await f.call('GET', `/api/messaging/conversations/${f.conversation.id}`, undefined, f.admin.accessToken)).unreadCount).toBe(1);
+    const clicked = page.waitForResponse(response => response.url().endsWith('/read') && response.request().method() === 'POST' && response.status() === 200);
+    await page.getByRole('textbox', { name: 'Message', exact: true }).click(); await clicked;
+    expect((await f.call('GET', `/api/messaging/conversations/${f.conversation.id}`, undefined, f.admin.accessToken)).unreadCount).toBe(0);
+  } finally { await page.close(); await f.close(); }
+}, 90000);
+
 // Opt in on a workstation with a real window server. CI's headless event-fence
 // check above cannot establish actual tab visibility/focus behavior.
 const headedTest = playwrightTestBrowserAvailable && process.env.ZERO_MESSAGING_HEADED === '1' ? test : test.skip;
@@ -455,6 +489,13 @@ headedTest('headed Chromium actual window focus interrupts read dwell and resume
   const page = await context.newPage(), other = await context.newPage();
   await page.setViewportSize({ width: 1100, height: 760 });
   const faults: string[] = []; page.on('pageerror', error => faults.push(error.message)); page.setDefaultTimeout(12000);
+  await page.addInitScript(() => {
+    const rows: unknown[] = []; Object.assign(window, { __nativeReadFocus: rows });
+    for (const type of ['focus', 'blur', 'focusin', 'visibilitychange', 'pointerdown']) {
+      const target = type === 'visibilitychange' || type === 'focusin' || type === 'pointerdown' ? document : window;
+      target.addEventListener(type, event => { rows.push({ type, trusted: event.isTrusted, focused: document.hasFocus(), visibility: document.visibilityState }); if (rows.length > 50) rows.shift(); });
+    }
+  });
   try {
     // Native default context with Playwright noDefaults: no focus emulation,
     // synthetic blur/focus/visibility events or overridden document getters.
@@ -477,5 +518,15 @@ headedTest('headed Chromium actual window focus interrupts read dwell and resume
     expect(unfocused.focused).toBe(false); expect(visible).toEqual({ visibility: 'visible', focused: true }); expect(faults).toEqual([]);
     await Bun.write(join(evidence, 'headed-window-lifecycle.json'), JSON.stringify({ platform: process.platform, arch: process.arch, headless: false,
       syntheticLifecycleEvents: false, overriddenDocumentApis: false, unfocused, visible, unreadWhileUnfocused: 1, unreadAfterVisibleDwell: 0 }, null, 2));
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => {
+      const viewport = document.querySelector('.zero-messaging-transcript'), end = document.querySelector('.zero-messaging-workspace-end');
+      const rect = (element: Element | null) => { const r = element?.getBoundingClientRect(); return r ? { top: r.top, bottom: r.bottom, height: r.height } : null; };
+      return { focused: document.hasFocus(), visibility: document.visibilityState, events: (window as unknown as { __nativeReadFocus: unknown[] }).__nativeReadFocus,
+        viewport: rect(viewport), end: rect(end), innerHeight, scrollTop: viewport?.scrollTop, scrollHeight: viewport?.scrollHeight, clientHeight: viewport?.clientHeight,
+        readError: document.body.textContent?.includes('Read position was not confirmed.') ?? false };
+    });
+    console.error('Synthetic native read diagnostics', JSON.stringify(diagnostics));
+    throw error;
   } finally { await native.close(); await f.close(); }
 }, 90000);

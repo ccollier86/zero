@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: managed-workspace
 maturity: experimental
-applies_to: ["2.6.0 native messaging workspace; identify installed support by release commit/archive hash"]
+applies_to: ["2.7.0 native messaging workspace; identify installed support by release commit/archive hash"]
 ---
 
 # Native Messaging Workspace
@@ -147,6 +147,13 @@ viewport, the document is visible and focused, and a 750ms dwell completes.
 Focus, visibility, scrolling, resizing, selection changes and unmount interrupt
 or recheck that observation. Opening a list, fetching history, seeing presence
 or receiving a server message never by itself advances the cursor.
+
+A focus transition is rechecked on the next animation frame because browser
+focus getters can lag the event. A later blur cancels that frame. Trusted
+pointer/keyboard activity can recover a missed focus event, but only when actual
+focus, visibility and viewport checks succeed and a fresh full dwell completes.
+Synthetic input and idle timers cannot reopen a blur fence. Ordinary typing
+after focus is admitted does not continually restart the dwell.
 
 This is a defined presentation policy, **not proof a person comprehended a
 message**. It does not assert the other participant read it. Own messages display

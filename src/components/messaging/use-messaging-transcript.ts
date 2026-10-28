@@ -42,7 +42,7 @@ export function useMessagingTranscript(controller: MessagingWorkspaceController,
   useEffect(() => {
     if (!viewport || !end.current || !last || readPolicy !== 'visible-end' || state.loading || !state.conversation) return;
     if (focusFence.current === null) focusFence.current = document.hasFocus();
-    let visible = false, timer: ReturnType<typeof setTimeout> | undefined;
+    let visible = false, timer: ReturnType<typeof setTimeout> | undefined, focusFrame: number | undefined;
     const onScreen = () => {
       if (!end.current) return false;
       const rect = end.current.getBoundingClientRect(), root = viewport.getBoundingClientRect();
@@ -55,12 +55,22 @@ export function useMessagingTranscript(controller: MessagingWorkspaceController,
       if (eligible()) timer = setTimeout(() => { if (eligible()) void controller.markPresented(last, state.selectedId); }, 750);
     };
     // A blur event cancels admission immediately, even if the browser's focus
-    // getter has not caught up in this event turn. Only a fresh focus restores it.
-    const blur = () => { focusFence.current = false; check(); }, focus = () => { focusFence.current = document.hasFocus(); check(); };
+    // getter has not caught up in this event turn. Resample only after an actual
+    // focus transition or trusted input, never on an idle timer. A subsequent
+    // blur cancels the pending frame and the full visible/focused dwell restarts.
+    const cancelFocus = () => { if (focusFrame !== undefined) cancelAnimationFrame(focusFrame); focusFrame = undefined; };
+    const blur = () => { cancelFocus(); focusFence.current = false; check(); };
+    const focus = () => {
+      cancelFocus(); focusFence.current = document.hasFocus(); check();
+      focusFrame = requestAnimationFrame(() => { focusFrame = undefined; focusFence.current = document.hasFocus(); check(); });
+    };
+    const activity = (event: Event) => { if (event.isTrusted && focusFence.current !== true) focus(); };
     const observer = new IntersectionObserver(entries => { visible = entries[0]?.isIntersecting === true && entries[0].intersectionRatio === 1; check(); }, { root: viewport, threshold: 1 });
     observer.observe(end.current); document.addEventListener('visibilitychange', check); document.addEventListener('focusin', focus); window.addEventListener('focus', focus); window.addEventListener('blur', blur);
+    document.addEventListener('pointerdown', activity); document.addEventListener('keydown', activity);
     window.addEventListener('scroll', check, { passive: true, capture: true }); window.addEventListener('resize', check);
-    return () => { clearTimeout(timer); observer.disconnect(); document.removeEventListener('visibilitychange', check); document.removeEventListener('focusin', focus); window.removeEventListener('focus', focus); window.removeEventListener('blur', blur);
+    return () => { clearTimeout(timer); cancelFocus(); observer.disconnect(); document.removeEventListener('visibilitychange', check); document.removeEventListener('focusin', focus); window.removeEventListener('focus', focus); window.removeEventListener('blur', blur);
+      document.removeEventListener('pointerdown', activity); document.removeEventListener('keydown', activity);
       window.removeEventListener('scroll', check, true); window.removeEventListener('resize', check); };
   }, [viewport, controller, state.selectedId, state.conversation?.unreadCount, state.loading, last, readPolicy, readAttempt]);
   const latest = () => { if (controller.getSnapshot().selectedId !== state.selectedId) return;

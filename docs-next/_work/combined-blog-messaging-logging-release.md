@@ -254,6 +254,44 @@ unmodified official-build/crash qualification or establish the old root cause.
 
 ## Execution status
 
+### First 2.7.0 candidate not selected
+
+Frozen `02ffec41229425030d5c3581285b8b9ab1042fb0` produced private archive SHA-256
+`1c016c9ab6641e3d4aed3642be69e9c2dccf38867ca4716095917534b2f67188`.
+Linux/amd64 official-build messaging/logging qualification passes: two bundled
+boots, writer/main SIGKILL, retained files and exact replay, two held provider
+calls, a foreground write during both calls, strict compliance and empty actor
+environments. The separate Linux publishing qualification also passes two
+generations, retained identity/history, FTS, private media, SSR and discovery.
+Root/payment dependency audits find no vulnerabilities; types, build and docs
+checks pass. The ordinary saved updater verifies 5,824 exact package files,
+dry-run, populated app/config/theme/environment/data preservation and a subsequent
+frozen reinstall. These results do not override failed gates.
+
+That candidate is **not qualified**: the final grouped-menu package test completed
+all 16 assertions and wrote provenance, then exceeded its original 120s deadline
+during owned cleanup. Separate native-window and saved-updater installations had
+been run alongside the package gate; the source release procedure now explicitly
+prohibits overlapping these independent cold-I/O gate phases. The failed run
+remains failed, cleanup is still required, and no assertion/deadline is changed.
+
+The real-window messaging gate also passes eight cases but fails read resumption
+after focus returns. An isolated rerun alone passes; that is not declared a fix.
+A deterministic event-order browser regression then fails on the original hook:
+a focus event can sample `hasFocus()` before its getter updates, leave the blur
+fence closed, and never schedule another observation when the same input already
+has DOM focus. The correction resamples on a transition-owned frame and permits
+verified trusted input to restore admission. Blur/unmount cancel pending frames;
+actual viewport/visibility/focus/dwell and current-scope checks remain. The new
+regression also checks cancellation and rejection of synthetic input. The next
+candidate must repeat qualification with sequential external gate admission.
+
+The corrected source's complete native messaging browser file passes all ten
+cases / 94 assertions with real-window opt-in (`native-read-focus-complete.log`).
+This includes the deterministic negative focus/blur/synthetic-input checks and
+the unchanged actual OS-focus/audio cases. Types and all 875 documentation links
+also pass. It is still source evidence, not selection of the failed old archive.
+
 - [x] Assess current feature source, public components and release evidence.
 - [x] Confirm the selected saved update and preserve the combined source on a
   feature branch.

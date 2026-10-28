@@ -450,6 +450,15 @@ git diff --check
    they may download runtime assets. Do not point release verification at a
    production app database or Storage root.
 
+   Keep these gate phases sequential. Do not run the package-consumer gate or
+   complete inventory alongside a separate saved-updater installation, Docker
+   installation/build, manual installed consumer or real-window browser gate.
+   The canonical runner coordinates its own children, not independent shells
+   competing for the same external cache/disk. In particular, an archive test
+   remains failed if its owned cleanup exceeds the original deadline even when
+   content assertions and provenance have completed. Retain that failure;
+   changing phase admission must not increase deadlines or omit cleanup/tests.
+
    The canonical suite discovers every normal Bun test/spec file, including
    actor-entry tests, and runs each exactly once in a fresh Bun OS process,
    with at most four concurrent children. `test:parallel` is a compatibility
