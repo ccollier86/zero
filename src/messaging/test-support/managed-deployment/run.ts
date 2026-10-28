@@ -26,5 +26,7 @@ try {
   await Bun.write(join(evidence, 'qualification-report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {
-  const path = join(root, 'server-output.log'); if (await Bun.file(path).exists()) await Bun.write(join(evidence, 'server-output.log'), await Bun.file(path).text());
+  for (const name of ['server-output.log', 'safe-observations.ndjson']) {
+    const path = join(root, name); if (await Bun.file(path).exists()) await Bun.write(join(evidence, name), await Bun.file(path).text());
+  }
 }

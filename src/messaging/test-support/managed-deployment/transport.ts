@@ -6,7 +6,8 @@ export async function request(origin: string, path: string, token?: string, body
     headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(key ? { 'Idempotency-Key': key } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15000) });
   const value = await response.json();
-  if (!response.ok) throw Object.assign(new Error('Synthetic native request rejected.'), { status: response.status, code: value.code });
+  if (!response.ok) throw Object.assign(new Error('Synthetic native request rejected.'), { status: response.status, code: value.code,
+    route: path.split('?')[0]!.replace(/\/(conversations|attachments|messages|review)\/[^/]+/g, '/$1/:id') });
   return value as any;
 }
 export async function acknowledge(origin: string, token: string) {
