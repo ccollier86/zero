@@ -21,9 +21,11 @@ The continuation adds native [website support](../backend/messaging/website-supp
 entry-specific Guardian staff routing, expiring single-conversation visitor
 capabilities, private file integration, shared-pool bidirectional typing, real
 assistant job activity, explicit model-requested human handoff, operator review
-UI and assigned-human resolve/reopen. It remains on the feature branch pending
-the installed/archive/release gates below; the older chronological remaining-work
-lists are not claims that these new source capabilities are still absent.
+UI and assigned-human resolve/reopen. This record separates implementation from
+the installed/archive/release gates below. Check `zero-release --status` for the
+actually selected committed archive; older chronological remaining-work lists
+are not claims that these source capabilities are still absent, nor proof that
+an older installed package has them.
 
 The support archive bug was real: support members have customer/staff roles, not
 group-owner roles. Only the current human owner may resolve/reopen, and both
@@ -220,6 +222,17 @@ retirement budgets, not a claim that aggregate execution fits the old single
 deadline or that production database performance improved. Final qualification
 and stable selection remain pending;
 these follow-up successes are not a replacement whole-suite pass.
+
+The prepared `a14abe4` inventory subsequently finishes all 1,370 files once:
+1,361 pass, nine fail, none are unrun (3,258,282ms). Its failed result and complete
+output remain `frozen-a14abe4-suite.jsonl` / `.stderr.log`. The failures are the
+Data Studio layout regression, three modal CSS preservation guards, the machine
+service allowlist, two migration-list expectations and the two retirement
+timeouts described above. The packed fresh-app smoke's exact registry expectation
+now includes 049–051 as well; it still checks clean application and idempotency.
+All other files, including the separate admitted Chrome source-preview tests,
+run normally. The corrected candidate requires its own frozen verification;
+this failed inventory is not described as a release pass.
 
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
