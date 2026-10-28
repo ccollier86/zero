@@ -467,6 +467,22 @@ git diff --check
    The generated native session/audit recovery browser file likewise owns its
    strict 60s scenarios and real logging actors; its blocked-delivery, refresh,
    live-record, hard-reload, new-tab and revocation checks are never bypassed.
+   The installed documentation and document-editor consumers also own an
+   exclusive window, as do the native presence and Resource-overlap files with
+   their own deliberately tight actor startup/operation/shutdown deadlines.
+   This avoids unrelated archive cleanup competing with those native boundaries;
+   the scenarios' own concurrent operations remain concurrent. Dependency
+   materialization in the docs consumer has a separate 180s admission bound,
+   not an extension of its native-entry or application-start deadline. The
+   document editor's dependency-tree retirement is an awaited bounded hook;
+   unsuccessful cleanup still fails the file and retains its resource slot.
+   The native FTS migration fixture independently bounds old dense-corpus
+   preparation, migration verification, and awaited native/file retirement at
+   20s each. Preparation retains the legacy dense-bridge checks; migration
+   retains the existing-text/update/no-parallel-corpus assertions. This is an
+   explicit staged qualification budget, not a claim that their aggregate
+   runtime is limited to the original single 20s test or that native indexing
+   got faster. A crash or failed hook remains a failed file.
    The slot stays owned through process, descendant
    and output retirement. This changes admission overlap, not inventories,
    assertions, deadlines, cleanup requirements or failure handling. Review

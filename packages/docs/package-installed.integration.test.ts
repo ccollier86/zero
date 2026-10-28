@@ -7,6 +7,10 @@ import sharp from 'sharp';
 const repository = resolve(import.meta.dir, '../..');
 const scratchRoot = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const artifactRoot = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/docs-plugin';
+// Registry resolution/materialization is setup, not application startup. Keep
+// it bounded like the normal updater proof; the separate native-entry/app
+// deadlines and this file's overall 300s qualification limit stay unchanged.
+const DEPENDENCY_INSTALL_ADMISSION_MS = 180_000;
 const image = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWMwTpv5HwAENAIyeXoBdAAAAABJRU5ErkJggg=='), character => character.charCodeAt(0));
 interface DocsPackageManifest { version: string; peerDependencies: { '@zero/framework': string } }
 
@@ -52,7 +56,7 @@ async function createConsumer(root: string, framework: string, docs: string): Pr
   await write(root, 'package.json', JSON.stringify({ name: 'zero-docs-installed-qualification', private: true, type: 'module',
     dependencies: { '@zero/framework': 'file:' + framework, '@zero/plugin-docs': 'file:' + docs, react: '19.2.4', 'react-dom': '19.2.4' },
     overrides: { '@zero/framework': 'file:' + framework } }));
-  await command(['bun', '--no-env-file', 'install', '--ignore-scripts'], root);
+  await command(['bun', '--no-env-file', 'install', '--ignore-scripts'], root, DEPENDENCY_INSTALL_ADMISSION_MS);
   await write(root, 'zero.config.ts', configModule('default')); await write(root, 'named.config.ts', configModule('named'));
   await write(root, 'app/server.ts', serverEntry('default')); await write(root, 'app/custom-server.ts', serverEntry('named'));
   await write(root, 'server/plugins/docs.ts', 'import {docs} from "@zero/plugin-docs"; export default docs({contentDir:"./documentation",watch:false,headerLinks:[{label:"Entry",href:"/entry-hook"}]});');

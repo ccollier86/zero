@@ -269,6 +269,12 @@ browserTest('two SDK tabs serialize sign-in HTTP behind an older held logout res
     const admitted = currentCookie ? await resolvePageSessionAuth(new Request(`${server.url.origin}/accepted-document`, {
       headers: { Cookie: `${tokens.pageSessionCookieName}=${encodeURIComponent(currentCookie.value)}` },
     }), tokens) : null;
+    // Cancelling the queued issuance rejects its promise before the separate
+    // cross-tab storage/BroadcastChannel reconciliation has acquired its lock.
+    // Cookie/HTTP exclusion is already observable above; the existing bounded
+    // reconciliation wait must precede taking a snapshot of the peer's store.
+    await newTab.waitForFunction(() => !window.__sessionRecoveryHarness.snapshot().isLoading
+      && window.__sessionRecoveryHarness.snapshot().userId === null);
     const browser = await newTab.evaluate(() => window.__sessionRecoveryHarness.snapshot());
     // No sign-in cookie may be minted ahead of the still-owned old deletion.
     // The queued intent belongs to the old family, so the logout tombstone
@@ -280,8 +286,6 @@ browserTest('two SDK tabs serialize sign-in HTTP behind an older held logout res
       cookiePresent: false, serverAdmitted: false, browserAuthenticated: false,
     });
     expect(loginRequests).toBe(1);
-    await newTab.waitForFunction(() => !window.__sessionRecoveryHarness.snapshot().isLoading
-      && window.__sessionRecoveryHarness.snapshot().userId === null);
     // A fresh explicit intent starts from the now-anonymous durable scope and
     // must work normally: serialization is not a permanent login prohibition.
     await newTab.evaluate(() => window.__sessionRecoveryHarness.login('sdk-writer-owner', 'password123'));

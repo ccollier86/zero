@@ -306,3 +306,56 @@ That distinguishes the shared-dependency harness failure from the actual
 independently installed build, without weakening production checks. The next
 exact committed candidate must again own a physical locked dependency install
 and complete all release gates; these separate successes do not qualify it.
+
+The exact `4062e22` archive passes independent typecheck, documentation and the
+Linux/amd64 installed publishing proof across source setup and two official
+bundle/restart generations. Its package-script gate fails the scaffold's original
+30s build deadline while other first-phase tests share one `bun test --parallel`
+process. That script still bypassed the canonical suite's OS-file isolation and
+reviewed archive-consumer admission. Both multi-file package phases now use the
+same canonical runner as the full suite, preserving all test files, original
+per-case deadlines, package/runtime assertions and sequential heavy installed
+phases. A regression pins that script boundary. No production timeout, runtime
+behavior or installed-app contract is changed; `4062e22` remains an unselected
+failed candidate and the corrected committed archive needs fresh qualification.
+
+The frozen `69b52c0` candidate passes its canonical package script, typecheck,
+documentation graph, dependency audit, external-output build, exact Linux/amd64
+source/bundle/restart publishing proof and normal updater/frozen-reinstall proof.
+Its complete 1341-file run remains **failed**: 1335 passed, six failed, none were
+unrun and there was no interruption. The original output is retained in
+`full-suite-69b52c0-complete-deps.log`; no stable selection was changed.
+
+The follow-up corrects three qualification boundaries rather than production
+authorization behavior. The installed documentation consumer now allows 180s
+only for registry dependency materialization (formerly 60s); its 300s overall,
+60s native-entry and 20s app-start limits remain. The editor consumer retires its
+owned dependency tree in an awaited, bounded `afterAll` hook after its original
+120s functional check; cleanup failure still fails the file. The cross-tab auth
+test now takes the peer store snapshot after its already-existing bounded
+reconciliation wait, retaining every cookie/HTTP exclusion and explicit fresh
+sign-in assertion. These four focused files pass, including the resource catalog.
+
+Presence and Resource-overlap native tests now receive exclusive cold-I/O
+admission without changing their own 3s startup/5s operation/1s shutdown bounds.
+The unchanged exact candidate passes those files independently (5.3s and 4.7s).
+The unchanged native vector file does **not** pass that same isolated attempt:
+its third case exceeds the original 20s limit, followed by a native-process
+segmentation fault. Do not label this merely a shared-load artifact or use the
+older passing vector runs to replace the failed gate. Its native creation,
+reopen/index migration and disposal boundaries still require diagnosis before
+this candidate can be qualified. The failed archive and all diagnostic evidence
+remain retained; no prior migration checksum or vector production code was
+changed to force a pass.
+
+The subsequent native timing diagnostic measures approximately 4.6s for cold
+pre-upgrade corpus creation and 12.4s for native FTS index construction; bounded
+queries take 0–2ms. The focused migration fixture now prepares the old dense
+corpus in its own explicitly bounded 20s setup hook. The migration/reopen,
+updates and all original result assertions retain a 20s test limit, and awaited
+native/file retirement has its own 20s hook. This separates qualification stages
+and increases their aggregate admission budget; it is **not** a production
+performance repair or an unchanged-total-timeout claim. The first corrected
+three-case run passes with a 12.8s migration. A new exact committed candidate
+still needs a complete run before stable selection; neither this focused pass
+nor the diagnostic resolves an unobserved native crash cause.

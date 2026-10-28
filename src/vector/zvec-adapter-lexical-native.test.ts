@@ -2,7 +2,7 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { resolveVectorConfig } from './vector-config';
 import { VectorRegistry } from './vector-registry';
 import { VectorService } from './vector-service';
@@ -65,29 +65,40 @@ it('native custom body fields retain hydrated vector and hybrid hits with scalar
   } finally { await service.dispose(); await rm(root, { recursive: true, force: true }); }
 }, 20_000);
 
-it('explicit native FTS migration indexes existing text and updates without a parallel corpus', async () => {
-  const scratch = process.platform === 'darwin' ? '/Volumes/code-bank/tmp/scratch/zero-platform' : tmpdir();
-  await mkdir(scratch, { recursive: true });
-  const root = await mkdtemp(join(scratch, 'vector-native-lexical-migrate-'));
+describe('explicit native FTS migration', () => {
+  let root: string | undefined, service: VectorService | undefined;
+  let denseIds: string[] = [], scopedDenseIds: string[] = [];
   const resolve = (lexical: boolean) => {
+    if (!root) throw new Error('Legacy native corpus was not prepared.');
     const config = resolveVectorConfig({ indexes: { default: { dimensions: 2, lexical, indexType: 'flat', path: join(root, 'corpus') } } }, {});
     if (!config) throw new Error('Expected fixture config');
     return new VectorService(new VectorRegistry({ config }), { emitCode: () => undefined as never });
   };
-  let service = resolve(false);
-  try {
+  // Cold creation of the pre-upgrade corpus is fixture admission, not FTS
+  // migration. Bound it independently; retain the original 20s migration
+  // budget, both dense-bridge assertions and awaited native/file retirement.
+  beforeAll(async () => {
+    const scratch = process.platform === 'darwin' ? '/Volumes/code-bank/tmp/scratch/zero-platform' : tmpdir();
+    await mkdir(scratch, { recursive: true });
+    root = await mkdtemp(join(scratch, 'vector-native-lexical-migrate-'));
+    service = resolve(false);
     await service.upsert({ id: 'existing', vector: [1, 0], text: 'uniquemigrationmarker original content' });
     const bridge = createAIVectorBridge({ vectors: service, ai: { embed: async () => ({ embedding: [1, 0] }) } as unknown as AIService });
-    expect((await bridge.embedAndQuery('default', { text: 'legacy dense query' })).map(row => row.id)).toEqual(['existing']);
-    expect((await bridge.scope('default', { id: 'existing' }).embedAndQuery({ text: 'legacy scoped dense query' })).map(row => row.id)).toEqual(['existing']);
+    denseIds = (await bridge.embedAndQuery('default', { text: 'legacy dense query' })).map(row => row.id);
+    scopedDenseIds = (await bridge.scope('default', { id: 'existing' }).embedAndQuery({ text: 'legacy scoped dense query' })).map(row => row.id);
     await service.dispose();
+  }, 20_000);
+  afterAll(async () => {
+    await service?.dispose();
+    if (root) await rm(root, { recursive: true, force: true });
+  }, 20_000);
+  it('indexes existing text and updates without a parallel corpus', async () => {
+    expect(denseIds).toEqual(['existing']);
+    expect(scopedDenseIds).toEqual(['existing']);
     service = resolve(true);
     expect((await service.query({ text: 'uniquemigrationmarker' })).map(row => row.id)).toEqual(['existing']);
     await service.upsert({ id: 'existing', vector: [1, 0], text: 'changed replacement content' });
     expect(await service.query({ text: 'uniquemigrationmarker' })).toEqual([]);
     expect((await service.query({ text: 'replacement' })).map(row => row.id)).toEqual(['existing']);
-  } finally {
-    await service.dispose();
-    await rm(root, { recursive: true, force: true });
-  }
-}, 20_000);
+  }, 20_000);
+});
