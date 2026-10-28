@@ -168,6 +168,17 @@ focused successes do not by themselves select the stable updater or establish a
 complete frozen-framework release pass. Existing applications/production and
 the current stable archive remain untouched.
 
+The SDK-only deployment fixture also needed the same real heartbeat lifetime as
+the existing publishing fixture: one initial acknowledgment is not a collector
+for a long setup/provider/recovery sequence. It now copies/reuses that tested
+helper from the exact installed archive, uses the returned policy interval,
+joins it before intentional faults/stop and establishes fresh admission after
+restart. Collector errors remain failed gates, without protected-operation
+retries or raised TTLs. This repairs the fixture contract; it does not establish
+that every earlier unconfirmed-acknowledgment/shutdown failure had this cause.
+The `9681220` whole-suite attempt was interrupted for that fixture correction;
+its retained partial result is not a full-suite pass.
+
 This pass completes the ordinary managed conversation workspace over the
 existing native backend. It does not merge the branch, select a stable updater
 archive, modify a consuming application or qualify a deployment. Prior private

@@ -1,7 +1,7 @@
 /** Execute after normal installed `zero build` inside an isolated Linux/amd64 container with retained source/dependencies. */
 import { expect } from 'bun:test';
 import { unlink } from 'node:fs/promises';
-import { request, acknowledge, until } from './transport';
+import { request, acknowledge, keepAuditDelivery, until } from './transport';
 let child: ReturnType<typeof Bun.spawn> | null = null;
 const output: Promise<string>[] = [], held = new Map<number, () => void>(); let providerCalls = 0;
 // Normal Torrent ownership is a 30-second durable lease. A hard-killed main
@@ -9,6 +9,13 @@ const output: Promise<string>[] = [], held = new Map<number, () => void>(); let 
 // weakening runtime admission to make the restart test pass.
 const crashLeaseGraceMs = 31_000;
 const stage = (name: string) => console.log(JSON.stringify({ stage: name }));
+let deliveries: Awaited<ReturnType<typeof keepAuditDelivery>>[] = [];
+async function collect(origin: string, tokens: string[]) { for (const token of tokens) deliveries.push(await keepAuditDelivery(origin, token)); }
+async function retireCollection() {
+  const owned = deliveries; deliveries = [];
+  const failures = (await Promise.allSettled(owned.map(delivery => delivery.stop()))).flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+  if (failures.length) throw new AggregateError(failures, 'Required audit collector failed; qualification cannot continue.');
+}
 const provider = Bun.serve({ hostname: '127.0.0.1', port: 4120, async fetch() {
   const call = ++providerCalls; await new Promise<void>(resolve => held.set(call, resolve));
   return Response.json({ id: 'synthetic-installed-answer-' + call, object: 'chat.completion', created: 1, model: 'chat',
@@ -34,12 +41,13 @@ try {
   expect(process.platform).toBe('linux'); expect(process.arch).toBe('x64');
   await Bun.write('./.env', 'ZERO_SYNTHETIC_DOTENV_SECRET=must-not-load\n');
   const seed = await Bun.file('./seed.json').json(), admin = seed.admin.accessToken, peer = seed.peer.accessToken;
-  stage('bundled-start-and-admission'); let origin = await launch(); await acknowledge(origin, admin); await acknowledge(origin, peer);
+  stage('bundled-start-and-admission'); let origin = await launch(); await collect(origin, [admin, peer]);
   stage('retained-history');
   expect((await request(origin, '/api/messaging/conversations/' + seed.conversation.id + '/messages', peer)).items[0].id).toBe(seed.message.id);
   // Terminate only this fixture's proven live private writer. A known crash may
   // reject an operation; explicit same-key recovery must not duplicate an intent.
   const writer = (await probes()).filter(probe => probe.kind === 'messaging' && probe.role === 'writer' && alive(probe.pid)).at(-1); expect(writer).toBeTruthy();
+  await retireCollection(); // Deliberate fault/re-admission below owns this transition, not an overlapping timer.
   process.kill(writer!.pid, 'SIGKILL'); await until(() => !alive(writer!.pid), 'Private writer death');
   stage('private-writer-recovery');
   let recoveryAttempts = 0;
@@ -47,6 +55,7 @@ try {
     try { await acknowledge(origin, admin); recoveryAttempts++; await request(origin, '/api/messaging/conversations/' + seed.conversation.id + '/messages', admin, { text: 'Synthetic post-writer-restart message' }, 'installed-writer-recovery'); return true; }
     catch (failure) { if (!failure || typeof failure !== 'object' || !('status' in failure) || ![409, 428, 500, 503].includes(Number(failure.status))) throw failure; return false; }
   }, 'Canonical writer recovery', 30000);
+  await collect(origin, [admin, peer]);
   stage('parallel-assistant-admission');
   const chats = await Promise.all([1, 2].map(n => request(origin, '/api/messaging/support', peer, {}, 'installed-ai-open-' + n)));
   await Promise.all(chats.map((chat, n) => request(origin, '/api/messaging/conversations/' + chat.id + '/messages', peer, { text: 'Synthetic parallel installed question ' + n }, 'installed-ai-send-' + n)));
@@ -59,10 +68,11 @@ try {
   stage('interrupted-call-admission'); const interrupted = await request(origin, '/api/messaging/support', peer, {}, 'installed-interrupted-open');
   await request(origin, '/api/messaging/conversations/' + interrupted.id + '/messages', peer, { text: 'Synthetic interrupted invocation' }, 'installed-interrupted-send');
   await until(() => providerCalls === 3, 'Invocation before main death');
+  await retireCollection();
   await stop('SIGKILL'); held.get(3)!();
   console.log('Waiting for the normal workflow ownership lease after main SIGKILL.');
   await Bun.sleep(crashLeaseGraceMs);
-  stage('restart-and-readmit'); origin = await launch(); await acknowledge(origin, admin); await acknowledge(origin, peer);
+  stage('restart-and-readmit'); origin = await launch(); await collect(origin, [admin, peer]);
   await until(async () => (await request(origin, '/api/messaging/conversations/' + interrupted.id, peer)).owner === 'triage', 'Unknown invocation recovery');
   expect(providerCalls).toBe(3); // Recovery must never repeat a dispatched external call automatically.
   stage('retained-unknown-review'); const waiting = await request(origin, '/api/messaging/conversations/' + interrupted.id, peer);
@@ -75,7 +85,7 @@ try {
   const download = await fetch(origin + '/api/messaging/conversations/' + seed.conversation.id + '/attachments/' + seed.file.id + '/content', { headers: { Authorization: 'Bearer ' + peer } }); expect(download.status).toBe(200);
   expect(new Bun.CryptoHasher('sha256').update(new Uint8Array(await download.arrayBuffer())).digest('hex')).toBe(seed.file.checksum);
   stage('strict-health-and-shutdown'); const health = await request(origin, '/api/_zero/logging/health', admin); expect(health.coverage.complianceReady).toBe(true);
-  await stop('SIGTERM');
+  await retireCollection(); await stop('SIGTERM');
   const boots = (await Bun.file('./main-boots.ndjson').text()).trim().split('\n'), actors = await probes();
   expect(boots).toHaveLength(2); expect(actors.every(probe => !probe.providerSecret && !probe.dotenvSecret)).toBe(true);
   const report = { platform: process.platform, arch: process.arch, bun: Bun.version, mainBoots: boots.length, workerLaunches: actors.length,
@@ -84,6 +94,9 @@ try {
     exactReplayCount: 1, complianceReady: true };
   await Bun.write('./qualification-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
+  // Preserve the primary failure; a normal success has already joined and
+  // verified every collector above. No timer may outlive this failed fixture.
+  await Promise.allSettled(deliveries.map(delivery => delivery.stop())); deliveries = [];
   for (const release of held.values()) release();
   const active = child as ReturnType<typeof Bun.spawn> | null;
   if (active && active.exitCode === null) { active.kill('SIGKILL'); await active.exited; }

@@ -1,6 +1,7 @@
 /** Diagnostic-only repeated fresh source setup/stop. Never retries a failed setup or changes an assertion/deadline. */
 import { cp, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { prepareMessagingAuditFixture } from './fixture-files';
 const root = '/qualification', evidence = '/evidence';
 await mkdir(root, { recursive: true }); await mkdir(evidence, { recursive: true });
 await cp(import.meta.dir, root, { recursive: true });
@@ -12,6 +13,7 @@ if (installCode !== 0) throw new Error('Lifecycle probe install failed.');
 for (let attempt = 1; attempt <= 8; attempt++) {
   const cwd = join(root, 'fresh-' + attempt), destination = join(evidence, 'fresh-' + attempt);
   await cp(import.meta.dir, cwd, { recursive: true }); await mkdir(destination);
+  await prepareMessagingAuditFixture(cwd);
   const child = Bun.spawn([process.execPath, '--no-env-file', './probe-executor-wrapper.ts'], { cwd, env, stdout: 'pipe', stderr: 'pipe' });
   const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]); clearTimeout(timer);

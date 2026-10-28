@@ -1,6 +1,7 @@
 /** Container entry: reuse the checked-in fixture, install the exact mounted archive, build normally and retain only safe diagnostics. */
 import { cp, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { prepareMessagingAuditFixture } from './fixture-files';
 const root = '/qualification', evidence = '/evidence';
 await mkdir(root, { recursive: true }); await mkdir(evidence, { recursive: true });
 await cp(import.meta.dir, root, { recursive: true });
@@ -19,6 +20,7 @@ try {
       const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
       await Bun.write(join(evidence, name + '.log'), stdout + '\n' + stderr);
       if (code !== 0) throw new Error('Messaging installed Linux stage failed: ' + name + ' (' + code + '). See the retained stage log.');
+      if (name === 'install') await prepareMessagingAuditFixture(root);
     } finally { clearTimeout(timer); }
   }
   const report = await Bun.file(join(root, 'qualification-report.json')).json();

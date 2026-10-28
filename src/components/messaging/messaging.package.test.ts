@@ -47,6 +47,8 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
       'src/components/messaging/use-messaging-transcript.ts',
       'src/components/messaging/support-chat.tsx', 'src/components/messaging/workspace-review.tsx', 'src/components/messaging/use-support-typing.ts',
       'src/messaging/visitor-client.ts', 'src/messaging/visitor-service.ts', 'src/messaging/visitor-session.ts', 'src/messaging/visitor-routes.ts',
+      'src/messaging/test-support/managed-deployment/fixture-files.ts', 'src/messaging/test-support/managed-deployment/audit-heartbeat.ts',
+      'src/blog/test-fixtures/publishing/audit-heartbeat.ts',
       'src/frontend/client/guardian-presence-presentation.ts', 'src/components/avatar-group/avatar-group.styles.css',
       'src/frontend/client/typing-indicator-hooks.ts', 'src/frontend/client/typing-indicator-model.ts',
       'src/sync/client/ephemeral-client.ts', 'src/sync/client/ephemeral-store.ts', 'src/sync/ephemeral-channel.ts',

@@ -30,6 +30,14 @@ the fixture never clears it or takes ownership early. Production supervision
 must likewise allow bounded startup retry/backoff after an ungraceful death.
 Graceful shutdown releases the exact generation without this crash grace.
 
+SDK-only fixture identities have no AppProvider collector. The runner therefore
+copies the existing tested audit-heartbeat helper from the exact installed
+archive and keeps authenticated observations current at its returned policy
+interval. It joins collectors before deliberate faults and shutdown, and starts
+fresh required admission after recovery. No server TTL is widened; a collector
+failure still fails qualification. Protected operations are never retried by
+that collector. Do not replace the production AppProvider with this test helper.
+
 Reports/logs exclude the generated synthetic credential file. Only newly created
 container state is used. Do not mount app data, production volumes, Docker socket,
 provider keys or a host home directory. `--init` reaps orphaned fixture workers so
