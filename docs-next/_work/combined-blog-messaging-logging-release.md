@@ -55,12 +55,14 @@ The source already centers one recent article, balances two recent articles
 and suppresses an empty related section. Preserve those working cases. Concrete
 gaps are the repeated hero/grid articles and text-only loading in
 [the layouts](../../src/components/blog/blog-layouts.tsx), the fixed sparse
-grid and lack of self/dedup protection in
-[cards and recommendations](../../src/components/blog/blog-cards.tsx), the
+grid in [cards and recommendations](../../src/components/blog/blog-cards.tsx), the
 public search failure without a retry action in
 [the managed reader](../../src/components/blog/blog-public-page.tsx), and
 initial publishing capability failures with no explicit recovery control in
 [the management workspace](../../src/components/blog/blog-workspace.tsx).
+The first implementation slice has already corrected current-article and
+duplicate recommendations and the usable-recent fallback; sparse layout and
+the other state work remain open.
 
 - [ ] Exercise zero, one, two, three and many published posts, with and without
   images. A single article must look deliberate; two should use balanced space.
@@ -221,7 +223,7 @@ replacement is added to this completion pass.
 - [x] Start phase one with current-article exclusion, stable recommendation
   deduplication and the recent-article fallback. `RelatedPosts` also accepts
   `excludePostId` for standalone composition. The focused related/default SSR
-  set passes 10 tests / 62 assertions; this is not the complete state/browser
+  set passes 10 tests / 62 assertions, and root TypeScript passes; this is not the complete state/browser
   acceptance pass (`blog-related-states-first.log` in the existing diagnostics).
 - [ ] Complete phases one through five and replace this status with exact final
   release evidence when the normal updater is actually ready.
