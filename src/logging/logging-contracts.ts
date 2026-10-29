@@ -96,6 +96,8 @@ export interface LoggingQuery {
   /** Exact stable [sourceId,eventId] row identities, bounded to 100 per authorized lookup. */
   readonly eventIds?: readonly string[];
   readonly limit?: number;
+  /** Defaults to true. Internal cursor/membership reads can skip the matching COUNT without changing evidence selection. */
+  readonly includeTotal?: boolean;
   readonly since?: number;
   readonly until?: number;
   readonly beforeOrdinal?: number;

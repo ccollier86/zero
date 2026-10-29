@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test';
 import { captureLoggingEvent, loggingArray, normalizeLoggingEvent } from './logging-validation';
 import { loggingContext, loggingEvent } from './test-support/logging-fixture';
 import { normalizeLoggingQuery, loggingPagePredicate } from './logging-query';
+import { loggingRealm } from './logging-realm';
+import type { DatabaseReadQueryContext } from '../databases/database-realm';
 
 test('event capture freezes a detached context, target and metadata snapshot', () => {
   const context = loggingContext(), metadata = { count: 2 }, target = { type: 'record', id: 'record-1' };
@@ -55,5 +57,23 @@ test('query predicates keep mandatory tenant scope and a fixed high-water bounda
   expect(compiled.values).toEqual(['audit', 200, 'tenant', 'tenant-a', 10, 20, 100, 'user-1']);
   for (const input of [{ limit: 0 }, { limit: 201 }, { limit: null }, { since: 20, until: 10 }, { beforeOrdinal: 0 }, { sql: 'SELECT *' }]) {
     expect(() => normalizeLoggingQuery('audit', { kind: 'platform' }, input as any)).toThrow();
+  }
+});
+
+test('count suppression skips the COUNT statement entirely without changing scope or page selection', () => {
+  const sql: string[] = [];
+  const context = { database: { query(statement: string) {
+    sql.push(statement);
+    return { get: () => statement.includes('COUNT(*)') ? { count: 0 } : null, all: () => [] };
+  } } } as unknown as DatabaseReadQueryContext;
+  const input = { stream: 'audit', scope: { kind: 'tenant', tenantId: 'tenant-a' }, query: { limit: 1, includeTotal: false } };
+  const helper = loggingRealm.queries['logging.page'](context, input);
+  expect(helper).not.toHaveProperty('total'); expect(sql.some(statement => statement.includes('COUNT(*)'))).toBe(false);
+  expect(sql.at(-1)).toContain('e.scope_kind = ? AND e.tenant_id = ?');
+  sql.length = 0;
+  const page = loggingRealm.queries['logging.page'](context, { ...input, query: { limit: 1 } });
+  expect(page.total).toBe(0); expect(sql.filter(statement => statement.includes('COUNT(*)'))).toHaveLength(1);
+  for (const includeTotal of [null, 0, 'false', {}, []]) {
+    expect(() => normalizeLoggingQuery('audit', { kind: 'application' }, { includeTotal } as any)).toThrow();
   }
 });

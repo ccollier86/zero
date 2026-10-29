@@ -2,8 +2,9 @@
 import type { LoggingFieldPolicy, LoggingResourcePolicies, LoggingResourcePolicy } from './logging-activity-contracts';
 import type { LoggingScalar } from './logging-contracts';
 import { invalid, loggingArray, loggingByteLength, loggingRecord } from './logging-validation';
+import { isLoggingApprovedScalar, LOGGING_SENSITIVE_FIELD } from './logging-activity-values';
 
-export const LOGGING_SENSITIVE_FIELD = /password|secret|cookie|authorization|credential|(?:access|refresh|bearer|session|csrf|auth|oauth)[_-]?token|(?:api|private|signing)[_-]?key|^token$/i;
+export { isLoggingApprovedScalar, LOGGING_SENSITIVE_FIELD } from './logging-activity-values';
 
 export function normalizeLoggingResourcePolicies(value: unknown): LoggingResourcePolicies {
   if (value === undefined) return Object.freeze({});
@@ -34,10 +35,6 @@ export function normalizeLoggingResourcePolicies(value: unknown): LoggingResourc
   return Object.freeze(output);
 }
 
-export function isLoggingApprovedScalar(value: unknown): value is LoggingScalar {
-  return value === null || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)
-    || typeof value === 'string' && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value);
-}
 function safeName(value: string, maximum: number): boolean {
   return value.length > 0 && value.length <= maximum && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
 }

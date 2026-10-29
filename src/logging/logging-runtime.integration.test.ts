@@ -109,3 +109,37 @@ test('a failed retained source retires strict grants and recovery requires a new
     await acknowledge(); expect(() => runtime.admission.assertCurrent({ auth })).not.toThrow();
   } finally { await source.close(); await runtime.close(); await rm(root, { recursive: true, force: true }); }
 }, 30000);
+
+test('quiet renewals require a responsive delivery child, not a cached ready state, and recovery does not revive grants', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'logging-strict-worker-probe-'));
+  const strict = resolveManagedLoggingConfig({ preset: 'compliance', rootDirectory: root }, root) as ResolvedManagedLoggingConfig;
+  const runtime = await LoggingRuntime.open(strict, observability());
+  const auth = { userId: 'fixture-user', sessionId: 'fixture-session', role: 'user', email: 'fixture@example.test', sessionKind: 'web' as const };
+  const context = { ...loggingContext(), policyVersion: strict.policyVersion };
+  const acknowledge = () => runtime.admission.acknowledge({ auth }, context, strict.policyVersion, async () => {});
+  let suspended: number | null = null;
+  try {
+    await acknowledge();
+    const initial = runtime.diagnostics().deliveryWorker!;
+    const head = (await runtime.page('audit', context.scope)).highWaterOrdinal;
+    for (let i = 0; i < 3; i++) await acknowledge();
+    expect((await runtime.page('audit', context.scope)).highWaterOrdinal).toBe(head);
+    suspended = initial.pid!; expect(suspended).not.toBe(process.pid);
+    process.kill(suspended, 'SIGSTOP');
+    expect(runtime.diagnostics().deliveryWorker?.state).toBe('ready');
+    await expect(acknowledge()).rejects.toThrow();
+    expect(() => runtime.admission.assertCurrent({ auth })).toThrow();
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline && !(runtime.diagnostics().deliveryWorker!.generation > initial.generation
+      && runtime.diagnostics().deliveryWorker!.state === 'ready')) await Bun.sleep(20);
+    expect(runtime.diagnostics().deliveryWorker).toMatchObject({ state: 'ready' });
+    expect(runtime.diagnostics().deliveryWorker!.generation).toBeGreaterThan(initial.generation);
+    expect(() => runtime.admission.assertCurrent({ auth })).toThrow();
+    await acknowledge(); expect(() => runtime.admission.assertCurrent({ auth })).not.toThrow();
+  } finally {
+    if (suspended !== null && runtime.diagnostics().deliveryWorker?.pid === suspended) {
+      try { process.kill(suspended, 'SIGCONT'); } catch { /* A failed probe already retired this test-owned child. */ }
+    }
+    await runtime.close(); await rm(root, { recursive: true, force: true });
+  }
+}, 30000);

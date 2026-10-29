@@ -18,10 +18,14 @@ export function normalizeLoggingQuery(stream: LoggingStream, scope: LoggingReadS
     const kind = loggingChoice(s.kind, ['application', 'tenant', 'platform'] as const);
     if (kind !== 'tenant' && 'tenantId' in s) invalid();
     const normalizedScope = Object.freeze(kind === 'tenant' ? { kind, tenantId: loggingId(s.tenantId)! } : { kind });
-    const r = loggingRecord(input, ['eventIds', 'limit', 'since', 'until', 'beforeOrdinal', 'highWaterOrdinal', 'family', 'action', 'actorId', 'sessionId', 'targetType', 'targetId', 'outcome', 'level']);
+    const r = loggingRecord(input, ['eventIds', 'limit', 'includeTotal', 'since', 'until', 'beforeOrdinal', 'highWaterOrdinal', 'family', 'action', 'actorId', 'sessionId', 'targetType', 'targetId', 'outcome', 'level']);
     const limit = r.limit === undefined ? 50 : r.limit;
     if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > LOGGING_MAX_PAGE) invalid();
     const query: Record<string, unknown> & { limit: number } = { limit };
+    if (r.includeTotal !== undefined) {
+      if (typeof r.includeTotal !== 'boolean') invalid();
+      query.includeTotal = r.includeTotal;
+    }
     if (r.eventIds !== undefined) {
       const ids = loggingArray(r.eventIds, 100).map(value => {
         if (typeof value !== 'string' || value.length > 1024) invalid();

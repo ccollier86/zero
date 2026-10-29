@@ -164,8 +164,11 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
   if (head && head.stream !== input.stream) throw new DatabaseError('DATABASE_CONFLICT', 'Logging stream binding does not match.');
   const highWaterOrdinal = Math.min(input.query.highWaterOrdinal ?? head?.ordinal ?? 0, head?.ordinal ?? 0);
   const predicate = loggingPagePredicate(input, highWaterOrdinal, 'e');
-  const totalPredicate = loggingPagePredicate({ ...input, query: { ...input.query, beforeOrdinal: undefined } }, highWaterOrdinal, 'e');
-  const total = database.query<{ count: number }>('SELECT COUNT(*) AS count FROM logging_events e WHERE ' + totalPredicate.sql).get(...totalPredicate.values)!.count;
+  let total: number | undefined;
+  if (input.query.includeTotal !== false) {
+    const totalPredicate = loggingPagePredicate({ ...input, query: { ...input.query, beforeOrdinal: undefined } }, highWaterOrdinal, 'e');
+    total = database.query<{ count: number }>('SELECT COUNT(*) AS count FROM logging_events e WHERE ' + totalPredicate.sql).get(...totalPredicate.values)!.count;
+  }
   const found = database.query<EventRow>('SELECT e.*,p.digest AS proof_digest,p.previous_hash,p.chain_hash,p.expired FROM logging_events e LEFT JOIN logging_proofs p ON p.id=e.id WHERE ' + predicate.sql + ' ORDER BY e.ordinal DESC LIMIT ?').all(...predicate.values, input.query.limit + 1);
   const events = []; let bytes = 1024;
   for (const row of found.slice(0, input.query.limit)) {
@@ -174,5 +177,5 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
     events.push(item); bytes += size;
   }
   const hasMore = found.length > events.length;
-  return { events, highWaterOrdinal, total, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
+  return { events, highWaterOrdinal, ...(total === undefined ? {} : { total }), hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
 }

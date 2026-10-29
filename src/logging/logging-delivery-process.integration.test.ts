@@ -81,3 +81,32 @@ test('an adversarial worker cannot manufacture sink admissions or acknowledge an
     await source.flush(); expect(reads).toBe(1); expect(writes).toBe(0); expect(acknowledgments).toBe(0);
   } finally { await source.close(); await worker.close(); }
 }, 30000);
+
+test('fresh control probes create no event admissions and do not flush a pending sink write', async () => {
+  const options = config(); let writes = 0, release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; }), inSink = new Promise<void>(resolve => { entered = resolve; });
+  const worker = await LoggingDeliveryProcess.open(options.createExecutor, options.policy.queue, async (_stream, events) => {
+    writes++; entered(); await gate;
+    return { receipts: events.map(event => ({ id: event.id, sourceId: event.sourceId, ordinal: 1, duplicate: false })), sequence: { seq: 1 } };
+  });
+  let writing: Promise<unknown> | undefined;
+  try {
+    for (let i = 0; i < 32; i++) await worker.probe(crypto.randomUUID());
+    expect(writes).toBe(0); expect(worker.diagnostics('audit')).toMatchObject({ acknowledged: 0, pendingEvents: 0 });
+    writing = worker.write(loggingEvent('held-sink')); await inSink;
+    expect(await Promise.race([worker.probe(crypto.randomUUID()).then(() => true), Bun.sleep(1000).then(() => false)])).toBe(true);
+    expect(writes).toBe(1); expect(worker.diagnostics('audit')).toMatchObject({ acknowledged: 0, pendingEvents: 1 });
+    release(); await writing;
+    expect(worker.diagnostics('audit')).toMatchObject({ acknowledged: 1, pendingEvents: 0 });
+  } finally { release(); await writing; await worker.close(); }
+}, 30000);
+
+test('an unrelated worker challenge reply retires that generation instead of proving liveness', async () => {
+  const options = resolveManagedLoggingConfig({ preset: 'activity', actors: { launch: { kind: 'source', entrypoint: new URL('./test-support/logging-delivery-probe.fixture.ts', import.meta.url) }, env: {} } }, '/tmp') as ResolvedManagedLoggingConfig;
+  const worker = await LoggingDeliveryProcess.open(options.createExecutor, options.policy.queue, async () => { throw new Error('Control probe reached the sink'); });
+  try {
+    await expect(worker.probe(crypto.randomUUID())).rejects.toMatchObject({ code: 'LOGGING_RESPONSE_INVALID' });
+    expect(worker.workerDiagnostics().state).not.toBe('ready');
+    expect(worker.diagnostics('audit').acknowledged).toBe(0);
+  } finally { await worker.close(); }
+}, 30000);

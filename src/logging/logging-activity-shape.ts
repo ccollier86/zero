@@ -1,9 +1,7 @@
 /** Browser-only JSON shape check. The server separately performs descriptor-safe admission. */
 import type { LoggingActivityDetail } from './logging-activity-contracts';
+import { isLoggingApprovedScalar as scalar, LOGGING_SENSITIVE_FIELD as sensitive } from './logging-activity-values';
 
-const sensitive = /password|secret|cookie|authorization|credential|(?:access|refresh|bearer|session|csrf|auth|oauth)[_-]?token|(?:api|private|signing)[_-]?key|^token$/i;
-const scalar = (value: unknown) => value === null || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)
-  || typeof value === 'string' && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value);
 const record = (value: unknown, keys: readonly string[]): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).every(key => keys.includes(key));
 
@@ -22,6 +20,6 @@ export function isLoggingActivityDetail(value: unknown): value is LoggingActivit
     if (field.kind === 'redacted') return !('before' in field) && !('after' in field);
     return field.kind === 'value' && !sensitive.test(field.field) && scalar(field.before) && scalar(field.after)
       && (field.beforePresent || field.before === null) && (field.afterPresent || field.after === null)
-      && (field.beforePresent !== field.afterPresent || !Object.is(field.before, field.after));
+      && (field.beforePresent !== field.afterPresent || field.before !== field.after);
   });
 }

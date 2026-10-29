@@ -29,7 +29,7 @@ export interface DeliverySourceRegistration {
   close(): Promise<void>;
   diagnostics(): DeliverySourceState;
 }
-export type DeliveryOperation = 'write' | 'source.add' | 'source.flush' | 'source.close' | 'flush' | 'stop' | 'status';
+export type DeliveryOperation = 'write' | 'probe' | 'source.add' | 'source.flush' | 'source.close' | 'flush' | 'stop' | 'status';
 export type DeliveryBrokerOperation = 'source.page' | 'sink.append';
 export interface DeliveryWire {
   protocol: typeof LOGGING_DELIVERY_PROTOCOL;
@@ -91,6 +91,15 @@ export function deliveryError(raw: unknown): LoggingError {
   return new LoggingError(r.code as LoggingError['code'], 'Logging delivery worker operation failed.', r.outcome as LoggingError['outcome']);
 }
 export function deliveryIdentity(event: Pick<LoggingEvent, 'id' | 'sourceId'> | LoggingReceipt): string { return JSON.stringify([event.sourceId, event.id]); }
+
+/** A per-request challenge is separate from the channel/session nonce and carries no event or source capability. */
+export function readDeliveryProbe(raw: unknown): Readonly<{ nonce: string }> {
+  try {
+    const input = loggingRecord(raw, ['nonce']);
+    if (typeof input.nonce !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(input.nonce)) throw new Error();
+    return Object.freeze({ nonce: input.nonce });
+  } catch { throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid delivery worker challenge.'); }
+}
 
 export function readDeliveryAppend(raw: unknown, events: readonly LoggingEvent[]): LoggingAppendResult {
   try {

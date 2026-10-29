@@ -111,7 +111,10 @@ export class LoggingRuntime {
         && (!this.custody || this.custody.diagnostics().state === 'ready'),
       async nonce => {
         this.assertReady();
-        try { await executeCoordinatorLoggingDeliveryProbe(this.streams.get('audit')!.lease, nonce); }
+        try {
+          await this.delivery!.probe(nonce);
+          await executeCoordinatorLoggingDeliveryProbe(this.streams.get('audit')!.lease, nonce);
+        }
         catch (error) { this.admission.invalidate(); throw error; }
       });
   }

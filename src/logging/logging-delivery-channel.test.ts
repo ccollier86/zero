@@ -1,7 +1,7 @@
 /** Pure transport admission/fencing tests. No worker or SQLite substitute is used for integration claims. */
 import { expect, test } from 'bun:test';
 import { LoggingDeliveryChannel } from './logging-delivery-channel';
-import { LOGGING_DELIVERY_PROTOCOL, LOGGING_DELIVERY_VERSION, readDeliveryPage, readDeliveryWire, type DeliveryWire } from './logging-delivery-protocol';
+import { LOGGING_DELIVERY_PROTOCOL, LOGGING_DELIVERY_VERSION, readDeliveryPage, readDeliveryProbe, readDeliveryWire, type DeliveryWire } from './logging-delivery-protocol';
 
 const nonce = '00000000-0000-0000-0000-000000000001';
 const reply = (id: number, op: string, value: unknown): DeliveryWire => ({ protocol: LOGGING_DELIVERY_PROTOCOL, version: LOGGING_DELIVERY_VERSION, nonce, type: 'reply', id, op, value });
@@ -29,4 +29,13 @@ test('a malformed error response rejects its dispatched request instead of remov
   const request = channel.call('write', null);
   channel.receive({ ...reply(1, 'write', null), error: { code: 'UNRECOGNIZED', outcome: 'unknown' } });
   await expect(request).rejects.toMatchObject({ code: 'LOGGING_OUTCOME_UNKNOWN', outcome: 'unknown' });
+});
+
+test('worker probe payloads are closed descriptor-safe UUID challenges, not extra broker capabilities', () => {
+  const challenge = crypto.randomUUID(); expect(readDeliveryProbe({ nonce: challenge })).toEqual({ nonce: challenge });
+  for (const value of [null, {}, { nonce }, { nonce: challenge, stream: 'audit' }, { nonce: challenge, events: [] }, { nonce: 'x'.repeat(200) }]) {
+    expect(() => readDeliveryProbe(value)).toThrow();
+  }
+  let invoked = false;
+  expect(() => readDeliveryProbe({ get nonce() { invoked = true; return challenge; } })).toThrow(); expect(invoked).toBe(false);
 });

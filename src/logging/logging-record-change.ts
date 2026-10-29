@@ -2,7 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { Row, Change } from '../sync/types';
 import type { LoggingFieldChange, LoggingRecordChange, LoggingResourcePolicies } from './logging-activity-contracts';
-import { LOGGING_SENSITIVE_FIELD, isLoggingApprovedScalar } from './logging-resource-policy';
+import { LOGGING_SENSITIVE_FIELD, isLoggingApprovedScalar } from './logging-activity-values';
 import { loggingDigest } from './logging-hash';
 import { loggingByteLength } from './logging-validation';
 
@@ -12,7 +12,7 @@ export function captureLoggingRecordChange(change: Pick<Change, 'op' | 'table' |
   resources: LoggingResourcePolicies = {}): LoggingRecordChange | null {
   const before: Row = change.previousRow ?? {}, after: Row = change.row ?? {};
   const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()
-    .filter(field => Object.hasOwn(before, field) !== Object.hasOwn(after, field) || !isDeepStrictEqual(before[field], after[field]));
+    .filter(field => Object.hasOwn(before, field) !== Object.hasOwn(after, field) || before[field] !== after[field] && !isDeepStrictEqual(before[field], after[field]));
   if (!changed.length && change.op === 'UPDATE') return null;
   const changes: LoggingFieldChange[] = []; let omittedFields = 0, bytes = loggingByteLength(change.table) + 256;
   for (const key of changed) {

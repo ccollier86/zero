@@ -9,6 +9,7 @@ process.on('message', raw => {
     const message = readDeliveryWire(raw);
     channel = new LoggingDeliveryChannel(message.nonce, value => { process.send!(value); }, async (op, value) => {
       if (op === 'init') return { pid: process.pid };
+      if (op === 'probe') return { nonce: crypto.randomUUID() }; // A fresh but unrelated response must never satisfy the parent's challenge.
       if (op === 'source.add') {
         const id = (value as string[])[0]!;
         probe = (async () => {

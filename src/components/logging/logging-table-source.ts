@@ -36,7 +36,7 @@ export function createLoggingTableSource(client: Pick<LoggingClient, 'page'> & P
     for (const change of changes) for (const listener of listeners) listener(change);
   };
   const initial = (signal: AbortSignal) => {
-    if (!baseline) baseline = client.page(stream, { ...filters, limit: 1 }, { signal })
+    if (!baseline) baseline = client.page(stream, { ...filters, limit: 1, includeTotal: false }, { signal })
       .then(page => page.highWaterOrdinal).catch(error => { baseline = null; throw error; });
     return baseline;
   };
@@ -48,7 +48,7 @@ export function createLoggingTableSource(client: Pick<LoggingClient, 'page'> & P
     notify('connecting');
     void initial(controller.signal).then(first => {
       if (!active()) return;
-      stop = client.watch!(stream, { ...filters, limit: 1 }, () => {}, {
+      stop = client.watch!(stream, { ...filters, limit: 1, includeTotal: false }, () => {}, {
         signal: controller.signal, platform: options.platform, afterOrdinal: cursor ?? first,
         onStatus: next => { if (active()) notify(next); },
         onError: () => { if (active()) notify('reconnecting'); },
@@ -110,14 +110,14 @@ export function createLoggingTableSource(client: Pick<LoggingClient, 'page'> & P
         for (let offset = 0; offset < wanted.length; offset += 100) {
           if (signal.aborted) return [];
           const ids = wanted.slice(offset, offset + 100), candidates = new Set(ids);
-          const page = await client.page(stream, { ...filters, eventIds: ids, limit: 100 }, { signal });
+          const page = await client.page(stream, { ...filters, eventIds: ids, limit: 100, includeTotal: false }, { signal });
           for (const row of page.events) { const id = identity(row); if (candidates.has(id)) confirmed.add(id); }
         }
         return signal.aborted ? [] : [...confirmed];
       },
       async getLeadingRowId(query, { signal }) {
         validate(query);
-        const page = await client.page(stream, { ...filters, limit: 1 }, { signal });
+        const page = await client.page(stream, { ...filters, limit: 1, includeTotal: false }, { signal });
         return signal.aborted || !page.events.length ? null : identity(page.events[0]!);
       },
       subscribeChanges(query, listener, { signal }) {

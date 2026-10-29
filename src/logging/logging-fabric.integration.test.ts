@@ -121,6 +121,20 @@ test('Fabric logging stores are physically independent, survive restart and isol
   } finally { await f.close(); }
 }, 30000);
 
+test('cursor helper reads can omit counts while ordinary scoped page totals remain exact', async () => {
+  const f = await fixture();
+  try {
+    const { audit } = await f.stores(); await audit.append([loggingEvent('a'), loggingEvent('b'), loggingEvent('foreign', 'tenant-b')]);
+    const scope = { kind: 'tenant' as const, tenantId: 'tenant-a' };
+    const counted = await audit.page(scope, { limit: 1 }), helper = await audit.page(scope, { limit: 1, includeTotal: false });
+    expect(counted.total).toBe(2); expect(helper).not.toHaveProperty('total');
+    expect(helper.events).toEqual(counted.events); expect(helper.hasMore).toBe(true);
+    expect((await audit.page(scope, { limit: 1, beforeOrdinal: counted.nextBeforeOrdinal! })).total).toBe(2);
+    expect((await audit.page(scope, { includeTotal: true, actorId: 'absent' })).total).toBe(0);
+    await expect(audit.page(scope, { includeTotal: 'false' } as any)).rejects.toMatchObject({ code: 'LOGGING_QUERY_INVALID' });
+  } finally { await f.close(); }
+}, 30000);
+
 test('event identity prevents duplicates across regrouped batches; conflicting content rolls back the whole batch', async () => {
   const f = await fixture();
   try {

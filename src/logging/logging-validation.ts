@@ -6,6 +6,7 @@ import {
   type LoggingContext, type LoggingEvent, type LoggingEventInput, type LoggingScalar,
 } from './logging-contracts';
 import { normalizeLoggingActivityDetail } from './logging-activity-validation';
+import { loggingTableTarget } from './logging-table-target';
 
 export const LOGGING_MAX_EVENT_BYTES = 16_384;
 export const LOGGING_MAX_BATCH = 256;
@@ -114,7 +115,10 @@ export function captureLoggingEvent(trustedContext: LoggingContext, input: Loggi
   const target = r.target == null ? null : loggingRecord(r.target, ['type', 'id']);
   const detail = r.detail === undefined ? undefined : normalizeLoggingActivityDetail(r.detail);
   if (detail && (c.origin === 'frontend' || family !== 'records' || !['record.created', 'record.updated', 'record.deleted'].includes(r.action as string)
-    || r.outcome !== 'succeeded' || evidence !== 'server-confirmed' || !target)) invalid();
+    || r.outcome !== 'succeeded' || evidence !== 'server-confirmed' || !target || target.type !== loggingTableTarget(detail.table)
+    || r.action === 'record.created' && detail.changes.some(field => field.beforePresent || !field.afterPresent)
+    || r.action === 'record.deleted' && detail.changes.some(field => !field.beforePresent || field.afterPresent)
+    || r.action === 'record.updated' && !detail.changes.length && !detail.omittedFields)) invalid();
   const event: LoggingEvent = Object.freeze({
     ...c, version: detail ? 2 : 1, id: loggingId(r.id)!, stream: family === 'operational' ? 'operational' : 'audit', family,
     action: loggingCode(r.action), level: r.level === undefined ? 'info' : loggingChoice(r.level, LOGGING_LEVELS),

@@ -15,7 +15,7 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
 (playwrightTestBrowserAvailable ? test : test.skip)('AppProvider masks protected UI when delivery is blocked, retries, and recovers cookie-only SSR without a reload loop', async () => {
   const root = await mkdtemp(join(tmpdir(), 'logging-provider-browser-'));
   let app: Awaited<ReturnType<typeof createApp>> | undefined, services: ServerRouteServices | undefined;
-  let blocked = true, acknowledgments = 0, documents = 0;
+  let blocked = true, partialAcknowledgment = false, acknowledgments = 0, documents = 0;
   const lease = await acquirePlaywrightTestBrowser(), context = await lease.browser.newContext();
   try {
     await mkdir(join(root, 'app'));
@@ -30,7 +30,7 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
     app = await createApp({ projectRoot: root,
       db: { mode: 'file', path: join(root, 'app.db'), synchronous: 'FULL' }, systemDb: { mode: 'file', path: join(root, 'system.db'), synchronous: 'FULL' }, tables: {},
       auth: { bootstrap: 'public', registration: { mode: 'public' }, accountEmails: { passwordReset: false }, userProfile: { avatars: { enabled: true, outputSize: 64 } } },
-      logging: { preset: 'compliance', rootDirectory: 'logs' }, workflows: false, email: false, ai: false, vector: false, kv: false, pdf: false,
+      logging: { preset: 'compliance', rootDirectory: 'logs', capture: { clipboard: true } }, workflows: false, email: false, ai: false, vector: false, kv: false, pdf: false,
       appDir: join(root, 'app'), outDir: join(root, 'build'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
       themeFoundation: 'legacy', frontendBuild: { version: 1, frontend: { themeFoundation: 'legacy', plugins: {} }, pluginIdentities: {} },
       migrate: true, serverPluginsDir: false, serverResourcesDir: false, serverMiddlewareDir: false, serverEndpointsDir: false,
@@ -48,6 +48,12 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
     const page = await context.newPage(), errors: string[] = [], responses: { path: string; status: number }[] = [];
     await page.route('**/api/_zero/logging/observations', async route => {
       if (blocked) await route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":"SYNTHETIC_UNAVAILABLE"}' });
+      else if (partialAcknowledgment) {
+        // Fault injection after the real native boundary. A valid delivery
+        // grant must not disguise an incomplete observation acknowledgment.
+        const response = await route.fetch(), body = await response.json();
+        await route.fulfill({ response, json: { ...body, accepted: 0 } });
+      }
       else await route.continue();
     });
     page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(10000);
@@ -91,6 +97,13 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
     expect(health).toMatchObject({ state: 'ready', preset: 'compliance', failedEvents: 0, sourceDeliveryFailures: 0, maintenanceFailures: 0 });
     expect(health.operationalBridge?.failed).toBe(0);
     expect(JSON.stringify(health)).not.toMatch(/Fixture-password|logging-browser-owner@example/);
+    partialAcknowledgment = true;
+    await page.evaluate(() => document.dispatchEvent(new ClipboardEvent('copy')));
+    await page.getByRole('alert', { name: 'Audit delivery required', exact: true }).waitFor();
+    expect(await page.getByTestId('logging-protected').count()).toBe(0);
+    partialAcknowledgment = false;
+    await page.getByRole('button', { name: 'Retry audit delivery', exact: true }).click();
+    await page.getByTestId('logging-protected').waitFor();
     expect(errors).toEqual([]);
     const events = await services!.logging!.page('audit', { kind: 'platform' });
     expect(JSON.stringify(events)).not.toMatch(/Fixture-password|logging-browser-owner@example/);

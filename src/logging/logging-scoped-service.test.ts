@@ -50,9 +50,9 @@ test('read scopes cannot be replaced, permission failure does not read, and dela
 
 test('live page and membership reads share one audited investigation window without a query-refresh feedback loop', async () => {
   const f = fixture();
-  await f.service.page('audit', { actorId: 'user-b', limit: 1 });
+  await f.service.page('audit', { actorId: 'user-b', limit: 1, includeTotal: false });
   await f.service.page('audit', { actorId: 'user-b', limit: 25, beforeOrdinal: 200, highWaterOrdinal: 500 });
-  await f.service.page('audit', { actorId: 'user-b', eventIds: [JSON.stringify(['source', 'event'])], limit: 100 });
+  await f.service.page('audit', { actorId: 'user-b', eventIds: [JSON.stringify(['source', 'event'])], limit: 100, includeTotal: false });
   expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(1);
   await f.service.page('audit', { actorId: 'user-c' });
   expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(2);

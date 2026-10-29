@@ -3,7 +3,7 @@ import { parseDatabaseActorInvocation } from '../databases/database-actor-entry-
 import { LoggingError } from './logging-error';
 import { LoggingDeliveryChannel } from './logging-delivery-channel';
 import { LoggingDeliveryScheduler } from './logging-delivery-scheduler';
-import { LOGGING_DELIVERY_FLAG, LOGGING_DELIVERY_MAX_SOURCES, readDeliveryAppend, readDeliveryWire } from './logging-delivery-protocol';
+import { LOGGING_DELIVERY_FLAG, LOGGING_DELIVERY_MAX_SOURCES, readDeliveryAppend, readDeliveryProbe, readDeliveryWire } from './logging-delivery-protocol';
 import { loggingArray, loggingId, loggingRecord, normalizeLoggingEvent } from './logging-validation';
 import type { ResolvedLoggingConfig } from './logging-config';
 
@@ -37,6 +37,7 @@ export async function runLoggingDeliveryIfRequested(argv: readonly string[] = pr
           }
           if (!scheduler || stopping) throw new LoggingError('LOGGING_CLOSED', 'Delivery worker is unavailable.');
           switch (op) {
+            case 'probe': return readDeliveryProbe(value);
             case 'write': return scheduler.write(normalizeLoggingEvent(value));
             case 'source.add': scheduler.add(ids(value)); return null;
             case 'source.flush': await scheduler.flush(ids(value)); return null;

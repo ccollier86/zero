@@ -561,8 +561,9 @@ A real Chromium regression decodes public artwork with a staff cookie before
 admission, after invalidation and during a logging outage. Protected images and
 public children of protected parents remain gated.
 
-Routine renewals now use fresh private Fabric writer challenges rather than
-appending acknowledgment activities. Initial and interrupted/recovered admission
+Routine renewals now require a fresh bounded delivery-child response followed by
+a private Fabric writer challenge rather than appending acknowledgment activities.
+Initial and interrupted/recovered admission
 remain durably evidenced; grants still recheck authority, expiry and worker
 generation after waits. The new control table has one current row. A fixed
 private writer operation uses the audit file's bounded FIFO and FULL-durability
@@ -606,3 +607,43 @@ upgrade/rebuild, Linux deployment and complete package qualification remain requ
 The compliance views default must not be enabled until those lifetimes and storage
 semantics are installed. Canonical public manuals and the final updater handoff
 will be updated with the qualified implementation, not this partial checkpoint.
+
+## Foundation review and polish
+
+The foundation review fixes additional admission, observation, privacy and query
+defects on the same feature branch. Main and the selected Zero 2.7.0 archive
+remain unchanged.
+
+| Boundary | Correction and regression |
+| --- | --- |
+| Delivery worker responsiveness | A stopped child can retain a cached Ready status. Renewal now requires an exact fresh UUID reply on the current IPC session within five seconds, followed by the durable audit-writer control commit. An unrelated reply retires that worker generation. Real subprocess tests cover SIGSTOP, timeout, restart, invalidated grants and rejection of an unrelated reply. Probes do not append events or flush unrelated source work. See [worker tests](../../src/logging/logging-delivery-process.integration.test.ts) and [runtime tests](../../src/logging/logging-runtime.integration.test.ts). |
+| Suspended views | After pagehide, visibility, interaction, copy and print signals cannot extend a closed view. Pageshow starts fresh view identities with zeroed counters. Deterministic lifecycle tests verify that suspended time is excluded; these are not a real browser-cache restoration qualification. See [collector tests](../../src/frontend/client/logging-collector.test.ts). |
+| Navigation and delivery timing | The fallback ignores hash/query-only URL changes and never persists the URL. New observations flush in a coalesced 250 ms batch instead of waiting for the heartbeat. Committed route/page identity and native displayed-list bindings remain separate unfinished work. |
+| Required observation completeness | Partial acceptance retains the original batch. A successful prefix cannot clear a later failed batch. Required queue loss latches an incomplete collector lifetime so a later heartbeat cannot present the UI as recovered. The native AppProvider browser test injects partial acceptance after a real request and verifies masking and explicit recovery. Durable server-side loss summaries remain part of the unfinished observation protocol. See [browser regression](../../src/frontend/client/logging-app-provider.browser.test.ts). |
+| Typed edit facts | Source sequences accept the full positive safe-integer range. JSON-equivalent signed zero is a no-op. Native table, create/delete presence and update facts must agree. Token-shaped fields cannot opt into values; browser and server scalar/privacy rules share one browser-safe owner. Version-one envelopes and the five historical migration checksums remain unchanged. See [record facts](../../src/logging/logging-record-change.test.ts) and [migration checks](../../src/logging/logging-migration-compatibility.test.ts). |
+| Readable record labels | Typed facts retain the exact physical table name when older slug identities collide. Presentation cannot accidentally borrow another current table's label. See [label tests](../../src/components/logging/logging-readable-activity.test.ts). |
+| Count work | `LoggingQuery.includeTotal` defaults to true. Native cursor, stream-snapshot, leading-row and membership helper reads use false and omit the total rather than returning a false zero. The displayed page still requests its exact filtered retained-event total. This query option is excluded from investigation identity, so it does not create a second self-audit window. SQL-admission, real Fabric and source-adapter tests cover the distinction; full projected-activity throughput remains unqualified. |
+
+Focused source qualification passed 113 tests across 20 files with 2,687
+assertions. Security/recovery qualification passed 21 tests across six files,
+including real Chromium public-image decoding, private release fences, strict
+Sync/admission, disk-full handling, source recovery, custody and export recovery.
+Seven further managed integration tests passed for optional/off startup, separate
+app ownership, Guardian capture, provider provenance and private exports.
+The native workspace and AppProvider browser suites passed nine tests; the
+expanded partial-acknowledgment AppProvider case also passed separately. The
+compiled-worker owner-death/replay regression passed on the native macOS/arm64
+host. TypeScript passed. The documentation graph passed with 876 reachable,
+uniquely identified pages and no problems; its parser/evidence checks passed
+10 tests with 33 assertions.
+
+Preserved diagnostics and screenshots are under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/audit-replacement/`, with
+`review-` filenames. The failing pre-fix worker, collector and typed-fact runs
+remain alongside the passing runs. Native screenshots cover visible differences,
+record history, rolling totals, dark/narrow layout and authorized photos.
+
+This is not an installed-package or Linux/amd64 qualification. Historical result
+receipts, complete view summaries, logical activity projection/counts, full native
+capture and extension tooling, retained upgrade/rebuild and the normal release
+gates still block publication of the replacement.

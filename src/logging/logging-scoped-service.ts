@@ -61,7 +61,7 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     // Page cursors and internal INSERT-membership lookups belong to the same
     // investigation window. Auditing every such RPC would make a live audit
     // table recursively observe the queries caused by its own inserted rows.
-    const { limit: _limit, beforeOrdinal: _before, highWaterOrdinal: _highWater, eventIds: _ids, ...criteria } = query;
+    const { limit: _limit, includeTotal: _total, beforeOrdinal: _before, highWaterOrdinal: _highWater, eventIds: _ids, ...criteria } = query;
     return criteria;
   };
   const readPage = async (stream: Parameters<ScopedLogging['page']>[0], query: Parameters<ScopedLogging['page']>[1] = {}, platform = false) => {

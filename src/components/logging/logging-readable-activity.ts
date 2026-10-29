@@ -52,9 +52,16 @@ export function loggingTableLabel(table: LoggingTableChoice, presentation?: Logg
   return own(presentation?.tables, table.type) ?? (table.names.length === 1 ? own(presentation?.tables, table.names[0]!) : undefined)
     ?? table.label ?? table.names.map(loggingWords).join(' / ');
 }
-export function loggingResourceLabel(event: Pick<LoggingEvent, 'target'>, tables: readonly LoggingTableChoice[], presentation?: LoggingPresentation): string {
+export function loggingResourceLabel(event: Pick<LoggingEvent, 'target'> & Partial<Pick<LoggingEvent, 'detail'>>, tables: readonly LoggingTableChoice[], presentation?: LoggingPresentation): string {
   if (!event.target) return 'No specific record';
   const table = tables.find(table => table.type === event.target!.type);
+  // Legacy slugs can group different physical names. A typed source fact
+  // identifies its exact table; do not show a different table's current label.
+  if (event.detail?.kind === 'record-change') {
+    const name = event.detail.table;
+    return own(presentation?.tables, name) ?? own(presentation?.tables, event.target.type)
+      ?? (table?.names.length === 1 && table.names[0] === name ? table.label : undefined) ?? loggingWords(name);
+  }
   return table ? loggingTableLabel(table, presentation) : own(presentation?.tables, event.target.type) ?? own(presentation?.resources, event.target.type)
     ?? (event.target.type.startsWith('table.') ? loggingWords(event.target.type.slice(6)) : loggingWords(event.target.type));
 }

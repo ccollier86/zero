@@ -6,7 +6,7 @@ import type { LoggingEvent, LoggingReceipt, LoggingStream } from './logging-cont
 import type { LoggingAppendResult } from './logging-fabric-store';
 import { LoggingError } from './logging-error';
 import { LoggingDeliveryChannel } from './logging-delivery-channel';
-import { deliveryIdentity, LOGGING_DELIVERY_FLAG, LOGGING_DELIVERY_MAX_SOURCES, readDeliveryAppend,
+import { deliveryIdentity, LOGGING_DELIVERY_FLAG, LOGGING_DELIVERY_MAX_SOURCES, readDeliveryAppend, readDeliveryProbe,
   type DeliverySourcePort, type DeliverySourceRegistration, type DeliverySourceState } from './logging-delivery-protocol';
 import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingArray, loggingByteLength, loggingCanonical, loggingChoice, loggingId, loggingRecord, normalizeLoggingEvent } from './logging-validation';
 
@@ -65,6 +65,20 @@ export class LoggingDeliveryProcess {
       credit.count--; credit.bytes -= bytes; this.pending.delete(task);
       const admission = bodies!.get(body)!; admission.count--; if (!admission.count) bodies!.delete(body); if (!bodies!.size) this.direct.delete(identity);
     });
+    this.pending.add(task); return task;
+  }
+  /** Fresh bounded child responsiveness, without flushing unrelated sources or creating audit events/receipts. */
+  probe(nonce: string): Promise<void> {
+    const input = readDeliveryProbe({ nonce });
+    if (this.closing) return Promise.reject(new LoggingError('LOGGING_CLOSED', 'Delivery intake is closed.'));
+    const session = this.session;
+    if (!this.ready || !session) return Promise.reject(new LoggingError('LOGGING_NOT_READY', 'Delivery worker is recovering.'));
+    const task = session.channel.call('probe', input, 5000).then(raw => {
+      try {
+        if (readDeliveryProbe(raw).nonce !== nonce) throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Delivery worker challenge mismatch.');
+      } catch (error) { this.failSession(session); throw error; }
+      if (this.closing || !this.ready || this.session !== session) throw new LoggingError('LOGGING_NOT_READY', 'Delivery worker generation changed.');
+    }).finally(() => { this.pending.delete(task); });
     this.pending.add(task); return task;
   }
   /** Register only a server-owned source port. Child requests cannot select a path, table or tenant. */
