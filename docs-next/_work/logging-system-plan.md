@@ -23,6 +23,13 @@ reviewed_against:
 
 [Working plans](./index.md) · [Documentation index](../index.md)
 
+This is the historical foundation plan and earlier preview checkpoint. The
+[logging and auditing replacement](./logging-auditing-replacement-plan.md)
+supersedes its conflicting product/capture directions, including the treatment
+of transport stages and view heartbeats as ordinary activity. Keep the prior
+design and verification history; its branch-status statements below are not the
+current Zero 2.7.0 release status or acceptance of the replacement.
+
 Build one first-party logging system that scales from basic operational logs
 and security events to detailed user activity and a compliance-oriented audit
 configuration. It belongs in Zero core, with easy presets and granular controls;

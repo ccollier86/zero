@@ -15,6 +15,12 @@ applies_to: ["feature/logging-human-readable-workspace; source/UI qualification,
 
 [Working index](./index.md) · [Supported component](../frontend/components/logging.md) · [Logging foundation](./logging-foundation-review.md)
 
+Historical UI implementation and verification record. The
+[logging and auditing replacement](./logging-auditing-replacement-plan.md)
+now owns the product correction: useful automatic capture, explorable record/list
+identity, changes, duration, correct totals and no idle transport activity. The
+checks below do not establish acceptance of those newly specified behaviors.
+
 ## Scope and ownership
 
 Keep the existing private Fabric logging system, current-scope Guardian checks,

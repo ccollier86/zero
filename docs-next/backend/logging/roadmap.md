@@ -8,15 +8,15 @@ visibility: internal
 system: logging
 feature: integrated-logging-roadmap
 maturity: planned
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["Zero 2.7.0 baseline and proposed activity auditing replacement"]
 modes: [managed-server, browser, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  version: "2.7.0"
+  commit: "534e7a0edf56c44eb0ae62c7a603238840315ded"
   snapshot: clean
-  date: "2026-10-25"
-  evidence_level: implementation-verified
+  date: "2026-10-29"
+  evidence_level: source-observed
 ---
 
 # Logging Roadmap
@@ -34,6 +34,27 @@ planning, not proof that every proposed integration exists.
 Ordinary app upgrades must use the exact qualified committed main package.
 The [qualification record](../../_work/logging-compliance-qualification.md)
 tracks package checks separately from application acceptance.
+
+## Activity audit replacement
+
+The [replacement plan](../../_work/logging-auditing-replacement-plan.md) is the
+current product correction, not an implemented capability. The Zero 2.7.0
+experience overproduces delivery/HTTP bookkeeping and does not provide the
+requested historical displayed lists, automatic readable differences and view
+duration. Public-asset admission and total/page-size defects also require repair.
+Existing durability and package qualification do not establish those behaviors.
+
+Keep the reusable private Fabric, Guardian, source-outbox, worker and evidence
+foundations while replacing capture/correlation, control-traffic handling and
+the activity projection. Native Zero operations should be automatic; apps add
+typed custom actions, safe labels, record links and field policies through the
+same facade. The first interface remains the native DataTable with real filters,
+exploration, live totals and normal component behavior. Other views are deferred.
+
+The plan defines protected/public boundaries, configuration including off,
+changing-list revisions, safe retained-state transition and concrete browser,
+isolation, deployment and updater gates. No new release or runtime change is
+implied by adding it. The earlier source/release records remain historical.
 
 ## Follow-ups, Not Hidden Preset Requirements
 

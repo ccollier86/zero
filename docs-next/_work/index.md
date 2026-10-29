@@ -17,6 +17,12 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Logging and auditing replacement](./logging-auditing-replacement-plan.md):
+  the current generic product plan replacing transport-centered activity with
+  automatic native operations, historical lists, record views and duration,
+  committed differences, public extension tools and a readable native DataTable.
+  Includes configuration, public-asset safety, worker/storage ownership,
+  retained-state transition and end-to-end release acceptance. Planning only.
 - [Combined blog messaging and logging release](./combined-blog-messaging-logging-release.md):
   current assessment, remaining product polish, shared runtime failures, exact
   archive qualification and normal updater publication in execution order.

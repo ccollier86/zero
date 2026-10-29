@@ -11,6 +11,12 @@ visibility: internal
 
 [Working evidence](./index.md) · [Logging plan](./logging-system-plan.md) · [Logging reference](../backend/logging/index.md)
 
+This preserves earlier control and package qualification. The current
+[logging and auditing replacement plan](./logging-auditing-replacement-plan.md)
+addresses the rejected transport-centered activity experience and adds new
+product acceptance gates. Prior successful control tests are not proof of
+historical displayed lists, meaningful differences or the replacement UI.
+
 This work starts from main `fc61dcc4cd107c6467bff498d3a772e8f5bdea9d`
 on `fix/logging-compliance-qualified`. Blog author/profile work is excluded.
 PracticeIQ is an integration reference only; its files, data and deployment
