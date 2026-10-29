@@ -59,6 +59,7 @@ export interface CoordinatorTenantSyncSnapshotStart {
 
 /** Narrow host boundary implemented by DatabaseCoordinator. */
 export interface DatabaseCoordinatorCapabilityHost {
+  executeLoggingDeliveryProbe?(entry: DatabaseCoordinatorEntry, nonce: string): Promise<void>;
   executeLoggingSource?(entry: DatabaseCoordinatorEntry, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage>;
   executePresenceProjection(entry: DatabaseCoordinatorEntry, publication: PresencePublication,
     options: DatabaseExecutionOptions | undefined, commitAuthority: DatabaseCommitAuthority | null): Promise<PresenceProjectionReceipt>;
@@ -179,6 +180,12 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
     if (!this.#coordinator.executeLoggingSource) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Actor audit source is unavailable.');
     return this.#coordinator.executeLoggingSource(this.#entry, scope, acknowledge);
   }
+  /** @internal The public database client never receives this private capability. */
+  executeLoggingDeliveryProbe(nonce: string): Promise<void> {
+    this.assertActive();
+    if (!this.#coordinator.executeLoggingDeliveryProbe) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Private audit writer delivery control is unavailable.');
+    return this.#coordinator.executeLoggingDeliveryProbe(this.#entry, nonce);
+  }
   get released(): boolean { return !this.#active; }
 
   tenantSyncReservedEntry(): DatabaseCoordinatorEntry {
@@ -298,6 +305,12 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
 export function executeCoordinatorLoggingSource(lease: DatabaseCoordinatorLease, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {
   if (!(lease instanceof CoordinatorLease)) throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Audit delivery requires a coordinator-owned binding.');
   return lease.executeLoggingSource(scope, acknowledge);
+}
+
+/** Fixed private liveness only; cannot select tables, SQL, paths or named realm commands. */
+export async function executeCoordinatorLoggingDeliveryProbe(lease: DatabaseCoordinatorLease, nonce: string): Promise<void> {
+  if (!(lease instanceof CoordinatorLease)) throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Audit delivery requires a coordinator-owned binding.');
+  await lease.executeLoggingDeliveryProbe(nonce);
 }
 
 /** Invoke the private projection path only on a coordinator-owned lease. */

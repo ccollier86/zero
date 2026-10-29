@@ -34,6 +34,7 @@ import {
   type CompiledAccessRequirement,
 } from '../../auth/authorization-kernel';
 import { AuthError, type AuthContext } from '../../auth/types';
+import { markPublicLoggingRequest } from '../../logging/logging-public-request';
 
 // ─── ISR Cache ────────────────────────────────────────────────────────────
 
@@ -152,7 +153,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         });
       }
       return new Response('Not Found', { status: 404 });
-    });
+    }, { transform: ({ request }) => { markPublicLoggingRequest(request); } });
 
   if (options.sitemap) {
     router.get(options.sitemap.config.path, async ({ request }) => {
@@ -175,13 +176,13 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         emit(OBS_CODES.SEO_DISCOVERY_FAILED, { metadata: { surface: 'sitemap' } });
         return new Response('Sitemap unavailable.', { status: 503, headers: { 'Cache-Control': 'no-store' } });
       }
-    });
+    }, { transform: ({ request }) => { markPublicLoggingRequest(request); } });
   }
 
   if (options.seo?.defaults && options.seo.defaults.robotsTxt !== false) {
     router.get('/robots.txt', () => new Response(options.seo!.robotsTxt(options.sitemap?.config.path), {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    }));
+    }), { transform: ({ request }) => { markPublicLoggingRequest(request); } });
   }
 
   return router
@@ -539,10 +540,44 @@ export function createRouterPlugin(options: RouterPluginOptions) {
       return privatePageRequest
         ? withPrivatePageHeaders(response)
         : response;
-    });
+    }, { transform: async ({ request }) => {
+      await markPublicFileRequest(request, routeTree, options);
+    } });
 }
 
 // ─── Route Middleware Runner ──────────────────────────────────────────────
+
+/** Classify only the selected file surface, before global admission. Never run loaders or middleware here. */
+async function markPublicFileRequest(request: Request, tree: RouteNode, options: RouterPluginOptions): Promise<void> {
+  try {
+    const pathname = new URL(request.url).pathname, match = matchRoute(tree, pathname);
+    const api = match.apiRoutePath ? await import(match.apiRoutePath) : null;
+    const selectedApi = api && typeof api[request.method.toUpperCase()] === 'function';
+    const selectedPath = selectedApi ? null : match.pagePath ?? match.notFoundPath;
+    if (!selectedApi && !selectedPath) return;
+    const pagePublic = !selectedApi && !!options.authGuard && (
+      options.authGuard.routeAuth === 'explicit' || isPublicPath(pathname, options.authGuard.publicPaths ?? [
+        '/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email',
+      ]));
+    // The global page guard cannot be weakened by a public child module.
+    if (!selectedApi && options.authGuard && !pagePublic) return;
+    const kernel = options.authorization?.getKernel() ?? null;
+    let access = compileRouteAccess(false, kernel), declaredPublic = pagePublic;
+    for (const path of match.layouts) {
+      const config: RouteConfig | undefined = (await import(path)).config;
+      declaredPublic ||= config?.auth === false;
+      access = mergeRouteAccess(access, config?.auth, kernel);
+      if (access.user === 'required') return;
+    }
+    const config: RouteConfig | undefined = selectedApi ? api.config : (await import(selectedPath!)).config;
+    declaredPublic ||= config?.auth === false;
+    access = mergeRouteAccess(access, config?.auth, kernel);
+    if (declaredPublic && access.user !== 'required') markPublicLoggingRequest(request);
+  } catch {
+    // An unavailable or invalid policy cannot become a public exemption. The
+    // normal route handler remains responsible for its own error response.
+  }
+}
 
 function resolveRouterAccess(input: {
   authContext: AuthContext | null;

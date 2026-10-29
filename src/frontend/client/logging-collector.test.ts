@@ -37,6 +37,31 @@ test('offline collection remains bounded and reports loss instead of claiming du
   await collector.stop(); expect(collector.diagnostics().queued).toBe(0); expect(collector.diagnostics().stopped).toBe(true);
 });
 
+test('nested record bindings close independently, retain visible duration, and never replace page navigation identity', async () => {
+  let clock = 0, focused = true;
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => focused });
+  const win = Object.assign(new EventTarget(), { location: { href: 'https://synthetic.invalid/start' } });
+  const observations: LoggingObservation[] = [];
+  const collector = createLoggingCollector({ bindObservations: () => ({ async observe(rows) { observations.push(...structuredClone(rows)); return { accepted: rows.length }; } }) },
+    { enabled: true, capture: Object.fromEntries(LOGGING_FAMILIES.map(f => [f, true])) as LoggingCollectionPolicy['capture'], heartbeatMs: 30000, idleMs: 60000 },
+    { document: doc as unknown as Document, window: win as unknown as Window, now: () => clock });
+  try {
+    const parent = collector.bindView({ type: 'table.records', id: 'parent-record' }); clock = 1000;
+    const nested = collector.bindView({ type: 'table.records', id: 'nested-record' }); clock = 3000;
+    nested.close(); nested.close(); clock = 5000; focused = false; doc.visibilityState = 'hidden'; doc.dispatchEvent(new Event('visibilitychange'));
+    clock = 10000; parent.close(); await collector.flush();
+    const nestedEvents = observations.filter(event => event.target?.id === 'nested-record');
+    expect(nestedEvents.map(event => event.action)).toEqual(['view.opened', 'view.closed']);
+    expect(nestedEvents[1]!.interval).toMatchObject({ elapsedMs: 2000, visibleMs: 2000, activeMs: 2000 });
+    const parentEvents = observations.filter(event => event.target?.id === 'parent-record');
+    expect(parentEvents.map(event => event.action)).toEqual(['view.opened', 'view.interval', 'view.closed']);
+    expect(parentEvents[1]!.interval).toMatchObject({ elapsedMs: 5000, visibleMs: 5000 });
+    expect(parentEvents[2]!.interval).toMatchObject({ elapsedMs: 5000, visibleMs: 0 });
+    win.location.href = 'https://synthetic.invalid/next'; win.dispatchEvent(new Event('popstate')); await collector.flush();
+    expect(observations.filter(event => event.action === 'navigation.changed').map(event => event.target)).toEqual([{ type: 'page', id: 'application' }]);
+  } finally { await collector.stop(); }
+});
+
 test('strict delivery heartbeats work with all optional browser capture disabled and report outages honestly', async () => {
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
   const win = Object.assign(new EventTarget(), { location: { href: 'https://synthetic.invalid/private' } });

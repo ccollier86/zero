@@ -83,6 +83,8 @@ export function DataTablePagination<TData>({
     prefetchScope.current.mounted = false; prefetchScope.current.revision++;
   }; }, []);
   const { pageIndex, pageSize } = table.getState().pagination;
+  // An explicitly configured size must have an actual option/selected label.
+  const effectivePageSizes = [...new Set([...pageSizes, pageSize].filter(size => Number.isSafeInteger(size) && size > 0))].sort((a, b) => a - b);
   const server = serverPage !== undefined;
   const navigableTotal = server ? serverPage?.total : table.getFilteredRowModel().rows.length;
   const totalRows = !server && Number.isSafeInteger(totalCountOverride) && totalCountOverride! >= 0 ? totalCountOverride : navigableTotal;
@@ -100,7 +102,7 @@ export function DataTablePagination<TData>({
     : table.getCanNextPage());
   const canJumpToLast = pageCount !== undefined && pageCount > 0;
   const selectedCount = selectedDataTablePageRows(table).length;
-  const countLabel = count > 0 ? cursor ? `${count} records on this page`
+  const countLabel = count > 0 ? cursor ? `${count} records on this page${totalRows === undefined ? '' : ` · ${totalRows} total`}`
     : `Showing ${start}-${end}${totalRows === undefined ? '' : ` of ${totalRows}`}`
     : loading ? 'Loading records…' : 'No results';
   const visiblePage = pageCount === 0 ? 0 : pageIndex + 1;
@@ -146,7 +148,8 @@ export function DataTablePagination<TData>({
       <div data-slot="data-table-page-count" data-ready={countReady ? 'true' : 'false'} role="status" aria-label={countLabel}
         className="min-w-0 text-sm text-muted-foreground sm:flex-1">
         <span aria-hidden="true">{count > 0 ? cursor
-          ? <><DataTableRollingNumber value={count} motionEnabled={animate} /> records on this page</>
+          ? <><DataTableRollingNumber value={count} motionEnabled={animate} /> records on this page
+            {totalRows !== undefined && <> · <DataTableRollingNumber value={totalRows} motionEnabled={animate} /> total</>}</>
           : <>Showing {start}-{end}
             {totalRows !== undefined && <> of <DataTableRollingNumber value={totalRows} motionEnabled={animate} /></>}</>
           : countLabel}</span>
@@ -173,10 +176,10 @@ export function DataTablePagination<TData>({
             }}
           >
             <SelectTrigger aria-label="Rows per page" className="h-8 w-[70px]">
-              <SelectValue />
+              <SelectValue>{pageSize}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {pageSizes.map((size) => (
+              {effectivePageSizes.map((size) => (
                 <SelectItem key={size} value={String(size)}>
                   {size}
                 </SelectItem>

@@ -26,7 +26,7 @@ export function readLoggingAppend(value: unknown, events: readonly LoggingEvent[
 
 export function readLoggingPage(value: unknown, input: NormalizedLoggingQuery): LoggingPage {
   try {
-    const r = loggingRecord(value, ['events', 'highWaterOrdinal', 'hasMore', 'nextBeforeOrdinal']);
+    const r = loggingRecord(value, ['events', 'highWaterOrdinal', 'hasMore', 'nextBeforeOrdinal', 'total']);
     if (typeof r.highWaterOrdinal !== 'number' || !Number.isSafeInteger(r.highWaterOrdinal) || r.highWaterOrdinal < 0 || typeof r.hasMore !== 'boolean') throw new Error();
     if (input.query.highWaterOrdinal !== undefined && r.highWaterOrdinal > input.query.highWaterOrdinal) throw new Error();
     let before = input.query.beforeOrdinal ?? Number.MAX_SAFE_INTEGER;
@@ -40,7 +40,9 @@ export function readLoggingPage(value: unknown, input: NormalizedLoggingQuery): 
       return Object.freeze({ event, ordinal: row.ordinal, ingestedAt: loggingTime(row.ingestedAt) });
     });
     if (r.hasMore ? !events.length || r.nextBeforeOrdinal !== events.at(-1)!.ordinal : r.nextBeforeOrdinal !== null) throw new Error();
-    return Object.freeze({ events: Object.freeze(events), highWaterOrdinal: r.highWaterOrdinal, hasMore: r.hasMore, nextBeforeOrdinal: r.nextBeforeOrdinal as number | null });
+    if (r.total !== undefined && (!Number.isSafeInteger(r.total) || Number(r.total) < events.length || r.hasMore && Number(r.total) <= events.length)) throw new Error();
+    return Object.freeze({ events: Object.freeze(events), highWaterOrdinal: r.highWaterOrdinal, hasMore: r.hasMore, nextBeforeOrdinal: r.nextBeforeOrdinal as number | null,
+      ...(r.total === undefined ? {} : { total: Number(r.total) }) });
   } catch { throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Logging query response is invalid.'); }
 }
 

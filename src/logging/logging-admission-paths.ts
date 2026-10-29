@@ -7,5 +7,5 @@ const RECOVERY = new Set([
 ]);
 export function isLoggingRecoveryRequest(request: Request): boolean {
   const path = new URL(request.url).pathname;
-  return RECOVERY.has(path) || path.startsWith('/_build/') || path === '/sync';
+  return RECOVERY.has(path) || path === '/sync';
 }

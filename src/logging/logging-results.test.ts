@@ -18,8 +18,9 @@ test('query result validation cannot release another tenant envelope or malforme
   for (const patch of [
     { events: [{ ...page.events[0]!, event: loggingEvent('other', 'tenant-b') }] },
     { events: [{ ...page.events[0]!, ordinal: 3 }] },
-    { events: [...page.events, ...page.events] }, { hasMore: true }, { nextBeforeOrdinal: 2 },
+    { events: [...page.events, ...page.events] }, { hasMore: true }, { nextBeforeOrdinal: 2 }, { total: 0 }, { total: -1 }, { total: 1.1 }, { total: Number.MAX_SAFE_INTEGER + 1 },
   ]) expect(() => readLoggingPage({ ...page, ...patch }, query)).toThrow();
+  expect(readLoggingPage({ ...page, total: 3 }, query).total).toBe(3);
 });
 test('core event contracts build for the browser without importing server or SQLite code', async () => {
   const result = await Bun.build({ entrypoints: [new URL('./logging-contracts.ts', import.meta.url).pathname], target: 'browser' });

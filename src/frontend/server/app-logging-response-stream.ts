@@ -1,10 +1,8 @@
 /** Final release fences for protected HTTP streams. Producer completion never claims network or human receipt. */
 import type { LoggingRuntime } from '../../logging/logging-runtime';
-import type { LoggingContext } from '../../logging/logging-contracts';
-import { captureLoggingEvent } from '../../logging/logging-validation';
 
 export function guardLoggingResponseStream(response: Response, request: Request, logging: LoggingRuntime,
-  context: LoggingContext, operationId: string, revalidate: () => Promise<void>, assertCurrent: () => void, recordTerminal = true): Response {
+  revalidate: () => Promise<void>, assertCurrent: () => void, diagnostic: (complete: boolean) => void): Response {
   if (!response.body) return response;
   const reader = response.body.getReader(); let closed = false, remove = () => {};
   const release = () => { try { reader.releaseLock(); } catch { /* Preserve the substantive stream outcome. */ } };
@@ -12,18 +10,15 @@ export function guardLoggingResponseStream(response: Response, request: Request,
   const cleanup = () => { remove(); request.signal.removeEventListener('abort', abort); };
   const terminal = async (complete: boolean) => {
     if (closed) return; closed = true; cleanup();
-    if (recordTerminal) await logging.deliver(captureLoggingEvent(context, { id: operationId + ':stream-terminal', family: 'records',
-      action: complete ? 'access.http.stream.completed' : 'access.http.stream.incomplete', occurredAt: Date.now(),
-      outcome: complete ? 'succeeded' : 'unknown', evidence: complete ? 'server-confirmed' : 'incomplete',
-      target: { type: 'transport', id: 'http' } }));
+    diagnostic(complete);
   };
   let controller: ReadableStreamDefaultController<Uint8Array>;
   const abort = () => {
     if (closed) return;
     void cancel(); void terminal(false).catch(() => {});
     // A client disconnect/owner stop is cancellation, not an unhandled server
-    // producer rejection. No further bytes are released; incomplete evidence
-    // is retained above. Failed authority fences still error in pull().
+    // producer rejection. No further bytes are released; interruption is
+    // diagnosed above. Failed authority fences still error in pull().
     try { controller.close(); } catch { /* Already stopped. */ }
   };
   try {

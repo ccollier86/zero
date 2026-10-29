@@ -6,4 +6,6 @@ export interface LoggingTableChoice {
   /** Exact retained target type used by the query, not a SQL selector. */
   readonly type: string;
   readonly names: readonly string[];
+  /** Current installation label; never part of a retained historical event. */
+  readonly label?: string;
 }

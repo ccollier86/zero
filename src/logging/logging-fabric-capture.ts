@@ -54,7 +54,7 @@ export function installLoggingFabricCapture(logging: LoggingRuntime, manager: Da
       failed: onFailure,
     }));
   };
-  installDatabaseLoggingBinding(port.coordinator, { records: logging.config.policy.capture.records, policyVersion: logging.config.policyVersion, sourceQueue: logging.config.sourceQueue,
+  installDatabaseLoggingBinding(port.coordinator, { records: logging.config.policy.capture.records, policyVersion: logging.config.policyVersion, sourceQueue: logging.config.sourceQueue, resources: logging.config.policy.resources,
     context: () => currentLoggingAttribution(logging) });
   for (const [id, scope] of sources) { prepareDatabaseLoggingBinding(port.coordinator, id, scope); register(id, scope); }
   const prepare = (id: string, scope: LoggingScope) => {

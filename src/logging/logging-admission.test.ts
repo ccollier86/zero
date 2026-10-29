@@ -13,6 +13,51 @@ function fixture(required = true) {
   return { admission, authority, context, events, revalidate, advance(ms: number) { now += ms; }, revoke() { valid = false; } };
 }
 
+test('healthy renewals and machine probes prove durable liveness without manufacturing audit activities', async () => {
+  const f = fixture(), events: LoggingEvent[] = [], nonces: string[] = [];
+  let clock = 0, failProbe = false;
+  const admission = new LoggingAdmission(true, f.context.policyVersion,
+    async event => { events.push(event); return { id: event.id, sourceId: event.sourceId, ordinal: events.length, duplicate: false }; },
+    () => clock, 60000, 10, () => true,
+    async nonce => { nonces.push(nonce); if (failProbe) throw new Error('Probe failed'); });
+  await admission.acknowledge(f.authority, f.context, f.context.policyVersion, f.revalidate);
+  for (let turn = 0; turn < 4; turn++) {
+    clock += 30000;
+    await admission.acknowledge(f.authority, f.context, f.context.policyVersion, f.revalidate);
+    expect(() => admission.assertCurrent(f.authority)).not.toThrow();
+  }
+  expect(events.map(event => event.action)).toEqual(['logging.delivery.acknowledged']);
+  expect(nonces).toHaveLength(4); expect(new Set(nonces).size).toBe(4);
+  const machine = { auth: { ...f.authority.auth, credentialKind: 'api-key' as const } }, owner = {};
+  await admission.admitMachine(machine, f.context, f.revalidate, owner);
+  expect(() => admission.assertCurrent(machine, owner)).not.toThrow();
+  expect(events).toHaveLength(1); expect(nonces).toHaveLength(5);
+  failProbe = true;
+  await expect(admission.acknowledge(f.authority, f.context, f.context.policyVersion, f.revalidate)).rejects.toThrow('Probe failed');
+  expect(() => admission.assertCurrent(f.authority)).toThrow();
+  await expect(admission.admitMachine(machine, f.context, f.revalidate, owner)).rejects.toThrow('Probe failed');
+  expect(() => admission.assertCurrent(machine, owner)).toThrow();
+});
+
+test('quiet renewals revalidate authority, expiry and sink generation after their writer wait', async () => {
+  for (const mutation of ['authority', 'expiry', 'sink', 'revocation'] as const) {
+    const f = fixture(); let now = 0, release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const admission = new LoggingAdmission(true, f.context.policyVersion,
+      async event => ({ id: event.id, sourceId: event.sourceId, ordinal: 1, duplicate: false }),
+      () => now, 60000, 10, () => true, () => held);
+    await admission.acknowledge(f.authority, f.context, f.context.policyVersion, f.revalidate);
+    const renewing = admission.acknowledge(f.authority, f.context, f.context.policyVersion, f.revalidate);
+    await Promise.resolve();
+    if (mutation === 'authority') f.authority.auth.role = 'admin';
+    if (mutation === 'expiry') now += 60000;
+    if (mutation === 'sink') admission.invalidate();
+    if (mutation === 'revocation') f.revoke();
+    release(); await expect(renewing).rejects.toThrow();
+    expect(() => admission.assertCurrent(f.authority)).toThrow();
+  }
+});
+
 test('strict delivery grants require a durable commit and bind session, scope, policy and current authority', async () => {
   const f = fixture();
   expect(() => f.admission.assertCurrent(f.authority)).toThrow(expect.objectContaining({ code: 'LOGGING_ADMISSION_REQUIRED' }));

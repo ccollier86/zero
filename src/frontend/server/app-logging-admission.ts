@@ -8,7 +8,6 @@ import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import { LoggingError } from '../../logging/logging-error';
 import { projectLoggingHttpFailure } from '../../logging/logging-http-error';
 import { loggingAuthContext } from '../../logging/logging-auth-context';
-import { captureLoggingEvent } from '../../logging/logging-validation';
 import { loggingRecoveryPage } from '../../logging/logging-recovery-page';
 import { ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER, ZERO_AUTH_TOKEN_SERVICE, ZERO_AUTH_STORE, ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE, ZERO_LOGGING_RUNTIME } from '../../runtime/service-keys';
@@ -16,11 +15,12 @@ import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { createAuthorityRevalidators } from './server-request-services/request-authority';
 import { getServerRouteServices } from './server-services';
 import type { LoggingAdmissionAuthority } from '../../logging/logging-admission';
-import type { LoggingContext } from '../../logging/logging-contracts';
 import { isLoggingRecoveryRequest } from '../../logging/logging-admission-paths';
 import { guardLoggingResponseStream } from './app-logging-response-stream';
 import { LOGGING_API } from '../../logging/logging-api-contracts';
 import { isPublicLoggingRequest } from '../../logging/logging-public-request';
+import { isLoggingDocumentRequest } from '../../logging/logging-document-request';
+import { loggingHttpDiagnostic } from './app-logging-http-diagnostic';
 
 const LOGGING_PROJECTION_READS = new Set([LOGGING_API + '/events', LOGGING_API + '/platform/events', LOGGING_API + '/stream']);
 
@@ -28,7 +28,7 @@ const LOGGING_PROJECTION_READS = new Set([LOGGING_API + '/events', LOGGING_API +
 export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRuntime): void {
   const logging = runtime.get(ZERO_LOGGING_RUNTIME);
   if (!logging?.admission.required) return;
-  const requests = new WeakMap<Request, { authority: LoggingAdmissionAuthority; context: LoggingContext; fence: () => void; revalidate: () => Promise<void>; id: string; recordTransport: boolean }>();
+  const requests = new WeakMap<Request, { authority: LoggingAdmissionAuthority; fence: () => void; revalidate: () => Promise<void>; id: string; recordTransport: boolean }>();
   const headers = { 'Cache-Control': 'private, no-store', Vary: 'Authorization, Cookie' };
   const failure = (error: unknown): Response => {
     if (error instanceof LoggingError) {
@@ -60,26 +60,24 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
       // still enforce this same authority/delivery gate and release fences,
       // but must not append another event for each live projection refresh.
       const recordTransport = !LOGGING_PROJECTION_READS.has(new URL(request.url).pathname);
-      if (recordTransport) await logging.deliver(captureLoggingEvent(context, { id: id + ':admitted', family: 'records', action: 'access.http.admitted',
-        occurredAt: Date.now(), outcome: 'attempted', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' } }));
+      if (recordTransport) loggingHttpDiagnostic(runtime, 'admitted', id);
       fences.synchronous(); logging.admission.assertCurrent(authority, request);
-      requests.set(request, { authority, context, fence: fences.synchronous, revalidate: fences.asynchronous, id, recordTransport });
+      requests.set(request, { authority, fence: fences.synchronous, revalidate: fences.asynchronous, id, recordTransport });
     } catch (error) {
       if (error instanceof LoggingError && error.code === 'LOGGING_ADMISSION_REQUIRED' && !request.headers.has('authorization')
-        && (request.method === 'GET' || request.method === 'HEAD')) return loggingRecoveryPage(logging.config.policyVersion);
+        && isLoggingDocumentRequest(request)) return loggingRecoveryPage(logging.config.policyVersion);
       return failure(error);
     }
   });
-  app.onAfterHandle({ as: 'global' }, async ({ request, response, set }) => {
+  app.onAfterHandle({ as: 'global' }, async ({ request, response }) => {
     const current = requests.get(request); if (!current) return;
     try {
       current.fence(); logging.admission.assertCurrent(current.authority, request);
-      const status = response instanceof Response ? response.status : typeof set.status === 'number' ? set.status : 200;
-      if (current.recordTransport) await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':prepared', family: 'records', action: 'access.http.response.prepared',
-        occurredAt: Date.now(), outcome: 'succeeded', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' }, metadata: { httpStatus: status } }, ['httpStatus']));
+      if (current.recordTransport) loggingHttpDiagnostic(runtime, 'prepared', current.id);
       current.fence(); logging.admission.assertCurrent(current.authority, request);
-      if (response instanceof Response) return guardLoggingResponseStream(response, request, logging, current.context, current.id, current.revalidate,
-        () => { current.fence(); logging.admission.assertCurrent(current.authority, request); }, current.recordTransport);
+      if (response instanceof Response) return guardLoggingResponseStream(response, request, logging, current.revalidate,
+        () => { current.fence(); logging.admission.assertCurrent(current.authority, request); },
+        complete => { if (current.recordTransport) loggingHttpDiagnostic(runtime, complete ? 'completed' : 'incomplete', current.id); });
     } catch (error) {
       if (response instanceof Response) await response.body?.cancel().catch(() => {});
       // A handler may already have committed. Never tell a caller it is safe to
@@ -94,8 +92,6 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
     requests.delete(request);
     // No exception bodies are admitted. A handler exception does not prove that
     // every external effect rolled back; writes are deliberately unresolved.
-    try { if (current.recordTransport) await logging.deliver(captureLoggingEvent(current.context, { id: current.id + ':failed', family: 'records', action: 'access.http.failed',
-      occurredAt: Date.now(), outcome: request.method === 'GET' || request.method === 'HEAD' ? 'failed' : 'unknown', evidence: 'server-confirmed', target: { type: 'transport', id: 'http' } })); }
-    catch { /* Existing fail-closed response remains; never recursively log sink failure. */ }
+    if (current.recordTransport) loggingHttpDiagnostic(runtime, 'failed', current.id);
   });
 }

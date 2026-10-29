@@ -92,7 +92,10 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     },
     async tables() {
       await revalidate(); permit('read');
-      const result = runtime.directory?.tables(readScope) ?? []; assertCurrent(); return result;
+      const result = (runtime.directory?.tables(readScope) ?? []).map(table => {
+        const label = table.names.length === 1 ? runtime.config.policy.resources[table.names[0]!]?.label : undefined;
+        return label === undefined ? table : Object.freeze({ ...table, label });
+      }); assertCurrent(); return result;
     },
     page: (stream, query = {}) => readPage(stream, query),
     platformPage: (stream, query = {}) => readPage(stream, query, true),

@@ -50,7 +50,7 @@ export function loggingActivityCode(action: string, presentation?: LoggingPresen
 }
 export function loggingTableLabel(table: LoggingTableChoice, presentation?: LoggingPresentation): string {
   return own(presentation?.tables, table.type) ?? (table.names.length === 1 ? own(presentation?.tables, table.names[0]!) : undefined)
-    ?? table.names.map(loggingWords).join(' / ');
+    ?? table.label ?? table.names.map(loggingWords).join(' / ');
 }
 export function loggingResourceLabel(event: Pick<LoggingEvent, 'target'>, tables: readonly LoggingTableChoice[], presentation?: LoggingPresentation): string {
   if (!event.target) return 'No specific record';

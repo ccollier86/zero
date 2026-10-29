@@ -34,6 +34,7 @@ export class LoggingAdmission {
     readonly ttlMs = 60000,
     private readonly capacity = 4096,
     private readonly available: () => boolean = () => true,
+    private readonly probe?: (nonce: string) => Promise<void>,
   ) {
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 30000 || ttlMs > 120000 || !Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100000) {
       throw new LoggingError('LOGGING_CONFIG_INVALID', 'Logging admission bounds are invalid.');
@@ -79,20 +80,22 @@ export class LoggingAdmission {
         id: crypto.randomUUID(), family: 'security', action: 'logging.delivery.interrupted',
         occurredAt: previous.expiresAt, outcome: 'unknown', evidence: 'incomplete',
       }));
-      await this.deliver(event);
+      if (previous && previous.until > started && this.probe) await this.probe(crypto.randomUUID());
+      else await this.deliver(event);
       // A slow/revoked handshake cannot mint a fresh lease after its owner is retired.
       await revalidate();
-      if (this.closed || !this.available() || this.generation !== generation || this.clock() - started >= this.ttlMs) throw new LoggingError('LOGGING_ADMISSION_REQUIRED', 'Audit delivery confirmation expired before admission.');
+      if (this.closed || !this.available() || this.generation !== generation || key !== this.key(authority) || this.clock() - started >= this.ttlMs) throw new LoggingError('LOGGING_ADMISSION_REQUIRED', 'Audit delivery confirmation expired before admission.');
       const receipt = Object.freeze({ policyVersion: this.policyVersion, expiresAt: Date.now() + this.ttlMs });
       this.grants.set(key, { until: this.clock() + this.ttlMs, expiresAt: receipt.expiresAt, actor: authority.auth.userId,
         scope: loggingDigest([authority.auth.sessionScopeKind ?? 'application', authority.auth.tenantId ?? null]) });
       return receipt;
-    })().finally(() => { if (this.pending.get(key) === task) this.pending.delete(key); });
+    })().catch(error => { this.grants.delete(key); throw error; })
+      .finally(() => { if (this.pending.get(key) === task) this.pending.delete(key); });
     this.pending.set(key, task);
     return task;
   }
 
-  /** Explicit server-owned work has no browser to attest. Each admission is durably evidenced, not exempt. */
+  /** Server-owned work proves fresh writer liveness; semantic actions own their audit evidence. */
   async admitMachine(authority: LoggingAdmissionAuthority, context: LoggingContext, revalidate: () => Promise<void>, owner: object): Promise<void> {
     if (!this.required) return;
     if (authority.auth.credentialKind !== 'api-key' && authority.auth.sessionKind !== 'native') {
@@ -100,8 +103,11 @@ export class LoggingAdmission {
     }
     const key = this.key(authority), started = this.clock(), generation = this.generation;
     if (this.closed) throw new LoggingError('LOGGING_CLOSED', 'Logging admission is closed.');
+    // Reusing a request owner cannot preserve an older grant after a failed probe.
+    this.machineGrants.delete(owner);
     await revalidate();
-    await this.deliver(captureLoggingEvent(context, { id: crypto.randomUUID(), family: 'security', action: 'logging.machine.admitted',
+    if (this.probe) await this.probe(crypto.randomUUID());
+    else await this.deliver(captureLoggingEvent(context, { id: crypto.randomUUID(), family: 'security', action: 'logging.machine.admitted',
       occurredAt: Date.now(), outcome: 'attempted', evidence: 'server-confirmed' }));
     await revalidate();
     if (this.closed || !this.available() || this.generation !== generation || key !== this.key(authority) || this.clock() - started >= this.ttlMs) throw new LoggingError('LOGGING_ADMISSION_REQUIRED', 'Machine audit admission expired.');

@@ -12,6 +12,7 @@ import type { LoggingCheckpoint, LoggingEvidenceCursor, LoggingEvidencePage, Log
 import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
 import type { OwnedLoggingExportJob } from './logging-export-realm';
 import { readOwnedLoggingExport } from './logging-export-validation';
+import { loggingRealm } from './logging-realm';
 
 export interface LoggingAppendResult { readonly receipts: readonly LoggingReceipt[]; readonly sequence: Readonly<{ seq: number }> }
 export interface LoggingBatchWriter {
@@ -30,7 +31,7 @@ export class LoggingFabricStore implements LoggingBatchWriter {
     if (events.some(event => event.stream !== this.stream)) throw new LoggingError('LOGGING_EVENT_INVALID', 'Logging event belongs to another stream.');
     try {
       const result = await this.data.command('logging.append', { stream: this.stream, events } as unknown as DatabaseSerializableValue,
-        { idempotencyKey: 'logging:append:' + loggingDigest(events) });
+        { idempotencyKey: 'logging:realm:' + loggingDigest([loggingRealm.fingerprint, 'logging.append', events]) });
       if (typeof result.replayed !== 'boolean' || !Number.isSafeInteger(result.sequence?.seq) || result.sequence.seq < 0) throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Logging append acknowledgment is invalid.', 'unknown');
       const receipts = readLoggingAppend(result.value, events, result.replayed);
       return Object.freeze({ receipts: Object.freeze(receipts), sequence: Object.freeze({ seq: result.sequence.seq }) });
@@ -58,7 +59,7 @@ export class LoggingFabricStore implements LoggingBatchWriter {
   /** @internal Fixed private commands only; request routes never receive this capability. */
   async evidenceCommand(command: 'logging.hold' | 'logging.review' | 'logging.prune' | 'logging.export.reserve' | 'logging.export.transition', input: Record<string, unknown>): Promise<unknown> {
     const captured = structuredClone(input);
-    const result = await this.data.command(command, captured as DatabaseSerializableValue, { idempotencyKey: command + ':' + loggingDigest(captured) });
+    const result = await this.data.command(command, captured as DatabaseSerializableValue, { idempotencyKey: 'logging:realm:' + loggingDigest([loggingRealm.fingerprint, command, captured]) });
     const wrapped = loggingRecord(result.value, ['kind', 'name', 'output']);
     if (wrapped.kind !== 'command' || wrapped.name !== command) throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Invalid evidence acknowledgment.', 'unknown');
     return wrapped.output;

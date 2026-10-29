@@ -1,5 +1,6 @@
 /** Pure public contracts; safe for browser type imports and headless clients. */
 export * from './logging-contracts';
+export type { LoggingActivityDetail, LoggingFieldChange, LoggingRecordChange, LoggingResourcePolicy, LoggingResourcePolicies, LoggingFieldPolicy } from './logging-activity-contracts';
 export * from './logging-api-contracts';
 export type { LoggingPerson, LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from './logging-directory-contracts';
 export * from './logging-evidence-contracts';

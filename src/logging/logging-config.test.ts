@@ -10,8 +10,16 @@ test('logging is opt-in and its presets expose progressively broader capture wit
   expect(detailed.capture.views).toBe(true); expect(detailed.capture.printing).toBe(true);
   const compliance = resolveLoggingConfig({ preset: 'compliance' });
   expect(compliance.complianceRequested).toBe(true); expect('ready' in compliance).toBe(false);
+  expect(compliance.diagnostics.http).toBe(false);
   expect(compliance.capture.views).toBe(false); expect(compliance.capture.clipboard).toBe(false); expect(compliance.capture.printing).toBe(false);
   expect(resolveLoggingConfig({ preset: 'compliance', capture: { views: true } }).capture.views).toBe(true);
+});
+test('technical HTTP tracing is an explicit detached opt-in, not implied by compliance', () => {
+  const input = { preset: 'compliance' as const, diagnostics: { http: true } };
+  const config = resolveLoggingConfig(input); input.diagnostics.http = false;
+  expect(config.diagnostics.http).toBe(true); expect(Object.isFrozen(config.diagnostics)).toBe(true);
+  expect(() => resolveLoggingConfig({ diagnostics: { http: 'yes' } } as any)).toThrow();
+  expect(() => resolveLoggingConfig({ diagnostics: { other: true } } as any)).toThrow();
 });
 test('granular capture can refine a preset; diagnostic severity cannot erase audit evidence', () => {
   const config = resolveLoggingConfig({ preset: 'detailed', minimumLevel: 'fatal', capture: { navigation: false } });

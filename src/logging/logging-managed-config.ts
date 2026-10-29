@@ -47,7 +47,7 @@ export interface ResolvedManagedLoggingConfig {
 export function resolveManagedLoggingConfig(input: boolean | ManagedLoggingConfig | undefined, projectRoot: string): ResolvedManagedLoggingConfig | false {
   if (input === false || input === undefined) return false;
   try {
-    const record = input === true ? {} : loggingRecord(input, ['preset', 'minimumLevel', 'capture', 'queue', 'rootDirectory', 'actors', 'access', 'metadataKeys', 'retention', 'sourceQueue', 'custody'], 'LOGGING_CONFIG_INVALID');
+    const record = input === true ? {} : loggingRecord(input, ['preset', 'minimumLevel', 'capture', 'diagnostics', 'resources', 'queue', 'rootDirectory', 'actors', 'access', 'metadataKeys', 'retention', 'sourceQueue', 'custody'], 'LOGGING_CONFIG_INVALID');
     const { rootDirectory, actors, access: rawAccess, metadataKeys: rawKeys, retention: rawRetention, sourceQueue: rawSourceQueue, custody: rawCustody, ...capture } = record;
     const sourceQueue = normalizeLoggingSourceLimits(rawSourceQueue);
     const access = rawAccess === undefined ? {} : loggingRecord(rawAccess, ['read', 'manage', 'export', 'hold', 'review']);

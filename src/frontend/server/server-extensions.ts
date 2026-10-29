@@ -9,6 +9,7 @@
 import type { AnyElysia, MaybePromise } from 'elysia';
 import { join } from 'node:path';
 import { emitPlatformCode, emitPlatformCodeTo } from '../../observability';
+import { markPublicLoggingRequest } from '../../logging/logging-public-request';
 
 import {
   createProtectedMultipartRequestGuard,
@@ -686,7 +687,9 @@ function buildRouteOptions(
     response: endpoint.response,
     detail: endpoint.detail,
     parse: endpoint.parse,
-    transform: endpoint.transform,
+    // Only this selected endpoint's effective inherited policy can classify
+    // public work. A required parent can never become anonymous via a child.
+    transform: prependHook(access.forceAnonymous ? context => { markPublicLoggingRequest(asContext(context).request); } : undefined, endpoint.transform),
     beforeHandle: prependHook(createAuthGuard(access), endpoint.beforeHandle),
     afterHandle: endpoint.afterHandle,
     mapResponse: endpoint.mapResponse,

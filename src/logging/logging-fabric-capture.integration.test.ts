@@ -28,7 +28,8 @@ import type { LoggingFabricStore } from './logging-fabric-store';
 test.each(['file', 'hot'] as const)('independent %s Fabric capture preserves tenant attribution, transaction rollback and restart recovery after sink acknowledgment loss', async placement => {
   const root = await mkdtemp(join(tmpdir(), 'logging-tenant-capture-'));
   const store = new MemoryEventStore();
-  const logging = await LoggingRuntime.open(resolveManagedLoggingConfig({ rootDirectory: join(root, 'logs'), preset: 'activity' }, root) as ResolvedManagedLoggingConfig,
+  const logging = await LoggingRuntime.open(resolveManagedLoggingConfig({ rootDirectory: join(root, 'logs'), preset: 'activity',
+    resources: { todos: { fields: { title: { values: ['draft', 'approved'] } } } } }, root) as ResolvedManagedLoggingConfig,
     { sink: store, store, config: { console: false } });
   let manager: DatabaseManager | undefined, capture: ReturnType<typeof installLoggingFabricCapture> = null;
   let fail = true;
@@ -65,6 +66,9 @@ test.each(['file', 'hot'] as const)('independent %s Fabric capture preserves ten
       expect(delivered.size).toBe(2); expect(capture!.diagnostics().queued).toBe(2);
       const pa = await logging.page('audit', { kind: 'tenant', tenantId: 'tenant-a' });
       expect(pa.events).toHaveLength(1); expect(pa.events[0]!.event.actor.kind).toBe('user');
+      expect(pa.events[0]!.event.detail).toMatchObject({ kind: 'record-change', table: 'todos', changes: [
+        { field: 'id', kind: 'redacted' }, { field: 'title', kind: 'redacted' },
+      ] });
       expect((await logging.page('audit', { kind: 'tenant', tenantId: 'tenant-b' })).events[0]!.event.actor.kind).toBe('system');
       expect(JSON.stringify(pa)).not.toContain('PRIVATE_ROW');
       expect(first.diagnostics().coordinator?.heldAuthorityLeases).toBe(0);
@@ -85,6 +89,17 @@ test.each(['file', 'hot'] as const)('independent %s Fabric capture preserves ten
     const before = placement === 'hot' ? new Bun.CryptoHasher('sha256').update(await Bun.file(file).arrayBuffer()).digest('hex') : null;
     await capture!.flush(); expect((await logging.page('audit', { kind: 'application' })).events).toHaveLength(1);
     if (before) expect(new Bun.CryptoHasher('sha256').update(await Bun.file(file).arrayBuffer()).digest('hex')).toBe(before);
+    const editing = await manager!.bindTenant({ tenantId: 'tenant-a', assertCurrentAuthoritySync: () => undefined });
+    try {
+      for (const title of ['draft', 'approved']) await runWithLoggingAttribution(logging, loggingContext('tenant-a'), () => {},
+        () => editing.client.mutate({ type: 'update', table: 'todos', id: 'a', patch: { title } }, { idempotencyKey: 'edit-' + title }));
+      await capture!.flush();
+      const edited = await logging.page('audit', { kind: 'tenant', tenantId: 'tenant-a' }, { action: 'record.updated', targetId: 'a' });
+      expect(edited.events).toHaveLength(2);
+      expect(edited.events[0]!.event.detail).toMatchObject({ kind: 'record-change', table: 'todos', changes: [
+        { field: 'title', kind: 'value', before: 'draft', after: 'approved' },
+      ] });
+    } finally { editing.release(); }
   } finally { await (capture as ReturnType<typeof installLoggingFabricCapture>)?.close(); await manager?.close(); await logging.close(); await rm(root, { recursive: true, force: true }); }
 }, 60000);
 

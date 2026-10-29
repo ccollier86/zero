@@ -69,6 +69,7 @@ import type {
 } from './database-writer-engine';
 import { LOGGING_ACTOR_SOURCE_OPERATION, normalizeLoggingActorSourcePage, type LoggingActorSourcePage } from '../logging/logging-actor-source';
 import type { LoggingContext, LoggingScope } from '../logging/logging-contracts';
+import { LOGGING_ACTOR_PROBE_OPERATION, normalizeLoggingDeliveryProbe } from '../logging/logging-control-realm';
 
 interface DatabaseCoordinatorOperationRuntimeOptions {
   readonly loggingContext?: () => LoggingContext | undefined;
@@ -112,6 +113,26 @@ interface DatabaseCoordinatorOperationRuntimeOptions {
 
 export class DatabaseCoordinatorOperationRuntime {
   constructor(private readonly options: DatabaseCoordinatorOperationRuntimeOptions) {}
+
+  /** Fixed private control write, on the existing bounded writer FIFO, without business receipt admission. */
+  executeLoggingDeliveryProbe(entry: DatabaseCoordinatorEntry, nonce: string): Promise<void> {
+    this.options.assertStarted(); const payload = normalizeLoggingDeliveryProbe({ nonce });
+    if (this.options.canAwaitOpening(entry)) return this.awaitReplacementOpening(entry, {}, 'mutation', () => this.executeLoggingDeliveryProbe(entry, nonce));
+    this.options.assertUsableEntry(entry);
+    return this.enqueueLane(entry, 'mutation', {}, async () => {
+      const writer = this.options.requireWriter(entry);
+      try {
+        const result = await writer.execute({ operation: LOGGING_ACTOR_PROBE_OPERATION, kind: 'write', payload: { databaseRef: entry.databaseRef, ...payload } }, { timeoutMs: this.options.operationTimeoutMs });
+        let matched = false;
+        try { matched = normalizeLoggingDeliveryProbe(result).nonce === nonce; } catch { /* A malformed producer reply is not caller input. */ }
+        if (!matched) throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Audit writer challenge acknowledgment did not match.', { outcome: 'unknown' });
+      } catch (caught) {
+        const error = safeCoordinatorError(caught);
+        if (error.outcome === 'unknown' || this.options.isTerminalFailure(writer, error)) await this.options.retire(entry, writer, error);
+        throw error;
+      }
+    });
+  }
 
   /** Delivery metadata uses the existing file FIFO without taking application/Guardian authority. */
   executeLoggingSource(entry: DatabaseCoordinatorEntry, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {

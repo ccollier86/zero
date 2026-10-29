@@ -13,6 +13,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../collapsi
 import { loggingActivity, loggingResourceLabel, LOGGING_CATEGORY_LABELS, type LoggingPresentation } from './logging-readable-activity';
 import type { LoggingPerson, LoggingTableChoice } from '../../logging/logging-directory-contracts';
 import { loggingDate, loggingEvidence, loggingLabel, loggingOutcome } from './logging-presentation';
+import { loggingFieldValue } from './logging-change-presentation';
+import { loggingWords } from './logging-readable-activity';
 
 /** A dialog masks evidence synchronously when its captured authorization scope retires. */
 export function LoggingEventDetail({ stored, scopeKey, person, tables = [], presentation }: { stored: StoredLoggingEvent; scopeKey: string;
@@ -28,8 +30,16 @@ export function LoggingEventDetail({ stored, scopeKey, person, tables = [], pres
       <h3 className="text-xl font-semibold tracking-tight">{activity.label}</h3>{activity.description && <p className="text-sm leading-relaxed text-muted-foreground">{activity.description}</p>}
       <div className="flex items-center gap-3 rounded-xl border border-border p-3">{event.actor.kind === 'user' ? <LoggingPersonAvatar userId={person?.id} name={who} revision={person?.revision} className="size-10" />
         : <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-muted/40" aria-hidden="true">{event.actor.kind === 'anonymous' ? <User className="size-5" /> : <Bot className="size-5" />}</span>}<div className="min-w-0"><p className="text-sm font-semibold">{who}</p><p className="text-xs text-muted-foreground">{person ? 'Current Guardian profile · historical identity retained below' : event.actor.kind === 'user' ? 'Current profile is unavailable' : 'An automated or unauthenticated action'}</p></div></div>
-      {event.target && <div className="flex items-center gap-2 text-sm"><FileText className="size-4 text-muted-foreground" /><span>{loggingResourceLabel(event, tables, presentation)}</span></div>}
+      {event.target && <div className="flex items-start gap-2 text-sm"><FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><span className="min-w-0"><span className="block">{loggingResourceLabel(event, tables, presentation)}</span><span className="block break-all text-xs text-muted-foreground">{event.target.id}</span></span></div>}
     </div>
+    {event.detail?.kind === 'record-change' && <section className="space-y-2" aria-label="Committed field changes"><h4 className="text-sm font-semibold">What changed</h4>
+      <p className="text-xs text-muted-foreground">Committed source revision {event.detail.sequence}. Values appear only where the capture policy allowed them.</p>
+      <dl className="divide-y divide-border overflow-hidden rounded-lg border border-border">{event.detail.changes.map(field => <div key={field.field} className="grid gap-1.5 px-3 py-2.5 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <dt className="font-medium" title={field.field}>{loggingWords(field.field)}</dt><dd className="min-w-0 break-words">{field.kind === 'value'
+          ? <><span className="text-muted-foreground">{loggingFieldValue(field.before, field.beforePresent)}</span><span aria-label="changed to" className="mx-2 text-muted-foreground">→</span><span>{loggingFieldValue(field.after, field.afterPresent)}</span></>
+          : <span className="text-xs text-muted-foreground">Changed · values private</span>}</dd></div>)}</dl>
+      {event.detail.omittedFields > 0 && <p className="text-xs text-muted-foreground">{event.detail.omittedFields} changed fields were omitted by privacy policy or the bounded capture budget. This is not a complete value snapshot.</p>}
+    </section>}
     <div className="rounded-xl border border-border bg-muted/30 p-3.5"><div className="mb-1.5 flex items-center gap-2 text-sm font-medium"><Info className="size-4 shrink-0 text-primary" />{evidence.label}</div><p className="text-xs leading-relaxed text-muted-foreground">{evidence.description}</p></div>
     <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border border-border p-3"><p className="mb-1 text-xs text-muted-foreground">Occurred · source clock</p><time className="text-sm tabular-nums">{loggingDate(event.occurredAt)}</time></div>
       <div className="rounded-lg border border-border p-3"><p className="mb-1 text-xs text-muted-foreground">Ingested · retained order</p><time className="text-sm tabular-nums">{loggingDate(stored.ingestedAt)}</time></div></div>

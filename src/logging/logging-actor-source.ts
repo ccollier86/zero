@@ -9,6 +9,9 @@ import { LoggingSourceOutbox } from './logging-source-outbox';
 import { LoggingError } from './logging-error';
 import { DatabaseError } from '../databases/database-error';
 import { normalizeLoggingSourceLimits, LOGGING_SOURCE_HARD_EVENTS, LOGGING_SOURCE_HARD_BYTES, LOGGING_SOURCE_PAGE_EVENTS, type LoggingSourceLimits } from './logging-source-limits';
+import type { LoggingResourcePolicies } from './logging-activity-contracts';
+import { normalizeLoggingResourcePolicies } from './logging-resource-policy';
+import { captureLoggingRecordChange } from './logging-record-change';
 
 export const LOGGING_ACTOR_SOURCE_OPERATION = 'database.logging.source';
 export interface LoggingActorSourceBinding {
@@ -16,6 +19,7 @@ export interface LoggingActorSourceBinding {
   readonly policyVersion: string;
   readonly scope: LoggingScope;
   readonly sourceQueue?: LoggingSourceLimits;
+  readonly resources?: LoggingResourcePolicies;
 }
 export interface LoggingActorSourcePage {
   readonly sourceId: string;
@@ -26,14 +30,14 @@ export interface LoggingActorSourcePage {
 
 /** Internal bind policy is detached before IPC and cannot select a physical path or a sink. */
 export function normalizeLoggingActorSourceBinding(input: unknown): LoggingActorSourceBinding {
-  const value = loggingRecord(input, ['records', 'policyVersion', 'scope', 'sourceQueue']);
+  const value = loggingRecord(input, ['records', 'policyVersion', 'scope', 'sourceQueue', 'resources']);
   if (typeof value.records !== 'boolean') throw new LoggingError('LOGGING_CONFIG_INVALID', 'Actor logging policy is invalid.');
   const policyVersion = loggingId(value.policyVersion)!;
   const scope = loggingRecord(value.scope, ['kind', 'tenantId']);
   if (scope.kind !== 'application' && scope.kind !== 'tenant' || scope.kind === 'application' && scope.tenantId !== null) {
     throw new LoggingError('LOGGING_CONFIG_INVALID', 'Actor audit scope is invalid.');
   }
-  return Object.freeze({ records: value.records, policyVersion, sourceQueue: normalizeLoggingSourceLimits(value.sourceQueue),
+  return Object.freeze({ records: value.records, policyVersion, sourceQueue: normalizeLoggingSourceLimits(value.sourceQueue), resources: normalizeLoggingResourcePolicies(value.resources),
     scope: scope.kind === 'application' ? Object.freeze({ kind: 'application', tenantId: null })
       : Object.freeze({ kind: 'tenant', tenantId: loggingId(scope.tenantId)! }) });
 }
@@ -71,6 +75,8 @@ export class LoggingActorSource {
     this.outbox = new LoggingSourceOutbox(db, policy.sourceQueue);
     this.remove = registerReactiveDBMutationContribution(db, ({ change }) => {
       if (!policy.records || change.table.startsWith('_')) return;
+      const detail = captureLoggingRecordChange(change, policy.resources);
+      if (!detail) return;
       const context: LoggingContext = { ...(this.current ?? { origin: 'system', scope: policy.scope,
         actor: { kind: 'system', id: 'zero.database', sessionId: null, initiatorId: null }, requestId: null, correlationId: null }),
         sourceId: this.outbox.sourceId, policyVersion: policy.policyVersion };
@@ -79,7 +85,7 @@ export class LoggingActorSource {
         outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: change.ts,
         target: { type: loggingTableTarget(change.table),
           id: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(change.rowId) ? change.rowId : 'hash:' + loggingDigest(change.rowId) },
-        metadata: { sequence: change.seq } }, ['sequence'])); }
+        metadata: { sequence: change.seq }, detail }, ['sequence'])); }
       catch (error) {
         if (error instanceof LoggingError && error.code === 'LOGGING_AUDIT_UNAVAILABLE') throw new DatabaseError('DATABASE_BACKPRESSURE', 'Required source audit admission is unavailable.', { retryable: true, outcome: 'not-committed' });
         throw error;

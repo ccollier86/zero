@@ -25,6 +25,7 @@ import { markLocalLoggingIdentityEstablished, openLocalLoggingIdentity } from '.
 import { createLocalLoggingCustody } from './logging-local-custody';
 import type { LoggingHealth } from './logging-api-contracts';
 import type { LoggingDirectoryPort } from './logging-person-directory';
+import { executeCoordinatorLoggingDeliveryProbe } from '../databases/database-coordinator-capability';
 
 interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store: LoggingFabricStore }
 
@@ -107,7 +108,12 @@ export class LoggingRuntime {
     this.admission = new LoggingAdmission(config.policy.complianceRequested, config.policyVersion, event => this.deliver(event),
       () => performance.now(), 60000, 4096,
       () => this.state === 'ready' && this.unavailableSources.size === 0 && this.delivery?.workerDiagnostics().state === 'ready'
-        && (!this.custody || this.custody.diagnostics().state === 'ready'));
+        && (!this.custody || this.custody.diagnostics().state === 'ready'),
+      async nonce => {
+        this.assertReady();
+        try { await executeCoordinatorLoggingDeliveryProbe(this.streams.get('audit')!.lease, nonce); }
+        catch (error) { this.admission.invalidate(); throw error; }
+      });
   }
 
   /** Open and probe both private streams before publication. Partial failures release every acquired owner. */

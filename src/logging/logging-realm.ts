@@ -13,6 +13,7 @@ import { reserveLoggingExport, transitionLoggingExport, readLoggingExport, pendi
 import { appendLocalLoggingCheckpoint, readLocalLoggingCheckpoint } from './logging-checkpoint-realm';
 import { readLoggingChanges } from './logging-change-query';
 import { projectLoggingStoredEvent } from './logging-stored-event';
+import { LOGGING_CONTROL_TABLES } from './logging-control-realm';
 
 const HEADS = LOGGING_STATE_TABLE;
 const HEAD_ID = 'head';
@@ -21,8 +22,8 @@ type EventRow = Row & { id: string; digest: string; envelope: string; ordinal: n
 
 /** Side-effect-free declaration. Both writer and reader actors import this exact realm/version. */
 export const loggingRealm = defineDatabaseRealm({
-  name: 'zero-logging', version: '6',
-  tables: LOGGING_TABLES,
+  name: 'zero-logging', version: '7',
+  tables: { ...LOGGING_TABLES, ...LOGGING_CONTROL_TABLES },
   migrations: [{
     version: '001', description: 'Index bounded scope, actor and resource investigations', safety: 'safe',
     up(database) {
@@ -78,6 +79,11 @@ export const loggingRealm = defineDatabaseRealm({
       database.run("CREATE TRIGGER IF NOT EXISTS logging_event_no_update BEFORE UPDATE ON logging_events BEGIN SELECT RAISE(ABORT,'Logging event content is immutable'); END");
       database.run("CREATE TRIGGER IF NOT EXISTS logging_proof_no_delete BEFORE DELETE ON logging_proofs BEGIN SELECT RAISE(ABORT,'Logging replay proofs are retained'); END");
       database.run("CREATE TRIGGER IF NOT EXISTS logging_proof_immutable BEFORE UPDATE ON logging_proofs WHEN NEW.id IS NOT OLD.id OR NEW.ordinal IS NOT OLD.ordinal OR NEW.digest IS NOT OLD.digest OR NEW.previous_hash IS NOT OLD.previous_hash OR NEW.chain_hash IS NOT OLD.chain_hash OR NEW.ingested_at IS NOT OLD.ingested_at OR NEW.expired IS NOT 1 OR OLD.expired IS NOT 0 BEGIN SELECT RAISE(ABORT,'Logging proof content is immutable'); END");
+    },
+  }, {
+    version: '006', description: 'Private bounded delivery liveness control, separate from activity evidence', safety: 'safe',
+    up(database) {
+      database.run('CREATE TABLE IF NOT EXISTS logging_delivery_control (id TEXT PRIMARY KEY,nonce TEXT NOT NULL,checked_at INTEGER NOT NULL)');
     },
   }],
   commands: { 'logging.append': appendLoggingBatch,
@@ -158,6 +164,8 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
   if (head && head.stream !== input.stream) throw new DatabaseError('DATABASE_CONFLICT', 'Logging stream binding does not match.');
   const highWaterOrdinal = Math.min(input.query.highWaterOrdinal ?? head?.ordinal ?? 0, head?.ordinal ?? 0);
   const predicate = loggingPagePredicate(input, highWaterOrdinal, 'e');
+  const totalPredicate = loggingPagePredicate({ ...input, query: { ...input.query, beforeOrdinal: undefined } }, highWaterOrdinal, 'e');
+  const total = database.query<{ count: number }>('SELECT COUNT(*) AS count FROM logging_events e WHERE ' + totalPredicate.sql).get(...totalPredicate.values)!.count;
   const found = database.query<EventRow>('SELECT e.*,p.digest AS proof_digest,p.previous_hash,p.chain_hash,p.expired FROM logging_events e LEFT JOIN logging_proofs p ON p.id=e.id WHERE ' + predicate.sql + ' ORDER BY e.ordinal DESC LIMIT ?').all(...predicate.values, input.query.limit + 1);
   const events = []; let bytes = 1024;
   for (const row of found.slice(0, input.query.limit)) {
@@ -166,5 +174,5 @@ function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown)
     events.push(item); bytes += size;
   }
   const hasMore = found.length > events.length;
-  return { events, highWaterOrdinal, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
+  return { events, highWaterOrdinal, total, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
 }

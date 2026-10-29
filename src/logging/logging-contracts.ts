@@ -41,7 +41,7 @@ export interface LoggingContext {
 
 /** One versioned evidence envelope; ingestion time is assigned separately by the database. */
 export interface LoggingEvent extends LoggingContext {
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly id: string;
   readonly stream: LoggingStream;
   readonly family: LoggingFamily;
@@ -52,6 +52,8 @@ export interface LoggingEvent extends LoggingContext {
   readonly occurredAt: number;
   readonly target: Readonly<{ type: string; id: string }> | null;
   readonly metadata: Readonly<Record<string, LoggingScalar>>;
+  /** Version two retains typed activity facts; historical v1 envelopes remain byte-identical. */
+  readonly detail?: import('./logging-activity-contracts').LoggingActivityDetail;
 }
 
 /** Source timestamps/IDs must be retained when retrying the same logical event. */
@@ -65,6 +67,7 @@ export interface LoggingEventInput {
   readonly occurredAt: number;
   readonly target?: Readonly<{ type: string; id: string }> | null;
   readonly metadata?: Readonly<Record<string, LoggingScalar>>;
+  readonly detail?: import('./logging-activity-contracts').LoggingActivityDetail;
 }
 
 /** Internal stored record; ordinal is a source-local position, not a global timeline or public cursor. */
@@ -112,6 +115,8 @@ export interface LoggingPage {
   readonly highWaterOrdinal: number;
   readonly hasMore: boolean;
   readonly nextBeforeOrdinal: number | null;
+  /** Exact retained matches at this high-water, independently of pagination. Omitted by older transports. */
+  readonly total?: number;
   /** Current scoped labels, never part of a signed/historical event envelope. */
   readonly people?: readonly import('./logging-directory-contracts').LoggingPerson[];
 }

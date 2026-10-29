@@ -26,16 +26,21 @@ const held: (() => void)[] = []; (window as any).__releaseLoggingPhotos = () => 
 const auth = { user: { userId: 'fixture-user' }, activeTenant: { tenantId: tenant }, isAuthenticated: true, isLoading: false, isRestoring: false,
   authorizationState: { status: 'ready' }, get authorizationScopeKey() { return tenant; }, sessionTransition: { phase: 'idle', operation: null, revision: 0, recoverable: false, error: null },
   subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }, subscribeAuthorization(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; } };
-function row(n: number): StoredLoggingEvent { const automated = varied && n % 11 === 0; return { ordinal: n, ingestedAt: Date.now(), event: { version: 1, id: 'event-' + n, sourceId: 'fixture-source', origin: 'backend', policyVersion: 'fixture-v1',
+function row(n: number): StoredLoggingEvent { const automated = varied && n % 11 === 0; const result: StoredLoggingEvent = { ordinal: n, ingestedAt: Date.now(), event: { version: 1, id: 'event-' + n, sourceId: 'fixture-source', origin: 'backend', policyVersion: 'fixture-v1',
   requestId: null, correlationId: null, scope: { kind: 'tenant', tenantId: tenant }, actor: { kind: automated ? 'system' : 'user', id: automated ? 'zero.database' : person(varied && n % 3 === 0).id, sessionId: 'fixture-session', initiatorId: null },
   stream: 'audit', family: 'records', action: varied ? ['record.created', 'record.updated', 'record.deleted'][n % 3]! : 'record.read', level: 'info', outcome: varied ? 'succeeded' : n % 9 === 0 ? 'denied' : 'succeeded', evidence: !varied && n % 5 === 0 ? 'browser-observed' : 'server-confirmed',
-  occurredAt: 1700000000000 + n * 1000, target: { type: varied ? n % 2 === 0 ? 'table.tasks' : 'table.items' : 'record', id: 'record-' + n }, metadata: { count: 1 } } }; }
+  occurredAt: 1700000000000 + n * 1000, target: { type: varied ? n % 2 === 0 ? 'table.tasks' : 'table.items' : 'record', id: 'record-' + n }, metadata: { count: 1 } } };
+  return n === 65 && new URLSearchParams(location.search).has('changes') ? { ...result, event: { ...result.event, version: 2, action: 'record.updated', outcome: 'succeeded', evidence: 'server-confirmed',
+    target: { type: 'table.items', id: 'invoice-7' }, detail: { kind: 'record-change', table: 'items', sequence: 7,
+      changes: [{ field: 'status', kind: 'value', beforePresent: true, afterPresent: true, before: 'draft', after: 'approved' },
+        { field: 'private_note', kind: 'redacted', beforePresent: true, afterPresent: true }], omittedFields: 0 } } } : result;
+}
 function page(q: LoggingQuery = {}): LoggingPage {
   const water = Math.min(q.highWaterOrdinal ?? ordinal, ordinal);
-  const all = Array.from({ length: water }, (_, i) => row(water - i)).filter(r => (!q.eventIds || q.eventIds.includes(JSON.stringify([r.event.sourceId, r.event.id]))) && (!q.beforeOrdinal || r.ordinal < q.beforeOrdinal) && (!q.actorId || r.event.actor.id === q.actorId) && (!q.outcome || r.event.outcome === q.outcome) && (!q.action || r.event.action === q.action) && (!q.targetId || r.event.target?.id === q.targetId)
+  const all = Array.from({ length: water }, (_, i) => row(water - i)).filter(r => (!q.eventIds || q.eventIds.includes(JSON.stringify([r.event.sourceId, r.event.id]))) && (!q.actorId || r.event.actor.id === q.actorId) && (!q.outcome || r.event.outcome === q.outcome) && (!q.action || r.event.action === q.action) && (!q.targetId || r.event.target?.id === q.targetId)
     && (!q.sessionId || r.event.actor.sessionId === q.sessionId) && (!q.targetType || r.event.target?.type === q.targetType) && (!q.family || r.event.family === q.family) && (!q.level || r.event.level === q.level) && (q.since === undefined || r.event.occurredAt >= q.since) && (q.until === undefined || r.event.occurredAt < q.until));
-  const events = all.slice(0, q.limit ?? 50), hasMore = all.length > events.length;
-  return { events, people: [person(), person(true)].filter(person => events.some(row => row.event.actor.kind === 'user' && row.event.actor.id === person.id)), highWaterOrdinal: water, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
+  const eligible = all.filter(r => !q.beforeOrdinal || r.ordinal < q.beforeOrdinal), events = eligible.slice(0, q.limit ?? 50), hasMore = eligible.length > events.length;
+  return { events, total: all.length, people: [person(), person(true)].filter(person => events.some(row => row.event.actor.kind === 'user' && row.event.actor.id === person.id)), highWaterOrdinal: water, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
 }
 const queries: LoggingQuery[] = [];
 (window as unknown as { __loggingQueries: LoggingQuery[] }).__loggingQueries = queries;

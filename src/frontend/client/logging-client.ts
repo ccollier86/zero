@@ -5,6 +5,7 @@ import type { LoggingChangePage, LoggingPage } from '../../logging/logging-contr
 import type { FetchInit } from './sdk';
 import { readLoggingExportJob } from '../../logging/logging-export-result';
 import type { LoggingPerson, LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from '../../logging/logging-directory-contracts';
+import { isLoggingActivityDetail } from '../../logging/logging-activity-shape';
 
 function validPeople(value: unknown, maximum: number): value is readonly LoggingPerson[] {
   return Array.isArray(value) && value.length <= maximum && new Set(value.map(person => person?.id)).size === value.length
@@ -22,7 +23,10 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     let before = Number.MAX_SAFE_INTEGER;
     for (const row of result.events) {
       const e = row?.event;
-      if (!row || !e || e.version !== 1 || !Number.isSafeInteger(row.ordinal) || row.ordinal < 1 || row.ordinal > result.highWaterOrdinal || row.ordinal >= before
+      if (!row || !e || e.version !== 1 && e.version !== 2
+        || e.version === 1 && e.detail !== undefined || e.version === 2 && (!isLoggingActivityDetail(e.detail) || e.origin === 'frontend'
+          || e.family !== 'records' || !['record.created', 'record.updated', 'record.deleted'].includes(e.action) || e.outcome !== 'succeeded' || e.evidence !== 'server-confirmed' || !e.target)
+        || !Number.isSafeInteger(row.ordinal) || row.ordinal < 1 || row.ordinal > result.highWaterOrdinal || row.ordinal >= before
         || !Number.isSafeInteger(row.ingestedAt) || !Number.isSafeInteger(e.occurredAt) || e.occurredAt < 0 || e.occurredAt > 8640000000000000
         || typeof e.id !== 'string' || typeof e.sourceId !== 'string' || typeof e.action !== 'string' || e.action.length > 120
         || !e.actor || !['user', 'system', 'service', 'anonymous'].includes(e.actor.kind) || e.actor.id !== null && typeof e.actor.id !== 'string'
@@ -33,6 +37,7 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
       before = row.ordinal;
     }
     if (result.hasMore ? !result.events.length || result.nextBeforeOrdinal !== result.events.at(-1)!.ordinal : result.nextBeforeOrdinal !== null) throw new Error('Invalid logging cursor.');
+    if (result.total !== undefined && (!Number.isSafeInteger(result.total) || result.total < result.events.length || result.hasMore && result.total <= result.events.length)) throw new Error('Invalid logging total.');
     if (result.people !== undefined && (!validPeople(result.people, 100) || result.people.some(person => !result.events.some(({ event }) => event.actor.kind === 'user' && event.actor.id === person.id)))) throw new Error('Invalid logging people projection.');
     return result;
   };
@@ -72,6 +77,7 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
       if (!Array.isArray(value) || value.length > 10000 || new Set(value.map(table => table?.type)).size !== value.length
         || value.some(table => !table || typeof table.type !== 'string' || !/^table\.[a-z0-9][a-z0-9.-]*$/.test(table.type) || table.type.length > 120
         || !Array.isArray(table.names) || !table.names.length || new Set(table.names).size !== table.names.length
+        || table.label !== undefined && (typeof table.label !== 'string' || !table.label.length || table.label.length > 120 || /[\u0000-\u001f\u007f]/.test(table.label))
         || table.names.some((name: unknown) => typeof name !== 'string' || !name || name.length > 1024))) throw new Error('Invalid logging table directory.');
       return value;
     },

@@ -9,6 +9,7 @@ import type { LoggingRuntime } from './logging-runtime';
 import { loggingDigest } from './logging-hash';
 import { currentLoggingAttribution } from './logging-attribution';
 import { loggingTableTarget } from './logging-table-target';
+import { captureLoggingRecordChange } from './logging-record-change';
 
 /** Install before source admission; invoke close before closing log/source owners. */
 export function installLoggingSourceCapture(logging: LoggingRuntime, application: ReactiveDB, system: ReactiveDB,
@@ -30,6 +31,8 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
     actor: { kind: 'system', id: 'zero.database', sessionId: null, initiatorId: null }, requestId: null, correlationId: null, policyVersion: logging.config.policyVersion });
   const removeMutation = registerReactiveDBMutationContribution(application, ({ change }) => {
     if (!logging.config.policy.capture.records || change.table.startsWith('_')) return;
+    const detail = captureLoggingRecordChange(change, logging.config.policy.resources);
+    if (!detail) return;
     const attribution = currentLoggingAttribution(logging);
     const base = { ...(attribution ?? context(app.sourceId)), sourceId: app.sourceId }, field = tenantFields[change.table];
     let scope = base.scope;
@@ -44,7 +47,7 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
     app.enqueue(captureLoggingEvent(c, { id: crypto.randomUUID(), family: 'records', action: 'record.' + ({ INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' }[change.op]),
       outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: change.ts,
       target: { type, id: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(change.rowId) ? change.rowId : 'hash:' + loggingDigest(change.rowId) },
-      metadata: { sequence: change.seq } }, ['sequence']));
+      metadata: { sequence: change.seq }, detail }, ['sequence']));
     committed(application);
   });
   const removeAuth = registerAuthAuditCapture(system, event => {

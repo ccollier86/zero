@@ -21,7 +21,7 @@ import { cn } from '../../lib/utils';
 import type { LoggingPerson, LoggingTableChoice } from '../../logging/logging-directory-contracts';
 import type { LoggingPresentation } from './logging-readable-activity';
 
-const schema = defineSchema({ time: field.text({ label: 'When' }), actor: field.text({ label: 'Who' }), action: field.text({ label: 'Activity' }), target: field.text({ label: 'Table / resource' }), outcome: field.text({ label: 'Result' }), evidence: field.text({ label: 'Recorded by' }), inspect: field.text({ label: 'Inspect' }) });
+const schema = defineSchema({ time: field.text({ label: 'When' }), actor: field.text({ label: 'Who' }), action: field.text({ label: 'Activity' }), target: field.text({ label: 'Item' }), details: field.text({ label: 'Details' }), outcome: field.text({ label: 'Result' }), evidence: field.text({ label: 'Recorded by' }), inspect: field.text({ label: 'Inspect' }) });
 const ACCESS_ERROR = 'Activity access could not be revalidated. Evidence is hidden until a fresh authorized snapshot succeeds.';
 const EMPTY_TABLE_CHOICES: readonly LoggingTableChoice[] = Object.freeze([]);
 export interface LoggingWorkspaceProps { className?: string; defaultStream?: LoggingStream; initialQuery?: LoggingQuery; allowExport?: boolean; scope?: 'current' | 'platform'; presentation?: LoggingPresentation }
@@ -112,7 +112,10 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
   const filterUser = React.useCallback((id: string, resolved: LoggingPerson | null) => {
     setPerson({ key: directoryKey, value: resolved ?? undefined }); setQuery(query => ({ ...query, actorId: id })); setRevision(n => n + 1);
   }, [directoryKey]);
-  const columns = React.useMemo(() => loggingColumns(inspect, { tables, presentation, onUser: filterUser }), [inspect, tables, presentation, filterUser]);
+  const filterTarget = React.useCallback((target: { type: string; id: string }) => {
+    setQuery(query => ({ ...query, targetType: target.type, targetId: target.id })); setRevision(n => n + 1);
+  }, []);
+  const columns = React.useMemo(() => loggingColumns(inspect, { tables, presentation, onUser: filterUser, onTarget: filterTarget }), [inspect, tables, presentation, filterUser, filterTarget]);
   if (!client || !source || !boundary.ready || !boundary.stable) return <section role="status" className="p-4 text-sm text-muted-foreground">Logging requires a ready authenticated AppProvider.</section>;
   const status = connection?.key === key ? connection.status : 'connecting';
   return <section data-slot="logging-workspace" className={cn('min-w-0 space-y-4', className)} aria-label="Logging investigation">
@@ -133,7 +136,7 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
     {blockedKey === key ? <div role="status" className="rounded-xl border border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">Protected evidence is hidden while the connection is revalidated.</div> : <div
       onClickCapture={event => { rowTrigger.current = event.target instanceof Element ? event.target.closest('[data-row-id]') : null; }}
       onKeyDownCapture={event => { rowTrigger.current = event.target instanceof Element ? event.target.closest('[data-row-id]') : null; }}>
-      <DataTable key={key} refreshKey={revision} schema={schema} source={source} columns={schema.fieldNames as string[]} columnOverrides={columns} tableLayout="fixed" className="[&_[data-slot=table]]:min-w-[68rem] [&_[data-slot=table-cell]]:py-1.5" paginated={{ pageSize: 25 }} searchable={false} sortable={false} filterable={false}
+      <DataTable key={key} refreshKey={revision} schema={schema} source={source} columns={schema.fieldNames as string[]} columnOverrides={columns} tableLayout="fixed" className="[&_[data-slot=table]]:min-w-[76rem] [&_[data-slot=table-cell]]:py-1.5" paginated={{ pageSize: 20 }} searchable={false} sortable={false} filterable={false}
       selectable={false} showExport={false} cellMotion={false} showHorizontalScrollbar={false}
       onRowClick={row => inspect(row, rowTrigger.current)}
       emptyState={<div className="grid justify-items-center gap-2 py-12 text-center"><SearchX className="mb-1 size-6 text-muted-foreground" /><p className="text-sm font-medium">No retained events match these filters.</p><p className="max-w-sm text-xs leading-relaxed text-muted-foreground">Try a wider time range or fewer criteria. Only evidence you are authorized to access is shown.</p></div>}

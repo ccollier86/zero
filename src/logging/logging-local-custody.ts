@@ -5,6 +5,8 @@ import type { LocalLoggingCustodyConfig, LoggingCustodyConfig, LoggingCustodySto
 import { checkpointDigest, verifySignedCheckpoint } from './logging-checkpoint-signer';
 import { loggingRecord } from './logging-validation';
 import { LoggingError } from './logging-error';
+import { loggingRealm } from './logging-realm';
+import { loggingDigest } from './logging-hash';
 
 export function createLocalLoggingCustody(data: AsyncDatabaseClient, identity: LocalLoggingIdentity, options: LocalLoggingCustodyConfig): LoggingCustodyConfig {
   const store = Object.freeze({ identity: 'zero.local.checkpoints',
@@ -19,7 +21,7 @@ export function createLocalLoggingCustody(data: AsyncDatabaseClient, identity: L
       signal.throwIfAborted();
       const cp = verifySignedCheckpoint(checkpoint, identity.ledgerId, checkpoint.stream, identity.signer.publicKeys);
       const result = await data.command('logging.checkpoint.append', { checkpoint: cp, expectedDigest } as unknown as DatabaseSerializableValue,
-        { idempotencyKey: 'checkpoint:' + checkpointDigest(cp), signal });
+        { idempotencyKey: 'logging:realm:' + loggingDigest([loggingRealm.fingerprint, 'logging.checkpoint.append', checkpointDigest(cp)]), signal });
       const wrapped = loggingRecord(result.value, ['kind', 'name', 'output']);
       if (wrapped.kind !== 'command' || wrapped.name !== 'logging.checkpoint.append') throw new LoggingError('LOGGING_RESPONSE_INVALID', 'Checkpoint acknowledgment is invalid.', 'unknown');
       signal.throwIfAborted();

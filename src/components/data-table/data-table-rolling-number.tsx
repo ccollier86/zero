@@ -7,6 +7,8 @@ import { cn } from '#zero/lib/utils';
 import { DATA_TABLE_MOTION } from './data-table-motion-tokens';
 
 interface DigitMotion { generation: number; animations: Animation[] }
+const digitStyle: React.CSSProperties = { display: 'inline-grid', overflow: 'hidden', height: '1.35em', verticalAlign: 'bottom' };
+const characterStyle: React.CSSProperties = { gridArea: '1 / 1', textAlign: 'center' };
 const digits = new WeakMap<HTMLElement, DigitMotion>();
 const useLayout = typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect;
 
@@ -24,6 +26,7 @@ export function updateDataTableRollingNumber(element: HTMLElement, value: number
   const slots = [...element.children] as HTMLElement[];
   while (slots.length < text.length) {
     const slot = document.createElement('span'); slot.dataset.slot = 'data-table-digit';
+    Object.assign(slot.style, digitStyle);
     element.prepend(slot); slots.unshift(slot);
   }
   while (slots.length > text.length) { const slot = slots.shift()!; stopDigit(slot); slot.remove(); }
@@ -37,6 +40,7 @@ export function updateDataTableRollingNumber(element: HTMLElement, value: number
     for (const child of [...slot.children]) if (child !== current) child.remove();
     if (current?.textContent === text[index]) { current.style.transform = ''; current.style.opacity = ''; return; }
     const incoming = document.createElement('span'); incoming.textContent = text[index]!; slot.append(incoming);
+    Object.assign(incoming.style, characterStyle);
     if (instant || typeof incoming.animate !== 'function') { current?.remove(); return; }
     const state = digits.get(slot) ?? { generation: 0, animations: [] };
     digits.set(slot, state); const generation = state.generation;
@@ -79,7 +83,8 @@ export function DataTableRollingNumber({ value, motionEnabled = true, durationFa
     for (const slot of [...(node?.children ?? [])]) stopDigit(slot as HTMLElement);
   }; }, []);
   return <span ref={element} aria-hidden="true" data-slot="data-table-rolling-number" data-value={value}
+    style={{ display: 'inline-flex', fontVariantNumeric: 'tabular-nums', verticalAlign: 'bottom', whiteSpace: 'nowrap' }}
     className={cn('data-table-rolling-number', className)}>{[...initial.current].map((character, index) => (
-      <span data-slot="data-table-digit" key={index}><span>{character}</span></span>
+      <span data-slot="data-table-digit" style={digitStyle} key={index}><span style={characterStyle}>{character}</span></span>
     ))}</span>;
 }

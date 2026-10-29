@@ -1,11 +1,17 @@
 /** Core logging capture presets and bounded writer policy. No services start and no existing audit is disabled. */
 import { LOGGING_FAMILIES, LOGGING_LEVELS, LOGGING_PRESETS, type LoggingEvent, type LoggingFamily, type LoggingLevel, type LoggingPreset } from './logging-contracts';
 import { invalid, loggingChoice, loggingRecord, LOGGING_MAX_BATCH } from './logging-validation';
+import type { LoggingResourcePolicies } from './logging-activity-contracts';
+import { normalizeLoggingResourcePolicies } from './logging-resource-policy';
 
 export interface LoggingConfig {
   readonly preset?: LoggingPreset;
   readonly minimumLevel?: LoggingLevel;
   readonly capture?: Partial<Readonly<Record<LoggingFamily, boolean>>>;
+  /** Technical HTTP stages are optional diagnostics, never record activity. Default: false. */
+  readonly diagnostics?: Readonly<{ http?: boolean }>;
+  /** Native table labels and explicitly approved field differences. Unknown values remain redacted. */
+  readonly resources?: LoggingResourcePolicies;
   readonly queue?: { readonly maxEvents?: number; readonly maxBytes?: number; readonly batchSize?: number };
 }
 export interface ResolvedLoggingConfig {
@@ -13,6 +19,8 @@ export interface ResolvedLoggingConfig {
   readonly preset: LoggingPreset;
   readonly minimumLevel: LoggingLevel;
   readonly capture: Readonly<Record<LoggingFamily, boolean>>;
+  readonly diagnostics: Readonly<{ http: boolean }>;
+  readonly resources: LoggingResourcePolicies;
   readonly queue: Readonly<{ maxEvents: number; maxBytes: number; batchSize: number }>;
   /** The managed composition must qualify durable sources, custody, admission and private evidence owners. */
   readonly complianceRequested: boolean;
@@ -24,7 +32,7 @@ const ACTIVITY = new Set<LoggingFamily>([...BASE, 'records', 'transfers', 'workf
 /** Resolve and detach capture policy. Omission preserves the existing platform runtime without enabling new storage. */
 export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedLoggingConfig {
   try {
-    const input = typeof value === 'boolean' || value === undefined ? {} : loggingRecord(value, ['preset', 'minimumLevel', 'capture', 'queue'], 'LOGGING_CONFIG_INVALID');
+    const input = typeof value === 'boolean' || value === undefined ? {} : loggingRecord(value, ['preset', 'minimumLevel', 'capture', 'diagnostics', 'resources', 'queue'], 'LOGGING_CONFIG_INVALID');
     const preset = input.preset === undefined ? 'basic' : loggingChoice(input.preset, LOGGING_PRESETS);
     // Compliance adds guarantees, not indiscriminate browser surveillance.
     // View/clipboard/printing capture must be selected by the reviewed policy.
@@ -33,13 +41,16 @@ export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedL
       if (typeof enabled !== 'boolean' || preset === 'compliance' && family === 'security' && !enabled) invalid('LOGGING_CONFIG_INVALID');
       capture[family as LoggingFamily] = enabled;
     }
+    const diagnostics = input.diagnostics === undefined ? {} : loggingRecord(input.diagnostics, ['http'], 'LOGGING_CONFIG_INVALID');
+    if (diagnostics.http !== undefined && typeof diagnostics.http !== 'boolean') invalid('LOGGING_CONFIG_INVALID');
     const queue = input.queue === undefined ? {} : loggingRecord(input.queue, ['maxEvents', 'maxBytes', 'batchSize'], 'LOGGING_CONFIG_INVALID');
     const maxEvents = bound(queue.maxEvents === undefined ? 1024 : queue.maxEvents, 1, 100_000);
     const maxBytes = bound(queue.maxBytes === undefined ? 8 * 1024 * 1024 : queue.maxBytes, 16_384, 64 * 1024 * 1024);
     const batchSize = bound(queue.batchSize === undefined ? Math.min(LOGGING_MAX_BATCH, maxEvents) : queue.batchSize, 1, Math.min(LOGGING_MAX_BATCH, maxEvents));
     return Object.freeze({ enabled: value !== undefined && value !== false, preset,
       minimumLevel: input.minimumLevel === undefined ? 'info' : loggingChoice(input.minimumLevel, LOGGING_LEVELS),
-      capture: Object.freeze(capture), queue: Object.freeze({ maxEvents, maxBytes, batchSize }), complianceRequested: preset === 'compliance' });
+      capture: Object.freeze(capture), diagnostics: Object.freeze({ http: diagnostics.http === true }), resources: normalizeLoggingResourcePolicies(input.resources),
+      queue: Object.freeze({ maxEvents, maxBytes, batchSize }), complianceRequested: preset === 'compliance' });
   } catch { return invalid('LOGGING_CONFIG_INVALID'); }
 }
 

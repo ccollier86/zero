@@ -4,6 +4,9 @@ import { LOGGING_BROWSER_ACTIONS } from '../../logging/logging-api-contracts';
 import type { LoggingAdmissionReceipt } from '../../logging/logging-admission-contracts';
 
 export interface LoggingCollector {
+  /** Component-owned lifetime. Closing one view never resets another mounted record. */
+  bindView(value: { type: string; id: string }): Readonly<{ close(): void }>;
+  /** @deprecated Use bindView(); this compatibility owner no longer replaces the page/other views. */
   target(value: { type: string; id: string } | null): void;
   action(action: LoggingObservation['action']): void;
   flush(): Promise<void>;
@@ -23,19 +26,43 @@ export function createLoggingCollector(client: Pick<LoggingClient, 'bindObservat
   let visible = doc.visibilityState !== 'hidden' && doc.hasFocus(), href = win.location.href, suspended = false;
   let pending: LoggingObservation[] = [], running: Promise<void> | null = null, stopTask: Promise<void> | null = null;
   const subscriptions: (() => void)[] = [];
+  interface OwnedView { id: string; sequence: number; target: { type: string; id: string }; last: number; elapsed: number; visible: number; active: number; incomplete: boolean }
+  const views = new Set<OwnedView>(); let compatibilityView: Readonly<{ close(): void }> | null = null;
   const enabled = (action: LoggingObservation['action']) => policy.enabled && policy.capture[LOGGING_BROWSER_ACTIONS[action]];
-  const enqueue = (action: LoggingObservation['action'], interval?: LoggingObservation['interval']) => {
+  const enqueue = (action: LoggingObservation['action'], interval?: LoggingObservation['interval'], subject = target) => {
     if (!enabled(action)) return;
     if (pending.length >= 128) { dropped++; return; }
-    pending.push({ id: crypto.randomUUID(), collectorId, action, target: { ...target }, occurredAt: Date.now(), ...(interval ? { interval } : {}) });
+    pending.push({ id: crypto.randomUUID(), collectorId, action, target: { ...subject }, occurredAt: Date.now(), ...(interval ? { interval } : {}) });
+  };
+  const accountView = (view: OwnedView) => {
+    const current = now(), delta = current - view.last, bounded = Math.max(0, Math.min(60000, delta));
+    view.incomplete ||= delta < 0 || delta > 60000;
+    view.elapsed += bounded;
+    if (visible) { view.visible += bounded; view.active += Math.max(0, Math.min(bounded, interaction + policy.idleMs - view.last)); }
+    view.last = current;
+  };
+  const observeView = (view: OwnedView, action: 'view.opened' | 'view.interval' | 'view.closed') => {
+    accountView(view);
+    enqueue(action, { viewId: view.id, sequence: view.sequence++, elapsedMs: Math.min(60000, Math.round(view.elapsed)),
+      visibleMs: Math.min(60000, Math.round(view.visible)), activeMs: Math.min(60000, Math.round(view.active)),
+      incomplete: view.incomplete || view.elapsed > 60000 }, view.target);
+    view.elapsed = view.visible = view.active = 0; view.incomplete = false;
+  };
+  const bindView = (value: { type: string; id: string }) => {
+    if (stopped || !policy.capture.views) return Object.freeze({ close() {} });
+    if (views.size >= 16) { const error = new Error('Audit view capacity is exhausted.'); options.onError?.(error); throw error; }
+    const view: OwnedView = { id: crypto.randomUUID(), sequence: 0, target: { ...value }, last: now(), elapsed: 0, visible: 0, active: 0, incomplete: false };
+    views.add(view); if (!suspended) observeView(view, 'view.opened');
+    return Object.freeze({ close() { if (!views.delete(view)) return; if (!stopped && !suspended) observeView(view, 'view.closed'); void flush(); } });
   };
   const account = () => {
-    const current = now(), delta = Math.max(0, current - last);
+    for (const view of views) accountView(view);
+    const current = now(), rawDelta = current - last, delta = Math.max(0, rawDelta);
     // Missing sleep/unload tails are not fabricated as observed attention.
     const bounded = Math.min(60000, delta);
     elapsedMs += bounded;
     if (visible) { visibleMs += bounded; activeMs += Math.max(0, Math.min(bounded, interaction + policy.idleMs - last)); }
-    last = current; return delta > 60000;
+    last = current; return rawDelta < 0 || delta > 60000;
   };
   const interval = (action: 'view.interval' | 'view.closed') => {
     const incomplete = account() || elapsedMs > 60000;
@@ -66,14 +93,17 @@ export function createLoggingCollector(client: Pick<LoggingClient, 'bindObservat
     return running;
   };
   const listen = (object: Window | Document, name: string, handler: () => void) => { object.addEventListener(name, handler, { passive: true }); subscriptions.push(() => object.removeEventListener(name, handler)); };
-  const setVisibility = () => { if (stopped) return; interval('view.interval'); visible = doc.visibilityState !== 'hidden' && doc.hasFocus(); void flush(); };
+  const setVisibility = () => { if (stopped) return; interval('view.interval'); for (const view of views) observeView(view, 'view.interval'); visible = doc.visibilityState !== 'hidden' && doc.hasFocus(); void flush(); };
   for (const event of ['pointerdown', 'keydown', 'touchstart']) listen(doc, event, () => { if (stopped) return; account(); interaction = now(); });
   listen(doc, 'copy', () => enqueue('clipboard.copy.observed'));
   listen(doc, 'visibilitychange', setVisibility); listen(win, 'focus', setVisibility); listen(win, 'blur', setVisibility);
   listen(win, 'beforeprint', () => { enqueue('print.requested'); void flush(); });
   listen(win, 'afterprint', () => { enqueue('print.dialog.closed'); void flush(); });
-  listen(win, 'pagehide', () => { if (!suspended) interval('view.closed'); suspended = true; void flush(); });
-  listen(win, 'pageshow', () => { if (suspended) { suspended = false; last = interaction = now(); viewId = crypto.randomUUID(); sequence = 0; opened(); } });
+  listen(win, 'pagehide', () => { if (!suspended) { interval('view.closed'); for (const view of views) observeView(view, 'view.closed'); } suspended = true; void flush(); });
+  listen(win, 'pageshow', () => { if (suspended) {
+    suspended = false; last = interaction = now(); viewId = crypto.randomUUID(); sequence = 0; visible = doc.visibilityState !== 'hidden' && doc.hasFocus(); opened();
+    for (const view of views) { view.id = crypto.randomUUID(); view.sequence = 0; view.last = last; observeView(view, 'view.opened'); }
+  } });
   // Zero's router publishes popstate only after navigation admission. Native
   // Back/Forward and hash navigation use the same signal; the URL is compared
   // in memory only, never copied into evidence. A duplicate browser signal is
@@ -88,17 +118,20 @@ export function createLoggingCollector(client: Pick<LoggingClient, 'bindObservat
   const timer = setInterval(() => {
     if (stopped || suspended) return;
     if (!navigation()) interval('view.interval');
+    for (const view of views) observeView(view, 'view.interval');
     void flush();
   }, policy.heartbeatMs);
   opened();
   return Object.freeze({
-    target(value: { type: string; id: string } | null) { if (stopped) return; interval('view.closed'); target = value ? { ...value } : { type: 'page', id: 'application' }; viewId = crypto.randomUUID(); sequence = 0; opened(); },
+    bindView,
+    target(value: { type: string; id: string } | null) { compatibilityView?.close(); compatibilityView = value ? bindView(value) : null; },
     action(action: LoggingObservation['action']) { if (!stopped && Object.hasOwn(LOGGING_BROWSER_ACTIONS, action)) enqueue(action); },
     flush,
     diagnostics() { return Object.freeze({ queued: pending.length, dropped, failed, stopped }); },
     stop() {
       if (stopTask) return stopTask;
-      stopped = true; if (!suspended) interval('view.closed'); clearInterval(timer); subscriptions.forEach(remove => remove());
+      stopped = true; if (!suspended) { interval('view.closed'); for (const view of views) observeView(view, 'view.closed'); }
+      views.clear(); clearInterval(timer); subscriptions.forEach(remove => remove());
       stopTask = flush().finally(() => { dropped += pending.length; pending = []; }); return stopTask;
     },
   });

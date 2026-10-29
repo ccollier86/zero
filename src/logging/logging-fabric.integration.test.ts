@@ -14,14 +14,21 @@ import { resolveLoggingConfig } from './logging-config';
 import { loggingEvent } from './test-support/logging-fixture';
 import { loggingContext } from './test-support/logging-fixture';
 import { captureLoggingEvent } from './logging-validation';
+import { executeCoordinatorLoggingDeliveryProbe } from '../databases/database-coordinator-capability';
+import { resolveDatabaseFile } from '../databases/database-file';
+import { Database as SQLiteDatabase } from 'bun:sqlite';
+import type { DatabaseRealm } from '../databases/database-realm';
+import { loggingV6Realm } from './test-support/logging-v6-realm.fixture';
+import { loggingDigest } from './logging-hash';
 
-async function fixture(afterWrite?: () => void) {
+async function fixture(afterWrite?: () => void, initialRealm: DatabaseRealm = loggingRealm) {
   const root = await mkdtemp(join(tmpdir(), 'logging-fabric-'));
-  let coordinator: DatabaseCoordinator; const leases = new Set<DatabaseCoordinatorLease>();
+  let realm = initialRealm;
+  let coordinator: DatabaseCoordinator; const leases = new Set<DatabaseCoordinatorLease>(), bound = new Map<LoggingFabricStore['stream'], DatabaseCoordinatorLease>();
   const start = () => {
-    coordinator = new DatabaseCoordinator({ rootDirectory: join(root, 'databases'), realm: loggingRealm, sqlite: { synchronous: 'FULL' },
+    coordinator = new DatabaseCoordinator({ rootDirectory: join(root, 'databases'), realm, sqlite: { synchronous: 'FULL' },
       maxDatabases: 2, readers: true, sweepIntervalMs: false,
-      createExecutor: createSubprocessDatabaseExecutorFactory({ launch: { kind: 'source', entrypoint: new URL('./test-support/logging-actor.fixture.ts', import.meta.url) }, env: {},
+      createExecutor: createSubprocessDatabaseExecutorFactory({ launch: { kind: 'source', entrypoint: new URL(realm.version === '6' ? './test-support/logging-v6-actor.fixture.ts' : './test-support/logging-actor.fixture.ts', import.meta.url) }, env: {},
         executor: { startupTimeoutMs: 5000, operationTimeoutMs: 10000, shutdownAckTimeoutMs: 2000, shutdownExitTimeoutMs: 2000 } }),
     }); coordinator.start();
   };
@@ -29,16 +36,71 @@ async function fixture(afterWrite?: () => void) {
   const stores = async () => {
     const bind = async (stream: 'audit' | 'operational') => {
       const lease = await coordinator.acquire('logging:' + stream); leases.add(lease);
+      bound.set(stream, lease);
       return new LoggingFabricStore(createAsyncDatabaseClient({ executor: { execute: async (operation: any, options: any) => {
         const result = await lease.execute(operation, options); if (operation.type === 'command') afterWrite?.(); return result;
       } } as AsyncDatabaseOperationExecutor }), stream);
     };
     return { audit: await bind('audit'), operational: await bind('operational') };
   };
-  const closeOwner = async () => { for (const lease of leases) lease.release(); leases.clear(); await coordinator.close(); };
-  return { stores, async restart() { await closeOwner(); start(); return stores(); },
+  const closeOwner = async () => { for (const lease of leases) lease.release(); leases.clear(); bound.clear(); await coordinator.close(); };
+  return { stores,
+    async legacyAppend(events: Parameters<LoggingFabricStore['append']>[0]) {
+      return bound.get('audit')!.execute({ type: 'command', name: 'logging.append', input: { stream: 'audit', events } as any,
+        idempotencyKey: 'logging:append:' + loggingDigest(events) });
+    },
+    probe: (nonce: string, stream: LoggingFabricStore['stream'] = 'audit') => executeCoordinatorLoggingDeliveryProbe(bound.get(stream)!, nonce),
+    controlCounts() {
+      const database = new SQLiteDatabase(resolveDatabaseFile(join(root, 'databases'), 'logging:audit').path, { readonly: true });
+      try { return { receipts: database.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM _zero_database_operation_receipts').get()!.n,
+        controls: database.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM logging_delivery_control').get()!.n }; }
+      finally { database.close(); }
+    }, async restart() { await closeOwner(); start(); return stores(); },
+    async upgrade() { await closeOwner(); realm = loggingRealm; start(); return stores(); },
     async close() { try { await closeOwner(); } finally { await rm(root, { recursive: true, force: true }); } } };
 }
+
+test('retained v6 source replay upgrades through real actors without changing old evidence or reusing expired command receipts', async () => {
+  const f = await fixture(undefined, loggingV6Realm);
+  try {
+    let { audit } = await f.stores(); const event = loggingEvent('legacy-ack-lost');
+    await f.legacyAppend([event]);
+    const checkpoint = (await audit.verify()).checkpoint;
+    const before = await audit.page({ kind: 'platform' });
+    ({ audit } = await f.upgrade());
+    expect(await audit.page({ kind: 'platform' })).toEqual(before);
+    expect((await audit.append([event])).receipts[0]?.duplicate).toBe(true);
+    await f.probe(crypto.randomUUID());
+    expect((await audit.verify(0, checkpoint)).checkpoint).toEqual(checkpoint);
+    expect((await audit.page({ kind: 'platform' })).events).toHaveLength(1);
+    await audit.append([loggingEvent('new-generation')]);
+    expect((await audit.verify(0, checkpoint)).checked).toBe(2);
+  } finally { await f.close(); }
+}, 30000);
+
+test('private delivery challenges force fresh commits without changing activity totals or evidence heads', async () => {
+  const f = await fixture();
+  try {
+    let { audit, operational } = await f.stores();
+    await audit.append([loggingEvent('meaningful')]);
+    const before = await audit.verify(), page = await audit.page({ kind: 'platform' });
+    const beforeCounts = f.controlCounts();
+    const nonce = crypto.randomUUID();
+    await f.probe(nonce);
+    await expect(f.probe(nonce)).rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
+    await expect(f.probe(crypto.randomUUID(), 'operational')).rejects.toMatchObject({ code: 'DATABASE_OPERATION_UNSUPPORTED' });
+    await expect(f.probe('invalid')).rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
+    for (let i = 0; i < 256; i++) await f.probe(crypto.randomUUID());
+    expect(f.controlCounts()).toEqual({ receipts: beforeCounts.receipts, controls: 1 });
+    expect(await audit.page({ kind: 'platform' })).toEqual(page);
+    expect(await audit.verify()).toEqual(before);
+    ({ audit, operational } = await f.restart());
+    await f.probe(crypto.randomUUID());
+    expect(f.controlCounts()).toEqual({ receipts: beforeCounts.receipts, controls: 1 });
+    expect(await audit.verify()).toEqual(before);
+    expect((await operational.page({ kind: 'platform' })).events).toHaveLength(0);
+  } finally { await f.close(); }
+}, 30000);
 
 test('Fabric logging stores are physically independent, survive restart and isolate tenant/application queries', async () => {
   const f = await fixture();
@@ -120,10 +182,14 @@ test('investigation pages keep a fixed high-water snapshot while new events arri
     const { audit } = await f.stores();
     await audit.append([loggingEvent('one'), loggingEvent('two'), loggingEvent('three')]);
     const first = await audit.page({ kind: 'tenant', tenantId: 'tenant-a' }, { limit: 1 });
-    expect(first.events[0]?.event.id).toBe('three'); expect(first.hasMore).toBe(true);
+    expect(first.events[0]?.event.id).toBe('three'); expect(first.hasMore).toBe(true); expect(first.total).toBe(3);
     await audit.append([loggingEvent('four')]);
     const second = await audit.page({ kind: 'tenant', tenantId: 'tenant-a' }, { limit: 10, highWaterOrdinal: first.highWaterOrdinal, beforeOrdinal: first.nextBeforeOrdinal! });
     expect(second.events.map(row => row.event.id)).toEqual(['two', 'one']);
+    expect(second.total).toBe(3);
+    const liveOlder = await audit.page({ kind: 'tenant', tenantId: 'tenant-a' }, { limit: 1, beforeOrdinal: first.nextBeforeOrdinal! });
+    expect(liveOlder.total).toBe(4); expect(liveOlder.events[0]!.event.id).toBe('two');
+    expect((await audit.page({ kind: 'tenant', tenantId: 'no-matching-tenant' })).total).toBe(0);
     expect((await audit.page({ kind: 'tenant', tenantId: 'tenant-a' }, { since: 1700000000000, until: 1700000000001, actorId: 'fixture-user', targetId: 'record-1' })).events).toHaveLength(4);
     expect((await audit.page({ kind: 'tenant', tenantId: 'tenant-a' }, { until: 1700000000000 })).events).toHaveLength(0);
   } finally { await f.close(); }

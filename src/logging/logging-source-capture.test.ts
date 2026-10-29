@@ -13,9 +13,10 @@ import { tmpdir } from 'node:os';
 import { LoggingDeliveryProcess } from './logging-delivery-process';
 import type { ResolvedManagedLoggingConfig } from './logging-managed-config';
 import type { DeliverySourceRegistration } from './logging-delivery-protocol';
+import type { LoggingResourcePolicies } from './logging-activity-contracts';
 
-async function sourceOwner(root: string, deliver: (event: LoggingEvent) => Promise<unknown>) {
-  const config = resolveManagedLoggingConfig({ preset: 'activity' }, root) as ResolvedManagedLoggingConfig;
+async function sourceOwner(root: string, deliver: (event: LoggingEvent) => Promise<unknown>, resources: LoggingResourcePolicies = {}) {
+  const config = resolveManagedLoggingConfig({ preset: 'activity', resources }, root) as ResolvedManagedLoggingConfig;
   const ordinals = new Map<string, number>();
   const worker = await LoggingDeliveryProcess.open(config.createExecutor, config.policy.queue, async (_stream, events) => {
     const receipts = [];
@@ -33,6 +34,27 @@ async function sourceOwner(root: string, deliver: (event: LoggingEvent) => Promi
   } as unknown as LoggingRuntime;
   return { logging, worker };
 }
+
+test('pinned committed changes use the same approved differences as Fabric and never retain rollback or no-op edits', async () => {
+  const application = createReactiveDB({ mode: 'memory' }), system = createReactiveDB({ mode: 'memory' });
+  application.defineTable('invoices', { id: 'text primary key', status: 'text', private_note: 'text' });
+  const events: LoggingEvent[] = [];
+  const { logging, worker } = await sourceOwner('/tmp', async event => { events.push(event); }, { invoices: { fields: { status: { values: ['draft', 'approved'] } } } });
+  const capture = installLoggingSourceCapture(logging, application, system);
+  try {
+    application.create('invoices', { id: 'invoice-7', status: 'draft', private_note: 'DO_NOT_RETAIN' });
+    application.update('invoices', 'invoice-7', { status: 'approved' });
+    application.update('invoices', 'invoice-7', { status: 'approved' });
+    expect(() => application.transaction(() => { application.update('invoices', 'invoice-7', { status: 'draft' }); throw new Error('Rollback'); })).toThrow('Rollback');
+    await capture.flush();
+    expect(events).toHaveLength(2);
+    expect(events[1]!.detail).toMatchObject({ kind: 'record-change', table: 'invoices', changes: [
+      { field: 'status', kind: 'value', before: 'draft', after: 'approved' },
+    ] });
+    expect(JSON.stringify(events)).not.toContain('DO_NOT_RETAIN');
+    expect(events.map(event => event.action)).toEqual(['record.created', 'record.updated']);
+  } finally { await capture.close(); await worker.close(); application.dispose(); system.dispose(); }
+}, 30000);
 
 test('capture joins the original commit, preserves automation hooks, excludes values and retries after a sink outage', async () => {
   const application = createReactiveDB({ mode: 'memory' }), system = createReactiveDB({ mode: 'memory' });

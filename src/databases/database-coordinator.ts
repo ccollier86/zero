@@ -835,6 +835,14 @@ export class DatabaseCoordinator implements AsyncDisposable {
     return this.operationRuntime.executeLoggingSource(entry, binding.scope, acknowledge);
   }
 
+  /** @internal Fixed private audit plane only; not part of the public data operation catalog. */
+  executeLoggingDeliveryProbe(entry: DatabaseEntry, nonce: string): Promise<void> {
+    if (this.realm.name !== 'zero-logging' || entry.id !== 'logging:audit' || entry.placement.mode !== 'file') {
+      throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Private audit writer delivery control is unavailable.', { outcome: 'not-started' });
+    }
+    return this.operationRuntime.executeLoggingDeliveryProbe(entry, nonce);
+  }
+
   executePresenceProjection(entry: DatabaseEntry, publication: PresencePublication,
     options: DatabaseExecutionOptions = {}, commitAuthority: DatabaseCommitAuthority | null = null): Promise<PresenceProjectionReceipt> {
     return this.operationRuntime.executePresenceProjection(entry, publication, options, commitAuthority);

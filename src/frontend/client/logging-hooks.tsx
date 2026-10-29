@@ -105,7 +105,7 @@ export function LoggingDeliveryGuard({ children }: { children?: ReactNode }) {
 /** Bind opaque record/document identity; no URL, label, text or clinical content is collected. */
 export function useLoggingView(target: { type: string; id: string } | null): void {
   const collector = useContext(CollectorContext);
-  useEffect(() => { collector?.target(target); return () => collector?.target(null); }, [collector, target?.type, target?.id]);
+  useEffect(() => { if (!collector || !target) return; const view = collector.bindView(target); return () => view.close(); }, [collector, target?.type, target?.id]);
 }
 
 /** Explicit successful/failed clipboard integrations report observations, not server-confirmed data exfiltration. */

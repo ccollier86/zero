@@ -7,9 +7,9 @@ import { DataTableColumnHeader } from './data-table-column-header';
 import { DataTableRollingNumber } from './data-table-rolling-number';
 import { DataTableNewRecordsButton } from './data-table-new-records-button';
 type RecordRow = { id: string; name: string };
-function Footer({ count = 25, pageIndex = 0, ...props }: Omit<DataTablePaginationProps<RecordRow>, 'table'> & { count?: number; pageIndex?: number }) {
+function Footer({ count = 25, pageIndex = 0, pageSize = 10, ...props }: Omit<DataTablePaginationProps<RecordRow>, 'table'> & { count?: number; pageIndex?: number; pageSize?: number }) {
   const table = useReactTable({ data: Array.from({ length: count }, (_, index) => ({ id: String(index), name: `Row ${index}` })),
-    columns: [{ accessorKey: 'name' }], state: { pagination: { pageIndex, pageSize: 10 } },
+    columns: [{ accessorKey: 'name' }], state: { pagination: { pageIndex, pageSize } },
     manualPagination: props.serverPage !== undefined, getCoreRowModel: getCoreRowModel(), getPaginationRowModel: getPaginationRowModel() });
   return <DataTablePagination table={table} {...props} />;
 }
@@ -28,7 +28,8 @@ test('unknown offset and unloaded pages never claim a total or page count', () =
 });
 test('opaque cursor batches do not invent absolute positions or total page counts even with an exact total', () => {
   const html = renderToStaticMarkup(<Footer count={7} pageIndex={3} serverPage={{ mode: 'cursor', total: 35, hasMore: true, nextCursor: 'opaque' }} />);
-  expect(html).toContain('aria-label="7 records on this page"'); expect(html).toContain('aria-label="Page 4"');
+  expect(html).toContain('aria-label="7 records on this page · 35 total"'); expect(html).toContain('aria-label="Page 4"');
+  expect(html).toContain('data-value="35"');
   expect(html).not.toContain('Showing 31'); expect(html).not.toContain('data-table-page-track'); expect(html).not.toContain('Last page');
 });
 test('known empty data has zero pages; an optional new-record action uses only its supplied count', () => {
@@ -71,7 +72,13 @@ test('initial rolling values are SSR-safe, grouped, and use hidden per-character
   const html = renderToStaticMarkup(<DataTableRollingNumber value={1234} />);
   expect(html).toContain('aria-hidden="true"'); expect(html).toContain('data-value="1234"');
   expect(html.match(/data-slot="data-table-digit"/g)).toHaveLength(5);
-  expect(html).toContain('<span>,</span>');
+  expect(html).toMatch(/<span[^>]*>,<\/span>/);
+  expect(html).toContain('display:inline-flex'); expect(html).toContain('display:inline-grid'); expect(html).toContain('grid-area:1 / 1');
+});
+test('a configured nonstandard page size has a selected trigger label rather than an empty Select', () => {
+  const html = renderToStaticMarkup(<Footer pageSize={25} pageSizes={[10, 20, 50, 100]} />);
+  expect(html).toContain('aria-label="Rows per page"');
+  expect(html).toMatch(/data-slot="select-value"[^>]*>25</);
 });
 test('held-new action can render without a fake pager and preserves native accessible button props', () => {
   const html = renderToStaticMarkup(<DataTableNewRecordsButton count={5} onReveal={() => {}} disabled id="held" />);

@@ -23,6 +23,38 @@ beforeAll(async () => {
 }, 60000);
 afterAll(() => { lease?.release(); expect(faults).toEqual([]); });
 
+browserTest('record identity, committed differences and exact live rolling totals are visible without opening technical details', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(7000); page.on('pageerror', error => faults.push(error.message));
+  await page.route('**/*', route => route.request().url().startsWith('https://zero-logging.invalid/') ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }) : route.abort());
+  try {
+    await page.goto('https://zero-logging.invalid/?changes=1'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
+    const target = page.getByRole('button', { name: 'Show history for Projects invoice-7', exact: true }); await target.waitFor();
+    await page.getByText('Status: draft → approved · Private note changed (values private)', { exact: true }).waitFor();
+    const footer = page.locator('[data-slot="data-table-page-count"]');
+    expect(await footer.getAttribute('aria-label')).toBe('20 records on this page · 65 total');
+    expect(await page.getByRole('combobox', { name: 'Rows per page', exact: true }).textContent()).toBe('20');
+    await page.getByRole('button', { name: 'Add synthetic activity', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-slot="data-table-page-count"]')?.getAttribute('aria-label') === '20 records on this page · 66 total');
+    const total = footer.locator('[data-value="66"]'); expect(await total.count()).toBe(1);
+    const tops = await total.locator('[data-slot="data-table-digit"]').evaluateAll(digits => digits.map(digit => digit.getBoundingClientRect().top));
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(1);
+    await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Event evidence', exact: true });
+    await dialog.getByRole('heading', { name: 'What changed', exact: true }).waitFor();
+    expect(await dialog.getByText('draft', { exact: true }).isVisible()).toBe(true);
+    expect(await dialog.getByText('approved', { exact: true }).isVisible()).toBe(true);
+    expect(await dialog.getByText('invoice-7', { exact: true }).isVisible()).toBe(true);
+    expect(await dialog.getByText('Changed · values private', { exact: true }).isVisible()).toBe(true);
+    const directory = process.env.LOGGING_SCREENSHOTS;
+    if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: join(directory, 'committed-record-differences.png'), fullPage: true }); }
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await target.click();
+    await page.waitForFunction(() => document.querySelector('[data-slot="data-table-page-count"]')?.getAttribute('aria-label') === '1 records on this page · 1 total');
+    expect(await page.locator('[data-row-id]').count()).toBe(1);
+  } finally { await page.close(); }
+}, 30000);
+
 browserTest('native live inserts preserve rows and pagination, use the existing incoming-record control and mask old-scope evidence', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.setDefaultTimeout(7000); page.on('pageerror', error => faults.push(error.message));
@@ -38,10 +70,10 @@ browserTest('native live inserts preserve rows and pagination, use the existing 
     expect(await page.locator('[data-slot="data-table-skeleton-body"]').count()).toBe(0);
     expect(await page.locator('[data-row-id=\'["fixture-source","event-66"]\']').getAttribute('data-table-fresh')).toBe('');
     await page.getByRole('button', { name: 'Next page', exact: true }).click();
-    await page.getByRole('button', { name: 'Inspect event event-41', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Inspect event event-46', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Add synthetic activity', exact: true }).click();
     await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).waitFor();
-    expect(await page.getByRole('button', { name: 'Inspect event event-41', exact: true }).count()).toBe(1);
+    expect(await page.getByRole('button', { name: 'Inspect event event-46', exact: true }).count()).toBe(1);
     expect(await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).count()).toBe(0);
     await page.getByRole('button', { name: 'Reveal 1 new records', exact: true }).click();
     await page.getByRole('button', { name: 'Inspect event event-67', exact: true }).waitFor();
@@ -137,7 +169,7 @@ browserTest('a committed burst refreshes one native page without blanking retain
     await page.goto('https://zero-logging.invalid/'); await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
     const retained = page.getByRole('button', { name: 'Inspect event event-65', exact: true });
     await retained.waitFor(); await retained.evaluate(element => { (window as any).__retainedLoggingCell = element.closest('[data-row-id]'); });
-    const count = () => page.evaluate(() => (window as any).__loggingQueries.filter((query: any) => query.limit === 25 && !query.eventIds).length);
+    const count = () => page.evaluate(() => (window as any).__loggingQueries.filter((query: any) => query.limit === 20 && !query.eventIds).length);
     const before = await count();
     await page.getByRole('button', { name: 'Add synthetic burst', exact: true }).click();
     await page.getByRole('button', { name: 'Inspect event event-68', exact: true }).waitFor();

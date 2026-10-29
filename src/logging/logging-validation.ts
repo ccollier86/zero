@@ -5,6 +5,7 @@ import {
   LOGGING_EVIDENCE, LOGGING_FAMILIES, LOGGING_LEVELS, LOGGING_OUTCOMES,
   type LoggingContext, type LoggingEvent, type LoggingEventInput, type LoggingScalar,
 } from './logging-contracts';
+import { normalizeLoggingActivityDetail } from './logging-activity-validation';
 
 export const LOGGING_MAX_EVENT_BYTES = 16_384;
 export const LOGGING_MAX_BATCH = 256;
@@ -105,18 +106,22 @@ export function captureLoggingEvent(trustedContext: LoggingContext, input: Loggi
   const allowed = loggingArray(metadataKeys, 32);
   if (allowed.some(key => typeof key !== 'string')) invalid();
   const c = context(trustedContext);
-  const r = loggingRecord(input, ['id', 'family', 'action', 'level', 'outcome', 'evidence', 'occurredAt', 'target', 'metadata']);
+  const r = loggingRecord(input, ['id', 'family', 'action', 'level', 'outcome', 'evidence', 'occurredAt', 'target', 'metadata', 'detail']);
   const family = loggingChoice(r.family, LOGGING_FAMILIES);
   const evidence = loggingChoice(r.evidence, LOGGING_EVIDENCE);
   if (c.origin === 'frontend' && !['browser-observed', 'estimated', 'incomplete'].includes(evidence)) invalid();
   if (evidence === 'provider-confirmed' && c.origin !== 'provider') invalid();
   const target = r.target == null ? null : loggingRecord(r.target, ['type', 'id']);
+  const detail = r.detail === undefined ? undefined : normalizeLoggingActivityDetail(r.detail);
+  if (detail && (c.origin === 'frontend' || family !== 'records' || !['record.created', 'record.updated', 'record.deleted'].includes(r.action as string)
+    || r.outcome !== 'succeeded' || evidence !== 'server-confirmed' || !target)) invalid();
   const event: LoggingEvent = Object.freeze({
-    ...c, version: 1, id: loggingId(r.id)!, stream: family === 'operational' ? 'operational' : 'audit', family,
+    ...c, version: detail ? 2 : 1, id: loggingId(r.id)!, stream: family === 'operational' ? 'operational' : 'audit', family,
     action: loggingCode(r.action), level: r.level === undefined ? 'info' : loggingChoice(r.level, LOGGING_LEVELS),
     outcome: loggingChoice(r.outcome, LOGGING_OUTCOMES), evidence, occurredAt: loggingTime(r.occurredAt),
     target: target ? Object.freeze({ type: loggingCode(target.type), id: loggingId(target.id)! }) : null,
     metadata: metadata(r.metadata ?? {}, allowed as string[]),
+    ...(detail ? { detail } : {}),
   });
   if (loggingByteLength(event) > LOGGING_MAX_EVENT_BYTES) invalid();
   return event;
@@ -125,13 +130,13 @@ export function captureLoggingEvent(trustedContext: LoggingContext, input: Loggi
 /** Validate a previously captured envelope again at the actor/storage boundary. */
 export function normalizeLoggingEvent(value: unknown): LoggingEvent {
   const r = loggingRecord(value, ['version', 'id', 'stream', 'family', 'action', 'level', 'outcome', 'evidence', 'occurredAt', 'target', 'metadata',
-    'sourceId', 'origin', 'scope', 'actor', 'requestId', 'correlationId', 'policyVersion']);
-  if (r.version !== 1) invalid();
+    'sourceId', 'origin', 'scope', 'actor', 'requestId', 'correlationId', 'policyVersion', 'detail']);
+  if (r.version !== 1 && r.version !== 2 || r.version === 1 && r.detail !== undefined || r.version === 2 && r.detail === undefined) invalid();
   const approved = metadata(r.metadata);
   const event = captureLoggingEvent({ sourceId: r.sourceId, origin: r.origin, scope: r.scope, actor: r.actor, requestId: r.requestId,
     correlationId: r.correlationId, policyVersion: r.policyVersion } as LoggingContext,
   { id: r.id, family: r.family, action: r.action, level: r.level, outcome: r.outcome, evidence: r.evidence,
-    occurredAt: r.occurredAt, target: r.target, metadata: approved } as LoggingEventInput, Object.keys(approved));
+    occurredAt: r.occurredAt, target: r.target, metadata: approved, ...(r.detail === undefined ? {} : { detail: r.detail }) } as LoggingEventInput, Object.keys(approved));
   if (event.stream !== r.stream) invalid();
   return event;
 }

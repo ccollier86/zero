@@ -14,7 +14,7 @@ test('one authorized connection supplies native INSERT evidence, batches arrival
   const source = createLoggingTableSource({
     async page(_stream, q = {}) {
       const events = Array.from({ length: head }, (_, i) => row(head - i)).filter(row => (!q.beforeOrdinal || row.ordinal < q.beforeOrdinal) && (!q.eventIds || q.eventIds.includes(id(row.ordinal))));
-      return { events: events.slice(0, q.limit ?? 50), highWaterOrdinal: head, hasMore: false, nextBeforeOrdinal: null };
+      return { events: events.slice(0, q.limit ?? 50), highWaterOrdinal: head, total: head, hasMore: false, nextBeforeOrdinal: null };
     },
     watch(_stream, _q, _listener, opts) { watchCalls++; options = opts!; opts?.onStatus?.('live'); return () => { stops++; }; },
   }, 'audit');
@@ -26,6 +26,7 @@ test('one authorized connection supplies native INSERT evidence, batches arrival
   const stopChanges = source.adapter!.subscribeChanges!(query, event => { observed.push(event.rowId); if (observed.length === 2) received(); }, { signal: signal.signal });
   try {
     expect(first.rows.map(row => row.id)).toEqual([id(2), id(1)]);
+    expect(first.page.total).toBe(2);
     expect(watchCalls).toBe(1); expect(options.afterOrdinal).toBe(2); expect(source.live).toBe(true);
     head = 4;
     options.onChanges!({ events: [row(3), row(4)], afterOrdinal: 2, throughOrdinal: 4, highWaterOrdinal: 4, hasMore: false });
@@ -35,6 +36,7 @@ test('one authorized connection supplies native INSERT evidence, batches arrival
     finally { clearTimeout(timeout); }
     expect(observed).toEqual([id(3), id(4)]);
     expect((await source.adapter!.query(query, { signal: signal.signal })).rows[0]!.id).toBe(id(4));
+    expect((await source.adapter!.query({ ...query, pagination: { ...query.pagination, cursor: '2', pageIndex: 1 } }, { signal: signal.signal })).page.total).toBe(4);
     expect(await source.adapter!.getLeadingRowId!(query, { signal: signal.signal })).toBe(id(4));
     expect(await source.adapter!.confirmInsertedRows!(query, [id(4), id(100)], { signal: signal.signal })).toEqual([id(4)]);
     stopChanges(); expect(stops).toBe(0);

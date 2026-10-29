@@ -100,7 +100,8 @@ export function createLoggingTableSource(client: Pick<LoggingClient, 'page'> & P
         // so new head inserts cannot turn a page transition into a new initial load.
         const page = await client.page(stream, { ...filters,
           ...(before === undefined ? {} : { beforeOrdinal: Math.min(before, filters.beforeOrdinal ?? before) }), limit: query.pagination.pageSize }, { signal });
-        return { rows: page.events.map(event => loggingTableRow(event, page.people)), page: { mode: 'cursor', hasMore: page.hasMore, nextCursor: page.nextBeforeOrdinal === null ? null : String(page.nextBeforeOrdinal) } };
+        return { rows: page.events.map(event => loggingTableRow(event, page.people)), page: { mode: 'cursor', hasMore: page.hasMore,
+          ...(page.total === undefined ? {} : { total: page.total }), nextCursor: page.nextBeforeOrdinal === null ? null : String(page.nextBeforeOrdinal) } };
       },
       async confirmInsertedRows(query, rowIds, { signal }) {
         validate(query);

@@ -8,6 +8,7 @@
 
 import { DatabaseError } from './database-error';
 import { LOGGING_ACTOR_SOURCE_OPERATION } from '../logging/logging-actor-source';
+import { LOGGING_ACTOR_PROBE_OPERATION, probeLoggingDeliveryDatabase } from '../logging/logging-control-realm';
 import { loggingRecord } from '../logging/logging-validation';
 import { loggingDigest } from '../logging/logging-hash';
 import { hasGuardianPresenceRealm } from '../presence/presence-realm';
@@ -58,6 +59,7 @@ import {
   type DatabaseActorRole,
 } from './database-actor-protocol';
 import type { DatabaseRef } from './database-file';
+import { createDatabaseRef } from './database-file';
 import { sameDatabaseFileIdentity } from './database-file-identity';
 import {
   createDatabaseSequenceToken,
@@ -189,6 +191,8 @@ export class DatabaseActorRuntime implements Disposable {
           return this.execute(request);
         case LOGGING_ACTOR_SOURCE_OPERATION:
           return this.loggingSource(request);
+        case LOGGING_ACTOR_PROBE_OPERATION:
+          return this.loggingDeliveryProbe(request);
         case DATABASE_ACTOR_OPERATIONS.replay:
           return asExecutorValue(this.replay(request));
         case DATABASE_ACTOR_OPERATIONS.tenantSyncSnapshotBegin:
@@ -464,6 +468,19 @@ export class DatabaseActorRuntime implements Disposable {
     // event proofs make that harmless; the next business/close snapshot folds
     // in these deletions. Never rewrite the complete hot image per audit page.
     return asExecutorValue(result);
+  }
+
+  /** A fixed private audit-file control write cannot execute application commands or consume their receipts. */
+  private loggingDeliveryProbe(request: DatabaseExecutorServerRequest): DatabaseExecutorValue {
+    const payload = loggingRecord(request.payload, ['databaseRef', 'nonce']);
+    const binding = this.requireBinding(payload.databaseRef as DatabaseRef);
+    requireOperationKind(request.kind, 'write');
+    if (this.realm.name !== 'zero-logging' || binding.role !== 'writer' || binding.placement.mode !== 'file'
+      || binding.databaseRef !== createDatabaseRef('logging:audit')) {
+      throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Private audit writer delivery control is unavailable.', { outcome: 'not-started' });
+    }
+    const run = () => probeLoggingDeliveryDatabase(binding.runtime.db, { nonce: payload.nonce });
+    return asExecutorValue(binding.authorityCommitGuard ? binding.authorityCommitGuard.runAuthorityNeutral(run) : run());
   }
 
   private replay(

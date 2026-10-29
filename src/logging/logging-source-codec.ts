@@ -5,16 +5,17 @@ import { loggingDigest } from './logging-hash';
 import { LoggingError } from './logging-error';
 
 export function encodeLoggingSourceEvent(event: LoggingEvent) {
-  const { version, id, family, action, level, outcome, evidence, occurredAt, target, metadata, ...context } = event;
+  const { version, id, family, action, level, outcome, evidence, occurredAt, target, metadata, detail, ...context } = event;
   return { context: loggingCanonical(context), contextDigest: loggingDigest(context),
-    payload: loggingCanonical([id, family, action, level, outcome, evidence, occurredAt, target, metadata]) };
+    payload: loggingCanonical([id, family, action, level, outcome, evidence, occurredAt, target, metadata, ...(version === 2 ? [version, detail] : [])]) };
 }
 
 /** Version-one full envelopes stay readable. No previously queued evidence is rewritten during upgrade. */
 export function decodeLoggingSourceEvent(payload: string, context: string | null): LoggingEvent {
   const value: unknown = JSON.parse(payload);
   if (context === null) return normalizeLoggingEvent(value);
-  if (!Array.isArray(value) || value.length !== 9) throw new LoggingError('LOGGING_EVENT_INVALID', 'Origin audit encoding is invalid.');
-  const [id, family, action, level, outcome, evidence, occurredAt, target, metadata] = value;
-  return normalizeLoggingEvent({ ...JSON.parse(context), version: 1, id, family, action, level, outcome, evidence, occurredAt, target, metadata });
+  if (!Array.isArray(value) || value.length !== 9 && value.length !== 11 || value.length === 11 && value[9] !== 2) throw new LoggingError('LOGGING_EVENT_INVALID', 'Origin audit encoding is invalid.');
+  const [id, family, action, level, outcome, evidence, occurredAt, target, metadata, version, detail] = value;
+  return normalizeLoggingEvent({ ...JSON.parse(context), version: version ?? 1, id, family, action, level, outcome, evidence, occurredAt, target, metadata,
+    ...(version === 2 ? { detail } : {}) });
 }

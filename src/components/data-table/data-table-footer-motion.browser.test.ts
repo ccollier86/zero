@@ -167,12 +167,29 @@ for (const dark of [false, true]) browserTest(`footer stays inside320px ${dark ?
     expect(boxes.controls.right).toBeLessThanOrEqual(320);
     await page.screenshot({ path: join(screenshots, dark ? 'footer-dark-320.png' : 'footer-light-320.png'), animations: 'disabled' });
     await page.evaluate(() => window.__tableFooterMotion.mode('cursor'));
-    await page.getByRole('status', { name: '7 records on this page', exact: true }).waitFor();
+    await page.getByRole('status', { name: '7 records on this page · 35 total', exact: true }).waitFor();
     expect(await page.locator('[data-slot="data-table-page-track"]').count()).toBe(0);
     expect(await page.getByRole('group', { name: 'Page 1', exact: true }).isVisible()).toBe(true);
     await page.evaluate(() => window.__tableFooterMotion.mode('offset'));
     await page.getByRole('status', { name: 'Showing 41-47', exact: true }).waitFor();
     expect(await page.locator('[data-slot="data-table-page-track"]').count()).toBe(0);
+  } finally { await close(page); }
+}, 30_000);
+browserTest('rolling digits stay on one line and overlap during carries even when optional stylesheet rules are missing', async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => { document.querySelectorAll('style,link[rel=stylesheet]').forEach(node => node.remove()); window.__tableFooterMotion.value(1234); });
+    await page.waitForFunction(() => document.querySelector('[data-testid="roller"] [data-value="1234"]'));
+    const geometry = await page.getByTestId('roller').evaluate(element => {
+      const digits = [...element.querySelectorAll('[data-slot="data-table-digit"]')];
+      return { tops: digits.map(digit => digit.getBoundingClientRect().top), displays: digits.map(digit => getComputedStyle(digit).display),
+        parentDisplay: getComputedStyle(element.firstElementChild!).display,
+        grid: [...element.querySelectorAll('[data-slot="data-table-digit"] > span')].map(span => ({ row: getComputedStyle(span).gridRowStart, column: getComputedStyle(span).gridColumnStart })) };
+    });
+    expect(Math.max(...geometry.tops) - Math.min(...geometry.tops)).toBeLessThan(1);
+    // CSS blockifies inline-grid flex items to grid; their parent remains inline.
+    expect(geometry.parentDisplay).toBe('inline-flex'); expect(geometry.displays.every(display => display === 'grid')).toBe(true);
+    expect(geometry.grid.every(area => area.row === '1' && area.column === '1')).toBe(true);
   } finally { await close(page); }
 }, 30_000);
 browserTest('known-page progress grows along the footer bottom with transform-only motion; at520px the pill still owns its row', async () => {

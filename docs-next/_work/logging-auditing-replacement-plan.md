@@ -29,10 +29,11 @@ what, which page or records were involved, what changed, when it happened and
 how long a view was visibly open. The first interface is the existing Zero
 DataTable, with readable, clickable, explorable and server-filtered activity.
 
-This is a replacement implementation plan, not an implemented API or a patch
-release. Runtime work is paused for design review. Zero 2.7.0 remains the
-selected update containing blogging and messaging; this plan changes neither
-their release status nor an application's configuration or data.
+Implementation is in progress on `feature/activity-auditing-replacement`.
+The replacement is not qualified or selected for application updates. Zero
+2.7.0 remains the selected update containing blogging and messaging. No
+application configuration, production data or deployment changes are part of
+this branch.
 
 The product and capture decisions here supersede conflicting directions in the
 [original logging plan](./logging-system-plan.md) and
@@ -554,6 +555,54 @@ production data is changed by the Zero release task.
 
 ## Plan status
 
-This pass records the replacement design and source findings only. It introduces
-no runtime behavior, migrations, collector, permissions, package-version change
-or new selected release. Implementation and product acceptance remain pending.
+The first implementation checkpoint corrects the selected native/file/build
+public-route boundary and limits recovery HTML to genuine document requests.
+A real Chromium regression decodes public artwork with a staff cookie before
+admission, after invalidation and during a logging outage. Protected images and
+public children of protected parents remain gated.
+
+Routine renewals now use fresh private Fabric writer challenges rather than
+appending acknowledgment activities. Initial and interrupted/recovered admission
+remain durably evidenced; grants still recheck authority, expiry and worker
+generation after waits. The new control table has one current row. A fixed
+private writer operation uses the audit file's bounded FIFO and FULL-durability
+transaction without consuming business command-receipt identities. It cannot
+target another realm, stream, table or arbitrary command. Throughput still needs
+operational qualification; a real durable write is not cost-free.
+HTTP success stages are no longer record activity. Warnings remain operational
+diagnostics; successful technical tracing requires `diagnostics.http: true`
+and a diagnostic severity policy that admits debug events.
+
+Typed version-two record-change facts are captured in the originating transaction
+by both pinned and Fabric writers. `resources[table].fields` defaults to redacted
+values, permits explicit finite approved values, and supports omission. Credential
+values cannot opt in. Source spools and canonical version-one envelopes remain
+readable without rewriting them. File/hot actor tests cover approved changes,
+rollback, privacy and lost-acknowledgment recovery; pinned-source tests cover
+the same policy and no-op edits.
+
+The native workspace now exposes record IDs, click-to-filter history and retained
+field differences. Its default page size is 20, explicit custom sizes have selected
+labels, and rolling digits own enough layout to remain usable without optional
+style rules. Count plumbing now transports exact filtered retained-event totals.
+**These are not yet logical-activity totals**: the activity projection must replace
+that interim source before this branch can be released as the replacement.
+
+`useLoggingView` now owns an independent binding per mounted component. Nested
+views retain separate targets and foreground intervals, and closing one no longer
+resets its parent or the page identity. Persistent summaries, native display
+bindings and their full recovery qualification remain unfinished.
+
+The former version-six realm is pinned by its exact released fingerprint, and all
+five old migration checksums have golden regressions. A retained-file test uses
+real former/current subprocess actors, preserves old evidence/checkpoints, and
+replays a previously committed append without duplication. New command keys are
+namespaced by the admitted realm fingerprint within Fabric's existing key budget;
+event proofs, not expired old command receipts, reconcile across the upgrade.
+
+Historical displayed lists, completed view sessions, committed route identity,
+activity/evidence grouping, full extension and coverage tooling, retained-state
+upgrade/rebuild, Linux deployment and complete package qualification remain required.
+The compliance views default must not be enabled until those lifetimes and storage
+semantics are installed. Canonical public manuals and the final updater handoff
+will be updated with the qualified implementation, not this partial checkpoint.
