@@ -94,6 +94,39 @@ The later intake-default change and final documentation/test-only commits are
 not byte-identical to that candidate. Repack and verify the exact final archive;
 do not reuse the candidate's checksum as a claim about another commit.
 
+## 2026-10-30 Qualification Resumption
+
+The source/local release candidate is being prepared as **2.8.0**, distinct from
+2.7.0's workspace/UI release. Main has not yet been advanced or selected for the
+normal updater. The diagnostics below are additional evidence, not a substitute
+for the final committed-tree and exact-archive gates.
+
+- Resource recovery restored development headroom without deleting application
+  data or release archives. `resume-20261030-remaining.log` reruns all 37 files
+  that did not pass the interrupted inventory: 34 passed and three failed.
+  The failed build/scaffold and Guardian/Fabric cases came from a source
+  worktree whose dependencies were symlinked to another worktree.
+- The clean qualification checkout has its own script-free frozen root and
+  payments installs. The separately admitted Chrome source fixture is commit
+  `622ef4e4eeb2577510417d0405286c7771765fe4`, tree
+  `3a512e1620c18a02bbe4d50cb9b9d569932a5295`; its prefixed Git archive SHA-256 is
+  `4b61c262ecab99041b3b0c20995f2fe2c540389a7c566de85fc55bf1e0ecc59b`.
+  No SDK dependencies or Git metadata were copied into the checkout.
+- Commit `e951bb3` keeps declared build-asset reads on the original admitted
+  FileHandle rather than creating a raw-descriptor alias. The added regression
+  fails before the change and all five asset tests pass afterward. This is
+  defensive admission hardening, not a claim that the shared-install native
+  crash's complete cause was established or fixed by this change alone.
+- The first clean run was interrupted by host sleep. Its original failures
+  remain in `resume-20261030-clean-descriptor-regressions.log`; the macOS power
+  log confirms idle-sleep intervals during the test window. The unchanged
+  focused cases were repeated with a temporary owned sleep-prevention assertion.
+- `resume-20261030-awake-clean-regressions.log` passes all four canonical files
+  on Bun 1.3.14: build-app (68,677 ms), scaffold (2,799 ms), declared assets
+  (112 ms), and Guardian/Fabric (27,860 ms). The runner reports four passed,
+  zero failed/unrun, 96,538 ms. These include real compiled builds and the
+  native Guardian/Fabric integration; they are not mocked replacements.
+
 ## Remaining Release Gates
 
 The full canonical inventory was interrupted deliberately when the external

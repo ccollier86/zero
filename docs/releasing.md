@@ -446,6 +446,18 @@ bun audit
 git diff --check
 ```
 
+   Admit the candidate's own frozen dependency installation. Do not reuse a
+   different worktree's `node_modules` through a symlink or copied dependency
+   tree. The activity-auditing qualification reproduced incorrect package reads
+   and a native descriptor-guard failure in a shared installation; the unchanged
+   focused cases passed with independently installed frozen dependencies. Keep
+   those failed-environment diagnostics rather than treating them as a pass.
+
+   Keep the qualification host awake for the uninterrupted run. On macOS, a
+   temporary, owned `caffeinate -i -s` assertion is appropriate; do not change
+   global power settings or extend test deadlines to conceal sleep. Retain a
+   sleep-interrupted run and repeat its unchanged gate while awake.
+
    Run browser/PDF installation checks in the disposable release environment;
    they may download runtime assets. Do not point release verification at a
    production app database or Storage root.

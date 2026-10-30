@@ -8,7 +8,7 @@ visibility: internal
 system: cross-system
 feature: upgrade
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0", "2.7.0", "2.8.0"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
@@ -58,6 +58,52 @@ with changed activity behavior.
 
 Independently versioned native SDKs and app-copied UI must be checked explicitly.
 A core framework version does not update a sibling repository or copied component.
+
+## Activity Auditing 2.8.0 Update
+
+The 2.8.0 replacement is distinct from 2.7.0's people-first workspace polish.
+Follow [activity-auditing adoption](../backend/logging/activity-auditing.md),
+the [exact coverage matrix](../backend/logging/events-and-coverage.md) and
+[retained-state operations](../backend/logging/operations.md#upgrade-procedure).
+Only the qualified saved main archive is an update target; inspect its commit
+and SHA with `zero-release --status` before the normal update.
+
+1. Create an application feature branch and retain the working package/lockfile
+   and consistent application/system/Storage/logging backups. Preview with
+   `zero-update /absolute/app/path --dry-run`, then apply the normal update.
+   An already converted single-tenant app stays single-tenant; do not repeat
+   legacy-state conversion, recreate accounts/drives or reset migration history.
+2. Update the client/server together and use the official build with matching
+   retained actor source/dependencies. Custom logging actor entries still call
+   the public bootstrap before ordinary application work, with an explicit
+   child environment. Rehearse the additive private logging migrations and
+   bounded history reconstruction against a restored disposable copy.
+3. Keep the intended logging preset and Guardian permissions. Logging can be
+   disabled with `logging: false`; a required compliance installation must not
+   be silently changed to an optional preset. Native `LoggingWorkspace` now
+   defaults to grouped activities; original supporting evidence remains
+   available. Retained history is not replaced with today's record values.
+4. Review custom SQL/joined sources and bespoke record views explicitly. After
+   domain authorization, use the public `prepareResult()` facade and return
+   `auditReceipt` alongside the stable server adapter's `rows` and `page`.
+   Preserve native released row objects and use the documented display hooks
+   for custom mounted views. Updating Zero alone cannot infer those semantics.
+   Do not fabricate row-change events or remount a DataTable to refresh it.
+5. Configure static table/page labels and only explicitly approved finite
+   change values. Use typed application actions for business meaning where
+   needed. Supply `resolveRecordLink` only through current domain authorization;
+   audit-read permission is not permission to open a current patient/invoice.
+   Clipboard and printing observations remain separate opt-ins, never content
+   capture or proof that physical printing succeeded.
+6. Exercise actual browser navigation, displayed/filter/paged/live results,
+   record open/close and observed duration, approved edits, user/table/activity
+   filters, rolling totals and idle behavior. Verify public artwork and private
+   files separately, then blocked delivery/retry, refresh, scope replacement,
+   revocation, retained evidence and supervised-worker restart. Framework
+   qualification does not replace application acceptance or certify compliance.
+
+The main website's custom public tokens, the app's domain records and existing
+blog/chat configuration are not rewritten by this update.
 
 ## Combined 2.7.0 UI And Services Update
 

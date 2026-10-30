@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: generic-activity-auditing
 maturity: preview
-applies_to: ["2.7.0 activity auditing replacement; use the qualified release commit, not version alone"]
+applies_to: ["2.8.0 activity auditing replacement; use the qualified release commit, not version alone"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"

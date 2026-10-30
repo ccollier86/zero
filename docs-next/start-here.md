@@ -67,6 +67,12 @@ families are listed in the [backend index](./backend/index.md).
   and the [people-first audit workspace](./frontend/components/logging.md).
   Use the [upgrade checklist](./guides/upgrade.md#combined-270-ui-and-services-update)
   and exact selected archive; do not create parallel clients, auth or data planes.
+- **Activity auditing:** 2.8.0 replaces raw-stage investigation with native
+  displayed-result history, readable activities and typed custom integration.
+  Start with the [adoption guide](./backend/logging/activity-auditing.md) and
+  [upgrade checklist](./guides/upgrade.md#activity-auditing-280-update).
+  Custom SQL/views need explicit application integration; an update does not
+  infer domain semantics, enable logging or change an app's tenancy.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
   canonical feature/config page. Respect the app's actual instructions and scope.
 - **Markdown documentation:** install and declare the optional

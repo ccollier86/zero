@@ -4,6 +4,54 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.8.0 - 2026-10-30
+
+Activity auditing replaces the default raw-stage investigation view with
+readable, correlated activities and inspectable historical results. This is
+the source/local update after 2.7.0; use its qualified main commit and archive
+checksum. Logging remains optional, and the update neither enables it nor
+migrates or deploys an application automatically.
+
+- Capture native committed navigation, displayed DataTable results and mounted
+  MasterDetail lifetimes. Server-owned read receipts bind actual displayed
+  positions, order and revisions to the current actor/session/scope/policy.
+  Prefetch, optimistic data and hidden panes are not treated as viewed records.
+- Retain bounded historical list versions, exact empty results, observed view
+  duration and explicitly approved finite field differences. Current business
+  records are never substituted for historical evidence, and browser activity
+  is not represented as proof of human attention.
+- Add typed application actions, custom authorized-result preparation and
+  public display hooks through the existing logging facade. Custom SQL/joined
+  results and bespoke views still need the documented app-owned integration.
+  No application business text, clipboard contents or credentials are captured
+  by these defaults.
+- Present activities through the native live DataTable, user names/private
+  photos, server-backed filters, standard 20-row pagination, exact rolling
+  totals, retained row identities, managed historical dialogs and expandable
+  original evidence. Current-record links require app domain authorization.
+- Stop retaining routine successful HTTP transport and healthy delivery-renewal
+  stages as audit activities. Failures, interruptions and required recovery
+  evidence remain visible. Optional successful transport diagnostics stay
+  separate from grouped activities; idle investigation does not generate a
+  repeating self-audit trail.
+- Correct public-asset audit admission without admitting private assets or
+  public descendants of protected parents. Healthy initial acknowledgment uses
+  a neutral pending state; blocked delivery, expiry and revocation stay gated.
+- Strengthen collector sequencing, partial-acceptance recovery, retired-scope
+  cancellation and delivery-worker liveness. Dedicated Fabric writers/readers
+  and supervised delivery workers remain outside the application writer lane.
+- Add private derived-activity/history migrations and restartable reconstruction
+  while preserving original envelopes, signing identities, custody, holds,
+  replay proofs, released migration checksums and business data. Rehearse a
+  retained-state upgrade and rebuild matching source actors with the server.
+- Keep declared build-asset reads on their admitted no-follow FileHandle;
+  containment, source-snapshot and content-hash checks remain enforced.
+
+Blogging, messaging and existing public APIs remain available. This release
+does not add session recording, a backup/archive-import service, legal
+certification or automatic semantic capture of arbitrary custom application
+code. See the activity-auditing adoption guide and coverage matrix.
+
 ## 2.7.0 - 2026-10-28
 
 Combined source/local release: native blogging and messaging, optional

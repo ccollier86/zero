@@ -8,7 +8,7 @@ visibility: internal
 system: logging
 feature: evidence-lifecycle
 maturity: supported
-applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
+applies_to: ["2.8.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
