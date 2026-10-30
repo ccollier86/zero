@@ -22,7 +22,10 @@ test('technical HTTP tracing is an explicit detached opt-in, not implied by comp
   expect(() => resolveLoggingConfig({ diagnostics: { other: true } } as any)).toThrow();
 });
 test('reactive observation and selection rates are separate configured finite policy limits', () => {
-  expect(resolveLoggingConfig({ preset: 'activity' }).browser).toEqual({ observationsPerMinute: 240, selectionsPerMinute: 240 });
+  const defaults = resolveLoggingConfig({ preset: 'activity' }).browser;
+  expect(defaults).toEqual({ observationsPerMinute: 2048, selectionsPerMinute: 512 });
+  expect(defaults.selectionsPerMinute).toBeGreaterThan(4 * 60);
+  expect(defaults.observationsPerMinute).toBeGreaterThan(defaults.selectionsPerMinute * 2 + 16 * 2 + 2);
   const input = { browser: { observationsPerMinute: 2000, selectionsPerMinute: 800 } };
   const policy = resolveLoggingConfig(input); input.browser.observationsPerMinute = 9999;
   expect(policy.browser).toEqual({ observationsPerMinute: 2000, selectionsPerMinute: 800 });

@@ -34,6 +34,8 @@ export interface ResolvedLoggingConfig {
 
 const BASE = new Set<LoggingFamily>(['operational', 'security']);
 const ACTIVITY = new Set<LoggingFamily>([...BASE, 'records', 'views', 'transfers', 'workflow', 'communications', 'ai', 'investigations', 'navigation']);
+/** A displayed revision emits an interval plus a change; allow native 250 ms batches and owned-view heartbeats. */
+export const LOGGING_BROWSER_DEFAULTS = Object.freeze({ observationsPerMinute: 2048, selectionsPerMinute: 512 });
 
 /** Resolve and detach capture policy. Omission preserves the existing platform runtime without enabling new storage. */
 export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedLoggingConfig {
@@ -54,7 +56,7 @@ export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedL
     if (diagnostics.http !== undefined && typeof diagnostics.http !== 'boolean') invalid('LOGGING_CONFIG_INVALID');
     const queue = input.queue === undefined ? {} : loggingRecord(input.queue, ['maxEvents', 'maxBytes', 'batchSize'], 'LOGGING_CONFIG_INVALID');
     const browser = input.browser === undefined ? {} : loggingRecord(input.browser, ['observationsPerMinute', 'selectionsPerMinute'], 'LOGGING_CONFIG_INVALID');
-    const observationsPerMinute = bound(browser.observationsPerMinute === undefined ? 240 : browser.observationsPerMinute, 1, 10000), selectionsPerMinute = bound(browser.selectionsPerMinute === undefined ? 240 : browser.selectionsPerMinute, 1, 10000);
+    const observationsPerMinute = bound(browser.observationsPerMinute === undefined ? LOGGING_BROWSER_DEFAULTS.observationsPerMinute : browser.observationsPerMinute, 1, 10000), selectionsPerMinute = bound(browser.selectionsPerMinute === undefined ? LOGGING_BROWSER_DEFAULTS.selectionsPerMinute : browser.selectionsPerMinute, 1, 10000);
     const maxEvents = bound(queue.maxEvents === undefined ? 1024 : queue.maxEvents, 1, 100_000);
     const maxBytes = bound(queue.maxBytes === undefined ? 8 * 1024 * 1024 : queue.maxBytes, 16_384, 64 * 1024 * 1024);
     const batchSize = bound(queue.batchSize === undefined ? Math.min(LOGGING_MAX_BATCH, maxEvents) : queue.batchSize, 1, Math.min(LOGGING_MAX_BATCH, maxEvents));

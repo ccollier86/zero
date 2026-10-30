@@ -19,6 +19,7 @@ import { captureLoggingResult } from './logging-result-capture';
 import { normalizeLoggingDeriveResultInput } from './logging-result-validation';
 import { captureLoggingAction } from './logging-action';
 import { loggingExportHistory } from './logging-export-history';
+import { LOGGING_BROWSER_DEFAULTS } from './logging-config';
 
 const rateWindows = new WeakMap<LoggingRuntime, Map<string, { start: number; count: number }>>();
 const selectionWindows = new WeakMap<LoggingRuntime, Map<string, { start: number; count: number }>>();
@@ -119,7 +120,7 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       if (c.actor.kind !== 'user' || !c.actor.sessionId) throw new LoggingError('LOGGING_EVENT_INVALID', 'An interactive session is required for displayed selections.');
       await revalidate(); assertCurrent(); assertWorkAdmission();
       if (runtime.config.policy.capture.records && runtime.config.policy.capture.views)
-        chargeBrowser(selectionWindows, runtime, loggingDigest([c.actor.id, c.actor.sessionId, c.scope]), 1, runtime.config.policy.browser?.selectionsPerMinute ?? 240);
+        chargeBrowser(selectionWindows, runtime, loggingDigest([c.actor.id, c.actor.sessionId, c.scope]), 1, runtime.config.policy.browser?.selectionsPerMinute ?? LOGGING_BROWSER_DEFAULTS.selectionsPerMinute);
       const result = await runtime.deriveResult(c, selection);
       await revalidate(); assertCurrent(); assertWorkAdmission(); return result;
     },
@@ -218,7 +219,7 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
           outcome: page || action === 'clipboard.copy.completed' ? 'succeeded' : action === 'clipboard.copy.failed' ? 'failed' : 'attempted', evidence: 'browser-observed', target: page ? { type: 'page', id: page.id } : r.target, metadata } as LoggingEventInput, Object.keys(metadata)),
           receiptId: r.receiptId === undefined ? undefined : loggingId(r.receiptId)! };
       });
-      chargeBrowser(rateWindows, runtime, key, charge, runtime.config.policy.browser?.observationsPerMinute ?? 240, now);
+      chargeBrowser(rateWindows, runtime, key, charge, runtime.config.policy.browser?.observationsPerMinute ?? LOGGING_BROWSER_DEFAULTS.observationsPerMinute, now);
       await revalidate(); assertCurrent();
       let accepted = 0;
       for (const { event, receiptId } of events) { assertCurrent(); if (await (receiptId ? runtime.observeResult(receiptId, event) : runtime.append(event))) accepted++; }
