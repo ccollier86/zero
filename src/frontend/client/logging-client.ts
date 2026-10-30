@@ -6,6 +6,8 @@ import type { FetchInit } from './sdk';
 import { readLoggingExportJob } from '../../logging/logging-export-result';
 import type { LoggingPerson, LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from '../../logging/logging-directory-contracts';
 import { isLoggingActivityDetail } from '../../logging/logging-activity-shape';
+import { isLoggingActivitySummary } from '../../logging/logging-activity-summary';
+import { isLoggingResultManifest, isLoggingResultReceipt } from '../../logging/logging-result-shape';
 
 function validPeople(value: unknown, maximum: number): value is readonly LoggingPerson[] {
   return Array.isArray(value) && value.length <= maximum && new Set(value.map(person => person?.id)).size === value.length
@@ -18,14 +20,16 @@ function validPeople(value: unknown, maximum: number): value is readonly Logging
 
 export function createLoggingClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>): LoggingClient {
   let generation = 0, boundary = new AbortController();
-  const validatePage = (result: LoggingPage): LoggingPage => {
+  const validatePage = (result: LoggingPage, projection?: 'events' | 'activities'): LoggingPage => {
     if (!result || !Array.isArray(result.events) || result.events.length > 100 || !Number.isSafeInteger(result.highWaterOrdinal) || result.highWaterOrdinal < 0 || typeof result.hasMore !== 'boolean') throw new Error('Invalid logging page.');
     let before = Number.MAX_SAFE_INTEGER;
     for (const row of result.events) {
       const e = row?.event;
+      if (projection === 'activities' ? !isLoggingActivitySummary(row?.activity) || row.activity.firstOrdinal !== row.ordinal || row.activity.revision > result.highWaterOrdinal : row?.activity !== undefined) throw new Error('Invalid logging activity.');
       if (!row || !e || e.version !== 1 && e.version !== 2
         || e.version === 1 && e.detail !== undefined || e.version === 2 && (!isLoggingActivityDetail(e.detail) || e.origin === 'frontend'
-          || e.family !== 'records' || !['record.created', 'record.updated', 'record.deleted'].includes(e.action) || e.outcome !== 'succeeded' || e.evidence !== 'server-confirmed' || !e.target)
+          || e.family !== 'records' || !e.detail || !(e.detail.kind === 'record-change' ? ['record.created', 'record.updated', 'record.deleted'].includes(e.action)
+            : e.action === (e.detail.resultKind === 'record' ? 'record.read.prepared' : 'record.list.prepared')) || e.outcome !== 'succeeded' || e.evidence !== 'server-confirmed' || !e.target)
         || !Number.isSafeInteger(row.ordinal) || row.ordinal < 1 || row.ordinal > result.highWaterOrdinal || row.ordinal >= before
         || !Number.isSafeInteger(row.ingestedAt) || !Number.isSafeInteger(e.occurredAt) || e.occurredAt < 0 || e.occurredAt > 8640000000000000
         || typeof e.id !== 'string' || typeof e.sourceId !== 'string' || typeof e.action !== 'string' || e.action.length > 120
@@ -38,7 +42,7 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     }
     if (result.hasMore ? !result.events.length || result.nextBeforeOrdinal !== result.events.at(-1)!.ordinal : result.nextBeforeOrdinal !== null) throw new Error('Invalid logging cursor.');
     if (result.total !== undefined && (!Number.isSafeInteger(result.total) || result.total < result.events.length || result.hasMore && result.total <= result.events.length)) throw new Error('Invalid logging total.');
-    if (result.people !== undefined && (!validPeople(result.people, 100) || result.people.some(person => !result.events.some(({ event }) => event.actor.kind === 'user' && event.actor.id === person.id)))) throw new Error('Invalid logging people projection.');
+    if (result.people !== undefined && (!validPeople(result.people, 200) || result.people.some(person => !result.events.some(({ event }) => event.actor.kind === 'user' && event.actor.id === person.id || event.actor.initiatorId === person.id)))) throw new Error('Invalid logging people projection.');
     return result;
   };
   const request = async <T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> => {
@@ -50,7 +54,7 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
   };
   const readPage = async (path: string, stream: Parameters<LoggingClient['page']>[0], query: Parameters<LoggingClient['page']>[1] = {}, options?: { signal?: AbortSignal }) => {
     const result = await request<LoggingPage>(path, { stream, query }, options?.signal);
-    return validatePage(result);
+    return validatePage(result, query.projection);
   };
   const page: LoggingClient['page'] = (stream, query, options) => readPage('/events', stream, query, options);
   const platformPage: LoggingClient['platformPage'] = (stream, query, options) => readPage('/platform/events', stream, query, options);
@@ -64,6 +68,29 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
     return result;
   };
   return Object.freeze({
+    async deriveResult(input, options) {
+      const value = await request<unknown>('/results/derive', input, options?.signal);
+      if (value !== null && (!isLoggingResultReceipt(value) || value.kind !== input.kind || value.count !== input.sources.reduce((sum, source) => sum + source.positions.length, 0))) throw new Error('Invalid displayed selection receipt.');
+      return value;
+    },
+    async result(id, options) {
+      const value = await request<unknown>('/results', { id, ...(options?.platform ? { platform: true } : {}) }, options?.signal);
+      if (value !== null && (!isLoggingResultManifest(value) || value.id !== id)) throw new Error('Invalid historical result.');
+      return value;
+    },
+    async resultVersions(activityId, options = {}) {
+      const { signal, ...query } = options;
+      const value = await request<import('../../logging/logging-result-contracts').LoggingResultVersions>('/results/versions', { activityId, ...query }, signal);
+      let before = options.beforeOrdinal ?? Number.MAX_SAFE_INTEGER;
+      if (!value || !Array.isArray(value.items) || value.items.length > 20) throw new Error('Invalid historical result versions.');
+      for (const row of value.items) {
+        if (!row || !isLoggingResultReceipt(row.receipt) || !Number.isSafeInteger(row.preparedAt) || row.preparedAt < 0
+          || !Number.isSafeInteger(row.ordinal) || row.ordinal < 1 || row.ordinal >= before || row.ordinal > (options.highWaterOrdinal ?? Number.MAX_SAFE_INTEGER)) throw new Error('Invalid historical result version.');
+        before = row.ordinal;
+      }
+      if (value.nextBeforeOrdinal !== null && (!value.items.length || value.nextBeforeOrdinal !== value.items.at(-1)!.ordinal)) throw new Error('Invalid historical result cursor.');
+      return value;
+    },
     async people(query: LoggingPeopleQuery = {}, options?: { signal?: AbortSignal }) {
       const limit = query.limit ?? 25, after = query.after ?? '';
       const value = await request<LoggingPeoplePage>('/people', query, options?.signal);
@@ -181,10 +208,17 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
                   || !Number.isSafeInteger(change.throughOrdinal) || change.throughOrdinal < afterOrdinal
                   || !Number.isSafeInteger(change.highWaterOrdinal) || change.highWaterOrdinal < change.throughOrdinal
                   || typeof change.hasMore !== 'boolean' || !Array.isArray(change.events)) throw new Error('Invalid logging change cursor.');
-                validatePage({ events: [...change.events].reverse(), highWaterOrdinal: change.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null });
-                if (change.events.some(row => row.ordinal <= afterOrdinal! || row.ordinal > change.throughOrdinal)
-                  || (change.hasMore ? !change.events.length || change.throughOrdinal !== change.events.at(-1)!.ordinal : change.throughOrdinal !== change.highWaterOrdinal)) {
-                  throw new Error('Invalid logging change delivery.');
+                if (detached.projection === 'activities') {
+                  for (const row of change.events) validatePage({ events: [row], highWaterOrdinal: change.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null }, 'activities');
+                  const removed = change.removed ?? [];
+                  if (!Array.isArray(removed) || removed.some(item => !item || Object.keys(item).some(key => !['id', 'revision'].includes(key)) || !/^[a-f0-9]{64}$/.test(item.id) || !Number.isSafeInteger(item.revision))) throw new Error('Invalid activity removal.');
+                  const revisions = [...change.events.map(row => ({ id: row.activity!.id, revision: row.activity!.revision })), ...removed];
+                  if (revisions.length > 100 || new Set(revisions.map(row => row.id)).size !== revisions.length || revisions.some(row => row.revision <= afterOrdinal! || row.revision > change.throughOrdinal)
+                    || (change.hasMore ? !revisions.length || Math.max(...revisions.map(row => row.revision)) !== change.throughOrdinal : change.throughOrdinal !== change.highWaterOrdinal)) throw new Error('Invalid activity change delivery.');
+                } else {
+                  validatePage({ events: [...change.events].reverse(), highWaterOrdinal: change.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null });
+                  if (change.removed !== undefined || change.events.some(row => row.ordinal <= afterOrdinal! || row.ordinal > change.throughOrdinal)
+                    || (change.hasMore ? !change.events.length || change.throughOrdinal !== change.events.at(-1)!.ordinal : change.throughOrdinal !== change.highWaterOrdinal)) throw new Error('Invalid logging change delivery.');
                 }
                 if (!signal.aborted && epoch === generation) {
                   options.onStatus?.('live'); options.onChanges(change); afterOrdinal = change.throughOrdinal;
@@ -192,7 +226,7 @@ export function createLoggingClient(fetch: <T = unknown>(path: string, init?: Fe
                 continue;
               }
               if (options.onChanges && packet.afterOrdinal !== afterOrdinal) throw new Error('Logging server did not confirm the requested live cursor.');
-              const page = validatePage(packet.page);
+              const page = validatePage(packet.page, detached.projection);
               if (!signal.aborted && epoch === generation) options.onStatus?.('live');
               if (!signal.aborted && epoch === generation && page.highWaterOrdinal !== highWater) { highWater = page.highWaterOrdinal; listener(page); }
             }

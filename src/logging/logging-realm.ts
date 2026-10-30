@@ -14,6 +14,13 @@ import { appendLocalLoggingCheckpoint, readLocalLoggingCheckpoint } from './logg
 import { readLoggingChanges } from './logging-change-query';
 import { projectLoggingStoredEvent } from './logging-stored-event';
 import { LOGGING_CONTROL_TABLES } from './logging-control-realm';
+import { LOGGING_ACTIVITY_TABLES } from './logging-activity-schema';
+import { projectLoggingActivity, rebuildLoggingActivities } from './logging-activity-projector';
+import { readLoggingActivities } from './logging-activity-query';
+import { LOGGING_RESULT_TABLES } from './logging-result-schema';
+import { prepareLoggingResult, observeLoggingResult, readLoggingResult, readLoggingResultVersions } from './logging-result-realm';
+import { deriveLoggingResult } from './logging-result-selection';
+import { cleanupLoggingActivities, pendingLoggingActivityCleanup } from './logging-activity-retention';
 
 const HEADS = LOGGING_STATE_TABLE;
 const HEAD_ID = 'head';
@@ -22,8 +29,8 @@ type EventRow = Row & { id: string; digest: string; envelope: string; ordinal: n
 
 /** Side-effect-free declaration. Both writer and reader actors import this exact realm/version. */
 export const loggingRealm = defineDatabaseRealm({
-  name: 'zero-logging', version: '7',
-  tables: { ...LOGGING_TABLES, ...LOGGING_CONTROL_TABLES },
+  name: 'zero-logging', version: '9',
+  tables: { ...LOGGING_TABLES, ...LOGGING_CONTROL_TABLES, ...LOGGING_ACTIVITY_TABLES, ...LOGGING_RESULT_TABLES },
   migrations: [{
     version: '001', description: 'Index bounded scope, actor and resource investigations', safety: 'safe',
     up(database) {
@@ -85,14 +92,54 @@ export const loggingRealm = defineDatabaseRealm({
     up(database) {
       database.run('CREATE TABLE IF NOT EXISTS logging_delivery_control (id TEXT PRIMARY KEY,nonce TEXT NOT NULL,checked_at INTEGER NOT NULL)');
     },
+  }, {
+    version: '007', description: 'Rebuildable logical activities and stable versioned view summaries', safety: 'safe',
+    up(database) {
+      for (const [table, columns] of Object.entries(LOGGING_ACTIVITY_TABLES)) {
+        database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, type]) => quoteSqlIdentifier(name) + ' ' + type).join(',') + ')');
+      }
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_scope ON logging_activities(stream,scope_kind,tenant_id,ordinal DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_actor ON logging_activities(actor_id,ordinal DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_initiator ON logging_activities(initiator_id,ordinal DESC)');
+      database.run("CREATE INDEX IF NOT EXISTS logging_event_initiator ON logging_events(json_extract(envelope,'$.actor.initiatorId'),ordinal DESC)");
+      database.run('CREATE INDEX IF NOT EXISTS logging_change_field ON logging_change_fields(field,event_ref)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_change_field_event ON logging_change_fields(event_ref)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_target ON logging_activities(target_type,target_id,ordinal DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_revision ON logging_activities(stream,scope_kind,tenant_id,revision)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_history ON logging_activity_revisions(activity_id,ordinal DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_evidence_history ON logging_activity_evidence(activity_id,ordinal DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_evidence_parent ON logging_activity_evidence(event_ref,activity_id)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_activity_retirement_cursor ON logging_activity_retirements(stream,scope_kind,tenant_id,revision)');
+      database.run('CREATE UNIQUE INDEX IF NOT EXISTS logging_activity_view_sequence ON logging_activity_revisions(activity_id,view_sequence) WHERE view_sequence IS NOT NULL');
+    },
+  }, {
+    version: '008', description: 'Private ordered read results and scoped sequenced display revisions', safety: 'safe',
+    up(database) {
+      for (const [table, columns] of Object.entries(LOGGING_RESULT_TABLES)) {
+        database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, type]) => quoteSqlIdentifier(name) + ' ' + type).join(',') + ')');
+      }
+      database.run('CREATE INDEX IF NOT EXISTS logging_results_scope ON logging_results(scope_kind,tenant_id,id)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_result_versions ON logging_result_view_versions(view_ref,sequence DESC)');
+      database.run('CREATE INDEX IF NOT EXISTS logging_result_evidence ON logging_results(event_ref)');
+    },
   }],
-  commands: { 'logging.append': appendLoggingBatch,
+  commands: { 'logging.append': appendLoggingBatch, 'logging.activities.rebuild': rebuildLoggingActivities,
+    'logging.result.prepare': (context, input) => prepareLoggingResult(context, input, appendLoggingBatch),
+    'logging.result.observe': (context, input) => observeLoggingResult(context, input, appendLoggingBatch),
+    'logging.result.derive': (context, input) => deriveLoggingResult(context, input, appendLoggingBatch),
     'logging.hold': (context, input) => changeLoggingHold(context, input, appendLoggingBatch),
-    'logging.review': (context, input) => recordLoggingReview(context, input, appendLoggingBatch), 'logging.prune': pruneLoggingEvents,
+    'logging.review': (context, input) => recordLoggingReview(context, input, appendLoggingBatch), 'logging.prune': (context, input) => pruneLoggingEvents(context, input, appendLoggingBatch),
+    'logging.activities.cleanup': cleanupLoggingActivities,
     'logging.export.reserve': (context, input) => reserveLoggingExport(context, input, appendLoggingBatch),
     'logging.export.transition': (context, input) => transitionLoggingExport(context, input, appendLoggingBatch),
     'logging.checkpoint.append': appendLocalLoggingCheckpoint },
-  queries: { 'logging.page': readLoggingPage, 'logging.changes': readLoggingChanges, 'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence,
+  queries: { 'logging.page': readLoggingPage, 'logging.changes': readLoggingChanges,
+    'logging.result': readLoggingResult,
+    'logging.result.versions': readLoggingResultVersions,
+    'logging.activities.cleanup.pending': pendingLoggingActivityCleanup,
+    'logging.activities.progress': ({ database }) => ({ cursor: database.query<{ cursor: number }>('SELECT cursor FROM logging_activity_state WHERE id=?').get('projection')?.cursor ?? 0,
+      head: database.query<{ ordinal: number }>('SELECT ordinal FROM logging_state WHERE id=?').get('head')?.ordinal ?? 0 }),
+    'logging.verify': verifyLoggingEvidence, 'logging.prune-candidates': loggingPruneCandidates, 'logging.evidence': listLoggingEvidence,
     'logging.export': readLoggingExport, 'logging.exports.pending': pendingLoggingExports, 'logging.checkpoint.read': readLocalLoggingCheckpoint },
 });
 
@@ -127,6 +174,9 @@ function appendLoggingBatch({ db }: DatabaseWriteCommandContext, input: unknown)
   const chain = db.get(LOGGING_CHAIN_TABLE, HEAD_ID);
   if (!chain || chain.ordinal !== last) throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Logging integrity head is inconsistent.');
   let previous = String(chain.hash);
+  // The frozen former realm fixture uses these handlers with its admitted old
+  // table registry. New managed runtimes always register the projection tables.
+  const projects = db.hasTable('logging_activities');
   const rows = new Map<string, { ordinal: number; inserted: boolean }>();
   for (const [id, item] of planned) {
     if (item.existing) { rows.set(id, { ordinal: item.existing.ordinal, inserted: false }); continue; }
@@ -140,12 +190,20 @@ function appendLoggingBatch({ db }: DatabaseWriteCommandContext, input: unknown)
     });
     const hash = loggingChainHash(previous, ordinal, id, item.digest, ingestedAt);
     db.createStrict(LOGGING_PROOFS_TABLE, { id, ordinal, digest: item.digest, previous_hash: previous, chain_hash: hash, expired: 0, ingested_at: ingestedAt });
+    if (projects) projectLoggingActivity(db, event, id, ordinal, ingestedAt);
     previous = hash;
     rows.set(id, { ordinal, inserted: true });
   }
   if (!head) db.createStrict(HEADS, { id: HEAD_ID, stream, ordinal });
   else if (ordinal !== last) db.update(HEADS, HEAD_ID, { ordinal });
   if (ordinal !== last) db.update(LOGGING_CHAIN_TABLE, HEAD_ID, { ordinal, hash: previous });
+  if (projects) {
+    const progress = db.get('logging_activity_state', 'projection');
+    if (Number(progress?.cursor ?? 0) === last) {
+      if (progress) db.update('logging_activity_state', 'projection', { cursor: ordinal });
+      else db.createStrict('logging_activity_state', { id: 'projection', cursor: ordinal, version: 1 });
+    }
+  }
   const emitted = new Set<string>();
   return { status: 'stored', receipts: events.map(event => {
     const id = loggingDigest([event.sourceId, event.id]), row = rows.get(id)!;
@@ -154,12 +212,14 @@ function appendLoggingBatch({ db }: DatabaseWriteCommandContext, input: unknown)
   }) };
 }
 
-function readLoggingPage({ database }: DatabaseReadQueryContext, value: unknown) {
+function readLoggingPage(context: DatabaseReadQueryContext, value: unknown) {
+  const { database } = context;
   let input;
   try {
     const r = loggingRecord(value, ['stream', 'scope', 'query']);
     input = normalizeLoggingQuery(r.stream as LoggingStream, r.scope as LoggingReadScope, r.query as LoggingQuery);
   } catch { throw new DatabaseError('DATABASE_PAYLOAD_INVALID', 'Logging query is invalid.'); }
+  if (input.query.projection === 'activities') return readLoggingActivities(context, input);
   const head = database.query<Head>('SELECT id, stream, ordinal FROM logging_state WHERE id = ?').get(HEAD_ID);
   if (head && head.stream !== input.stream) throw new DatabaseError('DATABASE_CONFLICT', 'Logging stream binding does not match.');
   const highWaterOrdinal = Math.min(input.query.highWaterOrdinal ?? head?.ordinal ?? 0, head?.ordinal ?? 0);

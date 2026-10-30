@@ -18,6 +18,7 @@ import type { InsertInput, PrimaryKeyOf } from '../../schema/infer';
 import type { Row } from '../../sync/types';
 import { shouldUseSsrFallback, useClientMaybe } from './client-context';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
+import { registerLoggingResultRows, emptyLoggingResult } from './logging-result-provenance';
 
 const NOOP_UNSUB = () => {};
 const EMPTY_RECORD: Record<string, never> = {};
@@ -27,6 +28,8 @@ export interface CollectionResult<
   T extends Row,
   TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
 > {
+  /** Empty authoritative release only; populated collections retain per-row provenance internally. */
+  auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt;
   /** All rows as an array. */
   data: T[];
   /** All rows as a map (id -> row) for O(1) lookups. */
@@ -115,7 +118,7 @@ export function useCollection<
 
   shouldUseSsrFallback(client, 'useCollection');
 
-  return { data, byId, count: data.length, insert, update, remove, load, clear };
+  return { data, byId, count: data.length, insert, update, remove, load, clear, auditReceipt: data.length ? undefined : emptyLoggingResult(byId) };
 }
 
 export interface LazyCollectionResult<
@@ -204,12 +207,13 @@ export function useLazyCollection<
     setError(null);
     setLoadedBoundaryKey(requestBoundaryKey);
 
-    client.fetch<{ rows: T[] }>(`/api/data?${params}`, { signal: controller.signal })
+    client.fetch<{ rows: T[]; auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt }>(`/api/data?${params}`, { signal: controller.signal })
       .then((data) => {
         if (controller.signal.aborted
           || requestIdRef.current !== requestId
           || boundaryKeyRef.current !== requestBoundaryKey
           || !boundaryReadyRef.current) return;
+        registerLoggingResultRows(data.rows, data.auditReceipt);
         load(data.rows, { replace: !!filters });
       })
       .catch((err) => {

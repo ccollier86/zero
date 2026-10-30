@@ -66,6 +66,9 @@ describe('addZeroSource', () => {
       expect(result.filesWritten).toContain('components/animate-ui/components/radix/checkbox.tsx');
       expect(result.filesWritten).toContain('components/animate-ui/icons/search.tsx');
       expect(result.rewrites.length).toBeGreaterThan(0);
+      const auditSource = await Bun.file(join(targetDir, 'components/data-table/data-table-audit-result.ts')).text();
+      expect(auditSource).toContain('@zero/framework/react/logging-results');
+      expect(auditSource).not.toContain('../../logging/');
 
       const rowIdentity = await readFile(join(targetDir, 'components/data-table/row-identity.ts'), 'utf8');
       expect(rowIdentity).toContain("from '@zero/framework/schema'");

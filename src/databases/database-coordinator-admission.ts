@@ -90,7 +90,7 @@ export class DatabaseCoordinatorAdmission {
       && entry.leases === 0
       && entry.activeOperations === 0
       && entry.recoveryWaiters === 0
-      && entry.lane.depth === 0;
+      && entry.lane.depth === 0 && entry.readerLane.depth === 0;
   }
 
   capacityError(databaseRef: DatabaseRef): DatabaseError {

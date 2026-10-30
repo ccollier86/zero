@@ -3,6 +3,14 @@ import type { LoggingChangePage, LoggingEvent, LoggingPage, LoggingReceipt } fro
 import type { NormalizedLoggingQuery } from './logging-query';
 import { LoggingError } from './logging-error';
 import { loggingArray, loggingRecord, loggingTime, normalizeLoggingEvent } from './logging-validation';
+import { isLoggingActivitySummary, type LoggingActivitySummary } from './logging-activity-summary';
+
+function activity(value: unknown): LoggingActivitySummary {
+  const r = loggingRecord(value, ['version', 'id', 'action', 'outcome', 'firstOrdinal', 'revision', 'startedAt', 'evidenceCount', 'resultReceiptId', 'view']);
+  if (r.view !== undefined) r.view = loggingRecord(r.view, ['viewId', 'openedAt', 'closedAt', 'elapsedMs', 'visibleMs', 'activeMs', 'observations', 'maxSequence', 'explicitIncomplete', 'afterClose', 'closedSequence', 'complete']);
+  if (!isLoggingActivitySummary(r)) throw new Error();
+  return Object.freeze({ ...r, ...(r.view === undefined ? {} : { view: Object.freeze(r.view) }) }) as unknown as LoggingActivitySummary;
+}
 
 export function readLoggingAppend(value: unknown, events: readonly LoggingEvent[], replayed: boolean): readonly LoggingReceipt[] {
   try {
@@ -31,13 +39,15 @@ export function readLoggingPage(value: unknown, input: NormalizedLoggingQuery): 
     if (input.query.highWaterOrdinal !== undefined && r.highWaterOrdinal > input.query.highWaterOrdinal) throw new Error();
     let before = input.query.beforeOrdinal ?? Number.MAX_SAFE_INTEGER;
     const events = loggingArray(r.events, input.query.limit).map(raw => {
-      const row = loggingRecord(raw, ['event', 'ordinal', 'ingestedAt']);
+      const row = loggingRecord(raw, ['event', 'ordinal', 'ingestedAt', 'activity']);
       if (typeof row.ordinal !== 'number' || !Number.isSafeInteger(row.ordinal) || row.ordinal < 1 || row.ordinal >= before || row.ordinal > (r.highWaterOrdinal as number)) throw new Error();
       before = row.ordinal;
       const event = normalizeLoggingEvent(row.event);
+      const summary = row.activity === undefined ? undefined : activity(row.activity);
+      if (input.query.projection === 'activities' ? !summary || summary.firstOrdinal !== row.ordinal || summary.revision > Number(r.highWaterOrdinal) : summary !== undefined) throw new Error();
       if (event.stream !== input.stream || input.scope.kind === 'tenant' && (event.scope.kind !== 'tenant' || event.scope.tenantId !== input.scope.tenantId)
         || input.scope.kind === 'application' && event.scope.kind !== 'application') throw new Error();
-      return Object.freeze({ event, ordinal: row.ordinal, ingestedAt: loggingTime(row.ingestedAt) });
+      return Object.freeze({ event, ordinal: row.ordinal, ingestedAt: loggingTime(row.ingestedAt), ...(summary ? { activity: summary } : {}) });
     });
     if (r.hasMore ? !events.length || r.nextBeforeOrdinal !== events.at(-1)!.ordinal : r.nextBeforeOrdinal !== null) throw new Error();
     if (r.total !== undefined && (!Number.isSafeInteger(r.total) || Number(r.total) < events.length || r.hasMore && Number(r.total) <= events.length)) throw new Error();
@@ -49,10 +59,25 @@ export function readLoggingPage(value: unknown, input: NormalizedLoggingQuery): 
 /** Change cursors are ascending and resumable; a truncated latest snapshot is not append evidence. */
 export function readLoggingChangePage(value: unknown, input: NormalizedLoggingQuery, afterOrdinal: number): LoggingChangePage {
   try {
-    const r = loggingRecord(value, ['events', 'afterOrdinal', 'throughOrdinal', 'highWaterOrdinal', 'hasMore']);
+    const r = loggingRecord(value, ['events', 'removed', 'afterOrdinal', 'throughOrdinal', 'highWaterOrdinal', 'hasMore']);
     if (r.afterOrdinal !== afterOrdinal || !Number.isSafeInteger(r.throughOrdinal) || Number(r.throughOrdinal) < afterOrdinal
       || !Number.isSafeInteger(r.highWaterOrdinal) || Number(r.highWaterOrdinal) < Number(r.throughOrdinal) || typeof r.hasMore !== 'boolean') throw new Error();
     const rows = loggingArray(r.events, input.query.limit);
+    if (input.query.projection === 'activities') {
+      const events = rows.flatMap(row => readLoggingPage({ events: [row], highWaterOrdinal: r.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null }, { ...input, query: { ...input.query, highWaterOrdinal: undefined } }).events);
+      const removed = loggingArray(r.removed ?? [], input.query.limit).map(raw => {
+        const item = loggingRecord(raw, ['id', 'revision']);
+        if (typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || !Number.isSafeInteger(item.revision)) throw new Error();
+        return Object.freeze({ id: item.id, revision: Number(item.revision) });
+      });
+      const changes = [...events.map(row => ({ id: row.activity!.id, revision: row.activity!.revision })), ...removed];
+      if (changes.length > input.query.limit || new Set(changes.map(change => change.id)).size !== changes.length
+        || changes.some(change => change.revision <= afterOrdinal || change.revision > Number(r.throughOrdinal))
+        || events.some(row => input.query.highWaterOrdinal !== undefined && row.activity!.revision > input.query.highWaterOrdinal)
+        || (r.hasMore ? !changes.length || Math.max(...changes.map(change => change.revision)) !== r.throughOrdinal : r.throughOrdinal !== r.highWaterOrdinal)) throw new Error();
+      return Object.freeze({ events: Object.freeze(events), removed: Object.freeze(removed), afterOrdinal, throughOrdinal: Number(r.throughOrdinal), highWaterOrdinal: Number(r.highWaterOrdinal), hasMore: r.hasMore });
+    }
+    if (r.removed !== undefined) throw new Error();
     const page = readLoggingPage({ events: rows.slice().reverse(), highWaterOrdinal: r.highWaterOrdinal, hasMore: false, nextBeforeOrdinal: null },
       { ...input, query: { ...input.query, highWaterOrdinal: undefined } });
     const events = Object.freeze([...page.events].reverse());

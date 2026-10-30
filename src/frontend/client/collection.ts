@@ -18,6 +18,7 @@ import type { InsertInput, PrimaryKeyOf } from '../../schema/infer';
 import type { SyncClient } from '../../sync/client/sync-client';
 import type { SyncMutationWaitOptions } from '../../sync/client/sync-mutation-receipts';
 import type { ClientTableDef, Row } from '../../sync/types';
+import { carryLoggingResultRow, carryEmptyLoggingResult } from './logging-result-provenance';
 
 export interface Collection<
   T extends Row = Row,
@@ -133,6 +134,7 @@ export function createCollection<
     }
 
     const decoded = next as T;
+    carryLoggingResultRow(row, decoded);
     decodedRows.set(row, decoded);
     return decoded;
   }
@@ -147,6 +149,7 @@ export function createCollection<
       decoded[id] = decodeStoredRow(row);
     }
     previousStoredTable = stored;
+    if (!Object.keys(decoded).length) carryEmptyLoggingResult(stored, decoded);
     previousDecodedTable = decoded;
     return decoded;
   }
@@ -158,6 +161,7 @@ export function createCollection<
     for (const field of booleanFields) {
       if (field in next) next[field] = encodeBooleanValue(next[field]);
     }
+    carryLoggingResultRow(row, next);
     return next;
   }
 
@@ -330,8 +334,10 @@ export function createCollection<
 
     load(rows: InsertInput<T, TPrimaryKey>[], options?: { replace?: boolean }): void {
       const keyed: Record<string, Row> = {};
+      if (!rows.length) carryEmptyLoggingResult(rows, keyed);
       for (const row of rows) {
         const nextRow = withCollectionPrimaryKey(row);
+        carryLoggingResultRow(row, nextRow);
         keyed[String(nextRow[primaryKey])] = encodeLogicalRow(nextRow);
       }
       store.send({

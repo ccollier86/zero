@@ -73,6 +73,8 @@ export interface ResourceCrudRequestContext {
 
 /** Configuration for generated resource CRUD behavior. */
 export interface ResourceCrudServiceOptions {
+  /** Optional trusted read-evidence boundary; invoked only after domain authorization and source/actor release. */
+  prepareRead?: (input: { resource: RegisteredResourceDefinition; kind: 'record' | 'list'; rows: import('../sync/types').Row[]; context: ResourceCrudRequestContext }) => Promise<import('../logging/logging-result-contracts').LoggingResultReceipt | null>;
   db: ReactiveDB;
   registry: ResourceRegistry;
   tables: Record<string, TableSchema>;

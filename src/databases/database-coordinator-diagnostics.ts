@@ -46,7 +46,7 @@ export function createDatabaseCoordinatorDiagnostics(
       leases: entry.leases,
       tenantSyncBindings: entry.tenantSyncBindingSlots,
       activeOperations: entry.activeOperations,
-      queueDepth: entry.lane.depth + entry.recoveryWaiters,
+      queueDepth: entry.lane.depth + entry.readerLane.depth + entry.recoveryWaiters,
       writerGeneration: options.executorGeneration(entry.writer),
       readerGeneration: options.executorGeneration(entry.reader),
       restartRetryCount: entry.restartRetryCount,

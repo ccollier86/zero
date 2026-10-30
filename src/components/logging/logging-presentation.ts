@@ -30,7 +30,7 @@ export function loggingLocalDate(value?: number): string {
   return Number.isNaN(local.getTime()) ? '' : local.toISOString().slice(0, 16);
 }
 export const loggingFilterLabels = {
-  family: 'Category', outcome: 'Outcome', actorId: 'User', action: 'Activity', targetId: 'Record ID',
+  family: 'Category', outcome: 'Outcome', userId: 'User', actorId: 'Executor ID', changedField: 'Changed field', action: 'Activity', targetId: 'Record ID',
   sessionId: 'Session ID', targetType: 'Table / resource', level: 'Severity', since: 'From', until: 'Before',
 } as const;
 export type LoggingFilterKey = keyof typeof loggingFilterLabels;
@@ -42,7 +42,8 @@ export function clearLoggingFilters(query: LoggingQuery): LoggingQuery {
 }
 /** Helpful client feedback; the server remains the authoritative query validator. */
 export function loggingFilterError(query: LoggingQuery): string | null {
-  for (const key of ['actorId', 'sessionId', 'targetId'] as const) if (query[key] !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(query[key])) return `${loggingFilterLabels[key]} must be an opaque ID (letters, digits, dots, underscores, colons or hyphens).`;
+  for (const key of ['actorId', 'userId', 'sessionId', 'targetId'] as const) if (query[key] !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(query[key])) return `${loggingFilterLabels[key]} must be an opaque ID (letters, digits, dots, underscores, colons or hyphens).`;
+  if (query.changedField !== undefined && (!query.changedField.length || query.changedField.length > 256 || /[\u0000-\u001f\u007f]/.test(query.changedField))) return 'Choose an exact retained field name.';
   for (const key of ['action', 'targetType'] as const) if (query[key] !== undefined && (query[key].length > 120 || !/^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/.test(query[key]))) return `${loggingFilterLabels[key]} must be an exact lowercase code, such as ${key === 'action' ? 'record.read' : 'record'}.`;
   for (const key of ['since', 'until'] as const) if (query[key] !== undefined && (!Number.isSafeInteger(query[key]) || query[key] < 0 || query[key] > 8.64e15)) return 'Choose a valid date and time.';
   return query.since !== undefined && query.until !== undefined && query.since >= query.until ? 'Start must be before end.' : null;

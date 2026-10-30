@@ -17,7 +17,7 @@ import { DataTableServerInsertMembership } from './data-table-server-insert-memb
 import { DataTableServerLeadingRow } from './data-table-server-leading-row';
 import { dataTableServerSourceIdentity } from './data-table-server-source-identity';
 import { dataTableServerPartitionMatches, dataTableServerStateMatches, normalizeDataTableServerFailure, projectDataTableServerRows, resolveDataTableServerQuery } from './data-table-server-source-state';
-import { DataTableServerSourceError, type DataTableServerPage, type DataTableServerQuery, type DataTableServerSource } from './data-table-server-types';
+import { DataTableServerSourceError, type DataTableServerResult, type DataTableServerPage, type DataTableServerQuery, type DataTableServerSource } from './data-table-server-types';
 export { dataTableServerStateMatches, projectDataTableServerRows } from './data-table-server-source-state';
 
 const EMPTY_ROWS: never[] = [];
@@ -26,7 +26,7 @@ export type DataTableServerChangeReason = 'query' | 'refresh' | 'live';
 interface Accepted<T extends Row> {
   boundaryKey: string; partition: string; signature: string; data: T[];
   membershipKey: string;
-  result: { rows: T[]; page: DataTableServerPage }; query: DataTableServerQuery;
+  result: DataTableServerResult<T>; query: DataTableServerQuery;
   changeReason: DataTableServerChangeReason; revision: number;
   liveInsertedRowIds: readonly string[];
 }
@@ -43,6 +43,7 @@ export interface UseDataTableServerSourceOptions<T extends Row> {
   confirmLiveInsertions?: boolean;
 }
 export interface DataTableServerSourceState<T extends Row> {
+  auditReceipt?: DataTableServerResult<T>['auditReceipt'];
   data: T[]; page: DataTableServerPage | null; isLoading: boolean; error: Error | null;
   refresh: () => Promise<void>;
   prefetchPage: (pageIndex: number) => Promise<void>;
@@ -302,6 +303,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   const exact = visible && accepted.signature === signature;
   const visibleFailure = dataTableServerStateMatches(failure, authorization.key, signature, authorization.ready);
   return { data: visible ? accepted.data : EMPTY_ROWS as T[], page: visible ? accepted.result.page : null,
+    auditReceipt: visible ? accepted.result.auditReceipt : undefined,
     isLoading: !!options.source && authorization.ready && (loadingKey === signature || !exact && !visibleFailure),
     error: visibleFailure ? failure.error : null, refresh, prefetchPage, isPreviousData: !!visible && !exact,
     requestKey: options.source ? signature : null, resolvedRequestKey: visible ? accepted.signature : null,

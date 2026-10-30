@@ -11,7 +11,8 @@ import { ModalManager, modals } from '../../modals';
 import { useModalHostPresent } from '../../modals/modal-host-context';
 import { useClientMaybe } from '../../frontend/client/client-context';
 import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
-import { defineSchema, field } from '../../schema';
+import { loggingTableSchema as schema } from './logging-table-schema';
+import { Checkbox } from '../ui/checkbox';
 import type { LoggingQuery, LoggingStream } from '../../logging/logging-contracts';
 import { createLoggingTableSource } from './logging-table-source';
 import { LoggingEventDetail, LoggingFilters } from './logging-parts';
@@ -20,17 +21,17 @@ import type { LoggingTableRow } from './logging-table-source';
 import { cn } from '../../lib/utils';
 import type { LoggingPerson, LoggingTableChoice } from '../../logging/logging-directory-contracts';
 import type { LoggingPresentation } from './logging-readable-activity';
+import type { LoggingRecordLinkResolver } from './logging-record-link';
 
-const schema = defineSchema({ time: field.text({ label: 'When' }), actor: field.text({ label: 'Who' }), action: field.text({ label: 'Activity' }), target: field.text({ label: 'Item' }), details: field.text({ label: 'Details' }), outcome: field.text({ label: 'Result' }), evidence: field.text({ label: 'Recorded by' }), inspect: field.text({ label: 'Inspect' }) });
 const ACCESS_ERROR = 'Activity access could not be revalidated. Evidence is hidden until a fresh authorized snapshot succeeds.';
 const EMPTY_TABLE_CHOICES: readonly LoggingTableChoice[] = Object.freeze([]);
-export interface LoggingWorkspaceProps { className?: string; defaultStream?: LoggingStream; initialQuery?: LoggingQuery; allowExport?: boolean; scope?: 'current' | 'platform'; presentation?: LoggingPresentation }
+export interface LoggingWorkspaceProps { className?: string; defaultStream?: LoggingStream; initialQuery?: LoggingQuery; allowExport?: boolean; scope?: 'current' | 'platform'; presentation?: LoggingPresentation; resolveRecordLink?: LoggingRecordLinkResolver }
 /** UI capability flags affect presentation only. Guardian enforces every read and export on the server. */
 export function LoggingWorkspace(props: LoggingWorkspaceProps) {
   const hosted = useModalHostPresent();
   return hosted ? <Workspace {...props} /> : <ModalManager><Workspace {...props} /></ModalManager>;
 }
-function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allowExport = true, scope = 'current', presentation }: LoggingWorkspaceProps) {
+function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allowExport = true, scope = 'current', presentation, resolveRecordLink }: LoggingWorkspaceProps) {
   const client = useClientMaybe(), boundary = useAuthorizationScopeBoundary(client);
   const [stream, setStream] = React.useState(defaultStream), [query, setQuery] = React.useState(initialQuery), [revision, setRevision] = React.useState(0);
   const [directory, setDirectory] = React.useState<{ key: string; tables: readonly LoggingTableChoice[]; error: boolean } | null>(null);
@@ -55,7 +56,8 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
   const lifetime = React.useRef(0);
   React.useEffect(() => () => { lifetime.current++; }, []);
   const busy = busyKey === key;
-  const source = React.useMemo(() => client ? createLoggingTableSource({ page: scope === 'platform' ? client.logging.platformPage : client.logging.page, watch: client.logging.watch }, stream, query, { platform: scope === 'platform' }) : null, [client, key]);
+  const effectiveQuery: LoggingQuery = { ...query, projection: query.projection ?? (stream === 'audit' ? 'activities' : 'events') };
+  const source = React.useMemo(() => client ? createLoggingTableSource({ page: scope === 'platform' ? client.logging.platformPage : client.logging.page, watch: client.logging.watch }, stream, effectiveQuery, { platform: scope === 'platform' }) : null, [client, key]);
   React.useEffect(() => {
     if (!source || !boundary.ready || !boundary.stable) return;
     return source.watchStatus(status => {
@@ -83,7 +85,7 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
         setPendingExport({ key: captured, id });
         const existing = pendingExport?.key === captured ? await client.logging.exportJob(id) : null;
         if (!active()) return;
-        const job = existing ?? await client.logging.createExport({ id, stream, query });
+        const job = existing ?? await client.logging.createExport({ id, stream, query: effectiveQuery });
         if (!active()) return;
         if (job.state === 'pending') return;
         if (job.state !== 'ready') { setPendingExport(null); setError({ key: captured, message: 'The retained export is no longer available. Request a new export when ready.' }); return; }
@@ -94,7 +96,7 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
         if (!job.complete) setError({ key: captured, message: `Export is a bounded segment (${job.count} events), not the complete investigation. Continue with its pinned high-water and continuation ordinal.` });
         return;
       }
-      const result = await client.logging.export(stream, query);
+      const result = await client.logging.export(stream, effectiveQuery);
       if (!active()) return;
       // The manifest remains with the evidence. Generating a browser download is not proof of receipt.
       const manifest = JSON.stringify({ ...result, ndjson: undefined });
@@ -106,11 +108,11 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
   };
   const rowTrigger = React.useRef<Element | null>(null);
   const inspect = React.useCallback((row: LoggingTableRow, trigger: Element | null) => {
-    modals.show({ title: 'Event evidence', description: 'Retained activity · current authorized scope', icon: <Activity className="size-4" />, size: 'lg', trigger,
-      body: <LoggingEventDetail stored={row.stored} scopeKey={boundary.key} person={row.person} tables={tables} presentation={presentation} /> });
-  }, [boundary.key, tables, presentation]);
+    modals.show({ title: row.stored.activity ? 'Activity details' : 'Event evidence', description: 'Retained activity · current authorized scope', icon: <Activity className="size-4" />, size: 'lg', trigger,
+      body: <LoggingEventDetail stored={row.stored} scopeKey={boundary.key} person={row.person} initiator={row.initiator} tables={tables} presentation={presentation} platform={scope === 'platform'} resolveRecordLink={resolveRecordLink} /> });
+  }, [boundary.key, tables, presentation, scope, resolveRecordLink]);
   const filterUser = React.useCallback((id: string, resolved: LoggingPerson | null) => {
-    setPerson({ key: directoryKey, value: resolved ?? undefined }); setQuery(query => ({ ...query, actorId: id })); setRevision(n => n + 1);
+    setPerson({ key: directoryKey, value: resolved ?? undefined }); setQuery(query => { const next = { ...query, userId: id }; delete next.actorId; return next; }); setRevision(n => n + 1);
   }, [directoryKey]);
   const filterTarget = React.useCallback((target: { type: string; id: string }) => {
     setQuery(query => ({ ...query, targetType: target.type, targetId: target.id })); setRevision(n => n + 1);
@@ -128,7 +130,8 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
       <span role="status" aria-label="Activity connection" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><span aria-hidden="true" className={cn('size-1.5 rounded-full', source.live && status === 'live' ? 'bg-success' : 'bg-muted-foreground')} />{!source.live ? 'Snapshot only' : status === 'live' ? 'Live updates connected' : status === 'connecting' ? 'Connecting to live updates…' : 'Revalidating access…'}</span></div>
     <TabsContent value={stream} className="mt-2 space-y-3">
     <div className="rounded-xl border border-border bg-card p-3"><LoggingFilters value={query} tables={tables} presentation={presentation} selectedPerson={selectedPerson}
-      onPersonChange={value => setPerson({ key: directoryKey, value })} onApply={next => { setQuery(next); refresh(); }} />
+      onPersonChange={value => setPerson({ key: directoryKey, value })} onApply={next => { setQuery(previous => ({ ...next, projection: previous.projection })); refresh(); }} />
+      {stream === 'audit' && <label className="mt-3 inline-flex items-center gap-2 text-xs text-muted-foreground"><Checkbox checked={effectiveQuery.projection === 'events'} onCheckedChange={checked => { setQuery(query => ({ ...query, projection: checked === true ? 'events' : 'activities' })); refresh(); }} />Show raw supporting evidence instead of grouped activities</label>}
       {directory?.key === directoryKey && directory.error && <p role="status" className="mt-2 text-xs text-muted-foreground">Table choices could not be loaded. Existing filters remain active; refresh to retry.</p>}
     </div>
     {error?.key === key && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error.message}</p>}
@@ -142,7 +145,7 @@ function Workspace({ className, defaultStream = 'audit', initialQuery = {}, allo
       emptyState={<div className="grid justify-items-center gap-2 py-12 text-center"><SearchX className="mb-1 size-6 text-muted-foreground" /><p className="text-sm font-medium">No retained events match these filters.</p><p className="max-w-sm text-xs leading-relaxed text-muted-foreground">Try a wider time range or fewer criteria. Only evidence you are authorized to access is shown.</p></div>}
       errorState={(_error, retry) => <div role="alert" className="grid justify-items-center gap-3 py-10 text-center"><p className="text-sm">Events could not be loaded under the current access.</p><Button variant="outline" size="sm" onClick={retry}>Retry loading events</Button></div>} />
     </div>}
-    <div className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-foreground"><CircleHelp className="mt-0.5 size-3.5 shrink-0" /><p>Newest ingestion first · source times may differ. Browser signals are observations, not proof of attention, clipboard contents or physical printing. Connection status is not an integrity or compliance verdict.</p></div>
+    <div className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-foreground"><CircleHelp className="mt-0.5 size-3.5 shrink-0" /><p>Newest activity first · supporting stages update their existing row. Browser signals are observations, not proof of attention, clipboard contents or physical printing. Connection status is not an integrity or compliance verdict.</p></div>
     </TabsContent></Tabs>
   </section>;
 }

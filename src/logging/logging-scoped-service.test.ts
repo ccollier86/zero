@@ -1,5 +1,5 @@
 /** Guardian admission/final fences and malicious observations without an HTTP/auth bypass. */
-import { expect, test } from 'bun:test';
+import { expect, test, spyOn } from 'bun:test';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import type { ServiceDataScope } from '../auth/service-data-scope';
 import { createScopedLoggingService } from './logging-scoped-service';
@@ -56,8 +56,21 @@ test('live page and membership reads share one audited investigation window with
   expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(1);
   await f.service.page('audit', { actorId: 'user-c' });
   expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(2);
+  expect(f.events[0]?.correlationId).toBeTruthy();
+  expect(f.events[1]?.correlationId).toBe(f.events[0]?.correlationId);
   f.deny(); await expect(f.service.page('audit')).rejects.toThrow('Forbidden');
   expect(f.events.at(-1)).toMatchObject({ action: 'logging.query.denied', outcome: 'denied' });
+});
+
+test('continuous investigation refreshes never create a new idle audit activity at the window boundary', async () => {
+  const f = fixture(); let now = 1700000000000;
+  const clock = spyOn(Date, 'now').mockImplementation(() => now);
+  try {
+    for (let i = 0; i < 20; i++) { await f.service.page('audit', { projection: 'activities' }); now += 30000; }
+    expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(1);
+    now += 300001; await f.service.page('audit', { projection: 'activities' });
+    expect(f.events.filter(event => event.action === 'logging.query.window')).toHaveLength(2);
+  } finally { clock.mockRestore(); }
 });
 test('server emission snapshots input before yielding and derives its actor and scope', async () => {
   const f = fixture(); let release!: () => void; f.gate(new Promise(resolve => { release = resolve; }));

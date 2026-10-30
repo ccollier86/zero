@@ -212,8 +212,9 @@ export class DatabaseCoordinatorOperationRuntime {
     if (operation.consistency?.mode === 'strong' || !entry.reader) {
       return this.enqueueWriterOperation(entry, operation, execution, null);
     }
-    return this.trackOperation(entry, async () => {
+    return this.trackOperation(entry, () => entry.readerLane.enqueue(async () => {
       try {
+        this.options.assertUsableEntry(entry);
         return await this.executeOnActor(
           entry,
           entry.reader!,
@@ -240,7 +241,7 @@ export class DatabaseCoordinatorOperationRuntime {
         }
         throw normalized;
       }
-    });
+    }, { signal: execution.signal, timeoutMs: queueTimeout(execution, this.options.queueTimeoutMs), operationClass: 'query' }));
   }
 
   executeTrustedWrite(

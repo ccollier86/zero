@@ -11,7 +11,7 @@ export interface LoggingEvidenceCursor {
   readonly holds: Readonly<{ at: number; id: string }> | null;
   readonly reviews: Readonly<{ at: number; id: string }> | null;
 }
-export interface LoggingExport { readonly version: 1; readonly id: string; readonly stream: LoggingStream; readonly highWaterOrdinal: number; readonly count: number; readonly complete: boolean; readonly nextBeforeOrdinal: number | null; readonly sha256: string; readonly ndjson: string }
+export interface LoggingExport { readonly version: 1 | 2; readonly id: string; readonly stream: LoggingStream; readonly highWaterOrdinal: number; readonly count: number; readonly complete: boolean; readonly historyComplete?: boolean; readonly nextBeforeOrdinal: number | null; readonly sha256: string; readonly ndjson: string }
 export interface LoggingEvidencePage { readonly holds: readonly LoggingHold[]; readonly reviews: readonly LoggingReview[]; readonly hasMoreHolds: boolean; readonly hasMoreReviews: boolean; readonly nextReviewBefore: number | null; readonly nextCursor: LoggingEvidenceCursor | null }
 export interface LoggingHoldReceipt { readonly id: string; readonly active: boolean }
 export interface LoggingReviewReceipt { readonly id: string; readonly reviewedAt: number }

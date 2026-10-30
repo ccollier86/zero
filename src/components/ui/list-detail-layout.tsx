@@ -7,6 +7,7 @@ import { Button } from '#zero/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './resizable';
 import { cn } from '#zero/lib/utils';
 import { useListDetailPanels } from './use-list-detail-panels';
+import { LoggingDisplayBoundary } from '../../frontend/client/logging-hooks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -150,7 +151,7 @@ function ListDetailLayout({
           onFocusCapture={(event) => rememberListTarget(event.target)}
           onPointerDownCapture={(event) => rememberListTarget(event.target)}
         >
-          {list}
+          <LoggingDisplayBoundary visible={panels.listVisible}>{list}</LoggingDisplayBoundary>
         </div>
         </ResizablePanel>
 
@@ -192,7 +193,7 @@ function ListDetailLayout({
               data-slot="list-detail-detail-scroll"
               className="min-h-0 min-w-0 flex-1 overflow-auto"
             >
-              {detail}
+              <LoggingDisplayBoundary visible={panels.detailShown}>{detail}</LoggingDisplayBoundary>
             </motion.div>
           </AnimatePresence>
         </div>

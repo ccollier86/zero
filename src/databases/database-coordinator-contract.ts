@@ -64,6 +64,7 @@ export interface DatabaseCoordinatorOptions {
   readonly maxTenantSyncBindingsPerDatabase?: number;
   /** Set false to route every read through the writer actor. Default: true. */
   readonly readers?: boolean;
+  /** Combined queued writer/readonly requests for one database. Active WAL reader and writer remain independent. */
   readonly maxQueuedPerDatabase?: number;
   readonly maxQueuedTotal?: number;
   readonly queueTimeoutMs?: number;
@@ -84,7 +85,7 @@ export interface DatabaseCoordinatorOptions {
 }
 
 export interface DatabaseExecutionOptions {
-  /** Cancellation is honored while waiting for recovery or in the writer FIFO. */
+  /** Cancellation is honored while waiting for recovery or either bounded reader/writer FIFO. */
   readonly signal?: AbortSignal;
   readonly queueTimeoutMs?: number;
   readonly operationTimeoutMs?: number;

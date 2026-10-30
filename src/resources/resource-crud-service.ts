@@ -51,6 +51,7 @@ export type {
 
 /** Service facade used by generated HTTP routes for registered Resources. */
 export class ResourceCrudService {
+  private readonly authority: ResourcePolicyAuthorityService;
   private readonly defaultEngine: ResourceDefaultCrudEngine;
   private readonly tenantEngine: ResourceTenantCrudEngine;
 
@@ -63,6 +64,7 @@ export class ResourceCrudService {
       authorizationKernel: options.authorizationKernel,
       roleAssignments: options.roleAssignments,
     });
+    this.authority = authority;
     const policy = new ResourceCrudPolicyService(
       options.authConfig,
       authority,
@@ -103,9 +105,11 @@ export class ResourceCrudService {
   ): Promise<ResourceCrudResult> {
     const resolved = this.resolve(resourceName, 'list', context);
     if ('failure' in resolved) return resolved.failure;
-    return isResourceTenantDatabaseScope(resolved.scope)
+    const authority = this.authority.capture(context);
+    const result = isResourceTenantDatabaseScope(resolved.scope)
       ? await this.tenantEngine.list(resolved.resource, resolved.scope, query, context)
       : await this.defaultEngine.list(resolved.resource, resolved.scope, query, context);
+    return this.readEvidence(resolved.resource, 'list', result, context, authority);
   }
 
   /** Get one row after resolving registry exposure and the authoritative plane. */
@@ -116,9 +120,23 @@ export class ResourceCrudService {
   ): Promise<ResourceCrudResult> {
     const resolved = this.resolve(resourceName, 'get', context);
     if ('failure' in resolved) return resolved.failure;
-    return isResourceTenantDatabaseScope(resolved.scope)
+    const authority = this.authority.capture(context);
+    const result = isResourceTenantDatabaseScope(resolved.scope)
       ? await this.tenantEngine.get(resolved.resource, resolved.scope, id, context)
       : await this.defaultEngine.get(resolved.resource, resolved.scope, id, context);
+    return this.readEvidence(resolved.resource, 'record', result, context, authority);
+  }
+
+  private async readEvidence(resource: RegisteredResourceDefinition, kind: 'record' | 'list', result: ResourceCrudResult, context: ResourceCrudRequestContext,
+    authority: import('./resource-policy-authority').ResourcePolicyAuthoritySnapshot): Promise<ResourceCrudResult> {
+    if (!result.ok || !this.options.prepareRead || !context.authContext) return result;
+    const current = async () => await this.authority.isCurrent(context, authority) && this.authority.isCurrentAtCommit(context, authority);
+    if (!await current()) return resourceFailure(403, 'Resource authorization changed during the request', 'resource-authority-changed');
+    const body = result.body as { rows?: import('../sync/types').Row[]; row?: import('../sync/types').Row };
+    const rows = kind === 'record' ? [body.row!] : body.rows!;
+    const receipt = await this.options.prepareRead({ resource, kind, rows, context });
+    if (!await current()) return resourceFailure(403, 'Resource authorization changed during the request', 'resource-authority-changed');
+    return receipt ? { ...result, body: { ...body, auditReceipt: receipt } } : result;
   }
 
   /** Create one row through the plane selected only by verified realm state. */

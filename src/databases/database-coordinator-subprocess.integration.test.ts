@@ -28,6 +28,27 @@ const CRASH_PARENT_PATH = fileURLToPath(new URL(
 ));
 
 describe('DatabaseCoordinator subprocess integration', () => {
+  test('queues overlapping snapshot reads with cancellation/deadlines while writers and another database keep progressing', async () => {
+    await withIntegrationResources(async resources => {
+      const coordinator = resources.createCoordinator(resources.createRoot()), alpha = await resources.acquire(coordinator, 'reader-alpha'), beta = await resources.acquire(coordinator, 'reader-beta');
+      await alpha.execute(createTodo('row', 'Before')); await beta.execute(createTodo('row', 'Other'));
+      const barriers = resources.createRoot(), entered = join(barriers, 'read-entered'), release = resources.registerReleaseFile(join(barriers, 'read-release'));
+      const blocked = resources.track(alpha.execute({ type: 'query', name: 'test.blockingRead', input: { enteredPath: entered, releasePath: release }, consistency: { mode: 'snapshot' } }));
+      await waitForFile(entered);
+      const abort = new AbortController();
+      const cancelled = resources.track(alpha.execute(readTodo('row'), { signal: abort.signal })).catch(error => error as DatabaseError);
+      const expired = resources.track(alpha.execute(readTodo('row'), { queueTimeoutMs: 10 })).catch(error => error as DatabaseError);
+      const reads = Array.from({ length: 8 }, () => resources.track(alpha.execute(readTodo('row'))));
+      abort.abort();
+      expect(await cancelled).toMatchObject({ code: 'DATABASE_QUEUE_TIMEOUT', outcome: 'not-started' });
+      expect(await expired).toMatchObject({ code: 'DATABASE_QUEUE_TIMEOUT', outcome: 'not-started' });
+      await expect(withDeadline(alpha.execute({ type: 'mutate', idempotencyKey: 'while-reader-active', mutation: { type: 'update', table: 'todos', id: 'row', patch: { title: 'After' } } }), 1500)).resolves.toMatchObject({ sequence: { seq: 2 } });
+      await expect(withDeadline(beta.execute(readTodo('row')), 1500)).resolves.toMatchObject({ value: { title: 'Other' } });
+      resources.releaseFile(release); await blocked;
+      const returned = await Promise.all(reads);
+      expect(returned).toHaveLength(8); expect(returned.every(read => (read.value as { title: string }).title === 'After')).toBe(true);
+    });
+  }, 20000);
   test('persists isolated CRUD, receipts, and replay through real actor generations', async () => {
     await withIntegrationResources(async (resources) => {
       const root = resources.createRoot();

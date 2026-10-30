@@ -28,6 +28,7 @@ import {
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_DATABASE_MANAGER,
   ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_LOGGING_RUNTIME,
 } from '../../runtime/service-keys';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { createDataQueryPlugin } from '../../sync/data-query.plugin';
@@ -48,6 +49,8 @@ import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 import type { ResolvedConfig } from './types';
 import { createSeoRuntime } from '../../seo/runtime';
 import { loggingPageRecovery } from './app-logging-page-recovery';
+import { loggingAuthContext } from '../../logging/logging-auth-context';
+import { LoggingError } from '../../logging/logging-error';
 
 interface MountPlatformRoutesInput {
   readonly app: Elysia;
@@ -113,6 +116,7 @@ export async function mountPlatformRoutes({
   }
 
   app.use(createDataQueryPlugin({
+    getLoggingRuntime: () => runtime.get(ZERO_LOGGING_RUNTIME),
     queryableTables: resolveGenericDataQueryableTables(config.lazyTables),
     tableColumns: config.tableColumns,
     policy: syncPolicy,
@@ -136,6 +140,12 @@ export async function mountPlatformRoutes({
 
   if (config.resourceRoutes !== false) {
     app.use(createResourceCrudPlugin({
+      prepareRead: async ({ resource, kind, rows, context }) => {
+        const logging = runtime.get(ZERO_LOGGING_RUNTIME);
+        if (!logging || !context.authContext || !logging.config.policy.capture.records) return null;
+        try { return await logging.prepareResult(loggingAuthContext(context.authContext, logging.config.policyVersion), { table: resource.table, kind, rows, primaryKey: resource.primaryKey }); }
+        catch (error) { throw error instanceof LoggingError ? error : new LoggingError('LOGGING_OUTCOME_UNKNOWN', 'Read evidence acknowledgment is unresolved.', 'unknown'); }
+      },
       registry: resourceRegistry,
       tables: config.tables,
       authConfig: resourceAuthConfig,
@@ -218,6 +228,7 @@ export async function mountPlatformRoutes({
   // The file router is the final catch-all. Request URLs remain derived at
   // runtime so this composition is independent of its eventual listener.
   app.use(createRouterPlugin({
+    onPageRoutes: patterns => runtime.get(ZERO_LOGGING_RUNTIME)?.registerPages(patterns),
     seo,
     observability: observabilityRuntime,
     appDir: config.appDir,

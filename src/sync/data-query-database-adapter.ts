@@ -53,6 +53,8 @@ export interface DataQueryTenantFindRequest {
   readonly clientInput: DatabaseFindInput;
   /** Cancellation remains actor execution metadata, never part of the wire predicate. */
   readonly signal?: AbortSignal;
+  /** Trusted composition callback for the actual actor snapshot, never query input. */
+  readonly onSnapshot?: (sequence: number) => void;
 }
 
 /** App-local adapter for authority-fenced managed-table database reads. */
@@ -214,6 +216,7 @@ export class DataQueryDatabaseAdapter {
     });
     try {
       const result = await read(binding.client);
+      request.onSnapshot?.(result.sequence.seq);
       return result.value;
     } finally {
       binding.release();

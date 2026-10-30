@@ -244,6 +244,7 @@ function toPublicFrameworkImport(sourcePath: string, sourceRoot: string): string
   if (rel === 'sync/identity.ts') return '@zero/framework/sync/identity';
   if (rel === 'sync/types.ts') return '@zero/framework/sync/types';
   if (rel === 'frontend/client/query-params.ts') return '@zero/framework/react/query-params';
+  if (rel === 'frontend/client/logging-result-provenance.ts' || rel === 'logging/logging-result-shape.ts' || rel === 'logging/logging-result-contracts.ts') return '@zero/framework/react/logging-results';
   if (rel === 'frontend/client/authorization-scope-hooks.ts') return '@zero/framework/react/authorization-scope';
   if (rel === 'frontend/client/authorization-scope-readiness.ts') return '@zero/framework/react/authorization-scope';
   if (rel.startsWith('frontend/client/')) return '@zero/framework/react';

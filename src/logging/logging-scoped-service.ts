@@ -15,9 +15,22 @@ import { AuthError } from '../auth/types';
 import { readOwnedLoggingExport } from './logging-export-validation';
 import { LOGGING_EXPORT_NAMESPACE } from './logging-export-manager';
 import { normalizeLoggingPeopleQuery } from './logging-person-directory';
+import { captureLoggingResult } from './logging-result-capture';
+import { normalizeLoggingDeriveResultInput } from './logging-result-validation';
+import { captureLoggingAction } from './logging-action';
+import { loggingExportHistory } from './logging-export-history';
 
 const rateWindows = new WeakMap<LoggingRuntime, Map<string, { start: number; count: number }>>();
+const selectionWindows = new WeakMap<LoggingRuntime, Map<string, { start: number; count: number }>>();
+const investigationWindows = new WeakMap<LoggingRuntime, Map<string, { expires: number; correlationId: string }>>();
 const readWindows = new WeakMap<LoggingRuntime, Map<string, { expires: number; admission: Promise<void> }>>();
+function chargeBrowser(registry: typeof rateWindows, runtime: LoggingRuntime, key: string, charge: number, limit: number, now = Date.now()): void {
+  let windows = registry.get(runtime); if (!windows) registry.set(runtime, windows = new Map());
+  for (const [id, window] of windows) if (now - window.start >= 60000) windows.delete(id);
+  const window = windows.get(key) ?? { start: now, count: 0 };
+  if (window.count + charge > limit || !windows.has(key) && windows.size >= 4096) throw new LoggingError('LOGGING_BACKPRESSURE', 'Browser logging rate exceeded.');
+  window.count += charge; windows.set(key, window);
+}
 
 /** Every yielding operation fences authority on both sides, and before any protected evidence release. */
 export function createScopedLoggingService(runtime: LoggingRuntime, access: RequestAuthorizationAccess, scope: ServiceDataScope,
@@ -51,10 +64,22 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     const c = context('backend'), key = loggingDigest([c.actor, c.scope, stream, query]), now = Date.now();
     let windows = readWindows.get(runtime); if (!windows) readWindows.set(runtime, windows = new Map());
     for (const [id, entry] of windows) if (entry.expires <= now) windows.delete(id);
-    const existing = windows.get(key); if (existing) { await existing.admission; return; }
+    // A continuously open live investigation is one activity, not a new audit
+    // event on each idle timeout/refresh. Only a genuinely idle/reopened window starts another.
+    const existing = windows.get(key); if (existing) { existing.expires = now + 300000; await existing.admission; return; }
     if (windows.size >= 4096) throw new LoggingError('LOGGING_BACKPRESSURE', 'Investigation admission capacity is exhausted.');
+    let investigations = investigationWindows.get(runtime);
+    if (!investigations) investigationWindows.set(runtime, investigations = new Map());
+    for (const [id, window] of investigations) if (window.expires <= now) investigations.delete(id);
+    const owner = loggingDigest([c.actor, c.scope, stream.startsWith('platform.') || (query as { platform?: boolean })?.platform === true]);
+    let investigation = investigations.get(owner);
+    if (!investigation) {
+      if (investigations.size >= 4096) throw new LoggingError('LOGGING_BACKPRESSURE', 'Investigation activity capacity is exhausted.');
+      investigation = { expires: now + 300000, correlationId: 'investigation:' + crypto.randomUUID() }; investigations.set(owner, investigation);
+    }
+    investigation.expires = now + 300000;
     const entry = { expires: now + 300000, admission: Promise.resolve() };
-    entry.admission = runtime.deliver(audit('logging.query.window', { stream, criteriaDigest: loggingDigest(query), windowMs: 300000 })).then(() => {}).catch(error => { if (windows!.get(key) === entry) windows!.delete(key); throw error; });
+    entry.admission = runtime.deliver({ ...audit('logging.query.window', { stream, criteriaDigest: loggingDigest(query), windowMs: 300000 }), correlationId: investigation.correlationId }).then(() => {}).catch(error => { if (windows!.get(key) === entry) windows!.delete(key); throw error; });
     windows.set(key, entry); await entry.admission; assertCurrent();
   };
   const investigationCriteria = (query: LoggingQuery) => {
@@ -78,11 +103,48 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
     };
     await revalidate(); await authorize(); await readAdmission((platform ? 'platform.' : '') + stream, investigationCriteria(admitted.query));
     const result = await runtime.page(stream, admitted.scope, admitted.query); await revalidate(); await authorize();
-    const ids = [...new Set(result.events.flatMap(({ event }) => event.actor.kind === 'user' && event.actor.id ? [event.actor.id] : []))];
-    const people = runtime.directory?.lookup(admitted.scope, ids) ?? [];
+    const ids = [...new Set(result.events.flatMap(({ event }) => [...(event.actor.kind === 'user' && event.actor.id ? [event.actor.id] : []), ...(event.actor.initiatorId ? [event.actor.initiatorId] : [])]))];
+    const people = [...(runtime.directory?.lookup(admitted.scope, ids.slice(0, 100)) ?? []), ...(ids.length > 100 ? runtime.directory?.lookup(admitted.scope, ids.slice(100, 200)) ?? [] : [])];
     assertCurrent(); return { ...result, people };
   };
   return Object.freeze({
+    async action(definition, input) {
+      const event = captureLoggingAction(context('backend'), definition, input);
+      await revalidate(); assertCurrent(); assertWorkAdmission();
+      const result = await runtime.append(event);
+      await revalidate(); assertCurrent(); assertWorkAdmission(); return result;
+    },
+    async deriveResult(input) {
+      const selection = normalizeLoggingDeriveResultInput(input), c = context('backend');
+      if (c.actor.kind !== 'user' || !c.actor.sessionId) throw new LoggingError('LOGGING_EVENT_INVALID', 'An interactive session is required for displayed selections.');
+      await revalidate(); assertCurrent(); assertWorkAdmission();
+      if (runtime.config.policy.capture.records && runtime.config.policy.capture.views)
+        chargeBrowser(selectionWindows, runtime, loggingDigest([c.actor.id, c.actor.sessionId, c.scope]), 1, runtime.config.policy.browser?.selectionsPerMinute ?? 240);
+      const result = await runtime.deriveResult(c, selection);
+      await revalidate(); assertCurrent(); assertWorkAdmission(); return result;
+    },
+    async prepareResult(input) {
+      // Capture approved immutable row identities/values before yielding, without retaining caller-owned objects.
+      const c = context('backend'), snapshot = captureLoggingResult(input, runtime.config.policy.resources);
+      await revalidate(); assertCurrent(); assertWorkAdmission();
+      const result = await runtime.prepareCapturedResult(c, snapshot);
+      await revalidate(); assertCurrent(); assertWorkAdmission(); return result;
+    },
+    async result(id, platform = false) {
+      const captured = loggingId(id)!;
+      const authorize = () => { if (platform) { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); } permit('read'); };
+      await revalidate(); authorize(); await readAdmission('historical-result', { id: captured, platform });
+      const result = await runtime.result(platform ? { kind: 'platform' } : readScope, captured); await revalidate(); authorize(); assertCurrent(); return result;
+    },
+    async resultVersions(activityId, options = {}) {
+      const r = loggingRecord(options, ['beforeOrdinal', 'highWaterOrdinal', 'platform']);
+      if (!/^[a-f0-9]{64}$/.test(activityId) || r.platform !== undefined && typeof r.platform !== 'boolean') throw new LoggingError('LOGGING_QUERY_INVALID', 'Historical result query is invalid.');
+      const before = r.beforeOrdinal === undefined ? undefined : loggingTime(r.beforeOrdinal), high = r.highWaterOrdinal === undefined ? undefined : loggingTime(r.highWaterOrdinal), platform = r.platform === true;
+      const authorize = () => { if (platform) { access.requirePlatformAdmin(); access.requireApplicationAuthorization(); } permit('read'); };
+      await revalidate(); authorize(); await readAdmission('historical-result-versions', { activityId, platform });
+      const result = await runtime.resultVersions(platform ? { kind: 'platform' } : readScope, activityId, before, high);
+      await revalidate(); authorize(); assertCurrent(); return result;
+    },
     async people(query = {}) {
       const captured = normalizeLoggingPeopleQuery(query);
       await revalidate(); permit('read'); await readAdmission('people', { search: captured.search ?? null });
@@ -126,18 +188,18 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       const items = loggingArray(raw, 32);
       if (!items.length && !runtime.config.policy.complianceRequested) return { accepted: 0 };
       const now = Date.now(), key = loggingDigest([user.userId, user.sessionId ?? null, scope.scopeKind, scope.tenantId]);
-      let windows = rateWindows.get(runtime); if (!windows) rateWindows.set(runtime, windows = new Map());
-      for (const [id, window] of windows) if (now - window.start >= 60000) windows.delete(id);
-      const window = windows.get(key) ?? { start: now, count: 0 };
       const charge = Math.max(1, items.length);
-      if (window.count + charge > 240 || !windows.has(key) && windows.size >= 4096) throw new LoggingError('LOGGING_BACKPRESSURE', 'Browser logging rate exceeded.');
       // Validate the complete batch before admitting any part. Browser clocks/durations remain observations.
       const events = items.map(value => {
-        const r = loggingRecord(value, ['id', 'collectorId', 'action', 'occurredAt', 'target', 'interval']);
+        const r = loggingRecord(value, ['id', 'collectorId', 'action', 'occurredAt', 'target', 'receiptId', 'page', 'interval']);
         const action = loggingChoice(r.action, Object.keys(LOGGING_BROWSER_ACTIONS) as (keyof typeof LOGGING_BROWSER_ACTIONS)[]);
         const occurredAt = loggingTime(r.occurredAt); if (Math.abs(now - occurredAt) > 300000) throw new LoggingError('LOGGING_EVENT_INVALID', 'Browser observation clock is outside its admission window.');
         const metadata: Record<string, string | number | boolean> = {};
         const isView = LOGGING_BROWSER_ACTIONS[action] === 'views';
+        const page = r.page === undefined ? undefined : typeof r.page === 'string' ? runtime.pages.get(r.page) : null;
+        if (page === null || r.page !== undefined && (!page || action !== 'navigation.changed' || r.target !== undefined || r.receiptId !== undefined)) throw new LoggingError('LOGGING_EVENT_INVALID', 'Navigation requires a registered static page.');
+        if (page) metadata.pageName = page.label;
+        if (r.receiptId !== undefined && ((!isView && !['clipboard', 'printing'].includes(LOGGING_BROWSER_ACTIONS[action])) || r.target !== undefined) || action === 'view.result.changed' && r.receiptId === undefined) throw new LoggingError('LOGGING_EVENT_INVALID', 'A displayed result requires its server receipt, not a client target.');
         if (isView !== (r.interval !== undefined)) throw new LoggingError('LOGGING_EVENT_INVALID', 'Viewing observations require a sequenced interval.');
         if (r.interval !== undefined) {
           const interval = loggingRecord(r.interval, ['viewId', 'sequence', 'elapsedMs', 'visibleMs', 'activeMs', 'incomplete']);
@@ -152,13 +214,14 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
         const c = context('frontend', loggingId(r.collectorId)!);
         const suppliedId = loggingId(r.id)!;
         const id = isView ? 'view:' + loggingDigest([metadata.viewId, metadata.sequence]) : suppliedId;
-        return captureLoggingEvent(c, { id, family: LOGGING_BROWSER_ACTIONS[action], action, occurredAt,
-          outcome: 'attempted', evidence: 'browser-observed', target: r.target, metadata } as LoggingEventInput, Object.keys(metadata));
+        return { event: captureLoggingEvent(c, { id, family: LOGGING_BROWSER_ACTIONS[action], action, occurredAt,
+          outcome: page || action === 'clipboard.copy.completed' ? 'succeeded' : action === 'clipboard.copy.failed' ? 'failed' : 'attempted', evidence: 'browser-observed', target: page ? { type: 'page', id: page.id } : r.target, metadata } as LoggingEventInput, Object.keys(metadata)),
+          receiptId: r.receiptId === undefined ? undefined : loggingId(r.receiptId)! };
       });
-      window.count += charge; windows.set(key, window);
+      chargeBrowser(rateWindows, runtime, key, charge, runtime.config.policy.browser?.observationsPerMinute ?? 240, now);
       await revalidate(); assertCurrent();
       let accepted = 0;
-      for (const event of events) { assertCurrent(); if (await runtime.append(event)) accepted++; }
+      for (const { event, receiptId } of events) { assertCurrent(); if (await (receiptId ? runtime.observeResult(receiptId, event) : runtime.append(event))) accepted++; }
       await revalidate();
       const admission = runtime.config.policy.complianceRequested
         ? await runtime.admission.acknowledge({ auth: user, properties: getProperties() }, context('backend'), policyVersion ?? '', revalidate)
@@ -187,8 +250,8 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       await revalidate(); assertWorkAdmission(); return result;
     },
     async read(target, operation) {
-      const attribution = context('backend');
       const operationId = crypto.randomUUID();
+      const attribution = { ...context('backend'), correlationId: operationId };
       const stage = (action: string, outcome: LoggingEventInput['outcome']) => captureLoggingEvent(attribution, {
         id: operationId + ':' + action, family: 'records', action, occurredAt: Date.now(), evidence: 'server-confirmed', outcome, target,
       });
@@ -249,12 +312,15 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       const admitted = normalizeLoggingQuery(stream, readScope, { ...capturedQuery.query, limit: 100 });
       await revalidate(); permit('read'); permit('export'); await readAdmission('export', admitted.query);
       let highWater: number | undefined = admitted.query.highWaterOrdinal, before = admitted.query.beforeOrdinal;
-      const lines: string[] = []; let complete = false, bytes = 0;
+      const lines: string[] = []; let complete = false, bytes = 0, historyComplete = true;
       for (let page = 0; page < 10; page++) {
         const result = await runtime.page(stream, readScope, { ...admitted.query, ...(highWater === undefined ? {} : { highWaterOrdinal: highWater }), ...(before === undefined ? {} : { beforeOrdinal: before }) });
         await revalidate(); permit('read'); permit('export'); highWater = result.highWaterOrdinal;
         for (const row of result.events) {
-          const line = loggingCanonical(row); const size = loggingByteLength(line);
+          const exported = admitted.query.projection === 'activities' ? await loggingExportHistory(runtime, readScope, row, result.highWaterOrdinal, 8 * 1024 * 1024 - bytes - 1024) : { row, complete: true };
+          historyComplete &&= exported.complete;
+          await revalidate(); permit('read'); permit('export');
+          const line = loggingCanonical(exported.row); const size = loggingByteLength(line);
           if (bytes + size > 8 * 1024 * 1024) throw new LoggingError('LOGGING_BACKPRESSURE', 'Export byte budget exceeded; narrow the query.');
           lines.push(line); bytes += size;
         }
@@ -265,7 +331,8 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       const sha256 = new Bun.CryptoHasher('sha256').update(ndjson).digest('hex');
       await runtime.deliver(audit('logging.export.generated', { count: lines.length, highWaterOrdinal: highWater ?? 0, complete, sha256 }, { type: 'logging.export', id }));
       await revalidate(); permit('read'); permit('export');
-      return Object.freeze({ version: 1 as const, id, stream, highWaterOrdinal: highWater ?? 0, count: lines.length, complete, nextBeforeOrdinal: complete ? null : before ?? null, sha256, ndjson });
+      return Object.freeze({ version: admitted.query.projection === 'activities' ? 2 as const : 1 as const, id, stream, highWaterOrdinal: highWater ?? 0, count: lines.length, complete,
+        ...(admitted.query.projection === 'activities' ? { historyComplete } : {}), nextBeforeOrdinal: complete ? null : before ?? null, sha256, ndjson });
     },
     async createExport(input) {
       const r = loggingRecord(input, ['id', 'stream', 'query']);

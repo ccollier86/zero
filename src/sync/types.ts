@@ -304,6 +304,8 @@ export interface ChangeRow {
  * Configuration for createSyncPlugin().
  */
 export interface SyncPluginConfig {
+  /** Trusted managed read-release hook. Called after row policy/codec projection, outside application writes. */
+  prepareReadResult?: (input: Readonly<{ table: string; rows: readonly Row[]; seq: number; epoch: string; authContext: SyncAuthContext | null }>) => Promise<import('../logging/logging-result-contracts').LoggingResultReceipt | null>;
   /** Database configuration */
   db: ReactiveDBConfig;
   /**
@@ -558,6 +560,9 @@ export interface SyncAuthConfig {
  * Per-WebSocket connection data. Typed, available in all WS lifecycle handlers.
  */
 export interface SyncSocketData {
+  /** Server-only captured-result boundary; never accepted from the wire. */
+  prepareReadResult?: (table: string, rows: readonly Row[], seq: number, epoch: string) => Promise<import('../logging/logging-result-contracts').LoggingResultReceipt | null>;
+  syncReadDeliveryClosed?: boolean;
   /** Tables this connection is allowed to subscribe to and snapshot */
   allowedTables: Set<string>;
   /** Bun pub/sub topics this socket has subscribed to */
@@ -576,6 +581,8 @@ export interface SyncSocketData {
     epoch: string;
     origin: string;
   }>;
+  /** Conservative retained payload budget while an audited snapshot owns delivery. */
+  syncDeferredChangeBytes?: number;
   /** True once this socket subscribes to both independent durable data logs. */
   syncMultiplexed?: boolean;
   /** Auth context derived from token (null if no auth) */
@@ -785,6 +792,7 @@ export interface SyncSnapshotChunkMessage {
   plane?: SyncDataPlaneName;
   table: string;
   rows: Record<string, Row>;
+  auditReceipt?: import('../logging/logging-result-contracts').LoggingResultReceipt;
 }
 
 /** Commits the staged snapshot atomically into the client store. */
@@ -808,6 +816,7 @@ export interface SyncChangeMessage {
   op: ChangeOp;
   rowId: string;
   row: Row | null;
+  auditReceipt?: import('../logging/logging-result-contracts').LoggingResultReceipt;
   origin: string;
   ts: number;
 }
@@ -848,6 +857,7 @@ export interface SyncAckMessage {
   ok: boolean;
   error?: string;
   errorCode?: SyncAckErrorCode;
+  auditReceipt?: import('../logging/logging-result-contracts').LoggingResultReceipt;
   /** Canonical mutation result, included so receipt replay cannot leave optimistic drift. */
   change?: {
     table: string;
@@ -869,6 +879,7 @@ export interface SyncCatchupMessage {
     origin: string;
     ts: number;
   }>;
+  auditResults?: readonly Readonly<{ table: string; rowIds: readonly string[]; receipt: import('../logging/logging-result-contracts').LoggingResultReceipt }>[];
   seq: number;
   /** Client cursor from which this atomic catchup was built. */
   prevSeq?: number;

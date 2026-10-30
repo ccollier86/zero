@@ -36,6 +36,7 @@ import {
   type RecordPrimaryAction,
 } from '#zero/components/ui/record-navigation-bar';
 import { Skeleton } from '#zero/components/ui/skeleton';
+import { LoggingRowsView } from '../../frontend/client/logging-hooks';
 import { cn } from '#zero/lib/utils';
 import {
   useMasterDetailSelection,
@@ -442,6 +443,7 @@ function MasterDetailPage<T extends Row = Row>({
         resizable={resizable}
         list={listContent}
         detail={
+          <LoggingRowsView rows={selectedItem ? [selectedItem] : []} identity={`${tableController.partition}:detail:${selectedId ?? ''}`} kind="record">
           <DetailPanel
             isEmpty={selectedItem == null}
             emptyState={
@@ -488,6 +490,7 @@ function MasterDetailPage<T extends Row = Row>({
               </>
             )}
           </DetailPanel>
+          </LoggingRowsView>
         }
         bottomBar={
           <RecordNavigationBar

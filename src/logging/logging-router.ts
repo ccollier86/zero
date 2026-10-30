@@ -9,12 +9,15 @@ import { projectLoggingHttpFailure } from './logging-http-error';
 import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 
 const stream = t.Union([t.Literal('audit'), t.Literal('operational')]);
-const query = t.Object({ eventIds: t.Optional(t.Array(t.String({ maxLength: 1024 }), { maxItems: 100 })), limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })), since: t.Optional(t.Number()), until: t.Optional(t.Number()),
+const query = t.Object({ projection: t.Optional(t.Union([t.Literal('events'), t.Literal('activities')])), activityId: t.Optional(t.String({ pattern: '^[a-f0-9]{64}$' })),
+  includeTotal: t.Optional(t.Boolean()), eventIds: t.Optional(t.Array(t.String({ maxLength: 1024 }), { maxItems: 100 })), limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })), since: t.Optional(t.Number()), until: t.Optional(t.Number()),
   beforeOrdinal: t.Optional(t.Number()), highWaterOrdinal: t.Optional(t.Number()), family: t.Optional(t.String({ maxLength: 32 })), action: t.Optional(t.String({ maxLength: 120 })),
-  actorId: t.Optional(t.String({ maxLength: 200 })), sessionId: t.Optional(t.String({ maxLength: 200 })), targetType: t.Optional(t.String({ maxLength: 120 })), targetId: t.Optional(t.String({ maxLength: 200 })),
+  actorId: t.Optional(t.String({ maxLength: 200 })), userId: t.Optional(t.String({ maxLength: 200 })), changedField: t.Optional(t.String({ maxLength: 256 })), sessionId: t.Optional(t.String({ maxLength: 200 })), targetType: t.Optional(t.String({ maxLength: 120 })), targetId: t.Optional(t.String({ maxLength: 200 })),
   outcome: t.Optional(t.String({ maxLength: 32 })), level: t.Optional(t.String({ maxLength: 16 })),
 }, { additionalProperties: false });
 const observation = t.Object({ id: t.String({ maxLength: 200 }), collectorId: t.String({ maxLength: 200 }), action: t.String({ maxLength: 120 }), occurredAt: t.Number(),
+  receiptId: t.Optional(t.String({ maxLength: 200 })),
+  page: t.Optional(t.String({ maxLength: 1024 })),
   target: t.Optional(t.Object({ type: t.String({ maxLength: 120 }), id: t.String({ maxLength: 200 }) }, { additionalProperties: false })),
   interval: t.Optional(t.Object({ viewId: t.String({ maxLength: 200 }), sequence: t.Number(), elapsedMs: t.Number(), visibleMs: t.Number(), activeMs: t.Number(), incomplete: t.Boolean() }, { additionalProperties: false })),
 }, { additionalProperties: false });
@@ -36,6 +39,17 @@ export function createLoggingRouter(options: { pageRecovery?: (request: Request)
     }
   };
   const routes = [
+    defineEndpoint({ method: 'POST', path: '/results/derive', body: t.Object({ id: t.String({ maxLength: 200 }), kind: t.Union([t.Literal('record'), t.Literal('list')]),
+      sources: t.Array(t.Object({ receiptId: t.String({ maxLength: 200 }), positions: t.Array(t.Integer({ minimum: 0, maximum: 1000 }), { maxItems: 1001 }) }, { additionalProperties: false }), { minItems: 1, maxItems: 1001 }),
+    }, { additionalProperties: false }), handler: ({ zero, body }) => run(() => {
+      if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.'); return zero.logging.deriveResult(body);
+    }) }),
+    defineEndpoint({ method: 'POST', path: '/results', body: t.Object({ id: t.String({ maxLength: 200 }), platform: t.Optional(t.Boolean()) }, { additionalProperties: false }), handler: ({ zero, body }) => run(() => {
+      if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.'); return zero.logging.result(body.id, body.platform);
+    }) }),
+    defineEndpoint({ method: 'POST', path: '/results/versions', body: t.Object({ activityId: t.String({ pattern: '^[a-f0-9]{64}$' }), platform: t.Optional(t.Boolean()), beforeOrdinal: t.Optional(t.Number()), highWaterOrdinal: t.Optional(t.Number()) }, { additionalProperties: false }), handler: ({ zero, body }) => run(() => {
+      if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.'); const { activityId, ...options } = body; return zero.logging.resultVersions(activityId, options);
+    }) }),
     defineEndpoint({ method: 'POST', path: '/people', body: t.Object({ search: t.Optional(t.String({ maxLength: 100 })), after: t.Optional(t.String({ maxLength: 200 })), limit: t.Optional(t.Integer({ minimum: 1, maximum: 50 })) }, { additionalProperties: false }), handler: ({ zero, body }) => run(() => {
       if (!zero.logging) throw new LoggingError('LOGGING_NOT_READY', 'Logging is unavailable.'); return zero.logging.people(body);
     }) }),

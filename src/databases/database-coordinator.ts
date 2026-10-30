@@ -1043,6 +1043,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       for (const entry of entries) {
         entry.state = 'closing';
         entry.lane.rejectQueued(closeError);
+        entry.readerLane.rejectQueued(closeError);
       }
       return entries;
     });

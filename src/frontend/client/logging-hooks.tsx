@@ -3,15 +3,24 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useClientMaybe } from './client-context';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
-import { createLoggingCollector, type LoggingCollector } from './logging-collector';
+import { createLoggingCollector, type LoggingCollector, type LoggingResultInteraction } from './logging-collector';
 import type { LoggingPage, LoggingQuery, LoggingStream } from '../../logging/logging-contracts';
 import { emitFrontendCode } from './observability';
 import { OBS_CODES } from '../../observability/codes';
 import type { InternalClient } from './sdk';
 import { Button } from '../../components/ui/button';
 import { bootstrapLoggingDelivery } from './logging-bootstrap';
+import { LOGGING_RESULT_MAX_RECORDS, type LoggingResultReceipt } from '../../logging/logging-result-contracts';
+import { loggingResultForRow, selectLoggingResultRows } from './logging-result-provenance';
+import { stableValueKey } from './query-params';
 
 const CollectorContext = createContext<LoggingCollector | null>(null);
+const DisplayContext = createContext(true);
+/** Keep mounted/animated panes from claiming their hidden contents were displayed. */
+export function LoggingDisplayBoundary({ visible, children }: { visible: boolean; children?: ReactNode }) {
+  const parent = useContext(DisplayContext);
+  return createElement(DisplayContext.Provider, { value: parent && visible, children });
+}
 const DeliveryContext = createContext<{ readonly paused: boolean; readonly failed: boolean; readonly retry: () => void } | null>(null);
 interface LoggingActivityProviderProps { children?: ReactNode; required?: boolean; policyVersion?: string }
 /** Standalone guarded composition. AppProvider uses the same owner/gate with persistent session-recovery ownership. */
@@ -64,6 +73,8 @@ export function LoggingActivityOwner({ children, required = false, policyVersion
       }
       if (required && !policy.delivery?.required) throw new Error('Required audit delivery policy is unavailable.');
       collector = createLoggingCollector({ bindObservations: () => writer }, policy, {
+        pageViews: false,
+        committedNavigation: true,
         onError: () => {
           clearTimeout(pendingDeadline); fail();
         },
@@ -105,7 +116,70 @@ export function LoggingDeliveryGuard({ children }: { children?: ReactNode }) {
 /** Bind opaque record/document identity; no URL, label, text or clinical content is collected. */
 export function useLoggingView(target: { type: string; id: string } | null): void {
   const collector = useContext(CollectorContext);
-  useEffect(() => { if (!collector || !target) return; const view = collector.bindView(target); return () => view.close(); }, [collector, target?.type, target?.id]);
+  const visible = useContext(DisplayContext);
+  useEffect(() => { if (!collector || !target || !visible) return; const view = collector.bindView(target); return () => view.close(); }, [collector, visible, target?.type, target?.id]);
+}
+
+/** Bind only a committed, visible read result. Separate components own independent duration lifetimes. */
+export function useLoggingResultView(receipt: LoggingResultReceipt | null | undefined, identity?: string, pending = false) {
+  const collector = useContext(CollectorContext);
+  const visible = useContext(DisplayContext);
+  const owner = useRef<ReturnType<LoggingCollector['bindResult']> | null>(null);
+  useEffect(() => {
+    return () => { owner.current?.close(); owner.current = null; };
+  }, [collector, identity]);
+  useEffect(() => {
+    if (!collector) return;
+    if (!visible) { owner.current?.close(); owner.current = null; return; }
+    if (receipt) { if (owner.current) owner.current.update(receipt); else owner.current = collector.bindResult(receipt); }
+    else if (pending) owner.current?.pause();
+    else { owner.current?.close(); owner.current = null; }
+  }, [collector, visible, identity, receipt?.id, receipt?.digest, pending]);
+  return { action: useCallback((action: LoggingResultInteraction) => owner.current?.action(action), []) };
+}
+
+/** Display only verified released row objects; local filtering/pagination selects their historical positions. */
+export function useLoggingRows(rows: readonly object[], options: { identity?: string; kind?: 'record' | 'list'; receipt?: LoggingResultReceipt; emptySource?: LoggingResultReceipt } = {}) {
+  const collector = useContext(CollectorContext), client = useClientMaybe(), boundary = useAuthorizationScopeBoundary(client);
+  const visible = useContext(DisplayContext);
+  const selected = selectLoggingResultRows(rows, options.emptySource);
+  const exceedsCaptureBudget = rows.length > LOGGING_RESULT_MAX_RECORDS && rows.some(row => loggingResultForRow(row));
+  useEffect(() => {
+    if (visible && collector?.capturesViews && exceedsCaptureBudget) collector.reportFailure();
+  }, [collector, visible, exceedsCaptureBudget]);
+  const selection = selected ? { ...selected, kind: options.kind ?? 'list' } : null;
+  const selectable = Boolean(selection && (selection.kind !== 'record' || rows.length === 1));
+  // Contents participate only in component-memory equality, never the API or retained audit metadata.
+  const key = JSON.stringify([boundary.key, options.identity, options.kind ?? 'list', selectable ? stableValueKey(rows) : null]);
+  const serialized = selectable ? JSON.stringify(selection) : null;
+  const owner = useRef<ReturnType<LoggingCollector['bindResult']> | null>(null), active = useRef<string | null>(null);
+  const direct = options.receipt;
+  useEffect(() => () => { owner.current?.close(); owner.current = null; active.current = null; }, [collector, options.identity]);
+  useEffect(() => {
+    if (!visible || !collector?.capturesViews || !client || !boundary.ready || !boundary.stable || !serialized && !direct) {
+      owner.current?.close(); owner.current = null; active.current = null; return;
+    }
+    if (active.current === key) return;
+    const binding = direct ?? client.logging.deriveResult({ ...JSON.parse(serialized!), id: crypto.randomUUID() });
+    if (binding instanceof Promise) void binding.catch(() => {}); // The collector reports failed delivery, without losing already-closed displays.
+    if (owner.current) owner.current.update(binding); else owner.current = collector.bindResult(binding);
+    active.current = key;
+    // Deliberately do not abort on another filter/close: that display already
+    // committed. The SDK's auth-generation fence still cancels a retired scope.
+  }, [client, collector, visible, boundary.ready, boundary.stable, key, serialized, direct?.id]);
+  return { action: useCallback((action: LoggingResultInteraction) => owner.current?.action(action), []) };
+}
+
+/** Place inside the actually mounted pane/dialog, so retained exit trees keep their own original result lifetime. */
+export function LoggingRowsView({ rows, identity, kind = 'list', children }: { rows: readonly object[]; identity?: string; kind?: 'record' | 'list'; children?: ReactNode }) {
+  useLoggingRows(rows, { identity, kind }); return children;
+}
+
+/** Static pattern from the rendered route, not the URL which may still be loading. */
+export function LoggingCommittedPage({ pattern, identity, children }: { pattern: string; identity: string; children?: ReactNode }) {
+  const collector = useContext(CollectorContext);
+  useEffect(() => { collector?.navigation(pattern, identity); }, [collector, pattern, identity]);
+  return children;
 }
 
 /** Explicit successful/failed clipboard integrations report observations, not server-confirmed data exfiltration. */

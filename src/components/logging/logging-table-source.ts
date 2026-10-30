@@ -7,18 +7,20 @@ import type { DataTableServerChange, DataTableServerQuery, DataTableServerSource
 export interface LoggingTableRow extends Record<string, unknown> {
   id: string; time: string; actor: string; action: string; target: string; outcome: string; evidence: string; stored: StoredLoggingEvent;
   person: LoggingPerson | null;
+  initiator: LoggingPerson | null;
 }
 type Status = 'connecting' | 'live' | 'reconnecting';
 export interface LoggingTableSource extends DataTableServerSource<LoggingTableRow> {
   /** Shares the adapter's connection, including while protected rows are masked during recovery. */
   watchStatus(listener: (status: Status) => void): () => void;
 }
-const identity = (stored: StoredLoggingEvent) => JSON.stringify([stored.event.sourceId, stored.event.id]);
+const identity = (stored: StoredLoggingEvent) => stored.activity ? JSON.stringify(['activity', stored.activity.id]) : JSON.stringify([stored.event.sourceId, stored.event.id]);
 export function loggingTableRow(stored: StoredLoggingEvent, people: readonly LoggingPerson[] = []): LoggingTableRow {
   const e = stored.event;
   return { id: identity(stored), time: new Date(e.occurredAt).toLocaleString(), actor: e.actor.id ?? e.actor.kind,
-    action: e.action, target: e.target ? `${e.target.type} · ${e.target.id}` : '—', outcome: e.outcome, evidence: e.evidence, stored,
-    person: e.actor.kind === 'user' ? people.find(person => person.id === e.actor.id) ?? null : null };
+    action: stored.activity?.action ?? e.action, target: e.target ? `${e.target.type} · ${e.target.id}` : '—', outcome: stored.activity?.outcome ?? e.outcome, evidence: e.evidence, stored,
+    person: e.actor.kind === 'user' ? people.find(person => person.id === e.actor.id) ?? null : null,
+    initiator: e.actor.initiatorId ? people.find(person => person.id === e.actor.initiatorId) ?? null : null };
 }
 
 /** One scoped connection; actual INSERTs drive DataTable's existing motion, membership and incoming-record handling. */
@@ -54,8 +56,13 @@ export function createLoggingTableSource(client: Pick<LoggingClient, 'page'> & P
         onError: () => { if (active()) notify('reconnecting'); },
         onChanges: changes => {
           if (!active()) return;
+          for (const row of changes.removed ?? []) {
+            const rowId = JSON.stringify(['activity', row.id]); pending.set(rowId, { op: 'DELETE', rowId });
+            while (pending.size > 1000) pending.delete(pending.keys().next().value!);
+          }
           for (const row of changes.events) {
-            const rowId = identity(row); pending.set(rowId, { op: 'INSERT', rowId });
+            const rowId = identity(row), op = row.activity && row.activity.firstOrdinal <= changes.afterOrdinal ? 'UPDATE' : 'INSERT';
+            pending.set(rowId, { op: pending.get(rowId)?.op === 'INSERT' && op === 'UPDATE' ? 'INSERT' : op, rowId });
             // Presentation evidence is bounded; the durable database retains
             // all events. Keep the newest identities, including the real head.
             while (pending.size > 1000) pending.delete(pending.keys().next().value!);

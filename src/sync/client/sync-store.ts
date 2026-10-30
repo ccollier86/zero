@@ -1,4 +1,5 @@
 import { createStore } from '@xstate/store';
+import { carryEmptyLoggingResult } from '../../frontend/client/logging-result-provenance';
 import type {
   Row,
   ChangeOp,
@@ -447,6 +448,7 @@ export function createSyncStore(
         const { table, rows, replace } = event;
         const existing = ctx[table] as Record<string, Row>;
         const baseData = replace ? { ...rows } : { ...existing, ...rows };
+        if (!Object.keys(baseData).length) carryEmptyLoggingResult(rows, baseData);
 
         // Re-apply pending optimistic mutations for this table
         for (const p of ctx._sync.pending) {

@@ -14,6 +14,16 @@ export const databaseActorFixtureRealm = defineDatabaseRealm({
     },
   },
   queries: {
+    'test.blockingRead': ({ database }, input) => {
+      const value = input as { enteredPath: string; releasePath: string };
+      writeFileSync(value.enteredPath, 'entered', { flag: 'wx' });
+      const deadline = Date.now() + 10000, sleeper = new Int32Array(new SharedArrayBuffer(4));
+      while (!existsSync(value.releasePath)) {
+        if (Date.now() >= deadline) throw new Error('Synthetic read barrier timed out.');
+        Atomics.wait(sleeper, 0, 0, 5);
+      }
+      return database.query('SELECT title FROM todos WHERE id=?').get('row');
+    },
     'todos.count': ({ database }) => {
       const row = database.query('SELECT count(*) AS count FROM todos').get() as {
         count: number;

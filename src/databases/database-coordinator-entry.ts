@@ -30,6 +30,8 @@ export interface DatabaseCoordinatorEntry {
   readonly placement: DatabaseActorPlacementConfig;
   readonly slot: number;
   readonly lane: DatabaseWriterLane;
+  /** Independent bounded readonly WAL scheduling; never takes the writer authority lease. */
+  readonly readerLane: DatabaseWriterLane;
   state: DatabaseCoordinatorEntryState;
   writer: DatabaseExecutor | null;
   reader: DatabaseExecutor | null;

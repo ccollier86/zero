@@ -54,7 +54,8 @@ test('v2 structured differences round-trip through source spools while legacy ca
   const old = loggingEvent(), canonical = loggingCanonical(old), legacy = encodeLoggingSourceEvent(old);
   expect(JSON.parse(legacy.payload)).toHaveLength(9); expect(loggingCanonical(normalizeLoggingEvent(old))).toBe(canonical);
   expect(decodeLoggingSourceEvent(legacy.payload, legacy.context)).toEqual(old);
-  expect(Object.isFrozen(event.detail?.changes)).toBe(true);
+  expect(event.detail?.kind).toBe('record-change');
+  expect(Object.isFrozen(event.detail?.kind === 'record-change' && event.detail.changes)).toBe(true);
   expect(() => normalizeLoggingEvent({ ...event, version: 1 })).toThrow();
   expect(() => normalizeLoggingEvent({ ...event, origin: 'frontend', evidence: 'browser-observed' })).toThrow();
   expect(() => normalizeLoggingEvent({ ...event, detail: { ...detail, changes: [{ field: 'password', kind: 'value', beforePresent: true, afterPresent: true, before: 'old', after: 'new' }] } })).toThrow();
@@ -90,7 +91,8 @@ test('typed facts cannot contradict their native table, operation, or changed-fi
   expect(() => captureLoggingEvent(loggingContext(), { ...input, action: 'record.created' })).toThrow();
   expect(() => captureLoggingEvent(loggingContext(), { ...input, action: 'record.deleted' })).toThrow();
   expect(() => captureLoggingEvent(loggingContext(), { ...input, detail: { ...detail, changes: [], omittedFields: 0 } })).toThrow();
-  expect(captureLoggingEvent(loggingContext(), { ...input, detail: { ...detail, changes: [], omittedFields: 3 } }).detail?.omittedFields).toBe(3);
+  const omitted = captureLoggingEvent(loggingContext(), { ...input, detail: { ...detail, changes: [], omittedFields: 3 } }).detail;
+  expect(omitted?.kind === 'record-change' && omitted.omittedFields).toBe(3);
   for (const op of ['INSERT', 'DELETE'] as const) {
     const valid = captureLoggingRecordChange({ ...change, op, previousRow: op === 'INSERT' ? null : change.previousRow, row: op === 'DELETE' ? null : change.row })!;
     expect(captureLoggingEvent(loggingContext(), { ...input, action: op === 'INSERT' ? 'record.created' : 'record.deleted', detail: valid }).detail).toEqual(valid);

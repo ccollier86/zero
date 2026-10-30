@@ -2,8 +2,15 @@
 import type { LoggingActivityDetail, LoggingFieldChange } from './logging-activity-contracts';
 import { invalid, loggingArray, loggingRecord } from './logging-validation';
 import { isLoggingApprovedScalar, LOGGING_SENSITIVE_FIELD } from './logging-activity-values';
+import { isLoggingResultReference } from './logging-result-contracts';
 
 export function normalizeLoggingActivityDetail(value: unknown): LoggingActivityDetail {
+  const kind = loggingRecord(value).kind;
+  if (kind === 'result') {
+    const reference = loggingRecord(value, ['kind', 'receiptId', 'digest', 'resultKind', 'table', 'recordCount', 'complete']);
+    if (!isLoggingResultReference(reference)) invalid();
+    return Object.freeze(reference);
+  }
   const detail = loggingRecord(value, ['kind', 'table', 'sequence', 'changes', 'omittedFields']);
   if (detail.kind !== 'record-change' || typeof detail.table !== 'string' || !detail.table.length || detail.table.length > 1024
     || /[\u0000-\u001f\u007f]/.test(detail.table) || !Number.isSafeInteger(detail.omittedFields) || Number(detail.omittedFields) < 0) invalid();

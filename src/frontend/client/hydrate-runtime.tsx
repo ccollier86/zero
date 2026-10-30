@@ -30,6 +30,7 @@ import {
   getRouteAuthRequirementFromModules,
 } from './route-auth-context';
 import type { EffectiveRouteAuthRequirement } from '../router/auth-policy';
+import { LoggingCommittedPage } from './logging-hooks';
 
 export interface HydrationManifestEntry {
   pattern: string;
@@ -67,6 +68,8 @@ declare global {
 }
 
 interface ShellState {
+  pattern: string;
+  pathname: string;
   Page: (props: any) => ReactNode;
   layouts: Array<(props: { children?: ReactNode; params?: Record<string, string> }) => ReactNode>;
   params: Record<string, string>;
@@ -75,6 +78,7 @@ interface ShellState {
 }
 
 interface ShellProps {
+  initialPattern: string;
   initialPage: (props: any) => ReactNode;
   initialLayouts: Array<(props: any) => ReactNode>;
   initialParams: Record<string, string>;
@@ -149,6 +153,7 @@ export async function startHydration(manifest: HydrationManifest): Promise<void>
     ]);
 
     const shell = createElement(Shell, {
+      initialPattern: routeData.pattern,
       initialPage: Page,
       initialLayouts: layoutComponents,
       initialParams: routeData.params,
@@ -198,6 +203,7 @@ function registerManifestRoutes(routes: HydrationManifestEntry[]): void {
  * provides routing and error boundaries around the server-rendered tree.
  */
 function Shell({
+  initialPattern,
   initialPage,
   initialLayouts,
   initialParams,
@@ -206,6 +212,7 @@ function Shell({
   serverRoutes,
 }: ShellProps) {
   const [current, setCurrent] = useState<ShellState>({
+    pattern: initialPattern, pathname: window.location.pathname,
     Page: initialPage,
     layouts: initialLayouts,
     params: initialParams,
@@ -254,6 +261,7 @@ function Shell({
       startTransition(() => {
         if (!isCurrentNavigation()) return;
         const next = {
+          pattern: result.route.pattern, pathname,
           Page: result.module.default,
           layouts: layoutComponents,
           params: result.params,
@@ -270,10 +278,10 @@ function Shell({
     return () => { active = false; };
   }, [pathname, serverRoutes, setParams, setIsNavigating]);
 
-  let element: ReactNode = createElement(current.Page, {
+  let element: ReactNode = createElement(LoggingCommittedPage, { pattern: current.pattern, identity: current.pathname }, createElement(current.Page, {
     params: current.params,
     data: current.loaderData,
-  });
+  }));
 
   for (let i = current.layouts.length - 1; i >= 0; i--) {
     const Layout = current.layouts[i];

@@ -13,6 +13,8 @@ import {
   messageSyncDataPlane,
   syncDataPlaneForTable,
 } from './sync-data-planes';
+import { isLoggingResultReceipt } from '../../logging/logging-result-shape';
+import { registerLoggingResultRows, carryEmptyLoggingResult } from '../../frontend/client/logging-result-provenance';
 
 const SNAPSHOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SNAPSHOT_MAX_ROWS = 50_000;
@@ -121,13 +123,15 @@ export class SyncSnapshotAssembler {
     if (!primaryKey) return invalid(this);
     const entries = Object.entries(message.rows);
     const boundedTenantTransfer = pending.plane === 'tenant';
-    if (entries.length === 0
+    if (entries.length === 0 && !message.auditReceipt
       || (boundedTenantTransfer && (
         pending.chunkCount >= SNAPSHOT_MAX_CHUNKS
         || entries.length > SNAPSHOT_MAX_ROWS - pending.rowCount
       ))) {
       return invalid(this);
     }
+    if (message.auditReceipt && (!isLoggingResultReceipt(message.auditReceipt) || message.auditReceipt.table !== message.table
+      || message.auditReceipt.count !== entries.length)) return invalid(this);
     let addedBytes = 0;
     for (const [rowId, value] of entries) {
       if (Object.hasOwn(target, rowId)
@@ -147,6 +151,9 @@ export class SyncSnapshotAssembler {
       }
       target[rowId] = value;
     }
+    const releasedRows = entries.map(([, row]) => row);
+    registerLoggingResultRows(releasedRows, message.auditReceipt);
+    if (!entries.length) carryEmptyLoggingResult(releasedRows, target);
     if (boundedTenantTransfer) {
       pending.rowCount += entries.length;
       pending.rowBytes += addedBytes;

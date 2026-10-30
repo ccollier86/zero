@@ -7,6 +7,7 @@ import { statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { PlatformDoctorFinding } from './platform-doctor-contracts';
 import { checkSourceOnlyModals } from './source-only-modal-checks';
+import { checkSourceOnlyLogging } from './source-only-logging-checks';
 import { checkSourceOnlyCharts } from './source-only-chart-checks';
 import { checkSourceOnlyUpgradeUsage } from './source-only-upgrade-checks';
 import { inspectSourceOnlyUpgradeAssets } from './source-only-upgrade-assets';
@@ -70,12 +71,12 @@ export async function runSourceOnlyDoctor(options: SourceOnlyDoctorOptions): Pro
     const lineCount = file.source.split(/\r?\n/u).length;
     if (lineCount > (options.maxFileLines ?? 400)) findings.push({ severity: 'warning', code: 'usage.structure.large_file', path: `${file.path}:1`, line: 1,
       category: 'recommended', confidence: 'high', message: 'This source file exceeds the configured responsibility-size threshold.', hint: 'Review responsibility boundaries; size alone does not prove a defect.' });
-    if (!checkUpgrade) findings.push(...checkSourceOnlyModals(file, installed));
+    if (!checkUpgrade) findings.push(...checkSourceOnlyModals(file, installed), ...checkSourceOnlyLogging(file));
     else {
       // Pathological generated syntax can exhaust the legacy AST parser/walker.
       // Keep the opt-in audit useful for other files without exposing source or
       // treating incomplete inspection as a proven migration requirement.
-      try { findings.push(...checkSourceOnlyModals(file, installed)); }
+      try { findings.push(...checkSourceOnlyModals(file, installed), ...checkSourceOnlyLogging(file)); }
       catch { findings.push({ severity: 'warning', code: 'upgrade.source_incomplete', path: `${file.path}:1`, line: 1,
         category: 'manual-review', confidence: 'high', message: 'This source could not be inspected within parser limits; upgrade coverage is incomplete.',
         hint: 'Review or explicitly exclude unsupported generated source before treating the audit as complete.' }); }

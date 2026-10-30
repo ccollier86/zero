@@ -12,6 +12,7 @@ import { filterSyncRows } from './row-filter';
 import { flushDeferredSyncChanges } from './sync-change-delivery';
 import type { ReactiveDB } from './reactive-db';
 import { sendSyncWire, waitForSyncDrain } from './sync-wire-send';
+import { syncReadDeliveryTail } from './sync-read-results';
 import {
   SYNC_SNAPSHOT_CHUNK_MAX_WIRE_BYTES,
   SyncSnapshotChunkLimitError,
@@ -67,6 +68,7 @@ async function sendSyncSnapshotAsync(
   socket.data.syncDeferredChanges ??= [];
   let completed = false;
   try {
+    const preceding = syncReadDeliveryTail(socket); if (preceding) await preceding;
     assertCurrentAuthority();
     const snapshot = db.readAtCurrentSequence(() => {
       const tableData: Record<string, Record<string, Row>> = {};
@@ -75,7 +77,7 @@ async function sendSyncSnapshotAsync(
         const projector = socket.data.resourceRowProjectors?.get(table);
         const keyed: Record<string, Row> = {};
         for (const row of filterSyncRows(db.query(table), filter, projector)) {
-          keyed[String(row[db.getPrimaryKey(table)])] = row;
+          keyed[String(row[db.getPrimaryKey(table)])] = socket.data.prepareReadResult ? structuredClone(row) : row;
         }
         tableData[table] = keyed;
       }
@@ -90,7 +92,7 @@ async function sendSyncSnapshotAsync(
       scope: socket.data.authorizationScope,
       reset,
     };
-    if (encoder.encode(JSON.stringify(message)).byteLength
+    if (!socket.data.prepareReadResult && encoder.encode(JSON.stringify(message)).byteLength
       <= SYNC_SNAPSHOT_CHUNK_MAX_WIRE_BYTES) {
       assertCurrentAuthority();
       if (sendSyncWire(socket, message)) {
@@ -146,7 +148,7 @@ async function sendSyncSnapshotAsync(
       );
     }
   } finally {
-    if (!completed) socket.data.syncDeferredChanges = [];
+    if (!completed) { socket.data.syncDeferredChanges = []; socket.data.syncDeferredChangeBytes = 0; }
     socket.data.syncSnapshotInFlight = false;
   }
 }

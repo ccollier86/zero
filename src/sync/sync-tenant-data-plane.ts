@@ -19,6 +19,7 @@ import type {
 import { projectSyncChange } from './row-filter';
 import { SyncTenantBindingController } from './sync-tenant-binding-controller';
 import { sendTenantCatchup } from './sync-tenant-catchup';
+import { prepareSyncReadResult } from './sync-read-results';
 import { SyncTenantSnapshotBudgetError } from './sync-tenant-snapshot-budget';
 import { syncTenantDataPlaneError } from './sync-tenant-data-plane-error';
 import {
@@ -676,7 +677,7 @@ export class SyncTenantSocketBridge {
         if (durable.seq !== this.#actorCursor + 1) {
           throw tenantHistoryGapError();
         }
-        const delivered = this.#deliverDurable(durable, replay.syncEpoch, true);
+        const delivered = await this.#deliverDurable(durable, replay.syncEpoch, true);
         if (!delivered) return;
         this.#actorCursor = durable.seq;
         this.#originBySequence.delete(durable.seq);
@@ -713,7 +714,7 @@ export class SyncTenantSocketBridge {
         this.#assertCurrentReadAuthoritySync();
         // The origin change is deliberately delivered at its ordered point.
         // Its optimistic mutation remains pending until the following ack.
-        if (!this.#deliverDurable(durable, replay.syncEpoch, false)) {
+        if (!(await this.#deliverDurable(durable, replay.syncEpoch, false))) {
           throw syncTenantDataPlaneError(
             'SYNC_TENANT_ORDERED_DELIVERY_FAILED',
             'Tenant Sync ordered mutation delivery failed.',
@@ -727,11 +728,11 @@ export class SyncTenantSocketBridge {
     if (!this.#disposed && this.#actorCursor < targetSeq) throw tenantHistoryGapError();
   }
 
-  #deliverDurable(
+  async #deliverDurable(
     durable: SyncTenantDataPlaneReplayChange,
     epoch: string,
     suppressOwnOrigin: boolean,
-  ): boolean {
+  ): Promise<boolean> {
     const origin = this.#originBySequence.get(durable.seq) ?? '';
     const ownOrigin = origin === this.#socket.data.connectionId;
     if ((suppressOwnOrigin && ownOrigin)
@@ -744,13 +745,18 @@ export class SyncTenantSocketBridge {
       this.#socket.data.resourceRowProjectors?.get(durable.table),
     );
     if (!projected) return true;
+    if (this.#socket.data.prepareReadResult && projected.row) projected.row = structuredClone(projected.row);
     // Resource projectors are extension code. Revalidate after they return so
     // a synchronous authority mutation cannot precede this wire frame.
+    this.#assertCurrentReadAuthoritySync();
+    const auditReceipt = projected.row && projected.op !== 'DELETE'
+      ? await prepareSyncReadResult(this.#socket, projected.table, [projected.row], projected.seq, epoch) : undefined;
     this.#assertCurrentReadAuthoritySync();
     const delivered = sendSyncWire(this.#socket, {
       type: 'sync.change',
       plane: 'tenant',
       ...projected,
+      ...(auditReceipt ? { auditReceipt } : {}),
       prevSeq: this.#lastDeliveredWireSeq,
       epoch,
       scope: this.#socket.data.authorizationScope,

@@ -55,6 +55,10 @@ import { getSyncDB } from './sync.plugin';
 import type { ReactiveDB } from './reactive-db';
 import { allowAllSyncPolicy, evaluateSyncReadPolicy } from './sync-policy';
 import type { SyncPolicy } from './sync-policy';
+import type { LoggingRuntime } from '../logging/logging-runtime';
+import { loggingAuthContext } from '../logging/logging-auth-context';
+import { LoggingError } from '../logging/logging-error';
+import { projectLoggingHttpFailure } from '../logging/logging-http-error';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -93,6 +97,8 @@ export interface DataQueryConfig {
   maxLimit?: number;
   /** App-local observability runtime. Standalone callers may use the ambient fallback. */
   observability?: PlatformObservabilityRuntime | null;
+  /** Optional app-local read receipt owner. Never accepts caller-selected log scope or storage. */
+  getLoggingRuntime?: () => LoggingRuntime | null;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -314,6 +320,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
 
       let resultRows: DatabaseFindRows | any[];
       let total: number | undefined;
+      let snapshotSequence: number | undefined;
       let page: { limit: number; offset: number };
       if (usesTenantDatabase) {
         const findPlan = buildResourceListFindPlan(planOptions);
@@ -333,6 +340,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
             table,
             clientInput: findPlan.input,
             signal: request.signal,
+            onSnapshot: (sequence: number) => { snapshotSequence = sequence; },
           };
           if (includeTotal) {
             const result = await database.findTenantPage(readRequest);
@@ -374,6 +382,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         let authorityChangedAtCommit = false;
         try {
           resultRows = db.transaction(() => {
+            snapshotSequence = db.currentSeq;
             if (resourceDecision.authorityFingerprint
               && !database.isAuthorityCurrentAtCommit(
                 commitAuthority,
@@ -442,8 +451,30 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         resource?.fields,
       );
 
+      let auditReceipt;
+      const logging = config.getLoggingRuntime?.();
+      if (logging && admittedAuthContext && logging.config.policy.capture.records) {
+        try {
+          auditReceipt = await logging.prepareResult(loggingAuthContext(admittedAuthContext, logging.config.policyVersion), {
+            table, kind: 'list', rows, primaryKey: resource?.primaryKey ?? db?.getPrimaryKey(table) ?? 'id',
+            ...(snapshotSequence === undefined ? {} : { revision: 'snapshot:' + snapshotSequence }), criteria: query,
+          });
+        } catch (error) {
+          const failure = projectLoggingHttpFailure(error instanceof LoggingError ? error : new LoggingError('LOGGING_OUTCOME_UNKNOWN', 'Read evidence acknowledgment is unresolved.', 'unknown'));
+          set.status = failure.status; return failure.body;
+        }
+        // Logging yields only after the application read/actor lease is finished.
+        // Revalidate the live credential and authorization again before releasing any rows.
+        const fingerprint = resourceDecision.authorityFingerprint ?? resolveDataPolicyAuthority(config, admittedAuthContext).fingerprint;
+        if (request.signal.aborted || !await database.isRequestAuthorityCurrent(request, fingerprint, commitAuthority)
+          || !database.isAuthorityCurrentAtCommit(commitAuthority, fingerprint)) {
+          set.status = 403; return { error: 'Resource authorization changed during the request', code: 'resource-authority-changed' };
+        }
+      }
+
       return {
         rows,
+        ...(auditReceipt ? { auditReceipt } : {}),
         page: {
           limit: page.limit,
           offset: page.offset,

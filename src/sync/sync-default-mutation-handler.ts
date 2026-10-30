@@ -14,6 +14,7 @@ import {
 } from './sync-mutation-receipt-store';
 import { validateSyncMutation } from './sync-mutation-validation';
 import { sendSyncWire } from './sync-wire-send';
+import { enqueueSyncReadDelivery, prepareSyncReadResult } from './sync-read-results';
 import {
   SYNC_ACK_ERROR_CODES,
   type Change,
@@ -380,20 +381,28 @@ function sendResolvedAck(
     const matches = readable && row
       ? socket.data.resourceRowFilters.get(table)?.matches(row) ?? true
       : false;
-    const projectedRow = matches && row
+    const releasedRow = matches && row
       ? socket.data.resourceRowProjectors?.get(table)?.project(row) ?? row
       : null;
+    const projectedRow = releasedRow && socket.data.prepareReadResult ? structuredClone(releasedRow) : releasedRow;
+    const epoch = db.syncEpoch;
     // Filters/projectors are trusted extension code. Fence their row-bearing
     // acknowledgement at the final synchronous edge, like live delivery.
     assertCurrentReadAuthority();
-    sendSyncWire(socket, {
+    const response: SyncAckMessage = {
       ...ack,
       ...(socket.data.syncMultiplexed ? { plane: 'default' as const } : {}),
       seq: db.currentSeq,
       change: projectedRow
         ? { table, rowId, op: 'UPDATE', row: projectedRow }
         : { table, rowId, op: 'DELETE', row: null },
-    });
+    };
+    if (socket.data.prepareReadResult && projectedRow) enqueueSyncReadDelivery(socket, async () => {
+      response.auditReceipt = await prepareSyncReadResult(socket, table, [projectedRow], response.seq!, epoch);
+      assertCurrentReadAuthority();
+      sendSyncWire(socket, response);
+    }, JSON.stringify(response).length * 3);
+    else sendSyncWire(socket, response);
   } catch (error) {
     // The managed assertion has already closed/reset the socket. The mutation
     // is durable, so never fabricate a definitive negative acknowledgement.

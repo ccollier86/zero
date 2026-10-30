@@ -25,6 +25,7 @@ import type { ResolvedConfig } from './types';
 import { ZERO_GUARDIAN_PRESENCE } from '../../presence/presence-service';
 import { createPresenceSyncTransport } from '../../presence/presence-sync-transport';
 import { managedLoggingSyncAdmission } from './app-logging-sync-admission';
+import { managedLoggingSyncResults } from './app-logging-sync-results';
 import { authorizeMessagingTyping } from '../../messaging/sync-policy';
 
 interface MountAppSyncEngineInput {
@@ -61,6 +62,8 @@ export function mountAppSyncEngine({
 }: MountAppSyncEngineInput): ReactiveDB {
   let syncDB: ReactiveDB | null = null;
   app.use(createSyncPlugin({
+    ...(config.logging !== false && config.logging.policy.capture.records ? managedLoggingSyncResults(runtime,
+      table => tenantDataPlane?.tables[table]?.primaryKey ?? (applicationDB.hasTable(table) ? applicationDB : systemDB).getPrimaryKey(table)) : {}),
     runtime,
     db: {
       ...config.db,

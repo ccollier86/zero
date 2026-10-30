@@ -935,9 +935,11 @@ describe('database realm handler execution', () => {
             'deleteByIdentity',
             'deleteIfCurrent',
             'deleteScoped',
+            'find',
             'get',
             'getIdentity',
             'getScoped',
+            'hasTable',
             'identityKey',
             'insert',
             'list',
@@ -976,6 +978,15 @@ describe('database realm handler execution', () => {
               title: 'Stored through the facade',
             });
           });
+          expect(capability.hasTable('todos')).toBe(true);
+          expect(capability.hasTable('sqlite_master')).toBe(false);
+          expect(capability.find('todos', { limit: 1, select: ['id'], filters: [{ type: 'field', field: 'id', operator: 'eq', value: 'tracked' }] })).toEqual([{ id: 'tracked' }]);
+          expect(() => capability.find('sqlite_master', { limit: 1 })).toThrow();
+          expect(() => capability.find('todos', { limit: 1002 })).toThrow();
+          expect(() => capability.find('todos', { limit: 1, select: ['not_a_column'] })).toThrow();
+          let getterRan = false;
+          expect(() => capability.find('todos', { get limit() { getterRan = true; return 1; } })).toThrow();
+          expect(getterRan).toBe(false);
           capability.afterCommit(() => {
             afterCommitRan = true;
             try {
@@ -1013,6 +1024,8 @@ describe('database realm handler execution', () => {
       const retained = retainedCapability!;
       const sequenceAfterCommand = db.currentSeq;
       for (const operation of [
+        () => retained.find('todos', { limit: 1 }),
+        () => retained.hasTable('todos'),
         () => retained.get('todos', 'tracked'),
         () => retained.createStrict('todos', {
           id: 'escaped',

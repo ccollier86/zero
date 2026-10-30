@@ -26,6 +26,7 @@ import { createScopedRoomService } from './scoped-room-service';
 import { createScopedStorageService } from './scoped-storage-service';
 import { createScopedWorkflowService } from './scoped-workflow-service';
 import { createScopedLoggingService } from '../../../logging/logging-scoped-service';
+import { loggingAuthContext } from '../../../logging/logging-auth-context';
 import { isLoggingRecoveryRequest } from '../../../logging/logging-admission-paths';
 
 /** Create (or preserve) the authorized service view for one HTTP request. */
@@ -234,6 +235,12 @@ export function createInternalAuthorityScopedServerServices(
         manager: services.databases,
         scope,
         assertCurrentAuthoritySync: databaseAuthoritySync,
+        prepareRead: services.logging && access.context ? async input => {
+          await assertGuardianAuthority(); assertDelivery();
+          const result = await services.logging!.prepareResult(loggingAuthContext(access.requireUser(), services.logging!.config.policyVersion),
+            { ...input, primaryKey: services.db.getPrimaryKey(input.table) });
+          await assertGuardianAuthority(); assertDelivery(); return result;
+        } : undefined,
       })
     : null;
 

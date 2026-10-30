@@ -23,12 +23,12 @@ export function LoggingFilters({ value, onApply, tables = [], presentation, sele
   const [draftPerson, setDraftPerson] = React.useState(selectedPerson);
   const id = React.useId();
   React.useEffect(() => { setDraft(value); setError(null); }, [value]);
-  React.useEffect(() => { setDraftPerson(selectedPerson); }, [value.actorId, selectedPerson]);
+  React.useEffect(() => { setDraftPerson(selectedPerson); }, [value.userId, selectedPerson]);
   const set = (key: LoggingFilterKey, value: unknown) => setDraft(current => {
     const next = { ...current }; if (value === '' || value === undefined) delete next[key]; else Object.assign(next, { [key]: value }); return next;
   });
   const apply = (next: LoggingQuery) => { const invalid = loggingFilterError(next); setError(invalid); if (!invalid) {
-    const person = draftPerson && next.actorId === draftPerson.id ? draftPerson : selectedPerson && next.actorId === selectedPerson.id ? selectedPerson : undefined;
+    const person = draftPerson && next.userId === draftPerson.id ? draftPerson : selectedPerson && next.userId === selectedPerson.id ? selectedPerson : undefined;
     onPersonChange?.(person); onApply(next);
   } };
   const keys = (Object.keys(loggingFilterLabels) as LoggingFilterKey[]).filter(key => value[key] !== undefined);
@@ -36,7 +36,7 @@ export function LoggingFilters({ value, onApply, tables = [], presentation, sele
   return <div className="space-y-2.5" data-slot="logging-filters">
     <div role="search" className="flex flex-wrap items-center gap-2" aria-label="Filter logging events" aria-describedby={error ? `${id}-error` : undefined}
       onKeyDown={event => { if (event.key === 'Enter' && !event.defaultPrevented && event.target instanceof HTMLInputElement && event.target.getAttribute('role') !== 'combobox' && !event.nativeEvent.isComposing) { event.preventDefault(); apply(draft); } }}>
-      <LoggingPersonPicker value={draft.actorId} selected={draftPerson} onChange={(id, person) => { set('actorId', id); setDraftPerson(person); }} />
+      <LoggingPersonPicker value={draft.userId} selected={draftPerson} onChange={(id, person) => { set('userId', id); setDraftPerson(person); }} />
       <Select value={draft.action ?? ALL} onValueChange={value => set('action', value === ALL ? undefined : value)}><SelectTrigger aria-label="Activity" className="h-8 w-auto min-w-44 text-xs"><SelectValue /></SelectTrigger><SelectContent>
         <SelectItem value={ALL}>All activities</SelectItem>{Object.entries({ ...LOGGING_ACTIVITY_LABELS, ...presentation?.actions }).map(([action, label]) => <SelectItem key={action} value={action}>{label.label}</SelectItem>)}
         {draft.action && !Object.hasOwn({ ...LOGGING_ACTIVITY_LABELS, ...presentation?.actions }, draft.action) && <SelectItem value={draft.action}>{loggingActivityCode(draft.action, presentation).label}</SelectItem>}
@@ -51,6 +51,7 @@ export function LoggingFilters({ value, onApply, tables = [], presentation, sele
           <h3 className="text-sm font-semibold">Narrow the investigation</h3><p className="mb-4 mt-1 text-xs text-muted-foreground">Exact matches · all criteria must match</p>
           <PopoverViewport className="grid max-h-[50vh] gap-3 pr-1">
             <Choice label="Category" value={draft.family} options={LOGGING_FAMILIES} onChange={value => set('family', value)} />
+            <label className="grid gap-1.5 text-xs font-medium">Changed field<Input className="h-8 text-xs" value={draft.changedField ?? ''} maxLength={256} autoComplete="off" spellCheck={false} placeholder="e.g. state" onChange={event => set('changedField', event.target.value)} /></label>
             <p className="text-xs text-muted-foreground">Optional technical identifiers</p>
             {(['actorId', 'sessionId', 'action', 'targetType', 'targetId'] as const).map(key => <label key={key} className="grid gap-1.5 text-xs font-medium">{{ actorId: 'User ID', sessionId: 'Session ID', action: 'Exact activity code', targetType: 'Exact resource type', targetId: 'Record ID' }[key]}
               <Input className="h-8 text-xs" value={draft[key] ?? ''} maxLength={key === 'action' || key === 'targetType' ? 120 : 200} autoComplete="off" spellCheck={false}
@@ -70,7 +71,7 @@ export function LoggingFilters({ value, onApply, tables = [], presentation, sele
     {keys.length > 0 && <div className="flex flex-wrap items-center gap-1.5" aria-label="Applied filters"><span className="mr-1 text-xs text-muted-foreground">Matching all</span>{keys.map(key => <button key={key} type="button"
       aria-label={`Remove ${loggingFilterLabels[key]} filter`} onClick={() => { const next = { ...value }; delete next[key]; setDraft(next); apply(next); }}
       className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      <span className="shrink-0 text-muted-foreground">{loggingFilterLabels[key]}</span><span className="truncate">{key === 'since' || key === 'until' ? loggingDate(value[key]!) : key === 'actorId' ? selectedPerson && selectedPerson.id === value.actorId ? selectedPerson.name : 'Selected user'
+      <span className="shrink-0 text-muted-foreground">{loggingFilterLabels[key]}</span><span className="truncate">{key === 'since' || key === 'until' ? loggingDate(value[key]!) : key === 'userId' ? selectedPerson && selectedPerson.id === value.userId ? selectedPerson.name : 'Selected user'
         : key === 'action' ? loggingActivityCode(value.action!, presentation).label
         : key === 'targetType' ? loggingResourceLabel({ target: { type: value.targetType!, id: '' } }, tables, presentation)
         : key === 'family' ? LOGGING_CATEGORY_LABELS[value.family!] : String(value[key])}</span><X className="size-3 shrink-0" aria-hidden="true" />

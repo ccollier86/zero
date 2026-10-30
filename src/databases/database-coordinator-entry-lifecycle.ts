@@ -374,7 +374,7 @@ export class DatabaseCoordinatorEntryLifecycle {
       || entry.leases > 0
       || entry.activeOperations > 0
       || entry.recoveryWaiters > 0
-      || entry.lane.depth > 0
+      || entry.lane.depth > 0 || entry.readerLane.depth > 0
       || !this.#entryExecutorsSettled(entry)) return;
     this.#entries.delete(entry.id);
     entry.writer = null;
@@ -430,6 +430,7 @@ export class DatabaseCoordinatorEntryLifecycle {
     entry.failure = safeCoordinatorError(error);
     entry.state = 'failed';
     entry.lane.rejectQueued(notReadyError());
+    entry.readerLane.rejectQueued(notReadyError());
     const writer = entry.writer;
     const reader = entry.reader;
     const actors = compactExecutors(writer, reader);
@@ -629,6 +630,7 @@ export class DatabaseCoordinatorEntryLifecycle {
     entry.restartAbortController?.abort();
     entry.restartAbortController = null;
     entry.lane.rejectQueued(closedError());
+    entry.readerLane.rejectQueued(closedError());
     try {
       await entry.opening;
     } catch {
@@ -636,6 +638,7 @@ export class DatabaseCoordinatorEntryLifecycle {
     }
     if (readEntryState(entry) === 'closed') return;
     await entry.lane.idle();
+    await entry.readerLane.idle();
     await this.#joinEntryRecovery(entry);
     if (readEntryState(entry) === 'closed') return;
     if (entry.closeFailure) {

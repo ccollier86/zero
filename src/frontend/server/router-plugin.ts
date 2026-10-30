@@ -35,6 +35,7 @@ import {
 } from '../../auth/authorization-kernel';
 import { AuthError, type AuthContext } from '../../auth/types';
 import { markPublicLoggingRequest } from '../../logging/logging-public-request';
+import { loggingPagePatterns } from '../../logging/logging-route-catalog';
 
 // ─── ISR Cache ────────────────────────────────────────────────────────────
 
@@ -49,6 +50,8 @@ interface CacheEntry {
 // ─── Router Plugin ─────────────────────────────────────────────────────────
 
 export interface RouterPluginOptions {
+  /** App-local static page catalog; registration does not import pages or inspect dynamic metadata. */
+  onPageRoutes?: (patterns: readonly string[]) => void;
   seo?: SeoRuntime;
   /** App-owned observability target supplied by managed createApp(). */
   observability?: PlatformObservabilityRuntime;
@@ -127,6 +130,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
   const appDir = options.appDir ?? './app';
   const outDir = resolve(options.outDir ?? '.build');
   const routeTree = options.routeTree ?? buildRouteTree(scanRoutes(appDir));
+  options.onPageRoutes?.(loggingPagePatterns(routeTree));
   const isrCache = new Map<string, CacheEntry>();
 
   const router = new Elysia({ name: 'router' })

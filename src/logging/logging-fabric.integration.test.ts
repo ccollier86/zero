@@ -102,6 +102,26 @@ test('private delivery challenges force fresh commits without changing activity 
   } finally { await f.close(); }
 }, 30000);
 
+test('retained activity reconstruction resumes from a lost bounded-batch acknowledgment without rewriting old evidence', async () => {
+  let lose = false;
+  const f = await fixture(() => { if (lose) { lose = false; throw new Error('Synthetic rebuild response lost after commit'); } }, loggingV6Realm);
+  try {
+    let { audit } = await f.stores();
+    const events = Array.from({ length: 230 }, (_, i) => loggingEvent('retained-' + i));
+    await f.legacyAppend(events);
+    const before = await audit.page({ kind: 'platform' }, { limit: 100 }), checkpoint = (await audit.verify()).checkpoint;
+    ({ audit } = await f.upgrade());
+    await expect(audit.page({ kind: 'platform' }, { projection: 'activities' })).rejects.toThrow();
+    lose = true; await expect(audit.rebuildActivities()).rejects.toThrow('Synthetic rebuild response lost after commit');
+    ({ audit } = await f.restart()); await audit.rebuildActivities();
+    expect(await audit.page({ kind: 'platform' }, { limit: 100 })).toEqual(before);
+    const activities = await audit.page({ kind: 'tenant', tenantId: 'tenant-a' }, { projection: 'activities', limit: 100 });
+    expect(activities.total).toBe(230); expect(activities.events.every(row => row.activity?.evidenceCount === 1)).toBe(true);
+    expect((await audit.verify(0, checkpoint)).checkpoint).toEqual(checkpoint);
+    await audit.rebuildActivities(); expect((await audit.page({ kind: 'platform' }, { projection: 'activities' })).total).toBe(230);
+  } finally { await f.close(); }
+}, 30000);
+
 test('Fabric logging stores are physically independent, survive restart and isolate tenant/application queries', async () => {
   const f = await fixture();
   try {
@@ -159,19 +179,20 @@ test('holds fence pruning, retained proofs prevent expired event resurrection, a
     await audit.evidenceCommand('logging.hold', { ...hold, auditEvent: action('logging.hold.created', 'hold-a') });
     const checkpoint = (await audit.verify()).checkpoint;
     expect(await audit.prune(Date.now() + 1000)).toBe(2);
-    expect((await audit.page({ kind: 'platform' })).events.map(e => e.event.id)).toEqual(['held']);
+    expect((await audit.page({ kind: 'platform' }, { projection: 'activities' })).events.map(e => e.event.id)).toEqual(['held']);
+    expect((await audit.page({ kind: 'platform' })).events.filter(e => e.event.action === 'logging.retention.applied')).toHaveLength(2);
     const replay = await audit.append([b]); expect(replay.receipts[0]?.duplicate).toBe(true);
-    expect((await audit.page({ kind: 'tenant', tenantId: 'tenant-b' })).events).toHaveLength(0);
+    expect((await audit.page({ kind: 'tenant', tenantId: 'tenant-b' }, { projection: 'activities' })).events).toHaveLength(0);
     await expect(audit.append([loggingEvent('expired', 'tenant-b', { outcome: 'failed' })])).rejects.toMatchObject({ code: 'LOGGING_EVENT_CONFLICT' });
     expect((await audit.verify(0, checkpoint)).expired).toBe(2);
     await expect(audit.evidenceCommand('logging.hold', { id: 'hold-a', actorId: 'fixture-user', scope: { kind: 'tenant', tenantId: 'tenant-b' }, release: true, auditEvent: action('logging.hold.released', 'hold-a') })).rejects.toThrow();
     await audit.evidenceCommand('logging.hold', { id: 'hold-a', actorId: 'fixture-user', scope: hold.scope, release: true, auditEvent: action('logging.hold.released', 'hold-a') });
     await audit.prune(Date.now() + 1000);
-    expect((await audit.page({ kind: 'platform' })).events).toHaveLength(0);
-    const final = await audit.verify(0, checkpoint); expect(final.expired).toBe(4);
+    expect((await audit.page({ kind: 'platform' }, { projection: 'activities' })).events).toHaveLength(0);
+    const final = await audit.verify(0, checkpoint); expect(final.expired).toBe(6);
     await expect(audit.verify(0, { ...checkpoint, hash: '0'.repeat(64) })).rejects.toThrow();
     const reopened = await f.restart(); expect((await reopened.audit.append([b])).receipts[0]?.duplicate).toBe(true);
-    expect((await reopened.audit.verify()).expired).toBe(4);
+    expect((await reopened.audit.verify()).expired).toBe(6);
   } finally { await f.close(); }
 }, 30000);
 

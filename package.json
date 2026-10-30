@@ -229,6 +229,10 @@
       "types": "./src/frontend/client/authorization-scope-hooks.ts",
       "import": "./src/frontend/client/authorization-scope-hooks.ts"
     },
+    "./react/logging-results": {
+      "types": "./src/frontend/client/logging-results.ts",
+      "import": "./src/frontend/client/logging-results.ts"
+    },
     "./server": {
       "types": "./src/frontend/server.ts",
       "import": "./src/frontend/server.ts"

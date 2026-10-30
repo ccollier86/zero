@@ -81,6 +81,7 @@ export class SyncSystemSocketBridge {
     this.#planeSocket.data.syncSubscribedTables.clear();
     this.#planeSocket.data.rowFilteredSubscribedTables.clear();
     this.#planeSocket.data.syncDeferredChanges = [];
+    this.#planeSocket.data.syncDeferredChangeBytes = 0;
   }
 
   deliver(
@@ -122,6 +123,8 @@ export class SyncSystemSocketBridge {
     this.#planeSocket.data.syncSubscribedTables.clear();
     this.#planeSocket.data.rowFilteredSubscribedTables.clear();
     this.#planeSocket.data.syncDeferredChanges = [];
+    this.#planeSocket.data.syncDeferredChangeBytes = 0;
+    this.#planeSocket.data.syncReadDeliveryClosed = true;
   }
 
   #assertUsable(): void {
@@ -140,6 +143,7 @@ function createSystemPlaneSocket(
   data.syncBackpressured = false;
   data.syncSnapshotInFlight = false;
   data.syncDeferredChanges = [];
+  data.syncDeferredChangeBytes = 0;
   data.syncMultiplexed = false;
 
   return new Proxy(socket, {

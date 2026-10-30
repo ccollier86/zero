@@ -21,6 +21,19 @@ import {
 } from './request-database-client';
 
 describe('createRequestDatabaseClient', () => {
+  test('native read receipts are prepared after releasing the database lease and final authority still fences their delivery', async () => {
+    const harness = createManagerHarness({ tenantDatabasesEnabled: true, readValues: { get: { id: 'one', state: 'draft' }, find: [{ id: 'one', state: 'draft' }] } });
+    let valid = true;
+    const captured: unknown[] = [];
+    const receipt = { id: 'historical-read', digest: 'a'.repeat(64), kind: 'record' as const, table: 'todos', count: 1, expiresAt: Date.now() + 300000 };
+    const client = createRequestDatabaseClient({ manager: harness.manager, scope: tenantScope('tenant-a'), assertCurrentAuthoritySync() { if (!valid) throw new Error('revoked'); },
+      async prepareRead(input) { expect(harness.binds.at(-1)!.releaseCount).toBe(1); captured.push(input); return receipt; } })!;
+    expect((await client.get('todos', 'one')).auditReceipt).toEqual(receipt);
+    expect(captured[0]).toEqual({ table: 'todos', kind: 'record', rows: [{ id: 'one', state: 'draft' }], revision: 'snapshot:0' });
+    const guarded = createRequestDatabaseClient({ manager: harness.manager, scope: tenantScope('tenant-a'), assertCurrentAuthoritySync() { if (!valid) throw new Error('revoked'); },
+      async prepareRead() { expect(harness.binds.at(-1)!.releaseCount).toBe(1); await Promise.resolve(); valid = false; return receipt; } })!;
+    await expect(guarded.find('todos', { limit: 10 })).rejects.toMatchObject({ code: 'DATABASE_AUTHORITY_CHANGED' });
+  });
   test('returns null outside an enabled committed tenant-database scope', () => {
     const disabled = createManagerHarness({ tenantDatabasesEnabled: false });
     const enabled = createManagerHarness({ tenantDatabasesEnabled: true });
@@ -242,6 +255,7 @@ function createManagerHarness(options: {
   invokeAuthority?: boolean;
   afterOperation?: () => void;
   bindError?: Error;
+  readValues?: Partial<Record<ClientMethod, DatabaseSerializableValue>>;
 }) {
   const binds: Array<{
     options: BindTenantDatabaseOptions;
@@ -261,6 +275,7 @@ function createManagerHarness(options: {
         if (options.invokeAuthority) bindingOptions.assertCurrentReadAuthority?.();
         if (options.failedMethod === method) throw new Error(`failed:${method}`);
         options.afterOperation?.();
+        if (options.readValues && Object.hasOwn(options.readValues, method)) return readResult(options.readValues[method]!);
         if (method === 'findPage') return readResult({ rows: [], total: 0 });
         return method === 'get'
           || method === 'list'

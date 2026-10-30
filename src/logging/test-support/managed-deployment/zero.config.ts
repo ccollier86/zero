@@ -16,6 +16,10 @@ export default defineZeroConfig({
   serverPluginsDir: false, serverMiddlewareDir: false, serverResourcesDir: false, serverEndpointsDir: false,
   serverRoutesDir: false, resourceRoutes: false,
   serverExtensions: [defineRouter({ name: 'deployment-proof', prefix: '/proof', auth: { user: 'required', credentials: ['session'] }, routes: [
+    defineEndpoint({ method: 'POST', path: '/result', handler: async ({ zero }) => {
+      return { receipt: await zero.logging!.prepareResult({ table: 'deployment_records', kind: 'list', revision: 'fixture:42',
+        rows: [{ id: 'synthetic-one' }, { id: 'synthetic-two' }] }) };
+    } }),
     defineEndpoint({ method: 'POST', path: '/record', handler: async ({ zero }) => {
       await zero.logging!.record({ id: 'deployment.original-stage', family: 'workflow', action: 'app.deployment.prepared',
         occurredAt: 1800000000000, outcome: 'succeeded', evidence: 'server-confirmed', target: { type: 'report', id: 'opaque-report' } });

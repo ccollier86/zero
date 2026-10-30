@@ -47,6 +47,18 @@ try {
   const seeded = await request(origin, '/api/_zero/logging/events', signed.accessToken, { stream: 'audit', query: { action: 'fixture.source.prepared' } });
   expect(seeded.events).toHaveLength(1);
   await request(origin, '/proof/record', signed.accessToken, {});
+  const prepared = await request(origin, '/proof/result', signed.accessToken, {});
+  const policy = await request(origin, '/api/_zero/logging/policy', signed.accessToken);
+  await request(origin, '/api/_zero/logging/observations', signed.accessToken, { policyVersion: policy.delivery.policyVersion, observations: [{
+    id: 'deployment.display.open', collectorId: 'deployment-browser', action: 'view.opened', occurredAt: Date.now(), receiptId: prepared.receipt.id,
+    interval: { viewId: 'deployment-view', sequence: 0, elapsedMs: 0, visibleMs: 0, activeMs: 0, incomplete: false },
+  }] });
+  const activities = await request(origin, '/api/_zero/logging/events', signed.accessToken, { stream: 'audit', query: { projection: 'activities', action: 'record.list.viewed' } });
+  expect(activities.events).toHaveLength(1);
+  const activity = activities.events[0].activity;
+  const historyExport = await request(origin, '/api/_zero/logging/exports/create', signed.accessToken,
+    { id: 'deployment.activity-export', stream: 'audit', query: { projection: 'activities', action: 'record.list.viewed' } });
+  expect(historyExport.state).toBe('ready');
   const artifact = await request(origin, '/api/_zero/logging/exports/create', signed.accessToken,
     { id: 'deployment.export', stream: 'audit', query: { action: 'app.deployment.prepared' } });
   expect(artifact.state).toBe('ready');
@@ -59,6 +71,15 @@ try {
   await request(origin, '/proof/record', signed.accessToken, {});
   const page = await request(origin, '/api/_zero/logging/events', signed.accessToken, { stream: 'audit', query: { action: 'app.deployment.prepared' } });
   expect(page.events).toHaveLength(1);
+  const versions = await request(origin, '/api/_zero/logging/results/versions', signed.accessToken, { activityId: activity.id });
+  expect(versions.items.map((item: { receipt: { id: string } }) => item.receipt.id)).toEqual([prepared.receipt.id]);
+  const historical = await request(origin, '/api/_zero/logging/results', signed.accessToken, { id: prepared.receipt.id });
+  expect(historical.records.map((record: { id: string }) => record.id)).toEqual(['synthetic-one', 'synthetic-two']);
+  const historyDownload = await fetch(origin + '/api/_zero/logging/exports/download', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + signed.accessToken }, body: JSON.stringify({ id: historyExport.id }) });
+  expect(historyDownload.status).toBe(200);
+  const historyLines = (await historyDownload.text()).trim().split('\n').map(line => JSON.parse(line));
+  expect(historyLines[0].manifest).toMatchObject({ version: 2, projection: 'activities', complete: true, historyComplete: true });
+  expect(historyLines[1].history.results[0].manifest.records.map((record: { id: string }) => record.id)).toEqual(['synthetic-one', 'synthetic-two']);
   const download = await fetch(origin + '/api/_zero/logging/exports/download', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + signed.accessToken }, body: JSON.stringify({ id: artifact.id }) });
   expect(download.status).toBe(200);
   expect(new Bun.CryptoHasher('sha256').update(new Uint8Array(await download.arrayBuffer())).digest('hex')).toBe(artifact.sha256);
@@ -70,7 +91,8 @@ try {
   expect(probes.every(probe => !probe.providerSecret && !probe.dotenvSecret)).toBe(true);
   const report = { platform: process.platform, arch: process.arch, bun: Bun.version, mainBoots: boots.length, workerLaunches: probes.length,
     sourceActor: true, emptyChildEnvironment: true, dotenvExcluded: true, officialBuild: true, sourcePreparedMigrations: true,
-    retainedSourceEvidence: seeded.events.length, privateExportAfterRestart: true, exactReplayCount: page.events.length, complianceReady: true };
+    retainedSourceEvidence: seeded.events.length, privateExportAfterRestart: true, exactReplayCount: page.events.length, complianceReady: true,
+    historicalResultsAfterRestart: true, activityV2ExportAfterRestart: true };
   await Bun.write('./qualification-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   const active = child as ReturnType<typeof Bun.spawn> | null;

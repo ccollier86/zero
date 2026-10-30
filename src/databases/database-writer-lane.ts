@@ -27,6 +27,7 @@ interface WriterLaneTask<T> {
 }
 
 export interface DatabaseWriterLaneOptions {
+  readonly role?: 'writer' | 'reader';
   readonly databaseRef: DatabaseRef;
   readonly placement: DatabaseActorPlacementConfig['mode'];
   readonly maxQueued: number;
@@ -44,6 +45,7 @@ export class DatabaseWriterLane {
   constructor(private readonly options: DatabaseWriterLaneOptions) {}
 
   get depth(): number { return this.queue.length + (this.active ? 1 : 0); }
+  get queuedDepth(): number { return this.queue.length; }
 
   enqueue<T>(
     execute: () => Promise<T>,
@@ -70,7 +72,7 @@ export class DatabaseWriterLane {
       });
       return Promise.reject(new DatabaseError(
         'DATABASE_BACKPRESSURE',
-        'Database writer queue capacity is exhausted.',
+        `Database ${this.options.role ?? 'writer'} queue capacity is exhausted.`,
         {
           retryable: true,
           outcome: 'not-started',

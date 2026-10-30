@@ -5,6 +5,7 @@ import type {
   SortingState,
 } from '@tanstack/react-table';
 import type { Row } from '../../sync/types';
+import type { LoggingResultReceipt } from '../../logging/logging-result-contracts';
 
 export type DataTableServerPaginationMode = 'offset' | 'cursor';
 
@@ -49,6 +50,8 @@ export type DataTableServerPage = DataTableServerOffsetPage | DataTableServerCur
 export interface DataTableServerResult<T extends Row> {
   rows: T[];
   page: DataTableServerPage;
+  /** Authorized historical result; bound only when these exact rows actually enter the committed display. */
+  auditReceipt?: LoggingResultReceipt;
 }
 
 export interface DataTableServerAdapterContext {

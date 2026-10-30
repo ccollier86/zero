@@ -5,12 +5,15 @@ import type { LoggingChangePage, LoggingQuery, LoggingReadScope, LoggingStream }
 import { loggingPagePredicate, normalizeLoggingQuery } from './logging-query';
 import { LOGGING_MAX_BATCH_BYTES, loggingByteLength, loggingRecord } from './logging-validation';
 import { projectLoggingStoredEvent, type LoggingStoredRow } from './logging-stored-event';
+import { readLoggingActivityChanges } from './logging-activity-query';
 
-export function readLoggingChanges({ database }: DatabaseReadQueryContext, raw: unknown): LoggingChangePage {
+export function readLoggingChanges(context: DatabaseReadQueryContext, raw: unknown): LoggingChangePage {
+  const { database } = context;
   const value = loggingRecord(raw, ['stream', 'scope', 'query', 'afterOrdinal']);
   const input = normalizeLoggingQuery(value.stream as LoggingStream, value.scope as LoggingReadScope, value.query as LoggingQuery);
   const after = value.afterOrdinal;
   if (!Number.isSafeInteger(after) || Number(after) < 0) throw new DatabaseError('DATABASE_PAYLOAD_INVALID', 'Logging change cursor is invalid.');
+  if (input.query.projection === 'activities') return readLoggingActivityChanges(context, input, Number(after));
   const head = database.query<{ stream: string; ordinal: number }>('SELECT stream,ordinal FROM logging_state WHERE id=?').get('head');
   const highWaterOrdinal = head?.ordinal ?? 0;
   if (head && head.stream !== input.stream || Number(after) > highWaterOrdinal) throw new DatabaseError('DATABASE_CONFLICT', 'Logging change cursor does not match retained history.');

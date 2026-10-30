@@ -7,6 +7,7 @@ import { loggingArray, loggingChoice, loggingId, loggingRecord, loggingTime, log
 import { normalizeLoggingQuery } from './logging-query';
 import { loggingDigest } from './logging-hash';
 import { normalizeLoggingEvidenceCursor } from './logging-evidence-cursor';
+import { pruneLoggingDependencies, retireLoggingActivities } from './logging-activity-retention';
 
 export const LOGGING_GENESIS_HASH = loggingDigest(['zero.logging.chain', 1]);
 export function loggingChainHash(previous: string, ordinal: number, id: string, digest: string, ingestedAt: number): string {
@@ -71,19 +72,30 @@ export function recordLoggingReview(context: DatabaseWriteCommandContext, value:
 /** Discovery is a hint. The write command repeats the live hold and age checks under its own transaction. */
 export function loggingPruneCandidates({ database }: DatabaseReadQueryContext, value: unknown) {
   const r = loggingRecord(value, ['before']); const before = loggingTime(r.before);
+  const projects = database.query('SELECT 1 FROM sqlite_master WHERE type=\'table\' AND name=\'logging_activities\'').get();
+  const dependencies = projects ? ` AND NOT EXISTS (SELECT 1 FROM logging_activity_evidence ae JOIN logging_activities a ON a.id=ae.activity_id
+    JOIN logging_events latest ON latest.id=a.event_ref WHERE ae.event_ref=e.id AND (latest.ingested_at>=? OR EXISTS (
+      SELECT 1 FROM logging_holds held WHERE held.active=1 AND held.scope_kind=a.scope_kind AND held.tenant_id IS a.tenant_id
+      AND held.since<=a.evidence_until AND held.until>a.evidence_since)))` : '';
   return database.query<{ id: string }>(`SELECT e.id FROM logging_events e WHERE e.ingested_at < ? AND NOT EXISTS (
     SELECT 1 FROM logging_holds h WHERE h.active=1 AND h.scope_kind=e.scope_kind AND (h.tenant_id IS e.tenant_id)
-    AND e.occurred_at >= h.since AND e.occurred_at < h.until) ORDER BY e.ordinal LIMIT 100`).all(before).map(row => row.id);
+    AND e.occurred_at >= h.since AND e.occurred_at < h.until)${dependencies} ORDER BY e.ordinal LIMIT 100`).all(before, ...(projects ? [before] : [])).map(row => row.id);
 }
-export function pruneLoggingEvents({ db }: DatabaseWriteCommandContext, value: unknown) {
+export function pruneLoggingEvents(context: DatabaseWriteCommandContext, value: unknown, append?: (context: DatabaseWriteCommandContext, input: unknown) => unknown) {
+  const { db } = context;
   const r = loggingRecord(value, ['before', 'ids']); const before = loggingTime(r.before), ids = loggingArray(r.ids, 100).map(id => loggingId(id)!);
-  const holds = db.list(LOGGING_HOLDS_TABLE).filter(h => h.active === 1); let removed = 0;
+  let removed = 0;
+  const activities: Record<string, unknown>[] = [], removedRows: Record<string, unknown>[] = [];
   for (const id of ids) {
     const row = db.get(LOGGING_EVENTS_TABLE, id); if (!row || Number(row.ingested_at) >= before) continue;
-    if (holds.some(h => h.scope_kind === row.scope_kind && h.tenant_id === row.tenant_id && Number(row.occurred_at) >= Number(h.since) && Number(row.occurred_at) < Number(h.until))) continue;
+    const dependents = pruneLoggingDependencies(db, row, before); if (dependents === null) continue;
+    activities.push(...dependents); removedRows.push(row);
     const proof = db.get(LOGGING_PROOFS_TABLE, id); if (!proof || proof.digest !== row.digest) fail();
     db.update(LOGGING_PROOFS_TABLE, id, { expired: 1 }); db.delete(LOGGING_EVENTS_TABLE, id); removed++;
+    if (db.hasTable('logging_change_fields')) for (const field of db.find('logging_change_fields', { filters: [{ type: 'field', field: 'event_ref', operator: 'eq', value: id }], select: ['id'], limit: 32 })) db.delete('logging_change_fields', String(field.id));
+    if (db.hasTable('logging_results')) for (const result of db.find('logging_results', { filters: [{ type: 'field', field: 'event_ref', operator: 'eq', value: id }], select: ['id'], limit: 1 })) db.delete('logging_results', String(result.id));
   }
+  if (append) retireLoggingActivities(context, activities, removedRows, before, append);
   return { removed };
 }
 

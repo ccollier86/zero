@@ -67,3 +67,28 @@ test('a large visual burst stays bounded to newest INSERT identities without cha
     expect(ids).toHaveLength(1000); expect(ids[0]).toBe(id(201)); expect(ids.at(-1)).toBe(id(1200));
   } finally { clearTimeout(timer); stop(); signal.abort(); }
 });
+
+test('activity revisions produce stable UPDATEs and real removals; an INSERT followed by an update remains one INSERT', async () => {
+  let options!: NonNullable<Parameters<LoggingClient['watch']>[3]>, connect!: () => void;
+  const ready = new Promise<void>(resolve => { connect = resolve; });
+  const source = createLoggingTableSource({
+    async page() { return { events: [], highWaterOrdinal: 10, hasMore: false, nextBeforeOrdinal: null }; },
+    watch(_stream, _query, _listener, value) { options = value!; connect(); return () => {}; },
+  }, 'audit', { projection: 'activities' });
+  const signal = new AbortController(), seen: { op: string; rowId: string }[] = [];
+  const stop = source.adapter!.subscribeChanges!(query, event => seen.push(event), { signal: signal.signal });
+  const activity = (first: number, revision: number): StoredLoggingEvent => ({ ...row(revision), ordinal: first, activity: {
+    version: 1, id: first.toString(16).padStart(64, '0'), action: 'record.read', outcome: 'succeeded', firstOrdinal: first, revision, startedAt: 1, evidenceCount: revision - first + 1,
+  } });
+  try {
+    await ready;
+    options.onChanges!({ events: [activity(1, 11)], afterOrdinal: 10, throughOrdinal: 11, highWaterOrdinal: 11, hasMore: false });
+    await Bun.sleep(300);
+    expect(seen).toEqual([{ op: 'UPDATE', rowId: JSON.stringify(['activity', '1'.padStart(64, '0')]) }]);
+    options.onChanges!({ events: [activity(12, 12)], afterOrdinal: 11, throughOrdinal: 12, highWaterOrdinal: 12, hasMore: false });
+    options.onChanges!({ events: [activity(12, 13)], afterOrdinal: 12, throughOrdinal: 13, highWaterOrdinal: 13, hasMore: false });
+    options.onChanges!({ events: [], removed: [{ id: '1'.padStart(64, '0'), revision: 14 }], afterOrdinal: 13, throughOrdinal: 14, highWaterOrdinal: 14, hasMore: false });
+    await Bun.sleep(300);
+    expect(seen.slice(1)).toEqual([{ op: 'INSERT', rowId: JSON.stringify(['activity', 'c'.padStart(64, '0')]) }, { op: 'DELETE', rowId: JSON.stringify(['activity', '1'.padStart(64, '0')]) }]);
+  } finally { stop(); signal.abort(); }
+});

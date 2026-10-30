@@ -5,7 +5,7 @@ export function projectLoggingHttpFailure(error: LoggingError) {
   // A corrupt worker response or server configuration is not bad client input.
   const status = error.code === 'LOGGING_FORBIDDEN' ? 403
     : error.code === 'LOGGING_ADMISSION_REQUIRED' ? 428
-      : error.code === 'LOGGING_BACKPRESSURE' ? 429
+      : error.code === 'LOGGING_RESULT_LIMIT' ? 413 : error.code === 'LOGGING_BACKPRESSURE' ? 429
         : error.code === 'LOGGING_EVENT_INVALID' || error.code === 'LOGGING_QUERY_INVALID' ? 422
           : error.code === 'LOGGING_EVENT_CONFLICT' ? 409 : 503;
   return {

@@ -332,6 +332,8 @@ export type DatabaseOperation = DatabaseReadOperation | DatabaseWriteOperation;
 export interface DatabaseReadResult<T extends DatabaseSerializableValue = DatabaseSerializableValue> {
   readonly value: T;
   readonly sequence: DatabaseSequenceToken;
+  /** Optional request-facade authorized release receipt; native actor protocol never trusts client-supplied audit facts. */
+  readonly auditReceipt?: import('../logging/logging-result-contracts').LoggingResultReceipt;
 }
 
 /** A committed value and its durable sequence/idempotency receipt. */

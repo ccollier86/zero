@@ -8,6 +8,7 @@ import type {
 } from './sync-tenant-data-plane-contract';
 import { validateTenantReplayPage } from './sync-tenant-replay-validation';
 import { sendSyncWire } from './sync-wire-send';
+import { prepareSyncCatchupResults } from './sync-read-results';
 import type {
   Change,
   SyncCatchupMessage,
@@ -63,7 +64,7 @@ export async function sendTenantCatchup(
         options.socket.data.resourceRowFilters.get(change.table),
         options.socket.data.resourceRowProjectors?.get(change.table),
       );
-      if (projected) changes.push({ ...projected, origin: '' });
+      if (projected) changes.push({ ...projected, row: options.socket.data.prepareReadResult && projected.row ? structuredClone(projected.row) : projected.row, origin: '' });
     }
     if (encodedBytes(changes) > options.maxWireBytes) {
       return { status: 'snapshot' };
@@ -85,6 +86,16 @@ export async function sendTenantCatchup(
     return { status: 'snapshot' };
   }
   options.assertCurrentReadAuthoritySync();
+  let auditResults;
+  try { auditResults = options.socket.data.prepareReadResult ? await prepareSyncCatchupResults(options.socket, changes, head, epoch ?? 'legacy') : undefined; }
+  catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'LOGGING_RESULT_LIMIT') return { status: 'snapshot' };
+    throw error;
+  }
+  if (auditResults) response.auditResults = auditResults;
+  if (!options.isCurrent()) return { status: 'failed' };
+  options.assertCurrentReadAuthoritySync();
+  if (encodedBytes(response) > options.maxWireBytes) return { status: 'snapshot' };
   if (!sendSyncWire(options.socket, response)) return { status: 'failed' };
   return Object.freeze({ status: 'sent', head });
 }

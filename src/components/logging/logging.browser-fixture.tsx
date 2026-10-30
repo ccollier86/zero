@@ -39,8 +39,9 @@ function page(q: LoggingQuery = {}): LoggingPage {
   const water = Math.min(q.highWaterOrdinal ?? ordinal, ordinal);
   const all = Array.from({ length: water }, (_, i) => row(water - i)).filter(r => (!q.eventIds || q.eventIds.includes(JSON.stringify([r.event.sourceId, r.event.id]))) && (!q.actorId || r.event.actor.id === q.actorId) && (!q.outcome || r.event.outcome === q.outcome) && (!q.action || r.event.action === q.action) && (!q.targetId || r.event.target?.id === q.targetId)
     && (!q.sessionId || r.event.actor.sessionId === q.sessionId) && (!q.targetType || r.event.target?.type === q.targetType) && (!q.family || r.event.family === q.family) && (!q.level || r.event.level === q.level) && (q.since === undefined || r.event.occurredAt >= q.since) && (q.until === undefined || r.event.occurredAt < q.until));
-  const eligible = all.filter(r => !q.beforeOrdinal || r.ordinal < q.beforeOrdinal), events = eligible.slice(0, q.limit ?? 50), hasMore = eligible.length > events.length;
-  return { events, total: all.length, people: [person(), person(true)].filter(person => events.some(row => row.event.actor.kind === 'user' && row.event.actor.id === person.id)), highWaterOrdinal: water, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
+  const filtered = all.filter(r => !q.userId || r.event.actor.kind === 'user' && r.event.actor.id === q.userId || r.event.actor.initiatorId === q.userId);
+  const eligible = filtered.filter(r => !q.beforeOrdinal || r.ordinal < q.beforeOrdinal), events = eligible.slice(0, q.limit ?? 50), hasMore = eligible.length > events.length;
+  return { events, total: filtered.length, people: [person(), person(true)].filter(person => events.some(row => row.event.actor.kind === 'user' && row.event.actor.id === person.id)), highWaterOrdinal: water, hasMore, nextBeforeOrdinal: hasMore ? events.at(-1)!.ordinal : null };
 }
 const queries: LoggingQuery[] = [];
 (window as unknown as { __loggingQueries: LoggingQuery[] }).__loggingQueries = queries;
@@ -73,7 +74,7 @@ function Fixture() {
       <button onClick={changeScope}>Change synthetic scope</button>
       <button onClick={() => document.documentElement.classList.toggle('dark')}>Toggle theme</button></div>
     <button onClick={() => { disconnected = !disconnected; for (const notify of watches) notify(); }}>Toggle live connection</button>
-    <LoggingWorkspace allowExport={false} presentation={{ tables: { items: 'Projects', tasks: 'Tasks' } }} />
+    <LoggingWorkspace allowExport={false} initialQuery={{ projection: 'events' }} presentation={{ tables: { items: 'Projects', tasks: 'Tasks' } }} />
   </main></ModalManager></TooltipProvider></ClientProvider>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

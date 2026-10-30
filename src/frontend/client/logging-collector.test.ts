@@ -4,6 +4,27 @@ import { createLoggingCollector } from './logging-collector';
 import { LOGGING_FAMILIES } from '../../logging/logging-contracts';
 import type { LoggingCollectionPolicy, LoggingObservation } from '../../logging/logging-api-contracts';
 
+test('rapid committed displays are not discarded while opaque selection receipts resolve after filtering or close', async () => {
+  let clock = 0, first!: (value: import('../../logging/logging-result-contracts').LoggingResultReceipt) => void, second!: (value: import('../../logging/logging-result-contracts').LoggingResultReceipt) => void;
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
+  const win = Object.assign(new EventTarget(), { location: { href: 'https://synthetic.invalid' } });
+  const observations: LoggingObservation[] = [];
+  const collector = createLoggingCollector({ bindObservations: () => ({ async observe(rows) { observations.push(...structuredClone(rows)); return { accepted: rows.length }; } }) },
+    { enabled: true, capture: Object.fromEntries(LOGGING_FAMILIES.map(f => [f, true])) as LoggingCollectionPolicy['capture'], heartbeatMs: 30000, idleMs: 60000 },
+    { pageViews: false, document: doc as unknown as Document, window: win as unknown as Window, now: () => clock });
+  try {
+    const view = collector.bindResult(new Promise(resolve => { first = resolve; }));
+    clock = 60; view.update(new Promise(resolve => { second = resolve; })); clock = 140; view.close();
+    const flushing = collector.flush(); expect(observations).toHaveLength(0);
+    const receipt = (id: string) => ({ id, digest: 'a'.repeat(64), kind: 'list' as const, table: 'records', count: 1, expiresAt: Date.now() + 300000 });
+    second(receipt('later')); first(receipt('earlier')); await flushing;
+    expect(observations.map(event => [event.action, event.receiptId, event.interval?.sequence, event.interval?.elapsedMs])).toEqual([
+      ['view.opened', 'earlier', 0, 0], ['view.interval', 'earlier', 1, 60], ['view.result.changed', 'later', 2, 0], ['view.closed', 'later', 3, 80],
+    ]);
+    expect(collector.diagnostics().queued).toBe(0);
+  } finally { await collector.stop(); }
+});
+
 test('visible/idle intervals, copy and print contain no content, keys or URLs; sleep is incomplete and stop joins once', async () => {
   let clock = 0, focused = true;
   const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => focused });
@@ -77,6 +98,29 @@ test('strict delivery heartbeats work with all optional browser capture disabled
     await collector.flush(); expect(received).toEqual([{ rows: [], options: { policyVersion: 'strict-policy' } }]); expect(acknowledged).toHaveLength(1);
     fail = true; await collector.flush(); expect(errors).toBe(1); expect(acknowledged).toHaveLength(1);
     expect(collector.diagnostics()).toMatchObject({ queued: 0, failed: 1 });
+  } finally { await collector.stop(); }
+});
+
+test('managed receipt owners retain distinct revisions and navigation only publishes committed static patterns', async () => {
+  let clock = 0;
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
+  const win = Object.assign(new EventTarget(), { location: { href: 'https://synthetic.invalid/records/private-id' } });
+  const observations: LoggingObservation[] = [];
+  const collector = createLoggingCollector({ bindObservations: () => ({ async observe(rows) { observations.push(...structuredClone(rows)); return { accepted: rows.length }; } }) },
+    { enabled: true, capture: Object.fromEntries(LOGGING_FAMILIES.map(f => [f, true])) as LoggingCollectionPolicy['capture'], heartbeatMs: 30000, idleMs: 60000 },
+    { pageViews: false, committedNavigation: true, document: doc as unknown as Document, window: win as unknown as Window, now: () => clock });
+  const receipt = (id: string) => ({ id, digest: 'a'.repeat(64), kind: 'list' as const, table: 'records', count: 2, expiresAt: Date.now() + 300000 });
+  try {
+    win.location.href += '?sensitive=never'; win.dispatchEvent(new Event('popstate'));
+    collector.navigation('/records/[id]', '/records/private-id'); collector.navigation('/records/[id]', '/records/private-id');
+    const view = collector.bindResult(receipt('first'));
+    clock = 1500; view.update(receipt('second')); clock = 2000; view.close(); await collector.flush();
+    expect(observations.map(row => row.action)).toEqual(['navigation.changed', 'view.opened', 'view.interval', 'view.result.changed', 'view.closed']);
+    expect(observations.filter(row => row.interval).map(row => [row.receiptId, row.interval!.sequence, row.interval!.visibleMs])).toEqual([
+      ['first', 0, 0], ['first', 1, 1500], ['second', 2, 0], ['second', 3, 500],
+    ]);
+    expect(JSON.stringify(observations)).not.toMatch(/private-id|sensitive|https:/);
+    expect(observations[0]!.page).toBe('/records/[id]'); expect(observations.every(row => row.target === undefined)).toBe(true);
   } finally { await collector.stop(); }
 });
 

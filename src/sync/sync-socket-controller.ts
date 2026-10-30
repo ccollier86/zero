@@ -112,6 +112,7 @@ export function createSyncSocketController(
   let connectionCounter = 0;
 
   const release = (socket: ServerWebSocket<SyncSocketData>): void => {
+    socket.data.syncReadDeliveryClosed = true;
     sockets.ingressQueues.get(socket)?.dispose();
     sockets.ingressQueues.delete(socket);
     rejectSyncDrain(socket);
@@ -140,6 +141,8 @@ export function createSyncSocketController(
       const connectionId = `conn_${++connectionCounter}`;
 
       const data = socket.data;
+      data.syncReadDeliveryClosed = false;
+      if (config.prepareReadResult) data.prepareReadResult = (table, rows, seq, epoch) => config.prepareReadResult!({ table, rows, seq, epoch, authContext: data.authContext });
       data.connectionId = connectionId;
       data.subscribedTopics = new Set();
       data.lastSeq = 0;

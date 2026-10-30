@@ -5,6 +5,7 @@ import type { LoggingExportJob } from './logging-export-contracts';
 import type { StoragePrivateObjects } from '../storage/storage-private-objects';
 import { captureLoggingEvent, loggingByteLength, loggingCanonical } from './logging-validation';
 import { LoggingError } from './logging-error';
+import { loggingExportHistory } from './logging-export-history';
 
 export const LOGGING_EXPORT_NAMESPACE = 'zero.logging.exports';
 const MAX_ACTIVE = 4, MAX_BYTES = 8 * 1024 * 1024;
@@ -88,13 +89,15 @@ export class LoggingExportManager {
     }
     if (job.state !== 'pending') return job;
     try {
-      const lines: string[] = []; let bytes = 0, before = owned.query.beforeOrdinal, complete = false;
+      const lines: string[] = []; let bytes = 0, before = owned.query.beforeOrdinal, complete = false, historyComplete = true;
       for (let i = 0; i < 10; i++) {
         this.assertRunning();
         const page = await this.runtime.page(job.stream, owned.scope, { ...owned.query, limit: 100, highWaterOrdinal: job.highWaterOrdinal, ...(before === undefined ? {} : { beforeOrdinal: before }) });
         this.assertRunning();
         for (const item of page.events) {
-          const line = loggingCanonical(item); bytes += loggingByteLength(line) + 1;
+          const exported = owned.query.projection === 'activities' ? await loggingExportHistory(this.runtime, owned.scope, item, job.highWaterOrdinal, MAX_BYTES - bytes - 1024) : { row: item, complete: true };
+          this.assertRunning(); historyComplete &&= exported.complete;
+          const line = loggingCanonical(exported.row); bytes += loggingByteLength(line) + 1;
           if (bytes > MAX_BYTES) throw new LoggingError('LOGGING_BACKPRESSURE', 'Export segment exceeds its byte budget; narrow the query.');
           lines.push(line);
         }
@@ -102,8 +105,8 @@ export class LoggingExportManager {
         if (!page.hasMore) { complete = true; break; }
       }
       const ndjson = lines.length ? lines.join('\n') + '\n' : '';
-      const manifest = { version: 1, exportId: job.id, stream: job.stream, highWaterOrdinal: job.highWaterOrdinal, count: lines.length,
-        complete, nextBeforeOrdinal: complete ? null : before ?? null, eventSha256: new Bun.CryptoHasher('sha256').update(ndjson).digest('hex') };
+      const manifest = { version: owned.query.projection === 'activities' ? 2 : 1, exportId: job.id, stream: job.stream, highWaterOrdinal: job.highWaterOrdinal, count: lines.length,
+        complete, nextBeforeOrdinal: complete ? null : before ?? null, ...(owned.query.projection === 'activities' ? { projection: 'activities', historyComplete } : {}), eventSha256: new Bun.CryptoHasher('sha256').update(ndjson).digest('hex') };
       const artifact = new TextEncoder().encode(JSON.stringify({ manifest }) + '\n' + ndjson);
       this.assertRunning();
       await this.storage.put(LOGGING_EXPORT_NAMESPACE, job.id, artifact, 'application/x-ndjson', () => {

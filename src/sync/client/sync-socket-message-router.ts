@@ -15,6 +15,7 @@ import {
   tablesInSyncDataPlane,
 } from './sync-data-planes';
 import type { SyncSnapshotAssembler } from './sync-snapshot-assembler';
+import { registerSyncReadResults } from './sync-read-results';
 
 type ExternalMessage = { type: string; [key: string]: unknown };
 interface SyncSocketMessageRouterInput {
@@ -68,6 +69,7 @@ export function routeSyncSocketEvent(
     }
   }
   const rejection = mutationRejection(input.store, message);
+  if (!registerSyncReadResults(message)) { input.recover(); return; }
   routeServerMessage(input.store, message);
   for (const handler of input.handlers) {
     try {

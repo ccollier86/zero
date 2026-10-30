@@ -217,7 +217,7 @@ browserTest('readable user photos and activity/table choices filter server resul
     await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     await page.locator('img[src^="blob:"]').first().waitFor();
     expect(await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).count()).toBeGreaterThan(0);
-    expect(await page.getByRole('cell', { name: 'System automation Not a signed-in person', exact: true }).count()).toBeGreaterThan(0);
+    expect(await page.getByRole('cell', { name: 'System automation No recorded human initiator', exact: true }).count()).toBeGreaterThan(0);
     expect(await page.getByRole('cell', { name: 'tenant-a-user', exact: true }).count()).toBe(0);
     expect(await page.evaluate(() => (window as any).__loggingPhotos.deliveries)).toBe(2);
     const directory = process.env.LOGGING_SCREENSHOTS;
@@ -230,10 +230,10 @@ browserTest('readable user photos and activity/table choices filter server resul
     await page.getByRole('button', { name: 'Filter by user', exact: true }).click();
     await page.getByLabel('Search users', { exact: true }).fill('Blair');
     await page.getByRole('option', { name: /Blair Example/ }).click();
-    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.actorId === 'tenant-a-second'))).toBe(false);
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.userId === 'tenant-a-second'))).toBe(false);
     await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     await page.getByRole('button', { name: 'Inspect event event-63', exact: true }).waitFor();
-    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.action === 'record.created' && q.targetType === 'table.items' && q.actorId === 'tenant-a-second'))).toBe(true);
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.action === 'record.created' && q.targetType === 'table.items' && q.userId === 'tenant-a-second'))).toBe(true);
     expect(await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).count()).toBe(0);
     await page.getByRole('button', { name: 'Inspect event event-63', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Event evidence', exact: true }); await dialog.waitFor();
@@ -249,7 +249,7 @@ browserTest('readable user photos and activity/table choices filter server resul
     await page.getByRole('button', { name: 'Inspect event event-65', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Show activity by Avery Example', exact: true }).first().click();
     await page.getByRole('button', { name: 'Remove User filter', exact: true }).waitFor();
-    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.actorId === 'tenant-a-user'))).toBe(true);
+    expect(await page.evaluate(() => (window as any).__loggingQueries.some((q: any) => q.userId === 'tenant-a-user'))).toBe(true);
     await page.getByRole('button', { name: 'Remove User filter', exact: true }).click();
     const revocations = await page.evaluate(() => (window as any).__loggingPhotos.revoked);
     await page.getByRole('button', { name: 'Change synthetic scope', exact: true }).click();

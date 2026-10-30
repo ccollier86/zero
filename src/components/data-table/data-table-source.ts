@@ -31,6 +31,7 @@ import type {
 import { invokeDataTableSourceWrite } from './data-table-source-action-guard';
 import { useOptionalDataTableCollection } from './use-data-table-collection-source';
 import { useDataTableServerSource } from './use-data-table-server-source';
+import { registerLoggingResultRows } from '../../frontend/client/logging-result-provenance';
 
 const EMPTY_ARRAY: never[] = [];
 
@@ -53,6 +54,8 @@ export type DataTableSource<T extends Row = Row> =
   | {
       type: 'data';
       data: T[];
+      /** Already-authorized custom projection receipt; rows/order must match that release. */
+      auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt;
       actions?: Partial<DataTableSourceActions<T>>;
       isLoading?: boolean;
       error?: Error | string | null;
@@ -87,6 +90,7 @@ export interface UseDataTableSourceOptions<T extends Row> {
 }
 
 export interface DataTableSourceState<T extends Row> {
+  auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt;
   data: T[];
   sourceType: DataTableSource<T>['type'];
   table: string | null;
@@ -230,12 +234,13 @@ export function useDataTableSource<T extends Row = Row>(
     setIsLazyLoading(true);
     setLazyError(null);
 
-    client.fetch<{ rows: T[] }>(`/api/data?${lazyQuery}`, { signal: controller.signal })
+    client.fetch<{ rows: T[]; auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt }>(`/api/data?${lazyQuery}`, { signal: controller.signal })
       .then((payload) => {
         if (controller.signal.aborted
           || requestIdRef.current !== requestId
           || !boundaryReadyRef.current
           || boundaryKeyRef.current !== requestBoundaryKey) return;
+        registerLoggingResultRows(payload.rows, payload.auditReceipt);
         collection.actions?.load(payload.rows, { replace: replaceOnLoad });
       })
       .catch((error) => {
@@ -334,6 +339,7 @@ export function useDataTableSource<T extends Row = Row>(
 
   if (sourceType === 'data') {
     return {
+      auditReceipt: visible ? resolved.auditReceipt : undefined,
       data: visible ? resolved.data : EMPTY_ARRAY as T[],
       sourceType,
       table: null,
@@ -348,6 +354,7 @@ export function useDataTableSource<T extends Row = Row>(
   if (sourceType === 'server') {
     return {
       data: server.data,
+      auditReceipt: server.auditReceipt,
       sourceType,
       table,
       isLoading: server.isLoading,
@@ -370,6 +377,7 @@ export function useDataTableSource<T extends Row = Row>(
 
   return {
     data: visible ? collection.data ?? (EMPTY_ARRAY as T[]) : EMPTY_ARRAY as T[],
+    auditReceipt: visible ? collection.auditReceipt : undefined,
     sourceType,
     table,
     isLoading: sourceType === 'lazy'

@@ -13,8 +13,12 @@ export const LOGGING_ACTIVITY_LABELS: Readonly<Record<string, LoggingActivityLab
   'record.updated': { label: 'Edited a record', description: 'The database committed changes to a record.' },
   'record.deleted': { label: 'Deleted a record', description: 'The database committed the removal of a record.' },
   'record.read': { label: 'Record read', description: 'The application recorded this read stage.' },
+  'record.viewed': { label: 'Viewed a record', description: 'The browser reported displaying an authorized result. Foreground time is observed, not proof of attention.' },
+  'record.list.viewed': { label: 'Viewed a list of records', description: 'The browser reported displaying this ordered result. Inspect its recorded identities and display revisions.' },
+  'view.record': { label: 'Viewed an item', description: 'The application bound this browser view to an item. No server-issued result receipt was attached.' },
   'record.read.admitted': { label: 'Requested a record', description: 'The read was admitted; its result had not been prepared yet.' },
   'record.read.prepared': { label: 'Prepared a record for viewing', description: 'The server prepared the result; this does not prove someone viewed it.' },
+  'record.list.prepared': { label: 'Returned a list of records', description: 'The server prepared this ordered result; this does not prove it was displayed.' },
   'record.read.failed': { label: 'Record could not be loaded' },
   'record.read.denied': { label: 'Record access was blocked' },
   'record.read.unknown': { label: 'Record read could not be confirmed' },
@@ -43,6 +47,9 @@ export function loggingWords(code: string): string {
   return words ? words[0]!.toUpperCase() + words.slice(1) : 'Activity';
 }
 export function loggingActivity(event: LoggingEvent, presentation?: LoggingPresentation): LoggingActivityLabel {
+  if (event.action.startsWith('app.') && event.origin !== 'frontend' && typeof event.metadata.actionName === 'string'
+    && event.metadata.actionName.length > 0 && event.metadata.actionName.length <= 120 && typeof event.metadata.actionVersion === 'string')
+    return own(presentation?.actions, event.action) ?? { label: event.metadata.actionName };
   return loggingActivityCode(event.action, presentation);
 }
 export function loggingActivityCode(action: string, presentation?: LoggingPresentation): LoggingActivityLabel {
@@ -52,8 +59,9 @@ export function loggingTableLabel(table: LoggingTableChoice, presentation?: Logg
   return own(presentation?.tables, table.type) ?? (table.names.length === 1 ? own(presentation?.tables, table.names[0]!) : undefined)
     ?? table.label ?? table.names.map(loggingWords).join(' / ');
 }
-export function loggingResourceLabel(event: Pick<LoggingEvent, 'target'> & Partial<Pick<LoggingEvent, 'detail'>>, tables: readonly LoggingTableChoice[], presentation?: LoggingPresentation): string {
+export function loggingResourceLabel(event: Pick<LoggingEvent, 'target'> & Partial<Pick<LoggingEvent, 'detail' | 'metadata'>>, tables: readonly LoggingTableChoice[], presentation?: LoggingPresentation): string {
   if (!event.target) return 'No specific record';
+  if (event.target.type === 'page' && typeof event.metadata?.pageName === 'string') return event.metadata.pageName;
   const table = tables.find(table => table.type === event.target!.type);
   // Legacy slugs can group different physical names. A typed source fact
   // identifies its exact table; do not show a different table's current label.

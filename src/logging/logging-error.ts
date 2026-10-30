@@ -1,7 +1,7 @@
 /** Safe logging-domain failures. Never attach event bodies, SQL, actor paths or credentials. */
 export type LoggingErrorCode =
   | 'LOGGING_CONFIG_INVALID' | 'LOGGING_NOT_READY' | 'LOGGING_FORBIDDEN' | 'LOGGING_AUDIT_UNAVAILABLE' | 'LOGGING_ADMISSION_REQUIRED' | 'LOGGING_EVENT_INVALID' | 'LOGGING_EVENT_CONFLICT'
-  | 'LOGGING_QUERY_INVALID' | 'LOGGING_BACKPRESSURE' | 'LOGGING_CLOSED'
+  | 'LOGGING_QUERY_INVALID' | 'LOGGING_BACKPRESSURE' | 'LOGGING_RESULT_LIMIT' | 'LOGGING_CLOSED'
   | 'LOGGING_WRITE_FAILED' | 'LOGGING_OUTCOME_UNKNOWN' | 'LOGGING_RESPONSE_INVALID' | 'LOGGING_INTEGRITY_FAILED';
 
 /** A failed admission differs from a dispatched write whose acknowledgment was lost. */

@@ -44,6 +44,8 @@ import {
 import type { ResourceAction } from './resource-policy-types';
 import { RESOURCE_QUERY_LIMITS } from './resource-query';
 import type { ResourceRegistry } from './resource-registry';
+import { LoggingError } from '../logging/logging-error';
+import { projectLoggingHttpFailure } from '../logging/logging-http-error';
 
 /** Options for generated resource CRUD route behavior. */
 export interface ResourceCrudRoutesConfig {
@@ -57,6 +59,7 @@ export interface ResourceCrudRoutesConfig {
 
 /** Dependencies required by the resource CRUD Elysia plugin. */
 export interface ResourceCrudPluginConfig extends ResourceCrudRoutesConfig {
+  prepareRead?: import('./resource-crud-contracts').ResourceCrudServiceOptions['prepareRead'];
   registry: ResourceRegistry;
   tables: Record<string, TableSchema>;
   authConfig: ResourcePolicyAuthConfig;
@@ -133,6 +136,7 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
       getRequestCredentialResolver: config.getRequestCredentialResolver,
     }))
     .onError(({ code, error, request, set }) => {
+      if (error instanceof LoggingError) { const failure = projectLoggingHttpFailure(error); set.status = failure.status; return failure.body; }
       if (error instanceof AuthError) {
         set.status = error.status;
         return { error: getPublicAuthErrorMessage(error), code: error.code };
@@ -374,6 +378,7 @@ function createService(
   if (!db) return null;
 
   return new ResourceCrudService({
+    prepareRead: config.prepareRead,
     db,
     registry: config.registry,
     tables: config.tables,

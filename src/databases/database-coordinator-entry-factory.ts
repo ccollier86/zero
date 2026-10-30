@@ -129,6 +129,7 @@ export class DatabaseCoordinatorEntryFactory {
       placement,
       slot,
       lane: null as unknown as DatabaseWriterLane,
+      readerLane: null as unknown as DatabaseWriterLane,
       state: 'opening' as const,
       writer: null,
       reader: null,
@@ -148,20 +149,22 @@ export class DatabaseCoordinatorEntryFactory {
       tenantSyncBindingSlots: 0,
       syncBindings: new Set(),
     } satisfies DatabaseCoordinatorEntry;
-    entry.lane = new DatabaseWriterLane({
+    const laneOptions = {
       databaseRef,
       placement: placement.mode,
       maxQueued: this.#options.maxQueuedPerDatabase,
       now: this.#options.now,
       onQueued: () => {
         if (this.#options.queuedOperations()
-          >= this.#options.maxQueuedTotal) return false;
+          >= this.#options.maxQueuedTotal || (entry.lane?.queuedDepth ?? 0) + (entry.readerLane?.queuedDepth ?? 0) >= this.#options.maxQueuedPerDatabase) return false;
         this.#options.incrementQueuedOperations();
         return true;
       },
       onDequeued: this.#options.decrementQueuedOperations,
       observability: this.#options.observability,
-    });
+    };
+    entry.lane = new DatabaseWriterLane(laneOptions);
+    entry.readerLane = new DatabaseWriterLane({ ...laneOptions, role: 'reader' });
     entry.opening = this.#options.openEntry(entry);
     // Concurrent acquirers may all cancel before observing shared startup.
     void entry.opening.catch(() => undefined);

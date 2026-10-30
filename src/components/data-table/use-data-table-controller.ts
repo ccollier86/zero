@@ -19,6 +19,7 @@ import { selectedDataTablePageRows } from './data-table-selection';
 import { useDataTableLiveWindow } from './use-data-table-live-window';
 import { useDataTableCollectionInserts } from './use-data-table-collection-inserts';
 import type { InternalClient } from '../../frontend/client/sdk';
+import { useDataTableAudit } from './use-data-table-audit';
 
 /** Internal composition result; not an additional public table API. */
 export interface DataTableController<T extends Row> {
@@ -108,6 +109,7 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     getRowId: server ? source.getRowId : undefined,
     paginationMode: mode,
   });
+  useDataTableAudit(partition, resolved.data, resolved.auditReceipt, dt.table.getRowModel().rows.map(row => row.original));
   const mutationRunner = useDataTableMutationRunner({ refresh: resolved.refresh, boundaryKey: partition });
   const selectedIds = selectedDataTablePageRows(dt.table).map((row) => row.id);
   const selectionKey = stableValueKey(selectedIds);

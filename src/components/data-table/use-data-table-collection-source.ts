@@ -16,11 +16,13 @@ import { useClientMaybe } from '../../frontend/client/client-context';
 import type { Row } from '../../sync/types';
 import type { DataTableSourceActions } from './data-table-source';
 import { invokeDataTableSourceWrite } from './data-table-source-action-guard';
+import { emptyLoggingResult } from '../../frontend/client/logging-result-provenance';
 
 const NOOP_UNSUBSCRIBE = () => {};
 const EMPTY_RECORD: Record<string, never> = {};
 
 export interface OptionalDataTableCollection<T extends Row> {
+  auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt;
   data: T[] | null;
   actions: DataTableSourceActions<T> | null;
 }
@@ -114,5 +116,5 @@ export function useOptionalDataTableCollection<T extends Row>(
     [clear, collection, insert, load, remove, update],
   );
 
-  return { data: rows, actions };
+  return { data: rows, actions, auditReceipt: rows?.length === 0 ? emptyLoggingResult(byId) : undefined };
 }

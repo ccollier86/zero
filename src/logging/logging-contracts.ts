@@ -75,6 +75,8 @@ export interface StoredLoggingEvent {
   readonly event: LoggingEvent;
   readonly ordinal: number;
   readonly ingestedAt: number;
+  /** Rebuildable summary; event remains the unmodified original supporting evidence. */
+  readonly activity?: import('./logging-activity-summary').LoggingActivitySummary;
 }
 
 /** Event-level replay proof survives expiration of a Fabric command receipt. */
@@ -93,6 +95,10 @@ export type LoggingReadScope =
 
 /** Closed initial query vocabulary. Nested shared Filters execution is a later integration. */
 export interface LoggingQuery {
+  /** Events preserves the original API. Native workspaces select logical activities. */
+  readonly projection?: 'events' | 'activities';
+  /** Explore supporting evidence for one activity under the same live scope authorization. */
+  readonly activityId?: string;
   /** Exact stable [sourceId,eventId] row identities, bounded to 100 per authorized lookup. */
   readonly eventIds?: readonly string[];
   readonly limit?: number;
@@ -105,6 +111,9 @@ export interface LoggingQuery {
   readonly family?: LoggingFamily;
   readonly action?: string;
   readonly actorId?: string;
+  /** A person as the executor or explicit initiator of system/API work. actorId remains an exact executor filter. */
+  readonly userId?: string;
+  readonly changedField?: string;
   readonly sessionId?: string;
   readonly targetType?: string;
   readonly targetId?: string;
@@ -130,4 +139,6 @@ export interface LoggingChangePage {
   readonly throughOrdinal: number;
   readonly highWaterOrdinal: number;
   readonly hasMore: boolean;
+  /** Activity identities which changed out of the requested filter. Never fabricated INSERT evidence. */
+  readonly removed?: readonly Readonly<{ id: string; revision: number }>[];
 }

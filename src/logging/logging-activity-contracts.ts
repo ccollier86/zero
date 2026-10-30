@@ -23,4 +23,4 @@ export interface LoggingRecordChange {
   readonly omittedFields: number;
 }
 
-export type LoggingActivityDetail = LoggingRecordChange;
+export type LoggingActivityDetail = LoggingRecordChange | import('./logging-result-contracts').LoggingResultReference;

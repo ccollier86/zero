@@ -11,6 +11,7 @@ import type { ServiceDataScope } from '../../auth/service-data-scope';
 import { DatabaseError } from '../../databases/database-error';
 import type { DatabaseManager } from '../../databases/database-manager';
 import type { ResourceTenantDatabaseAccess } from '../../resources/resource-crud-service';
+import type { LoggingResultReceipt } from '../../logging/logging-result-contracts';
 import type {
   AsyncDatabaseClient,
   DatabaseBatchInput,
@@ -35,6 +36,8 @@ export interface CreateRequestDatabaseClientOptions {
   readonly scope: ServiceDataScope;
   /** Durable live-authority fence captured with the request/background scope. */
   readonly assertCurrentAuthoritySync: () => void;
+  /** Trusted app-local boundary, invoked after the physical binding has been released. */
+  readonly prepareRead?: (input: { table: string; kind: 'record' | 'list'; rows: readonly DatabaseOperationRow[]; revision: string }) => Promise<LoggingResultReceipt | null>;
 }
 
 /**
@@ -59,7 +62,7 @@ export function createRequestDatabaseClient(
   if (scope.scopeKind === 'application') {
     if (tenantDatabases) return null;
     const primary = manager.bindApplication(assertCurrentAuthority);
-    return primary ? new RequestDatabaseClient(manager, null, assertCurrentAuthority, primary) : null;
+    return primary ? new RequestDatabaseClient(manager, null, assertCurrentAuthority, primary, options.prepareRead) : null;
   }
   if (!tenantDatabases) return null;
 
@@ -67,6 +70,7 @@ export function createRequestDatabaseClient(
     manager,
     scope.tenantId,
     assertCurrentAuthority,
+    null, options.prepareRead,
   );
 }
 
@@ -111,17 +115,20 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
   readonly #tenantId: string | null;
   readonly #primary: AsyncDatabaseClient | null;
   readonly #assertCurrentAuthority: () => undefined;
+  readonly #prepareRead: CreateRequestDatabaseClientOptions['prepareRead'];
 
   constructor(
     manager: DatabaseManager,
     tenantId: string | null,
     assertCurrentAuthority: () => undefined,
     primary: AsyncDatabaseClient | null = null,
+    prepareRead?: CreateRequestDatabaseClientOptions['prepareRead'],
   ) {
     this.#manager = manager;
     this.#tenantId = tenantId;
     this.#assertCurrentAuthority = assertCurrentAuthority;
     this.#primary = primary;
+    this.#prepareRead = prepareRead;
     Object.freeze(this);
   }
 
@@ -130,7 +137,8 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     id: string,
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseOperationRow | null>> {
-    return await this.#withBinding((client) => client.get(table, id, options));
+    const result = await this.#withBinding((client) => client.get(table, id, options));
+    return result.value === null ? result : this.#withEvidence(table, 'record', result, [result.value]);
   }
 
   async list(
@@ -138,7 +146,9 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     page: DatabaseListPageOptions,
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseListPage>> {
-    return await this.#withBinding((client) => client.list(table, page, options));
+    const result = await this.#withBinding((client) => client.list(table, page, options));
+    if (!this.#prepareRead) return result;
+    return this.#withEvidence(table, 'list', result, result.value.rows);
   }
 
   async find(
@@ -146,7 +156,9 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     input: DatabaseFindInput,
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseFindRows>> {
-    return await this.#withBinding((client) => client.find(table, input, options));
+    const result = await this.#withBinding((client) => client.find(table, input, options));
+    if (!this.#prepareRead) return result;
+    return this.#withEvidence(table, 'list', result, result.value);
   }
 
   /** Read one exact-total page using the same short-lived trusted binding and final fence. */
@@ -155,7 +167,9 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     input: DatabaseFindInput,
     options?: DatabaseReadOptions,
   ): Promise<DatabaseReadResult<DatabaseFindPage>> {
-    return await this.#withBinding((client) => client.findPage(table, input, options));
+    const result = await this.#withBinding((client) => client.findPage(table, input, options));
+    if (!this.#prepareRead) return result;
+    return this.#withEvidence(table, 'list', result, result.value.rows);
   }
 
   async query(
@@ -186,6 +200,14 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
     options: DatabaseMutationOptions,
   ): Promise<DatabaseCommitResult<DatabaseSerializableValue>> {
     return await this.#withBinding((client) => client.command(name, input, options));
+  }
+
+  async #withEvidence<T extends DatabaseSerializableValue>(table: string, kind: 'record' | 'list', result: DatabaseReadResult<T>, rows: readonly DatabaseOperationRow[]): Promise<DatabaseReadResult<T>> {
+    if (!this.#prepareRead) return result;
+    this.#assertFinalAuthority();
+    const receipt = await this.#prepareRead({ table, kind, rows, revision: 'snapshot:' + result.sequence.seq });
+    this.#assertFinalAuthority();
+    return receipt ? { ...result, auditReceipt: receipt } : result;
   }
 
   async #withBinding<T>(

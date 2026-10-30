@@ -7,6 +7,10 @@ import type {
 import type { IdentityKey } from '../sync/identity';
 import type { Change, Row } from '../sync/types';
 import { DatabaseError } from './database-error';
+import type { DatabaseFindInput, DatabaseFindRows } from './database-operations';
+import { databaseOperationRecord } from './database-operation-payload';
+import { validateDatabaseFindOperation } from './database-find-validation';
+import { runDatabaseFind } from './database-find';
 
 /**
  * Tracked application-data surface available to one registered command.
@@ -16,6 +20,9 @@ import { DatabaseError } from './database-error';
  * internal-change APIs.
  */
 export interface DatabaseWriteCommandCapability {
+  /** Bounded structured read of registered tables within this command's existing transaction. No SQL/handle escapes. */
+  readonly find: (table: string, input: DatabaseFindInput) => DatabaseFindRows;
+  readonly hasTable: (table: string) => boolean;
   readonly insert: (table: string, row: Row) => Change;
   readonly create: (table: string, row: Row) => Change;
   readonly createStrict: (table: string, row: Row) => Change;
@@ -128,6 +135,16 @@ export function createDatabaseWriteCommandSession(
       );
     }
   };
+
+  defineMethod(methods, 'hasTable', activeMethod((table: string) => typeof table === 'string' && database.hasTable(table)));
+  defineMethod(methods, 'find', activeMethod((table: string, input: DatabaseFindInput) => {
+    if (typeof table !== 'string' || !database.hasTable(table)) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Database command table is not registered.');
+    const fields = databaseOperationRecord(input);
+    if (Object.keys(fields).some(key => !['select', 'filters', 'order', 'limit', 'offset'].includes(key))) throw new DatabaseError('DATABASE_PAYLOAD_INVALID', 'Database command find fields are invalid.');
+    const catalog = { tables: [table], columns: { [table]: database.getColumns(table) }, primaryKeys: { [table]: database.getPrimaryKey(table) } };
+    const operation = validateDatabaseFindOperation({ ...fields, type: 'find', table }, catalog);
+    return runDatabaseFind(database, operation, catalog);
+  }));
 
   defineMethod(methods, 'insert', activeMethod((table: string, row: Row) => {
     assertWritableTable(table);

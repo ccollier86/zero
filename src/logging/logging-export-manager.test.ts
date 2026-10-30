@@ -83,3 +83,24 @@ test('expiration revokes access before provider cleanup and retries cleanup with
     await owner.reconcile(); expect(deleted).toBe(2);
   } finally { await owner.close(); }
 });
+
+test('activity export artifacts declare their v2 history contract without changing raw v1 artifacts', async () => {
+  for (const projection of ['events', 'activities'] as const) {
+    const original = job('format-' + projection);
+    const owned = { ...original, query: { ...original.query, projection } };
+    let bytes: Uint8Array | undefined;
+    const runtime = {
+      async page() { return { events: [], hasMore: false, highWaterOrdinal: 0 }; },
+      async evidenceCommand(_command: string, input: Record<string, unknown>) { return { ...owned, job: { ...owned.job, state: input.state } }; },
+    } as unknown as LoggingRuntime;
+    const storage = { async put(_namespace: string, _id: string, artifact: Uint8Array) { bytes = artifact; } } as unknown as StoragePrivateObjects;
+    const manager = new LoggingExportManager(runtime, storage);
+    try {
+      await manager.materialize(owned);
+      const { manifest } = JSON.parse(new TextDecoder().decode(bytes).trim());
+      expect(manifest).toMatchObject({ version: projection === 'activities' ? 2 : 1, complete: true, count: 0 });
+      if (projection === 'activities') expect(manifest).toMatchObject({ projection, historyComplete: true });
+      else expect(manifest).not.toHaveProperty('historyComplete');
+    } finally { await manager.close(); }
+  }
+});

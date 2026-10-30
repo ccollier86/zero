@@ -114,11 +114,14 @@ export function captureLoggingEvent(trustedContext: LoggingContext, input: Loggi
   if (evidence === 'provider-confirmed' && c.origin !== 'provider') invalid();
   const target = r.target == null ? null : loggingRecord(r.target, ['type', 'id']);
   const detail = r.detail === undefined ? undefined : normalizeLoggingActivityDetail(r.detail);
-  if (detail && (c.origin === 'frontend' || family !== 'records' || !['record.created', 'record.updated', 'record.deleted'].includes(r.action as string)
+  if (detail?.kind === 'record-change' && (c.origin === 'frontend' || family !== 'records' || !['record.created', 'record.updated', 'record.deleted'].includes(r.action as string)
     || r.outcome !== 'succeeded' || evidence !== 'server-confirmed' || !target || target.type !== loggingTableTarget(detail.table)
     || r.action === 'record.created' && detail.changes.some(field => field.beforePresent || !field.afterPresent)
     || r.action === 'record.deleted' && detail.changes.some(field => !field.beforePresent || field.afterPresent)
     || r.action === 'record.updated' && !detail.changes.length && !detail.omittedFields)) invalid();
+  if (detail?.kind === 'result' && (c.origin === 'frontend' || family !== 'records' || r.action !== (detail.resultKind === 'record' ? 'record.read.prepared' : 'record.list.prepared')
+    || r.outcome !== 'succeeded' || evidence !== 'server-confirmed' || !target || target.type !== loggingTableTarget(detail.table)
+    || detail.resultKind === 'list' && target.id !== detail.receiptId)) invalid();
   const event: LoggingEvent = Object.freeze({
     ...c, version: detail ? 2 : 1, id: loggingId(r.id)!, stream: family === 'operational' ? 'operational' : 'audit', family,
     action: loggingCode(r.action), level: r.level === undefined ? 'info' : loggingChoice(r.level, LOGGING_LEVELS),

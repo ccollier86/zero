@@ -4,6 +4,8 @@ import type { LoggingCheckpoint, LoggingEvidenceCursor, LoggingEvidencePage, Log
 import type { LoggingAdmissionReceipt } from './logging-admission-contracts';
 import type { LoggingExportJob, LoggingExportRequest } from './logging-export-contracts';
 import type { LoggingPeoplePage, LoggingPeopleQuery, LoggingTableChoice } from './logging-directory-contracts';
+import type { LoggingDeriveResultInput, LoggingPrepareResultInput, LoggingResultManifest, LoggingResultReceipt, LoggingResultVersions } from './logging-result-contracts';
+import type { LoggingActionDefinition, LoggingActionInput, LoggingActionValues } from './logging-action';
 
 export interface LoggingObservationResult { readonly accepted: number; readonly admission?: LoggingAdmissionReceipt }
 
@@ -12,7 +14,7 @@ export interface LoggingReviewInput { readonly id: string; readonly query: Loggi
 
 export const LOGGING_API = '/api/_zero/logging';
 export const LOGGING_BROWSER_ACTIONS = Object.freeze({
-  'view.opened': 'views', 'view.interval': 'views', 'view.closed': 'views',
+  'view.opened': 'views', 'view.interval': 'views', 'view.closed': 'views', 'view.result.changed': 'views',
   'clipboard.copy.observed': 'clipboard', 'clipboard.copy.completed': 'clipboard', 'clipboard.copy.failed': 'clipboard',
   'print.requested': 'printing', 'print.dialog.closed': 'printing', 'navigation.changed': 'navigation',
 } as const);
@@ -22,6 +24,10 @@ export interface LoggingObservation {
   readonly action: keyof typeof LOGGING_BROWSER_ACTIONS;
   readonly occurredAt: number;
   readonly target?: Readonly<{ type: string; id: string }>;
+  /** Opaque reference to a previously authorized server result. Never accepts client-provided row contents. */
+  readonly receiptId?: string;
+  /** Selects a registered static page pattern. Never an actual URL or dynamic path value. */
+  readonly page?: string;
   readonly interval?: Readonly<{ viewId: string; sequence: number; elapsedMs: number; visibleMs: number; activeMs: number; incomplete: boolean }>;
 }
 export interface LoggingCollectionPolicy {
@@ -48,6 +54,11 @@ export interface LoggingHealth {
 }
 /** Query projections never accept a tenant, actor, database ref or raw SQL selector. */
 export interface ScopedLogging {
+  action<T extends LoggingActionValues>(definition: LoggingActionDefinition<T>, input: LoggingActionInput<NoInfer<T>>): Promise<LoggingReceipt | null>;
+  prepareResult(input: LoggingPrepareResultInput): Promise<LoggingResultReceipt | null>;
+  deriveResult(input: LoggingDeriveResultInput): Promise<LoggingResultReceipt | null>;
+  result(id: string, platform?: boolean): Promise<LoggingResultManifest | null>;
+  resultVersions(activityId: string, options?: { beforeOrdinal?: number; highWaterOrdinal?: number; platform?: boolean }): Promise<LoggingResultVersions>;
   people(query?: LoggingPeopleQuery): Promise<LoggingPeoplePage>;
   tables(): Promise<readonly LoggingTableChoice[]>;
   page(stream: LoggingStream, query?: LoggingQuery): Promise<LoggingPage>;
@@ -73,6 +84,9 @@ export interface ScopedLogging {
   verify(stream: LoggingStream, afterOrdinal?: number, checkpoint?: LoggingCheckpoint): Promise<LoggingVerification>;
 }
 export interface LoggingClient {
+  deriveResult(input: LoggingDeriveResultInput, options?: { signal?: AbortSignal }): Promise<LoggingResultReceipt | null>;
+  result(id: string, options?: { signal?: AbortSignal; platform?: boolean }): Promise<LoggingResultManifest | null>;
+  resultVersions(activityId: string, options?: { beforeOrdinal?: number; highWaterOrdinal?: number; signal?: AbortSignal; platform?: boolean }): Promise<LoggingResultVersions>;
   people(query?: LoggingPeopleQuery, options?: { signal?: AbortSignal }): Promise<LoggingPeoplePage>;
   tables(options?: { signal?: AbortSignal }): Promise<readonly LoggingTableChoice[]>;
   /** Pin a collector to the current auth generation before any asynchronous observation occurs. */

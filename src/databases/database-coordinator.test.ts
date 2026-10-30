@@ -733,6 +733,12 @@ describe('DatabaseCoordinator', () => {
     const oldWriterMaySettle = deferred<void>();
     harness.deferNextWriterSettlement = oldWriterMaySettle.promise;
     harness.onOperation = async ({ role, operation }) => {
+      // Reader slots are now FIFO-bounded. Lose the independent writer
+      // binding while the snapshot is active, rather than inventing a second
+      // simultaneously executing request on the same single reader slot.
+      if (role === 'writer' && operation.type === 'get' && operation.id === 'terminal') {
+        throw new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Writer exited.', { retryable: false, outcome: null });
+      }
       if (role !== 'reader' || operation.type !== 'get') return;
       if (operation.id === 'stale') {
         staleStarted.resolve();
@@ -741,13 +747,6 @@ describe('DatabaseCoordinator', () => {
           'DATABASE_TRANSACTION_STALE',
           'Reader is behind.',
           { retryable: true, outcome: 'not-started' },
-        );
-      }
-      if (operation.id === 'terminal') {
-        throw new DatabaseError(
-          'DATABASE_EXECUTOR_FAILED',
-          'Reader exited.',
-          { retryable: false, outcome: null },
         );
       }
     };
@@ -759,7 +758,7 @@ describe('DatabaseCoordinator', () => {
     await staleStarted.promise;
     await expect(captureCode(() => lease.execute({
       type: 'get', table: 'todos', id: 'terminal',
-      consistency: { mode: 'snapshot' },
+      consistency: { mode: 'strong' },
     }))).resolves.toBe('DATABASE_EXECUTOR_FAILED');
     expect(harness.coordinator.diagnostics().quarantinedSlots).toBe(1);
 

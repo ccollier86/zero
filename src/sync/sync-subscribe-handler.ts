@@ -12,6 +12,7 @@ import type { ReactiveDB } from './reactive-db';
 import { sendSyncSnapshot } from './sync-snapshot-response';
 import { selectSyncSubscription } from './sync-subscription-selection';
 import { sendSyncWire } from './sync-wire-send';
+import { prepareSyncCatchupResults, syncReadDeliveryTail } from './sync-read-results';
 import type {
   SyncCatchupMessage,
   SyncSocketData,
@@ -28,6 +29,7 @@ export async function handleSyncSubscribe(
   assertCurrentAuthority: () => void = () => undefined,
 ): Promise<void> {
   if (!validSubscribe(message)) return;
+  const preceding = syncReadDeliveryTail(socket); if (preceding) await preceding;
   assertCurrentAuthority();
   const selection = selectSyncSubscription(socket, message, db, snapshotTables);
   const hasPriorCursor = message.epoch !== undefined || message.lastSeq > 0;
@@ -71,7 +73,7 @@ export async function handleSyncSubscribe(
       socket.data.resourceRowProjectors?.get(change.table),
     ))
     .filter((change): change is NonNullable<typeof change> => Boolean(change))
-    .map((change) => ({ ...change, origin: '' }));
+    .map((change) => ({ ...change, row: socket.data.prepareReadResult && change.row ? structuredClone(change.row) : change.row, origin: '' }));
   const response: SyncCatchupMessage = {
     type: 'sync.catchup',
     ...(socket.data.syncMultiplexed ? { plane: 'default' as const } : {}),
@@ -81,6 +83,13 @@ export async function handleSyncSubscribe(
     epoch: db.syncEpoch,
     scope: socket.data.authorizationScope,
   };
+  let auditResults;
+  try { auditResults = socket.data.prepareReadResult ? await prepareSyncCatchupResults(socket, projected, replay.seq, db.syncEpoch) : undefined; }
+  catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'LOGGING_RESULT_LIMIT')) throw error;
+    await sendSyncSnapshot(socket, selection.snapshot, db, 'preserve-pending', observability, assertCurrentAuthority); return;
+  }
+  if (auditResults) response.auditResults = auditResults;
   assertCurrentAuthority();
   if (sendSyncWire(socket, response)) socket.data.lastSeq = replay.seq;
 }

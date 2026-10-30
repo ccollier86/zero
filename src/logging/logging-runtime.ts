@@ -26,6 +26,11 @@ import { createLocalLoggingCustody } from './logging-local-custody';
 import type { LoggingHealth } from './logging-api-contracts';
 import type { LoggingDirectoryPort } from './logging-person-directory';
 import { executeCoordinatorLoggingDeliveryProbe } from '../databases/database-coordinator-capability';
+import type { LoggingDeriveResultInput, LoggingPrepareResultInput, LoggingResultManifest, LoggingResultReceipt } from './logging-result-contracts';
+import { captureLoggingResult } from './logging-result-capture';
+import { loggingDigest } from './logging-hash';
+import { loggingTableTarget } from './logging-table-target';
+import { loggingPageDescriptor } from './logging-route-catalog';
 
 interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store: LoggingFabricStore }
 
@@ -33,6 +38,11 @@ interface StreamOwner { readonly lease: DatabaseCoordinatorLease; readonly store
 export class LoggingRuntime {
   /** @internal Minimal current identity presentation, not another log-file identity store. */
   directory: LoggingDirectoryPort | null = null;
+  /** @internal Static router catalog; browser input can select, never define, a retained page identity/label. */
+  readonly pages = new Map<string, Readonly<{ id: string; label: string }>>();
+  registerPages(patterns: readonly string[]): void {
+    for (const pattern of new Set([...patterns, ...Object.keys(this.config.policy.pages)])) this.pages.set(pattern, loggingPageDescriptor(pattern, this.config.policy.pages[pattern]));
+  }
   readonly admission: LoggingAdmission;
   private custody: LoggingCheckpointCustody | null = null;
   private custodyLease: DatabaseCoordinatorLease | null = null;
@@ -141,6 +151,7 @@ export class LoggingRuntime {
         const lease = await coordinator.acquire('logging:' + stream);
         const store = new LoggingFabricStore(createAsyncDatabaseClient({ executor: lease as AsyncDatabaseOperationExecutor }), stream);
         owner.streams.set(stream, { lease, store });
+        await store.rebuildActivities();
         await store.page({ kind: 'platform' }, { limit: 1 });
       }
       if (config.custody) {
@@ -206,6 +217,43 @@ export class LoggingRuntime {
     return owner.store.page(scope, query);
   }
 
+  /** Trusted authorized read-release boundary. No application transaction or authority lease may span this await. */
+  async prepareResult(context: LoggingContext, input: LoggingPrepareResultInput): Promise<LoggingResultReceipt | null> {
+    this.assertReady();
+    if (!this.config.policy.capture.records) return null;
+    return this.prepareCapturedResult(context, captureLoggingResult(input, this.config.policy.resources));
+  }
+  /** @internal Already captured with this runtime's privacy policy before request authority revalidation. */
+  async prepareCapturedResult(context: LoggingContext, manifest: LoggingResultManifest): Promise<LoggingResultReceipt | null> {
+    this.assertReady(); if (!this.config.policy.capture.records) return null;
+    const digest = loggingDigest(manifest);
+    const event = captureLoggingEvent(context, { id: 'result:' + manifest.id, family: 'records',
+      action: manifest.kind === 'record' ? 'record.read.prepared' : 'record.list.prepared', occurredAt: manifest.preparedAt,
+      evidence: 'server-confirmed', outcome: 'succeeded', target: { type: loggingTableTarget(manifest.table), id: manifest.kind === 'record' ? manifest.records[0]!.id : manifest.id },
+      detail: { kind: 'result', receiptId: manifest.id, digest, resultKind: manifest.kind, table: manifest.table, recordCount: manifest.records.length, complete: manifest.complete } });
+    const store = this.streams.get('audit')!.store;
+    try { const result = await store.prepareResult(manifest, event); await this.sealCommittedAudit(store); this.committed('audit'); return result; }
+    catch (error) { if (this.admission.required && (!(error instanceof LoggingError) || error.code !== 'LOGGING_EVENT_INVALID')) this.admission.invalidate(); throw error; }
+  }
+  async observeResult(receiptId: string, event: LoggingEvent): Promise<LoggingReceipt | null> {
+    this.assertReady();
+    if (!loggingCaptures(this.config.policy, event)) return null;
+    const store = this.streams.get('audit')!.store;
+    try {
+      const result = await store.observeResult(receiptId, event); await this.sealCommittedAudit(store); this.committed('audit'); return result;
+    } catch (error) { if (this.admission.required && (!(error instanceof LoggingError) || error.code !== 'LOGGING_EVENT_INVALID')) this.admission.invalidate(); throw error; }
+  }
+  async deriveResult(context: LoggingContext, input: LoggingDeriveResultInput): Promise<LoggingResultReceipt | null> {
+    this.assertReady(); if (!this.config.policy.capture.records || !this.config.policy.capture.views) return null;
+    const event = captureLoggingEvent(context, { id: crypto.randomUUID(), family: 'records', action: 'record.list.prepared',
+      occurredAt: Date.now(), evidence: 'server-confirmed', outcome: 'succeeded' });
+    const store = this.streams.get('audit')!.store;
+    try { const result = await store.deriveResult(input, event); await this.sealCommittedAudit(store); this.committed('audit'); return result; }
+    catch (error) { if (this.admission.required && (!(error instanceof LoggingError) || error.code !== 'LOGGING_EVENT_INVALID')) this.admission.invalidate(); throw error; }
+  }
+  async result(scope: LoggingReadScope, id: string): Promise<LoggingResultManifest | null> { this.assertReady(); return this.streams.get('audit')!.store.result(scope, id); }
+  async resultVersions(scope: LoggingReadScope, activityId: string, beforeOrdinal?: number, highWaterOrdinal?: number) { this.assertReady(); return this.streams.get('audit')!.store.resultVersions(scope, activityId, beforeOrdinal, highWaterOrdinal); }
+
   /** @internal Fixed private evidence capability; scope is provided by the admitted Guardian facade. */
   async changes(stream: LoggingStream, scope: LoggingReadScope, query: LoggingQuery, afterOrdinal: number) {
     this.assertReady();
@@ -245,7 +293,12 @@ export class LoggingRuntime {
     this.maintenanceTask = (async () => {
       for (const [stream, owner] of this.streams) {
         const days = stream === 'audit' ? this.config.retention.auditDays : this.config.retention.operationalDays;
-        if (days !== null) for (let i = 0; i < 8; i++) if (await owner.store.prune(Math.max(0, now - days * 86400000)) < 100) break;
+        if (days !== null) for (let i = 0; i < 8; i++) {
+          const removed = await owner.store.prune(Math.max(0, now - days * 86400000));
+          if (removed) { if (stream === 'audit') await this.sealCommittedAudit(owner.store); this.committed(stream); }
+          if (removed < 100) break;
+        }
+        await owner.store.cleanupActivities();
       }
     })().finally(() => { this.maintenanceTask = null; });
     return this.maintenanceTask;

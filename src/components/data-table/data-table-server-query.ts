@@ -10,6 +10,7 @@ import {
   type DataFilterValue,
 } from '../../frontend/client/query-params';
 import type { Row } from '../../sync/types';
+import { isLoggingResultReceipt } from '../../logging/logging-result-shape';
 import { dataTableServerMembershipQueries } from './data-table-server-membership-query';
 import {
   DataTableServerSourceError,
@@ -29,6 +30,7 @@ const FILTER_OPERATORS = new Set<DataFilterOperator>([
 
 interface DataTableApiResponse<T extends Row> {
   rows: T[];
+  auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt;
   page: {
     limit: number;
     offset: number;
@@ -216,6 +218,7 @@ export function normalizeDataTableApiResponse<T extends Row>(
     throw invalidResponse();
   }
   if (value.rows.some((row) => !isRecord(row))) throw invalidResponse();
+  if (value.auditReceipt !== undefined && (!isLoggingResultReceipt(value.auditReceipt) || value.auditReceipt.count !== value.rows.length || value.auditReceipt.kind !== 'list')) throw invalidResponse();
   const page = value.page;
   if (!isNonNegativeInteger(page.offset)
     || !isPositiveInteger(page.limit)
@@ -233,6 +236,7 @@ export function normalizeDataTableApiResponse<T extends Row>(
   }
   return {
     rows: [...value.rows] as T[],
+    ...(value.auditReceipt === undefined ? {} : { auditReceipt: value.auditReceipt }),
     page: {
       mode: 'offset',
       offset: page.offset,
@@ -251,6 +255,7 @@ export function normalizeDataTableServerResult<T extends Row>(
     throw invalidResponse();
   }
   if (value.rows.some((row) => !isRecord(row))) throw invalidResponse();
+  if (value.auditReceipt !== undefined && (!isLoggingResultReceipt(value.auditReceipt) || value.auditReceipt.count !== value.rows.length || value.auditReceipt.kind !== 'list')) throw invalidResponse();
   const page = value.page;
   if (page.mode !== expectedMode
     || typeof page.hasMore !== 'boolean'
@@ -261,6 +266,7 @@ export function normalizeDataTableServerResult<T extends Row>(
     if (!isNonNegativeInteger(page.offset)) throw invalidResponse();
     return {
       rows: [...value.rows] as T[],
+      ...(value.auditReceipt === undefined ? {} : { auditReceipt: value.auditReceipt }),
       page: {
         mode: 'offset',
         offset: page.offset,
@@ -274,6 +280,7 @@ export function normalizeDataTableServerResult<T extends Row>(
   }
   return {
     rows: [...value.rows] as T[],
+    ...(value.auditReceipt === undefined ? {} : { auditReceipt: value.auditReceipt }),
     page: {
       mode: 'cursor',
       hasMore: page.hasMore,
