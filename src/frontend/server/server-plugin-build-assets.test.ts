@@ -81,6 +81,21 @@ describe('browser entry snapshot admission', () => {
     } finally { await rm(projectRoot, { recursive: true, force: true }); }
   });
 
+  test('keeps snapshot descriptor ownership with the no-follow FileHandle', async () => {
+    const { projectRoot } = await fixture();
+    const source = 'export const marker = "owned snapshot — 日本語";';
+    await Bun.write(join(projectRoot, 'entry.ts'), source);
+    const file = spyOn(Bun, 'file');
+    try {
+      const admitted = await readPluginBuildFile(projectRoot, { name: 'source', path: 'entry.ts', sourceRoot: projectRoot, contentHash: hash(source) });
+      expect(new TextDecoder().decode(admitted.bytes)).toBe(source);
+      expect(admitted.hash).toBe(hash(source));
+      // A raw descriptor is reusable after FileHandle.close(). Keep snapshot
+      // reads on the admitted handle instead of creating another descriptor alias.
+      expect(file.mock.calls.filter(([path]) => typeof path === 'number')).toHaveLength(0);
+    } finally { file.mockRestore(); await rm(projectRoot, { recursive: true, force: true }); }
+  });
+
   test('production ESM preserves imported serializer aliases across the dependency graph', async () => {
     const { projectRoot, context } = await fixture();
     try {

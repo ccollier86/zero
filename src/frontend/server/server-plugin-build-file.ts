@@ -19,12 +19,13 @@ export async function readPluginBuildFile(projectRoot: string, file: ZeroPluginB
     if (root !== undefined) assertInside(root, admittedPath);
     const before = await stat(admittedPath, { bigint: true });
     if (!before.isFile()) throw invalid('Declared plugin file source must be a regular file.');
-    // Bun has no native realpath/no-follow descriptor opener. Its Node-compatible
-    // filesystem API supplies those safeguards; byte reads remain Bun-native.
+    // Keep admission, reads and close on this one no-follow FileHandle. A
+    // BunFile made from its raw fd can retain that reusable descriptor number
+    // after this owner closes it; another file or SQLite may acquire it next.
     handle = await open(admittedPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = await handle.stat({ bigint: true });
     if (!sameSnapshot(before, opened)) throw changed();
-    const bytes = new Uint8Array(await Bun.file(handle.fd).arrayBuffer());
+    const bytes = new Uint8Array(await handle.readFile());
     const after = await handle.stat({ bigint: true });
     const [currentPath, currentFile, currentRoot] = await Promise.all([
       realpath(path), stat(admittedPath, { bigint: true }), rootPath === undefined ? undefined : realpath(rootPath),
