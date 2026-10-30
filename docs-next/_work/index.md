@@ -22,7 +22,11 @@ publication, search, and production agent bundles.
   automatic native operations, historical lists, record views and duration,
   committed differences, public extension tools and a readable native DataTable.
   Includes configuration, public-asset safety, worker/storage ownership,
-  retained-state transition and end-to-end release acceptance. Planning only.
+  retained-state transition and end-to-end release acceptance. Implemented on a
+  feature branch; normal release qualification remains separate.
+  - [Activity auditing qualification](./activity-auditing-qualification.md):
+    source/browser checks, retained installed-archive/Linux proof, exact diagnostic
+    candidate and outstanding release gates; not a selected main update.
 - [Combined blog messaging and logging release](./combined-blog-messaging-logging-release.md):
   current assessment, remaining product polish, shared runtime failures, exact
   archive qualification and normal updater publication in execution order.

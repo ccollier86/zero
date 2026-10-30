@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.7.0"
-  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
+  commit: "06cd2719ddce6680480845ab46f88eec1b1e0c76"
   snapshot: clean
   date: "2026-10-29"
   evidence_level: implementation-verified
@@ -84,7 +84,7 @@ or localStorage copy of sensitive activity.
 ## Bounds and Failure Behavior
 
 Buffers hold at most 128 observations and send at most 32 per batch. Server
-admission defaults to 240 observations and separately 240 result selections per
+admission defaults to 2048 observations and separately 512 result selections per
 minute per session/scope (`logging.browser`, each configurable 1–10000), with
 bounded principal tracking. A batch is fully validated before any event append.
 Partial persistence followed by failure is retried with the same identities.

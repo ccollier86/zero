@@ -13,7 +13,7 @@ modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.7.0"
-  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
+  commit: "06cd2719ddce6680480845ab46f88eec1b1e0c76"
   snapshot: clean
   date: "2026-10-29"
   evidence_level: implementation-verified
@@ -62,8 +62,8 @@ updater status, not an older preview or intermediate source pack.
 | `logging.resources` | Table labels and per-field `omit`, `redact`, or finite `{ values }` policies. Changes default to redaction; approved result values only use declared finite vocabularies. See [activity auditing](./activity-auditing.md). |
 | `logging.pages` | Static registered route-pattern labels. Never actual dynamic URLs, IDs, query strings or fragments. |
 | `logging.diagnostics.http` | `false`. Explicit technical successful HTTP capture; routine successful transport stages never become grouped user activities. Failures/interruption retain evidence without this opt-in. |
-| `logging.browser.observationsPerMinute` | 240 per current session/scope; integer 1–10000. Independent from source queue/writer admission. |
-| `logging.browser.selectionsPerMinute` | 240 opaque result selections per current session/scope; integer 1–10000. Separate from observation admission to prevent preparatory-work overload. |
+| `logging.browser.observationsPerMinute` | 2048 per current session/scope; integer 1–10000. Allows interval/change pairs and view heartbeats; independent from source queue/writer admission. |
+| `logging.browser.selectionsPerMinute` | 512 opaque result selections per current session/scope; integer 1–10000. Separate from observation admission to prevent preparatory-work overload. |
 | `logging.access` | Optional Guardian permission codes for `read`, `export`, `hold`, `review`, `manage`. Omitted codes require a platform administrator. Codes must already be declared in Guardian; export and review additionally require read. |
 | `logging.metadataKeys` | Empty by default. Up to 32 explicitly approved scalar metadata keys for trusted `record()` calls. Secret/content keys remain prohibited. |
 | `logging.retention.auditDays` | `null`: indefinite retention. Otherwise an integer 1–36500; explicit bounded pruning respects audit holds. |
@@ -192,6 +192,11 @@ child. A custom entry that handles only the older database marker is no longer
 sufficient. The owner and actors must use matching
 realm/build fingerprints; do not weaken the check to mix separately built
 implementations. The shared-entry pattern is:
+
+Invoke the helper before yielding to ordinary startup or asynchronous diagnostic
+work. An instrumentation probe must not delay installing the private IPC owner.
+Keep the actor entry minimal; import/start the application only when the helper
+reports that this is not an actor invocation.
 
 ```ts
 import { runLoggingActorIfRequested } from '@zero/framework/logging/actor';

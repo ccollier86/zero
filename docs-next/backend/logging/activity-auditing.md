@@ -13,7 +13,7 @@ modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
   version: "2.7.0"
-  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
+  commit: "06cd2719ddce6680480845ab46f88eec1b1e0c76"
   snapshot: clean
   date: "2026-10-29"
   evidence_level: implementation-verified
@@ -54,7 +54,7 @@ logging: {
       },
     },
   },
-  browser: { observationsPerMinute: 240, selectionsPerMinute: 240 },
+  browser: { observationsPerMinute: 2048, selectionsPerMinute: 512 },
   capture: { clipboard: false, printing: false },
 }
 ```
@@ -207,7 +207,9 @@ inspectable. Unrelated sessions, scopes and later windows are not merged by time
   otherwise bound displayed native selections. A known released display over
   that budget reports capture failure, not a falsely complete truncated list.
 - Browser observations and result selections have independent per-session/scope
-  budgets (240/minute each by default, configurable 1–10000). The collector holds
+  budgets (2048 observations/512 selections per minute by default, each configurable
+  1–10000). The observation budget accounts for both an interval and a result-change
+  fact per displayed revision, plus owned-view heartbeats. The collector holds
   128 observations, submits at most 32 per batch and bounds receipt resolution
   to 15 seconds. Overload is visible, not silent sampling.
 - First receipt display admission expires after five minutes. A previously

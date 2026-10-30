@@ -741,6 +741,12 @@ imports through a focused browser-safe public facade.
 
 ### Remaining release qualification
 
+The [current qualification record](./activity-auditing-qualification.md) records
+the passing retained installed-archive/Linux official-bundle test, source/browser
+evidence and exact candidate identity. It also records the full-suite interruption
+when development storage fell below 400 MiB. That candidate is not the selected
+main update, and unfinished/interrupted gates must not be reported as passing.
+
 Do not select an update archive until the complete source/package/browser gates
 pass, retained installed-archive and Linux/amd64 official bundled deployment are
 qualified, and the exact clean release commit/archive passes normal updater
