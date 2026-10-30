@@ -77,7 +77,8 @@ test('curated facades preserve every original ordered named/type/star source con
       'DocumentEditorProps', 'DocumentEditorHandle', 'DocumentFormat', 'DocumentSourceChange', 'DocumentParseResult'].includes(item.name));
   const documentAdditive = result.records.filter(documentPart);
   const loggingTargets = new Set(['src/logging/logging-api-contracts', 'src/logging/logging-contracts', 'src/logging/logging-evidence-contracts', 'src/logging/logging-export-contracts', 'src/logging/logging-admission-contracts',
-    'src/logging/logging-directory-contracts', 'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
+    'src/logging/logging-directory-contracts', 'src/logging/logging-result-contracts', 'src/logging/logging-activity-summary',
+    'src/frontend/client/logging-collector', 'src/frontend/client/logging-hooks', 'src/components/logging']);
   const loggingAdditive = result.records.filter(record => loggingTargets.has(record.target));
   const feedbackTargets = new Set(['src/frontend/client/notification-feedback-provider', 'src/frontend/client/notification-audio', 'src/frontend/client/notification-feedback']);
   const feedbackAdditive = result.records.filter(record => feedbackTargets.has(record.target));
@@ -124,8 +125,11 @@ test('curated facades preserve every original ordered named/type/star source con
     && !loggingTargets.has(record.target) && !feedbackTargets.has(record.target) && !domainPart(record) && !drawerPart(record) && !blogPart(record) && !palettePart(record))
     .map(record => Array.isArray(record.clause) && (record.target === popoverTarget || record.target === appShellTarget)
       ? { ...record, clause: record.clause.filter(item => record.target === popoverTarget ? !anchorNames.has(item.name) : item.name !== 'AppShellLinkProps') } : record);
-  expect(loggingAdditive).toHaveLength(10);
+  expect(loggingAdditive).toHaveLength(12);
   expect(loggingAdditive.flatMap(record => Array.isArray(record.clause) ? record.clause.map(item => item.name) : []).sort()).toEqual([
+    'LoggingActivitySummary', 'LoggingViewSummary', 'LoggingDeriveResultInput', 'LoggingResultReceipt', 'LoggingResultManifest',
+    'LoggingResultRecord', 'LoggingPrepareResultInput', 'LoggingResultVersions', 'LoggingResultBinding', 'LoggingResultInteraction',
+    'LoggingDisplayBoundary', 'LoggingRowsView', 'useLoggingResultView', 'useLoggingRows', 'LoggingRecordLinkResolver',
     'LoggingActivityLabel', 'LoggingActivityProvider', 'LoggingAdmissionReceipt', 'LoggingCheckpoint', 'LoggingClient', 'LoggingCollectionPolicy', 'LoggingCollector', 'LoggingEvent', 'LoggingEventDetail', 'LoggingEvidence', 'LoggingEvidenceCursor', 'LoggingEvidencePage', 'LoggingExport', 'LoggingExportJob', 'LoggingExportRequest', 'LoggingFamily', 'LoggingFilters', 'LoggingHealth', 'LoggingHold', 'LoggingObservation', 'LoggingOutcome', 'LoggingPage', 'LoggingPeoplePage', 'LoggingPeopleQuery', 'LoggingPerson', 'LoggingPresentation', 'LoggingQuery', 'LoggingReceipt', 'LoggingReview', 'LoggingStream', 'LoggingTableChoice', 'LoggingTableRow', 'LoggingVerification', 'LoggingWorkspace', 'LoggingWorkspaceProps', 'StoredLoggingEvent', 'createLoggingCollector', 'createLoggingTableSource', 'useLoggingActivity', 'useLoggingEvents', 'useLoggingView',
   ].sort());
   expect(additive).toHaveLength(2);
