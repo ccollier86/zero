@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: logging-workspace
 maturity: supported
-applies_to: ["2.6.0 source builds containing the people-first LoggingWorkspace directory and presentation APIs"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "1849e34ae7a36fbfaa07ea05aa946ae38a1b347c"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-28"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -43,13 +43,16 @@ Guardian must be enabled. The component can supply a ModalManager host when
 none exists; the normal AppProvider already supplies one.
 
 For an investigator's user-specific view, pass
-`initialQuery={{ actorId: selectedUserId }}`. The existing user/action/resource/
+`initialQuery={{ userId: selectedUserId }}`. This includes the person's own
+activity and explicitly attributed initiated service work. `actorId` still
+means the exact executor. The existing user/action/resource/
 date/outcome filters run on the server and apply to live arrivals as well as
 pages. This is an initial filter, not permission for a user to view audit logs
 or a server-enforced self-only access policy; Guardian still authorizes reads.
 
 Props are `className`, `presentation` (optional app-authored labels), `defaultStream` (`audit` by default),
-`initialQuery`, `allowExport` (true), and `scope` (`current` by
+`initialQuery`, `allowExport` (true), `resolveRecordLink` (optional current-domain
+authorization adapter), and `scope` (`current` by
 default, or `platform`). Platform mode uses the separately authorized
 cross-tenant/control-plane read and does not expose the current-scope export
 button as if it exported the platform result. Props never grant server authority.
@@ -58,7 +61,8 @@ button as if it exported the platform result. Props never grant server authority
 
 The table reads server-filtered cursor pages, newest ingestion ordinal first.
 It does not download the full dataset for filtering or fabricate an exact total.
-Page size defaults to 25. Dates display source times in the browser locale;
+Page size defaults to the standard 20 with its selected value visible. The exact
+total uses native rolling-number presentation. Dates display source times in the browser locale;
 the evidence dialog separately shows ingestion time and source position.
 
 The compact Audit activity / Diagnostics tabs use the shared magnetic selection
@@ -73,6 +77,7 @@ loaded page. Creating, editing and deleting records use actual retained actions
 the exact retained `table.*` target, not a client-side text filter.
 
 More filters opens a standard morphing Popover with category, user/session IDs,
+exact retained changed-field name,
 exact activity code, resource type/record ID, severity and source-time
 constraints; overflowing content uses the shared ScrollArea treatment.
 All criteria combine with AND. Draft choices do not change the investigation
@@ -113,6 +118,14 @@ are shown safely without raw exceptions/provider data.
 
 ## People and readable activity
 
+Audit defaults to grouped activities; Diagnostics remains raw operational events.
+The raw-supporting-evidence control deliberately exposes original stages.
+An activity's duration/result changes update its stable row instead of adding a
+new activity. The detail includes historical ordered result versions and typed
+field differences, not a current record query masquerading as history. Unknown,
+incomplete and unclosed facts remain explicit. See [activity auditing](../../backend/logging/activity-auditing.md)
+for exact automatic capture, privacy and bounds.
+
 The main table shows **When / Who / Activity / Table or resource / Result**,
 with a separate evidence-source column. Human entries show the current name,
 username and authorized private avatar. Repeated rows share photo reads; scope
@@ -121,7 +134,8 @@ or image URL is created just for the logs. Disabled, absent or inaccessible
 photos fall back to initials; an unavailable/deleted/out-of-scope user has a
 neutral placeholder and its exact retained identity remains in the details.
 
-Service/API-key, system and anonymous activity have their own labels. They
+Service/API-key, system and anonymous activity have their own labels. An explicit
+human initiator is shown separately from the service/system executor. They
 are never presented as a signed-in person, and the logs do not invent a
 historical presence indicator. Current profile presentation is **not** a
 historical name/photo snapshot and is not inserted into immutable evidence,
@@ -183,6 +197,11 @@ or evidence rewrite is required for these presentation additions.
 - `LoggingActivityProvider` is automatically mounted by the configured
   AppProvider; manual composition must not duplicate it.
 - `useLoggingView(target)` binds one opaque page/document target.
+- `useLoggingResultView(receipt, identity?)` owns a prepared result's display;
+  `useLoggingRows(rows, options?)` derives actual displayed selections from
+  released native objects. Both expose explicit receipt-bound `action()`.
+- `LoggingRowsView` and `LoggingDisplayBoundary` compose mounted/hidden or
+  animated panes without claiming speculative contents were displayed.
 - `useLoggingActivity()` exposes the collector and explicit observation action.
 - `createLoggingCollector()` supplies headless lifecycle-owned collection.
 

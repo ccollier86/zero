@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: scoped-api
 maturity: supported
-applies_to: ["2.6.0 source builds containing the people-first LoggingWorkspace directory and presentation APIs"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "1849e34ae7a36fbfaa07ea05aa946ae38a1b347c"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-28"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -42,6 +42,12 @@ import `createApp` only after the actor helper returns false, as shown in the
 environment or startup-deadline checks.
 
 ## Declared Server Actions
+
+For the generic replacement, start with [activity auditing](./activity-auditing.md):
+`defineLoggingAction`/`zero.logging.action()` supply typed static labels and
+finite values; `prepareResult()` and receipt-backed React views retain historical
+displayed selections. `record`, `read` and `run` below remain compatible, with
+their narrower semantics unchanged.
 
 Use the request's `zero.logging` facade after ordinary domain authorization.
 It derives the actor, current application/tenant scope and policy on the server;
@@ -166,6 +172,15 @@ query and never select a different scope. An empty list matches nothing.
 Scalar criteria combine with AND. There is no
 free-text scan, raw SQL or advanced nested filter grammar in this version.
 
+The replacement additionally accepts `projection` (`events` by API default,
+or `activities`), `activityId` (supporting evidence for that exact activity),
+`userId` (human actor or explicit initiating user), `changedField` (exact retained
+field name), and `includeTotal`. Omitted values never become free-text search.
+`actorId` continues to select the exact executor, not the initiator. Activities
+retain a stable ID, first ordinal and latest immutable projection revision;
+high-water queries select the retained revision appropriate to that snapshot.
+Exact totals count the selected projection, not raw ordinal differences.
+
 Ordinary `page()` is permanently bound to the live application/tenant scope.
 `platformPage()` is a distinct operation requiring platform-administrator
 and application-control-plane authority, plus the configured read permission.
@@ -253,6 +268,11 @@ It never turns an initial/reconnect snapshot into INSERT evidence. Bursts drain
 in bounded pages rather than losing events beyond the latest snapshot window.
 These options require stream transport; polling does not pretend to prove inserts.
 
+Activity change pages distinguish genuine INSERT, UPDATE and removal. A new
+duration/result fact updates its existing activity; it is not a newly inserted
+activity. Filter exits and retention produce actual removal identities. The
+native adapter preserves those semantics and batches presentation updates.
+
 The component groups visual INSERTs for roughly 250 ms and bounds pending
 presentation identities to the latest 1000. This is UI batching, not delayed
 durable logging. Every retained record remains queryable. Native DataTable
@@ -280,6 +300,12 @@ backlog or integrity state. Query filters remain in POST bodies, not URLs/referr
 Responses are private/no-store. Server identities never come from body fields;
 schema normalization may discard additional HTTP fields.
 
+Use `client.logging.deriveResult`, `result` and `resultVersions` for historical
+selections/reads. Selection accepts only opaque source receipt positions; there
+is no browser `prepareResult` operation. Historical reads need current logging-read
+authority. Platform inspection is explicitly separate and additionally needs
+platform/application-control authorization.
+
 `health()` separates in-memory `pendingEvents`, durable
 `sourcePendingEvents`, writer `failedEvents`, `sourceDeliveryFailures`,
 and `maintenanceFailures`. `sourceDiscoveryPending` separately counts sources
@@ -306,6 +332,11 @@ and a conflicting event identity 409. Configuration, worker response and
 unresolved service failures are 503, not mislabeled bad input. An `unknown`
 outcome requires reconciliation of the original operation, never a blind repeat
 of a payment, email or other possibly completed external action.
+
+`LOGGING_RESULT_LIMIT` (413) is a definite pre-admission manifest-size rejection,
+not an unknown commit or transient queue-pressure signal. Native Sync may split
+only that specific rejected preparation. It does not split/replay possibly
+committed work after an unknown outcome.
 
 ## Related Guides and Next Steps
 

@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: evidence-lifecycle
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -59,6 +59,13 @@ and release each commit their attributable audit event atomically with hold
 state. A release does not erase its history. The active/history catalog has a
 hard 1000-record bound; this preview has no archival lifecycle for that catalog.
 Operational diagnostic retention is not a substitute for an audit hold.
+
+In the [activity replacement](./activity-auditing.md), fresh/held activities
+protect their linked preparation facts and historical manifests as well as their
+own latest fact. Expiration retires the logical row, publishes a real removal
+and deletes derived manifests/indexes through bounded restartable cleanup.
+Retired ranges prevent later reconstruction from resurrecting removed history.
+Original replay proofs and custody checkpoints retain their existing semantics.
 
 Pruning removes event envelopes but retains minimal digest/ordinal/chain proofs.
 Exact redelivery of an expired source/event identity returns its old receipt;
@@ -169,6 +176,23 @@ Its job SHA-256 covers every downloadable byte, including the manifest line;
 result's SHA-256 still covers only its event NDJSON. Neither hash proves
 unobserved source activity. These are investigation exports, not a database
 backup or an implemented older-log archive/import format.
+
+### Activity Export Format
+
+Raw-event exports keep format version 1. Selecting `projection: 'activities'`
+produces version 2, adding a bounded history segment for each activity: actual
+displayed result versions, their ordered manifests/source lineage and original
+supporting evidence. It does not query the current application record in place
+of missing historical evidence.
+
+`complete` describes the query segment. `historyComplete` in the v2 export
+manifest and each row's `history.complete` describe history coverage separately.
+At most 20 result versions, 100 supporting events and 100 lineage sources are
+included per activity, within the shared 8 MiB artifact budget. Continuation
+ordinals, `omittedSourceIds` and `unavailableResultIds` explicitly identify older
+or retired facts. A complete query segment is not a complete history when those
+markers/flags say otherwise. The existing durable job's `complete` remains the
+query-segment flag; inspect the downloaded artifact's history markers too.
 
 ## Related Guides and Next Steps
 

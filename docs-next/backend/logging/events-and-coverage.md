@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: events-and-coverage
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "6ff33f4c30d26c27caa64e0ae3b2c8e41e023ca6"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -69,14 +69,18 @@ deciding whether a new attempt is appropriate.
 | Shared-row tenant resources | Uses registered resource storage fields for tenant attribution. A missing tenant rejects the captured mutation; tenant identity is not taken from browser claims. |
 | Managed tenant/named Fabric actors | Writer-local same-commit capture, manager-proven scope, required bind-policy readiness proof, existing-only source discovery/recovery and independent delivery. Raw SQL is still excluded. Source crash guarantees follow the selected placement/durability. |
 | Request-owned source mutations | `zero.logging.run()` carries trusted actor/scope attribution during its operation. Without an attributed operation, automatic database capture honestly identifies a system actor. |
-| Semantic record reads | Use `zero.logging.read()` after domain authorization. A SQL SELECT alone does not identify what a person saw. |
-| Browser views, copy and print | The authenticated AppProvider collector follows configured families and explicit opaque view bindings. All signals remain browser observations. |
-| Strict managed HTTP | Automatic durable request admission, prepared response status and stream producer completion/interruption. Fixed logging projection RPCs retain the same authorization/delivery fences but use their durable investigation window instead of per-refresh transport events, avoiding recursive self-logging. No raw URL, body or exception text. Transport preparation is not semantic business success. |
+| Native data/Resource reads | `/api/data`, generated Resource list/get and request `zero.data.get/list/find/findPage` prepare ordered private result receipts after domain projection and source release; final live authority is checked again. This proves preparation, not display. |
+| Managed Sync/collections | Authorized snapshot chunks, final catch-up rows, live releases and canonical default mutation acknowledgments carry opaque provenance. Native codec-equivalent copies preserve it; optimistic or arbitrary mapped copies do not. Preparation does not hold the application writer/authority lease. |
+| Native table/detail displays | Committed DataTable row models and mounted MasterDetail panes bind the actual released selection. Filter/order/page/reactive changes retain displayed revisions; prefetch, held arrivals and hidden panes do not count as displays. Bounds and failures are explicit. |
+| Custom semantic reads/displays | Use `prepareResult()` after domain authorization and pass its receipt to the native server adapter or `useLoggingResultView`. `useLoggingRows` selects positions from released objects. `read()` remains preparation-only; identity-only `useLoggingView` cannot supply historical membership/revision. A SQL SELECT is not evidence of what a person saw. |
+| Navigation | Generated route content emits after commit, mapped to a registered static page ID/label. Dynamic path values, queries and fragments are not retained. A URL change alone is not successful rendering. |
+| Browser views, copy and print | Configured view bindings report elapsed/foreground/active intervals, gaps and close state. Explicit copy/print actions can bind to their currently displayed receipt; generic DOM observations cannot establish a record or actual clipboard/paper delivery. |
+| Managed HTTP | Required admission/release fences remain, including actual failures/interruption. Successful transport bookkeeping is retained only with `diagnostics.http: true`, and is excluded from grouped user activities. Explicit public assets need no staff delivery handshake. Fixed logging RPCs reuse an audited investigation window instead of recursively logging refreshes. No raw URL, body or exception text. |
 | Managed AI provider calls | Automatic admitted and completed/unknown provider stages through the managed AI service, including the native decision facade. SDK streams complete only after their finish part and stream completion. Provider/model selectors are opaque digests; no prompts, tools, results or chunks. A provider return is not proof that the app accepted or used it. |
 | Managed platform email sending | Automatic admitted and provider accepted/rejected/unknown stages with recipient counts, not addresses, subjects or bodies. Acceptance is not delivery to a recipient. Lost post-send evidence returns an unknown send outcome; auth mail does not blindly send it again. |
 | Custom AI service/provider instances and direct vendor SDKs | Explicit instrumentation. Supplying an already-built service does not magically wrap every SDK call, tool or provider callback. |
 | Storage, payments, receiving/inbox providers, workflow and messaging semantics | Partial automatic coverage through Guardian audit, committed metadata mutations and strict managed HTTP. Apps declare actual semantic read/release/provider/durable-task stages through the scoped facade. Do not infer file delivery, payment settlement, message delivery or job completion from a row mutation. |
-| Investigation reads | Durable admission evidence opens a five-minute window per actor/scope/semantic filter fingerprint. Page positions, limits and internal exact-row membership lookups reuse it; different actor/action/date criteria open distinct windows. Permission denial is recorded explicitly. This is not a count of every physical database read. |
+| Investigation reads | Durable admission evidence opens a five-minute window per actor/scope/semantic filter fingerprint; continuous reads extend it without another timer-driven activity. Page positions, limits and internal exact-row membership lookups reuse it; different semantic criteria open distinct windows. Denial is recorded explicitly. This is not a count of every physical database read. |
 | Holds and reviews | Their state and attributable activity event commit atomically in the private audit actor. |
 | Evidence export | Automatic atomic request/state evidence, private artifact publication, separate download authorization, producer completion/interruption and expiry/cleanup stages. Generation or producer completion is not proof of human review. |
 
@@ -87,6 +91,14 @@ delivery, custody and source-durability controls, not an assertion that every
 application semantic operation has been automatically discovered.
 
 ## Privacy and Attribution
+
+The [activity projection](./activity-auditing.md) groups only declared invocation,
+read or sequenced-view correlations. It preserves original immutable evidence,
+source-time differences, failed/unknown facts and missing/gap markers. It never
+groups unrelated events merely because their actor, label or time is similar.
+Historical results retain ordered opaque identities/revision references and only
+explicit finite approved field values. Default change values are redacted.
+Neither a source mutation nor a prepared result proves human attention.
 
 Metadata is denied by default for application `record()` calls. Configure
 `metadataKeys` explicitly. Keys associated with secrets, credentials, message

@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: managed-configuration-preview
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -59,6 +59,11 @@ updater status, not an older preview or intermediate source pack.
 | `logging.preset` | `basic`; alternatives `activity`, `detailed`, `compliance`. Strict startup verifies source durability and required owners; it does not silently downgrade on failure. |
 | `logging.minimumLevel` | `info`; `debug`, `info`, `warn`, `error`, `fatal`. Filters diagnostics, not required audit events. |
 | `logging.capture` | Granular boolean family overrides. Automatic Guardian/application capture and browser collection follow enabled families; uncovered services still require declared instrumentation. |
+| `logging.resources` | Table labels and per-field `omit`, `redact`, or finite `{ values }` policies. Changes default to redaction; approved result values only use declared finite vocabularies. See [activity auditing](./activity-auditing.md). |
+| `logging.pages` | Static registered route-pattern labels. Never actual dynamic URLs, IDs, query strings or fragments. |
+| `logging.diagnostics.http` | `false`. Explicit technical successful HTTP capture; routine successful transport stages never become grouped user activities. Failures/interruption retain evidence without this opt-in. |
+| `logging.browser.observationsPerMinute` | 240 per current session/scope; integer 1–10000. Independent from source queue/writer admission. |
+| `logging.browser.selectionsPerMinute` | 240 opaque result selections per current session/scope; integer 1–10000. Separate from observation admission to prevent preparatory-work overload. |
 | `logging.access` | Optional Guardian permission codes for `read`, `export`, `hold`, `review`, `manage`. Omitted codes require a platform administrator. Codes must already be declared in Guardian; export and review additionally require read. |
 | `logging.metadataKeys` | Empty by default. Up to 32 explicitly approved scalar metadata keys for trusted `record()` calls. Secret/content keys remain prohibited. |
 | `logging.retention.auditDays` | `null`: indefinite retention. Otherwise an integer 1–36500; explicit bounded pruning respects audit holds. |
@@ -112,8 +117,11 @@ be established by the operator, not inferred from the adapter's name.
 ## Capture and delivery policy
 
 `basic` enables operational/security families. `activity` additionally enables
-records, transfers, workflow, communications, AI, investigations and navigation.
-`detailed` enables every family, including browser views/copy/print. Granular
+records, transfers, workflow, communications, AI, investigations, navigation and
+owned record/list viewing. `compliance` includes those viewing facts but does
+not implicitly enable copy/print collection. `detailed` enables every family,
+including browser views/copy/print. Explicit `capture.views: false` remains an
+override. The managed collector has no generic page-duration heartbeat. Granular
 overrides remain available. They do not implement uncovered instrumentation.
 
 Required browser-delivery enforcement is reserved for the explicit strict

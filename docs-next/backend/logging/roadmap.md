@@ -8,12 +8,12 @@ visibility: internal
 system: logging
 feature: integrated-logging-roadmap
 maturity: planned
-applies_to: ["Zero 2.7.0 baseline and proposed activity auditing replacement"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.7.0"
-  commit: "534e7a0edf56c44eb0ae62c7a603238840315ded"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
   date: "2026-10-29"
   evidence_level: source-observed
@@ -38,7 +38,8 @@ tracks package checks separately from application acceptance.
 ## Activity audit replacement
 
 The [replacement plan](../../_work/logging-auditing-replacement-plan.md) is the
-current product correction, not an implemented capability. The Zero 2.7.0
+current product correction. Its [adoption guide](./activity-auditing.md) describes
+implemented branch behavior, not qualification of an update archive. The earlier Zero 2.7.0
 experience overproduces delivery/HTTP bookkeeping and does not provide the
 requested historical displayed lists, automatic readable differences and view
 duration. Public-asset admission and total/page-size defects also require repair.
@@ -51,10 +52,10 @@ typed custom actions, safe labels, record links and field policies through the
 same facade. The first interface remains the native DataTable with real filters,
 exploration, live totals and normal component behavior. Other views are deferred.
 
-The plan defines protected/public boundaries, configuration including off,
+The branch implements protected/public boundaries, configuration including off,
 changing-list revisions, safe retained-state transition and concrete browser,
-isolation, deployment and updater gates. No new release or runtime change is
-implied by adding it. The earlier source/release records remain historical.
+isolation, deployment and updater gates. Remaining deployment/regression/archive
+checks determine release readiness. Earlier source/release records remain historical.
 
 ## Follow-ups, Not Hidden Preset Requirements
 

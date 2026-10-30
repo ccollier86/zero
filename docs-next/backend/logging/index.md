@@ -8,20 +8,24 @@ visibility: internal
 system: logging
 feature: integrated-logging-preview
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
 # Core Logging
 
 [Backend index](../index.md) · [Documentation index](../../index.md)
+
+Start with [activity auditing](./activity-auditing.md) for the replacement's
+automatic native capture, custom actions, historical results and explicit limits.
+It is branch documentation until the normal qualified archive is selected.
 
 Core logging is an optional managed Zero subsystem with dedicated Fabric audit
 and diagnostic databases, durable source capture, Guardian-scoped APIs,
@@ -66,7 +70,9 @@ plane mirrors newly appended Guardian events rather than deleting or replacing
 the old trail. Automatic ReactiveDB record capture covers the pinned application
 database and managed tenant/named Fabric writers. Managed AI/email and strict HTTP
 stages are explicit in the coverage matrix; app semantics still require declared
-instrumentation. A selected preset is not proof of complete coverage,
+instrumentation. The replacement separates grouped human-readable activities
+from immutable supporting evidence; ordinary successful HTTP and healthy delivery
+renewals are not audit activity. A selected preset is not proof of complete coverage,
 independent evidence custody, uncompromised browser behavior or legal compliance.
 
 ## Related Guides And Next Steps

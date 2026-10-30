@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: operations-and-upgrade
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-26"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -121,6 +121,16 @@ distributed multi-server logging cluster.
 
 ## Upgrade Procedure
 
+The [activity replacement](./activity-auditing.md) adds private realm migrations
+007/008 and derived history; it preserves the selected original migration
+identities, source event envelopes, replay proofs and signed custody. Reconstruction
+uses restartable 100-event batches and completes before startup publishes the
+projection. Measure a large retained trail's startup window explicitly. Do not
+delete evidence, edit ledgers or substitute a new logging root to accelerate it.
+Source-only Doctor reports known identity-only/custom-adapter patterns for review;
+it cannot infer arbitrary domain semantics. See the guide's exact native/custom
+capture contract before removing application instrumentation.
+
 1. Keep the app's current release pinned and back up its application, system,
    Storage and logging state through approved deployment procedures.
 2. Create an application feature branch, inspect the saved main release, and
@@ -185,7 +195,7 @@ qualified for this change. Rehearse against an authorized copy of that logging
 state; do not rewrite its migration ledger or delete evidence to evade a
 fingerprint mismatch. PracticeIQ's never-activated logging starts a new private
 trail; its existing application/system legacy-state boundary remains separate.
-The additive core migration `045_private_storage_artifacts` registers private
+The earlier additive core migration `045_private_storage_artifacts` registers private
 export object metadata; it does not migrate clinical or identity records.
 
 ## Verification

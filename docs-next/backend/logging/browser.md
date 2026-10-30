@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: browser-activity
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.7.0 activity auditing replacement; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "1bc732ba4375e87621f1be093ef257a7e11ff9e5"
+  version: "2.7.0"
+  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
   snapshot: clean
-  date: "2026-10-26"
+  date: "2026-10-29"
   evidence_level: implementation-verified
 ---
 
@@ -68,15 +68,13 @@ suspension/truncation is marked incomplete. Sleep and hidden time are not
 fabricated as attention. Multiple tabs are independent observations, not summed
 proof of unique human attention.
 
-The collector observes admitted router transitions immediately via the existing
-router's `popstate` notification, plus native Back/Forward and `hashchange`.
-Duplicate notifications for one URL are suppressed. Several transitions inside
-one heartbeat interval are separate observations, even when they return to the
-starting URL. A canceled navigation guard is not a completed transition. The
-heartbeat remains a fallback for integrations changing history without a signal.
-Raw URLs, queries and fragments are compared only in memory, never retained;
-explicit view bindings provide the meaningful opaque target. URL observation
-does not prove successful page rendering, a semantic record read or human attention.
+The managed collector records a page only when generated route content actually
+commits beneath its readiness gates. A server catalog maps its registered static
+pattern to an opaque page ID and label. Canceled/loading routes are not completed
+page visits; actual dynamic path values, queries and fragments are not retained.
+The managed collector disables generic page-duration heartbeats. A standalone
+headless collector can opt into history observation; that remains weaker than a
+committed render and cannot assert a semantic record view or human attention.
 Use [router-aware AppShell links](../../frontend/app-shell/navigation.md#persistent-client-navigation)
 to avoid remounting the collector on ordinary sidebar navigation.
 A pagehide tail is best effort;
@@ -86,7 +84,8 @@ or localStorage copy of sensitive activity.
 ## Bounds and Failure Behavior
 
 Buffers hold at most 128 observations and send at most 32 per batch. Server
-admission is limited to 240 observations per minute per session/scope, with
+admission defaults to 240 observations and separately 240 result selections per
+minute per session/scope (`logging.browser`, each configurable 1–10000), with
 bounded principal tracking. A batch is fully validated before any event append.
 Partial persistence followed by failure is retried with the same identities.
 View sequence identity is canonicalized on the server so changing a client
@@ -103,6 +102,22 @@ Headless integrations can call
 `createLoggingCollector(client.logging, policy, options)`. Stop it exactly
 once for its owning scope. `client.logging.observe()` is the write-only browser
 API; it cannot claim server/provider confirmation or select actor/tenant identity.
+
+Prefer [receipt-backed views](./activity-auditing.md#instrument-custom-results-without-another-logging-system)
+when the displayed records must be inspectable later. `useLoggingRows`,
+`useLoggingResultView` and native table/detail bindings use opaque prepared
+receipts and server-validated positions, never client record facts. Each
+displayed revision has its own historical selection. Rapid filter/close changes
+retain original observation ordering even while receipt resolution is pending.
+An unresolved receipt, queue overflow or oversized known release is an explicit
+collection failure; strict mode pauses protected work rather than silently
+claiming a complete view. Optional presets report loss without acquiring that gate.
+
+At most 1001 rows and 256 KiB fit one result manifest. First display admission
+expires after five minutes. Previously bound same-collector views and exact
+committed replays are not new claims. Browser time remains an observation,
+not independent attention evidence. See [activity auditing](./activity-auditing.md)
+for custom integration and bounded selections.
 
 ## Strict Compliance Delivery Requirement
 

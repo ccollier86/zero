@@ -646,4 +646,107 @@ record history, rolling totals, dark/narrow layout and authorized photos.
 This is not an installed-package or Linux/amd64 qualification. Historical result
 receipts, complete view summaries, logical activity projection/counts, full native
 capture and extension tooling, retained upgrade/rebuild and the normal release
-gates still block publication of the replacement.
+gates still blocked publication at that foundation checkpoint.
+
+## Activity history and displayed results
+
+The branch now has a same-writer logical activity projection and private ordered
+read manifests. It is still an unreleased replacement, not the selected Zero
+update. Main, application databases and deployments remain unchanged.
+
+| Boundary | Implemented behavior |
+| --- | --- |
+| Activities and evidence | [The projector](../../src/logging/logging-activity-projector.ts) writes a stable activity and immutable projection revisions in the original event transaction. Declared read/service stages and scoped sequenced view intervals share one activity; similar times or labels never establish correlation. Original envelopes, hashes and replay proofs remain unchanged. |
+| Queries and live updates | `LoggingQuery.projection: 'activities'` returns logical rows with an `activity` summary. The original API default remains `'events'`. Exact totals count activities. Live changes carry genuine updates and removals; a later duration update is not another insertion. Pinned reads select the appropriate retained projection revision. `activityId` selects supporting evidence within the same authorized scope. |
+| Historical results | [Read capture](../../src/logging/logging-result-capture.ts) retains bounded, ordered identities and source revision references, plus only explicitly approved finite field values. It never retains full record bodies. A source snapshot reference and a fallback `release:` reference have different meanings; the fallback is not a database version. Receipts and their preparation evidence commit together in the private audit writer. |
+| Display admission | [The result command](../../src/logging/logging-result-realm.ts) binds observations to the same actor, session, scope, policy and component view. A browser cannot submit row contents or replace that binding. First use expires after five minutes; exact committed replay and previously bound same-collector restoration remain distinct from a new claim. Ordered display changes retain separate result versions. |
+| Native reads | `/api/data`, generated Resource list/get and request `zero.data.get/list/find/findPage` prepare receipts after domain checks and source/actor release, then repeat the final authority check. The data facade carries its actual snapshot sequence. Named arbitrary queries still need explicit result mapping. No application transaction or authority lease is held while awaiting the private logger. |
+| Native server DataTable | [The display owner](../../src/components/data-table/use-data-table-audit.ts) matches the committed row model against its fetched result. Neighbor prefetch, membership helper reads and held arrivals alone do not count as displayed. Equal-content refreshes do not create another displayed revision. Custom server adapters can return the same `auditReceipt` alongside `rows` and `page`. |
+| Record and custom views | `zero.logging.prepareResult({ table, kind, rows, primaryKey?, revision?, criteria? })` supplies a receipt for already-authorized custom results. `useLoggingResultView(receipt, identity?)` owns its displayed lifetime. The existing `record`, `read`, `run` and weaker identity-only `useLoggingView` remain supported. No browser or application event chooses another actor or tenant. |
+| Committed navigation | Generated hydration publishes only after route content commits. The server maps a registered static pattern to an opaque page ID and readable label; dynamic values, URLs, query strings and fragments are not retained. `logging.pages` can provide static pattern labels. The managed collector no longer starts generic application-page duration heartbeats. |
+| Workspace and exploration | The audit workspace defaults to grouped activities. A deliberate raw-evidence control retains access to technical stages. Rows show record identity, field differences and observed foreground/active duration. Native dialogs, DataTable, Morph Select and ScrollArea expose ordered result versions and supporting stages. `client.logging.result()` and `resultVersions()` reauthorize current or explicitly permitted platform inspection. |
+| Retention and holds | A fresh or held activity protects its dependent source evidence and result manifest. Expiration retires the derived history, removes its manifests and publishes a genuine removal. Bounded restartable cleanup removes old derived rows; proofs/checkpoints are preserved, and reconstruction cannot resurrect retired history. Routine retention evidence is technical, not a new user activity. No retention cutoff is enabled by default. |
+
+`activity` and `compliance` now enable owned record/list viewing observations by
+default. Explicit `capture.views: false` remains an override; copy and print stay
+optional. The managed owner disables generic page-duration collection, so this
+does not add a timer-driven page activity stream. Continuously refreshed audit
+queries extend their existing investigation window instead of generating another
+activity every five minutes.
+
+### Verified source and browser behavior
+
+Real private Fabric tests cover correlated stages, duplicate-safe and gap-aware
+view summaries, historical high-water reads, tenant isolation, filter exits,
+retention dependencies, legal holds and restart. A 230-event former-realm fixture
+upgrades, loses the response after a committed 100-event reconstruction batch,
+restarts and completes without altering old envelopes or checkpoints. The native
+source adapter tests distinguish updates, removals and coalesced inserts.
+
+The generated file-router Chromium fixture uses real Guardian sign-in, strict
+delivery, private workers, the normal SDK, `/api/data`, Resource reads and the
+production Next stylesheet. It performs Records → Completed → record → Close →
+Audit with no per-button audit events. Those client transitions make zero
+document requests and preserve shared navigation/provider state. The audit UI
+shows the record view; its historical-result selector switches from the filtered
+one-record result to the original ordered two-record result. Supporting evidence
+loads through the authenticated native transport. A 31-second idle period adds
+no audit events.
+
+These checks run on the native macOS host. Preserved diagnostics are under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/audit-replacement/`.
+The `native-activity-browser-first.log` fixture-policy failure and the earlier
+unstyled screenshot run remain available; neither counts as visual qualification.
+The subsequent styled and explorer runs passed. Screenshots are in `browser/`.
+
+### Completed implementation follow-through
+
+Native Sync snapshots/chunks, final catch-up rows, live changes and canonical
+default-plane acknowledgments now carry read provenance. Equivalent native codec
+copies preserve it; optimistic and arbitrary projected copies do not. Actual
+DataTable row models, local filters, lazy pages, data-array sources and mounted
+MasterDetail panes derive admitted historical positions. Hidden/prefetched
+contents are not claimed as displays. Delayed receipt resolution preserves brief
+committed displays and their close/sequence order across filter changes.
+
+`defineLoggingAction` and `zero.logging.action` provide static readable labels
+and finite typed values. Human initiators remain distinct from system/service
+executors. Person/initiator and retained changed-field predicates execute on the
+server. Optional domain link resolvers use an app-authorized relative destination,
+current-scope fencing and Zero Link without speculative prefetch. Source-only
+Doctor reports known weaker custom/identity-only bindings for manual review.
+
+Activity export format v2 includes historical displayed versions, source lineage
+and supporting evidence with separate query/history completeness, continuation
+and unavailable markers. Raw v1 evidence bytes retain their contract. Record-bound
+explicit clipboard/print signals use currently displayed receipts; they remain
+browser observations. Observation/selection rates and native Sync pending bytes
+are independently bounded. A known over-budget display reports failure rather
+than silently claiming complete capture. Investigation criteria admissions share
+an explicit server investigation correlation without erasing their original facts.
+
+The actual concurrent historical reads exposed a generic Fabric reader admission
+defect. A bounded per-database FIFO now serializes each read-only worker's dispatch,
+preserving its single in-flight contract without serializing unrelated database
+writes. Cancellation/deadlines, writer independence and shutdown are covered.
+The 78-test coordinator/subprocess regression passed. A synthetic 2100-event
+private activity load preserved a 2000-record pinned total during eight concurrent
+reads and 100 more appends, then the exact final 2100 total. Its measured times
+are diagnostics for this loaded workstation, not a universal throughput promise.
+
+The canonical [adoption guide](../backend/logging/activity-auditing.md), coverage,
+configuration, API, browser, evidence and workspace manuals now describe these
+boundaries. The isolated source-copy build caught and fixed private receipt-helper
+imports through a focused browser-safe public facade.
+
+### Remaining release qualification
+
+Do not select an update archive until the complete source/package/browser gates
+pass, retained installed-archive and Linux/amd64 official bundled deployment are
+qualified, and the exact clean release commit/archive passes normal updater
+verification. The running full-suite log retains earlier missing optional
+workspace dependencies, the corrected source-copy defect and interim stale UI
+assertions; targeted reruns do not erase those original diagnostics. These are
+release gates, not permission to weaken admission or substitute app workarounds.
+Applications own domain authorization, static labels and genuinely custom result
+mapping; they do not need a second logging system.
