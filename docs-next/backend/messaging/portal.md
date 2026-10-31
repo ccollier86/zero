@@ -3,12 +3,12 @@ id: zero.messaging.portal
 type: how-to
 audience: [developer, agent, maintainer]
 owner: messaging
-status: draft
+status: in-review
 visibility: internal
 system: messaging
 feature: authenticated-portal-messaging
-maturity: experimental
-applies_to: ["feature/messaging-portal; not included in the published 2.8.0 archive"]
+maturity: supported
+applies_to: ["2.9.0 source/local release; verify the selected commit and archive hash"]
 ---
 
 # Members Message The Team
@@ -21,10 +21,11 @@ client, student and patient portals are examples, not separate implementations.
 It uses existing Guardian accounts and support conversations, not another login
 system, a second messaging backend or an email bridge.
 
-This feature is on `feature/messaging-portal`. The released `2.8.0` archive does
-not contain the new configuration or API fields. Update client and server from
-the same qualified release when this branch is released; source availability
-alone does not make an existing `zero-update` installation support it.
+Available starting with the qualified `2.9.0` source/local release. The `2.8.0`
+archive does not contain these configuration or API fields. Verify
+`zero-release --status`, then update client and server from the same selected
+archive. Follow the [upgrade checklist](../../guides/upgrade.md#member-portal-290-update);
+source availability alone does not update an existing installation.
 
 ## Smallest Configuration
 

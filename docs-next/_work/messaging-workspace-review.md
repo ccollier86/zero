@@ -15,6 +15,30 @@ applies_to: ["feature/messaging-portal and prior messaging continuations; source
 
 [Work index](./index.md) · [Frontend manual](../frontend/messaging/workspace.md) · [Backend configuration](../backend/messaging/configuration.md) · [Earlier correction](./messaging-configuration-correction.md)
 
+## 2.9.0 Source Local Release
+
+The approved integration target is `release/2.9.0`, based on main's qualified
+`2.8.0` commit `00e1ffcb388a606b82e38f8e5bc64db24882c08e` plus the optional
+portal implementation and reviewed corrections below. The package version,
+changelog, Start Here and upgrade/feature guides identify 2.9.0; existing
+everyone/contact defaults remain unchanged. No unrelated worktree or preview
+SDK is merged into the framework release.
+
+Release qualification records are retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/release-2.9.0/`.
+The release process must record the exact clean candidate, separate Chrome
+source fixture, complete canonical inventory, types/package/build/audit gates,
+exact installed Linux/amd64 archive and ordinary saved-updater preservation
+proof. The preceding focused checks are not substitutes. Keep the 2.8.0 stable
+selection until those gates pass, then fast-forward main to that exact
+candidate, tag/push both remotes and select committed main normally.
+
+The final operator authority is `zero-release --status`: its full commit,
+archive path and SHA-256 must match the qualified release report. Merely seeing
+the version heading or this release branch does not establish publication.
+The source/local channel does not constitute npm publication, a wider platform
+matrix, a production migration or deployment of an existing app.
+
 ## Destination Origin And Open Retry Corrections (2026-10-31)
 
 A further native review of `3f465761221881f17de017529b2a1002c880ce05`

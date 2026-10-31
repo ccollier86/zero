@@ -4,6 +4,53 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.9.0 - 2026-10-31
+
+Optional member-to-team messaging and named authenticated inboxes, using the
+existing Guardian, private Fabric realm, Storage, Sync, Torrent and native
+workspace. Existing everyone/contact messaging remains unchanged by default.
+This is a source/local release, not npm publication or an application deployment.
+Use the qualified committed-main archive and SHA-256 selected by `zero-release`.
+
+- Add `messaging.portal: true` for applications whose ordinary members may
+  message authorized operators but cannot discover/add peers, create groups or
+  open internal assistants. Current server-side policy covers HTTP/SDK reads
+  and writes, live projections, files, typing, jobs and notification admission.
+- Add named `support.inboxes`, optional `defaultInbox`, destination-specific
+  customer/operator Guardian requirements and optional existing assistant
+  selection. Expose safe inbox descriptors and filtered reactive staff queues
+  through the same `zero.messaging`/client facade. The native workspace adapts
+  to a destination-only member panel and an operator inbox filter.
+- Keep operator claims, current-owner reply fencing, private notes, human
+  escalation, exact-intent recovery, presence and optional quiet-active-chat
+  notification sounds on their existing services. This does not add an email
+  bridge, external messenger connector or proactive staff-created member thread.
+- Separate private-inbox and public-entry operator grants by canonical retained
+  origin. Reusing a name cannot expose another destination's old queue,
+  transcript, private files, typing or notification audience. Restoring the
+  original destination restores current admitted access without relabeling rows.
+- Preserve admitted staff peer history after portal enablement, but reject new
+  sends to now-restricted member recipients, including membership-change races.
+  Hide unusable retained contact requests without discarding forward cursors.
+- Keep unchanged message and conversation-opening retries stable across
+  unrelated configuration/display-label changes. Preserve exact old named-inbox
+  receipts without rewriting them; changed caller intent still conflicts.
+  Native receipt recovery retains `support.open` and never sends a second open
+  merely because the first response was lost.
+- Respect current destination bot selection for dispatch, handback and review
+  retry. A bot left in the global registry cannot reactivate disabled support
+  automation. Recover inbox-load failures and withdrawn queue filters through
+  explicit native UI retries while retaining drafts and current authorization.
+- Append private messaging migration `010` for bounded named-inbox queue
+  indexes. Existing `001`–`009`, identities, messages, files and receipts remain
+  intact; no application/SYSTEM schema conversion or account recreation is
+  required. Back up retained state and restart matching package/source actors;
+  ordinary private-realm migration admission must remain enabled for the upgrade.
+
+Updating the dependency does not enable portal mode, change tenancy, rewrite
+application configuration/public tokens, run application migrations or deploy
+an app. See the member-portal guide and 2.9.0 upgrade checklist.
+
 ## 2.8.0 - 2026-10-30
 
 Activity auditing replaces the default raw-stage investigation view with

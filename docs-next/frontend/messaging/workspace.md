@@ -135,8 +135,8 @@ another sender's work, read provider drafts or resend an uncertain effect.
 
 ## Optional Member Portal Panel
 
-The [authenticated portal option](../../backend/messaging/portal.md), on
-`feature/messaging-portal` and not in the published `2.8.0` archive, adapts this
+The [authenticated portal option](../../backend/messaging/portal.md), available
+starting with qualified `2.9.0` and not in the `2.8.0` archive, adapts this
 same organism using server capabilities. `capabilities.portal` means the current
 member is support-only, not that the app should trust a client-side role test.
 `supportInboxes` indicates named destinations are configured.

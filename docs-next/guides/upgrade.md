@@ -8,7 +8,7 @@ visibility: internal
 system: cross-system
 feature: upgrade
 maturity: supported
-applies_to: ["2.6.0", "2.7.0", "2.8.0"]
+applies_to: ["2.6.0", "2.7.0", "2.8.0", "2.9.0"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
@@ -58,6 +58,43 @@ with changed activity behavior.
 
 Independently versioned native SDKs and app-copied UI must be checked explicitly.
 A core framework version does not update a sibling repository or copied component.
+
+## Member Portal 2.9.0 Update
+
+The optional [member-to-team mode](../backend/messaging/portal.md) and named
+authenticated inboxes start in qualified 2.9.0. Updating the package alone
+does not enable them or change existing everyone/contact behavior.
+
+1. Inspect `zero-release --status` and retain the current app's package/commit,
+   archive checksum, configuration and normal verified data backups. Stop the
+   app and use the ordinary updater dry-run/update workflow on its feature
+   branch; do not regenerate a scaffold or clear private databases.
+2. Rebuild and restart matching client/server/package source actors. Allow the
+   native messaging realm to apply index-only migration `010` through its
+   supported startup migration boundary; no application or SYSTEM schema
+   conversion, identity recreation or manual migration-ledger edit is needed.
+3. Leave `portal` false to retain ordinary behavior. To opt in, configure
+   `messaging: { portal: true }` or the documented named inboxes. Declare and
+   assign current Guardian operator requirements before routing members there.
+   Any app-owned authorization-registry semantic changes still need their
+   normal registry-version rollout; portal mode is not a role-assignment bypass.
+4. Compose the existing `MessagingWorkspace` into the app's member/staff
+   pages. Reuse AppProvider and the native facade. Navigation, domain-specific
+   assignment rules and a shared notification entry URL remain app-owned.
+5. Verify member restrictions, operator claims/replies, files, typing/live
+   changes and retained state in the actual application. Ordinary members lose
+   peer/internal-bot access when portal mode is enabled; staff retain admitted
+   history but cannot send into retained peer threads containing restricted
+   members. No history or accepted receipt is deleted.
+6. Treat private inboxes and public website entries as different destinations.
+   Reusing a name does not convert old threads or carry its operator grants
+   across origins. Unchanged open retries survive a label rename; keep the
+   original request ID and use receipt reconciliation after an unknown outcome.
+
+This is a source/local channel update. Verify the exact selected main archive;
+a moving feature branch, a health endpoint, or focused source tests are not a
+release identity. Updating Zero does not migrate/deploy an existing app or
+change its public website design tokens.
 
 ## Activity Auditing 2.8.0 Update
 

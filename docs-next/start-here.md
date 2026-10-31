@@ -73,6 +73,12 @@ families are listed in the [backend index](./backend/index.md).
   [upgrade checklist](./guides/upgrade.md#activity-auditing-280-update).
   Custom SQL/views need explicit application integration; an update does not
   infer domain semantics, enable logging or change an app's tenancy.
+- **Members message the team:** the opt-in [portal mode](./backend/messaging/portal.md)
+  starts with qualified 2.9.0. It uses the existing messaging backend and native
+  member/operator workspace, not another user model or app-specific patient
+  system. Read the [upgrade checklist](./guides/upgrade.md#member-portal-290-update)
+  before enabling it on retained conversations; existing contact/everyone modes
+  remain the default.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
   canonical feature/config page. Respect the app's actual instructions and scope.
 - **Markdown documentation:** install and declare the optional

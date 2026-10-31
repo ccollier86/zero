@@ -74,13 +74,14 @@ and workers. Disabling messaging does not delete retained files or outcomes.
 
 ### Optional Restricted Portal
 
-On `feature/messaging-portal`, `portal: true` makes non-operator members
+Starting with the qualified `2.9.0` source/local release, `portal: true` makes non-operator members
 support-only. It enables the existing protected support inbox if omitted;
 explicit `support: false` is invalid. Default `portal: false` leaves existing
 everyone/contact behavior unchanged. See the [portal guide](./portal.md) for
 current staff requirements, named `support.inboxes`, `defaultInbox`, Guardian
 configuration, native UI and retained-state enablement. These additions are
-not present in the released `2.8.0` archive.
+not present in the `2.8.0` archive; verify the selected commit/hash and update
+client/server together before configuring them.
 
 `support.inboxes()` lists only destinations the current user can open or handle,
 with safe capability descriptors rather than private policy/staff identities.

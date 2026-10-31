@@ -48,8 +48,9 @@ Email-to-conversation bridging is not a messaging requirement or release gate.
 
 For applications where members can message only authorized operators, the
 optional [authenticated portal mode](./portal.md) reuses this same subsystem.
-Its guide identifies the feature branch/release boundary; it is not included
-in the published `2.8.0` archive. Everyone/contact defaults remain unchanged.
+It is available starting with the qualified `2.9.0` source/local release, not
+the `2.8.0` archive. Everyone/contact defaults remain unchanged. Use the
+[upgrade checklist](../../guides/upgrade.md#member-portal-290-update).
 
 The package version alone is insufficient: older archives also say `2.6.0`.
 Record the selected updater commit and archive hash, and update client/server
