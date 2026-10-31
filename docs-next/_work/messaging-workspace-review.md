@@ -15,6 +15,61 @@ applies_to: ["feature/messaging-backend; source and isolated synthetic tests, no
 
 [Work index](./index.md) · [Frontend manual](../frontend/messaging/workspace.md) · [Backend configuration](../backend/messaging/configuration.md) · [Earlier correction](./messaging-configuration-correction.md)
 
+## Authenticated Portal Continuation (2026-10-31)
+
+The optional [members-message-the-team mode](../backend/messaging/portal.md)
+is implemented on `feature/messaging-portal`, based on released `2.8.0` commit
+`00e1ffcb388a606b82e38f8e5bc64db24882c08e`. Feature implementation is
+`2a9006d22432bfe883d43a962eed7bdf8571f514`; final source hardening and qualification
+target is `3550d3e42afaf5600bbfe2c2ab1f7ca6d0430963`. The documentation continuation
+does not change runtime source. This feature is **not** selected by the stable
+updater or included in the published `2.8.0` archive.
+
+The mode restricts ordinary members to current Guardian-authorized support
+destinations. Operators retain native queue/claim/reply, private notes, file
+authorization and current ownership fencing. Named authenticated inboxes have
+independent customer/staff requirements and optional bot selection; they cannot
+alias anonymous website entries or caller-selected users/tenants. The workspace
+adapts automatically, reusing native popovers, Select, scroll treatment, magnetic
+highlights and Zero-owned icons. Existing everyone/contact defaults remain.
+
+Real native tests cover default administrator handling, authorized non-admin
+operators, inbox/property revocation, private attachments, live updates and
+restart/replay. Multi-tenant checks use ordinary members enrolled through the
+actual Guardian invitation flow, not only organization owners. Enabling the
+mode on retained peer history preserves its rows/receipts while denying renewed
+member peer access. A held loopback AI response is fenced after revocation;
+disabling support automation cannot reactivate an old bot just because it
+remains in the internal registry, including through human handback.
+
+The private realm appends index-only migration `010`. Exact published `001`–`009`
+checksums are pinned in a regression; populated v9 and earlier v7-shaped native
+actors preserve identities, messages, reactions and accepted request receipts.
+Named queues use dedicated scoped inbox/owner indexes with filter-bound cursors.
+No application/system schema conversion or production data was used.
+
+Evidence is retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/messaging-portal/`:
+
+| Gate at clean source `3550d3e` | Result and limit |
+| --- | --- |
+| `final-suite.log` | 35-file focused inventory: 34 passed, one timed out, none unrun. The timeout is retained, not relabeled as a passing batch. |
+| `final-package-isolated.log` | The same unchanged messaging installed-consumer test passed independently in 78,216 ms, including cleanup and all 56 assertions. |
+| Installed-consumer timeout diagnosis | All assertions and the exact-source/hash evidence write completed before the combined-run timeout; the remaining test operation was disposal of its owned dependency tree. No timeout increase or disabled assertion was used. |
+| Native workspace browser | Nine automated flows passed, including the new destination-only member panel and staff Billing claim/reply. Two optional headed native-window/audio tests were skipped; this continuation does not claim to rerun those OS-focus gates. |
+| Fresh installed package | Public config/client types, source-file equality, SSR, browser build, private-subpath rejection and no app-config execution passed. This is not installed-backend/Linux qualification. |
+| Package distribution/export/recipes | Generated app runtime/SSR smoke, public export-map builds and native package recipes passed. |
+| `final-types.log` | Root TypeScript passed. |
+| `final-docs.log` | 879 unique, reachable documentation pages, zero structural/link problems before this documentation-only continuation. |
+
+This is a focused source/browser/package review, not a new full-repository or
+Linux/amd64 release qualification. Main, stable tags, updater selection and
+existing applications are unchanged. A later release must qualify its exact
+committed archive through the normal release process before apps use this option
+through `zero-update`. Member/staff application routing, a shared notification
+entry route and any domain-specific assignment rules remain explicit app work;
+proactive operator-created member threads are not added by this option.
+
 ## Current Completion Pass (2026-10-28)
 
 ### Latest release gate, not a selected update

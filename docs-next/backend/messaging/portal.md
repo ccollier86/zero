@@ -13,7 +13,7 @@ applies_to: ["feature/messaging-portal; not included in the published 2.8.0 arch
 
 # Members Message The Team
 
-[Messaging](./index.md) · [Configuration and API](./configuration.md) · [Native workspace](../../frontend/messaging/workspace.md) · [Anonymous website support](./website-support.md)
+[Messaging](./index.md) · [Configuration and API](./configuration.md) · [Native workspace](../../frontend/messaging/workspace.md) · [Anonymous website support](./website-support.md) · [Qualification](../../_work/messaging-workspace-review.md)
 
 This optional mode is for any application whose ordinary members should message
 authorized operators rather than discover or contact each other. Customer,
@@ -157,6 +157,11 @@ escalation, epoch fencing, manual review and unknown-result recovery are the
 same native support contracts. Revoking customer/inbox/bot access during a call
 prevents publication; it is not permission to retry the provider automatically.
 
+A bot remaining in the internal registry does not reactivate disabled support
+automation in an old conversation. Message/edit dispatch, explicit retry and
+human handback must respect the currently selected authenticated inbox/support
+bot; current customer bot access is checked before execution and publication.
+
 Messages, ownership and durable request receipts remain in the private messaging
 Fabric realm. Private attachments use Storage's native stages and current
 download authorization. Typing uses existing ephemeral Sync admission; presence
@@ -164,6 +169,11 @@ uses Guardian. Notifications narrow their accepted audience against current
 inbox/role access and reuse AppProvider's active-conversation and sound policy.
 This flag is not an application-wide replacement for profile, presence or other
 services' independent visibility policies.
+
+Notifications use the existing single `messaging.notifications.path`. If members
+and operators use different page URLs, choose a shared authenticated messages
+route that renders or forwards to the appropriate panel and preserves the
+`conversation` query. The inbox does not invent role-specific URLs.
 
 ## Enablement And Retained Data
 
@@ -180,7 +190,10 @@ ledger rewrite, account recreation or business-table migration is required.
 Keep normal backups and qualify retained-state upgrades before deployment.
 Do not assume an older package can reopen a newer private realm.
 
-This baseline does not infer app-specific case assignments, clinical care teams
-or record relationships. Apps choose trusted Guardian eligibility and named
-destinations; those domain rules must be modeled explicitly rather than guessed
-from profile text or a model's routing answer.
+This option provides member-initiated team conversations. Operators claim, reply
+and take over those requests. It does not add proactive staff-created member
+threads, infer app-specific case assignments, clinical care teams or record
+relationships. Apps choose trusted Guardian eligibility and named destinations;
+domain rules must be modeled explicitly rather than guessed from profile text
+or a model's routing answer. A staff-to-member peer chat is not an authorized
+substitute for a future deliberate outbound portal API.
