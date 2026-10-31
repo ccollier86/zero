@@ -16,8 +16,12 @@ export async function portalFixture(overrides: Pick<Partial<AppConfig>, 'messagi
     themeFoundation: 'legacy', frontendBuild: { version: 1, frontend: { themeFoundation: 'legacy', plugins: {} }, pluginIdentities: {} },
     workflows: false, email: false, ai: false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false, ...overrides };
-  let app = await createApp(config), origin = '';
-  const listen = () => { app.listen({ hostname: '127.0.0.1', port: 0 }); origin = 'http://127.0.0.1:' + app.server!.port; }; listen();
+  const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 503 }) }), port = reservation.port!;
+  let app: Awaited<ReturnType<typeof createApp>>, origin = '';
+  try { app = await createApp(config); } catch (error) { await reservation.stop(true); throw error; }
+  await reservation.stop(true);
+  const listen = () => { app.listen({ hostname: '127.0.0.1', port }); origin = 'http://127.0.0.1:' + port; };
+  try { listen(); } catch (error) { await app.stop(true); throw error; }
   const peers: Array<{ close(): void }> = [];
   return { get origin() { return origin; }, config,
     peer() {

@@ -8,21 +8,72 @@ visibility: internal
 system: messaging
 feature: native-workspace
 maturity: experimental
-applies_to: ["feature/messaging-backend; source and isolated synthetic tests, not stable-release qualification"]
+applies_to: ["feature/messaging-portal and prior messaging continuations; source and isolated synthetic tests, not stable-release qualification"]
 ---
 
 # Native Messaging Workspace Review
 
 [Work index](./index.md) · [Frontend manual](../frontend/messaging/workspace.md) · [Backend configuration](../backend/messaging/configuration.md) · [Earlier correction](./messaging-configuration-correction.md)
 
+## Portal Review And Polish (2026-10-31)
+
+This follow-up reviews the optional generic member-to-team mode, not an
+application-specific patient portal. It preserves ordinary contact/everyone
+defaults and the public facade. All work remains on `feature/messaging-portal`;
+main, stable `2.8.0`, updater selection and consuming applications are unchanged.
+
+The review found and corrected these boundaries:
+
+| Boundary | Correction and regression |
+| --- | --- |
+| Retained peer threads | Native reproduction showed an operator could send into a retained peer thread whose ordinary members could no longer read it. New sends now require current operator eligibility for the checked recipient set; canonical conversation revision fences membership changes before commit. Existing history is retained. Staff-to-staff messaging still passes. |
+| Retained contacts | Native reproduction showed requests from newly restricted members with actions the backend would reject. Contact pages mask non-operators while preserving the underlying forward cursor, including an empty first page followed by an admitted operator. |
+| Public request identity | A native accepted-message replay failed after unrelated inbox configuration changed its private snapshot. Fabric keys now bind a detached exact private payload; durable domain intents still bind the user's request ID/command. An unchanged message returns the original ID with one stored message; changed text still conflicts. Current authorization/projection checks remain mandatory. |
+| Destination bot selection | Human handback and review retry now read canonical membership-admitted private routing metadata. A public entry and an authenticated inbox cannot alias one another or reactivate a disabled bot through the global registry. A real native public-entry handback is denied without changing ownership or making a provider call. |
+| Native error presentation | The retained-thread direction originally worked for a direct error but not the native SDK's wrapped `FetchError`. A failing SDK-shaped regression led to reuse of the existing shared error projection; both forms keep the draft and show the team-inbox direction. |
+| Inbox recovery | Destination reads handle synchronous and asynchronous adapter failures. Explicit queue retry reloads destination choices as well as its stream; a withdrawn filter resets to All admitted inboxes with fresh pagination. Real-browser cases cover failure/retry and filter recovery. |
+
+The private routing query is not a new HTTP/public SDK endpoint or a bypass of
+transcript membership. The follow-up does not modify published private
+migrations `001`–`009`, the branch's index-only `010`, SYSTEM schema, identities
+or retained files. Provider execution still uses existing AI/Torrent work pools;
+no model call or cross-file async read is moved inside a SQLite writer lease.
+
+Evidence is retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/messaging-portal-polish/`.
+The failed `retained-policy-before.log` and `public-intent-before.log` demonstrate
+the native defects; `sdk-error-before.log` demonstrates the native SDK error
+presentation gap. The first `public-routing-before.log` is a fixture startup
+failure caused by bots without their required AI/workflow configuration—not a
+successful reproduction of the handback defect. The corrected native fixture
+uses a real loopback provider and stable origin across restart.
+
+| Focused gate | Result and limits |
+| --- | --- |
+| `final-native-regressions.log` | All 29 selected files pass, including 18 native managed HTTP/SDK/Fabric cases, portal transitions, scoped files/live revocation, job recovery and frozen migration checks. |
+| `sdk-error-after.log` | Both controller/lifecycle files pass after the later SDK-shaped presentation correction; these overlap the preceding inventory and are not summed as distinct coverage. |
+| `browser-probe.log` | Ten native workspace browser flows pass. Two optional headed OS-window/audio tests are skipped, not claimed as rerun. The queue-withdrawal case explicitly injects transport failure to test UI recovery; native authorization withdrawal has separate integration coverage. |
+| `final-parts-browser.log` | Three browser interaction/layout/typing cases pass using the existing native components and design tokens. |
+| `final-types.log` | Root TypeScript passes. |
+| `final-docs.log` | 879 unique, reachable pages, no structural/link problems. |
+
+Installed-package evidence and exact source identity are recorded in the
+qualification continuation after this review's source commit. These focused
+checks do not select a new stable archive, establish a full repository pass,
+or qualify installed Linux/amd64 backend deployment. Proactive operator-created
+portal threads, application-specific assignment rules and per-role notification
+URLs are not added. The [portal guide](../backend/messaging/portal.md) states
+the supported configuration, transitions and remaining app-owned composition.
+
 ## Authenticated Portal Continuation (2026-10-31)
 
 The optional [members-message-the-team mode](../backend/messaging/portal.md)
 is implemented on `feature/messaging-portal`, based on released `2.8.0` commit
 `00e1ffcb388a606b82e38f8e5bc64db24882c08e`. Feature implementation is
-`2a9006d22432bfe883d43a962eed7bdf8571f514`; final source hardening and qualification
-target is `3550d3e42afaf5600bbfe2c2ab1f7ca6d0430963`. The documentation continuation
-does not change runtime source. This feature is **not** selected by the stable
+`2a9006d22432bfe883d43a962eed7bdf8571f514`; the first source hardening/qualification
+target was `3550d3e42afaf5600bbfe2c2ab1f7ca6d0430963`, recorded by documentation
+commit `1963582e1810356bf3361ae573dfdabc109c7742`. The later review above changes
+runtime source and needs its own qualification. This feature is **not** selected by the stable
 updater or included in the published `2.8.0` archive.
 
 The mode restricts ordinary members to current Guardian-authorized support

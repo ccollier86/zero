@@ -76,8 +76,15 @@ browserTest('portal members get a destination-only panel and staff receive the s
   member.on('request', request => { if (/\/api\/messaging\/(directory|contacts|assistants)(?:\/|\?|$)/.test(new URL(request.url()).pathname)) forbiddenRequests.push(request.url()); });
   member.setDefaultTimeout(12000); staff.setDefaultTimeout(12000);
   try {
+    let firstDestinations = true;
+    await member.route('**/api/messaging/support/inboxes', async route => {
+      if (firstDestinations) { firstDestinations = false; await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'MESSAGING_NOT_READY' }) }); }
+      else await route.continue();
+    });
     await member.goto(f.base + '/workspace?user=peer');
     await member.getByRole('button', { name: 'New message', exact: true }).click();
+    await member.getByText('Message destinations could not be loaded.', { exact: true }).waitFor();
+    await member.getByRole('button', { name: 'Retry destinations', exact: true }).click();
     await member.getByRole('button', { name: 'Message Billing', exact: true }).waitFor();
     expect(await member.getByRole('textbox', { name: 'Find people' }).count()).toBe(0);
     expect(await member.getByRole('button', { name: 'Request contact' }).count()).toBe(0);
@@ -102,6 +109,34 @@ browserTest('portal members get a destination-only panel and staff receive the s
     await member.screenshot({ path: join(evidence, 'portal-member.png') }); await staff.screenshot({ path: join(evidence, 'portal-staff.png') });
     expect(errors).toEqual([]);
   } finally { await member.close(); await staff.close(); await f.close(); }
+}, 90000);
+browserTest('staff queue retry refreshes inbox choices and clears a withdrawn filter instead of leaving a blank Select', async () => {
+  // Transport fault injection qualifies frontend recovery only. Native Guardian
+  // withdrawal and current-scope enforcement have their own integration tests.
+  const f = await fixture('portal'), page = await lease!.browser.newPage({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' });
+  const errors: string[] = [], queries: Array<string | null> = []; let withdrawn = false;
+  page.on('pageerror', error => errors.push(error.message)); page.setDefaultTimeout(12000);
+  await page.route('**/api/messaging/support/inboxes', async route => {
+    if (!withdrawn) { await route.continue(); return; }
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: { ...body, items: body.items.filter((item: { id: string }) => item.id !== 'billing') } });
+  });
+  await page.route('**/api/messaging/support/queue/live?**', async route => {
+    const inbox = new URL(route.request().url()).searchParams.get('inboxId'); queries.push(inbox);
+    if (withdrawn && inbox === 'billing') await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ code: 'MESSAGING_NOT_FOUND' }) });
+    else await route.continue();
+  });
+  try {
+    await page.goto(f.base + '/workspace'); await page.getByRole('button', { name: 'Open support queue', exact: true }).click();
+    const select = page.getByRole('combobox', { name: 'Support inbox', exact: true });
+    await select.click(); await page.getByRole('option', { name: 'Billing', exact: true }).click();
+    await page.getByText('No requests waiting on this page.', { exact: true }).waitFor(); withdrawn = true;
+    await page.getByRole('button', { name: 'AI', exact: true }).click(); await page.getByRole('button', { name: 'Waiting', exact: true }).click();
+    await page.getByRole('button', { name: 'Retry support queue', exact: true }).click();
+    await select.getByText('All admitted inboxes', { exact: true }).waitFor();
+    await page.locator('[data-support-id="' + f.conversation.id + '"]').waitFor();
+    expect(queries.at(-1)).toBeNull(); expect(errors).toEqual([]);
+  } finally { await page.close(); await f.close(); }
 }, 90000);
 browserTest('native alert policy suppresses the active chat, chooses exactly one correct sound, and never replays history or muted alerts', () => qualifyAlertPolicy(lease!.browser), 120000);
 async function qualifyAlertPolicy(browser: Browser, realBackground = false, nativeContext?: BrowserContext) {

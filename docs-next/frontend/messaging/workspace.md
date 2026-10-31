@@ -149,6 +149,18 @@ inbox Select in the staff queue. Each inbox/owner filter change resets keyset
 pagination and cancels the previous subscription. The server still checks every
 operation; hiding controls is not the access boundary.
 
+An explicit queue retry reloads both the inbox choices and the live queue. If
+the refreshed choices withdraw the selected inbox, the filter returns to **All
+admitted inboxes** and resets pagination instead of leaving a blank Select.
+Loading and destination failures remain visible and retryable. Access is still
+checked server-side for every queue request and conversation operation.
+
+After portal enablement, retained operator peer history can remain readable
+even when its ordinary members are no longer peer-message recipients. A new
+send into that thread is rejected with a clear team-inbox direction; the draft
+is retained. This is a known rejection, not an uncertain send or permission to
+retry automatically through another route.
+
 Compose the workspace into the app's existing role-specific pages/AppShells.
 Account invitations/registration, navigation and domain-specific relationship
 rules remain in Guardian/the app, not a duplicated portal user model. Existing

@@ -2,7 +2,21 @@ import { expect, test } from 'bun:test';
 import { MessagingWorkspaceController } from './messaging-workspace-controller';
 import { workspaceConversation, workspaceFixture, workspaceMessage } from './workspace.test-fixtures';
 import { MessagingLiveError } from '../../messaging/live-error';
+import { FetchError } from '../../frontend/client/sdk';
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test.each([
+  ['direct service rejection', Object.assign(new Error('Synthetic retained restriction.'), { status: 403, code: 'MESSAGING_PEER_RESTRICTED' })],
+  ['native SDK rejection', new FetchError('Synthetic retained restriction.', 403, { code: 'MESSAGING_PEER_RESTRICTED' })],
+])('a retained peer restriction keeps the draft and readable inbox direction (%s)', async (_name, error) => {
+  const f = workspaceFixture(1), owner = new MessagingWorkspaceController(f.source, 'me', { isCurrent: f.current });
+  f.mutable.messages.send = async () => { throw error; };
+  try {
+    await owner.start(); await owner.select('one'); owner.edit('SYNTHETIC_RETAINED_DRAFT'); await owner.send();
+    expect(owner.getSnapshot().draft).toMatchObject({ phase: 'rejected', text: 'SYNTHETIC_RETAINED_DRAFT', requestId: null });
+    expect(owner.getSnapshot().draft.error).toContain('team inbox'); expect(f.messages).toHaveLength(1);
+  } finally { owner.dispose(); }
+});
 
 test('an uncertain portal open pins its inbox, mode and request identity through explicit retry', async () => {
   const f = workspaceFixture(1), owner = new MessagingWorkspaceController(f.source, 'me', { isCurrent: f.current });

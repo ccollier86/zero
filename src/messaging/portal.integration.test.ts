@@ -50,6 +50,21 @@ test('portal members cannot discover/add peers and reach the owner through their
   } finally { stop?.(); await f.close(); }
 }, 90000);
 
+test('the same accepted public message request survives unrelated inbox configuration changes without a second message', async () => {
+  const f = await portalFixture({ messaging: { portal: true, support: { inboxes: { team: { title: 'Team' } } } } }), admin = f.peer(), member = f.peer();
+  try {
+    await admin.register('replay-config-owner'); await member.register('replay-config-member');
+    const chat = await member.messaging.support.open({ inboxId: 'team', mode: 'human' }, { requestId: 'replay-config-open' });
+    const body = { text: 'SYNTHETIC_STABLE_PUBLIC_INTENT' }, request = { requestId: 'replay-config-message' };
+    const accepted = await member.messaging.messages.send(chat.id, body, request);
+    f.config.messaging = { portal: true, support: { defaultInbox: 'team', inboxes: { team: { title: 'Renamed team' }, additional: { title: 'Another team' } } } };
+    await f.restart(); await member.login('replay-config-member');
+    expect((await member.messaging.messages.send(chat.id, body, request)).id).toBe(accepted.id);
+    await expect(member.messaging.messages.send(chat.id, { text: 'DIFFERENT_PUBLIC_INTENT' }, request)).rejects.toMatchObject({ code: 'MESSAGING_INTENT_CONFLICT' });
+    expect((await member.messaging.messages.list(chat.id)).items.map(row => row.id)).toEqual([accepted.id]);
+  } finally { await f.close(); }
+}, 90000);
+
 test('named inboxes route to current authorized operators and revoke member/staff reads, files, queue filters and streams', async () => {
   const f = await portalFixture({ auth: { bootstrap: 'public', userProperties: {
     operator: { editableBy: 'admin', useInPolicies: true }, department: { editableBy: 'admin', useInPolicies: true }, billingAccess: { editableBy: 'admin', useInPolicies: true },
@@ -63,6 +78,10 @@ test('named inboxes route to current authorized operators and revoke member/staf
     await set(admin.id, 'operator', 'yes'); await admin.login('inbox-owner');
     await set(agent.id, 'operator', 'yes'); await set(agent.id, 'department', 'billing'); await agent.login('inbox-agent');
     await set(member.id, 'billingAccess', 'yes'); await member.login('inbox-member');
+    expect((await admin.messaging.directory()).items.map(row => row.id)).toEqual([agent.id]);
+    const staffChat = await admin.messaging.conversations.create({ userIds: [agent.id] }, { requestId: 'operator-to-operator' });
+    await admin.messaging.messages.send(staffChat.id, { text: 'SYNTHETIC_OPERATOR_PEER_MESSAGE' }, { requestId: 'operator-peer-turn' });
+    expect((await agent.messaging.messages.list(staffChat.id)).items[0]?.text).toBe('SYNTHETIC_OPERATOR_PEER_MESSAGE');
     expect((await member.messaging.support.inboxes()).items.map(item => item.id)).toEqual(['frontdesk', 'billing']);
     expect((await other.messaging.support.inboxes()).items.map(item => item.id)).toEqual(['frontdesk']);
     const privateMemberData = JSON.stringify(await member.messaging.support.inboxes());
@@ -131,6 +150,8 @@ test('enabling portal on an existing installation retains peer history but does 
     const input = { kind: 'group' as const, userIds: [admin.id, other.id] }, request = { requestId: 'retained-peer-create' };
     const prior = await member.messaging.conversations.create(input, request);
     await member.messaging.messages.send(prior.id, { text: 'SYNTHETIC_RETAINED_HISTORY' }, { requestId: 'retained-peer-turn' });
+    await member.messaging.contacts.request(admin.id, { requestId: 'retained-member-contact' });
+    expect((await admin.messaging.contacts.list()).items.map(row => row.userId)).toEqual([member.id]);
     f.config.messaging = { support: {}, portal: true }; await f.restart();
     await admin.login('retained-owner'); await member.login('retained-member'); await other.login('retained-other');
     expect(await member.messaging.capabilities()).toMatchObject({ portal: true });
@@ -140,7 +161,25 @@ test('enabling portal on an existing installation retains peer history but does 
     await expect(other.messaging.conversations.get(prior.id)).rejects.toMatchObject({ status: 404 });
     expect((await member.messaging.conversations.list()).items).toEqual([]);
     expect((await admin.messaging.messages.list(prior.id)).items[0]?.text).toBe('SYNTHETIC_RETAINED_HISTORY');
+    await expect(admin.messaging.messages.send(prior.id, { text: 'MUST_NOT_SEND_TO_A_RESTRICTED_PORTAL_MEMBER' }, { requestId: 'retained-peer-operator-send' })).rejects.toMatchObject({ status: 403, code: 'MESSAGING_PEER_RESTRICTED' });
     const routed = await member.messaging.support.open({ mode: 'human' }, { requestId: 'retained-portal-new' });
     expect((await admin.messaging.support.queue()).items.map(row => row.id)).toEqual([routed.id]);
+  } finally { await f.close(); }
+}, 90000);
+
+test('portal operator contact pages hide retained non-operator requests without dropping the forward cursor', async () => {
+  const f = await portalFixture({ auth: { bootstrap: 'public', userProperties: { operator: { editableBy: 'admin', useInPolicies: true } } }, messaging: { support: {} } });
+  const admin = f.peer(), a = f.peer(), b = f.peer();
+  try {
+    await admin.register('contact-filter-owner'); await a.register('contact-filter-a'); await b.register('contact-filter-b');
+    await a.messaging.contacts.request(admin.id, { requestId: 'retained-contact-a' }); await b.messaging.contacts.request(admin.id, { requestId: 'retained-contact-b' });
+    const before = await admin.messaging.contacts.list(); expect(before.items).toHaveLength(2);
+    const operator = before.items[1]!.userId;
+    await admin.json('/auth/admin/users/' + operator + '/properties/operator', { method: 'PUT', body: { value: 'yes' } });
+    await admin.json('/auth/admin/users/' + admin.id + '/properties/operator', { method: 'PUT', body: { value: 'yes' } });
+    f.config.messaging = { portal: true, support: { staff: { properties: { operator: 'yes' } } } }; await f.restart(); await admin.login('contact-filter-owner');
+    const first = await admin.messaging.contacts.list({ limit: 1 }); expect(first.items).toEqual([]); expect(first.hasMore).toBe(true); expect(first.nextCursor).not.toBeNull();
+    const next = await admin.messaging.contacts.list({ limit: 1, after: first.nextCursor! }); expect(next.items.map(row => row.userId)).toEqual([operator]);
+    expect(next.hasMore).toBe(false); expect(next.nextCursor).toBeNull();
   } finally { await f.close(); }
 }, 90000);

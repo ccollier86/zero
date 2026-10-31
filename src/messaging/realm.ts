@@ -8,7 +8,7 @@ import { messagingFail, messagingId, messagingRecord } from './validation';
 import { createMessagingConversation, changeMessagingConversation, markMessagingRead, ownMessagingConversation } from './conversation-commands';
 import { changeMessagingContact } from './contact-commands';
 import { changeMessagingMessage, reactMessagingMessage, sendMessagingMessage } from './message-commands';
-import { listMessagingContacts, listMessagingConversations, listMessagingMessages, listMessagingSupportQueue, readMessagingConversation, readMessagingMessage, readMessagingReceipt, readMessagingTypingMembership } from './realm-queries';
+import { listMessagingContacts, listMessagingConversations, listMessagingMessages, listMessagingSupportQueue, readMessagingConversation, readMessagingMessage, readMessagingReceipt, readMessagingTypingMembership, readMessagingAssistantRoute } from './realm-queries';
 import { openMessagingSupport, claimMessagingSupport, requestMessagingHuman } from './support-commands';
 import { MESSAGING_ATTACHMENT_TABLES } from './attachment-model';
 import { allocateMessagingAttachment, acceptMessagingAttachment, retireMessagingAttachment } from './attachment-commands';
@@ -147,7 +147,7 @@ export const messagingRealm = defineDatabaseRealm({
     'messaging.notification.complete': completeMessagingNotification, 'messaging.notification.redispatch': redispatchMessagingNotification,
   })),
   // Session resolution is a closed server transport query, never general Sync.
-  queries: { 'messaging.visitor.session': query(readMessagingVisitor),
+  queries: { 'messaging.visitor.session': query(readMessagingVisitor), 'messaging.assistant.route': query(readMessagingAssistantRoute),
     'messaging.conversation': query(readMessagingConversation), 'messaging.conversations': query(listMessagingConversations), 'messaging.message': query(readMessagingMessage), 'messaging.messages': query(listMessagingMessages), 'messaging.contacts': query(listMessagingContacts), 'messaging.support.queue': query(listMessagingSupportQueue), 'messaging.receipt': query(readMessagingReceipt), 'messaging.typing': query(readMessagingTypingMembership),
     'messaging.attachment': query(readMessagingAttachment), 'messaging.attachments.pending': query(pendingMessagingAttachments),
     'messaging.jobs.pending': query(pendingMessagingJobs), 'messaging.job.context': query(readMessagingJobContext),

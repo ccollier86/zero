@@ -19,6 +19,8 @@ import { auditMessagingRead, type MessagingReadAction } from './read-audit';
 import { messagingAssistantId } from './assistant-config';
 import { directMessagingDisplay } from './conversation-display';
 import { MessagingVisitors } from './visitor-service';
+import { selectMessagingConversationAssistant, type MessagingAssistantRoute } from './assistant-selection';
+import { cloneDatabaseSerializableValue } from '../databases/database-operations';
 
 export interface MessagingAuthority { readonly access: RequestAuthorizationAccess; readonly scope: ServiceDataScope; assertCurrentAuthoritySync(): void }
 export interface MessagingDirectory {
@@ -67,9 +69,9 @@ export class MessagingService {
       if (!sameMessagingAdmission(current, captured)) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409);
       for (const id of recipients) this.deps.directory.assertRecipient(scope, id);
     };
-    const peer = (recipients: readonly string[] = []) => {
+    const peer = (recipients: readonly string[] = [], failure: 'MESSAGING_NOT_FOUND' | 'MESSAGING_PEER_RESTRICTED' = 'MESSAGING_NOT_FOUND') => {
       if (actor().portal) messagingFail('MESSAGING_FORBIDDEN', 403);
-      if (this.deps.config.portal) for (const id of recipients) if (!this.deps.directory.notificationRecipient(scope, id, true)) messagingFail('MESSAGING_NOT_FOUND', 404);
+      if (this.deps.config.portal) for (const id of recipients) if (!this.deps.directory.notificationRecipient(scope, id, true)) messagingFail(failure, failure === 'MESSAGING_PEER_RESTRICTED' ? 403 : 404);
     };
     const mutation = (input: MessagingMutationOptions) => {
       const value = messagingRecord(input, ['requestId', 'signal']), requestId = messagingId(value.requestId), signal = value.signal;
@@ -103,8 +105,13 @@ export class MessagingService {
     };
     const write = <T>(name: string, input: object, options: MessagingMutationOptions, recipients: readonly string[] = [], extra?: () => void): Promise<T> => {
       const captured = actor(true), opts = mutation(options), base = final(captured, true, recipients), check = () => { base(); extra?.(); };
-      check(); const transport = 'messaging:' + messagingHash([scopeId, captured.kind, captured.id, opts.requestId]);
-      return attributed(captured, opts, check, async () => { await prepare(name, input); check(); return this.runtime.write<T>(scope, name, { ...input, actor: captured, requestId: opts.requestId }, transport, check, opts.signal); }).then(value => {
+      check(); const payload = cloneDatabaseSerializableValue({ ...input, actor: captured, requestId: opts.requestId });
+      // Fabric deduplicates this exact private snapshot. The actor's durable
+      // intent receipt independently binds the public request ID and user intent.
+      // A policy/configuration change must not turn an unchanged public retry
+      // into a transport-payload conflict or a second accepted domain operation.
+      const transport = 'messaging:' + messagingHash([scopeId, captured.kind, captured.id, opts.requestId, name, payload]);
+      return attributed(captured, opts, check, async () => { await prepare(name, payload as object); check(); return this.runtime.write<T>(scope, name, payload, transport, check, opts.signal); }).then(value => {
         this.deps.jobs?.wake(scope); return value;
       }, error => { if (error?.code === 'DATABASE_OUTCOME_UNKNOWN') this.deps.jobs?.wake(scope); throw error; });
     };
@@ -127,18 +134,11 @@ export class MessagingService {
     };
     const assistantPolicy = this.deps.config.support && this.deps.config.assistant ? this.deps.config.assistant.policyHash : null;
     const inboxAssistants = Object.fromEntries(Object.values(this.deps.config.supportInboxes ?? {}).flatMap(inbox => inbox.assistantId ? [[inbox.id, inbox.assistantId]] : []));
-    const assistantFor = (current: ConversationRecord) => {
-      const id = current.assistantId ?? (this.deps.config.assistant ? this.deps.config.assistant.id : null);
-      if (current.kind === 'support' && current.participants.some(member => member.role === 'customer' && member.kind === 'user')) {
-        const selected = current.inboxId ? this.deps.config.supportInboxes[current.inboxId]?.assistantId ?? null
-          : this.deps.config.support && this.deps.config.assistant ? this.deps.config.assistant.id : null;
-        if (id !== selected) return undefined;
-      }
-      return id ? this.deps.config.assistants[id] : undefined;
-    };
+    const assistantFor = async (id: string, signal?: AbortSignal) => selectMessagingConversationAssistant(this.deps.config,
+      await read<MessagingAssistantRoute>('messaging.assistant.route', { id: messagingId(id) }, signal));
     const ownership = async (id: string, expectedEpoch: number, owner: 'human' | 'assistant' | 'triage', options: MessagingMutationOptions) => {
       const current = await conversation(messagingId(id), options.signal), assistantId = current.assistantId ?? (this.deps.config.assistant ? this.deps.config.assistant.id : null);
-      const selected = assistantFor(current);
+      const selected = owner === 'assistant' ? await assistantFor(current.id, options.signal) : undefined;
       if (owner === 'assistant' && (!selected || !actor(true).assistantPolicies?.[selected.id])) messagingFail('MESSAGING_FORBIDDEN', 403);
       if (owner === 'assistant' && !this.deps.jobs) messagingFail('MESSAGING_NOT_READY', 503);
       return afterCommit(write('messaging.conversation.owner', { id, expectedEpoch: messagingInteger(expectedEpoch), owner, assistantPolicy: selected?.policyHash ?? null,
@@ -170,7 +170,7 @@ export class MessagingService {
         list: (conversationId, query = {}, options) => audit('review.list', messagingId(conversationId), () => read('messaging.reviews', { conversationId: messagingId(conversationId), query }, options?.signal)),
         get: (conversationId, id, options) => audit('review.detail', messagingId(conversationId), () => read('messaging.review', { conversationId: messagingId(conversationId), id: messagingId(id) }, options?.signal)),
         retry: async (conversationId, id, epoch, acknowledgePossibleDuplicate, options) => {
-          const current = await conversation(messagingId(conversationId), options.signal), selected = assistantFor(current);
+          const selected = await assistantFor(conversationId, options.signal);
           if (!selected || !actor(true).assistantPolicies?.[selected.id]) messagingFail('MESSAGING_FORBIDDEN', 403);
           if (!this.deps.jobs) messagingFail('MESSAGING_NOT_READY', 503);
           return write('messaging.review.resolve', { conversationId, id: messagingId(id), expectedOwnerEpoch: messagingInteger(epoch), action: 'retry', acknowledgePossibleDuplicate, assistantPolicy: selected.policyHash }, options);
@@ -228,9 +228,20 @@ export class MessagingService {
         get: (conversationId, id, opts) => audit('history', messagingId(conversationId), () => message(conversationId, id, opts?.signal)),
         list: (conversationId, query = {}, opts) => audit('history', messagingId(conversationId), () => read('messaging.messages', { conversationId: messagingId(conversationId), query }, opts?.signal)),
         send: (conversationId, input, options) => {
-          const r = messagingRecord(input, ['text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch']), opts = mutation(options);
-          return afterCommit(write<DurableMessage>('messaging.message.send', { ...r, conversationId: messagingId(conversationId), id: 'message_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40), maxMessageLength: this.deps.config.maxMessageLength,
-            assistantEnabled: Boolean(assistantPolicy), assistantPolicy, inboxAssistants, notificationsEnabled: this.deps.config.notifications, notificationPath: this.deps.config.notificationPath }, opts), accepted => message(conversationId, accepted.id, opts.signal));
+          const r = cloneDatabaseSerializableValue(messagingRecord(input, ['text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch'])) as Readonly<Record<string, unknown>>, opts = mutation(options);
+          const portalActor = this.deps.config.portal ? actor(true) : null, current = portalActor ? final(portalActor, true) : undefined;
+          const commit = (recipients: readonly string[] = [], peerRevision?: number) => afterCommit(write<DurableMessage>('messaging.message.send', {
+            ...r, conversationId: messagingId(conversationId), id: 'message_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40), maxMessageLength: this.deps.config.maxMessageLength,
+            ...(peerRevision === undefined ? {} : { peerRevision }), assistantEnabled: Boolean(assistantPolicy), assistantPolicy, inboxAssistants, notificationsEnabled: this.deps.config.notifications, notificationPath: this.deps.config.notificationPath,
+          }, opts, recipients, () => { current?.(); if (peerRevision !== undefined) peer(recipients, 'MESSAGING_PEER_RESTRICTED'); }), accepted => message(conversationId, accepted.id, opts.signal));
+          // Ordinary portal actors are already support-only in the worker.
+          // Only operators need the extra retained-peer recipient preflight.
+          if (!portalActor || portalActor.portal) return commit();
+          return conversation(conversationId, opts.signal).then(record => {
+            if (record.kind !== 'direct' && record.kind !== 'group') return commit();
+            const recipients = record.participants.filter(member => member.kind === 'user' && member.id !== identity.userId).map(member => member.id);
+            peer(recipients, 'MESSAGING_PEER_RESTRICTED'); return commit(recipients, record.revision);
+          });
         },
         edit: (conversationId, id, revision, text, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), text: messagingText(text, this.deps.config.maxMessageLength), action: 'edit', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy, inboxAssistants }, opts), () => message(conversationId, id, opts.signal)),
         remove: (conversationId, id, revision, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy, inboxAssistants }, opts), () => message(conversationId, id, opts.signal)),
@@ -238,8 +249,11 @@ export class MessagingService {
       },
       contacts: { list: (query = {}, opts) => audit('contacts', null, async () => {
         const captured = actor(), check = final(captured), page = await read<MessagingPage<MessagingContact>>('messaging.contacts', { query }, opts?.signal);
-        check(); const names = new Map(this.deps.directory.resolve?.(scope, page.items.map(row => row.userId)).map(row => [row.id, row]) ?? []);
-        const result = { ...page, items: page.items.map(row => ({ ...row, name: names.get(row.userId)?.name ?? 'Member', avatarUrl: names.get(row.userId)?.avatarUrl ?? null })) }; check(); return result;
+        check(); const visible = this.deps.config.portal ? page.items.filter(row => this.deps.directory.notificationRecipient(scope, row.userId, true)) : page.items;
+        const names = new Map(this.deps.directory.resolve?.(scope, visible.map(row => row.userId)).map(row => [row.id, row]) ?? []);
+        // Keep the source cursor even when this bounded page masks every old
+        // non-operator relationship, so the next admitted page remains reachable.
+        const result = { ...page, items: visible.map(row => ({ ...row, name: names.get(row.userId)?.name ?? 'Member', avatarUrl: names.get(row.userId)?.avatarUrl ?? null })) }; check(); return result;
       }), request: (userId, opts) => contact('request', userId, opts),
         respond: (userId, revision, accept, opts) => { if (typeof accept !== 'boolean') messagingFail('MESSAGING_INPUT_INVALID', 422); return contact(accept ? 'accept' : 'decline', userId, opts, revision); },
         block: (userId, opts) => contact('block', userId, opts), unblock: (userId, opts) => contact('unblock', userId, opts) },

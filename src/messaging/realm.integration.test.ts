@@ -42,6 +42,19 @@ const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice,
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
 
+test('a checked peer-recipient snapshot cannot admit a send after canonical membership changed', async () => {
+  const f = await fixture();
+  try {
+    await f.command('messaging.conversation.create', create());
+    expect((await f.command('messaging.conversation.change', { actor: alice, id: 'conversation-one', requestId: 'peer-add', expectedRevision: 1,
+      action: 'add', value: carol.id, contactsOnly: false, history: 'all', maxParticipants: 100 })).ok).toBe(true);
+    expect((await f.command('messaging.message.send', { ...send(1), peerRevision: 1 })).code).toBe('MESSAGING_REVISION_CONFLICT');
+    expect((await f.query('messaging.messages', { actor: alice, conversationId: 'conversation-one' })).value.items).toEqual([]);
+    expect((await f.query('messaging.receipt', { actor: alice, requestId: 'send-1' })).value).toBeNull();
+    expect((await f.command('messaging.message.send', { ...send(1), peerRevision: 2 })).ok).toBe(true);
+  } finally { await f.close(); }
+}, 30000);
+
 test('a populated retained v9 realm upgrades only inbox indexes and preserves identities, history and accepted request receipts', async () => {
   const f = await fixture('9');
   try {
@@ -80,6 +93,8 @@ test('a portal actor cannot replay/create peer grants and retained routed suppor
     expect((await f.query('messaging.conversations', { actor: portal })).value.items).toEqual([]);
     const open = { actor: portal, id: 'portal-one', requestId: 'portal-open', title: 'Front desk', owner: 'triage', channelId: null, entryId: 'frontdesk', assistantId: null };
     expect((await f.command('messaging.support.open', open)).ok).toBe(true);
+    expect((await f.query('messaging.assistant.route', { actor: bob, id: 'portal-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.assistant.route', { actor: portal, id: 'portal-one' })).value).toEqual({ kind: 'support', assistantId: null, entryId: 'frontdesk', visitor: false });
     expect((await f.command('messaging.support.open', { ...open, entryId: 'billing' })).code).toBe('MESSAGING_NOT_FOUND');
     expect((await f.query('messaging.conversation', { actor: portal, id: 'portal-one' })).value.inboxId).toBe('frontdesk');
     expect((await f.query('messaging.support.queue', { actor: routed, query: { inboxId: 'frontdesk' } })).value.items.map((row: any) => row.id)).toEqual(['portal-one']);

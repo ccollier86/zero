@@ -27,6 +27,12 @@ export function WorkspaceSupportQueue({ controller, state, onOpen }: { controlle
   const view = owner?.controller === controller && owner.key === key ? owner.view : EMPTY;
   const locked = !!state.command && state.command.phase !== 'rejected';
   useEffect(() => {
+    if (inboxId && !inboxes.loading && !inboxes.error && !inboxes.items.some(item => item.id === inboxId && item.canHandle)) {
+      setSelection({ controller }); setCursors([undefined]); setIndex(0);
+    }
+  }, [controller, inboxId, inboxes.loading, inboxes.error, inboxes.items]);
+  const retryQueue = () => { inboxes.retry(); setRetry(value => value + 1); };
+  useEffect(() => {
     const abort = new AbortController(); let stop: (() => void) | undefined;
     const current = () => !abort.signal.aborted && controller.current() && latest.current.controller === controller && latest.current.key === key;
     const update = (change: (prior: View) => View) => { if (current()) setOwner(prior => current() ? ({ controller, key, view: change(prior?.controller === controller && prior.key === key ? prior.view : EMPTY) }) : prior); };
@@ -50,11 +56,12 @@ export function WorkspaceSupportQueue({ controller, state, onOpen }: { controlle
       <SelectTrigger aria-label="Support inbox" className="w-full"><SelectValue placeholder="All admitted inboxes" /></SelectTrigger>
       <SelectContent><SelectItem value="__all">All admitted inboxes</SelectItem>{choices.map(item => <SelectItem key={item.id} value={item.id}>{item.title}</SelectItem>)}</SelectContent>
     </Select>}
+    {inboxes.loading && <p role="status" className="zero-messaging-workspace-hint">Loading inbox choices…</p>}
     {inboxes.error && <p role="status" className="zero-messaging-workspace-hint">Inbox choices could not be loaded. Current queue access is still checked by the server.<Button size="xs" variant="ghost" onClick={inboxes.retry}>Retry inbox choices</Button></p>}
     <div className="zero-messaging-support-filters" role="group" aria-label="Support queue filter">{FILTERS.map(([value, label]) => <Button key={value} size="xs" variant={filter === value ? 'secondary' : 'ghost'} aria-pressed={filter === value}
       onClick={() => { setFilter(value); setCursors([undefined]); setIndex(0); }}>{label}</Button>)}</div>
     <p className="zero-messaging-workspace-hint">Claim a request to join its conversation. Queue entries do not expose message contents.</p>
-    {view.error && <div role="alert" className="zero-messaging-workspace-notice">{view.error}<Button size="xs" variant="ghost" onClick={() => setRetry(value => value + 1)}>Retry support queue</Button></div>}
+    {view.error && <div role="alert" className="zero-messaging-workspace-notice">{view.error}<Button size="xs" variant="ghost" onClick={retryQueue}>Retry support queue</Button></div>}
     <ul ref={setContainer} className="zero-messaging-conversations" aria-label="Support requests" aria-busy={view.loading}>
       <MenuActiveHighlight container={container} activeSelector="[aria-pressed=true]" hoverSelector="[data-support-request]" preserveSelectionFill={false} />
       {view.page?.items.map(item => <li key={item.id}><button type="button" data-support-request data-support-id={item.id} className="zero-messaging-conversation" disabled={locked}

@@ -11,11 +11,17 @@ import { messagingMessageAssistantPolicy } from './message-assistant-policy';
 
 export function sendMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'inboxAssistants', 'notificationsEnabled', 'notificationPath']);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'peerRevision', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'inboxAssistants', 'notificationsEnabled', 'notificationPath']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.conversationId), staff = staffTimeline(conversation, member);
     const text = messagingText(r.text, messagingInteger(r.maxMessageLength, 1, 20000), true), id = messagingId(r.id), visibility = messagingChoice(r.visibility ?? 'conversation', ['conversation', 'staff']);
     const attachments = [...new Set(messagingArray(r.attachmentIds ?? [], 10).map(messagingId))];
     if (!text.trim() && !attachments.length || visibility === 'staff' && !staff) messagingFail('MESSAGING_INPUT_INVALID', 422);
+    // The parent checked current Guardian eligibility for this exact member
+    // set. Membership changes before admission must not add unchecked recipients.
+    if (r.peerRevision !== undefined) {
+      if (conversation.kind !== 'direct' && conversation.kind !== 'group') messagingFail('MESSAGING_INPUT_INVALID', 422);
+      if (conversation.revision !== messagingInteger(r.peerRevision)) messagingFail('MESSAGING_REVISION_CONFLICT');
+    }
     if (conversation.kind !== 'support' && conversation.kind !== 'assistant') for (const other of conversationMembers(conversation)) if (other !== actor.id) assertMessagingContact(context, actor, other, false);
     return messagingIntent(context, actor, r.requestId, ['message.send', conversation.id, text, attachments, visibility, r.expectedOwnerEpoch ?? null], () => {
       if (conversation.archived) messagingFail('MESSAGING_ARCHIVED');

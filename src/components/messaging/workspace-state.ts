@@ -40,7 +40,7 @@ export function messagingErrorCode(error: unknown): string | undefined {
 export function messagingWriteWasRejected(error: unknown): boolean {
   const code = messagingErrorCode(error);
   if (code === 'MESSAGING_OUTCOME_UNKNOWN' || code === 'DATABASE_OUTCOME_UNKNOWN') return false;
-  return ['MESSAGING_INPUT_INVALID', 'MESSAGING_FORBIDDEN', 'MESSAGING_NOT_FOUND', 'MESSAGING_INTENT_CONFLICT', 'MESSAGING_ARCHIVED',
+  return ['MESSAGING_INPUT_INVALID', 'MESSAGING_FORBIDDEN', 'MESSAGING_PEER_RESTRICTED', 'MESSAGING_NOT_FOUND', 'MESSAGING_INTENT_CONFLICT', 'MESSAGING_ARCHIVED',
     'MESSAGING_OWNER_CONFLICT', 'MESSAGING_REVISION_CONFLICT', 'MESSAGING_CONTACT_REQUIRED', 'MESSAGING_BLOCKED', 'MESSAGING_ATTACHMENT_UNAVAILABLE',
     'MESSAGING_NOT_READY', 'MESSAGING_STAGE_CONFLICT', 'MESSAGING_CAPACITY'].includes(code ?? '')
     || [401, 403, 404, 422].includes(messagingErrorStatus(error) ?? 0);

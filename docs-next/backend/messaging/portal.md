@@ -53,6 +53,15 @@ all transcripts: an explicit claim admits the staff member to that conversation.
 New operator-to-operator peer chats remain available; portal members cannot be
 added as peer-chat recipients as a way around the routed inbox.
 
+That rule also applies to an old peer thread after portal mode is enabled. An
+operator can retain their admitted history but cannot send new messages into a
+thread containing a now-restricted portal member. The server returns
+`MESSAGING_PEER_RESTRICTED`; the native workspace keeps the draft and directs
+the operator to the team inbox. Staff-to-staff peer messages remain available.
+Retained non-operator contact requests are masked from the operator's contact
+list. A bounded page can consequently be empty with `hasMore: true`; continue
+with its `nextCursor` rather than assuming there are no later admitted contacts.
+
 `portal` defaults to `false`. Existing everyone/contact deployments do not change
 unless they enable it. `messaging: false` still disables messaging. An explicit
 `support: false` with `portal: true` is rejected rather than leaving members with
@@ -136,6 +145,16 @@ owner filter; reset pagination when either changes. Queue rows contain safe
 inbox IDs, ownership and creation metadata, not customer message text. An
 admitted conversation adds optional `inboxId` and `inboxTitle` display fields.
 
+Keep the same request ID for an unconfirmed message send and its explicit retry.
+Internal Fabric receipt keys bind the exact server-owned snapshot; the durable
+messaging intent separately binds the public request ID to the member's command.
+An unrelated inbox/configuration change does not create another message or make
+an unchanged message retry conflict. Reusing that ID for different text or
+attachments is still rejected. Current admission runs before any replay and
+before returning its projection: an old receipt never restores revoked access.
+Changing an effective default destination or requested operation is not an
+unchanged intent; reconcile the original receipt instead of inventing a new ID.
+
 The native `MessagingWorkspace` automatically uses server capabilities. A
 portal member gets a labeled **New message** action and approved destinations,
 not people/contact/group or staff-only controls. Operators get the existing
@@ -161,6 +180,11 @@ A bot remaining in the internal registry does not reactivate disabled support
 automation in an old conversation. Message/edit dispatch, explicit retry and
 human handback must respect the currently selected authenticated inbox/support
 bot; current customer bot access is checked before execution and publication.
+
+Explicit handback and review retry resolve the conversation's canonical private
+routing metadata, not its visible participant labels. Public website entries
+and authenticated inboxes retain separate selections; leaving a bot in the
+global registry cannot reactivate a disabled destination's automation.
 
 Messages, ownership and durable request receipts remain in the private messaging
 Fabric realm. Private attachments use Storage's native stages and current

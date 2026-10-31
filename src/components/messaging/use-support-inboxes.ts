@@ -10,7 +10,7 @@ export function useSupportInboxes(controller: MessagingWorkspaceController, enab
   useEffect(() => {
     if (!enabled) return;
     const abort = new AbortController();
-    void controller.source.support.inboxes({ signal: abort.signal }).then(page => {
+    void Promise.resolve().then(() => { abort.signal.throwIfAborted(); return controller.source.support.inboxes({ signal: abort.signal }); }).then(page => {
       if (!abort.signal.aborted && controller.current()) setOwner({ controller, generation, items: page.items, error: false });
     }).catch(() => { if (!abort.signal.aborted && controller.current()) setOwner({ controller, generation, items: [], error: true }); });
     return () => abort.abort();

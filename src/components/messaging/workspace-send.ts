@@ -1,7 +1,7 @@
 /** Exact-intent send ownership. Unknown outcomes require a read/check or explicit same-key retry. */
 import type { DurableMessage } from '../../messaging/contracts';
 import type { WorkspaceSource, MessagingWorkspaceDraft } from './workspace-state';
-import { EMPTY_MESSAGING_DRAFT, messagingWriteWasRejected } from './workspace-state';
+import { EMPTY_MESSAGING_DRAFT, messagingErrorCode, messagingWriteWasRejected } from './workspace-state';
 interface SendMode { readonly visibility?: 'conversation' | 'staff'; readonly expectedOwnerEpoch?: number }
 interface Pending extends SendMode { readonly requestId: string; readonly text: string; readonly attachmentIds: readonly string[]; task?: Promise<void> }
 export class MessagingWorkspaceSends {
@@ -37,7 +37,12 @@ export class MessagingWorkspaceSends {
         if (this.current()) this.finish(id, key, active, message);
       } catch (error) {
         if (!this.current()) return;
-        if (messagingWriteWasRejected(error)) { this.pending.delete(key); this.set(key, { text: active.text, phase: 'rejected', requestId: null, error: 'This message was not accepted. Review it before trying again.' }); }
+        if (messagingWriteWasRejected(error)) {
+          const code = messagingErrorCode(error);
+          this.pending.delete(key); this.set(key, { text: active.text, phase: 'rejected', requestId: null, error: code === 'MESSAGING_PEER_RESTRICTED'
+            ? 'This retained peer thread cannot receive new messages under the current policy. Use the team inbox for member conversations. Your draft is kept.'
+            : 'This message was not accepted. Review it before trying again.' });
+        }
         else this.set(key, { text: active.text, phase: 'unknown', requestId: active.requestId, error: 'The send result is unconfirmed. Check its result or retry this same message; do not create another copy.' });
       } finally { if (this.pending.get(key) === active) active.task = undefined; }
     }); active.task = work; return work;

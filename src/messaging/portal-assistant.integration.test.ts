@@ -45,6 +45,29 @@ test('an inbox selects its own assistant without a default bot and current custo
   } finally { release(); await f.close(); await provider.stop(true); }
 }, 90000);
 
+test('a retained public entry cannot be handed back to a disabled bot just because that bot remains the global default', async () => {
+  const assistant = { model: 'synthetic/not-called' };
+  let calls = 0;
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() { calls++; return Response.json({ error: { message: 'Synthetic provider must not run.' } }, { status: 503 }); } });
+  let f: Awaited<ReturnType<typeof portalFixture>> | undefined;
+  try {
+    f = await portalFixture({ messaging: { portal: true, assistant }, workflows: {},
+      ai: { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-loopback-key', baseURL: 'http://127.0.0.1:' + provider.port + '/v1' } } } });
+    const admin = f.peer();
+    await admin.register('public-handoff-owner');
+    f.config.messaging = { portal: true, assistant, support: { entries: { website: { origin: f.origin } } } }; await f.restart(); await admin.login('public-handoff-owner');
+    const response = await fetch(f.origin + '/api/messaging/public/website/session', { method: 'POST', headers: {
+      Origin: f.origin, 'X-Zero-Support-Client': '1', 'Content-Type': 'application/json',
+    }, body: JSON.stringify({ mode: 'human' }) }); expect(response.status).toBe(200);
+    const session = await response.json() as { conversationId: string };
+    const claimed = await admin.messaging.support.claim(session.conversationId, 1, { requestId: 'public-handoff-claim' });
+    f.config.messaging = { portal: true, assistant, support: { entries: { website: { origin: f.origin, assistant: false } } } }; await f.restart(); await admin.login('public-handoff-owner');
+    await expect(admin.messaging.conversations.handBack(session.conversationId, claimed.ownerEpoch, 'assistant', { requestId: 'disabled-public-handoff' })).rejects.toMatchObject({ status: 403 });
+    expect(await admin.messaging.conversations.get(session.conversationId)).toMatchObject({ owner: 'human', ownerEpoch: claimed.ownerEpoch });
+    expect(calls).toBe(0);
+  } finally { await f?.close(); await provider.stop(true); }
+}, 90000);
+
 test('disabling the default support assistant preserves a retained portal conversation without starting another provider call', async () => {
   let calls = 0;
   const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {

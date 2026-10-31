@@ -40,6 +40,11 @@ export function readMessagingConversation({ database }: DatabaseReadQueryContext
   const r = messagingRecord(input, ['actor', 'id']), actor = captureMessagingActor(r.actor), { conversation, member } = readMessagingMembership(database, actor, messagingId(r.id));
   return projectMessagingConversation(database, actor, conversation, member);
 }
+/** Server-only handoff/review metadata after normal canonical membership admission. No transcript, cookie or credential is exposed. */
+export function readMessagingAssistantRoute({ database }: DatabaseReadQueryContext, input: unknown): import('./assistant-selection').MessagingAssistantRoute {
+  const r = messagingRecord(input, ['actor', 'id']), actor = captureMessagingActor(r.actor), { conversation } = readMessagingMembership(database, actor, messagingId(r.id));
+  return { kind: conversation.kind, assistantId: conversation.assistant_id ?? null, entryId: conversation.support_entry_id ?? null, visitor: !!conversation.visitor_session_id };
+}
 /** A point lookup is still bounded by current membership, the history boundary and private-note visibility. */
 export function readMessagingMessage({ database }: DatabaseReadQueryContext, input: unknown): DurableMessage {
   const r = messagingRecord(input, ['actor', 'conversationId', 'id']), actor = captureMessagingActor(r.actor);
