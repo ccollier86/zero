@@ -50,6 +50,7 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
       'src/messaging/support-inbox-config.ts', 'src/messaging/support-inbox-policy.ts',
       'src/messaging/message-assistant-policy.ts',
       'src/messaging/assistant-selection.ts',
+      'src/messaging/support-admission.ts', 'src/messaging/support-open-intent.ts',
       'src/messaging/visitor-client.ts', 'src/messaging/visitor-service.ts', 'src/messaging/visitor-session.ts', 'src/messaging/visitor-routes.ts',
       'src/messaging/test-support/managed-deployment/fixture-files.ts', 'src/messaging/test-support/managed-deployment/audit-heartbeat.ts',
       'src/blog/test-fixtures/publishing/audit-heartbeat.ts',

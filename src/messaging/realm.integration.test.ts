@@ -42,6 +42,47 @@ const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice,
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
 
+test('notification contexts preserve canonical public versus inbox origin before receiver admission', async () => {
+  const f = await fixture(), hash = 'a'.repeat(64), actor = { ...alice, inboxPolicies: { team: hash } }, operator = { ...staff, supportPolicies: { team: hash }, inboxStaffPolicies: { team: hash } };
+  try {
+    await f.command('messaging.support.open', { actor, id: 'private-notice', requestId: 'private-notice-open', title: '', owner: 'triage', channelId: null, entryId: 'team', assistantId: null });
+    await f.command('messaging.support.claim', { actor: operator, id: 'private-notice', requestId: 'private-notice-claim', expectedEpoch: 1, maxParticipants: 100 });
+    await f.command('messaging.message.send', { ...send(1, actor), conversationId: 'private-notice', notificationsEnabled: true });
+    await f.command('messaging.visitor.create', { scopeId: 'application', entryId: 'team', policyHash: hash, id: 'public-session', customerId: 'public-customer',
+      conversationId: 'public-notice', tokenHash: 'b'.repeat(64), ttlSeconds: 60, maxVisitors: 1, title: '', owner: 'triage', assistantId: null });
+    const visitor = (await f.query('messaging.visitor.session', { scopeId: 'application', entryId: 'team', policyHash: hash, id: 'public-session', tokenHash: 'b'.repeat(64) })).value.actor;
+    await f.command('messaging.support.claim', { actor: operator, id: 'public-notice', requestId: 'public-notice-claim', expectedEpoch: 1, maxParticipants: 100 });
+    await f.command('messaging.message.send', { ...send(2, visitor), conversationId: 'public-notice', notificationsEnabled: true });
+    const jobs = (await f.query('messaging.jobs.pending', { scopeId: 'application' })).value as { id: string; message_id: string }[];
+    expect(jobs).toHaveLength(2);
+    const privateJob = jobs.find(job => job.message_id === 'message-1')!, publicJob = jobs.find(job => job.message_id === 'message-2')!;
+    expect((await f.query('messaging.notification.context', { scopeId: 'application', id: privateJob.id })).value).toMatchObject({ inboxId: 'team', supportEntryId: null, currentRecipientIds: [staff.id] });
+    expect((await f.query('messaging.notification.context', { scopeId: 'application', id: publicJob.id })).value).toMatchObject({ inboxId: null, supportEntryId: 'team', currentRecipientIds: [staff.id] });
+  } finally { await f.close(); }
+}, 30000);
+
+test.each(['triage', 'assistant'] as const)('pre-v2 named-inbox open receipts replay exactly through a label change and human claim without digest rewrites (%s)', async owner => {
+  const f = await fixture(), hash = 'f'.repeat(64), actor = { ...alice, inboxPolicies: { team: hash, other: hash } }, operator = { ...staff, inboxStaffPolicies: { team: hash } };
+  const open = { actor, id: 'legacy-inbox-open', requestId: 'legacy-inbox-request', title: 'Original label', owner, channelId: null, entryId: 'team', assistantId: owner === 'assistant' ? 'help' : null };
+  let retained = '';
+  try {
+    expect((await f.command('messaging.support.open', open)).ok).toBe(true);
+    await f.fault(db => { retained = JSON.stringify(db.query('SELECT digest,result_json,receipt_json FROM messaging_intents').all()); });
+    const originalReceipt = (await f.query('messaging.receipt', { actor, requestId: open.requestId })).value;
+    await f.command('messaging.support.claim', { actor: operator, id: open.id, requestId: 'legacy-inbox-claim', expectedEpoch: 1, maxParticipants: 100 });
+    const retry = { ...open, title: 'Renamed label', openIntent: { title: null, mode: owner === 'triage' ? 'human' : null } };
+    expect((await f.command('messaging.support.open', retry)).value.id).toBe(open.id);
+    expect((await f.query('messaging.receipt', { actor, requestId: open.requestId })).value).toEqual(originalReceipt);
+    await f.fault(db => { expect(JSON.stringify(db.query("SELECT digest,result_json,receipt_json FROM messaging_intents WHERE participant_id='user-alice'").all())).toBe(retained); });
+    expect((await f.command('messaging.support.open', { ...retry, title: 'Different requested title', openIntent: { title: 'Different requested title', mode: retry.openIntent.mode } })).code).toBe('MESSAGING_INTENT_CONFLICT');
+    expect((await f.command('messaging.support.open', { ...retry, entryId: 'other' })).code).toBe('MESSAGING_INTENT_CONFLICT');
+    const mode = owner === 'triage' ? 'assistant' : 'human', changedOwner = owner === 'triage' ? 'assistant' : 'triage';
+    expect((await f.command('messaging.support.open', { ...retry, owner: changedOwner, openIntent: { title: null, mode } })).code).toBe('MESSAGING_INTENT_CONFLICT');
+    expect((await f.command('messaging.support.open', { ...retry, actor: { ...actor, inboxPolicies: {} } })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.conversation', { actor, id: open.id })).value).toMatchObject({ title: 'Original label', owner: 'human', ownerEpoch: 2 });
+  } finally { await f.close(); }
+}, 30000);
+
 test('a checked peer-recipient snapshot cannot admit a send after canonical membership changed', async () => {
   const f = await fixture();
   try {
@@ -82,7 +123,7 @@ test('a populated retained v9 realm upgrades only inbox indexes and preserves id
 
 test('a portal actor cannot replay/create peer grants and retained routed support requires current customer and staff inbox admission', async () => {
   const f = await fixture(), hash = 'd'.repeat(64), portal = { ...alice, portal: true, inboxPolicies: { frontdesk: hash } };
-  const routed = { ...staff, supportPolicies: { frontdesk: hash, billing: hash } };
+  const routed = { ...staff, inboxStaffPolicies: { frontdesk: hash, billing: hash } };
   try {
     await f.command('messaging.conversation.create', create()); await f.command('messaging.message.send', send(1));
     expect((await f.command('messaging.conversation.create', create(portal))).code).toBe('MESSAGING_FORBIDDEN');
@@ -110,7 +151,7 @@ test('a portal actor cannot replay/create peer grants and retained routed suppor
 }, 30000);
 
 test('support queue cursors are pinned to their named inbox as well as owner filter', async () => {
-  const f = await fixture(), hash = 'e'.repeat(64), actor = { ...alice, inboxPolicies: { frontdesk: hash, billing: hash } }, routed = { ...staff, supportPolicies: actor.inboxPolicies };
+  const f = await fixture(), hash = 'e'.repeat(64), actor = { ...alice, inboxPolicies: { frontdesk: hash, billing: hash } }, routed = { ...staff, inboxStaffPolicies: actor.inboxPolicies };
   try {
     for (const [index, entryId] of ['frontdesk', 'frontdesk', 'billing'].entries()) await f.command('messaging.support.open', {
       actor, id: 'inbox-' + index, requestId: 'open-inbox-' + index, title: entryId, owner: 'triage', channelId: null, entryId, assistantId: null });

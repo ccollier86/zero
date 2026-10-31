@@ -117,6 +117,13 @@ Their lowercase names must be unique. Anonymous `support.entries` and
 authenticated `support.inboxes` have different admission; a member cannot pass
 a website entry name, user ID, tenant ID or staff ID as a destination.
 
+Destination origin is retained with each conversation. Reusing a removed
+private inbox name for a public website entry, or the reverse, does not convert
+old conversations or grant that new destination's operators access to them.
+The queue, current membership, live history, typing, private files and native
+notification admission distinguish the two origins. Restoring the original
+destination can restore current authorized access without recreating history.
+
 ## Same Public Facade
 
 ```ts
@@ -152,6 +159,20 @@ An unrelated inbox/configuration change does not create another message or make
 an unchanged message retry conflict. Reusing that ID for different text or
 attachments is still rejected. Current admission runs before any replay and
 before returning its projection: an old receipt never restores revoked access.
+
+The same rule applies to opening an authenticated inbox conversation: retain
+the original request ID after an uncertain response. Renaming only the inbox's
+display label does not change the caller's intent or create another thread.
+Reconciliation keeps the public receipt operation `support.open`; a successful
+retry returns the existing conversation with its current ownership, not a reset
+of an already claimed thread. Explicitly different caller titles, modes or
+destinations remain different intents. Older named-inbox receipts are matched
+only against their exact accepted digest and admitted original identity; they
+are not rewritten or granted a generic compatibility bypass. Those old receipts
+retain their original normalized handling semantics: they cannot retroactively
+distinguish an omitted mode from an explicit mode that originally resolved to
+the same handling. A human/assistant handling change is still rejected.
+
 Changing an effective default destination or requested operation is not an
 unchanged intent; reconcile the original receipt instead of inventing a new ID.
 

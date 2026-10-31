@@ -4,6 +4,7 @@ import type { ConversationRecord, DurableMessage, MessagingContact } from './con
 import type { Row } from '../sync/types';
 import { assertMessagingMember, canReviewMessagingConversation, captureMessagingActor, memberKey, projectMessage, staffTimeline, type ConversationRow, type MemberRow, type MessageRow, type MessagingActor } from './realm-model';
 import { messagingReviewAudience } from './review-model';
+import { messagingSupportStaffFilter } from './support-admission';
 import { messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 
 export function readMessagingMembership(database: DatabaseReadQueryConnection, actor: MessagingActor, id: string) {
@@ -70,8 +71,8 @@ export function listMessagingConversations({ database }: DatabaseReadQueryContex
   const inboxes = Object.keys(actor.inboxPolicies ?? {});
   where.push(inboxes.length ? `(m.role!='customer' OR m.kind!='user' OR c.support_entry_id IS NULL OR c.visitor_session_id IS NOT NULL OR c.support_entry_id IN (${inboxes.map(() => '?').join(',')}))`
     : "(m.role!='customer' OR m.kind!='user' OR c.support_entry_id IS NULL OR c.visitor_session_id IS NOT NULL)"); values.push(...inboxes);
-  const channels = Object.keys(actor.supportPolicies ?? {});
-  where.push(channels.length ? `(m.role!='staff' OR c.support_entry_id IS NULL OR c.support_entry_id IN (${channels.map(() => '?').join(',')}))` : "(m.role!='staff' OR c.support_entry_id IS NULL)"); values.push(...channels);
+  const support = messagingSupportStaffFilter(actor, 'c.');
+  where.push(`(m.role!='staff' OR ${support.sql})`); values.push(...support.values);
   const assistants = Object.keys(actor.assistantPolicies ?? {});
   where.push(assistants.length ? `(c.kind!='assistant' OR c.assistant_id IN (${assistants.map(() => '?').join(',')}))` : "c.kind!='assistant'");
   values.push(...assistants);
@@ -149,10 +150,10 @@ export function listMessagingSupportQueue({ database }: DatabaseReadQueryContext
   const limit = messagingInteger(q.limit ?? 25, 1, 50);
   const owner = q.owner === undefined ? null : messagingChoice(q.owner, ['triage', 'assistant', 'human']);
   const inboxId = q.inboxId === undefined ? null : messagingId(q.inboxId);
-  if (inboxId !== null && !actor.supportPolicies?.[inboxId]) messagingFail('MESSAGING_NOT_FOUND', 404);
+  if (inboxId !== null && !actor.inboxStaffPolicies?.[inboxId]) messagingFail('MESSAGING_NOT_FOUND', 404);
   const values: (string | number)[] = [actor.scopeId], where = ["scope_id=?", "kind='support'", 'archived=0'];
-  const channels = Object.keys(actor.supportPolicies ?? {});
-  where.push(channels.length ? `(support_entry_id IS NULL OR support_entry_id IN (${channels.map(() => '?').join(',')}))` : 'support_entry_id IS NULL'); values.push(...channels);
+  const support = messagingSupportStaffFilter(actor);
+  where.push(support.sql); values.push(...support.values);
   if (owner !== null) { where.push('owner=?'); values.push(owner); }
   if (inboxId !== null) { where.push('support_entry_id=?', 'visitor_session_id IS NULL'); values.push(inboxId); }
   if (q.after !== undefined) {

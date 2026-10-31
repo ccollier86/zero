@@ -39,9 +39,9 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
   const directory = new ManagedMessagingDirectory({ db: systemDB, users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null, portal: config.messaging.portal,
     assistantRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.assistants[id] && accessPolicy(scope, userId, config.messaging.assistants[id].access)),
     groupRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.groups[id] && accessPolicy(scope, userId, config.messaging.groups[id].members)),
-    supportEntryRecipient: (scope, userId, id) => Boolean(config.messaging && (config.messaging.supportInboxes[id]
-      ? accessPolicy(scope, userId, config.messaging.supportInboxes[id].staff)
-      : config.messaging.supportEntries[id] && config.messaging.supportEntries[id].tenantId === scope.tenantId && accessPolicy(scope, userId, config.messaging.supportEntries[id].staff))),
+    supportEntryRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.supportEntries[id]
+      && config.messaging.supportEntries[id].tenantId === scope.tenantId && accessPolicy(scope, userId, config.messaging.supportEntries[id].staff)),
+    inboxStaffRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.supportInboxes[id] && accessPolicy(scope, userId, config.messaging.supportInboxes[id].staff)),
     inboxRecipient: (scope, userId, id) => Boolean(config.messaging && config.messaging.supportInboxes[id] && accessPolicy(scope, userId, config.messaging.supportInboxes[id].access)),
     supportRecipient: createMessagingRecipientPolicy({ users: runtime.require(ZERO_AUTH_STORE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
       kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null, support: config.messaging.support,

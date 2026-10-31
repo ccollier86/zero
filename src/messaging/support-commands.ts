@@ -3,15 +3,19 @@ import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import { messagingCommand } from './realm-errors';
 import { captureMessagingActor, conversationMember, conversationMembers, memberKey, messagingIntent, type ConversationRow, type MemberRow } from './realm-model';
 import { messagingChoice, messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
+import { canHandleMessagingSupport } from './support-admission';
+import { messagingSupportOpenIntent } from './support-open-intent';
 
 export function openMessagingSupport(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'title', 'owner', 'channelId', 'assistantId', 'entryId', 'visitorSessionId']), actor = captureMessagingActor(r.actor), id = messagingId(r.id), title = messagingText(r.title, 200, true);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'title', 'owner', 'channelId', 'assistantId', 'entryId', 'visitorSessionId', 'openIntent']), actor = captureMessagingActor(r.actor), id = messagingId(r.id), title = messagingText(r.title, 200, true);
     const owner = messagingChoice(r.owner, ['triage', 'assistant']), channelId = r.channelId === null ? null : messagingId(r.channelId);
     if (actor.kind === 'assistant') messagingFail('MESSAGING_FORBIDDEN', 403);
     const inbox = actor.kind === 'user' && r.entryId !== undefined && r.visitorSessionId === undefined ? messagingId(r.entryId) : null;
     if (inbox && !actor.inboxPolicies?.[inbox]) messagingFail('MESSAGING_NOT_FOUND', 404);
-    const intent = inbox ? ['support.open', title, owner, channelId, 'inbox', inbox, r.assistantId ?? null] : ['support.open', title, owner, channelId];
+    if (r.openIntent !== undefined && !inbox) messagingFail('MESSAGING_INPUT_INVALID', 422);
+    const intent = inbox && r.openIntent !== undefined ? messagingSupportOpenIntent(context, actor, { id, inbox, requestId: r.requestId, title, owner, channelId, intent: r.openIntent })
+      : inbox ? ['support.open', title, owner, channelId, 'inbox', inbox, r.assistantId ?? null] : ['support.open', title, owner, channelId];
     return messagingIntent(context, actor, r.requestId, intent, () => {
       const now = Date.now();
       context.db.createStrict('messaging_conversations', { id, scope_id: actor.scopeId, kind: 'support', title, revision: 1, created_at: now, updated_at: now, public_updated_at: now, archived: 0,
@@ -26,7 +30,7 @@ export function claimMessagingSupport(context: DatabaseWriteCommandContext, inpu
   return messagingCommand(context, () => {
     const r = messagingRecord(input, ['actor', 'id', 'requestId', 'expectedEpoch', 'maxParticipants']), actor = captureMessagingActor(r.actor);
     const row = context.db.get('messaging_conversations', messagingId(r.id)) as ConversationRow | null;
-    if (actor.kind !== 'user' || !actor.staff || !row || row.scope_id !== actor.scopeId || row.kind !== 'support' || row.support_entry_id && !actor.supportPolicies?.[row.support_entry_id]) messagingFail('MESSAGING_NOT_FOUND', 404);
+    if (!row || row.scope_id !== actor.scopeId || !canHandleMessagingSupport(actor, row)) messagingFail('MESSAGING_NOT_FOUND', 404);
     const conversation = row!;
     return messagingIntent(context, actor, r.requestId, ['support.claim', conversation.id, r.expectedEpoch], () => {
       if (conversation.owner_epoch !== messagingInteger(r.expectedEpoch)) messagingFail('MESSAGING_OWNER_CONFLICT');

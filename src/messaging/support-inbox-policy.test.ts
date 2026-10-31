@@ -14,7 +14,7 @@ test('a current member can select only an admitted named inbox and never a visit
   expect(selectMessagingSupportInbox(config, actor, undefined)?.id).toBe('frontdesk');
   for (const value of ['billing', 'website', 'staff-user-id', '__proto__']) expect(() => selectMessagingSupportInbox(config, actor, value)).toThrow();
   expect(() => selectMessagingSupportInbox(config, { ...actor, inboxPolicies: {} }, undefined)).toThrow();
-  const operator = { ...actor, portal: false, staff: true, inboxPolicies: {}, supportPolicies: { billing: config.supportInboxes.billing!.policyHash } };
+  const operator = { ...actor, portal: false, staff: true, inboxPolicies: {}, inboxStaffPolicies: { billing: config.supportInboxes.billing!.policyHash } };
   expect(messagingSupportInboxes(config, operator)).toEqual([{ id: 'billing', title: 'billing', canOpen: false, canHandle: true, assistant: false, default: false }]);
   expect(() => selectMessagingSupportInbox(config, operator, 'billing')).toThrow();
 });

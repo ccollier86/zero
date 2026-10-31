@@ -26,7 +26,8 @@ test('discovery, exact display resolution and automatic groups exclude unfinishe
     expect(() => directory.assertRecipient(app, 'ready')).not.toThrow();
     let admitted = true;
     const portal = new ManagedMessagingDirectory({ db, users: {} as UserStore, tenancy, portal: true, publicAvatar: () => null,
-      supportRecipient: (_scope, id) => admitted && id === 'ready', groupRecipient: () => true, inboxRecipient: (_scope, id, inbox) => admitted && id === 'ready' && inbox === 'team' });
+      supportRecipient: (_scope, id) => admitted && id === 'ready', groupRecipient: () => true, inboxRecipient: (_scope, id, inbox) => admitted && id === 'ready' && inbox === 'team',
+      supportEntryRecipient: (_scope, _id, entry) => entry === 'public', inboxStaffRecipient: (_scope, _id, inbox) => inbox === 'team' });
     expect(portal.list(app, 'self', {}, true).items.map(row => row.id)).toEqual(['ready']);
     expect(portal.notificationRecipient(app, 'foreign', false, 'direct')).toBe(false);
     expect(portal.notificationRecipient(app, 'foreign', false, 'support')).toBe(true);
@@ -34,9 +35,15 @@ test('discovery, exact display resolution and automatic groups exclude unfinishe
     expect(portal.groupRecipient(app, 'foreign', 'team')).toBe(false);
     expect(portal.groupRecipient(app, 'ready', 'team')).toBe(true);
     expect(portal.inboxRecipient(app, 'ready', 'team')).toBe(true);
+    expect(portal.supportRecipient(app, 'ready', 'public')).toBe(true);
+    expect(portal.supportRecipient(app, 'ready', 'team')).toBe(false);
+    expect(portal.inboxStaffRecipient(app, 'ready', 'team')).toBe(true);
+    expect(portal.inboxStaffRecipient(app, 'ready', 'public')).toBe(false);
     admitted = false;
     expect(portal.notificationRecipient(app, 'ready', true, 'support')).toBe(false);
     expect(portal.inboxRecipient(app, 'ready', 'team')).toBe(false);
+    expect(portal.supportRecipient(app, 'ready', 'public')).toBe(false);
+    expect(portal.inboxStaffRecipient(app, 'ready', 'team')).toBe(false);
     expect(portal.list(app, 'self', {}, true).items).toEqual([]);
   } finally { db.dispose(); }
 });

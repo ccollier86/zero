@@ -36,6 +36,8 @@ export interface MessagingDirectory {
   groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean;
   groupCandidates?(scope: ServiceDataScope, after: string, limit: number): { readonly ids: readonly string[]; readonly hasMore: boolean };
   supportRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean;
+  /** Current staff admission to an authenticated inbox, never a same-name public entry. */
+  inboxStaffRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean;
   inboxRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean;
 }
 export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void }; readonly groups?: { ensure(scope: ServiceDataScope): Promise<void> }; readonly getEphemeral?: () => import('../sync/ephemeral-channel').EphemeralChannel | null }
@@ -272,7 +274,7 @@ export class MessagingService {
           if (mode !== 'human' && automated && !this.deps.jobs) messagingFail('MESSAGING_NOT_READY', 503);
           if (mode === 'assistant' && !automated) messagingFail('MESSAGING_FORBIDDEN', 403);
           return afterCommit(write('messaging.support.open', { id, title: messagingText(r.title ?? inbox?.title ?? '', 200, true), owner: mode !== 'human' && automated ? 'assistant' : 'triage', channelId: null,
-            assistantId: selectedAssistant?.id ?? null, ...(inbox ? { entryId: inbox.id } : {}) }, opts), () => conversation(id, opts.signal));
+            assistantId: selectedAssistant?.id ?? null, ...(inbox ? { entryId: inbox.id, openIntent: { title: r.title === undefined ? null : messagingText(r.title, 200, true), mode: mode ?? null } } : {}) }, opts), () => conversation(id, opts.signal));
         },
         queue: (query = {}, opts) => audit('support.queue', null, () => read('messaging.support.queue', { query }, opts?.signal)),
         claim: (id, epoch, opts) => afterCommit(write('messaging.support.claim', { id: messagingId(id), expectedEpoch: messagingInteger(epoch), maxParticipants: this.deps.config.maxParticipants }, opts), () => conversation(id, opts.signal)),

@@ -7,7 +7,7 @@ import { messagingFail, messagingText } from './validation';
 /** The descriptor exposes only safe display and current-user booleans, never policy definitions or private staff identities. */
 export function messagingSupportInboxes(config: ResolvedMessagingConfig, actor: MessagingActor): readonly MessagingSupportInbox[] {
   return Object.values(config.supportInboxes ?? {}).flatMap(inbox => {
-    const canOpen = actor.inboxPolicies?.[inbox.id] === inbox.policyHash, canHandle = actor.staff && actor.supportPolicies?.[inbox.id] === inbox.policyHash;
+    const canOpen = actor.inboxPolicies?.[inbox.id] === inbox.policyHash, canHandle = actor.staff && actor.inboxStaffPolicies?.[inbox.id] === inbox.policyHash;
     if (!canOpen && !canHandle) return [];
     return [{ id: inbox.id, title: inbox.title, canOpen, canHandle,
       assistant: !!inbox.assistantId && !!actor.assistantPolicies?.[inbox.assistantId], default: config.defaultSupportInbox === inbox.id }];

@@ -33,22 +33,22 @@ export function createMessagingActorResolver(authority: MessagingAuthority, conf
       try { if (entry.staff !== undefined) access.authorize(entry.staff); supportPolicies[entry.id] = entry.policyHash; }
       catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
     }
-    const inboxPolicies: Record<string, string> = Object.create(null);
+    const inboxPolicies: Record<string, string> = Object.create(null), inboxStaffPolicies: Record<string, string> = Object.create(null);
     for (const inbox of Object.values(config.supportInboxes ?? {})) {
       try { if (inbox.access !== undefined) access.authorize(inbox.access); inboxPolicies[inbox.id] = inbox.policyHash; }
       catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
       if (staff) {
-        try { if (inbox.staff !== undefined) access.authorize(inbox.staff); supportPolicies[inbox.id] = inbox.policyHash; }
+        try { if (inbox.staff !== undefined) access.authorize(inbox.staff); inboxStaffPolicies[inbox.id] = inbox.policyHash; }
         catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
       }
     }
-    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, portal: config.portal === true && !staff, assistantPolicies, groupPolicies, supportPolicies, inboxPolicies };
+    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, portal: config.portal === true && !staff, assistantPolicies, groupPolicies, supportPolicies, inboxPolicies, inboxStaffPolicies };
   };
 }
 /** Every release/commit and typing recheck uses the same current server-owned admission projection. */
 export function sameMessagingAdmission(first: MessagingActor, second: MessagingActor): boolean {
   return first.id === second.id && first.scopeId === second.scopeId && first.kind === second.kind && first.staff === second.staff
     && Boolean(first.portal) === Boolean(second.portal)
-    && ['assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies'].every(key =>
+    && ['assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies', 'inboxStaffPolicies'].every(key =>
       messagingHash(first[key as 'assistantPolicies'] ?? {}) === messagingHash(second[key as 'assistantPolicies'] ?? {}));
 }

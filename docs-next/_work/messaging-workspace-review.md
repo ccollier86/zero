@@ -15,6 +15,74 @@ applies_to: ["feature/messaging-portal and prior messaging continuations; source
 
 [Work index](./index.md) · [Frontend manual](../frontend/messaging/workspace.md) · [Backend configuration](../backend/messaging/configuration.md) · [Earlier correction](./messaging-configuration-correction.md)
 
+## Destination Origin And Open Retry Corrections (2026-10-31)
+
+A further native review of `3f465761221881f17de017529b2a1002c880ce05`
+reproduced two missing transitions: replacing an authenticated inbox with a
+same-name public entry granted the new entry's operator access to the old
+private conversation, and a display-only inbox rename made an unchanged
+accepted open retry conflict. The earlier passing tests did not cover those
+transitions and are not evidence that these defects were absent.
+
+This continuation separates server-minted public-entry operator policies from
+authenticated-inbox operator policies. Point admission, claim, paginated queue
+and conversation SQL use canonical retained origin; a visible name is not an
+origin. Private files and typing inherit that same canonical membership check.
+The offline notification directory/receiver also checks the matching namespace
+at commit, without moving an asynchronous private read into the SYSTEM writer.
+There is no fallback from a missing inbox grant to a same-name public grant.
+
+Named-inbox opens now bind a versioned private digest to the selected inbox and
+the caller's requested title/mode, not a subsequently changed display default.
+The public operation name remains `support.open`, so native receipt checking
+still works. An additional regression caught an interim operation-name change;
+`receipt-contract-before.log` retains that failure. Existing pre-v2 named-inbox
+receipts are accepted only when their exact digest matches the admitted
+original support identity, immutable title and compatible initial handling.
+Their digest, receipt and result are not rewritten. New receipts distinguish
+changed explicit caller title/mode/destination. Old receipts keep their prior
+normalized handling semantics, including originally equivalent omitted/explicit
+modes; switching initial human/assistant handling still conflicts. Current
+admission remains required in both cases.
+
+The regressions cover both namespace-replacement directions, a previously
+admitted staff member as well as a newly eligible operator, retained private
+files, native live-history rejection and a real denied Sync typing subscription.
+Restoring the original destination restores admitted history with the same IDs,
+bytes, ownership and receipts. Real browser fault injection loses only the HTTP
+acknowledgment after the actual server accepts an open; **Check change** then
+resolves its real receipt and no second open POST is made. A private actor test
+checks that notification contexts retain origin; receiver unit doubles are
+labeled as unit coverage, not native delivery qualification.
+
+No application, SYSTEM or private SQL migration is added or edited. Private
+`001`–`010` migration definitions and the generic intent helper remain unchanged.
+The public config/SDK signatures do not change; browsers cannot supply the
+internal intent marker or actor grants. The work stays on
+`feature/messaging-portal`, not main, the stable `2.8.0` archive or the updater.
+
+Evidence is under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/messaging-portal-corrections/`.
+`before.log` retains the failing original transitions; the final qualification
+continuation records the reviewed source commit and completed gates. Earlier
+`final-native.log` / `final-browser.log` runs preceded the additional public
+receipt-contract check and are not the final runtime identity. Installed-package
+checks remain separate from installed Linux/amd64 and whole-repository release
+qualification. No application/production data or real provider was used.
+
+| Correction gate | Result and limit |
+| --- | --- |
+| `qualified-native.log` | All 33 selected files passed, including the 18-case native managed HTTP/SDK/Fabric suite, both origin transitions, unchanged-open replay, private migration checks, scoped AI/job recovery, files and current revocation. |
+| `final-boundary-delta.log` | Four overlapping boundary files passed after the final point/SQL null-origin alignment and fully typed notification fixture. Counts are not added to the preceding inventory as distinct coverage. |
+| `qualified-browser.log` | Ten native workspace flows and three parts/layout/typing flows passed. The portal case loses an actual accepted response, checks its real `support.open` receipt, claims/replies through the native queue and asserts exactly one open POST. Two optional headed OS-window/audio checks were skipped. |
+| `qualified-types.log` | Root TypeScript passed after replacing an intentionally partial unit job fixture with a complete typed row. The earlier fixture type error remains recorded in `final-types.log`. |
+| `qualified-docs.log` | 879 unique, reachable documentation pages, no structural/link problems. |
+
+The installed public-package check runs separately against the clean source
+commit so consumer installation/cleanup does not compete with the native/browser
+inventory. Its exact identity and result are recorded by the documentation-only
+qualification continuation, not inferred from these source checks.
+
 ## Portal Review And Polish (2026-10-31)
 
 This follow-up reviews the optional generic member-to-team mode, not an

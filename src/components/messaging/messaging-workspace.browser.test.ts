@@ -76,10 +76,19 @@ browserTest('portal members get a destination-only panel and staff receive the s
   member.on('request', request => { if (/\/api\/messaging\/(directory|contacts|assistants)(?:\/|\?|$)/.test(new URL(request.url()).pathname)) forbiddenRequests.push(request.url()); });
   member.setDefaultTimeout(12000); staff.setDefaultTimeout(12000);
   try {
-    let firstDestinations = true;
+    let firstDestinations = true, acceptedOpens = 0;
     await member.route('**/api/messaging/support/inboxes', async route => {
       if (firstDestinations) { firstDestinations = false; await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'MESSAGING_NOT_READY' }) }); }
       else await route.continue();
+    });
+    // Lose only the HTTP acknowledgment after the real native server commit.
+    // Check change must use the public receipt, not repeat the accepted open.
+    await member.route('**/api/messaging/support', async route => {
+      if (route.request().method() !== 'POST') { await route.continue(); return; }
+      const response = await route.fetch();
+      if (response.status() !== 200) { await route.fulfill({ response }); return; }
+      acceptedOpens++;
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'MESSAGING_OUTCOME_UNKNOWN', outcome: 'unknown' }) });
     });
     await member.goto(f.base + '/workspace?user=peer');
     await member.getByRole('button', { name: 'New message', exact: true }).click();
@@ -90,6 +99,9 @@ browserTest('portal members get a destination-only panel and staff receive the s
     expect(await member.getByRole('button', { name: 'Request contact' }).count()).toBe(0);
     expect(await member.getByRole('button', { name: 'Open support queue' }).count()).toBe(0);
     await member.getByRole('button', { name: 'Message Billing', exact: true }).click();
+    await member.getByRole('button', { name: 'Check change', exact: true }).click();
+    await member.getByRole('button', { name: 'Check change', exact: true }).waitFor({ state: 'hidden' });
+    await member.keyboard.press('Escape');
     const composer = member.getByRole('textbox', { name: 'Message', exact: true }); await composer.waitFor();
     await composer.fill('SYNTHETIC_PORTAL_BILLING_QUESTION'); await member.getByRole('button', { name: 'Send message', exact: true }).click();
     await member.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PORTAL_BILLING_QUESTION', { exact: true }).waitFor();
@@ -107,6 +119,7 @@ browserTest('portal members get a destination-only panel and staff receive the s
     await member.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PORTAL_TEAM_REPLY', { exact: true }).waitFor();
     expect(await member.getByText('Private team note', { exact: true }).count()).toBe(0);
     await member.screenshot({ path: join(evidence, 'portal-member.png') }); await staff.screenshot({ path: join(evidence, 'portal-staff.png') });
+    expect(acceptedOpens).toBe(1);
     expect(errors).toEqual([]);
   } finally { await member.close(); await staff.close(); await f.close(); }
 }, 90000);

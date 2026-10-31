@@ -64,6 +64,14 @@ department/team routing. Discovery, claims, history, files, typing and notices
 recheck current entry admission. A global support role alone does not grant
 every entry's transcript. Staff explicitly claim before reading a conversation.
 
+On the portal feature branch, public entries and authenticated
+[team inboxes](./portal.md) have separate operator grants. Replacing one kind
+with the other under the same name does not convert retained conversations,
+grant their queue/history/files, or admit their old notification audience.
+Their original kind remains canonical even after a visitor session expires.
+Restore the original destination and current authorization to regain its
+retained staff access; do not relabel its rows as an application workaround.
+
 An entry can select a named assistant independently of the support default.
 Define a dedicated public bot without an internal Guardian `access` restriction;
 do not accidentally expose an internal one. Handback/review retry preserve that

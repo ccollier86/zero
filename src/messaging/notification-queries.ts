@@ -27,5 +27,6 @@ export function readMessagingNotification({ database }: DatabaseReadQueryContext
   }).map(recipient => recipient.id) : [];
   return { job, audiencePresent: !!audience, available, path: audience ? messagingNotificationPath(audience.path) : null, recipients, currentRecipientIds,
     conversationKind: conversation?.kind ?? null, inboxId: conversation?.kind === 'support' && !conversation.visitor_session_id ? conversation.support_entry_id ?? null : null,
-    managedGroupId: conversation?.managed_group_id ?? null, internalAssistantId: conversation?.kind === 'assistant' ? conversation.assistant_id ?? null : null, supportEntryId: conversation?.support_entry_id ?? null };
+    managedGroupId: conversation?.managed_group_id ?? null, internalAssistantId: conversation?.kind === 'assistant' ? conversation.assistant_id ?? null : null,
+    supportEntryId: conversation?.visitor_session_id ? conversation.support_entry_id ?? null : null };
 }
