@@ -44,3 +44,30 @@ test('an inbox selects its own assistant without a default bot and current custo
     expect(JSON.stringify(await admin.messaging.messages.list(chat.id))).not.toContain('MUST_NOT_PUBLISH_REVOKED_PORTAL_REPLY'); expect(entered).toBe(2);
   } finally { release(); await f.close(); await provider.stop(true); }
 }, 90000);
+
+test('disabling the default support assistant preserves a retained portal conversation without starting another provider call', async () => {
+  let calls = 0;
+  const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
+    calls++; return Response.json({ id: 'synthetic-default-' + calls, object: 'chat.completion', created: 1, model: 'chat',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'SYNTHETIC_DEFAULT_ANSWER' }, finish_reason: 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 } });
+  } });
+  const bot = { model: 'synthetic/chat', timeoutMs: 30000 };
+  const f = await portalFixture({ workflows: {}, messaging: { portal: true, assistant: bot },
+    ai: { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-loopback-key', baseURL: 'http://127.0.0.1:' + provider.port + '/v1' } } } }), admin = f.peer(), member = f.peer();
+  try {
+    await admin.register('disabled-bot-owner'); await member.register('disabled-bot-member');
+    const chat = await member.messaging.support.open({ mode: 'assistant' }, { requestId: 'before-disabling' });
+    await member.messaging.messages.send(chat.id, { text: 'SYNTHETIC_BEFORE_DISABLE' }, { requestId: 'before-disable-turn' });
+    await until(async () => (await member.messaging.messages.list(chat.id)).items.some(row => row.text === 'SYNTHETIC_DEFAULT_ANSWER'));
+    f.config.messaging = { portal: true, assistant: bot, support: { assistant: false } }; await f.restart(); await member.login('disabled-bot-member');
+    expect(await member.messaging.capabilities()).toMatchObject({ portal: true, assistant: false, supportAssistant: false });
+    await member.messaging.messages.send(chat.id, { text: 'SYNTHETIC_AFTER_DISABLE' }, { requestId: 'after-disable-turn' });
+    expect((await member.messaging.conversations.get(chat.id)).assistantActivity).toBeNull();
+    expect((await member.messaging.messages.list(chat.id)).items.filter(row => row.authorKind === 'assistant')).toHaveLength(1); expect(calls).toBe(1);
+    const human = await member.messaging.support.requestHuman(chat.id, chat.ownerEpoch, { requestId: 'disabled-helper-human' }); expect(human.owner).toBe('triage');
+    await admin.login('disabled-bot-owner');
+    const claimed = await admin.messaging.support.claim(chat.id, human.ownerEpoch, { requestId: 'disabled-helper-claim' });
+    await expect(admin.messaging.conversations.handBack(chat.id, claimed.ownerEpoch, 'assistant', { requestId: 'disabled-helper-handback' })).rejects.toMatchObject({ status: 403 });
+    expect((await member.messaging.conversations.get(chat.id)).owner).toBe('human'); expect(calls).toBe(1);
+  } finally { await f.close(); await provider.stop(true); }
+}, 90000);

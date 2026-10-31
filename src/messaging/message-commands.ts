@@ -7,10 +7,11 @@ import { MESSAGING_REACTIONS } from './contracts';
 import { releaseAttachmentReservation, type AttachmentRow } from './attachment-model';
 import type { JobConversation } from './job-model';
 import { captureMessagingNotificationAudience } from './notification-model';
+import { messagingMessageAssistantPolicy } from './message-assistant-policy';
 
 export function sendMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'notificationsEnabled', 'notificationPath']);
+    const r = messagingRecord(input, ['actor', 'id', 'requestId', 'conversationId', 'text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch', 'maxMessageLength', 'assistantEnabled', 'assistantPolicy', 'inboxAssistants', 'notificationsEnabled', 'notificationPath']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.conversationId), staff = staffTimeline(conversation, member);
     const text = messagingText(r.text, messagingInteger(r.maxMessageLength, 1, 20000), true), id = messagingId(r.id), visibility = messagingChoice(r.visibility ?? 'conversation', ['conversation', 'staff']);
     const attachments = [...new Set(messagingArray(r.attachmentIds ?? [], 10).map(messagingId))];
@@ -37,8 +38,8 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
       context.db.update('messaging_conversations', conversation.id, next);
       if (visibility === 'conversation') {
         if (conversation.channel_id && actor.kind !== 'external') appendMessagingJob(context, conversation, id, 'delivery', now);
-        const policy = actor.kind === 'user' && actor.assistantPolicies !== undefined ? actor.assistantPolicies[conversation.assistant_id ?? 'default'] : r.assistantPolicy;
-        if (policy && (r.assistantEnabled === true || conversation.kind === 'assistant' || conversation.kind === 'support' && conversation.assistant_id)) queueMessagingAssistant(context, next, policy);
+        const policy = messagingMessageAssistantPolicy(actor, conversation, r.assistantPolicy, r.inboxAssistants);
+        if (policy && (r.assistantEnabled === true || conversation.kind === 'assistant' || conversation.kind === 'support' && conversation.support_entry_id)) queueMessagingAssistant(context, next, policy);
         if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now, null, r.notificationPath);
       }
       return projectMessage(row, staff);
@@ -61,7 +62,7 @@ export function queueMessagingAssistant(context: DatabaseWriteCommandContext, co
 }
 export function changeMessagingMessage(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['actor', 'conversationId', 'id', 'requestId', 'expectedRevision', 'text', 'action', 'maxMessageLength', 'assistantPolicy']);
+    const r = messagingRecord(input, ['actor', 'conversationId', 'id', 'requestId', 'expectedRevision', 'text', 'action', 'maxMessageLength', 'assistantPolicy', 'inboxAssistants']);
     const actor = captureMessagingActor(r.actor), { conversation, member } = conversationMember(context, actor, r.conversationId), staff = staffTimeline(conversation, member);
     const row = context.db.get('messaging_messages', messagingId(r.id)) as MessageRow | null;
     if (!row || row.conversation_id !== conversation.id || row.scope_id !== actor.scopeId || row.visibility === 'staff' && !staff || (staff ? row.sequence : row.public_sequence!) < member.history_from) messagingFail('MESSAGING_NOT_FOUND', 404);
@@ -79,7 +80,7 @@ export function changeMessagingMessage(context: DatabaseWriteCommandContext, inp
       const changed: JobConversation = { ...prior, updated_at: next.edited_at!, ...(row.visibility === 'conversation' ? { public_updated_at: next.edited_at!, context_revision: prior.context_revision + 1,
         ...(action === 'remove' && prior.customer_turn_id === row.id ? { customer_turn_id: null } : {}) } : {}) };
       context.db.update('messaging_conversations', conversation.id, changed);
-      const policy = actor.kind === 'user' && actor.assistantPolicies !== undefined ? actor.assistantPolicies[conversation.assistant_id ?? 'default'] : r.assistantPolicy;
+      const policy = messagingMessageAssistantPolicy(actor, conversation, r.assistantPolicy, r.inboxAssistants);
       if (row.visibility === 'conversation' && policy) queueMessagingAssistant(context, changed, policy);
       return projectMessage(next, staff);
     });

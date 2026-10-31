@@ -45,6 +45,8 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
     let failureCode = 'ADMISSION_REQUIRES_REVIEW';
     const current = () => {
       check();
+      if (captured.conversationKind === 'support' && !captured.supportEntryId
+        && (!deps.config.support || !deps.config.assistant || deps.config.assistant.id !== assistantId)) throw new AuthError('Support automation is no longer selected.', 'MESSAGING_FORBIDDEN', 403);
       if (captured.supportEntryId && captured.customerKind === 'external') {
         const entry = deps.config.supportEntries[captured.supportEntryId];
         if (!entry || entry.tenantId !== scope.tenantId || entry.assistantId !== assistantId || entry.policyHash !== captured.visitorPolicyHash || !captured.visitorExpiresAt || captured.visitorExpiresAt <= Date.now()) throw new AuthError('Public support admission changed.', 'MESSAGING_FORBIDDEN', 403);
@@ -56,7 +58,7 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
           if (!inbox || inbox.assistantId !== assistantId || deps.directory.inboxRecipient?.(scope, captured.customerId, inbox.id) !== true) throw new AuthError('Messaging inbox access changed.', 'MESSAGING_FORBIDDEN', 403);
         }
         if (captured.conversationKind === 'assistant' && deps.config.portal && !deps.directory.notificationRecipient(scope, captured.customerId, true)) throw new AuthError('Messaging portal access changed.', 'MESSAGING_FORBIDDEN', 403);
-        if (captured.conversationKind === 'assistant' && deps.directory.assistantRecipient?.(scope, captured.customerId, assistantId) !== true) throw new AuthError('Messaging assistant access changed.', 'MESSAGING_FORBIDDEN', 403);
+        if (deps.directory.assistantRecipient?.(scope, captured.customerId, assistantId) !== true) throw new AuthError('Messaging assistant access changed.', 'MESSAGING_FORBIDDEN', 403);
       }
     };
     try {

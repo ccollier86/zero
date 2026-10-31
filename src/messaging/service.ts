@@ -125,10 +125,20 @@ export class MessagingService {
         ...(action === 'add' ? { maxParticipants: this.deps.config.maxParticipants, contactsOnly: this.deps.config.directory === 'contacts', history: this.deps.config.history } : {}) }, options,
       action === 'add' || action === 'transfer' ? [messagingId(value)] : [], action === 'add' || action === 'transfer' ? () => peer([messagingId(value)]) : undefined), () => conversation(target, options.signal));
     };
-    const assistantPolicy = this.deps.config.assistant ? this.deps.config.assistant.policyHash : null;
+    const assistantPolicy = this.deps.config.support && this.deps.config.assistant ? this.deps.config.assistant.policyHash : null;
+    const inboxAssistants = Object.fromEntries(Object.values(this.deps.config.supportInboxes ?? {}).flatMap(inbox => inbox.assistantId ? [[inbox.id, inbox.assistantId]] : []));
+    const assistantFor = (current: ConversationRecord) => {
+      const id = current.assistantId ?? (this.deps.config.assistant ? this.deps.config.assistant.id : null);
+      if (current.kind === 'support' && current.participants.some(member => member.role === 'customer' && member.kind === 'user')) {
+        const selected = current.inboxId ? this.deps.config.supportInboxes[current.inboxId]?.assistantId ?? null
+          : this.deps.config.support && this.deps.config.assistant ? this.deps.config.assistant.id : null;
+        if (id !== selected) return undefined;
+      }
+      return id ? this.deps.config.assistants[id] : undefined;
+    };
     const ownership = async (id: string, expectedEpoch: number, owner: 'human' | 'assistant' | 'triage', options: MessagingMutationOptions) => {
       const current = await conversation(messagingId(id), options.signal), assistantId = current.assistantId ?? (this.deps.config.assistant ? this.deps.config.assistant.id : null);
-      const selected = assistantId ? this.deps.config.assistants[assistantId] : undefined;
+      const selected = assistantFor(current);
       if (owner === 'assistant' && (!selected || !actor(true).assistantPolicies?.[selected.id])) messagingFail('MESSAGING_FORBIDDEN', 403);
       if (owner === 'assistant' && !this.deps.jobs) messagingFail('MESSAGING_NOT_READY', 503);
       return afterCommit(write('messaging.conversation.owner', { id, expectedEpoch: messagingInteger(expectedEpoch), owner, assistantPolicy: selected?.policyHash ?? null,
@@ -160,7 +170,7 @@ export class MessagingService {
         list: (conversationId, query = {}, options) => audit('review.list', messagingId(conversationId), () => read('messaging.reviews', { conversationId: messagingId(conversationId), query }, options?.signal)),
         get: (conversationId, id, options) => audit('review.detail', messagingId(conversationId), () => read('messaging.review', { conversationId: messagingId(conversationId), id: messagingId(id) }, options?.signal)),
         retry: async (conversationId, id, epoch, acknowledgePossibleDuplicate, options) => {
-          const current = await conversation(messagingId(conversationId), options.signal), selected = current.assistantId ? this.deps.config.assistants[current.assistantId] : undefined;
+          const current = await conversation(messagingId(conversationId), options.signal), selected = assistantFor(current);
           if (!selected || !actor(true).assistantPolicies?.[selected.id]) messagingFail('MESSAGING_FORBIDDEN', 403);
           if (!this.deps.jobs) messagingFail('MESSAGING_NOT_READY', 503);
           return write('messaging.review.resolve', { conversationId, id: messagingId(id), expectedOwnerEpoch: messagingInteger(epoch), action: 'retry', acknowledgePossibleDuplicate, assistantPolicy: selected.policyHash }, options);
@@ -220,10 +230,10 @@ export class MessagingService {
         send: (conversationId, input, options) => {
           const r = messagingRecord(input, ['text', 'attachmentIds', 'visibility', 'expectedOwnerEpoch']), opts = mutation(options);
           return afterCommit(write<DurableMessage>('messaging.message.send', { ...r, conversationId: messagingId(conversationId), id: 'message_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40), maxMessageLength: this.deps.config.maxMessageLength,
-            assistantEnabled: Boolean(assistantPolicy), assistantPolicy, notificationsEnabled: this.deps.config.notifications, notificationPath: this.deps.config.notificationPath }, opts), accepted => message(conversationId, accepted.id, opts.signal));
+            assistantEnabled: Boolean(assistantPolicy), assistantPolicy, inboxAssistants, notificationsEnabled: this.deps.config.notifications, notificationPath: this.deps.config.notificationPath }, opts), accepted => message(conversationId, accepted.id, opts.signal));
         },
-        edit: (conversationId, id, revision, text, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), text: messagingText(text, this.deps.config.maxMessageLength), action: 'edit', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy }, opts), () => message(conversationId, id, opts.signal)),
-        remove: (conversationId, id, revision, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy }, opts), () => message(conversationId, id, opts.signal)),
+        edit: (conversationId, id, revision, text, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), text: messagingText(text, this.deps.config.maxMessageLength), action: 'edit', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy, inboxAssistants }, opts), () => message(conversationId, id, opts.signal)),
+        remove: (conversationId, id, revision, opts) => afterCommit(write('messaging.message.change', { conversationId: messagingId(conversationId), id: messagingId(id), expectedRevision: messagingInteger(revision), action: 'remove', maxMessageLength: this.deps.config.maxMessageLength, assistantPolicy, inboxAssistants }, opts), () => message(conversationId, id, opts.signal)),
         react: (conversationId, id, emoji, selected, opts) => afterCommit(write('messaging.message.react', { conversationId: messagingId(conversationId), id: messagingId(id), emoji, selected }, opts), () => message(conversationId, id, opts.signal)),
       },
       contacts: { list: (query = {}, opts) => audit('contacts', null, async () => {
