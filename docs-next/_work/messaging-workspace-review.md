@@ -54,12 +54,20 @@ uses a real loopback provider and stable origin across restart.
 | `sdk-error-after.log` | Both controller/lifecycle files pass after the later SDK-shaped presentation correction; these overlap the preceding inventory and are not summed as distinct coverage. |
 | `browser-probe.log` | Ten native workspace browser flows pass. Two optional headed OS-window/audio tests are skipped, not claimed as rerun. The queue-withdrawal case explicitly injects transport failure to test UI recovery; native authorization withdrawal has separate integration coverage. |
 | `final-parts-browser.log` | Three browser interaction/layout/typing cases pass using the existing native components and design tokens. |
+| `committed-package-isolated.log` | Clean committed source `707d199bfff7b90730b7ce9264c92a074c4d75dd` installs into a fresh consumer and passes all 57 assertions in 95,870 ms, including cleanup. Public config/client types, source equality, SSR, browser build, private-path rejection and the no-app-config tripwire pass. |
+| `committed-controller.log` | Both controller/lifecycle files pass against that same clean commit, including direct and real SDK error shapes. |
 | `final-types.log` | Root TypeScript passes. |
-| `final-docs.log` | 879 unique, reachable pages, no structural/link problems. |
+| `final-docs.log`, `committed-docs.log` | 879 unique, reachable pages, no structural/link problems; the latter checks the committed review documentation. |
 
-Installed-package evidence and exact source identity are recorded in the
-qualification continuation after this review's source commit. These focused
-checks do not select a new stable archive, establish a full repository pass,
+`committed-installed-archive-evidence.json` records `dirty: false`, the source
+commit above and test archive SHA-256
+`fc8021aac3933e5e1e3b2ce26a8b0123a30b389270aa491e5d79ad355f8f455d`.
+The test disposes its private temporary archive/consumer; that checksum is
+qualification evidence, not a published download or updater release identity.
+The earlier dirty-source package run is retained separately in
+`final-package-isolated.log` / `review-source-installed-evidence.json`.
+This qualification continuation changes documentation only, not runtime source.
+These focused checks do not select a new stable archive, establish a full repository pass,
 or qualify installed Linux/amd64 backend deployment. Proactive operator-created
 portal threads, application-specific assignment rules and per-role notification
 URLs are not added. The [portal guide](../backend/messaging/portal.md) states
