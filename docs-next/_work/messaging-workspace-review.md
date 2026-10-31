@@ -78,10 +78,22 @@ qualification. No application/production data or real provider was used.
 | `qualified-types.log` | Root TypeScript passed after replacing an intentionally partial unit job fixture with a complete typed row. The earlier fixture type error remains recorded in `final-types.log`. |
 | `qualified-docs.log` | 879 unique, reachable documentation pages, no structural/link problems. |
 
-The installed public-package check runs separately against the clean source
-commit so consumer installation/cleanup does not compete with the native/browser
-inventory. Its exact identity and result are recorded by the documentation-only
-qualification continuation, not inferred from these source checks.
+The installed public-package check ran separately against clean source commit
+`1f13f0bf5723b516761b3a2f3bf44cfa843a4ad1`, so consumer installation/cleanup did
+not compete with the native/browser inventory. `committed-package.log` records
+all 59 assertions passing in 85,133 ms, including cleanup. Public config/client
+types, exact copied source (including both new server helpers), SSR, browser
+build, private-path rejection and the no-app-config tripwire passed.
+`committed-types.log` and `committed-docs.log` also pass against that clean
+commit. These are not installed-backend/Linux or stable-release qualification.
+
+`committed-installed-evidence.json` records `dirty: false` and test archive
+SHA-256 `f5707cd316abb200c5fd91df0ab5a515c153206eecb772142dca4a578535cc81`.
+The test disposes its temporary archive/consumer; this is evidence, not a
+published download or updater identity. This final qualification addition is
+documentation-only; the runtime source remains the commit above. The feature
+branch can be reviewed/pulled from either remote, while main/stable deployment
+still requires its normal exact-archive release gates.
 
 ## Portal Review And Polish (2026-10-31)
 
