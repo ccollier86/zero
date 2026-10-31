@@ -46,13 +46,15 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
       'src/messaging/contracts.ts', 'src/messaging/realm-queries.ts', 'src/components/messaging/workspace-transcript.ts',
       'src/components/messaging/use-messaging-transcript.ts',
       'src/components/messaging/support-chat.tsx', 'src/components/messaging/workspace-review.tsx', 'src/components/messaging/use-support-typing.ts',
+      'src/components/messaging/workspace-portal-start.tsx', 'src/components/messaging/workspace-support-start.tsx', 'src/components/messaging/use-support-inboxes.ts',
+      'src/messaging/support-inbox-config.ts', 'src/messaging/support-inbox-policy.ts',
       'src/messaging/visitor-client.ts', 'src/messaging/visitor-service.ts', 'src/messaging/visitor-session.ts', 'src/messaging/visitor-routes.ts',
       'src/messaging/test-support/managed-deployment/fixture-files.ts', 'src/messaging/test-support/managed-deployment/audit-heartbeat.ts',
       'src/blog/test-fixtures/publishing/audit-heartbeat.ts',
       'src/frontend/client/guardian-presence-presentation.ts', 'src/components/avatar-group/avatar-group.styles.css',
       'src/frontend/client/typing-indicator-hooks.ts', 'src/frontend/client/typing-indicator-model.ts',
       'src/sync/client/ephemeral-client.ts', 'src/sync/client/ephemeral-store.ts', 'src/sync/ephemeral-channel.ts',
-      'docs-next/frontend/messaging/index.md', 'docs-next/backend/messaging/index.md',
+      'docs-next/frontend/messaging/index.md', 'docs-next/backend/messaging/index.md', 'docs-next/backend/messaging/portal.md',
     ]) expect(await Bun.file(join(installed, file)).text()).toBe(await Bun.file(join(process.cwd(), file)).text());
     expect([...new Bun.Glob('*.{db,sqlite,sqlite3}').scanSync({ cwd: consumer })]).toEqual([]);
     const commit = await git(['rev-parse', 'HEAD']), dirty = (await git(['status', '--porcelain'])).length > 0;
@@ -95,7 +97,10 @@ import * as Parts from '@zero/framework/messaging';
 import * as Alias from '@zero/framework/components/messaging';
 import type { UseConversationTypingReturn, MessageBubbleProps, MessageDeliveryIndicatorProps, ConversationAssistantActivityProps,
   MessagingComposerProps, MessagingAttachment, MessagingMessage, MessagingWorkspaceProps, MessagingWorkspaceState } from '@zero/framework/messaging';
-import type { MessagingClient } from '@zero/framework/messaging/client';
+import type { MessagingClient, MessagingSupportInbox } from '@zero/framework/messaging/client';
+import type { MessagingConfig, MessagingSupportInboxConfig } from '@zero/framework/messaging/server';
+const inbox: MessagingSupportInboxConfig = { title: 'Our team', assistant: false };
+const portal: MessagingConfig = { portal: true, support: { inboxes: { team: inbox }, defaultInbox: 'team' } };
 const names = ['MessagingLayout', 'ConversationList', 'ConversationListHeading', 'ConversationHeader', 'ConversationSeparator',
   'ConversationTypingIndicator', 'ConversationAssistantActivity', 'MessageBubble', 'MessageDeliveryIndicator', 'MessagingComposer',
   'useConversationTyping', 'useMessagingPresence', 'conversationActivityLabel', 'conversationActivityMembers',
@@ -108,6 +113,9 @@ const delivery: MessageDeliveryIndicatorProps = { state: 'accepted' };
 const assistant: ConversationAssistantActivityProps = { activity: null };
 const workspace: MessagingWorkspaceProps = { avatarShape: 'square', maxMessages: 500, readPolicy: 'visible-end' };
 export function nativeFacadeTypes(client: MessagingClient) {
+  void client.support.inboxes().then(page => { const destinations: readonly MessagingSupportInbox[] = page.items; });
+  void client.support.open({ inboxId: 'team', mode: 'human' }, { requestId: 'package-typecheck-only' });
+  void client.support.queue({ inboxId: 'team', owner: 'triage', limit: 25 });
   void client.conversations.people('admitted-conversation');
   void client.messages.get('admitted-conversation', 'accepted-message');
   void client.watchReview('admitted-conversation', page => { const count: number = page.items.length; });

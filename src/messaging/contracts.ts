@@ -11,6 +11,8 @@ export interface ConversationParticipant { readonly id: string; readonly kind: '
   /** Optional admitted direct-conversation display; never a role/profile override. */
   readonly name?: string; readonly avatarUrl?: string | null }
 export interface MessagingAssistant { readonly id: string; readonly name: string; readonly description: string }
+/** A named destination and current-user capabilities, never its Guardian policy or a staff directory. */
+export interface MessagingSupportInbox { readonly id: string; readonly title: string; readonly canOpen: boolean; readonly canHandle: boolean; readonly assistant: boolean; readonly default: boolean }
 export interface ConversationRecord {
   readonly id: string; readonly kind: ConversationKind; readonly title: string; readonly revision: number;
   readonly createdAt: number; readonly updatedAt: number; readonly archived: boolean;
@@ -19,6 +21,8 @@ export interface ConversationRecord {
   readonly assistantName?: string;
   /** Non-null means membership/name are configured by Guardian policy rather than manually editable. */
   readonly managedGroupId?: string | null;
+  readonly inboxId?: string | null;
+  readonly inboxTitle?: string;
   /** Canonical current assistant work only; never a simulated typing timer. */
   readonly assistantActivity?: { readonly runId: string; readonly state: 'queued' | 'thinking' | 'responding' } | null;
   /** Omitted for customers/non-reviewers; neither private drafts nor attempt details are included. */
@@ -40,11 +44,13 @@ export interface MessagingPage<T> { readonly items: readonly T[]; readonly hasMo
 export interface MessageHistoryQuery { readonly before?: number; readonly after?: number; readonly limit?: number; readonly search?: string }
 export interface ConversationQuery { readonly after?: string; readonly limit?: number; readonly archived?: boolean }
 /** Content-free staff discovery. A queue row is not permission to fetch a transcript. */
-export interface MessagingSupportQueueQuery { readonly after?: string; readonly limit?: number; readonly owner?: ConversationOwner }
-export interface MessagingSupportQueueItem { readonly id: string; readonly owner: ConversationOwner; readonly ownerEpoch: number; readonly createdAt: number }
+export interface MessagingSupportQueueQuery { readonly after?: string; readonly limit?: number; readonly owner?: ConversationOwner; readonly inboxId?: string }
+export interface MessagingSupportQueueItem { readonly id: string; readonly owner: ConversationOwner; readonly ownerEpoch: number; readonly createdAt: number; readonly inboxId?: string | null }
 export interface MessagingCapabilities { readonly enabled: boolean; readonly directory: 'everyone' | 'contacts'; readonly canSupport: boolean; readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxUploadBytes: number;
   /** Configuration/capability, not a provider-delivery or current network-health claim. */
-  readonly assistant?: boolean; readonly notifications?: boolean; readonly support?: boolean; readonly supportAssistant?: boolean }
+  readonly assistant?: boolean; readonly notifications?: boolean; readonly support?: boolean; readonly supportAssistant?: boolean;
+  /** Server-derived member restriction, not a client-selected role. Old servers may omit it. */
+  readonly portal?: boolean; readonly supportInboxes?: boolean }
 export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null }
 /** Current admitted conversation identities; names/avatars are presentation, never membership proof. */
 export interface MessagingPerson extends MessagingDirectoryEntry { readonly kind: ConversationParticipant['kind'] }
@@ -92,7 +98,8 @@ export interface MessagingApi {
     unblock(userId: string, options: MessagingMutationOptions): Promise<{ readonly unblocked: true }>;
   };
   support: {
-    open(input: { readonly title?: string; readonly mode?: 'assistant' | 'human' }, options: MessagingMutationOptions): Promise<ConversationRecord>;
+    inboxes(options?: MessagingReadOptions): Promise<MessagingPage<MessagingSupportInbox>>;
+    open(input: { readonly title?: string; readonly mode?: 'assistant' | 'human'; readonly inboxId?: string }, options: MessagingMutationOptions): Promise<ConversationRecord>;
     queue(query?: MessagingSupportQueueQuery, options?: MessagingReadOptions): Promise<MessagingPage<MessagingSupportQueueItem>>;
     claim(id: string, expectedEpoch: number, options: MessagingMutationOptions): Promise<ConversationRecord>;
     /** Ask for a person without selecting staff or granting transcript membership. */

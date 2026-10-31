@@ -9,7 +9,10 @@ export function openMessagingSupport(context: DatabaseWriteCommandContext, input
     const r = messagingRecord(input, ['actor', 'id', 'requestId', 'title', 'owner', 'channelId', 'assistantId', 'entryId', 'visitorSessionId']), actor = captureMessagingActor(r.actor), id = messagingId(r.id), title = messagingText(r.title, 200, true);
     const owner = messagingChoice(r.owner, ['triage', 'assistant']), channelId = r.channelId === null ? null : messagingId(r.channelId);
     if (actor.kind === 'assistant') messagingFail('MESSAGING_FORBIDDEN', 403);
-    return messagingIntent(context, actor, r.requestId, ['support.open', title, owner, channelId], () => {
+    const inbox = actor.kind === 'user' && r.entryId !== undefined && r.visitorSessionId === undefined ? messagingId(r.entryId) : null;
+    if (inbox && !actor.inboxPolicies?.[inbox]) messagingFail('MESSAGING_NOT_FOUND', 404);
+    const intent = inbox ? ['support.open', title, owner, channelId, 'inbox', inbox, r.assistantId ?? null] : ['support.open', title, owner, channelId];
+    return messagingIntent(context, actor, r.requestId, intent, () => {
       const now = Date.now();
       context.db.createStrict('messaging_conversations', { id, scope_id: actor.scopeId, kind: 'support', title, revision: 1, created_at: now, updated_at: now, public_updated_at: now, archived: 0,
         created_by: actor.id, owner, owner_id: null, owner_epoch: 1, internal_sequence: 0, public_sequence: 0, channel_id: channelId,

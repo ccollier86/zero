@@ -12,6 +12,30 @@ test('messaging is opt-in and retains bounded private actors with contact/histor
   expect(config).toMatchObject({ directory: 'contacts', history: 'since-join', rootDirectory: root + '/data/zero.messaging', maxMessageLength: 20000, maxParticipants: 100, maxActiveDatabases: 4, maxDatabaseFiles: 1000, support: { staff: 'admin' } });
   expect(Object.isFrozen(config)).toBe(true);
 });
+test('portal is optional, enables a protected human inbox by default and cannot silently disable staff admission', () => {
+  const auth = resolveAuthBehaviorConfig(), resolve = (value: unknown) => resolveMessagingConfig(value as never, '/synthetic', auth);
+  expect(resolve(true)).toMatchObject({ portal: false, support: false, supportInboxes: {}, defaultSupportInbox: null });
+  expect(resolve({ portal: true })).toMatchObject({ portal: true, support: { staff: 'admin' }, supportInboxes: {} });
+  for (const value of [{ portal: 'yes' }, { portal: true, support: false }, { portal: true, support: { staff: true } }]) expect(() => resolve(value)).toThrow();
+});
+test('named authenticated inboxes compile current Guardian requirements and share a bounded non-colliding namespace with public entries', () => {
+  const auth = resolveAuthBehaviorConfig({ userProperties: { department: { editableBy: 'admin', useInPolicies: true } } });
+  const resolve = (value: unknown) => resolveMessagingConfig(value as never, '/synthetic', auth);
+  const config = resolve({ portal: true, support: { defaultInbox: 'frontdesk', inboxes: {
+    frontdesk: { title: 'Front desk' }, billing: { title: 'Billing', staff: { properties: { department: 'billing' } }, access: { properties: { department: 'customer' } } },
+  } } });
+  expect(config && config.defaultSupportInbox).toBe('frontdesk');
+  expect(config && config.supportInboxes.billing).toMatchObject({ id: 'billing', title: 'Billing', assistantId: null });
+  expect(config && Object.isFrozen(config.supportInboxes.billing!.staff)).toBe(true);
+  expect(resolve({ portal: true, support: { inboxes: { team: {} } } })).toMatchObject({ defaultSupportInbox: 'team' });
+  for (const value of [
+    { support: { defaultInbox: 'missing' } }, { support: { inboxes: { invalid: { access: { properties: { unknown: 'no' } } } } } },
+    { support: { inboxes: { team: { assistant: 'missing' } } } }, { support: { inboxes: { team: { tenantId: 'forged' } } } },
+    { support: { entries: { team: { origin: 'https://example.test' } }, inboxes: { team: {} } } },
+  ]) expect(() => resolve(value)).toThrow();
+  let invoked = false; const hostile = Object.defineProperty({}, 'team', { enumerable: true, get() { invoked = true; return {}; } });
+  expect(() => resolve({ support: { inboxes: hostile } })).toThrow(); expect(invoked).toBe(false);
+});
 test('unknown, hostile and unbounded configuration does not become permissive messaging policy', () => {
   const auth = resolveAuthBehaviorConfig(), resolve = (value: unknown) => resolveMessagingConfig(value as never, '/synthetic-project', auth);
   for (const input of [null, [], { notAField: true }, { maxMessageLength: Infinity }, { maxMessageLength: 20001 }, { maxParticipants: 101 }, { maxDatabaseFiles: 10001 }, { maxActiveDatabases: 65 }, { directory: 'public' }, { support: { staff: true } }, { rootDirectory: '\0' }]) expect(() => resolve(input)).toThrow();

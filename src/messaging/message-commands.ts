@@ -37,7 +37,8 @@ export function sendMessagingMessage(context: DatabaseWriteCommandContext, input
       context.db.update('messaging_conversations', conversation.id, next);
       if (visibility === 'conversation') {
         if (conversation.channel_id && actor.kind !== 'external') appendMessagingJob(context, conversation, id, 'delivery', now);
-        if (r.assistantEnabled === true || conversation.kind === 'assistant') queueMessagingAssistant(context, next, conversation.kind === 'assistant' ? actor.assistantPolicies?.[conversation.assistant_id!] : r.assistantPolicy);
+        const policy = actor.kind === 'user' && actor.assistantPolicies !== undefined ? actor.assistantPolicies[conversation.assistant_id ?? 'default'] : r.assistantPolicy;
+        if (policy && (r.assistantEnabled === true || conversation.kind === 'assistant' || conversation.kind === 'support' && conversation.assistant_id)) queueMessagingAssistant(context, next, policy);
         if (r.notificationsEnabled === true) appendMessagingJob(context, conversation, id, 'notification', now, null, r.notificationPath);
       }
       return projectMessage(row, staff);
@@ -78,7 +79,7 @@ export function changeMessagingMessage(context: DatabaseWriteCommandContext, inp
       const changed: JobConversation = { ...prior, updated_at: next.edited_at!, ...(row.visibility === 'conversation' ? { public_updated_at: next.edited_at!, context_revision: prior.context_revision + 1,
         ...(action === 'remove' && prior.customer_turn_id === row.id ? { customer_turn_id: null } : {}) } : {}) };
       context.db.update('messaging_conversations', conversation.id, changed);
-      const policy = conversation.kind === 'assistant' ? actor.assistantPolicies?.[conversation.assistant_id!] : r.assistantPolicy;
+      const policy = actor.kind === 'user' && actor.assistantPolicies !== undefined ? actor.assistantPolicies[conversation.assistant_id ?? 'default'] : r.assistantPolicy;
       if (row.visibility === 'conversation' && policy) queueMessagingAssistant(context, changed, policy);
       return projectMessage(next, staff);
     });

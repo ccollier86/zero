@@ -13,7 +13,7 @@ applies_to: ["2.6.0 native messaging; identify installed support by release comm
 
 # Configurable Messaging
 
-[Messaging index](./index.md) · [Review](./review.md) · [Notifications](./notifications.md) · [Presence](../guardian/presence.md) · [UI parts](../../frontend/messaging/index.md)
+[Messaging index](./index.md) · [Members message the team](./portal.md) · [Review](./review.md) · [Notifications](./notifications.md) · [Presence](../guardian/presence.md) · [UI parts](../../frontend/messaging/index.md)
 
 One optional subsystem supports peer conversations, configured organizational
 groups, internal assistants and support conversations. These can coexist; AI is
@@ -71,6 +71,25 @@ Single tenancy owns one private messaging Fabric database. Multi tenancy owns
 one per admitted organization. SYSTEM retains ownership receipts, Storage owns
 private bytes, and the existing logging subsystem owns its separate audit files
 and workers. Disabling messaging does not delete retained files or outcomes.
+
+### Optional Restricted Portal
+
+On `feature/messaging-portal`, `portal: true` makes non-operator members
+support-only. It enables the existing protected support inbox if omitted;
+explicit `support: false` is invalid. Default `portal: false` leaves existing
+everyone/contact behavior unchanged. See the [portal guide](./portal.md) for
+current staff requirements, named `support.inboxes`, `defaultInbox`, Guardian
+configuration, native UI and retained-state enablement. These additions are
+not present in the released `2.8.0` archive.
+
+`support.inboxes()` lists only destinations the current user can open or handle,
+with safe capability descriptors rather than private policy/staff identities.
+`support.open({ inboxId, mode }, options)` selects one authenticated destination;
+`support.queue({ inboxId, owner, limit })` and its live watch filter staff
+discovery. Inbox `staff` narrows global `support.staff`; `access` governs current
+customer eligibility. Neither caller-selected tenant IDs nor public visitor
+entry names become authenticated destinations. Queue cursors bind both inbox
+and owner; changing either requires resetting the cursor.
 
 ## Ordinary And Configured Groups
 

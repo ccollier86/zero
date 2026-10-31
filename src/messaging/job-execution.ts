@@ -51,6 +51,11 @@ export async function executeMessagingJob(deps: MessagingJobExecutionDependencie
       }
       if (captured.customerKind === 'user' && captured.customerId) {
         deps.directory.assertRecipient(scope, captured.customerId);
+        if (captured.supportEntryId) {
+          const inbox = deps.config.supportInboxes?.[captured.supportEntryId];
+          if (!inbox || inbox.assistantId !== assistantId || deps.directory.inboxRecipient?.(scope, captured.customerId, inbox.id) !== true) throw new AuthError('Messaging inbox access changed.', 'MESSAGING_FORBIDDEN', 403);
+        }
+        if (captured.conversationKind === 'assistant' && deps.config.portal && !deps.directory.notificationRecipient(scope, captured.customerId, true)) throw new AuthError('Messaging portal access changed.', 'MESSAGING_FORBIDDEN', 403);
         if (captured.conversationKind === 'assistant' && deps.directory.assistantRecipient?.(scope, captured.customerId, assistantId) !== true) throw new AuthError('Messaging assistant access changed.', 'MESSAGING_FORBIDDEN', 403);
       }
     };

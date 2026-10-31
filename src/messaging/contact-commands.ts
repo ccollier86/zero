@@ -7,6 +7,7 @@ import { messagingChoice, messagingFail, messagingId, messagingRecord } from './
 export function changeMessagingContact(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
     const r = messagingRecord(input, ['actor', 'requestId', 'userId', 'action', 'expectedRevision']), actor = captureMessagingActor(r.actor), other = messagingId(r.userId);
+    if (actor.portal) messagingFail('MESSAGING_FORBIDDEN', 403);
     const action = messagingChoice(r.action, ['request', 'accept', 'decline', 'block', 'unblock']);
     if (actor.kind !== 'user' || other === actor.id) messagingFail('MESSAGING_INPUT_INVALID', 422);
     const id = contactKey(actor.scopeId, actor.id, other), prior = context.db.get('messaging_contacts', id);

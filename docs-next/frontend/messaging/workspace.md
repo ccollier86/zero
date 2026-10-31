@@ -133,6 +133,28 @@ Ordinary peer chats show Review only when the current sender has an unresolved
 native-notification alert (or its review is open). That surface cannot inspect
 another sender's work, read provider drafts or resend an uncertain effect.
 
+## Optional Member Portal Panel
+
+The [authenticated portal option](../../backend/messaging/portal.md), on
+`feature/messaging-portal` and not in the published `2.8.0` archive, adapts this
+same organism using server capabilities. `capabilities.portal` means the current
+member is support-only, not that the app should trust a client-side role test.
+`supportInboxes` indicates named destinations are configured.
+
+Members get an always-labeled **New message** action with approved team inboxes
+and loading, empty, interrupted-change and retry states. No people search,
+contacts, group creation, conversation-management or operator review controls
+are exposed. Admitted operators retain the existing panel and receive a native
+inbox Select in the staff queue. Each inbox/owner filter change resets keyset
+pagination and cancels the previous subscription. The server still checks every
+operation; hiding controls is not the access boundary.
+
+Compose the workspace into the app's existing role-specific pages/AppShells.
+Account invitations/registration, navigation and domain-specific relationship
+rules remain in Guardian/the app, not a duplicated portal user model. Existing
+files, live replies, presence, typing, sound suppression and scoped notifications
+use their original native services and design-token components.
+
 New-chat, member and message menus reuse Zero Popover, magnetic directory
 highlight, ScrollArea/PopoverViewport, buttons, inputs, avatars and modal
 confirmations. Overflow is bounded on narrow screens; a short member list does

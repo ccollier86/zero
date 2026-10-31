@@ -11,7 +11,12 @@ import type { MessagingWorkspaceController } from './messaging-workspace-control
 import type { MessagingWorkspaceState } from './workspace-state';
 import { MessagingAvatar } from './messaging-avatar';
 import type { AvatarGroupShape } from '../avatar-group/avatar-group-types';
+import { WorkspacePortalStart } from './workspace-portal-start';
+import { WorkspaceSupportStart } from './workspace-support-start';
 export function WorkspaceStart({ controller, state, shape }: { controller: MessagingWorkspaceController; state: MessagingWorkspaceState; shape?: AvatarGroupShape }) {
+  return state.capabilities?.portal ? <WorkspacePortalStart controller={controller} state={state} /> : <WorkspacePeerStart controller={controller} state={state} shape={shape} />;
+}
+function WorkspacePeerStart({ controller, state, shape }: { controller: MessagingWorkspaceController; state: MessagingWorkspaceState; shape?: AvatarGroupShape }) {
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [title, setTitle] = useState(''), [selected, setSelected] = useState<string[]>([]);
   const [people, setPeople] = useState<readonly MessagingDirectoryEntry[]>([]), [bots, setBots] = useState<readonly MessagingAssistant[]>([]), [contacts, setContacts] = useState<readonly MessagingContact[]>([]);
   const [cursor, setCursor] = useState<string | null>(null), [contactCursor, setContactCursor] = useState<string | null>(null), [after, setAfter] = useState<string | undefined>(), [contactAfter, setContactAfter] = useState<string | undefined>();
@@ -66,8 +71,7 @@ export function WorkspaceStart({ controller, state, shape }: { controller: Messa
         void controller.openAssistant(bot.id).then(() => { if (controller.current() && !controller.getSnapshot().command) setOpen(false); });
       }}>{bot.name}</Button>)}</div>}
       {state.capabilities?.support && <div className="zero-messaging-start-section"><h4>Support</h4>
-        {state.capabilities.supportAssistant && <Button size="sm" variant="ghost" disabled={locked} onClick={() => { void controller.openSupport('assistant').then(() => { if (controller.current() && !controller.getSnapshot().command) setOpen(false); }); }}>Ask the support assistant</Button>}
-        <Button size="sm" variant="outline" disabled={locked} onClick={() => { void controller.openSupport('human').then(() => { if (controller.current() && !controller.getSnapshot().command) setOpen(false); }); }}>Talk to a person</Button>
+        <WorkspaceSupportStart controller={controller} state={state} onStarted={() => setOpen(false)} />
       </div>}
       {contacts.filter(row => row.state === 'pending' && row.direction === 'incoming').map(row => <div key={row.id} className="zero-messaging-start-section"><span>{row.name ?? 'Contact request'}</span><div>
         <Button size="xs" variant="outline" disabled={locked} onClick={() => { void controller.respondContact(row.userId, row.revision, true); }}>Accept {row.name ?? 'contact'}</Button>

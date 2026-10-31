@@ -26,7 +26,7 @@ Third-party provider connectors are application-owned and do not gate the
 framework. [Native website/portal support](./website-support.md) has its own restricted admission.
 Email-to-conversation bridging is not a messaging requirement or release gate.
 
-[Configuration and facade](./configuration.md) · [Website support](./website-support.md) · [Review](./review.md) ·
+[Configuration and facade](./configuration.md) · [Members message the team](./portal.md) · [Website support](./website-support.md) · [Review](./review.md) ·
 [Notifications](./notifications.md) · [Guardian presence](../guardian/presence.md)
 
 ## Start Here
@@ -45,6 +45,11 @@ Email-to-conversation bridging is not a messaging requirement or release gate.
 5. Read [review/recovery](./review.md) and [notifications](./notifications.md)
    before connecting app-specific effects. An unknown outcome is not failure or
    permission to issue a fresh request ID.
+
+For applications where members can message only authorized operators, the
+optional [authenticated portal mode](./portal.md) reuses this same subsystem.
+Its guide identifies the feature branch/release boundary; it is not included
+in the published `2.8.0` archive. Everyone/contact defaults remain unchanged.
 
 The package version alone is insufficient: older archives also say `2.6.0`.
 Record the selected updater commit and archive hash, and update client/server

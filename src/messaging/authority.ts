@@ -4,7 +4,7 @@ import { serviceDataScopeKey } from '../auth/service-data-scope';
 import type { ResolvedMessagingConfig } from './config';
 import type { MessagingAuthority } from './service';
 import type { MessagingActor } from './realm-model';
-import { messagingFail, messagingId } from './validation';
+import { messagingFail, messagingHash, messagingId } from './validation';
 import { AuthError } from '../auth/types';
 export function createMessagingActorResolver(authority: MessagingAuthority, config: ResolvedMessagingConfig): (write?: boolean) => MessagingActor {
   const original = authority.access.requireUser(), scopeId = serviceDataScopeKey(authority.scope);
@@ -33,6 +33,22 @@ export function createMessagingActorResolver(authority: MessagingAuthority, conf
       try { if (entry.staff !== undefined) access.authorize(entry.staff); supportPolicies[entry.id] = entry.policyHash; }
       catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
     }
-    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, assistantPolicies, groupPolicies, supportPolicies };
+    const inboxPolicies: Record<string, string> = Object.create(null);
+    for (const inbox of Object.values(config.supportInboxes ?? {})) {
+      try { if (inbox.access !== undefined) access.authorize(inbox.access); inboxPolicies[inbox.id] = inbox.policyHash; }
+      catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
+      if (staff) {
+        try { if (inbox.staff !== undefined) access.authorize(inbox.staff); supportPolicies[inbox.id] = inbox.policyHash; }
+        catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
+      }
+    }
+    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, portal: config.portal === true && !staff, assistantPolicies, groupPolicies, supportPolicies, inboxPolicies };
   };
+}
+/** Every release/commit and typing recheck uses the same current server-owned admission projection. */
+export function sameMessagingAdmission(first: MessagingActor, second: MessagingActor): boolean {
+  return first.id === second.id && first.scopeId === second.scopeId && first.kind === second.kind && first.staff === second.staff
+    && Boolean(first.portal) === Boolean(second.portal)
+    && ['assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies'].every(key =>
+      messagingHash(first[key as 'assistantPolicies'] ?? {}) === messagingHash(second[key as 'assistantPolicies'] ?? {}));
 }

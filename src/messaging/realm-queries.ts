@@ -28,6 +28,7 @@ export function projectMessagingConversation(database: DatabaseReadQueryConnecti
   const audience = messagingReviewAudience(actor, conversation, member);
   const reviewCount = canReviewMessagingConversation(actor, conversation, member) ? database.query<{ count: number }>("SELECT count(*) AS count FROM messaging_jobs j WHERE j.scope_id=? AND j.conversation_id=? AND j.state='needs-review' AND NOT EXISTS(SELECT 1 FROM messaging_job_resolutions r WHERE r.job_id=j.id)" + audience.sql).get(actor.scopeId, conversation.id, ...audience.values)!.count : undefined;
   return { id: conversation.id, kind: conversation.kind, title: conversation.title, revision: conversation.revision, createdAt: conversation.created_at,
+    ...(conversation.kind === 'support' && conversation.support_entry_id && !conversation.visitor_session_id ? { inboxId: conversation.support_entry_id } : {}),
     updatedAt: staff ? conversation.updated_at : conversation.public_updated_at, archived: conversation.archived === 1,
     owner: conversation.owner, ownerId: conversation.owner_id, ownerEpoch: conversation.owner_epoch,
     assistantId: conversation.assistant_id ?? null,
@@ -60,6 +61,10 @@ export function listMessagingConversations({ database }: DatabaseReadQueryContex
   const where = ['m.scope_id=?', 'm.participant_id=?', 'm.active=1', 'c.scope_id=m.scope_id', 'c.archived=?'];
   const values: (string | number)[] = [actor.scopeId, actor.id, q.archived ? 1 : 0];
   if (!actor.staff) where.push("m.role!='staff'");
+  if (actor.portal) where.push("c.kind='support'");
+  const inboxes = Object.keys(actor.inboxPolicies ?? {});
+  where.push(inboxes.length ? `(m.role!='customer' OR m.kind!='user' OR c.support_entry_id IS NULL OR c.visitor_session_id IS NOT NULL OR c.support_entry_id IN (${inboxes.map(() => '?').join(',')}))`
+    : "(m.role!='customer' OR m.kind!='user' OR c.support_entry_id IS NULL OR c.visitor_session_id IS NOT NULL)"); values.push(...inboxes);
   const channels = Object.keys(actor.supportPolicies ?? {});
   where.push(channels.length ? `(m.role!='staff' OR c.support_entry_id IS NULL OR c.support_entry_id IN (${channels.map(() => '?').join(',')}))` : "(m.role!='staff' OR c.support_entry_id IS NULL)"); values.push(...channels);
   const assistants = Object.keys(actor.assistantPolicies ?? {});
@@ -116,7 +121,7 @@ export function listMessagingMessages({ database }: DatabaseReadQueryContext, in
 }
 export function listMessagingContacts({ database }: DatabaseReadQueryContext, input: unknown): unknown {
   const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit']);
-  if (actor.kind !== 'user') messagingFail('MESSAGING_FORBIDDEN', 403);
+  if (actor.kind !== 'user' || actor.portal) messagingFail('MESSAGING_FORBIDDEN', 403);
   const limit = messagingInteger(q.limit ?? 25, 1, 50), after = q.after === undefined ? '' : messagingId(q.after);
   const rows = database.query<Row>(`SELECT * FROM (
     SELECT c.id,CASE WHEN c.requester_id=? THEN c.recipient_id ELSE c.requester_id END AS user_id,
@@ -134,26 +139,34 @@ export function listMessagingContacts({ database }: DatabaseReadQueryContext, in
 }
 /** Deliberate triage discovery is narrower than reading every private conversation or its transcript. */
 export function listMessagingSupportQueue({ database }: DatabaseReadQueryContext, input: unknown): unknown {
-  const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit', 'owner']);
+  const r = messagingRecord(input, ['actor', 'query']), actor = captureMessagingActor(r.actor), q = messagingRecord(r.query ?? {}, ['after', 'limit', 'owner', 'inboxId']);
   if (!actor.staff || actor.kind !== 'user') messagingFail('MESSAGING_FORBIDDEN', 403);
   const limit = messagingInteger(q.limit ?? 25, 1, 50);
   const owner = q.owner === undefined ? null : messagingChoice(q.owner, ['triage', 'assistant', 'human']);
+  const inboxId = q.inboxId === undefined ? null : messagingId(q.inboxId);
+  if (inboxId !== null && !actor.supportPolicies?.[inboxId]) messagingFail('MESSAGING_NOT_FOUND', 404);
   const values: (string | number)[] = [actor.scopeId], where = ["scope_id=?", "kind='support'", 'archived=0'];
   const channels = Object.keys(actor.supportPolicies ?? {});
   where.push(channels.length ? `(support_entry_id IS NULL OR support_entry_id IN (${channels.map(() => '?').join(',')}))` : 'support_entry_id IS NULL'); values.push(...channels);
   if (owner !== null) { where.push('owner=?'); values.push(owner); }
+  if (inboxId !== null) { where.push('support_entry_id=?', 'visitor_session_id IS NULL'); values.push(inboxId); }
   if (q.after !== undefined) {
     const cursor = messagingText(q.after, 512); let parsed: unknown;
     try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { messagingFail('MESSAGING_INPUT_INVALID', 422); }
-    if (!Array.isArray(parsed) || parsed.length !== 3 || parsed[0] !== owner) messagingFail('MESSAGING_INPUT_INVALID', 422);
-    const stamp = messagingInteger(parsed[1], 0), id = messagingId(parsed[2]);
+    if (!Array.isArray(parsed) || parsed[0] !== owner || (parsed.length === 3 ? inboxId !== null : parsed.length !== 4 || parsed[1] !== inboxId)) messagingFail('MESSAGING_INPUT_INVALID', 422);
+    const stamp = messagingInteger(parsed[parsed.length - 2], 0), id = messagingId(parsed[parsed.length - 1]);
     where.push('(created_at>? OR (created_at=? AND id>?))'); values.push(stamp, stamp, id);
   }
-  const rows = database.query<ConversationRow>('SELECT id,owner,owner_epoch,created_at FROM messaging_conversations WHERE ' + where.join(' AND ') + ' ORDER BY created_at,id LIMIT ?')
+  // A named destination must not scan unrelated support inboxes even when
+  // SQLite's small-database estimates prefer the older broad queue index.
+  const from = inboxId === null ? 'messaging_conversations' : 'messaging_conversations INDEXED BY '
+    + (owner === null ? 'messaging_support_inbox_queue' : 'messaging_support_inbox_owner_queue');
+  const rows = database.query<ConversationRow>('SELECT id,owner,owner_epoch,created_at,support_entry_id,visitor_session_id FROM ' + from + ' WHERE ' + where.join(' AND ') + ' ORDER BY created_at,id LIMIT ?')
     .all(...values, limit + 1);
-  const items = rows.slice(0, limit).map(row => ({ id: row.id, owner: row.owner, ownerEpoch: row.owner_epoch, createdAt: row.created_at }));
+  const items = rows.slice(0, limit).map(row => ({ id: row.id, owner: row.owner, ownerEpoch: row.owner_epoch, createdAt: row.created_at,
+    ...(row.support_entry_id && !row.visitor_session_id ? { inboxId: row.support_entry_id } : {}) }));
   const last = items.at(-1);
-  return { items, hasMore: rows.length > limit, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify([owner, last.createdAt, last.id])).toString('base64url') : null };
+  return { items, hasMore: rows.length > limit, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify(inboxId === null ? [owner, last.createdAt, last.id] : [owner, inboxId, last.createdAt, last.id])).toString('base64url') : null };
 }
 /** Current identity/scope may read its own content-free acknowledgment, never the retained result payload. */
 export function readMessagingReceipt({ database }: DatabaseReadQueryContext, input: unknown): unknown {

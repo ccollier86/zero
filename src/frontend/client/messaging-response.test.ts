@@ -1,6 +1,6 @@
 /** Public wire-shape validation only; capabilities are not proof of current authority or worker health. */
 import { expect, test } from 'bun:test';
-import { assertMessagingCapabilities, assertMessagingContact, assertMessagingConversation, assertMessagingPage } from './messaging-response';
+import { assertMessagingCapabilities, assertMessagingContact, assertMessagingConversation, assertMessagingPage, assertMessagingSupportInbox, assertMessagingSupportQueueItem } from './messaging-response';
 
 const legacy = { enabled: true, directory: 'everyone', canSupport: false,
   maxMessageLength: 20000, maxParticipants: 100, maxUploadBytes: 16 * 1024 * 1024 };
@@ -17,8 +17,21 @@ test('history grant metadata admits only a complete positive versioned boundary'
 test('older capability projections remain readable and optional configured integrations are strictly boolean', () => {
   expect(() => assertMessagingCapabilities(legacy)).not.toThrow();
   expect(() => assertMessagingCapabilities({ ...legacy, assistant: true, notifications: false })).not.toThrow();
-  for (const key of ['assistant', 'notifications']) for (const value of ['true', 1, null, {}]) {
+  for (const key of ['assistant', 'notifications', 'portal', 'supportInboxes']) for (const value of ['true', 1, null, {}]) {
     expect(() => assertMessagingCapabilities({ ...legacy, [key]: value })).toThrow('Invalid messaging response.');
+  }
+});
+
+test('portal capabilities and inbox descriptors are coherent, bounded optional additions rather than authority claims', () => {
+  expect(() => assertMessagingCapabilities({ ...legacy, portal: true, support: true, supportInboxes: true })).not.toThrow();
+  for (const fields of [{ portal: true }, { portal: true, support: false }, { portal: true, support: true, canSupport: true }, { supportInboxes: true }]) {
+    expect(() => assertMessagingCapabilities({ ...legacy, ...fields })).toThrow('Invalid messaging response.');
+  }
+  const inbox = { id: 'billing', title: 'Billing', canOpen: true, canHandle: false, assistant: false, default: true };
+  expect(() => assertMessagingSupportInbox(inbox)).not.toThrow();
+  expect(() => assertMessagingSupportQueueItem({ id: 'request', ownerEpoch: 1, createdAt: 1, owner: 'triage', inboxId: inbox.id })).not.toThrow();
+  for (const change of [{ id: '__proto__' }, { title: 'x'.repeat(121) }, { canOpen: false }, { assistant: 'yes' }, { default: null }]) {
+    expect(() => assertMessagingSupportInbox({ ...inbox, ...change })).toThrow('Invalid messaging response.');
   }
 });
 

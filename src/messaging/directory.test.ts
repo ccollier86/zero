@@ -24,5 +24,40 @@ test('discovery, exact display resolution and automatic groups exclude unfinishe
     expect(directory.resolve(tenant, ['ready', 'foreign']).map(row => row.id)).toEqual(['ready']);
     for (const id of ['registration', 'admin', 'password', 'verify', 'suspended']) expect(() => directory.assertRecipient(app, id)).toThrow();
     expect(() => directory.assertRecipient(app, 'ready')).not.toThrow();
+    let admitted = true;
+    const portal = new ManagedMessagingDirectory({ db, users: {} as UserStore, tenancy, portal: true, publicAvatar: () => null,
+      supportRecipient: (_scope, id) => admitted && id === 'ready', groupRecipient: () => true, inboxRecipient: (_scope, id, inbox) => admitted && id === 'ready' && inbox === 'team' });
+    expect(portal.list(app, 'self', {}, true).items.map(row => row.id)).toEqual(['ready']);
+    expect(portal.notificationRecipient(app, 'foreign', false, 'direct')).toBe(false);
+    expect(portal.notificationRecipient(app, 'foreign', false, 'support')).toBe(true);
+    expect(portal.notificationRecipient(app, 'ready', false, 'direct')).toBe(true);
+    expect(portal.groupRecipient(app, 'foreign', 'team')).toBe(false);
+    expect(portal.groupRecipient(app, 'ready', 'team')).toBe(true);
+    expect(portal.inboxRecipient(app, 'ready', 'team')).toBe(true);
+    admitted = false;
+    expect(portal.notificationRecipient(app, 'ready', true, 'support')).toBe(false);
+    expect(portal.inboxRecipient(app, 'ready', 'team')).toBe(false);
+    expect(portal.list(app, 'self', {}, true).items).toEqual([]);
+  } finally { db.dispose(); }
+});
+
+test('operator-only discovery pages across sparse eligible accounts with bounded Guardian work and no skipped admitted staff', () => {
+  const db = createReactiveDB({ mode: 'memory' });
+  try {
+    db.exec(`CREATE TABLE users(user_id TEXT PRIMARY KEY,username TEXT,first_name TEXT,last_name TEXT,status TEXT,password_change_required INTEGER,email_verification_required INTEGER,email_verified_at INTEGER);
+      CREATE TABLE _auth_registration_provisioning(user_id TEXT PRIMARY KEY); CREATE TABLE _auth_admin_user_provisioning(user_id TEXT PRIMARY KEY);`);
+    const insert = db.prepare("INSERT INTO users VALUES(?,?,NULL,NULL,'active',0,0,NULL)");
+    db.transaction(() => { for (let n = 0; n < 1110; n++) { const id = 'member-' + String(n).padStart(4, '0'); insert.run(id, id); } });
+    const app = applicationServiceDataScope(); let checks = 0;
+    const directory = new ManagedMessagingDirectory({ db, users: {} as UserStore, tenancy: null, publicAvatar: () => null, supportRecipient: (_scope, id) => {
+      checks++; return id === 'member-0001' || id === 'member-1101' || id === 'member-1102';
+    } });
+    const first = directory.list(app, 'self', { limit: 2 }, true);
+    expect(first.items.map(row => row.id)).toEqual(['member-0001']); expect(first.nextCursor).toBe('member-0999'); expect(checks).toBe(1000);
+    checks = 0; const second = directory.list(app, 'self', { limit: 1, after: first.nextCursor! }, true);
+    expect(second.items.map(row => row.id)).toEqual(['member-1101']); expect(second.nextCursor).toBe('member-1101'); expect(checks).toBeLessThanOrEqual(110);
+    const third = directory.list(app, 'self', { limit: 1, after: second.nextCursor! }, true);
+    expect(third.items.map(row => row.id)).toEqual(['member-1102']); expect(third.hasMore).toBe(false); expect(third.nextCursor).toBeNull();
+    const empty = directory.list(app, 'self', { search: 'not-admitted' }, true); expect(empty.items).toEqual([]); expect(empty.hasMore).toBe(false);
   } finally { db.dispose(); }
 });

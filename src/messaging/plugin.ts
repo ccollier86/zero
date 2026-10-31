@@ -76,9 +76,10 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
       return action === 'respond' ? api.respond(params.id, messagingInteger(r.expectedRevision), r.accept as boolean, options) : api[action](params.id, options);
     }, { parse: 'none' })
     .post('/support', async ({ access, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).support.open(await readMessagingBody(request) as never, options); }, { parse: 'none' })
-    .get('/support/queue', ({ access, request }) => read(access.requireUser(), request).support.queue(readMessagingQuery(request, ['after', 'limit', 'owner']) as never, { signal: request.signal }))
+    .get('/support/inboxes', ({ access, request }) => { noQuery(request); return read(access.requireUser(), request).support.inboxes({ signal: request.signal }); })
+    .get('/support/queue', ({ access, request }) => read(access.requireUser(), request).support.queue(readMessagingQuery(request, ['after', 'limit', 'owner', 'inboxId']) as never, { signal: request.signal }))
     .get('/support/queue/live', async ({ access, request }) => {
-      const captured = context(access.requireUser(), request), query = readMessagingQuery(request, ['after', 'limit', 'owner']) as never;
+      const captured = context(access.requireUser(), request), query = readMessagingQuery(request, ['after', 'limit', 'owner', 'inboxId']) as never;
       await captured.facade.support.queue(query, { signal: request.signal });
       const projection = captured.service.projectionForAuthority(captured.authority);
       return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => projection.support.queue(query, { signal: request.signal }), request.signal,

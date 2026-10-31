@@ -11,11 +11,15 @@ import { messagingNotificationPath } from './notification-link';
 import { resolveMessagingAssistants, type MessagingAssistantConfig, type ResolvedMessagingAssistant } from './assistant-config';
 import { resolveMessagingGroups, type MessagingGroupConfig, type ResolvedMessagingGroup } from './group-config';
 import { resolveMessagingSupportEntries, type MessagingSupportEntryConfig, type ResolvedMessagingSupportEntry } from './support-entry-config';
+import { resolveMessagingSupportInboxes, type MessagingSupportInboxConfig, type ResolvedMessagingSupportInbox } from './support-inbox-config';
 export type { MessagingSupportEntryConfig } from './support-entry-config';
+export type { MessagingSupportInboxConfig } from './support-inbox-config';
 export type { MessagingAssistantConfig } from './assistant-config';
 export type { MessagingGroupConfig } from './group-config';
 
 export interface MessagingConfig {
+  /** Ordinary members use private routed support only; authorized support staff retain their existing backend workspace. */
+  portal?: boolean;
   directory?: 'everyone' | 'contacts';
   history?: 'all' | 'since-join';
   rootDirectory?: string;
@@ -25,7 +29,8 @@ export interface MessagingConfig {
   maxActiveDatabases?: number;
   maxDatabaseFiles?: number;
   maxUploadBytes?: number;
-  support?: false | { staff?: AccessRequirement; assistant?: string | false; entries?: Readonly<Record<string, MessagingSupportEntryConfig>> };
+  support?: false | { staff?: AccessRequirement; assistant?: string | false; entries?: Readonly<Record<string, MessagingSupportEntryConfig>>;
+    inboxes?: Readonly<Record<string, MessagingSupportInboxConfig>>; defaultInbox?: string };
   /** Compatibility alias for the named `default` assistant; support is not required. */
   assistant?: false | MessagingAssistantConfig;
   assistants?: Readonly<Record<string, MessagingAssistantConfig>>;
@@ -35,11 +40,14 @@ export interface MessagingConfig {
   jobs?: { concurrency?: number | 'max' };
 }
 export interface ResolvedMessagingConfig {
+  readonly portal: boolean;
   readonly directory: 'everyone' | 'contacts'; readonly history: 'all' | 'since-join'; readonly rootDirectory: string;
   readonly createExecutor: SubprocessDatabaseExecutorFactory; readonly defaultActorEntrypoint: string | null;
   readonly maxMessageLength: number; readonly maxParticipants: number; readonly maxActiveDatabases: number; readonly maxDatabaseFiles: number; readonly maxUploadBytes: number;
   readonly support: false | { readonly staff: AccessRequirement };
   readonly supportEntries: Readonly<Record<string, ResolvedMessagingSupportEntry>>;
+  readonly supportInboxes: Readonly<Record<string, ResolvedMessagingSupportInbox>>;
+  readonly defaultSupportInbox: string | null;
   readonly assistant: ResolvedMessagingAssistant | false;
   readonly assistants: Readonly<Record<string, ResolvedMessagingAssistant>>;
   readonly groups: Readonly<Record<string, ResolvedMessagingGroup>>;
@@ -49,11 +57,14 @@ export interface ResolvedMessagingConfig {
 export function resolveMessagingConfig(input: boolean | MessagingConfig | undefined, projectRoot: string, auth: NormalizedAuthBehaviorConfig | null): ResolvedMessagingConfig | false {
   if (input === false || input === undefined) return false;
   if (!auth) throw new Error('[messaging] Guardian must be enabled.');
-  const r = input === true ? {} : messagingRecord(input, ['directory', 'history', 'rootDirectory', 'actors', 'maxMessageLength', 'maxParticipants', 'maxActiveDatabases', 'maxDatabaseFiles', 'maxUploadBytes', 'support', 'assistant', 'assistants', 'groups', 'notifications', 'jobs']);
+  const r = input === true ? {} : messagingRecord(input, ['portal', 'directory', 'history', 'rootDirectory', 'actors', 'maxMessageLength', 'maxParticipants', 'maxActiveDatabases', 'maxDatabaseFiles', 'maxUploadBytes', 'support', 'assistant', 'assistants', 'groups', 'notifications', 'jobs']);
+  if (r.portal !== undefined && typeof r.portal !== 'boolean') throw new Error('[messaging] portal must be boolean.');
+  if (r.portal === true && r.support === false) throw new Error('[messaging] Portal messaging requires support admission.');
   if (r.rootDirectory !== undefined && (typeof r.rootDirectory !== 'string' || !r.rootDirectory.trim() || r.rootDirectory.includes('\0'))) throw new Error('[messaging] Invalid private messaging root.');
   const entry = r.actors === undefined ? packagedMessagingActor(projectRoot) : null;
   const actors = r.actors === undefined ? { launch: { kind: 'source' as const, entrypoint: entry! }, env: {} } : messagingRecord(r.actors, ['launch', 'env', 'executor']);
-  const support = r.support === undefined || r.support === false ? false : messagingRecord(r.support, ['staff', 'assistant', 'entries']);
+  const support = r.support === undefined ? r.portal === true ? {} : false : r.support === false ? false
+    : messagingRecord(r.support, ['staff', 'assistant', 'entries', 'inboxes', 'defaultInbox']);
   const staff = support === false ? null : structuredClone(support.staff ?? (auth.tenancy.mode === 'multi' ? { permission: 'tenant.members:manage' } : 'admin')) as AccessRequirement;
   if (staff !== null) {
     const compiled = createAuthorizationKernel(auth).compile(staff, { user: 'required', credentials: ['session'] });
@@ -64,16 +75,21 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
   const maxActiveDatabases = messagingInteger(r.maxActiveDatabases ?? 4, 1, 64), maxDatabaseFiles = messagingInteger(r.maxDatabaseFiles ?? 1000, maxActiveDatabases, 10000);
   const assistantConfiguration = resolveMessagingAssistants(r, auth);
   const supportEntries = resolveMessagingSupportEntries(support === false ? undefined : support.entries, auth, assistantConfiguration.assistants, assistantConfiguration.assistant ? assistantConfiguration.assistant.id : null);
+  const supportInboxes = resolveMessagingSupportInboxes(support === false ? undefined : support.inboxes, auth, assistantConfiguration.assistants, assistantConfiguration.assistant ? assistantConfiguration.assistant.id : null);
+  const inboxIds = Object.keys(supportInboxes);
+  if (Object.keys(supportEntries).length + inboxIds.length > 32 || inboxIds.some(id => Object.hasOwn(supportEntries, id))) throw new Error('[messaging] Support entries and inboxes require unique names and at most 32 combined destinations.');
+  const defaultSupportInbox = support === false || support.defaultInbox === undefined ? inboxIds.length === 1 ? inboxIds[0]! : null : messagingText(support.defaultInbox, 64);
+  if (defaultSupportInbox !== null && !Object.hasOwn(supportInboxes, defaultSupportInbox)) throw new Error('[messaging] The default support inbox is not configured.');
   const notice = r.notifications === undefined || r.notifications === false ? false : r.notifications === true ? {} : messagingRecord(r.notifications, ['path']);
   const notificationPath = messagingNotificationPath(notice === false ? '/messages' : notice.path ?? '/messages');
   const jobs = r.jobs === undefined ? {} : messagingRecord(r.jobs, ['concurrency']);
   const jobConcurrency = jobs.concurrency === undefined || jobs.concurrency === 'max' ? 100 : messagingInteger(jobs.concurrency, 1, 100);
-  return Object.freeze({ directory: messagingChoice(r.directory ?? 'everyone', ['everyone', 'contacts']), history: messagingChoice(r.history ?? 'all', ['all', 'since-join']),
+  return Object.freeze({ portal: r.portal === true, directory: messagingChoice(r.directory ?? 'everyone', ['everyone', 'contacts']), history: messagingChoice(r.history ?? 'all', ['all', 'since-join']),
     rootDirectory: resolve(projectRoot, r.rootDirectory as string ?? 'data/zero.messaging'),
     createExecutor: createSubprocessDatabaseExecutorFactory({ ...actors, actorFlag: MESSAGING_ACTOR_FLAG } as unknown as SubprocessDatabaseExecutorFactoryOptions), defaultActorEntrypoint: entry,
     maxMessageLength: messagingInteger(r.maxMessageLength ?? 20000, 1, 20000), maxParticipants: messagingInteger(r.maxParticipants ?? 100, 2, 100), maxActiveDatabases, maxDatabaseFiles,
     maxUploadBytes: messagingInteger(r.maxUploadBytes ?? 16 * 1024 * 1024, 1024, 256 * 1024 * 1024), support: staff === null ? false : Object.freeze({ staff: deepFreeze(staff) }),
-    ...assistantConfiguration, supportEntries, groups: resolveMessagingGroups(r.groups, auth), notifications: notice !== false, notificationPath, jobConcurrency });
+    ...assistantConfiguration, supportEntries, supportInboxes, defaultSupportInbox, groups: resolveMessagingGroups(r.groups, auth), notifications: notice !== false, notificationPath, jobConcurrency });
 }
 function packagedMessagingActor(projectRoot: string): string {
   const adjacent = fileURLToPath(new URL('./actor-entry.ts', import.meta.url)); if (existsSync(adjacent)) return adjacent;

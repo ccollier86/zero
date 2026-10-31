@@ -9,7 +9,7 @@ import { messagingFail, messagingId, messagingInteger, messagingRecord, messagin
 import { AuthError } from '../auth/types';
 import { MESSAGING_DIRECTORY_ELIGIBLE } from './directory-eligibility';
 
-interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; supportEntryRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean }
+interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; readonly portal?: boolean; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; supportEntryRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean; inboxRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean }
 /** The server owns Guardian relationships and published avatar descriptors; caller-selected identity metadata is ignored. */
 export class ManagedMessagingDirectory implements MessagingDirectory {
   constructor(private readonly deps: DirectoryDependencies) {}
@@ -35,8 +35,8 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
       if (tenant?.status !== 'active' || member?.status !== 'active') messagingFail('MESSAGING_NOT_FOUND', 404);
     }
   }
-  notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean): boolean {
-    try { this.assertRecipient(scope, userId); return !staff || this.deps.supportRecipient?.(scope, userId) === true; }
+  notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean, conversationKind?: string | null): boolean {
+    try { this.assertRecipient(scope, userId); return !(staff || this.deps.portal && conversationKind !== undefined && conversationKind !== 'support') || this.deps.supportRecipient?.(scope, userId) === true; }
     catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
   }
   assistantRecipient(scope: ServiceDataScope, userId: string, assistantId: string): boolean {
@@ -47,7 +47,11 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
     return this.notificationRecipient(scope, userId, true) && this.deps.supportEntryRecipient?.(scope, userId, entryId) === true;
   }
   groupRecipient(scope: ServiceDataScope, userId: string, groupId: string): boolean {
-    try { this.assertRecipient(scope, userId); return this.deps.groupRecipient?.(scope, userId, groupId) === true; }
+    try { this.assertRecipient(scope, userId); return (!this.deps.portal || this.deps.supportRecipient?.(scope, userId) === true) && this.deps.groupRecipient?.(scope, userId, groupId) === true; }
+    catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
+  }
+  inboxRecipient(scope: ServiceDataScope, userId: string, inboxId: string): boolean {
+    try { this.assertRecipient(scope, userId); return this.deps.inboxRecipient?.(scope, userId, inboxId) === true; }
     catch (error) { if (error instanceof AuthError && [403, 404].includes(error.status)) return false; throw error; }
   }
   groupCandidates(scope: ServiceDataScope, after: string, limit: number): { ids: readonly string[]; hasMore: boolean } {
@@ -58,7 +62,7 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
     const rows = this.deps.db.prepare(`SELECT u.user_id FROM users u WHERE ${MESSAGING_DIRECTORY_ELIGIBLE} AND u.user_id>?` + tenant + ' ORDER BY u.user_id LIMIT ?').all(...values, maximum + 1) as { user_id: string }[];
     return { ids: rows.slice(0, maximum).map(row => row.user_id), hasMore: rows.length > maximum };
   }
-  list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }): MessagingPage<MessagingDirectoryEntry> {
+  list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }, staffOnly = false): MessagingPage<MessagingDirectoryEntry> {
     const q = messagingRecord(query, ['after', 'limit', 'search']), limit = messagingInteger(q.limit ?? 25, 1, 50);
     const where = [MESSAGING_DIRECTORY_ELIGIBLE, 'u.user_id<>?', 'u.user_id>?'], values: (string | number)[] = [actorId, q.after === undefined ? '' : messagingId(q.after)];
     if (scope.tenantId !== null) {
@@ -68,7 +72,26 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
       const search = messagingText(q.search, 100, true).trim().replace(/[\\%_]/g, value => '\\' + value);
       where.push("(u.username LIKE ? ESCAPE '\\' OR coalesce(u.first_name,'') || ' ' || coalesce(u.last_name,'') LIKE ? ESCAPE '\\')"); values.push('%' + search + '%', '%' + search + '%');
     }
-    const rows = this.deps.db.prepare(`SELECT u.user_id,u.username,u.first_name,u.last_name FROM users u WHERE ${where.join(' AND ')} ORDER BY u.user_id LIMIT ?`).all(...values, limit + 1) as { user_id: string; username: string; first_name: string | null; last_name: string | null }[];
+    type DirectoryRow = { user_id: string; username: string; first_name: string | null; last_name: string | null };
+    const sql = this.deps.db.prepare(`SELECT u.user_id,u.username,u.first_name,u.last_name FROM users u WHERE ${where.join(' AND ')} ORDER BY u.user_id LIMIT ?`);
+    let rows = sql.all(...values, staffOnly ? 100 : limit + 1) as DirectoryRow[];
+    if (staffOnly) {
+      const admitted: DirectoryRow[] = []; let scanned = 0, more = false, after = String(values[1]);
+      // Bound Guardian predicate work without loading the application directory wholesale.
+      while (rows.length) {
+        for (const row of rows) {
+          after = row.user_id; scanned++;
+          if (this.deps.supportRecipient?.(scope, row.user_id) === true) admitted.push(row);
+          if (admitted.length > limit) break;
+        }
+        if (admitted.length > limit || rows.length < 100) { more = admitted.length > limit; break; }
+        if (scanned >= 1000) { more = true; break; }
+        values[1] = after; rows = sql.all(...values, 100) as DirectoryRow[];
+      }
+      const visible = admitted.slice(0, limit), items = visible.map(row => ({ id: row.user_id,
+        name: ([row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.username).slice(0, 241), avatarUrl: this.deps.publicAvatar(row.user_id) }));
+      return { items, hasMore: more, nextCursor: more ? admitted.length > limit ? visible.at(-1)!.user_id : after : null };
+    }
     // Current profile names allow 120 characters each. Bound legacy longer
     // display values on the wire without changing their canonical identity/profile.
     const items = rows.slice(0, limit).map(row => ({ id: row.user_id, name: ([row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.username).slice(0, 241), avatarUrl: this.deps.publicAvatar(row.user_id) }));

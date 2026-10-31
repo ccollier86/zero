@@ -1,6 +1,6 @@
 /** Bounded JSON response assertions shared by normal requests and SSE. This is display validation, never authorization. */
 import type { ConversationRecord, DurableMessage, MessagingPage } from '../../messaging/contracts';
-import type { MessagingCapabilities, MessagingContact, MessagingDirectoryEntry, MessagingReceipt, MessagingAssistant } from '../../messaging/contracts';
+import type { MessagingCapabilities, MessagingContact, MessagingDirectoryEntry, MessagingReceipt, MessagingAssistant, MessagingSupportInbox } from '../../messaging/contracts';
 const bad = () => { throw new Error('Invalid messaging response.'); };
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : bad();
 const text = (value: unknown, maximum = 200) => { if (typeof value !== 'string' || value.length > maximum) bad(); };
@@ -18,6 +18,8 @@ export function assertMessagingConversation(value: unknown): asserts value is Co
   if (r.assistantId !== undefined && r.assistantId !== null) text(r.assistantId, 64);
   if (r.assistantName !== undefined) text(r.assistantName, 120);
   if (r.managedGroupId !== undefined && r.managedGroupId !== null) text(r.managedGroupId, 64);
+  if (r.inboxId !== undefined && r.inboxId !== null) text(r.inboxId, 64);
+  if (r.inboxTitle !== undefined) text(r.inboxTitle, 120);
   if (r.reviewCount !== undefined) integer(r.reviewCount);
   if (r.assistantActivity !== undefined && r.assistantActivity !== null) { const activity = record(r.assistantActivity); text(activity.runId); if (!['queued', 'thinking', 'responding'].includes(activity.state)) bad(); }
   if (r.ownerId !== null) text(r.ownerId);
@@ -37,7 +39,8 @@ export function assertMessagingPage<T>(value: unknown, item: (value: unknown) =>
 export function assertMessagingCapabilities(value: unknown): asserts value is MessagingCapabilities {
   const r = record(value);
   if (typeof r.enabled !== 'boolean' || !['everyone', 'contacts'].includes(r.directory) || typeof r.canSupport !== 'boolean') bad();
-  for (const key of ['assistant', 'notifications', 'support', 'supportAssistant']) if (r[key] !== undefined && typeof r[key] !== 'boolean') bad();
+  for (const key of ['assistant', 'notifications', 'support', 'supportAssistant', 'portal', 'supportInboxes']) if (r[key] !== undefined && typeof r[key] !== 'boolean') bad();
+  if (r.portal === true && (r.support !== true || r.canSupport !== false) || r.supportInboxes === true && r.support !== true) bad();
   for (const [key, maximum] of [['maxMessageLength', 20000], ['maxParticipants', 100], ['maxUploadBytes', 256 * 1024 * 1024]] as const) { integer(r[key]); if (r[key] < 1 || r[key] > maximum) bad(); }
 }
 export function assertMessagingDirectoryEntry(value: unknown): asserts value is MessagingDirectoryEntry {
@@ -51,6 +54,10 @@ export function assertMessagingPerson(value: unknown): void {
 export function assertMessagingAssistant(value: unknown): asserts value is MessagingAssistant {
   const r = record(value); text(r.id, 64); text(r.name, 120); text(r.description, 500);
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(r.id)) bad();
+}
+export function assertMessagingSupportInbox(value: unknown): asserts value is MessagingSupportInbox {
+  const r = record(value); text(r.id, 64); text(r.title, 120);
+  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(r.id) || ['canOpen', 'canHandle', 'assistant', 'default'].some(key => typeof r[key] !== 'boolean') || !r.canOpen && !r.canHandle) bad();
 }
 export function assertMessagingContact(value: unknown): asserts value is MessagingContact {
   const r = record(value); text(r.id); text(r.userId); integer(r.revision); integer(r.updatedAt);
@@ -67,4 +74,5 @@ export function assertMessagingRemoved(value: unknown): void { if (record(value)
 export function assertMessagingUnblocked(value: unknown): void { if (record(value).unblocked !== true) bad(); }
 export function assertMessagingSupportQueueItem(value: unknown): void {
   const r = record(value); text(r.id); integer(r.ownerEpoch); integer(r.createdAt); if (!['human', 'assistant', 'triage'].includes(r.owner)) bad();
+  if (r.inboxId !== undefined && r.inboxId !== null) text(r.inboxId, 64);
 }

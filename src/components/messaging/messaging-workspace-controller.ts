@@ -135,8 +135,9 @@ export class MessagingWorkspaceController {
     const intent = structuredClone(input); return this.conversationCommand('Start conversation', 'conversation.create', options => this.source.conversations.create(intent, options));
   }
   openAssistant(id: string): Promise<void> { return this.conversationCommand('Open assistant', 'assistant.open', options => this.source.assistants.open(id, {}, options)); }
-  openSupport(mode?: 'assistant' | 'human'): Promise<void> {
-    return this.conversationCommand('Contact support', 'support.open', options => this.source.support.open(mode ? { mode } : {}, options));
+  openSupport(mode?: 'assistant' | 'human', inboxId?: string): Promise<void> {
+    const input = { ...(mode ? { mode } : {}), ...(inboxId ? { inboxId } : {}) };
+    return this.conversationCommand('Contact support', 'support.open', options => this.source.support.open(input, options));
   }
   claimSupport(id: string, expectedEpoch: number): Promise<void> {
     return this.conversationCommand('Take support ownership', 'support.claim', options => this.source.support.claim(id, expectedEpoch, options), id);

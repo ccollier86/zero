@@ -13,13 +13,14 @@ import { readMessagingActorRejection } from './realm-errors';
 import { Database } from 'bun:sqlite';
 import { resolveDatabaseFile } from '../databases/database-file';
 import { legacyMessagingRealm } from './test-support/legacy-realm';
+import { prePortalMessagingRealm } from './test-support/pre-portal-realm';
 
-async function fixture(legacy = false) {
+async function fixture(legacy: boolean | '9' = false) {
   const root = await mkdtemp(join(tmpdir(), 'zero-messaging-realm-'));
   let owner!: DatabaseCoordinator, lease!: Awaited<ReturnType<DatabaseCoordinator['acquire']>>;
   const open = async () => {
-    owner = new DatabaseCoordinator({ rootDirectory: root, realm: legacy ? legacyMessagingRealm : messagingRealm, sqlite: { synchronous: 'FULL' }, maxDatabases: 1, readers: true, sweepIntervalMs: false,
-      createExecutor: createSubprocessDatabaseExecutorFactory({ launch: { kind: 'source', entrypoint: new URL(legacy ? './test-support/legacy-actor-entry.ts' : './actor-entry.ts', import.meta.url) }, actorFlag: MESSAGING_ACTOR_FLAG, env: {} }) });
+    owner = new DatabaseCoordinator({ rootDirectory: root, realm: legacy === '9' ? prePortalMessagingRealm : legacy ? legacyMessagingRealm : messagingRealm, sqlite: { synchronous: 'FULL' }, maxDatabases: 1, readers: true, sweepIntervalMs: false,
+      createExecutor: createSubprocessDatabaseExecutorFactory({ launch: { kind: 'source', entrypoint: new URL(legacy === '9' ? './test-support/pre-portal-actor-entry.ts' : legacy ? './test-support/legacy-actor-entry.ts' : './actor-entry.ts', import.meta.url) }, actorFlag: MESSAGING_ACTOR_FLAG, env: {} }) });
     owner.start(); lease = await owner.acquire('messaging:content'); return createAsyncDatabaseClient({ executor: lease as AsyncDatabaseOperationExecutor });
   };
   let data = await open();
@@ -40,6 +41,72 @@ const bob = { ...alice, id: 'user-bob' }, carol = { ...alice, id: 'user-carol' }
 const staff = { ...alice, id: 'staff-one', staff: true }, customer = { ...alice, id: 'external-one', kind: 'external' };
 const create = (actor = alice, contactsOnly = false) => ({ actor, id: 'conversation-one', requestId: 'create-one', kind: 'group', title: 'Synthetic discussion', userIds: [bob.id], contactsOnly, maxParticipants: 100 });
 const send = (n: number, actor = alice) => ({ actor, conversationId: 'conversation-one', id: 'message-' + n, requestId: 'send-' + n, text: 'Synthetic message ' + n, maxMessageLength: 20000 });
+
+test('a populated retained v9 realm upgrades only inbox indexes and preserves identities, history and accepted request receipts', async () => {
+  const f = await fixture('9');
+  try {
+    await f.command('messaging.conversation.create', create()); await f.command('messaging.message.send', send(1));
+    const support = { actor: alice, id: 'retained-support', requestId: 'retained-support-open', title: '', owner: 'triage', channelId: null };
+    await f.command('messaging.support.open', support);
+    await f.fault(db => expect(db.query("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'messaging_support_inbox_%'").all()).toEqual([]));
+    await f.restart();
+    expect((await f.query('messaging.messages', { actor: alice, conversationId: 'conversation-one' })).value.items.map((row: any) => row.id)).toEqual(['message-1']);
+    expect((await f.command('messaging.conversation.create', create())).ok).toBe(true);
+    expect((await f.command('messaging.message.send', send(1))).value.id).toBe('message-1');
+    expect((await f.command('messaging.support.open', support)).ok).toBe(true);
+    expect((await f.query('messaging.receipt', { actor: alice, requestId: 'retained-support-open' })).value.resourceId).toBe('retained-support');
+    await f.fault(db => {
+      for (const [owner, index] of [[false, 'messaging_support_inbox_queue'], [true, 'messaging_support_inbox_owner_queue']] as const) {
+        const plan = db.query("EXPLAIN QUERY PLAN SELECT id FROM messaging_conversations INDEXED BY " + index + " WHERE scope_id=? AND kind='support' AND archived=0 AND support_entry_id=? AND visitor_session_id IS NULL" + (owner ? ' AND owner=?' : '') + ' ORDER BY created_at,id LIMIT 26')
+          .all(...(owner ? ['application', 'frontdesk', 'triage'] : ['application', 'frontdesk']));
+        expect(JSON.stringify(plan)).toContain(index);
+        expect(JSON.stringify(plan)).not.toContain('TEMP B-TREE');
+      }
+      expect(db.query('SELECT count(*) AS n FROM messaging_messages').get()).toEqual({ n: 1 });
+    });
+  } finally { await f.close(); }
+}, 30000);
+
+test('a portal actor cannot replay/create peer grants and retained routed support requires current customer and staff inbox admission', async () => {
+  const f = await fixture(), hash = 'd'.repeat(64), portal = { ...alice, portal: true, inboxPolicies: { frontdesk: hash } };
+  const routed = { ...staff, supportPolicies: { frontdesk: hash, billing: hash } };
+  try {
+    await f.command('messaging.conversation.create', create()); await f.command('messaging.message.send', send(1));
+    expect((await f.command('messaging.conversation.create', create(portal))).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.command('messaging.contact', { actor: portal, userId: bob.id, action: 'request', requestId: 'portal-contact' })).code).toBe('MESSAGING_FORBIDDEN');
+    expect((await f.query('messaging.conversation', { actor: portal, id: 'conversation-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.messages', { actor: portal, conversationId: 'conversation-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.typing', { actor: portal, id: 'conversation-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.conversations', { actor: portal })).value.items).toEqual([]);
+    const open = { actor: portal, id: 'portal-one', requestId: 'portal-open', title: 'Front desk', owner: 'triage', channelId: null, entryId: 'frontdesk', assistantId: null };
+    expect((await f.command('messaging.support.open', open)).ok).toBe(true);
+    expect((await f.command('messaging.support.open', { ...open, entryId: 'billing' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.conversation', { actor: portal, id: 'portal-one' })).value.inboxId).toBe('frontdesk');
+    expect((await f.query('messaging.support.queue', { actor: routed, query: { inboxId: 'frontdesk' } })).value.items.map((row: any) => row.id)).toEqual(['portal-one']);
+    expect((await f.command('messaging.support.claim', { actor: staff, id: 'portal-one', requestId: 'unrouted-claim', expectedEpoch: 1, maxParticipants: 100 })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.command('messaging.support.claim', { actor: routed, id: 'portal-one', requestId: 'routed-claim', expectedEpoch: 1, maxParticipants: 100 })).ok).toBe(true);
+    expect((await f.query('messaging.messages', { actor: staff, conversationId: 'portal-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    expect((await f.query('messaging.messages', { actor: { ...portal, inboxPolicies: {} }, conversationId: 'portal-one' })).code).toBe('MESSAGING_NOT_FOUND');
+    await f.restart();
+    expect((await f.query('messaging.conversation', { actor: portal, id: 'portal-one' })).value.inboxId).toBe('frontdesk');
+    expect((await f.command('messaging.support.open', open)).ok).toBe(true);
+    expect((await f.command('messaging.support.open', { ...open, actor: { ...portal, inboxPolicies: {} } })).code).toBe('MESSAGING_NOT_FOUND');
+  } finally { await f.close(); }
+}, 30000);
+
+test('support queue cursors are pinned to their named inbox as well as owner filter', async () => {
+  const f = await fixture(), hash = 'e'.repeat(64), actor = { ...alice, inboxPolicies: { frontdesk: hash, billing: hash } }, routed = { ...staff, supportPolicies: actor.inboxPolicies };
+  try {
+    for (const [index, entryId] of ['frontdesk', 'frontdesk', 'billing'].entries()) await f.command('messaging.support.open', {
+      actor, id: 'inbox-' + index, requestId: 'open-inbox-' + index, title: entryId, owner: 'triage', channelId: null, entryId, assistantId: null });
+    const page = (await f.query('messaging.support.queue', { actor: routed, query: { inboxId: 'frontdesk', limit: 1 } })).value;
+    expect(page.items).toHaveLength(1); expect(page.items[0].inboxId).toBe('frontdesk'); expect(page.nextCursor).not.toBeNull();
+    expect((await f.query('messaging.support.queue', { actor: routed, query: { inboxId: 'billing', after: page.nextCursor } })).code).toBe('MESSAGING_INPUT_INVALID');
+    expect((await f.query('messaging.support.queue', { actor: routed, query: { after: page.nextCursor } })).code).toBe('MESSAGING_INPUT_INVALID');
+    const last = (await f.query('messaging.support.queue', { actor: routed, query: { inboxId: 'frontdesk', after: page.nextCursor, limit: 1 } })).value;
+    expect(last.items).toHaveLength(1); expect(last.items[0].id).not.toBe(page.items[0].id); expect(last.hasMore).toBe(false);
+  } finally { await f.close(); }
+}, 30000);
 
 test('peer notification reviews are sender-only, history-bound and dismissible without granting group-owner operator powers', async () => {
   const f = await fixture();

@@ -34,7 +34,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '9', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
+  name: 'zero-messaging', version: '10', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
     messaging_visitor_budgets: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', entry_id: 'TEXT NOT NULL', visitor_count: 'INTEGER NOT NULL' },
     messaging_sessions: { ...MESSAGING_TABLES.messaging_sessions!, entry_id: 'TEXT', policy_hash: 'TEXT', write_window: 'INTEGER NOT NULL DEFAULT 0', write_count: 'INTEGER NOT NULL DEFAULT 0', message_count: 'INTEGER NOT NULL DEFAULT 0' },
     messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" },
@@ -120,6 +120,9 @@ export const messagingRealm = defineDatabaseRealm({
     database.run('CREATE INDEX messaging_visitor_conversation ON messaging_sessions(scope_id,conversation_id,customer_id,expires_at)');
     // Earlier experimental session rows are retained but have no entry policy
     // hash. They cannot silently acquire the new public admission capability.
+  } }, { version: '010', description: 'Indexed authenticated inbox routing without changing retained messages, identities or receipts', safety: 'safe', up(database) {
+    database.run("CREATE INDEX messaging_support_inbox_queue ON messaging_conversations(scope_id,support_entry_id,created_at,id) WHERE kind='support' AND archived=0 AND visitor_session_id IS NULL");
+    database.run("CREATE INDEX messaging_support_inbox_owner_queue ON messaging_conversations(scope_id,support_entry_id,owner,created_at,id) WHERE kind='support' AND archived=0 AND visitor_session_id IS NULL");
   } }],
   commands: withMessagingCommitHints(withMessagingVisitorGuards({
     'messaging.visitor.create': createMessagingVisitor, 'messaging.visitor.revoke': revokeMessagingVisitor,

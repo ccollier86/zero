@@ -1,8 +1,25 @@
 import { expect, test } from 'bun:test';
 import { MessagingWorkspaceController } from './messaging-workspace-controller';
-import { workspaceFixture, workspaceMessage } from './workspace.test-fixtures';
+import { workspaceConversation, workspaceFixture, workspaceMessage } from './workspace.test-fixtures';
 import { MessagingLiveError } from '../../messaging/live-error';
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test('an uncertain portal open pins its inbox, mode and request identity through explicit retry', async () => {
+  const f = workspaceFixture(1), owner = new MessagingWorkspaceController(f.source, 'me', { isCurrent: f.current });
+  const calls: Array<{ input: unknown; requestId: string }> = [];
+  f.source.support = { ...f.source.support, open: async (input, options) => {
+    calls.push({ input: structuredClone(input), requestId: options.requestId });
+    if (calls.length === 1) throw new Error('Synthetic accepted response interruption.');
+    return { ...workspaceConversation(), kind: 'support', inboxId: 'billing' };
+  } };
+  try {
+    await owner.start(); await owner.openSupport('human', 'billing');
+    expect(owner.getSnapshot().command?.phase).toBe('unknown');
+    await owner.retryCommand();
+    expect(calls).toHaveLength(2); expect(calls[0]).toEqual(calls[1]); expect(calls[1]?.input).toEqual({ mode: 'human', inboxId: 'billing' });
+    expect(owner.getSnapshot().command).toBeNull(); expect(owner.getSnapshot().selectedId).toBe('one');
+  } finally { owner.dispose(); }
+});
 
 test('selection never marks read; live append/backfill retain rows and historical edits/reactions remain live', async () => {
   const f = workspaceFixture(), owner = new MessagingWorkspaceController(f.source, 'me', { isCurrent: f.current });

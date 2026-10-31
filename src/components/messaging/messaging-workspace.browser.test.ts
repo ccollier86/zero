@@ -27,7 +27,7 @@ beforeAll(async () => {
   await mkdir(evidence, { recursive: true }); lease = await acquirePlaywrightTestBrowser();
 }, 90000);
 afterAll(() => lease?.release());
-async function fixture(support: boolean | 'website' | 'review' | 'notice-review' | 'notices' = false) {
+async function fixture(support: boolean | 'website' | 'review' | 'notice-review' | 'notices' | 'portal' = false) {
   const root = await mkdtemp(join(scratch, 'messaging-workspace-native-')); await mkdir(join(root, 'app'));
   const reservation = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('Synthetic port reservation') });
   const port = reservation.port!; await reservation.stop(true); const base = 'http://127.0.0.1:' + port;
@@ -41,7 +41,9 @@ async function fixture(support: boolean | 'website' | 'review' | 'notice-review'
   const app = await createApp({ projectRoot: root, appDir: join(root, 'app'), outDir: join(root, 'out'), generatedDir: join(root, 'generated'), storageDir: join(root, 'storage'),
     app: { publicUrl: base },
     db: { mode: 'file', path: join(root, 'app.db') }, systemDb: { mode: 'file', path: join(root, 'system.db') }, tables: {},
-    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : hasSupport ? {} : false, ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}), ...(noticeReview || notices ? { notifications: true } : {}) }, logging: false,
+    auth: { bootstrap: 'public', presence: { enabled: true } }, messaging: { ...(support === 'portal' ? { portal: true } : {}),
+      support: support === 'website' ? { entries: { website: { origin: base, assistant: false } } } : support === 'portal' ? { inboxes: { frontdesk: { title: 'Front desk' }, billing: { title: 'Billing' } }, defaultInbox: 'frontdesk' } : hasSupport ? {} : false,
+      ...(provider ? { assistant: { model: 'synthetic/chat' } } : {}), ...(noticeReview || notices ? { notifications: true } : {}) }, logging: false,
     ai: provider ? { autoDetect: false, providers: { synthetic: { type: 'openai-compatible', apiKey: 'synthetic-test-key', baseURL: 'http://127.0.0.1:' + provider.port + '/v1' } } } : false,
     email: false, workflows: provider || noticeReview || notices ? {} : false, vector: false, pdf: false, kv: false, stateSync: false, observability: false,
     ...(noticeReview ? { serverExtensions: [defineZeroPlugin({ name: 'synthetic-notice-review', setup({ zero }) {
@@ -60,11 +62,47 @@ async function fixture(support: boolean | 'website' | 'review' | 'notice-review'
   const admin = await call('POST', '/auth/register', { username: 'workspace-admin', email: 'workspace-admin@example.test', password: 'Synthetic-workspace-password-123' });
   const peer = await call('POST', '/auth/register', { username: 'workspace-peer', email: 'workspace-peer@example.test', password: 'Synthetic-workspace-password-123' });
   const other = await call('POST', '/auth/register', { username: 'workspace-other', email: 'workspace-other@example.test', password: 'Synthetic-workspace-password-123' });
-  const conversation = await call('POST', '/api/messaging/conversations', { userIds: [peer.user.userId] }, admin.accessToken, 'native-workspace-chat');
+  const conversation = support === 'portal' ? await call('POST', '/api/messaging/support', { inboxId: 'frontdesk', mode: 'human' }, peer.accessToken, 'native-portal-chat')
+    : await call('POST', '/api/messaging/conversations', { userIds: [peer.user.userId] }, admin.accessToken, 'native-workspace-chat');
   const send = (text: string, key: string = crypto.randomUUID()) => call('POST', `/api/messaging/conversations/${conversation.id}/messages`, { text }, peer.accessToken, key);
-  for (let i = 1; i <= (noticeReview || notices ? 0 : 55); i++) await send('Synthetic native history ' + i, 'history-' + i);
+  for (let i = 1; i <= (noticeReview || notices || support === 'portal' ? 0 : 55); i++) await send('Synthetic native history ' + i, 'history-' + i);
   return { base, app, call, admin, peer, other, conversation, send, close: async () => { await app.stop(true); await provider?.stop(true); } };
 }
+browserTest('portal members get a destination-only panel and staff receive the same private reactive conversation in its named inbox', async () => {
+  const f = await fixture('portal'), member = await lease!.browser.newPage({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' }),
+    staff = await lease!.browser.newPage({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' });
+  const errors: string[] = [], forbiddenRequests: string[] = [];
+  member.on('pageerror', error => errors.push(error.message)); staff.on('pageerror', error => errors.push(error.message));
+  member.on('request', request => { if (/\/api\/messaging\/(directory|contacts|assistants)(?:\/|\?|$)/.test(new URL(request.url()).pathname)) forbiddenRequests.push(request.url()); });
+  member.setDefaultTimeout(12000); staff.setDefaultTimeout(12000);
+  try {
+    await member.goto(f.base + '/workspace?user=peer');
+    await member.getByRole('button', { name: 'New message', exact: true }).click();
+    await member.getByRole('button', { name: 'Message Billing', exact: true }).waitFor();
+    expect(await member.getByRole('textbox', { name: 'Find people' }).count()).toBe(0);
+    expect(await member.getByRole('button', { name: 'Request contact' }).count()).toBe(0);
+    expect(await member.getByRole('button', { name: 'Open support queue' }).count()).toBe(0);
+    await member.getByRole('button', { name: 'Message Billing', exact: true }).click();
+    const composer = member.getByRole('textbox', { name: 'Message', exact: true }); await composer.waitFor();
+    await composer.fill('SYNTHETIC_PORTAL_BILLING_QUESTION'); await member.getByRole('button', { name: 'Send message', exact: true }).click();
+    await member.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PORTAL_BILLING_QUESTION', { exact: true }).waitFor();
+    expect(await member.getByRole('button', { name: 'Conversation options' }).count()).toBe(0);
+    expect(forbiddenRequests).toEqual([]);
+    await staff.goto(f.base + '/workspace'); await staff.getByRole('button', { name: 'Open support queue', exact: true }).click();
+    await staff.getByRole('combobox', { name: 'Support inbox', exact: true }).click();
+    await staff.getByRole('option', { name: 'Billing', exact: true }).click();
+    const requests = staff.getByRole('list', { name: 'Support requests', exact: true });
+    await requests.locator('[data-support-request]').waitFor(); expect(await requests.locator('[data-support-request]').count()).toBe(1);
+    await requests.locator('[data-support-request]').click();
+    await staff.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PORTAL_BILLING_QUESTION', { exact: true }).waitFor();
+    await staff.getByRole('textbox', { name: 'Message', exact: true }).fill('SYNTHETIC_PORTAL_TEAM_REPLY');
+    await staff.getByRole('button', { name: 'Send message', exact: true }).click();
+    await member.locator('.zero-messaging-transcript').getByText('SYNTHETIC_PORTAL_TEAM_REPLY', { exact: true }).waitFor();
+    expect(await member.getByText('Private team note', { exact: true }).count()).toBe(0);
+    await member.screenshot({ path: join(evidence, 'portal-member.png') }); await staff.screenshot({ path: join(evidence, 'portal-staff.png') });
+    expect(errors).toEqual([]);
+  } finally { await member.close(); await staff.close(); await f.close(); }
+}, 90000);
 browserTest('native alert policy suppresses the active chat, chooses exactly one correct sound, and never replays history or muted alerts', () => qualifyAlertPolicy(lease!.browser), 120000);
 async function qualifyAlertPolicy(browser: Browser, realBackground = false, nativeContext?: BrowserContext) {
   const f = await fixture('notices'), context = nativeContext ?? await browser.newContext({ viewport: { width: 1100, height: 800 }, reducedMotion: 'reduce' }), page = await context.newPage();

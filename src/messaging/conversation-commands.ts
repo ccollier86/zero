@@ -10,6 +10,7 @@ export function createMessagingConversation(context: DatabaseWriteCommandContext
   return messagingCommand(context, () => {
     const r = messagingRecord(input, ['actor', 'id', 'requestId', 'kind', 'title', 'userIds', 'contactsOnly', 'maxParticipants']);
     const actor = captureMessagingActor(r.actor), kind = messagingChoice(r.kind, ['direct', 'group']), id = messagingId(r.id), title = messagingText(r.title, 200, true);
+    if (actor.portal) messagingFail('MESSAGING_FORBIDDEN', 403);
     const maximum = messagingInteger(r.maxParticipants, 2, 100), users = [...new Set(messagingArray(r.userIds, maximum - 1).map(messagingId))];
     if (actor.kind !== 'user' || users.length < 1 || users.includes(actor.id) || kind === 'direct' && users.length !== 1 || typeof r.contactsOnly !== 'boolean') messagingFail('MESSAGING_INPUT_INVALID', 422);
     for (const other of users) assertMessagingContact(context, actor, other, r.contactsOnly);

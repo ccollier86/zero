@@ -3,12 +3,12 @@ import { MESSAGING_API, type MessagingMutationOptions } from '../../messaging/co
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { FetchInit } from './sdk';
 import { assertMessagingConversation, assertMessagingMessage, assertMessagingPage, assertMessagingCapabilities, assertMessagingDirectoryEntry, assertMessagingReceipt,
-  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem, assertMessagingAssistant, assertMessagingPerson } from './messaging-response';
+  assertMessagingContact, assertMessagingReadPosition, assertMessagingRemoved, assertMessagingUnblocked, assertMessagingSupportQueueItem, assertMessagingAssistant, assertMessagingPerson, assertMessagingSupportInbox } from './messaging-response';
 import { watchMessagingProjection } from './messaging-watch';
 import { createMessagingAttachmentClient, type MessagingBinaryTransport } from './messaging-attachment-client';
 import { assertMessagingReviewItem, assertMessagingReviewDetail, assertMessagingReviewResolution } from './messaging-review-response';
 export function messagingQueryString(input: object = {}): string {
-  const query = new URLSearchParams(); for (const key of ['before', 'after', 'limit', 'search', 'archived', 'owner']) { const value = (input as Record<string, unknown>)[key]; if (value !== undefined) query.set(key, String(value)); }
+  const query = new URLSearchParams(); for (const key of ['before', 'after', 'limit', 'search', 'archived', 'owner', 'inboxId']) { const value = (input as Record<string, unknown>)[key]; if (value !== undefined) query.set(key, String(value)); }
   return query.size ? '?' + query : '';
 }
 export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit) => Promise<T>, raw?: MessagingBinaryTransport): MessagingClient {
@@ -68,6 +68,7 @@ export function createMessagingClient(fetch: <T>(path: string, init?: FetchInit)
       unblock: (id, opts) => mutate('/contacts/' + encodeURIComponent(id) + '/unblock', 'POST', {}, opts, assertMessagingUnblocked),
     }),
     support: Object.freeze<MessagingClient['support']>({
+      inboxes: opts => call('/support/inboxes', 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingSupportInbox, 32)),
       open: (input, opts) => mutate('/support', 'POST', input, opts, assertMessagingConversation), queue: (query = {}, opts) => call('/support/queue' + messagingQueryString(query), 'GET', undefined, opts?.signal, undefined, value => assertMessagingPage(value, assertMessagingSupportQueueItem, 50)),
       claim: (id, expectedEpoch, opts) => mutate('/support/' + encodeURIComponent(id) + '/claim', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
       requestHuman: (id, expectedEpoch, opts) => mutate('/support/' + encodeURIComponent(id) + '/request-human', 'POST', { expectedEpoch }, opts, assertMessagingConversation),
