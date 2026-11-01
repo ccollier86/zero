@@ -85,6 +85,15 @@ Before adopting that release:
 This runtime prerequisite does not re-run legacy conversion or change tenancy,
 website design tokens, existing blog/chat configuration or application records.
 
+New apps also declare app-owned `@types/node` development types (qualified pin
+`25.3.3`). Existing TypeScript apps using optional provider SDKs should retain a
+modern compatible direct declaration as well. In particular, Square's legacy
+dependency can otherwise hoist Node 14 declarations into the ambient Bun/Zero
+graph. This is a declaration-resolution issue, not a reason to run Node or
+change application data. The updater does not silently rewrite app-owned
+development dependencies; review and add the qualified type dependency when
+needed, then run the app's type check.
+
 Older combined platform/app databases are not automatically split into the new
 managed system plane. Plan canonical authority migration and minimal anchors
 separately from application records. Multi-tenancy conversion additionally needs

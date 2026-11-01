@@ -12,6 +12,19 @@ import sharp from 'sharp';
 import type { BlogPostContent } from './content-types';
 
 const PASSWORD = 'Synthetic-blog-only-password-123';
+/** Payload-free phase evidence distinguishes cold startup from semantic/restart failures without changing their deadlines. */
+async function lifecycle<T>(stage: string, operation: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  console.info('Synthetic managed blog lifecycle', { stage, state: 'started' });
+  try {
+    const value = await operation();
+    console.info('Synthetic managed blog lifecycle', { stage, state: 'completed', durationMs: Math.round(performance.now() - started) });
+    return value;
+  } catch (error) {
+    console.info('Synthetic managed blog lifecycle', { stage, state: 'failed', durationMs: Math.round(performance.now() - started) });
+    throw error;
+  }
+}
 async function fixture(features: { metrics?: boolean; compliance?: boolean; tenancy?: 'single' | 'multi'; advanced?: boolean } = {}) {
   const root = await mkdtemp('/Volumes/code-bank/tmp/scratch/zero-platform/blog-managed-');
   await mkdir(join(root, 'app'));
@@ -27,14 +40,17 @@ async function fixture(features: { metrics?: boolean; compliance?: boolean; tena
     serverExtensions: [defineZeroPlugin({ name: 'blog-content-proof', setup(context) { zero = context.zero; } }),
       defineEndpoint({ method: 'GET', path: '/proof/publishing', auth: 'user', handler: ({ zero }) => zero.blog!.posts.capabilities() })],
   };
-  let app = await createApp(configuration);
+  let app = await lifecycle('startup', () => createApp(configuration));
   const start = () => { app.listen({ hostname: '127.0.0.1', port: 0 }); return `http://127.0.0.1:${app.server!.port}`; };
   let origin = start();
   const client = () => createClient({ url: origin, auth: true, autoConnect: false });
   return {
     root, configuration, client, get origin() { return origin; }, get zero() { return zero; },
-    async restart() { await app.stop(true); app = await createApp(configuration); origin = start(); },
-    async close() { await app.stop(true); },
+    async restart() {
+      await lifecycle('shutdown-for-restart', () => app.stop(true));
+      app = await lifecycle('restart', () => createApp(configuration)); origin = start();
+    },
+    async close() { await lifecycle('shutdown', () => app.stop(true)); },
   };
 }
 function content(authorId: string, title = 'Orchids in the garden', text = 'Beautiful orchids bloom beside the river.'): BlogPostContent {

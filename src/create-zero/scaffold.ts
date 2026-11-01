@@ -146,6 +146,9 @@ async function writeGeneratedPackageJson(
     },
     devDependencies: {
       '@types/bun': 'latest',
+      // App-owned Node declarations prevent older transitive SDK typings from
+      // becoming the ambient contract for Zero's Bun/Node-compatible source.
+      '@types/node': '25.3.3',
       '@types/react': '19.2.14',
       '@types/react-dom': '19.2.3',
       typescript: '^5.7.0',
@@ -251,6 +254,10 @@ renders the first page, \`db/schema.ts\` starts with no app tables, and
 Use Bun ${MINIMUM_BUN_VERSION} or newer on the host, in CI, and in Docker.
 Older Bun versions can crash when a browser cancels a streaming HTTP response.
 Compiled servers embed Bun: rebuild them after changing the runtime.
+
+Keep the generated app-owned \`@types/node\` development dependency. Optional
+provider SDKs can carry older nested Node declarations; those must not replace
+the modern ambient types used when checking Zero's public TypeScript source.
 
 \`\`\`sh
 cp .env.example .env

@@ -39,6 +39,9 @@ publication.
 - Align the test-only one-button sign-in fixture with native LoginForm's
   loading/authorization boundary. Its existing audit-failure/recovery and
   avatar assertions remain unchanged; production account guards are not relaxed.
+- Declare modern app-owned Node types in generated projects and the installed
+  payments consumer. Document existing-app setup: Square's transitive legacy
+  Node 14 declarations must not become Zero's ambient TypeScript contract.
 
 Updating this dependency does not upgrade the host runtime, convert databases,
 alter migration checksums, recreate identities or clear Storage/logging state.

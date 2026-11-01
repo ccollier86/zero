@@ -19,13 +19,16 @@ test('optional payments and provider-free clients work from fresh installed arch
     if (!process.env.ZERO_PAYMENTS_CORE_ARCHIVE) await command(['pm', 'pack', '--ignore-scripts', '--filename', core], repository);
     if (!process.env.ZERO_PAYMENTS_PLUGIN_ARCHIVE) await command(['pm', 'pack', '--ignore-scripts', '--filename', plugin], join(repository, 'packages/payments'));
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({ name: 'payments-archive-consumer', private: true, type: 'module', dependencies: {
-      '@zero/framework': `file:${core}`, '@zero/plugin-payments': `file:${plugin}`, typescript: '^5.9.3', '@types/bun': '1.3.14', '@types/react': '^19.2.14', '@types/react-dom': '^19.2.3', react: '19.2.4', 'react-dom': '19.2.4',
+      // Square's legacy SDK carries Node 14 types. Match the app-owned modern
+      // ambient contract rather than relying on accidental install hoisting.
+      '@zero/framework': `file:${core}`, '@zero/plugin-payments': `file:${plugin}`, typescript: '^5.9.3', '@types/bun': '1.3.14', '@types/node': '25.3.3', '@types/react': '^19.2.14', '@types/react-dom': '^19.2.3', react: '19.2.4', 'react-dom': '19.2.4',
     } }));
     await Bun.write(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', strict: true, skipLibCheck: true, esModuleInterop: true, jsx: 'react-jsx', types: ['bun'], lib: ['ES2022', 'DOM', 'DOM.Iterable'] }, include: ['consumer.ts'] }));
     await Bun.write(join(consumer, 'consumer.ts'), CONSUMER);
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
     await Bun.write(join(consumer, 'browser.ts'), BROWSER);
     await command(['install', '--ignore-scripts'], consumer);
+    expect((await Bun.file(join(consumer, 'node_modules/@types/node/package.json')).json()).version).toBe('25.3.3');
     await command(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
     const verified = JSON.parse((await command(['verify.ts'], consumer)).trim());
     const frameworkManifest = await Bun.file(join(consumer, 'node_modules/@zero/framework/package.json')).json();

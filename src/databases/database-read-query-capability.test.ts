@@ -182,6 +182,10 @@ describe('registered database read-query capability', () => {
         ...closeDescriptor,
         value(this: Database, throwOnError?: boolean) {
           closeAttempts.push(throwOnError);
+          // Newer Bun can finalize outstanding native statements during a
+          // strict close. Inject this failure explicitly so the forced-fallback
+          // contract does not depend on an older engine's SQLITE_BUSY behavior.
+          if (throwOnError) throw new Error('injected strict connection close failure');
           return originalClose.call(this, throwOnError);
         },
       });

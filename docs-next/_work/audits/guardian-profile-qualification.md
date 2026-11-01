@@ -1003,3 +1003,38 @@ gateway/actors, Cascader, SignaturePad and grouped-menu consumers. Updated
 TypeScript passes in `bun-1.4.4-updater-metadata-types.log`. A new exact committed
 candidate must repeat the clean complete release sequence; the failed `52423a2`
 archive is not relabeled as qualified.
+
+### Full inventory follow-up: types and native fixture contracts
+
+Candidate `0dfca2e` passes its independent frozen install, type check, complete
+package gate, PDF runtime setup and 879-page documentation graph. Its complete
+inventory nevertheless reports a fresh dual-provider consumer type failure and
+a managed blog fixture's logging actor bind timeout. The run and both failures
+remain in `release-2.10.0/candidate-0dfca2e/`; this is not a qualified release and
+must not be selected on main just because earlier gates passed.
+
+The type failure reproduces without Zero: a fresh Bun install of the pinned
+Stripe/Square SDKs plus Bun/TypeScript types hoists Square's legacy Node
+`14.18.63` declarations. Missing `BlockList`, promise modules and disposal types
+then reject modern source. Keeping app-owned `@types/node: 25.3.3` resolves the
+same small probe. The generated app and real archive consumer now explicitly
+declare that qualified ambient contract, and existing-app instructions cover
+it. This is TypeScript metadata, not a switch to a Node runtime or a change to
+payment execution. The real consumer must still pass from the next exact
+archive; the small probe alone is not package qualification.
+
+The blog failure occurs during logging actor binding with
+`DATABASE_OPERATION_TIMEOUT`/unknown outcome. Other synthetic cases in that
+file pass, but that does not clear its first failure. Its overlap, native
+startup and unchanged deadlines need independent verification before deciding
+whether there is a runtime defect or test admission contention. No production
+timeout, audit requirement or worker authority is relaxed by this follow-up.
+
+The same sweep later catches an older native-SQLite fixture assumption: its
+mocked statement-finalization failure no longer guarantees that Bun's strict
+connection close also fails. The actual strict close can release the native
+statement, so production correctly reports the earlier cleanup error without
+needing a forced close. The fallback test now injects the strict-close failure
+explicitly, retaining the exact `[true, false]` attempt, error and sealed-handle
+assertions. All five capability cases then pass on 1.4.4. No database runtime
+implementation was changed or native cleanup assertion removed for this repair.

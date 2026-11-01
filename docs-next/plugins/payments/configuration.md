@@ -33,6 +33,14 @@ checksums. This file dependency is a local artifact, not a claim that the packag
 has been published to a registry. Do not enable the plugin until the configuration
 and deployment checks below are complete.
 
+For source type-checking, keep modern **app-owned** Node declarations. The
+qualified consumer pin is `bun add --dev @types/node@25.3.3`. Square's bundled
+legacy dependency declares Node 14 types, and fresh unconstrained resolution
+can otherwise hoist those for Bun/Zero too. They are incompatible with Zero's
+public source and Stripe's >=20 declaration contract. Nested legacy types may
+remain for their SDK; do not weaken type checking or rewrite dependency files.
+This does not require a Node runtime: Zero still runs on its declared Bun engine.
+
 ## Declare The Optional Plugin
 
 Use the existing `server/plugins/` discovery convention, or put the returned

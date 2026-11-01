@@ -7,6 +7,13 @@ through the same facade; install matching framework and plugin archives.
 Version 0.2.1 hardens concurrent Square ownership, sales-pause enforcement,
 canonical resource IDs/totals, captured-balance refunds and checkout URL replay.
 
+Type-checking consumers must retain modern app-owned Node declarations
+(`bun add --dev @types/node@25.3.3` is the qualified pin). Square's legacy SDK
+carries Node 14 types; an unconstrained transitive install can otherwise choose
+those as ambient declarations, which are incompatible with Zero's public
+TypeScript source and Stripe's Node >=20 type contract. This affects compile-time
+declarations, not the Bun runtime or a requirement to install/run Node itself.
+
 ```ts
 // server/plugins/payments.ts
 import { stripePayments } from '@zero/plugin-payments';
