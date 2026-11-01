@@ -898,7 +898,7 @@ responses and zero pending requests. The official Linux/amd64 image
 also passes the same isolated probe (1,298 completed /702 aborted, zero pending).
 Neither a host-wide runtime upgrade nor an application deployment was performed.
 
-The candidate declares Bun >=1.4.0 and checks the actual executing binary at
+The first guarded candidate declares Bun >=1.4.0 and checks the actual executing binary at
 managed startup, build, scaffold/update and runtime Doctor admission before
 configuration resolution/import or app mutation. Generated manifests and pinned
 qualification recipes match. Bun child commands retain `process.execPath` so
@@ -942,3 +942,36 @@ These files remain under the external diagnostics root named above. The current
 archive, independent frozen install, complete source inventory, installed native
 deployment and retained-state updater gates still need qualification before
 main selection/publication. Main and the selected 2.9.0 archive remain unchanged.
+
+### Later qualification rejects 1.4.0 as the final minimum
+
+The first clean-source gate did not finish its initial frozen-install capture.
+The owned harness was observed spinning after its child exited; its process
+sample and terminated attempt are retained under
+`release-2.10.0/candidate-ecff72e/source-gates*`. It is **not** a passed install,
+package gate or complete inventory. A tiny standalone reproduction using only
+`Bun.spawn`, `Response`, `Bun.write` and a synthetic temporary file also stalls
+on Bun 1.4.0. This is separate from Zero, auth, logging and browser admission.
+Only these positively identified owned probes were stopped; no application
+processes, runtime data or unrelated builds were removed.
+
+The official stable 1.4.4 macOS/arm64 archive is independently verified against
+SHA-256 `c240d7f0ccb90c263a849fcdb09b7ee62630d921348ed6aafda86b9d577bc510`.
+It completes that exact response/file probe and the same 2,000-request HTTP
+cancellation probe (1,717 completed /283 aborted, zero pending). The pinned
+Linux/amd64 image
+`oven/bun@sha256:13b43f8bb2c63f5d89c56205c4279b85620363296a00ada33ff7ad568f3688e7`
+also completes **both** probes (1,168 completed /832 aborted, zero pending).
+The source now requires >=1.4.4 throughout, rejecting the intermediate minimum;
+both native regressions remain bounded child-process tests. This does not
+claim to have identified the precise upstream cause of the second stall.
+
+Evidence: `response-write-probe*` in the rejected candidate directory,
+`http-abort-probe-bun-1.4.4.log`, and
+`native-probes-bun-1.4.4-linux-amd64.*`. All 25 selected files pass
+on 1.4.4 in `avatar-bun-1.4.4-focused`, including the photo browser, five native
+session/audit scenarios, private photo controls, both runtime probes and retained
+migration contracts. TypeScript passes in
+`avatar-bun-1.4.4-types.log`. The current final complete inventory, exact archive,
+installed Linux browser and updater qualification must still be repeated with
+the new committed minimum. Neither earlier 1.4.0 candidate is an update target.

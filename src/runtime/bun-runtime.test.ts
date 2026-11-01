@@ -12,13 +12,13 @@ import {
 
 describe('supported Bun runtime', () => {
   test('rejects affected, malformed and unqualified prerelease versions', () => {
-    for (const version of [null, undefined, 140, '', 'unknown', '1.3.14', '1.3.99', '1.4.0-canary.1', '1.5.0-beta.1', 'x'.repeat(129)]) {
+    for (const version of [null, undefined, 144, '', 'unknown', '1.3.14', '1.3.99', '1.4.0', '1.4.3', '1.4.4-canary.1', '1.5.0-beta.1', 'x'.repeat(129)]) {
       expect(isSupportedBunVersion(version)).toBe(false);
     }
   });
 
   test('accepts the fixed minimum and newer stable builds', () => {
-    for (const version of ['1.4.0', '1.4.0+34cbb9a40', '1.4.4', '1.5.0', '2.0.0']) {
+    for (const version of ['1.4.4', '1.4.4+38afee6', '1.4.5', '1.5.0', '2.0.0']) {
       expect(isSupportedBunVersion(version)).toBe(true);
     }
     expect(isSupportedBunVersion(Bun.version)).toBe(true);

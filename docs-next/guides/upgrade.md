@@ -47,16 +47,18 @@ them before enabling them.
 
 ### Native runtime and avatar consumer 2.10.0 update
 
-The current source candidate raises the minimum to **Bun 1.4.0** because older
+The current source candidate raises the minimum to **Bun 1.4.4** because older
 Bun can crash when a client aborts an asynchronous HTTP response
-([upstream repair](https://github.com/oven-sh/bun/pull/32120)). This candidate
+([upstream repair](https://github.com/oven-sh/bun/pull/32120)). Qualification
+also rejected 1.4.0 for an isolated child-response/file-writer stall; 1.4.4
+completes both native probes. This candidate
 is not selected by `zero-update` until its exact archive passes normal release
 qualification. Do not substitute a feature branch for a qualified main archive.
 
 Before adopting that release:
 
 1. Verify the actual `bun --version` on the app host, in CI and inside its
-   Docker image. Upgrade each to a qualified stable version at least 1.4.0.
+   Docker image. Upgrade each to a qualified stable version at least 1.4.4.
    Do not assume changing a package dependency upgrades the executing binary.
 2. Stop the app and its supervised workers normally. Retain the working
    package/lockfile and verified backups, then run the ordinary updater

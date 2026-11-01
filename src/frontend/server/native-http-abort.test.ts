@@ -2,8 +2,8 @@
 import { expect, test } from 'bun:test';
 import { join } from 'node:path';
 
-test('native asynchronous HTTP responses survive mixed client cancellation without leaking requests', async () => {
-  const child = Bun.spawn([process.execPath, '--no-env-file', join(import.meta.dir, 'test-fixtures/native-http-abort.fixture.ts')], {
+async function probe(fixture: string) {
+  const child = Bun.spawn([process.execPath, '--no-env-file', join(import.meta.dir, 'test-fixtures', fixture)], {
     env: { PATH: Bun.env.PATH ?? '', TMPDIR: Bun.env.TMPDIR },
     stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
   });
@@ -17,16 +17,26 @@ test('native asynchronous HTTP responses survive mixed client cancellation witho
     expect({ exit, signal: child.signalCode, stderr: error }).toEqual({ exit: 0, signal: null, stderr: '' });
     const proof = JSON.parse(output);
     expect(proof.runtime).toBe(Bun.version);
-    expect(proof.requests).toBe(2_000);
-    expect(proof.completed + proof.aborted).toBe(proof.requests);
-    expect(proof.completed).toBeGreaterThan(0);
-    expect(proof.aborted).toBeGreaterThan(0);
-    expect(proof.producerCancellations).toBeGreaterThan(0);
-    expect(proof.pending).toBe(0);
+    return proof;
   } finally {
     clearTimeout(deadline);
     if (child.exitCode === null) child.kill('SIGKILL');
     await child.exited;
     await Promise.all([stdout, stderr]);
   }
+}
+
+test('native asynchronous HTTP responses survive mixed client cancellation without leaking requests', async () => {
+  const proof = await probe('native-http-abort.fixture.ts');
+  expect(proof.requests).toBe(2_000);
+  expect(proof.completed + proof.aborted).toBe(proof.requests);
+  expect(proof.completed).toBeGreaterThan(0);
+  expect(proof.aborted).toBeGreaterThan(0);
+  expect(proof.producerCancellations).toBeGreaterThan(0);
+  expect(proof.pending).toBe(0);
+}, 25_000);
+
+test('native child-response file delivery settles without stalling the executing runtime', async () => {
+  const proof = await probe('native-response-file.fixture.ts');
+  expect(proof.responseWriter).toBe(true);
 }, 25_000);

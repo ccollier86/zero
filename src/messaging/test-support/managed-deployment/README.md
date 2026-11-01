@@ -12,7 +12,7 @@ docker run --rm --init --platform linux/amd64 \
   --mount type=bind,src=/absolute/qualified-framework.tgz,dst=/input/framework.tgz,readonly \
   --mount type=bind,src=/absolute/source/src/messaging/test-support/managed-deployment,dst=/fixture,readonly \
   --mount type=bind,src=/absolute/new-diagnostics-directory,dst=/evidence \
-  oven/bun:1.4.0-slim@sha256:4c3ac64f41e0a47e28403789a63ecdca7987f322fa811bf5b3cb0f25f18443cc \
+  oven/bun:1.4.4-slim@sha256:13b43f8bb2c63f5d89c56205c4279b85620363296a00ada33ff7ad568f3688e7 \
   bun --no-env-file /fixture/run.ts
 ```
 

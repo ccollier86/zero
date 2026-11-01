@@ -20,9 +20,11 @@ publication.
   Fence late old responses and retire temporary object URLs. No raw private
   avatar table or public image URL is introduced. This does not add a new
   cross-device directory subscription.
-- Require Bun 1.4.0 or newer for the repaired native asynchronous HTTP abort
+- Require Bun 1.4.4 or newer for the repaired native asynchronous HTTP abort
   lifecycle. Bun 1.3.14 can crash outside Zero when a client cancels a response.
-  Fail managed startup, build, scaffold/update and runtime Doctor early on an
+  An initial 1.4.0 candidate also stalled a separate child-response/file-writer
+  probe; 1.4.4 completes both. Fail managed startup, build, scaffold/update and
+  runtime Doctor early on an
   unsafe engine; preserve source-only diagnostics. Add a bounded native abort
   regression independent of Zero/auth/persistence, and pin qualification Docker
   recipes to the fixed minimum. No JavaScript cancellation workaround or

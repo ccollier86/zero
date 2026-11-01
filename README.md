@@ -362,10 +362,12 @@ backend app code, or grows source files past the responsibility threshold.
 ## Current Package State
 
 Zero is Bun-first and exports TypeScript source through the package export
-map. The current source requires Bun 1.4.0 or newer, including CI and Docker.
+map. The current source requires Bun 1.4.4 or newer, including CI and Docker.
 Bun 1.3.14 has a native crash when clients cancel asynchronous HTTP streams;
 the [upstream repair](https://github.com/oven-sh/bun/pull/32120) is included in
-the new minimum. Managed startup, build, install/update and runtime Doctor
+the new minimum. Qualification also found a child-response/file-writer stall
+on 1.4.0; 1.4.4 completes the same isolated probe. Managed startup, build,
+install/update and runtime Doctor
 checks reject unsupported runtimes before application state is opened or
 changed. Compiled executables embed Bun and must be rebuilt after upgrading it.
 That is intentional for package-mode development. Public npm publication also

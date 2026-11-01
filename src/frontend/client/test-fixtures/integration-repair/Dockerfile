@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.0-slim@sha256:4c3ac64f41e0a47e28403789a63ecdca7987f322fa811bf5b3cb0f25f18443cc
+FROM oven/bun:1.4.4-slim@sha256:13b43f8bb2c63f5d89c56205c4279b85620363296a00ada33ff7ad568f3688e7
 COPY framework.tgz /input/framework.tgz
 WORKDIR /qualification
 COPY package.json ./package.json
