@@ -140,6 +140,29 @@ browserTest('new field policy retires the remaining queued fields without erasin
   } finally { await h.close(); }
 });
 
+browserTest('policy refresh cannot forget an unknown committed result or allow blind replay of a still-editable field', async () => {
+  const h = await open(), p = h.page;
+  try {
+    await p.getByLabel('Professional credentials', { exact: true }).fill('Unknown under refreshed policy');
+    await p.getByLabel('Professional region', { exact: true }).fill('Never dispatch');
+    await save(p).click(); await count(p, 1);
+    await p.evaluate(() => window.__propertiesForm.restrict());
+    await p.getByLabel('Professional region', { exact: true }).waitFor({ state: 'detached' });
+    await p.evaluate(() => window.__propertiesForm.reject(0, true, true));
+    await p.getByRole('button', { name: 'Check saved settings', exact: true }).waitFor();
+    expect(await save(p).isDisabled()).toBe(true);
+    await form(p).evaluate(node => (node as HTMLFormElement).requestSubmit());
+    expect(await p.evaluate(() => window.__propertiesForm.calls.length)).toBe(1);
+    expect(await p.evaluate(() => window.__propertiesForm.snapshot().successes)).toBe(0);
+    await p.getByRole('button', { name: 'Check saved settings', exact: true }).click();
+    await p.getByRole('button', { name: 'Check saved settings', exact: true }).waitFor({ state: 'detached' });
+    expect(await save(p).isDisabled()).toBe(true);
+    expect(await p.getByRole('alert').innerText()).toContain('outcome is still unknown');
+    expect(await p.evaluate(() => window.__propertiesForm.snapshot().reads)).toBe(1);
+    expect(await p.evaluate(() => window.__propertiesForm.calls.length)).toBe(1);
+  } finally { await h.close(); }
+});
+
 browserTest('failed policy refresh fails closed but a successful explicit retry restores the same professional draft', async () => {
   const h = await open(), p = h.page;
   try {
@@ -152,5 +175,29 @@ browserTest('failed policy refresh fails closed but a successful explicit retry 
     await p.getByLabel('Professional credentials', { exact: true }).waitFor();
     expect(await p.getByLabel('Professional credentials', { exact: true }).inputValue()).toBe('Retained professional draft');
     expect(await save(p).isEnabled()).toBe(true);
+  } finally { await h.close(); }
+});
+
+browserTest('an unavailable configuration cannot erase an in-flight unknown outcome when the same form recovers', async () => {
+  const h = await open(), p = h.page;
+  try {
+    await p.getByLabel('Professional credentials', { exact: true }).fill('Unknown during configuration outage');
+    await save(p).click(); await count(p, 1);
+    await p.evaluate(() => window.__propertiesForm.failConfiguration());
+    await p.getByRole('button', { name: 'Retry', exact: true }).waitFor();
+    await p.evaluate(() => window.__propertiesForm.reject(0, true, true));
+    await p.evaluate(() => window.__propertiesForm.recoverConfiguration());
+    await p.getByRole('button', { name: 'Retry', exact: true }).click();
+    await p.getByRole('button', { name: 'Check saved settings', exact: true }).waitFor();
+    expect(await save(p).isDisabled()).toBe(true);
+    expect(await p.getByLabel('Professional credentials', { exact: true }).inputValue()).toBe('Unknown during configuration outage');
+    await form(p).evaluate(node => (node as HTMLFormElement).requestSubmit());
+    expect(await p.evaluate(() => window.__propertiesForm.calls.length)).toBe(1);
+    expect(await p.evaluate(() => window.__propertiesForm.snapshot().successes)).toBe(0);
+    await p.getByRole('button', { name: 'Check saved settings', exact: true }).click();
+    await p.getByRole('button', { name: 'Check saved settings', exact: true }).waitFor({ state: 'detached' });
+    expect(await save(p).isDisabled()).toBe(true);
+    expect(await p.getByRole('alert').innerText()).toContain('outcome is still unknown');
+    expect(await p.evaluate(() => window.__propertiesForm.calls.length)).toBe(1);
   } finally { await h.close(); }
 });

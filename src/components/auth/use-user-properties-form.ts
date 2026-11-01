@@ -57,8 +57,8 @@ export function useUserPropertiesForm(fields: readonly AuthUserPropertyConfig[],
     const run = {}, capturedKey = liveKey(), schemaRevision = holder.schemaRevision;
     holder.run = run; holder.busy = true; holder.error = null; holder.success = null;
     holder.draft.begin(writes); publish();
-    const lifecycleCurrent = () => holder.mounted && current.current.holder === holder
-      && current.current.ready && holder.schemaRevision === schemaRevision && liveKey() === capturedKey;
+    const sameOwner = () => holder.mounted && current.current.holder === holder && liveKey() === capturedKey;
+    const lifecycleCurrent = () => sameOwner() && current.current.ready && holder.schemaRevision === schemaRevision;
     const isCurrent = () => lifecycleCurrent() && holder.run === run;
     const accepted: Record<string, string> = {};
     try {
@@ -81,8 +81,13 @@ export function useUserPropertiesForm(fields: readonly AuthUserPropertyConfig[],
         if (lifecycleCurrent()) reportPropertyFailure('userPropertiesAcceptedCallback', null);
       }
     } catch (error) {
-      if (!isCurrent()) return;
-      holder.uncertain = propertySaveOutcomeUnknown(error);
+      const unknown = propertySaveOutcomeUnknown(error);
+      // A schema/config refresh retires queued dispatch, not the possibility
+      // that the already-issued write committed. Keep that uncertainty for
+      // this same account/client/authority until an explicit current read.
+      // A replaced owner or authorization family must receive nothing late.
+      if (!sameOwner() || holder.run !== run || (!isCurrent() && !unknown)) return;
+      holder.uncertain = unknown;
       const count = Object.keys(accepted).length;
       holder.error = `${count ? `${count} setting${count === 1 ? '' : 's'} saved. ` : ''}${holder.uncertain
         ? 'The last request outcome is unknown. Check the current saved settings before trying again.'
