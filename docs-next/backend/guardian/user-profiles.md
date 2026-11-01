@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: own-profile
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced, native]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-07"
+  date: "2026-11-01"
   evidence_level: implementation-verified
 ---
 
@@ -88,6 +88,17 @@ against the supplied revision and rechecks live session authority at the final
 transaction boundary. A concurrent profile or avatar change returns
 `AUTH_PROFILE_REVISION_CONFLICT`; reload/review rather than overwriting it.
 An acknowledgement is the accepted stored snapshot, not the submitted draft.
+
+In the 2.10 candidate the canonical native writer also appends
+`account.profile-updated` in that same transaction for actual accepted value
+changes. The event identifies the initiating user, target account, changed
+schema field names and accepted revision. It contains no name, biography,
+social-link or regional-preference values. Rollback/rejection cannot leave a
+false success event; an unchanged patch creates no semantic profile-change
+event. The existing operational `AUTH_USER_PROFILE_UPDATED` diagnostic is
+separate and is not a substitute for this durable audit evidence. The
+first-use continuation retains its verified recovery provenance rather than
+pretending it was an authenticated session.
 
 Web sessions may use own-profile operations. Native sessions require `profile`
 to read and explicit `profile:write` to write; a native caller without `email`

@@ -8,15 +8,15 @@ visibility: internal
 system: guardian
 feature: metadata-defaults-and-trusted-properties
 maturity: supported
-applies_to: ["2.1.1 source; new documentation under review"]
+applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-05"
-  evidence_level: source-observed
+  date: "2026-11-01"
+  evidence_level: implementation-verified
 ---
 
 # Declare User Properties And Their Trust
@@ -98,6 +98,36 @@ boundary; applications must handle the resulting auth/scope transition instead
 of retaining a cached “allowed” Boolean.
 
 ## Use In Policies
+
+### Authority and own-account saves (2.10 candidate)
+
+Managed Guardian authority snapshots bind properties explicitly declared
+`useInPolicies: true` under a trusted editor, in addition to the unchanged
+account/session/role/tenant/assignment fences. An ordinary self-editable
+professional setting is metadata, not a permission change. Its successful
+native PUT does not retire a healthy audit-delivery acknowledgment or turn an
+accepted commit into `LOGGING_OUTCOME_UNKNOWN`. HTTP response release, logging
+acknowledgment and Sync admission use the same projection.
+
+This does not allow user-editable fields in authorization policies. Trusted
+property changes still invalidate the previous authority; status, role,
+session revocation, tenant scope and policy checks remain fail-closed. Direct
+legacy property-store adapters without the managed policy declaration retain
+conservative all-property fingerprinting. The public authority fingerprint
+still binds every property explicitly supplied to it.
+
+Actual own-account set/delete changes append one canonical Guardian event in
+the source transaction: `account.property-updated` or
+`account.property-deleted`. Events identify the initiating user and target
+account. Only configured field names and the operation are descriptive metadata;
+unknown keys and all property values are excluded. Same-value PUTs and absent
+deletes do not create false change events. A failed audit append rolls back
+the mutation. Managed logging mirrors this source evidence into its private
+Fabric audit view; apps must not add a duplicate frontend “saved” audit event.
+
+No schema conversion, profile reset or relaxation of the compliance preset is
+part of this correction. The native [property form](../../frontend/guardian/account-actions.md#userpropertiesform)
+uses per-field dirty tracking and honest partial/unknown outcomes.
 
 Declare the trusted field first, then reference it through Guardian's structured
 access requirements or resource policies. The authorization compiler rejects

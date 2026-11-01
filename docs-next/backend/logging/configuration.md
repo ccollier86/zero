@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: managed-configuration-preview
 maturity: supported
-applies_to: ["2.8.0 activity auditing replacement; verify the qualified release commit"]
+applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.7.0"
-  commit: "06cd2719ddce6680480845ab46f88eec1b1e0c76"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-29"
+  date: "2026-11-01"
   evidence_level: implementation-verified
 ---
 
@@ -70,7 +70,7 @@ updater status, not an older preview or intermediate source pack.
 | `logging.retention.operationalDays` | `null`: indefinite retention. Otherwise an integer 1–36500. Diagnostic retention is not compliance audit policy. |
 | `logging.queue.maxEvents` | 1024 outstanding events per stream, including in-flight work; integer 1–100000. |
 | `logging.queue.maxBytes` | 8 MiB event-payload budget per stream; integer 16384–67108864. This is not a total JavaScript heap bound. |
-| `logging.queue.batchSize` | `min(256, maxEvents)`; integer 1–`min(256, maxEvents)`. The unchanged 512 KiB actor-batch byte limit can split it further. Sparse events flush on a microtask without waiting to fill a batch. |
+| `logging.queue.batchSize` | `min(256, maxEvents)`; integer 1–`min(256, maxEvents)`. The unchanged 512 KiB actor-batch byte limit and Fabric structural node budget can split it further. Sparse events flush on a microtask without waiting to fill a batch. |
 | `logging.sourceQueue.maxEvents` | 50000 admitted events per originating database; integer 1–100000. Independent of the in-memory writer queue. |
 | `logging.sourceQueue.maxBytes` | 64 MiB per originating database; integer 16384–268435456. Counts normalized event bytes, not an exact SQLite file or heap size. |
 | `logging.actors` | Default packaged source entry and empty child environment. The validated launch also starts the dedicated delivery subprocess through a distinct private marker. Explicit `launch`, `env` and `executor` configure the Fabric actors; delivery IPC has its own bounded deadlines. Nothing implicitly inherits the parent's secrets or dotenv files. |

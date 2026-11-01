@@ -1069,3 +1069,96 @@ the inherited native guard. Evidence: `followup-preflight.*`,
 `followup-scaffold-sqlite.*` and `runner-reviewed.*` in that candidate directory.
 These are working-source preflights, not a relabeling of the failed full sweep
 or permission to select its archive for an application upgrade.
+
+## Own-account properties and canonical profile evidence — November 1, 2026
+
+Implementation checkpoint `ad39fa51f5647753649dc0c80a9dd77e28e9d3f2`
+extends the same 2.10.0 candidate; it is not yet a selected update. PracticeIQ
+was not modified, booted, reconverted or deployed. All state and identities in
+the following probes are synthetic private fixtures.
+
+The managed request/admission fingerprint previously included every account
+property. A successfully committed self-editable metadata change consequently
+invalidated its own final authority check and healthy browser admission. The
+managed projection now reads only Guardian's explicitly declared trusted policy
+properties. Full property data remains available to services, the public
+fingerprint is unchanged, and legacy adapters still fence every supplied
+property. Session, account, role, tenant, assignment, policy and trusted-property
+changes retain their existing final authority/revocation behavior. This changes
+admission identity, not permission evaluation or database schema.
+
+The native form defaults `disableSaveWhenUnchanged` to true. Independently of
+that visual option, it admits only genuinely changed, currently self-editable
+fields; absent/default optional values are not materialized by unchanged saves.
+Drafts survive unrelated personal/auth/configuration updates, newer typing and
+known partial acceptance. Immediate locking prevents duplicate dispatch. Account,
+client, authorization, schema and actual React-commit unmount boundaries retire
+late callbacks and remaining queued fields. An uncertain response blocks writes
+until an explicit guarded read; a matching value is not retroactively described
+as an operation receipt, and mutations are never automatically replayed.
+
+Canonical own-property set/delete and personal-profile writers now append
+value-free Guardian evidence in the same source transaction. Same-value/absent
+no-ops do not manufacture change events. The existing source/outbox/Fabric
+projection preserves the affected account and explicitly allowlisted schema
+field descriptors, not biographies, professional values, names, credentials or
+arbitrary Guardian metadata. Existing audit evidence is retained; no historical
+successes are invented. First-use profile completion retains its verified
+account-recovery provenance rather than inventing a browser session.
+
+The final working-source preflight passes all ten selected files in 57,553ms,
+including all 16 actual Chromium form scenarios, the complete existing native
+profile/avatar UI file, and four real managed compliance cases. TypeScript passes
+in 27,264ms and the documentation graph passes for 879 pages. Evidence lives in
+`release-2.10.0/own-account-preflight-20261101/final-source-*` under the external
+Zero diagnostics root. These focused results are not exact-archive/Linux gates.
+
+The managed tests exercise normal browser acknowledgment → own property PUTs
+and personal PATCH → protected HTTP and Sync admission without another
+acknowledgment. They query native audit RPCs after source/outbox/Fabric delivery,
+verify actor/target/safe metadata, deny an ordinary member's investigator access,
+retain admin-editing-another-user behavior, and test logging disabled. A forced
+failure after audit/outbox enqueue rolls back property/profile state and evidence
+together. A real trusted-property change after commit still yields an unknown
+outcome and invalidates the prior admission. The browser file covers unchanged
+Enter/programmatic submit, optional absence, sequential fields, rapid submit,
+partial/unknown results, newer input, all eight accepted/rejected late-response
+lifecycle combinations, callback failure and policy-refresh recovery.
+
+### Dense audit batching and earlier complete-inventory results
+
+Candidate `bb02451dcf378cf88f9af53cdc3c250d691624df` completed its full inventory
+with 1,401 admitted, 1,398 passed, three failed and zero not run. The failed run
+remains under `release-2.10.0/candidate-bb02451/`; it is not qualified. Its native
+initial viewport resize could add an unsolicited theme-observer sample; the
+fixture now awaits the initial native frames before observing, retaining all
+three original behavior assertions. Its legacy installed consumer timed out;
+payload-free pack/install/installed-test phase timing was added without changing
+the 240s case bound or any migration assertion. The isolated proof passes in
+108,642ms, including all ten installed conversion checks. No legacy migration
+boundary, retained receipt behavior or migration checksum was changed.
+
+The hot-auth failure's isolated follow-up exposed valid source evidence being
+batched under byte/count limits but above Fabric's 10,000-node command budget.
+Those commands correctly failed before starting, leaving the source queue
+undrained. Worker-local batching now also accounts for structural nodes with
+bounded command-framing headroom. Fabric validation and public atomic command
+semantics are unchanged; original event identities and durable receipts remain.
+A regression first verifies the unsplit dense command is rejected, then verifies
+all 256 events are acknowledged through valid smaller batches with zero failures.
+
+The strengthened complete hot case now checks that all 20,267 source mutations
+reach retained audit history with zero queued, failed or pending work, rather
+than stopping after foreground authentication. The 2s login/refresh requirement
+is unchanged; background-function completion is explicitly budgeted at 90s,
+autonomous audit drain at 240s and the aggregate case at 420s. On this development
+drive the focused complete case passes in 247,972ms, with 174 assertions,
+20,270 acknowledged events and zero failures. This is correctness/backlog
+recovery evidence, not a claim of fast ingestion or a production throughput SLA.
+Earlier 90s/180s failures remain failed evidence. See `hot-final-*` in the same
+preflight directory.
+
+The next exact clean archive must still pass its complete newly expanded
+inventory, installed Chromium account/avatar sequence, bundled Linux/amd64
+private actors, retained-state updater and normal selected-update gates. Main
+and the selected 2.9.0 archive remain unchanged until those gates complete.

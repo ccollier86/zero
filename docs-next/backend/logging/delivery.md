@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: managed-delivery-preview
 maturity: supported
-applies_to: ["2.6.0 builds with managed compliance logging and native live audit tables"]
+applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
 modes: [managed-server, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "74264b034eba6c32975cc7822a21da18e682f41f"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-25"
+  date: "2026-11-01"
   evidence_level: implementation-verified
 ---
 
@@ -33,6 +33,13 @@ The delivery coordinator is also a dedicated subprocess. It owns event batching,
 source fairness, retry timers and backlog draining; these loops do not run on
 the application event loop. Database validation, hashing, event/proof writes,
 retention and integrity operations execute in the separate Fabric actors.
+
+The configured batch size is an upper bound. The worker splits independently
+admitted events by count, bytes **and** Fabric's structural node budget, leaving
+room for the command envelope. Dense field-change evidence must not enter a
+permanently rejected oversized batch. Database validators and public atomic
+command semantics are unchanged; each event keeps its original identity and
+is acknowledged only after its sink commit.
 
 | Owner | Work |
 | --- | --- |

@@ -8,14 +8,14 @@ visibility: internal
 system: logging
 feature: events-and-coverage
 maturity: supported
-applies_to: ["2.8.0 activity auditing replacement; verify the qualified release commit"]
+applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
 modes: [managed-server, browser, Fabric, file]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.7.0"
-  commit: "d702d72c09e94eb95eb65cc270dad2aa8ab5c2ac"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-29"
+  date: "2026-11-01"
   evidence_level: implementation-verified
 ---
 
@@ -64,7 +64,8 @@ deciding whether a new attempt is appropriate.
 | Surface | Current branch behavior |
 | --- | --- |
 | Backend diagnostics | Automatically bridges code, level, time and category when enabled. Excludes raw messages/errors/arbitrary metadata. Best effort. |
-| Guardian audit | Mirrors newly appended Guardian audit events into a same-transaction source outbox. The existing Guardian trail and its public APIs remain intact. Existing historical events are not automatically backfilled. |
+| Guardian audit | Mirrors newly appended Guardian audit events and their opaque targets into a same-transaction source outbox. The existing Guardian trail and its public APIs remain intact. Existing historical events are not automatically backfilled. |
+| Native own-account profile/settings (2.10 candidate) | Canonical personal-profile and own-property writers append real accepted changes with the initiating user and target account. Core logging preserves only the explicit native field-name/operation/revision descriptors, never arbitrary Guardian metadata or submitted values. Same-value property retries and unchanged profiles do not manufacture change evidence. |
 | Pinned application ReactiveDB mutations | Captures committed creates/updates/deletes, opaque row target and source sequence. Rollback removes the queued evidence too. Private underscore-prefixed tables and raw SQL are excluded. |
 | Shared-row tenant resources | Uses registered resource storage fields for tenant attribution. A missing tenant rejects the captured mutation; tenant identity is not taken from browser claims. |
 | Managed tenant/named Fabric actors | Writer-local same-commit capture, manager-proven scope, required bind-policy readiness proof, existing-only source discovery/recovery and independent delivery. Raw SQL is still excluded. Source crash guarantees follow the selected placement/durability. |

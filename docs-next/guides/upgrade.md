@@ -12,10 +12,10 @@ applies_to: ["2.6.0", "2.7.0", "2.8.0", "2.9.0", "2.10.0"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-07"
+  date: "2026-11-01"
   evidence_level: source-observed
 ---
 
@@ -45,7 +45,7 @@ them before enabling them.
 
 ## Changes That Need An App Plan
 
-### Native runtime and avatar consumer 2.10.0 update
+### Native runtime, avatar and own-account save 2.10.0 update
 
 The current source candidate raises the minimum to **Bun 1.4.4** because older
 Bun can crash when a client aborts an asynchronous HTTP response
@@ -81,6 +81,17 @@ Before adopting that release:
    healthy navigation. No auth/audit relaxation or database reset is part of
    this change. Leave existing migration ledgers, Storage identities, profile
    revisions and retained logging custody intact.
+6. Exercise the native personal and professional forms independently under the
+   configured logging preset. `UserPropertiesForm` now defaults to
+   `disableSaveWhenUnchanged={true}`; unchanged Enter/programmatic submits issue
+   no writes, and missing optional properties stay missing. Genuine metadata
+   saves remain accepted without a fresh audit handshake. Verify partial
+   acceptance, uncertain-response read reconciliation and newer in-flight edits
+   with the [native form contract](../frontend/guardian/account-actions.md#userpropertiesform).
+   Check `account.profile-updated` and `account.property-updated` through the
+   authorized native audit view. Do not add duplicate app “saved” events or log
+   biography/property values. Trusted property, session and scope changes must
+   still retire previous authority.
 
 This runtime prerequisite does not re-run legacy conversion or change tenancy,
 website design tokens, existing blog/chat configuration or application records.

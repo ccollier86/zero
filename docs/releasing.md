@@ -517,6 +517,15 @@ git diff --check
    The two hot-auth contention acceptance files also run exclusively so their
    unchanged latency and actor-start assertions measure their own deliberate
    workload, not unrelated package extraction or another benchmark.
+   The populated hot-auth case now also verifies retention of all 20,267
+   committed record-change events and zero failed/pending audit work. Its
+   original 2s per-login/refresh assertion is unchanged. Durable background
+   delivery has a separate 90s bound, autonomous audit drain a 240s bound,
+   followed by the existing bounded flush; the complete case is bounded at
+   420s instead of the former 90s aggregate. This explicitly expanded recovery
+   qualification does not claim the full backlog drains within the former
+   deadline or establish a production ingestion-throughput SLA. Preserve failed
+   earlier runs, including structurally rejected dense batches, as failures.
    The two real native-vector integration files use the same window so their
    unchanged native/managed-operation deadlines are not dominated by unrelated
    package I/O. Fake vector adapters and source-only tests remain ordinary files.

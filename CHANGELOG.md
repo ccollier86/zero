@@ -11,6 +11,22 @@ This is a source/local release candidate until its exact committed archive is
 qualified and selected from main; it is not an application deployment or npm
 publication.
 
+- Correct native own-account metadata saves under compliance admission. Managed
+  HTTP, Sync and acknowledgment fences use declared trusted policy properties,
+  without weakening account/session/role/tenant/revocation checks or the
+  conservative legacy fingerprint contract.
+- Add default-on `UserPropertiesForm.disableSaveWhenUnchanged`, changed-only
+  sequential writes, absent/default preservation, independent drafts, immediate
+  duplicate-submit locking, newer-typing protection, retired lifecycle callbacks
+  and honest partial/uncertain reconciliation. No automatic mutation replay.
+- Append durable value-free own-property and personal-profile change audit
+  events at the canonical transaction boundary. Preserve the affected account
+  and explicit safe field descriptors through the existing private Fabric audit
+  path. Retain existing evidence; do not backfill invented successes.
+- Bound worker batches by Fabric's structural node budget as well as bytes and
+  count, preventing dense audit bursts from repeatedly failing a valid source
+  queue. Preserve validation, original event identities and commit-bound receipts.
+
 - Show saved authorized private profile photos in the selected-account header
   of managed user controls, retaining the existing initials fallback, layout,
   role/status badges and current account/scope authorization.

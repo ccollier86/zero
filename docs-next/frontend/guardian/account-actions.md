@@ -8,15 +8,15 @@ visibility: internal
 system: guardian
 feature: password-email-and-property-forms
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
+  version: "2.10.0"
+  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
   snapshot: clean
-  date: "2026-10-07"
-  evidence_level: source-observed
+  date: "2026-11-01"
+  evidence_level: implementation-verified
 ---
 
 # Password, Email And Account-Property Forms
@@ -114,21 +114,63 @@ the underlying account operation.
 
 `UserPropertiesFormProps` accepts `title` (Account settings),
 `description` (settings this app lets you control), `emptyState` (null),
-`onSuccess(properties: Record<string, string>)`, `className`.
+`onSuccess(properties: Record<string, string>)`, `className`, and
+`disableSaveWhenUnchanged` (default **true** in the 2.10 candidate).
 
 The form renders the public self-editable property descriptors rather than all
 stored properties. Boolean/string/number/select presentation follows the
-descriptor. Identity/property snapshots reset local values. Without a user it
-renders null; public-config failure shows loading/error; no fields renders the
-configured empty state.
+descriptor. Without a user it renders null; public-config failure shows
+loading/error; no fields renders the configured empty state.
 
-Submission writes fields sequentially through `setProperty`, then reads
-`getProperties` and reports that accepted snapshot. This is **not** one atomic
-bulk-property transaction: if a later write fails, earlier accepted writes
-remain. Backend validation/writer policy still prevents writing trusted or
-undeclared properties. Use server service composition for an application task
-that explicitly needs atomic multi-field changes, not a success toast hiding a
-partial failure.
+```tsx
+import { UserPropertiesForm } from '@zero/framework/components/auth';
+
+export function ProfessionalSettings() {
+  return <UserPropertiesForm title="Professional profile" disableSaveWhenUnchanged />;
+}
+```
+
+The 2.10 candidate compares only currently self-editable fields with their
+accepted typed baselines. Save starts disabled and disables again when edits
+are reverted. Enter and `requestSubmit()` cannot write unchanged fields either.
+Setting `disableSaveWhenUnchanged={false}` changes the button presentation only:
+it does **not** authorize empty writes. An absent optional property remains
+absent; a displayed default is not silently persisted. A cleared number must
+be corrected rather than being coerced into an implicit zero.
+
+Only changed fields are submitted, sequentially, using the existing native
+`setProperty` SDK. This is **not** an atomic bulk transaction. Each acknowledged
+field advances its own baseline. A later rejection preserves the remaining
+draft and reports partial acceptance; pressing Save again does not resend
+already accepted unchanged fields. A normal save needs no follow-up GET whose
+failure could falsely turn accepted writes into failures. `onSuccess` receives
+the current properties plus acknowledged writes after the submitted fields
+are accepted. A failing notification callback does not undo or replay them.
+
+Inputs remain usable during a pending save. Newer typing, including an explicit
+revert, is preserved. Unrelated personal-profile/auth snapshots or replacement
+config objects do not clear professional drafts. Removed/restricted fields
+cannot continue through an earlier queued submission. Account/client or
+authorization replacement and unmount retire old callbacks. The professional
+form does not submit, discard or accept the personal-profile form's draft.
+Old fields are masked while the authorization boundary is unready. A temporary
+config refresh failure blocks saves but retains the exact account's draft for
+an explicit successful Retry; it does not turn unknown policy into permission.
+
+An uncertain response blocks further writes. **Check saved settings** performs
+a guarded read only; it never retries the mutation or claims the original
+request was confirmed. The current state can be reviewed before another
+explicit Save. A changed value after a read is not an operation receipt.
+An older SDK property read crossing a local write is rejected with
+`AUTH_PROPERTIES_READ_SUPERSEDED` instead of rolling the accepted cache back.
+Request a fresh read when appropriate; do not replay a mutation in response.
+Backend writer policy still forbids user edits to trusted/admin/system fields.
+Use a dedicated server operation for application work that truly requires an
+atomic multi-field transaction.
+
+These changes require the qualified 2.10 archive, not an application-side
+replacement of the native writer. See [upgrade checks](../../guides/upgrade.md)
+and [native audit coverage](../../backend/logging/events-and-coverage.md).
 
 ## Auth Error Helpers
 
