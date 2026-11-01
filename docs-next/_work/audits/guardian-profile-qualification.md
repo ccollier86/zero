@@ -1184,3 +1184,46 @@ the canonical two-file runner in 5,732ms. Evidence:
 This remains focused implementation evidence. The replacement committed archive
 must pass installed native acceptance and the entire release sequence before it
 can become an update target.
+
+### Persistent Sync and installed-browser follow-up
+
+The exact `0779e1574a8d91bf761a4480994f6ad372ad3126` archive passed the clean
+package gate, documentation graph, headed native-window tests and all four
+bundled Linux/amd64 service gates. Its installed account test failed, so it was
+not selected. Evidence remains in `release-2.10.0/candidate-0779e15/`; later
+diagnostics are not substituted into that failed qualification.
+
+Native browser follow-up separates two test barriers from a framework defect.
+Initial page rendering precedes asynchronous audit retention, so navigation
+checks now match exact submitted, acknowledged and retained event identities.
+The modal scene intentionally keeps the underlying surface inert through exit
+paint; the test now awaits that real boundary before editing, rather than
+mistaking an ignored native fill for a dirty-tracking failure. Original Save,
+navigation, admission and private audit assertions are retained.
+
+After those barriers, the installed professional PUT correctly returns 200,
+but an already-open Sync reader still closes with 4001, `Sync access changed`.
+A new real managed persistent-connection regression independently reproduces
+that closure after ordinary metadata, even though HTTP and new-connection
+admission already pass. The resource Sync adapter reused its full-property
+mutation fingerprint for read lifetimes. This unnecessary permission reset can
+retire profile/avatar editors after the successful property save.
+
+The correction distinguishes read lifetime from mutation commit fencing.
+Managed built-in read policies use the declared trusted-property projection;
+all existing identity/session/role/tenant/authorization fences remain. A
+registry with any custom list-policy branch conservatively retains every
+property, as do legacy stores. Custom callbacks still receive full inputs and
+mutation commit fencing is unchanged. Focused and exact-archive acceptance must
+pass before the replacement candidate may be selected; no application state,
+main or stable selection has been changed by this follow-up.
+
+The focused implementation check passes 89 cases across five managed
+HTTP/Sync/client files, including persistent read → metadata save → catchup and
+trusted change → 4001 authorization retirement. Known read-authority changes
+are checked before audit readmission so an expired grant cannot disguise a real
+permission change as a generic server reconnect; final post-await checks remain.
+A separate canonical five-file run passes all 55 browser/resource/revalidation
+cases, including all 18 actual Chromium form cases. TypeScript and the 879-page
+documentation graph pass. These are focused source checks, not proof that the
+installed avatar sequence or replacement release archive is qualified.

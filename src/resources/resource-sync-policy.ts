@@ -9,6 +9,7 @@
 import type { UserStore } from '../auth/user-store';
 import type { AuthTenancyMode } from '../auth/types';
 import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
+import { readAuthAuthorityProperties } from '../auth/auth-authority-properties';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
 import type {
@@ -32,6 +33,7 @@ import {
   createResourcePolicyUser,
 } from './resource-auth';
 import { evaluateResourcePolicy } from './resource-policy-evaluator';
+import { hasCustomPolicyBranch } from './resource-policy-inspection';
 import type {
   ResourceAction,
   ResourceDataConstraint,
@@ -117,7 +119,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     const fingerprints: Array<[string, string]> = [];
     // One immutable authority snapshot owns the complete table decision. A
     // separate capture per table could combine policies from two revisions.
-    const readAuthority = this.captureMutationAuthority(context.authContext);
+    const readAuthority = this.captureReadAuthority(context.authContext);
 
     for (const table of context.tableNames) {
       const decision = await this.evaluateSyncRead(
@@ -171,7 +173,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       };
     }
 
-    const mutationAuthority = this.captureMutationAuthority(
+    const mutationAuthority = this.captureAuthority(
       context.authContext,
     );
 
@@ -317,7 +319,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     authContext: SyncAuthContext | null,
     expectedFingerprint: string,
   ): boolean {
-    return this.mutationAuthorityFingerprint(authContext) === expectedFingerprint;
+    return this.captureAuthority(authContext).fingerprint === expectedFingerprint;
   }
 
   /** Re-read the same trusted user/property/RBAC snapshot used by list policy. */
@@ -325,7 +327,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     authContext: SyncAuthContext | null,
     expectedFingerprint: string,
   ): boolean {
-    return this.mutationAuthorityFingerprint(authContext) === expectedFingerprint;
+    return this.captureReadAuthority(authContext).fingerprint === expectedFingerprint;
   }
 
   private async evaluateSyncRead(
@@ -421,7 +423,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       row?: Row;
       input?: Record<string, unknown>;
     } = {},
-    policyAuthority = this.captureMutationAuthority(authContext),
+    policyAuthority = this.captureAuthority(authContext),
   ): Promise<ResourcePolicyDecision> {
     return evaluateResourcePolicy(resource.policy[action]!, {
       action,
@@ -434,18 +436,27 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     });
   }
 
-  private mutationAuthorityFingerprint(
-    authContext: SyncAuthContext | null,
-  ): string {
-    return this.captureMutationAuthority(authContext).fingerprint;
-  }
-
-  private captureMutationAuthority(
+  private captureReadAuthority(
     authContext: SyncAuthContext | null,
   ): ResourceSyncPolicyAuthority {
+    // Built-in policies can consume only declared trusted properties. A custom
+    // callback may read any property, including inside a composed list policy,
+    // so retain the conservative full-property fence for that whole registry.
+    // Legacy stores without a trust projection also retain full fencing.
+    const customReadPolicy = this.options.registry.list().some(resource => (
+      resource.policy.list && hasCustomPolicyBranch(resource.policy.list)
+    ));
+    return this.captureAuthority(authContext, customReadPolicy ? 'all' : 'declared');
+  }
+
+  private captureAuthority(
+    authContext: SyncAuthContext | null,
+    properties: 'all' | 'declared' = 'all',
+  ): ResourceSyncPolicyAuthority {
+    const userStore = this.options.getUserStore?.() ?? null;
     const user = createResourcePolicyUser(
       authContext,
-      this.options.getUserStore?.() ?? null,
+      userStore,
     );
     const authorization = createResourcePolicyAuthorization(
       authContext,
@@ -457,7 +468,11 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       user,
       authorization,
       fingerprint: JSON.stringify([
-        authContextAuthorityFingerprint(authContext, user?.properties ?? {}),
+        authContextAuthorityFingerprint(authContext, user
+          ? properties === 'declared'
+            ? readAuthAuthorityProperties(userStore, user.userId)
+            : user.properties
+          : {}),
         user ? [user.userId, user.email ?? null, user.role] : null,
         authorization?.subject?.authorization ? [
           authorization.subject.authorization.scopeKind,

@@ -255,6 +255,17 @@ export function createSyncSocketRevalidation(options: LifecycleOptions) {
       closeInvalidSocket(socket, 4001, 'Auth context changed');
       return false;
     }
+    // A known read-authority change must retire client caches even when it also
+    // invalidated audit admission. Otherwise the admission exception masks it
+    // as a generic reconnectable server failure. The post-await check below
+    // remains necessary for changes racing asynchronous policy/admission work.
+    if (!validateReadAuthorityFingerprint(
+      current.authContext,
+      data.readAuthorizationFingerprint ?? null,
+    )) {
+      closeInvalidSocket(socket, 4001, 'Sync access changed');
+      return false;
+    }
     try {
       const access = await resolveSyncSocketAccess(options, current.authContext);
       await options.auth?.admitDataAccess?.(current.authContext, socket);

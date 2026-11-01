@@ -15,6 +15,10 @@ publication.
   HTTP, Sync and acknowledgment fences use declared trusted policy properties,
   without weakening account/session/role/tenant/revocation checks or the
   conservative legacy fingerprint contract.
+- Preserve already-open built-in-policy Sync readers across ordinary metadata
+  saves, preventing an unnecessary permission reset from retiring profile or
+  avatar editors. Keep full-property fencing for custom read-policy branches,
+  legacy stores and resource mutation commits.
 - Add default-on `UserPropertiesForm.disableSaveWhenUnchanged`, changed-only
   sequential writes, absent/default preservation, independent drafts, immediate
   duplicate-submit locking, newer-typing protection, retired lifecycle callbacks

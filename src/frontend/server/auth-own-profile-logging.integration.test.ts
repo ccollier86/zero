@@ -158,3 +158,37 @@ test('logging disabled still enforces native property permissions and profile au
     expect((await f.call('PUT', '/auth/me/properties/professional_credentials', { value: 'anonymous' })).status).toBe(401);
   } finally { await f.close(); }
 }, 30000);
+
+test('managed compliance: a persistent Sync reader survives ordinary own metadata but still retires on a trusted property change', async () => {
+  const f = await fixture(true); let socket: WebSocket | undefined;
+  try {
+    const user = await f.register('persistent-profile-owner'); expect((await f.acknowledge(user.accessToken)).status).toBe(200);
+    socket = new WebSocket(f.app.server!.url.toString().replace('http:', 'ws:').replace(/\/$/, '') + '/sync');
+    const frames: any[] = []; let closed: {code: number; reason: string} | null = null;
+    socket.onmessage = event => { if (typeof event.data === 'string') frames.push(JSON.parse(event.data)); };
+    socket.onclose = event => { closed = {code: event.code, reason: event.reason}; };
+    socket.onopen = () => socket!.send(JSON.stringify({type: 'sync.auth', token: user.accessToken}));
+    const until = async (check: () => boolean) => {
+      const deadline = Date.now() + 5000;
+      while (!check()) { if (Date.now() >= deadline) throw new Error('Synthetic persistent Sync response timed out'); await Bun.sleep(10); }
+    };
+    await until(() => frames.some(frame => frame.type === 'sync.auth.ready') || closed !== null);
+    expect(closed).toBeNull();
+    socket.send(JSON.stringify({type: 'sync.subscribe', tables: [], snapshot: [], lastSeq: 0}));
+    await until(() => frames.some(frame => frame.type === 'sync.snapshot.end' || frame.type === 'sync.snapshot') || closed !== null);
+    expect(closed).toBeNull();
+    const cursor = frames.find(frame => frame.type === 'sync.snapshot.begin' || frame.type === 'sync.snapshot');
+    expect(cursor).toBeDefined();
+    expect((await f.call('PUT', '/auth/me/properties/professional_credentials', {value: 'Ordinary metadata'}, user.accessToken)).status).toBe(200);
+    frames.length = 0;
+    const subscribe = {type: 'sync.subscribe', tables: [], snapshot: [], lastSeq: cursor.seq, epoch: cursor.epoch, scope: cursor.scope};
+    socket.send(JSON.stringify(subscribe));
+    await until(() => frames.some(frame => frame.type === 'sync.catchup') || closed !== null);
+    expect(closed).toBeNull();
+    expect(frames.some(frame => frame.type === 'sync.catchup')).toBe(true);
+    f.services.auth.store!.setProperty(user.user.userId, 'plan', 'trusted-change');
+    socket.send(JSON.stringify(subscribe));
+    await until(() => closed !== null);
+    expect(closed).toEqual({ code: 4001, reason: 'Sync access changed' });
+  } finally { socket?.close(); await f.close(); }
+}, 30000);

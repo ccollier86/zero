@@ -33,14 +33,27 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
   const report: Record<string, unknown> = { run, nativeServer: 'linux/amd64', archiveConsumer: true };
   const responses: { route: string; method: string; status: number; code?: string }[] = [];
   const page = await context.newPage(); page.setDefaultTimeout(15000);
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.name));
+  report.nativeResponses = responses;
+  report.browserErrorKinds = pageErrors;
   let documents = 0, acknowledgments = 0, flashes = 0, blocked = false;
   const propertyCommands: string[] = [];
+  const navigationSent: { id: string; page: string }[] = [];
+  const navigationAcknowledged = new Set<string>();
+  const submittedNavigation = (request: import('playwright').Request) => {
+    if (new URL(request.url()).pathname !== '/api/_zero/logging/observations' || request.method() !== 'POST') return [];
+    const body = request.postDataJSON() as { observations?: { action?: string; id?: string; page?: string }[] } | null;
+    return (body?.observations ?? []).filter((row): row is { action: string; id: string; page: string } =>
+      row.action === 'navigation.changed' && typeof row.id === 'string' && typeof row.page === 'string');
+  };
   page.on('request', request => {
     const path = new URL(request.url()).pathname;
     if (request.method() === 'PUT' && path.startsWith('/auth/me/properties/')) {
       const key = path.slice('/auth/me/properties/'.length);
       propertyCommands.push(['professional_credentials', 'professional_region', 'optional'].includes(key) ? key : 'unexpected-field');
     }
+    for (const row of submittedNavigation(request)) if (!navigationSent.some(previous => previous.id === row.id)) navigationSent.push({ id: row.id, page: row.page });
   });
   try {
     await until(async () => { try { return (await fetch(base + '/api/health')).status === 200; } catch { return false; } }, 60000);
@@ -76,7 +89,10 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
     page.on('request', request => { if (request.resourceType() === 'document') documents++; });
     page.on('response', async response => {
       const route = safePath(response.url());
-      if (route === '/api/_zero/logging/observations' && response.status() === 200) acknowledgments++;
+      if (route === '/api/_zero/logging/observations' && response.status() === 200) {
+        acknowledgments++;
+        for (const row of submittedNavigation(response.request())) navigationAcknowledged.add(row.id);
+      }
       if (!route.startsWith('/auth/profile') && !route.startsWith('/storage/upload-grants/') && !route.startsWith('/auth/me/properties/')) return;
       const entry = { route, method: response.request().method(), status: response.status() } as typeof responses[number];
       responses.push(entry);
@@ -93,7 +109,14 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
     const initialShell = await page.getByTestId('persistent-shell').getAttribute('data-identity');
     expect(initialShell).toBeTruthy();
     const navigationQuery = { stream: 'audit', query: { action: 'navigation.changed', actorId: registered.user.userId, limit: 100 } };
+    const earlyNavigation = (await api('/api/_zero/logging/events', navigationQuery)).events.length;
+    if (!baseline) await until(async () => {
+      const initial = navigationSent.find(row => row.page === '/workspace');
+      if (!initial || !navigationAcknowledged.has(initial.id)) return false;
+      return (await api('/api/_zero/logging/events', navigationQuery)).events.some((row: any) => row.event.id === initial.id);
+    });
     const initialNavigation = (await api('/api/_zero/logging/events', navigationQuery)).events.length;
+    const initialNavigationSent = navigationSent.length;
     const before = documents, beforeFlashes = flashes, beforeAck = acknowledgments;
     for (const label of ['Account', 'Audit', 'Overview', 'Account']) {
       await page.locator('[data-sidebar="content"]').getByRole('link', { name: label, exact: true }).click();
@@ -113,20 +136,44 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       expect(documents).toBe(before); expect(flashes).toBe(beforeFlashes);
       expect(await page.getByTestId('persistent-shell').getAttribute('data-identity')).toBe(initialShell);
       report.extendedNavigation = { documentRequests: documents - before, failurePanelFlashes: flashes - beforeFlashes, shellPreserved: true };
-      // Route rendering may finish before the asynchronous audit append. Wait
-      // for all ten completed transitions before testing the canceled one.
-      await until(async () => (await api('/api/_zero/logging/events', navigationQuery)).events.length >= initialNavigation + 10);
+      // DOM rendering is not a delivery barrier. Bind the exact ten completed
+      // transitions to their real browser submissions, acknowledgments and
+      // retained IDs, including the separately acknowledged initial page.
+      await until(() => navigationSent.length >= initialNavigationSent + 10);
+      expect(navigationSent.slice(initialNavigationSent).map(row => row.page)).toEqual([
+        '/account', '/audit', '/workspace', '/account', '/workspace', '/account',
+        '/workspace', '/account', '/workspace', '/account',
+      ]);
+      await until(async () => {
+        const retained = new Set((await api('/api/_zero/logging/events', navigationQuery)).events.map((row: any) => row.event.id));
+        return navigationSent.every(row => navigationAcknowledged.has(row.id) && retained.has(row.id));
+      });
+      report.navigationEvidence = { earlyRetained: earlyNavigation, initialRetained: initialNavigation,
+        completedTransitions: 10, exactSubmittedSequence: true, retainedAcknowledgedIds: true };
     }
     const revisedName = 'Synthetic revised name ' + Date.now().toString(36);
     await page.getByLabel('First name', { exact: true }).fill(revisedName);
     if (!baseline) {
       const prior = await api('/api/_zero/logging/events', navigationQuery);
+      const sentBeforeCancel = navigationSent.length;
       await page.locator('[data-sidebar="content"]').getByRole('link', { name: 'Audit', exact: true }).click();
-      await page.getByRole('button', { name: 'Stay', exact: true }).click();
-      await page.getByRole('button', { name: 'Stay', exact: true }).waitFor({ state: 'detached' });
+      const stay = page.getByRole('button', { name: 'Stay', exact: true });
+      const closingDialog = await stay.evaluateHandle(button => button.closest('[role="dialog"], [role="alertdialog"]'));
+      expect(await closingDialog.evaluate(dialog => dialog !== null)).toBe(true);
+      await stay.click();
+      // Role queries stop matching as soon as the exiting dialog is aria-hidden,
+      // before its real animation/focus scope retires. Wait for actual DOM exit
+      // so a following fill cannot target the page while focus is still trapped.
+      try { await page.waitForFunction(dialog => !dialog?.isConnected, closingDialog); }
+      finally { await closingDialog.dispose(); }
       expect(new URL(page.url()).pathname).toBe('/account');
+      // Allow the normal 250ms collector dispatch timer to expose any erroneous
+      // canceled-route observation; do not infer absence from an immediate read.
+      await page.waitForTimeout(350);
       const after = await api('/api/_zero/logging/events', navigationQuery);
-      expect(after.events.length).toBe(prior.events.length); report.canceledNavigation = true;
+      expect(navigationSent.length).toBe(sentBeforeCancel);
+      expect(after.events.map((row: any) => row.event.id).sort()).toEqual(prior.events.map((row: any) => row.event.id).sort());
+      report.canceledNavigation = true;
     }
     if (!baseline) {
       const professional = page.locator('[data-slot="user-properties-form"]');
@@ -134,7 +181,17 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       expect(await save.isDisabled()).toBe(true);
       await professional.evaluate(node => (node as HTMLFormElement).requestSubmit());
       expect(propertyCommands).toEqual([]);
-      await professional.getByLabel('Professional credentials', { exact: true }).fill('Synthetic credential ' + Date.now().toString(36));
+      // The modal scene keeps the application surface inert while its safe
+      // exit paint finishes, after the live dialog node has already retired.
+      // Native fill() does not wait for ancestor inertness before editing.
+      await page.waitForFunction(() => {
+        const input = document.querySelector<HTMLInputElement>('[data-slot="user-properties-form"] input');
+        return Boolean(input && !input.disabled && !input.closest('[inert]'));
+      });
+      const credential = 'Synthetic credential ' + Date.now().toString(36);
+      await professional.getByLabel('Professional credentials', { exact: true }).fill(credential);
+      expect(await professional.getByLabel('Professional credentials', { exact: true }).inputValue()).toBe(credential);
+      expect(await save.isEnabled()).toBe(true);
       await save.click(); await professional.getByRole('status').waitFor();
       expect(propertyCommands).toEqual(['professional_credentials']);
       expect(responses.filter(row => row.method === 'PUT' && row.route === '/auth/me/properties/:key').map(row => row.status)).toEqual([200]);
@@ -144,6 +201,7 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       report.professionalSettings = { unchangedWrites: 0, firstChangedFieldAccepted: true, personalDraftPreserved: true };
     }
     const avatar = page.locator('[data-slot="avatar-editor"]'); await avatar.waitFor();
+    if (!baseline) await avatar.getByRole('button', { name: /^(Upload|Change) photo$/ }).waitFor();
     await page.screenshot({ path: join(artifacts, 'integration-repair-' + run + '-profile.png') });
     const visiblePhotoAction = await avatar.getByRole('button', { name: /^(Upload|Change) photo$/ }).count();
     report.visiblePhotoAction = visiblePhotoAction;
@@ -154,6 +212,10 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
     }
     const image = await sharp({ create: { width: 120, height: 100, channels: 3, background: '#345678' } }).png().toBuffer();
     await page.getByLabel('Profile picture file', { exact: true }).setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: image });
+    if (!baseline) await page.waitForFunction(() => {
+      const image = document.querySelector<HTMLImageElement>('.reactEasyCrop_Image');
+      return Boolean(image?.complete && image.naturalWidth > 0 && !image.closest('[inert]'));
+    });
     const savePicture = page.getByRole('button', { name: 'Save picture', exact: true }); await savePicture.waitFor();
     await until(() => savePicture.isEnabled()); await savePicture.click();
     await until(async () => responses.some(row => row.method === 'POST' && row.route.endsWith('/finalize'))
@@ -260,8 +322,23 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       expect(operational.events).toHaveLength(beforeOperational.events.length + 1); expect(navigation.events.length).toBeGreaterThanOrEqual(4);
       expect(health.coverage.complianceReady).toBe(true);
       expect(health.operationalBridge).toMatchObject({ attached: true, failed: 0 });
+      expect(pageErrors).toEqual([]);
     }
   } finally {
+    report.lastUiState = await page.evaluate(() => {
+      const image = document.querySelector<HTMLImageElement>('.reactEasyCrop_Image');
+      const surface = document.querySelector('[data-slot="avatar-crop-surface"]')?.getBoundingClientRect();
+      return { activeModalLayers: document.querySelectorAll('.zero-modal-layer:not([inert])').length,
+        closingModalLayers: document.querySelectorAll('.zero-modal-layer[inert]').length,
+        inertApplicationSurfaces: document.querySelectorAll('[data-zero-modal-surface][inert]').length,
+        cropSurface: Boolean(surface), cropWidth: surface?.width ?? 0, cropHeight: surface?.height ?? 0,
+        cropImage: Boolean(image), cropImageDecoded: Boolean(image?.complete && image.naturalWidth),
+        savePictureInDom: [...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Save picture'),
+        avatarFailureShown: document.body.textContent?.includes('Your profile picture could not be loaded or saved. Please try again.') ?? false,
+        profilePolicyRefreshing: document.body.textContent?.includes('Refreshing profile policy') ?? false,
+      };
+    }).catch(() => ({ browserUnavailable: true }));
+    await page.screenshot({ path: join(artifacts, 'integration-repair-' + run + '-last-state.png'), timeout: 5000 }).catch(() => {});
     await Bun.write(join(artifacts, 'integration-repair-' + run + '.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ run, navigation: report.navigation, visiblePhotoAction: report.visiblePhotoAction, avatar: report.avatar, retained: report.retained }));
     await context.close(); lease.release();

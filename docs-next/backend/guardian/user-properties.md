@@ -109,6 +109,15 @@ native PUT does not retire a healthy audit-delivery acknowledgment or turn an
 accepted commit into `LOGGING_OUTCOME_UNKNOWN`. HTTP response release, logging
 acknowledgment and Sync admission use the same projection.
 
+Persistent Sync readers using built-in resource policies also retain that
+healthy authority across ordinary metadata edits; opening a connection only
+after the edit is not an adequate regression test. Resource mutation commit
+fences remain conservative. A registry with a custom `list` policy (including
+a nested custom branch) still fences every property, because application
+callbacks can depend on arbitrary metadata. Custom policy callbacks continue
+to receive the complete property snapshot; this correction does not strip
+their inputs or automatically grant a newly changed policy.
+
 This does not allow user-editable fields in authorization policies. Trusted
 property changes still invalidate the previous authority; status, role,
 session revocation, tenant scope and policy checks remain fail-closed. Direct
