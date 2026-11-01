@@ -41,6 +41,9 @@ test('installed legacy-state archive preserves the admitted profile using public
 }, 240_000);
 
 async function checked(args: string[], cwd: string): Promise<string> {
+  const stage = args[0] === 'pm' ? 'pack' : args[0] === 'install' ? 'install' : 'installed-tests';
+  const started = performance.now();
+  await Bun.write(Bun.stdout, JSON.stringify({ qualification: 'legacy-state', stage, state: 'started' }) + '\n');
   const child = Bun.spawn([process.execPath, '--no-env-file', ...args], {
     cwd, stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH,
       TMPDIR: SCRATCH, PROJECT_SCRATCH_DIR: SCRATCH, BUN_INSTALL_CACHE_DIR: '/Volumes/code-bank/caches/bun/install-cache' },
@@ -50,6 +53,7 @@ async function checked(args: string[], cwd: string): Promise<string> {
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     if (expired || code !== 0) throw new Error(`Synthetic public migration proof failed (${expired ? 'timeout' : code}):\n${stdout}\n${stderr}`);
+    await Bun.write(Bun.stdout, JSON.stringify({ qualification: 'legacy-state', stage, state: 'completed', durationMs: Math.round(performance.now() - started) }) + '\n');
     return stdout + stderr;
   } finally { clearTimeout(timer); }
 }

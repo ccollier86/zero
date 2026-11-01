@@ -130,6 +130,8 @@ export interface UserStoreOptions {
   auditService?: AuthAuditService;
   /** App-bound runtime emitter for operator-visible invariant failures. */
   emitCode?: AuthPlatformCodeEmitter;
+  /** Managed policy declaration. Omitted legacy stores fence all properties. */
+  authorityPropertyPolicy?: { isPolicyTrusted(key: string): boolean };
   /** Synchronous system-plane hook for durable ID-only anchor enqueue. */
   identityProjection?: Pick<IdentityProjectionLifecycleHook, 'userCreated'>
     & Partial<Pick<IdentityProjectionLifecycleHook, 'membershipCreated'>>;
@@ -203,12 +205,14 @@ export class UserStore {
   private runtimeProfileGuard: (() => void) | null = null;
   private readonly tenancyMode: AuthTenancyMode;
   private readonly auditService: AuthAuditService | null;
+  private readonly authorityPropertyPolicy: UserStoreOptions['authorityPropertyPolicy'];
   private readonly emitCode: AuthPlatformCodeEmitter | null;
   private readonly identityProjection: UserStoreIdentityProjectionLifecycle;
 
   constructor(private db: ReactiveDB, options: UserStoreOptions = {}) {
     this.tenancyMode = options.tenancyMode ?? 'single';
     this.auditService = options.auditService ?? null;
+    this.authorityPropertyPolicy = options.authorityPropertyPolicy;
     this.emitCode = options.emitCode ?? null;
     this.identityProjection = new UserStoreIdentityProjectionLifecycle(db, {
       tenancyMode: this.tenancyMode,
@@ -1089,6 +1093,14 @@ export class UserStore {
    */
   getProperties(userId: string): Record<string, string> {
     return this.propertyConfig.getProperties(userId);
+  }
+
+  /** Snapshot only declared authorization inputs; legacy stores retain all-property fences. */
+  getAuthorityProperties(userId: string): Record<string, string> {
+    const properties = this.getProperties(userId);
+    if (!this.authorityPropertyPolicy) return properties;
+    return Object.fromEntries(Object.entries(properties).filter(([key]) =>
+      this.authorityPropertyPolicy!.isPolicyTrusted(key)));
   }
 
   /**

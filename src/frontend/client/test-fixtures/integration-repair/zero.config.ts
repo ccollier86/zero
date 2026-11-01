@@ -9,6 +9,11 @@ export default defineZeroConfig({
   systemDb: { mode: 'file', path: join(root, 'state/system.db'), synchronous: 'FULL' },
   tables: {},
   auth: { bootstrap: 'public', registration: { mode: 'public' }, accountEmails: { passwordReset: false },
+    userProperties: {
+      professional_credentials: { type: 'string', label: 'Professional credentials', editableBy: 'user' },
+      professional_region: { type: 'string', label: 'Professional region', editableBy: 'user' },
+      optional: { type: 'string', label: 'Optional setting', editableBy: 'user' },
+    },
     userProfile: { enabled: true, fields: { firstName: true, lastName: true, bio: true },
       avatars: { enabled: true, editable: true, shape: 'rounded', maxUploadBytes: 8 * 1024 * 1024,
         maxPixels: 16_000_000, outputSize: 512 } } },

@@ -100,10 +100,12 @@ export async function bootstrapAuthRuntimeServices(
     authConfig.audit,
     emitCode,
   );
+  services.propertyService = new UserPropertyService(authConfig);
   services.userStore = new UserStore(config.db, {
     tenancyMode: authConfig.tenancy?.mode ?? 'single',
     auditService: services.auditService,
     emitCode,
+    authorityPropertyPolicy: services.propertyService,
     identityProjection: config.identityProjection,
   });
   services.requestAdmissionService = new AuthRequestAdmissionService(
@@ -162,7 +164,6 @@ export async function bootstrapAuthRuntimeServices(
   services.authSessionService.setRuntimeProfileGuard(() => {
     services.installedProfileGuard!.assertCurrent();
   });
-  services.propertyService = new UserPropertyService(authConfig);
   services.actionTokenService = new AuthActionTokenService(
     services.userStore,
     authConfig.accountEmails,

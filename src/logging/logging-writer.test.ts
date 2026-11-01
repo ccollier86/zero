@@ -5,10 +5,32 @@ import type { LoggingBatchWriter, LoggingAppendResult } from './logging-fabric-s
 import type { LoggingEvent } from './logging-contracts';
 import { loggingEvent } from './test-support/logging-fixture';
 import { LoggingError } from './logging-error';
+import { cloneDatabaseSerializableValue } from '../databases/database-operation-payload';
 
 function receipt(events: readonly LoggingEvent[]): LoggingAppendResult {
   return { sequence: { seq: 1 }, receipts: events.map((event, i) => ({ id: event.id, sourceId: event.sourceId, ordinal: i + 1, duplicate: false })) };
 }
+test('dense record-change bursts split by Fabric structural limits without weakening validation or losing acknowledgments', async () => {
+  const sizes: number[] = [];
+  const store: LoggingBatchWriter = { stream: 'audit', async append(events) {
+    // Exercise the real canonical whole-operation validator, not a duplicate
+    // test estimate. The unsplit 256-event command exceeds its node budget.
+    cloneDatabaseSerializableValue({ type: 'command', name: 'logging.append', input: { stream: 'audit', events }, idempotencyKey: 'synthetic-append' });
+    sizes.push(events.length); return receipt(events);
+  } };
+  const writer = new LoggingWriter(store, resolveLoggingConfig({ queue: { batchSize: 256 } }).queue);
+  const events: LoggingEvent[] = Array.from({ length: 256 }, (_, sequence) => ({ ...loggingEvent('dense-' + sequence, null), version: 2,
+    family: 'records', action: 'record.updated', target: { type: 'table.items', id: 'item-' + sequence },
+    detail: { kind: 'record-change', table: 'items', sequence: sequence + 1, omittedFields: 0,
+      changes: Array.from({ length: 32 }, (_, index) => ({ field: 'field_' + index, beforePresent: true, afterPresent: true, kind: 'redacted' })) } }));
+  expect(() => cloneDatabaseSerializableValue({ type: 'command', name: 'logging.append', input: { stream: 'audit', events }, idempotencyKey: 'synthetic-append' }))
+    .toThrow('node');
+  const acknowledgments = await Promise.all(events.map(event => writer.write(event)));
+  await writer.stop();
+  expect(sizes.length).toBeGreaterThan(1); expect(sizes.reduce((total, size) => total + size, 0)).toBe(256);
+  expect(acknowledgments.map(row => row.id)).toEqual(events.map(event => event.id));
+  expect(writer.diagnostics()).toMatchObject({ acknowledged: 256, failed: 0, pendingEvents: 0 });
+});
 test('writer batches admissions and never resolves their acknowledgment before the Fabric store commits', async () => {
   let release!: () => void, called!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { called = resolve; });

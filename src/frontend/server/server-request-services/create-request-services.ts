@@ -28,6 +28,7 @@ import { createScopedWorkflowService } from './scoped-workflow-service';
 import { createScopedLoggingService } from '../../../logging/logging-scoped-service';
 import { loggingAuthContext } from '../../../logging/logging-auth-context';
 import { isLoggingRecoveryRequest } from '../../../logging/logging-admission-paths';
+import { readAuthAuthorityProperties } from '../../../auth/auth-authority-properties';
 
 /** Create (or preserve) the authorized service view for one HTTP request. */
 export function createServerRequestServices(
@@ -145,7 +146,7 @@ export function createInternalAuthorityScopedServerServices(
   const assertDelivery = () => {
     if (!request || !services.logging?.admission?.required || isLoggingRecoveryRequest(request)) return;
     const auth = access.context;
-    if (auth) services.logging.admission.assertCurrent({ auth, properties: services.auth.store?.getProperties(auth.userId) ?? {} }, request);
+    if (auth) services.logging.admission.assertCurrent({ auth, properties: readAuthAuthorityProperties(services.auth.store, auth.userId) }, request);
   };
   const assertCurrentAuthoritySync = () => { assertGuardianAuthoritySync(); assertDelivery(); };
   const assertCurrentAuthority = async () => { await assertGuardianAuthority(); assertDelivery(); };
@@ -252,7 +253,8 @@ export function createInternalAuthorityScopedServerServices(
     [REQUEST_SERVICES]: true,
     logging: services.logging ? createScopedLoggingService(services.logging, projectedAccess, scope, assertGuardianAuthority, assertGuardianAuthoritySync,
       auditProvenance === 'system' && privilegedSystem ? 'zero.durable-work' : undefined,
-      () => authorityProperties ?? services.auth.store?.getProperties(access.context?.userId ?? '') ?? {}, assertDelivery) : null,
+      () => authorityProperties ?? services.auth.store?.getProperties(access.context?.userId ?? '') ?? {}, assertDelivery,
+      () => readAuthAuthorityProperties(services.auth.store, access.context?.userId ?? '')) : null,
     payments: services.payments?.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync, signal: request?.signal }) ?? null,
     access: projectedAccess,
     scope,

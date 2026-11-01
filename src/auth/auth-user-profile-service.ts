@@ -17,6 +17,9 @@ import type { TokenService } from './token-service';
 import { AuthError, type AuthContext } from './types';
 import type { UserStore } from './user-store';
 import type { UserAvatarCapabilities } from './auth-user-avatar-types';
+import { authAuditActorFromContext, captureAuthAuditRequestContext } from './auth-audit-service';
+import type { AuthAuditRequestContext } from './auth-audit-types';
+import { appendUserProfileAudit } from './auth-user-profile-audit';
 
 /** A single runtime's optional global profile domain, bound to existing Guardian services. */
 export class AuthUserProfileService {
@@ -88,6 +91,7 @@ export class AuthUserProfileService {
       this.assertRequired({ ...before.values, ...command.changes,
         regional: { ...before.values.regional, ...command.changes.regional } });
       const profile = this.profiles.update(userId, command, assertAdmission); assertAdmission();
+      appendUserProfileAudit(this.users, userId, { userId, provenance: 'account-recovery' }, before.values, profile.values, profile.revision);
       this.users.afterCommit(() => this.emitCode(OBS_CODES.AUTH_USER_PROFILE_UPDATED, {
         metadata: { operation: 'first-use-completion', revision: profile.revision },
       }));
@@ -96,8 +100,9 @@ export class AuthUserProfileService {
   }
 
   /** CAS core/extended/regional changes under the final live session and immutable field policy. */
-  update(auth: AuthContext, input: UpdateUserProfileInput): UserProfileSnapshot {
+  update(auth: AuthContext, input: UpdateUserProfileInput, request?: AuthAuditRequestContext): UserProfileSnapshot {
     const command = captureUserProfileUpdate(input);
+    const auditRequest = captureAuthAuditRequestContext(request);
     const admission = this.capture(auth, true);
     return this.users.transaction(() => {
       const current = admission();
@@ -108,6 +113,7 @@ export class AuthUserProfileService {
         regional: { ...before.values.regional, ...command.changes.regional } });
       const accepted = this.profiles.update(current.userId, command, () => { admission(); });
       admission();
+      appendUserProfileAudit(this.users, current.userId, authAuditActorFromContext(current), before.values, accepted.values, accepted.revision, auditRequest);
       this.users.afterCommit(() => this.emitCode(OBS_CODES.AUTH_USER_PROFILE_UPDATED, {
         metadata: { operation: 'self-update', revision: accepted.revision },
       }));

@@ -5,6 +5,7 @@ import { AuthError, type AuthContext } from './types';
 import type { AuthorizationKernel } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { authContextAuthorityFingerprint } from './auth-context-authority';
+import { readAuthAuthorityProperties } from './auth-authority-properties';
 import { createRequestAuthorizationAccess } from './authorization-access';
 import type { UserStore } from './user-store';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
@@ -65,14 +66,14 @@ export function captureAuthAdminMutationAuthority(input: {
   if (!reference) throw staleAdminAuthority();
   const capturedFingerprint = authContextAuthorityFingerprint(
     input.auth,
-    input.store.getProperties(input.auth.userId),
+    readAuthAuthorityProperties(input.store, input.auth.userId),
   );
 
   return (boundary) => {
     const current = input.tokenService.resolveAuthContextAuthority(reference);
     if (!current || authContextAuthorityFingerprint(
       current,
-      input.store.getProperties(current.userId),
+      readAuthAuthorityProperties(input.store, current.userId),
     ) !== capturedFingerprint) throw staleAdminAuthority();
 
     if (input.kernel.tenancy.mode === 'single') {

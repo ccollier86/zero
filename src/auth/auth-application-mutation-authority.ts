@@ -7,6 +7,7 @@ import type {
 } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { authContextAuthorityFingerprint } from './auth-context-authority';
+import { readAuthAuthorityProperties } from './auth-authority-properties';
 import type { TokenService } from './token-service';
 import { AuthError, type AuthContext, type PermissionKey } from './types';
 import type { UserStore } from './user-store';
@@ -43,14 +44,14 @@ export function captureAuthApplicationMutationAuthority(input: {
   if (!reference) throw staleApplicationAuthority();
   const capturedFingerprint = authContextAuthorityFingerprint(
     input.auth,
-    input.store.getProperties(input.auth.userId),
+    readAuthAuthorityProperties(input.store, input.auth.userId),
   );
 
   return (requiredPermissions) => {
     const current = input.tokenService.resolveAuthContextAuthority(reference);
     if (!current || authContextAuthorityFingerprint(
       current,
-      input.store.getProperties(current.userId),
+      readAuthAuthorityProperties(input.store, current.userId),
     ) !== capturedFingerprint) throw staleApplicationAuthority();
 
     const access = createRequestAuthorizationAccess({

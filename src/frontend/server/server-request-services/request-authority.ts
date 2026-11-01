@@ -1,5 +1,6 @@
 import { readAuthBearerToken } from '../../../auth/auth-bearer-token';
 import { authContextAuthorityFingerprint } from '../../../auth/auth-context-authority';
+import { readAuthAuthorityProperties } from '../../../auth/auth-authority-properties';
 import type { RequestAuthorizationAccess } from '../../../auth/authorization-access';
 import {
   applicationServiceDataScope,
@@ -48,7 +49,7 @@ export function createAuthorityRevalidators(
   const captured = authContextAuthorityFingerprint(
     access.context,
     access.context
-      ? services.auth.store?.getProperties(access.context.userId) ?? {}
+      ? readAuthAuthorityProperties(services.auth.store, access.context.userId)
       : {},
   );
   const bearer = readAuthBearerToken(request);
@@ -71,7 +72,7 @@ export function createAuthorityRevalidators(
 
   const validateResolved = (current: AuthContext | null): void => {
     const properties = current
-      ? services.auth.store?.getProperties(current.userId) ?? {}
+      ? readAuthAuthorityProperties(services.auth.store, current.userId)
       : {};
     if (authContextAuthorityFingerprint(current, properties) !== captured) {
       throw authorityChanged();

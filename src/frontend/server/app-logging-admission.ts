@@ -4,6 +4,7 @@ import { resolveRequestAuthContext } from '../../auth/auth.middleware';
 import { resolvePageSessionAuth } from '../../auth/page-session';
 import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
 import { AuthError } from '../../auth/types';
+import { readAuthAuthorityProperties } from '../../auth/auth-authority-properties';
 import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import { LoggingError } from '../../logging/logging-error';
 import { projectLoggingHttpFailure } from '../../logging/logging-http-error';
@@ -50,7 +51,7 @@ export function installManagedLoggingAdmission(app: Elysia, runtime: ZeroAppRunt
         assertCurrentProfile: () => tokens?.assertCurrentProfile() });
       access.authorize({ user: 'required', credentials: ['session', 'api-key'] });
       const fences = createAuthorityRevalidators(request, access, getServerRouteServices(runtime));
-      const authority = { auth, properties: runtime.get(ZERO_AUTH_STORE)?.getProperties(auth.userId) ?? {} };
+      const authority = { auth, properties: readAuthAuthorityProperties(runtime.get(ZERO_AUTH_STORE), auth.userId) };
       const context = loggingAuthContext(auth, logging.config.policyVersion);
       if (auth.credentialKind === 'api-key' || auth.sessionKind === 'native') {
         await logging.admission.admitMachine(authority, context, fences.asynchronous, request);

@@ -102,16 +102,28 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
     expect(denied.status).toBe(401);
     expect((await denied.json() as { code: string }).code).toBe('INVALID_CREDENTIALS');
     const investigationError = await investigations; if (investigationError) throw investigationError; mark('investigation-reads-complete');
-    // This case now also durably captures the 20,267 seeded mutations. Give
-    // background disk work its own budget; auth above keeps a separate strict
-    // latency assertion rather than inheriting the backlog-drain allowance.
-    const deadline = Date.now() + 45_000;
+    // This case durably captures 20,267 actual source mutations. Once valid
+    // dense batches really reach the sink (rather than failing its structural
+    // budget), FULL source snapshots and audit commits need a separate bounded
+    // drain window. The measured login/refresh deadline above stays at 2s.
+    const deadline = Date.now() + 90_000;
     let counts = await request('/proof/counts', undefined, owner.accessToken);
     while (counts.deliveries < 51 && Date.now() < deadline) {
       await Bun.sleep(100); counts = await request('/proof/counts', undefined, owner.accessToken);
     }
     mark('deliveries-checked');
     expect(counts, JSON.stringify(stages)).toEqual({ functions: 51, invocations: 768, history: 19_448, deliveries: 51 });
+    mark('audit-drain-started');
+    const auditDeadline = Date.now() + 240_000;
+    // Let the independent worker finish a genuinely large committed backlog.
+    // Do not hold a source.flush IPC call open past its 60s control deadline.
+    while (logger!.diagnostics().fabricSources?.queued && Date.now() < auditDeadline) await Bun.sleep(50);
+    expect(logger!.diagnostics().fabricSources?.queued).toBe(0);
+    await logger!.flush();
+    mark('audit-drained');
+    expect(logger!.diagnostics().fabricSources).toMatchObject({ queued: 0, failed: 0 });
+    expect(logger!.diagnostics().streams.audit).toMatchObject({ failed: 0, pendingEvents: 0 });
+    expect((await logger!.page('audit', { kind: 'platform' }, { action: 'record.created', limit: 1 })).total).toBe(20_267);
   } finally {
     mark('before-stop');
     try { await app?.stop(true); }
@@ -121,4 +133,4 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       await rm(root, { recursive: true, force: true });
     }
   }
-}, 90_000);
+}, 420_000);

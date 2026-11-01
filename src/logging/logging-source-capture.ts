@@ -10,6 +10,7 @@ import { loggingDigest } from './logging-hash';
 import { currentLoggingAttribution } from './logging-attribution';
 import { loggingTableTarget } from './logging-table-target';
 import { captureLoggingRecordChange } from './logging-record-change';
+import { projectAuthAuditLogging } from './logging-auth-audit-projection';
 
 /** Install before source admission; invoke close before closing log/source owners. */
 export function installLoggingSourceCapture(logging: LoggingRuntime, application: ReactiveDB, system: ReactiveDB,
@@ -56,7 +57,9 @@ export function installLoggingSourceCapture(logging: LoggingRuntime, application
       scope: event.scopeKind === 'tenant' ? { kind: 'tenant', tenantId: event.tenantId! } : { kind: 'application', tenantId: null },
       actor: { kind: event.actorUserId ? 'user' : 'system', id: event.actorUserId ?? 'guardian', sessionId: event.actorSessionId, initiatorId: null },
       requestId: event.requestId, correlationId: event.correlationId };
-    auth.enqueue(captureLoggingEvent(c, { id: event.eventId, family: 'security', action: event.action, outcome: event.outcome, evidence: 'server-confirmed', occurredAt: event.occurredAt }));
+    const projection = projectAuthAuditLogging(event);
+    auth.enqueue(captureLoggingEvent(c, { id: event.eventId, family: 'security', action: event.action, outcome: event.outcome,
+      evidence: 'server-confirmed', occurredAt: event.occurredAt, ...projection }, Object.keys(projection.metadata)));
     committed(system);
   });
   return Object.freeze({

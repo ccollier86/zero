@@ -4,6 +4,7 @@ import type { AuthApiKeyService } from './auth-api-key-service';
 import type { AuthApiKeyMutationAuthority } from './auth-api-key-types';
 import { authAuditRequestFromRequest } from './auth-audit-service';
 import { authContextAuthorityFingerprint } from './auth-context-authority';
+import { readAuthAuthorityProperties } from './auth-authority-properties';
 import { extractAuthContext } from './auth-context';
 import { apiKeyAuthorityChanged } from './auth-api-key-errors';
 import type { TokenService } from './token-service';
@@ -61,7 +62,7 @@ export function captureAuthApiKeyMutationAuthority(
   if (!reference) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
   const fingerprint = authContextAuthorityFingerprint(
     actor.auth,
-    actor.store.getProperties(actor.auth.userId),
+    readAuthAuthorityProperties(actor.store, actor.auth.userId),
   );
   return Object.freeze({
     auth: actor.auth,
@@ -70,7 +71,7 @@ export function captureAuthApiKeyMutationAuthority(
       const current = actor.tokenService.resolveAuthContextAuthority(reference);
       if (!current || authContextAuthorityFingerprint(
         current,
-        actor.store.getProperties(current.userId),
+        readAuthAuthorityProperties(actor.store, current.userId),
       ) !== fingerprint) throw apiKeyAuthorityChanged();
       return current;
     },

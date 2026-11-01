@@ -465,6 +465,7 @@ export class AuthClient {
     });
     this.properties = new AuthPropertyTransport({
       baseUrl,
+      authorityKey: () => this.authorizationScopeKey,
       authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
       patchProperties: (response, values) => {
         this.assertAuthenticatedResponseCurrent(response);

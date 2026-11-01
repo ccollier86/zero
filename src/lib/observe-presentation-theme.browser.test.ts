@@ -26,6 +26,10 @@ browserTest('closed shadow boundaries follow scoped attributes, removal and late
     await page.setContent('<!doctype html><html style="--sample:root"><body><div id="host" data-zero-mode="light"></div></body></html>');
     await page.addStyleTag({ content: '#host{--sample:light}#host[data-zero-mode="dark"]{--sample:dark}' });
     await page.addScriptTag({ content: script });
+    // A new Chromium page can deliver its initial viewport resize after
+    // setContent/addScript resolve. Drain that real environment event before
+    // asserting that unrelated DOM content produces no theme notification.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await page.evaluate(() => {
       const shadow = document.querySelector('#host')!.attachShadow({ mode: 'closed' });
       const source = document.createElement('span'); shadow.append(source);

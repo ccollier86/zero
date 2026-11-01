@@ -40,6 +40,9 @@ export const LOGGING_ACTIVITY_LABELS: Readonly<Record<string, LoggingActivityLab
   'session.scope-switched': { label: 'Changed session scope' },
   'session.revoked': { label: 'Revoked a session' },
   'account.sessions-revoked': { label: 'Revoked account sessions' },
+  'account.profile-updated': { label: 'Updated personal profile', description: 'The native profile writer committed these field changes. Only field names and the accepted revision are retained, not profile values.' },
+  'account.property-updated': { label: 'Updated account settings', description: 'The native own-account writer committed a changed setting. The affected account and configured field are recorded without the property value.' },
+  'account.property-deleted': { label: 'Removed an account setting', description: 'The native own-account writer removed an existing editable property.' },
 });
 const own = <T,>(map: Readonly<Record<string, T>> | undefined, code: string): T | undefined => map && Object.hasOwn(map, code) ? map[code] : undefined;
 export function loggingWords(code: string): string {

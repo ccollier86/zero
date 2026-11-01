@@ -7,6 +7,7 @@ import type { TokenService } from './token-service';
 import { AuthError } from './types';
 import { authUsernameSchema } from './auth-request-schema';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
+import { authAuditRequestFromRequest } from './auth-audit-service';
 
 export interface AuthUserProfilePluginConfig {
   getTokenService(): TokenService | null;
@@ -50,7 +51,7 @@ export function createAuthUserProfilePlugin(config: AuthUserProfilePluginConfig)
     .patch('', async ({ request, set, body }) => {
       applyAuthPrivateNoStore(set);
       const { profiles, auth } = await actor(request);
-      return profiles.update(auth, body);
+      return profiles.update(auth, body, authAuditRequestFromRequest(request));
     }, { body: t.Object({ expectedRevision: t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER - 1 }),
       changes: userProfileChangesSchema }, { additionalProperties: true }) });
 }

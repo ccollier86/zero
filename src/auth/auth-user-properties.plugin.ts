@@ -19,6 +19,8 @@ import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { assertAuthPropertyValueBound } from './auth-request-property-bounds';
 import { authPropertyKeySchema } from './auth-request-schema';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
+import { authAuditRequestFromRequest } from './auth-audit-service';
+import { setOwnUserProperty, deleteOwnUserProperty } from './auth-user-property-writer';
 
 export interface AuthUserPropertiesPluginConfig {
   getUserStore: () => UserStore | null;
@@ -47,17 +49,16 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
           emitCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
             error: err,
             userId: authContext.userId,
-            metadata: { key: params.key },
+            metadata: propertyService.isConfigured(params.key) ? { field: params.key } : { configured: false },
           });
           throw err;
         }
 
         const reference = tokenService.captureAuthContextAuthority(authContext);
-        await withAuthCommitAdmission(store, () => store.transaction(() => {
-          if (!reference || !tokenService.resolveAuthContextAuthority(reference)) {
-            throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-          }
-          store.setProperty(authContext.userId, params.key, value);
+        await withAuthCommitAdmission(store, () => setOwnUserProperty({
+          store, propertyService, key: params.key, value,
+          request: authAuditRequestFromRequest(request),
+          assertAuthority: () => requireCurrentAuthority(tokenService, reference),
         }), request.signal);
         return { ok: true };
       },
@@ -109,17 +110,16 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
 
         try {
           const reference = tokenService.captureAuthContextAuthority(authContext);
-          await withAuthCommitAdmission(store, () => store.transaction(() => {
-            if (!reference || !tokenService.resolveAuthContextAuthority(reference)) {
-              throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-            }
-            propertyService.deleteProperty(authContext.userId, params.key, 'user', store);
+          await withAuthCommitAdmission(store, () => deleteOwnUserProperty({
+            store, propertyService, key: params.key,
+            request: authAuditRequestFromRequest(request),
+            assertAuthority: () => requireCurrentAuthority(tokenService, reference),
           }), request.signal);
         } catch (err) {
           emitCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
             error: err,
             userId: authContext.userId,
-            metadata: { key: params.key },
+            metadata: propertyService.isConfigured(params.key) ? { field: params.key } : { configured: false },
           });
           throw err;
         }
@@ -136,6 +136,12 @@ interface AuthUserPropertyServices {
   store: UserStore;
   tokenService: TokenService;
   propertyService: UserPropertyService;
+}
+
+function requireCurrentAuthority(tokenService: TokenService, reference: ReturnType<TokenService['captureAuthContextAuthority']>) {
+  const current = reference && tokenService.resolveAuthContextAuthority(reference);
+  if (!current) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+  return current;
 }
 
 function requirePropertyServices(

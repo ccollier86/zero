@@ -4,8 +4,8 @@
  * user-properties-form.tsx
  *
  * Renders current-user editable auth property controls from public auth config.
- * This file owns current-user property form state only; property validation and
- * authority are enforced by UserPropertyService on the backend.
+ * Rendering consumes the scoped draft/submission hook; property validation and
+ * authority remain in the native backend writer and Guardian services.
  */
 
 import * as React from 'react';
@@ -28,14 +28,18 @@ import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
 import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
-import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import { AuthConfigLoadState } from './auth-config-load-state';
+import { useUserPropertiesForm } from './use-user-properties-form';
+import type { PropertyFormValue } from './user-properties-draft';
 
 export interface UserPropertiesFormProps {
   title?: string;
   description?: string;
   emptyState?: React.ReactNode;
+  /** Current-scope notification after submitted changes are acknowledged; not a commit/rollback hook. */
   onSuccess?: (properties: Record<string, string>) => void;
+  /** Default true. Unchanged submissions never issue writes, even when this is false. */
+  disableSaveWhenUnchanged?: boolean;
   className?: string;
 }
 
@@ -45,53 +49,26 @@ export function UserPropertiesForm({
   description = 'Update the settings this app lets you control',
   emptyState = null,
   onSuccess,
+  disableSaveWhenUnchanged = true,
   className,
 }: UserPropertiesFormProps) {
-  const { user, setProperty, getProperties } = useAuth();
+  const { user } = useAuth();
   const authConfig = useAuthConfig();
   const { config } = authConfig;
   const fields = React.useMemo(
-    () => Object.values(config?.userProperties ?? {}),
+    () => Object.values(config?.userProperties ?? {}).filter(field => field.editableBy === 'user'),
     [config],
   );
-  const [values, setValues] = React.useState<Record<string, unknown>>({});
-  const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [success, setSuccess] = React.useState(false);
-  const propertySnapshot = React.useMemo(
-    () => JSON.stringify(user?.properties ?? {}),
-    [user?.properties],
-  );
+  const form = useUserPropertiesForm(fields, onSuccess, authConfig.status === 'ready');
+  const { submitting } = form;
 
-  React.useEffect(() => {
-    setValues(parseInitialPropertyValues(fields, user?.properties ?? {}));
-    setError(null);
-    setSuccess(false);
-  }, [fields, propertySnapshot, user?.userId]);
-
-  async function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (submitting) return;
-
-    setSubmitting(true);
-    setError(null);
-    setSuccess(false);
-    try {
-      for (const field of fields) {
-        await setProperty(field.key, values[field.key] ?? defaultPropertyValue(field));
-      }
-      const properties = await getProperties();
-      setSuccess(true);
-      onSuccess?.(properties);
-    } catch (err) {
-      reportAuthUiError('setUserProperties', err);
-      setError(getAuthDisplayMessage(err, 'Failed to update settings'));
-    } finally {
-      setSubmitting(false);
-    }
+    void form.submit();
   }
 
   if (!user) return null;
+  if (!form.authorizationReady) return <p role="status" className={cn('text-sm text-muted-foreground', className)}>Loading account settings…</p>;
   if (!config) {
     return (
       <AuthConfigLoadState
@@ -105,29 +82,32 @@ export function UserPropertiesForm({
   if (fields.length === 0) return <>{emptyState}</>;
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)} aria-busy={submitting}>
+    <form data-slot="user-properties-form" onSubmit={handleSubmit} className={cn('space-y-4', className)} aria-busy={submitting}>
       <AuthHeader title={title} description={description} />
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map((field) => (
           <PropertyField
             key={field.key}
             field={field}
-            value={values[field.key] ?? defaultPropertyValue(field)}
-            disabled={submitting}
-            onChange={(value) => {
-              setValues((current) => ({ ...current, [field.key]: value }));
-            }}
+            value={form.value(field.key)}
+            disabled={!form.ready}
+            onChange={(value) => form.edit(field.key, value)}
           />
         ))}
       </div>
-      <Feedback error={error} success={success ? 'Settings updated.' : null} />
-      <Button type="submit" size="sm" disabled={submitting}>
+      <Feedback error={form.error} success={form.success} />
+      {form.uncertain && (
+        <Button type="button" variant="outline" size="sm" disabled={submitting || !form.ready} onClick={() => { void form.reconcile(); }}>
+          Check saved settings
+        </Button>
+      )}
+      <Button type="submit" size="sm" disabled={submitting || !form.ready || form.uncertain || (disableSaveWhenUnchanged && !form.dirty)}>
         {submitting ? (
           <>
             <AnimateIcon animate loop>
               <Loader size={16} />
             </AnimateIcon>
-            <span className="sr-only">Saving settings</span>
+            <span className="sr-only">{form.reconciling ? 'Checking saved settings' : 'Saving settings'}</span>
           </>
         ) : (
           'Save settings'
@@ -144,9 +124,9 @@ function PropertyField({
   onChange,
 }: {
   field: AuthUserPropertyConfig;
-  value: unknown;
+  value: PropertyFormValue | undefined;
   disabled: boolean;
-  onChange: (value: unknown) => void;
+  onChange: (value: PropertyFormValue) => void;
 }) {
   const id = React.useId();
   const label = field.label ?? formatPropertyLabel(field.key);
@@ -163,9 +143,9 @@ function PropertyField({
 function renderPropertyInput(params: {
   id: string;
   field: AuthUserPropertyConfig;
-  value: unknown;
+  value: PropertyFormValue | undefined;
   disabled: boolean;
-  onChange: (value: unknown) => void;
+  onChange: (value: PropertyFormValue) => void;
 }) {
   const { id, field, value, disabled, onChange } = params;
   if (field.type === 'enum' && field.values?.length) {
@@ -243,35 +223,6 @@ function Feedback({ error, success }: { error: string | null; success: string | 
       <p className="text-xs font-medium leading-relaxed">{message}</p>
     </div>
   );
-}
-
-function parseInitialPropertyValues(
-  fields: AuthUserPropertyConfig[],
-  properties: Record<string, string>,
-): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
-  for (const field of fields) {
-    const raw = properties[field.key] ?? field.default;
-    values[field.key] = raw === undefined
-      ? defaultPropertyValue(field)
-      : parsePropertyValue(field, raw);
-  }
-  return values;
-}
-
-function parsePropertyValue(field: AuthUserPropertyConfig, value: string): unknown {
-  if (field.type === 'boolean') return value === 'true';
-  if (field.type === 'number') {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : '';
-  }
-  return value;
-}
-
-function defaultPropertyValue(field: AuthUserPropertyConfig): unknown {
-  if (field.type === 'boolean') return false;
-  if (field.type === 'number') return '';
-  return '';
 }
 
 function formatPropertyLabel(value: string): string {

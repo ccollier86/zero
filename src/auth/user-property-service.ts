@@ -28,6 +28,9 @@ export interface UserPropertyStore {
 export class UserPropertyService {
   constructor(private readonly config: ResolvedAuthBehaviorConfig) {}
 
+  /** Whether a key belongs to the configured schema rather than arbitrary user metadata. */
+  isConfigured(key: string): boolean { return Object.hasOwn(this.config.userProperties, key); }
+
   /**
    * Return whether a configured property is safe to consume as authorization
    * policy input. Unknown and user-editable properties are never trusted.

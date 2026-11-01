@@ -5,13 +5,14 @@ import type { SyncAuthConfig, SyncAuthContext } from '../../sync/types';
 import { sameSyncAuthContext } from '../../sync/sync-auth';
 import { LoggingError } from '../../logging/logging-error';
 import { loggingAuthContext } from '../../logging/logging-auth-context';
+import { readAuthAuthorityProperties } from '../../auth/auth-authority-properties';
 
 export function managedLoggingSyncAdmission(runtime: ZeroAppRuntime): Pick<SyncAuthConfig, 'admitDataAccess' | 'assertDataAdmission'> {
   const logging = runtime.get(ZERO_LOGGING_RUNTIME);
   if (!logging?.admission.required) return {};
   const authority = (auth: SyncAuthContext | null) => {
     if (!auth) throw new LoggingError('LOGGING_ADMISSION_REQUIRED', 'Authenticated audit delivery admission is required.');
-    return { auth, properties: runtime.get(ZERO_AUTH_STORE)?.getProperties(auth.userId) ?? {} };
+    return { auth, properties: readAuthAuthorityProperties(runtime.get(ZERO_AUTH_STORE), auth.userId) };
   };
   return {
     async admitDataAccess(auth, owner) {

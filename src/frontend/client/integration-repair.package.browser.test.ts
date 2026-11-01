@@ -19,6 +19,7 @@ function fixtureOrigin() {
 }
 function safePath(url: string) {
   return new URL(url).pathname.replace(/\/storage\/upload-grants\/[^/]+/g, '/storage/upload-grants/:token')
+    .replace(/\/auth\/me\/properties\/[^/]+/g, '/auth/me/properties/:key')
     .replace(/\/stages\/[^/]+/g, '/stages/:stageId').replace(/\/assets\/[^/]+/g, '/assets/:assetId');
 }
 async function until(check: () => boolean | Promise<boolean>, timeout = 15000) {
@@ -33,6 +34,14 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
   const responses: { route: string; method: string; status: number; code?: string }[] = [];
   const page = await context.newPage(); page.setDefaultTimeout(15000);
   let documents = 0, acknowledgments = 0, flashes = 0, blocked = false;
+  const propertyCommands: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'PUT' && path.startsWith('/auth/me/properties/')) {
+      const key = path.slice('/auth/me/properties/'.length);
+      propertyCommands.push(['professional_credentials', 'professional_region', 'optional'].includes(key) ? key : 'unexpected-field');
+    }
+  });
   try {
     await until(async () => { try { return (await fetch(base + '/api/health')).status === 200; } catch { return false; } }, 60000);
     const registration = await fetch(base + (process.env.ZERO_REPAIR_REUSE_IDENTITY === '1' ? '/auth/login' : '/auth/register'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -68,7 +77,7 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
     page.on('response', async response => {
       const route = safePath(response.url());
       if (route === '/api/_zero/logging/observations' && response.status() === 200) acknowledgments++;
-      if (!route.startsWith('/auth/profile') && !route.startsWith('/storage/upload-grants/')) return;
+      if (!route.startsWith('/auth/profile') && !route.startsWith('/storage/upload-grants/') && !route.startsWith('/auth/me/properties/')) return;
       const entry = { route, method: response.request().method(), status: response.status() } as typeof responses[number];
       responses.push(entry);
       if (response.status() >= 400) {
@@ -119,6 +128,21 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       const after = await api('/api/_zero/logging/events', navigationQuery);
       expect(after.events.length).toBe(prior.events.length); report.canceledNavigation = true;
     }
+    if (!baseline) {
+      const professional = page.locator('[data-slot="user-properties-form"]');
+      const save = professional.getByRole('button', { name: 'Save settings', exact: true });
+      expect(await save.isDisabled()).toBe(true);
+      await professional.evaluate(node => (node as HTMLFormElement).requestSubmit());
+      expect(propertyCommands).toEqual([]);
+      await professional.getByLabel('Professional credentials', { exact: true }).fill('Synthetic credential ' + Date.now().toString(36));
+      await save.click(); await professional.getByRole('status').waitFor();
+      expect(propertyCommands).toEqual(['professional_credentials']);
+      expect(responses.filter(row => row.method === 'PUT' && row.route === '/auth/me/properties/:key').map(row => row.status)).toEqual([200]);
+      expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
+      expect(flashes).toBe(beforeFlashes);
+      await professional.getByLabel('Professional region', { exact: true }).fill('Unsaved synthetic region');
+      report.professionalSettings = { unchangedWrites: 0, firstChangedFieldAccepted: true, personalDraftPreserved: true };
+    }
     const avatar = page.locator('[data-slot="avatar-editor"]'); await avatar.waitFor();
     await page.screenshot({ path: join(artifacts, 'integration-repair-' + run + '-profile.png') });
     const visiblePhotoAction = await avatar.getByRole('button', { name: /^(Upload|Change) photo$/ }).count();
@@ -142,6 +166,26 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
       expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
       await page.getByRole('button', { name: 'Save changes', exact: true }).click();
       await until(() => responses.some(row => row.method === 'PATCH' && row.route === '/auth/profile' && row.status === 200));
+      if (!baseline) {
+        const professional = page.locator('[data-slot="user-properties-form"]');
+        expect(await professional.getByLabel('Professional region', { exact: true }).inputValue()).toBe('Unsaved synthetic region');
+        await professional.getByRole('button', { name: 'Save settings', exact: true }).click();
+        await professional.getByRole('status').waitFor();
+        expect(propertyCommands).toEqual(['professional_credentials', 'professional_region']);
+        expect(responses.filter(row => row.method === 'PUT' && row.route === '/auth/me/properties/:key').map(row => row.status)).toEqual([200, 200]);
+        expect(flashes).toBe(beforeFlashes);
+        expect(Object.hasOwn((await api('/auth/me/properties')).properties, 'optional')).toBe(false);
+        const query = (action: string) => ({ stream: 'audit', query: { action, actorId: registered.user.userId, limit: 100 } });
+        await until(async () => (await api('/api/_zero/logging/events', query('account.property-updated'))).events.length >= 2);
+        const properties = await api('/api/_zero/logging/events', query('account.property-updated'));
+        const profiles = await api('/api/_zero/logging/events', query('account.profile-updated'));
+        expect(profiles.events.length).toBeGreaterThan(0);
+        for (const row of [...properties.events, ...profiles.events]) expect(row.event).toMatchObject({
+          outcome: 'succeeded', evidence: 'server-confirmed', target: { type: 'user', id: registered.user.userId }, actor: { id: registered.user.userId } });
+        expect(JSON.stringify([...properties.events, ...profiles.events])).not.toContain('Unsaved synthetic region');
+        report.professionalSettings = { ...(report.professionalSettings as object), professionalDraftPreserved: true,
+          changedOnly: true, healthyAdmission: true, canonicalAuditRetained: true, noPrivateValues: true };
+      }
       const snapshot = await api('/auth/profile/avatar');
       expect(snapshot.asset.mimeType).toBe('image/webp'); expect(snapshot.asset.width).toBe(512);
       expect(responses.some(row => row.route === '/auth/profile/avatar/assets/:assetId' && row.status === 200)).toBe(true);

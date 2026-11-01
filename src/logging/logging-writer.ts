@@ -4,10 +4,12 @@ import type { LoggingBatchWriter } from './logging-fabric-store';
 import type { ResolvedLoggingConfig } from './logging-config';
 import { LoggingError } from './logging-error';
 import { LOGGING_MAX_BATCH, LOGGING_MAX_BATCH_BYTES, loggingByteLength, loggingRecord, normalizeLoggingEvent } from './logging-validation';
+import { LOGGING_BATCH_MAX_NODES, loggingEventNodes } from './logging-batch-budget';
 
 interface Pending {
   event: LoggingEvent;
   bytes: number;
+  nodes: number;
   resolve(receipt: LoggingReceipt): void;
   reject(error: unknown): void;
   promise: Promise<LoggingReceipt>;
@@ -39,11 +41,13 @@ export class LoggingWriter {
     try {
       if (this.state !== 'open') throw new LoggingError('LOGGING_CLOSED', 'Logging intake is closed.');
       const event = normalizeLoggingEvent(input), bytes = loggingByteLength(event);
+      const nodes = loggingEventNodes(event);
+      if (nodes > LOGGING_BATCH_MAX_NODES) throw new LoggingError('LOGGING_EVENT_INVALID', 'Logging event exceeds the portable command budget.');
       if (event.stream !== this.store.stream) throw new LoggingError('LOGGING_EVENT_INVALID', 'Logging event belongs to another stream.');
       if (this.pending.size >= this.limits.maxEvents || this.bytes + bytes > this.limits.maxBytes) throw new LoggingError('LOGGING_BACKPRESSURE', 'Logging admission capacity is exhausted.');
       let resolve!: Pending['resolve'], reject!: Pending['reject'];
       const promise = new Promise<LoggingReceipt>((yes, no) => { resolve = yes; reject = no; });
-      const item = { event, bytes, resolve, reject, promise };
+      const item = { event, bytes, nodes, resolve, reject, promise };
       this.pending.add(item); this.queue.push(item); this.bytes += bytes;
       if (!this.running) { this.running = true; queueMicrotask(() => { void this.drain(); }); }
       return promise;
@@ -72,9 +76,10 @@ export class LoggingWriter {
   private async drain(): Promise<void> {
     try {
       while (this.queue.length) {
-        const batch: Pending[] = []; let bytes = 2;
-        while (this.queue.length && batch.length < this.limits.batchSize && bytes + this.queue[0]!.bytes + 1 <= LOGGING_MAX_BATCH_BYTES) {
-          const item = this.queue.shift()!; batch.push(item); bytes += item.bytes + 1;
+        const batch: Pending[] = []; let bytes = 2, nodes = 0;
+        while (this.queue.length && batch.length < this.limits.batchSize && bytes + this.queue[0]!.bytes + 1 <= LOGGING_MAX_BATCH_BYTES
+          && nodes + this.queue[0]!.nodes <= LOGGING_BATCH_MAX_NODES) {
+          const item = this.queue.shift()!; batch.push(item); bytes += item.bytes + 1; nodes += item.nodes;
         }
         try {
           const result = await this.store.append(batch.map(item => item.event));

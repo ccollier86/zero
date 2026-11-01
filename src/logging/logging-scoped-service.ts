@@ -35,7 +35,8 @@ function chargeBrowser(registry: typeof rateWindows, runtime: LoggingRuntime, ke
 
 /** Every yielding operation fences authority on both sides, and before any protected evidence release. */
 export function createScopedLoggingService(runtime: LoggingRuntime, access: RequestAuthorizationAccess, scope: ServiceDataScope,
-  revalidate: () => Promise<void>, assertCurrent: () => void, systemActor?: string, getProperties: () => Readonly<Record<string, string>> = () => ({}), assertWorkAdmission: () => void = () => {}): ScopedLogging {
+  revalidate: () => Promise<void>, assertCurrent: () => void, systemActor?: string, getProperties: () => Readonly<Record<string, string>> = () => ({}), assertWorkAdmission: () => void = () => {},
+  getAuthorityProperties: () => Readonly<Record<string, string>> = getProperties): ScopedLogging {
   const readScope: LoggingReadScope = scope.scopeKind === 'tenant' ? { kind: 'tenant', tenantId: scope.tenantId! } : { kind: 'application' };
   const permit = (kind: keyof LoggingRuntime['config']['access']) => {
     assertWorkAdmission();
@@ -225,7 +226,7 @@ export function createScopedLoggingService(runtime: LoggingRuntime, access: Requ
       for (const { event, receiptId } of events) { assertCurrent(); if (await (receiptId ? runtime.observeResult(receiptId, event) : runtime.append(event))) accepted++; }
       await revalidate();
       const admission = runtime.config.policy.complianceRequested
-        ? await runtime.admission.acknowledge({ auth: user, properties: getProperties() }, context('backend'), policyVersion ?? '', revalidate)
+        ? await runtime.admission.acknowledge({ auth: user, properties: getAuthorityProperties() }, context('backend'), policyVersion ?? '', revalidate)
         : undefined;
       return Object.freeze({ accepted, ...(admission ? { admission } : {}) });
     },
