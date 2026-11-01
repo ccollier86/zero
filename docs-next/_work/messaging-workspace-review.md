@@ -90,6 +90,26 @@ That directory name is historical, not a claim that 3bd8054 passed release
 qualification. A new committed candidate must repeat the entire clean gate;
 no consuming app, production data or saved stable selection was changed.
 
+### Final dependency-audit correction
+
+Candidate `871578d19e21a2c9c89b4533860e9aa563f9b3b4`, archive SHA-256
+`e029cf1ca854934bbbae0b933ebca966459a5b78e6006aeccbd7076592edf256`,
+passed all 1,396 canonical test files with no failures, omissions or
+interruption. Its types, package phase, PDF checks, documentation graph,
+four-entrypoint build and root dependency audit also passed. The separate
+optional-payments audit then rejected `follow-redirects` 1.16.1 through
+Square's legacy Axios dependency chain. This candidate was not selected as
+stable or represented as having completed deployment/update qualification.
+
+The payments lock now resolves the compatible patched 1.16.2 release for
+[GHSA-mrwp-f3q8-3g9p](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p).
+The advisory explicitly does not demonstrate the issue through Axios 1.20.0;
+this is dependency hygiene, not a claim of observed credential disclosure.
+No provider, application permission, runtime code, deadline or assertion is
+changed. Existing applications own their plugin dependency locks. Retain the
+prior audit result and repeat the complete clean gates for the new candidate,
+including both root and payments audits before lengthy deployment gates.
+
 ## Destination Origin And Open Retry Corrections (2026-10-31)
 
 A further native review of `3f465761221881f17de017529b2a1002c880ce05`

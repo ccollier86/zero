@@ -46,6 +46,10 @@ Use the qualified committed-main archive and SHA-256 selected by `zero-release`.
   intact; no application/SYSTEM schema conversion or account recreation is
   required. Back up retained state and restart matching package/source actors;
   ordinary private-realm migration admission must remain enabled for the upgrade.
+- Refresh the optional payments package's frozen `follow-redirects` resolution
+  to 1.16.2 for GHSA-mrwp-f3q8-3g9p. Provider versions and the payment facade
+  are unchanged. Existing plugin consumers retain their own dependency locks;
+  a framework update alone does not rewrite those transitive resolutions.
 
 Updating the dependency does not enable portal mode, change tenancy, rewrite
 application configuration/public tokens, run application migrations or deploy
