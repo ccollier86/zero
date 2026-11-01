@@ -16,7 +16,8 @@ function report(config: ToolsConfig, release: StableRelease): void {
 }
 
 async function runChild(argv: string[], cwd: string): Promise<void> {
-  const child = Bun.spawn(argv, { cwd, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
+  const command = argv[0] === 'bun' ? [process.execPath, ...argv.slice(1)] : argv;
+  const child = Bun.spawn(command, { cwd, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
   const code = await child.exited;
   if (code !== 0) throw new Error(`${argv[0]} failed with exit code ${code}`);
 }

@@ -141,7 +141,7 @@ prevent a stale queued write from being admitted.
 Prerequisites:
 
 - the repository dependencies installed with `bun install`;
-- Bun 1.3.14 or newer, matching Zero 2.0's encoded runtime floor; and
+- Bun 1.4.0 or newer, matching the framework's encoded runtime floor; and
 - `openssl` (or another cryptographically secure generator) for the one-time
   bootstrap secret.
 

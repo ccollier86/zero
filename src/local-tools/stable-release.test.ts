@@ -17,7 +17,7 @@ test('saved packages exclude feature/uncommitted files; installed tools and main
     // Use the existing committed scaffolder/transaction/updater APIs as the fixture contract.
     const sourceRepo = resolve(import.meta.dir, '../..');
     const sourceTar = join(root, 'source.tar');
-    await command(['git', 'archive', '--output', sourceTar, 'main', 'package.json', 'src/create-zero', 'src/update', 'examples/package-mode'], sourceRepo);
+    await command(['git', 'archive', '--output', sourceTar, 'main', 'package.json', 'src/create-zero', 'src/update', 'src/runtime', 'examples/package-mode'], sourceRepo);
     await command(['tar', '-xf', sourceTar, '-C', repo], root);
     await writeFile(join(repo, 'src/marker.ts'), 'export const marker = "committed-main";\n');
     await command(['git', 'init', '-b', 'main'], repo);

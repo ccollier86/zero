@@ -10,6 +10,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/pr
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertSupportedBunRuntime, BUN_ENGINE_RANGE, MINIMUM_BUN_VERSION } from '../runtime/bun-runtime';
 import { assertRegularDirectoryTree, resolveSafeScaffoldPaths } from './scaffold-safety';
 import { commitStagedScaffold } from './scaffold-transaction';
 
@@ -41,6 +42,7 @@ const TEMPLATE_RELATIVE_DIR = '../../examples/package-mode';
  * repository once dependencies are installed.
  */
 export async function scaffoldZeroApp(options: ScaffoldZeroAppOptions): Promise<ScaffoldZeroAppResult> {
+  assertSupportedBunRuntime();
   const templateInput = options.templateDir ?? fileURLToPath(new URL(TEMPLATE_RELATIVE_DIR, import.meta.url));
   const { targetDir, targetSnapshot, templateDir } = await resolveSafeScaffoldPaths(
     options.targetDir,
@@ -122,6 +124,8 @@ async function writeGeneratedPackageJson(
     version: '0.1.0',
     private: true,
     type: 'module',
+    engines: { bun: BUN_ENGINE_RANGE },
+    packageManager: `bun@${MINIMUM_BUN_VERSION}`,
     scripts: {
       dev: 'bun --watch app/server.ts',
       start: 'bun app/server.ts',
@@ -243,6 +247,10 @@ renders the first page, \`db/schema.ts\` starts with no app tables, and
 \`zero.config.ts\` opts into platform systems as you enable them.
 
 ## Setup
+
+Use Bun ${MINIMUM_BUN_VERSION} or newer on the host, in CI, and in Docker.
+Older Bun versions can crash when a browser cancels a streaming HTTP response.
+Compiled servers embed Bun: rebuild them after changing the runtime.
 
 \`\`\`sh
 cp .env.example .env

@@ -2,6 +2,7 @@
 import { mkdir, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertSupportedBunRuntime } from '../runtime/bun-runtime';
 import type { AppConfig } from '../frontend/server/types';
 import { prepareAppBuild } from '../frontend/server/app-build';
 import { createAppDependencyAliasPlugin } from '../frontend/server/client-bundle';
@@ -17,6 +18,7 @@ import { createMessagingRealmBuildPlugin } from './messaging-realm-build-plugin'
 
 /** Execute the normal build without starting the app, invoking runtime setup or opening databases. */
 export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuildResult> {
+  assertSupportedBunRuntime();
   const configPath = resolve(options.configPath);
   if (!(await Bun.file(configPath).exists())) throw new Error('Zero build config module was not found.');
   const module = await import(pathToFileURL(configPath).href);

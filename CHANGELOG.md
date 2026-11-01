@@ -4,6 +4,41 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.10.0 - 2026-11-01
+
+Private avatar consumer updates and a deliberate native runtime prerequisite.
+This is a source/local release candidate until its exact committed archive is
+qualified and selected from main; it is not an application deployment or npm
+publication.
+
+- Show saved authorized private profile photos in the selected-account header
+  of managed user controls, retaining the existing initials fallback, layout,
+  role/status badges and current account/scope authorization.
+- Publish accepted same-client avatar commands through the native facade so
+  persistent sidebar, profile, audit and admin-header consumers update after
+  upload, replacement or removal without another Save or full page reload.
+  Fence late old responses and retire temporary object URLs. No raw private
+  avatar table or public image URL is introduced. This does not add a new
+  cross-device directory subscription.
+- Require Bun 1.4.0 or newer for the repaired native asynchronous HTTP abort
+  lifecycle. Bun 1.3.14 can crash outside Zero when a client cancels a response.
+  Fail managed startup, build, scaffold/update and runtime Doctor early on an
+  unsafe engine; preserve source-only diagnostics. Add a bounded native abort
+  regression independent of Zero/auth/persistence, and pin qualification Docker
+  recipes to the fixed minimum. No JavaScript cancellation workaround or
+  reduced audit/auth validation substitutes for the runtime repair.
+- Keep update/new/check subprocesses on the executing validated Bun binary.
+  Generated apps declare the matching engine requirement. Update host, CI and
+  Docker Bun and rebuild compiled executables, whose runtime is embedded.
+- Align the test-only one-button sign-in fixture with native LoginForm's
+  loading/authorization boundary. Its existing audit-failure/recovery and
+  avatar assertions remain unchanged; production account guards are not relaxed.
+
+Updating this dependency does not upgrade the host runtime, convert databases,
+alter migration checksums, recreate identities or clear Storage/logging state.
+See the native-runtime/avatar checklist in the upgrade guide. Retain the exact
+selected commit and archive checksum before adopting the update.
+
 ## 2.9.0 - 2026-10-31
 
 Optional member-to-team messaging and named authenticated inboxes, using the

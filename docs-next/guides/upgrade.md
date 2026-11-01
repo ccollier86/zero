@@ -8,7 +8,7 @@ visibility: internal
 system: cross-system
 feature: upgrade
 maturity: supported
-applies_to: ["2.6.0", "2.7.0", "2.8.0", "2.9.0"]
+applies_to: ["2.6.0", "2.7.0", "2.8.0", "2.9.0", "2.10.0"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
@@ -44,6 +44,44 @@ Dry-run first. Optional check scripts can execute arbitrary app code; inspect
 them before enabling them.
 
 ## Changes That Need An App Plan
+
+### Native runtime and avatar consumer 2.10.0 update
+
+The current source candidate raises the minimum to **Bun 1.4.0** because older
+Bun can crash when a client aborts an asynchronous HTTP response
+([upstream repair](https://github.com/oven-sh/bun/pull/32120)). This candidate
+is not selected by `zero-update` until its exact archive passes normal release
+qualification. Do not substitute a feature branch for a qualified main archive.
+
+Before adopting that release:
+
+1. Verify the actual `bun --version` on the app host, in CI and inside its
+   Docker image. Upgrade each to a qualified stable version at least 1.4.0.
+   Do not assume changing a package dependency upgrades the executing binary.
+2. Stop the app and its supervised workers normally. Retain the working
+   package/lockfile and verified backups, then run the ordinary updater
+   dry-run/update. New managed startup/build/scaffold/update entrypoints fail
+   early with `ZERO_BUN_RUNTIME_UNSUPPORTED` on an affected runtime. Runtime
+   Doctor reports `runtime.bun.unsupported` before importing app config;
+   source-only inspection remains available without executing that config.
+3. Rebuild the client, server and any compiled executable using the upgraded
+   Bun, with matching retained actor source/dependencies. A compiled executable
+   embeds its runtime: replacing only host Bun leaves the old engine in place.
+   The updater's Bun subprocesses use the validated executing binary, not an
+   unrelated older `bun` elsewhere on PATH.
+4. Exercise actual browser upload/replace/remove through native
+   `UserProfileSettings`, the mounted AppShell footer and selected-account
+   management header. Accepted changes on the same client update independent
+   mounted consumers without an unrelated Save, reselect or document reload.
+   The header uses current authorized private delivery and initials when no
+   picture is available. This is not a new cross-device directory feed.
+5. Verify blocked audit delivery/retry, hard refresh and revocation as well as
+   healthy navigation. No auth/audit relaxation or database reset is part of
+   this change. Leave existing migration ledgers, Storage identities, profile
+   revisions and retained logging custody intact.
+
+This runtime prerequisite does not re-run legacy conversion or change tenancy,
+website design tokens, existing blog/chat configuration or application records.
 
 Older combined platform/app databases are not automatically split into the new
 managed system plane. Plan canonical authority migration and minimal anchors

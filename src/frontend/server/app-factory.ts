@@ -1,4 +1,5 @@
 import { Elysia } from 'elysia';
+import { assertSupportedBunRuntime } from '../../runtime/bun-runtime';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import { createEmailRuntime, registerEmailRuntime } from '../../email';
 import type { AppConfig } from './types';
@@ -77,6 +78,7 @@ import {
  * ```
  */
 export async function createApp(userConfig: AppConfig) {
+  assertSupportedBunRuntime();
   const config = resolveConfig(userConfig);
   assertManagedAppLoggingIsolation(config);
   assertManagedAppLoggingIsolation(config, true);

@@ -7,6 +7,7 @@
  */
 
 import { basename, dirname } from 'node:path';
+import { assertSupportedBunRuntime, UnsupportedBunRuntimeError } from '../runtime/bun-runtime';
 
 import type { PlatformDoctorFinding } from './platform-doctor-contracts';
 import type { UsageAuditOptions } from './usage-audit';
@@ -60,6 +61,7 @@ try {
     }
     if (!report.ok) process.exitCode = 1;
   } else {
+    assertSupportedBunRuntime();
     // Deliberately branch before even config discovery: static mode must not
     // import the executable loader, server checks, resource definitions or DBs.
     const { loadDoctorConfig, resolveDoctorConfigPath } = await import('./config-loader');
@@ -77,7 +79,7 @@ try {
       ok: false,
       findings: [{
         severity: 'error',
-        code: 'doctor.failed',
+        code: error instanceof UnsupportedBunRuntimeError ? 'runtime.bun.unsupported' : 'doctor.failed',
         message: error instanceof Error ? error.message : String(error),
       }],
     }, null, 2));

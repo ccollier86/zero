@@ -12,6 +12,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { scaffoldZeroApp } from './scaffold';
 import { buildZeroApp } from '../build/build-app';
+import { BUN_ENGINE_RANGE, MINIMUM_BUN_VERSION } from '../runtime/bun-runtime';
 
 async function createTempRoot(): Promise<string> {
   const baseDir = '/Volumes/code-bank/tmp/scratch/zero-platform';
@@ -50,8 +51,12 @@ describe('scaffoldZeroApp', () => {
       const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
         dependencies: Record<string, string>;
         scripts: Record<string, string>;
+        engines: { bun: string };
+        packageManager: string;
       };
       expect(packageJson.dependencies['@zero/framework']).toBe('file:../zero-framework');
+      expect(packageJson.engines.bun).toBe(BUN_ENGINE_RANGE);
+      expect(packageJson.packageManager).toBe(`bun@${MINIMUM_BUN_VERSION}`);
       expect(packageJson.scripts.doctor).toBe('zero doctor --config ./zero.config.ts');
       expect(packageJson.scripts.build).toBe('zero build --config ./zero.config.ts --entry ./app/server.ts --outdir ./dist');
       expect(packageJson.scripts.migrate)
@@ -104,6 +109,8 @@ describe('scaffoldZeroApp', () => {
 
       const readme = await readFile(join(targetDir, 'README.md'), 'utf8');
       expect(readme).toContain('cp .env.example .env');
+      expect(readme).toContain(`Use Bun ${MINIMUM_BUN_VERSION} or newer`);
+      expect(readme).toContain('Compiled servers embed Bun');
       expect(readme).toContain('node_modules/@zero/framework/docs/start-here.md');
       expect(readme).toContain('node_modules/@zero/framework/docs-next/start-here.md');
       expect(readme).toContain('node_modules/@zero/framework/docs-next/index.md');

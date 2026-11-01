@@ -28,6 +28,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { assertSupportedBunRuntime } from '../runtime/bun-runtime';
 
 import {
   LOCAL_FRAMEWORK_DEPENDENCY,
@@ -185,6 +186,7 @@ export async function updateZeroProject(
   options: ZeroUpdateOptions,
   dependencies: ZeroUpdateDependencies = {}
 ): Promise<ZeroUpdateResult> {
+  assertSupportedBunRuntime();
   const mode = options.mode ?? (options.localFrameworkDir ? 'local' : 'registry');
   const dryRun = options.dryRun ?? false;
   const check = options.check ?? false;
@@ -1506,7 +1508,10 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 }
 
 async function runCommand(argv: string[], options: UpdateCommandOptions): Promise<UpdateCommandResult> {
-  const child = Bun.spawn(argv, {
+  // Keep install/build/check subprocesses on the already-validated runtime,
+  // even when the caller invoked a newer Bun by absolute path.
+  const command = argv[0] === 'bun' ? [process.execPath, ...argv.slice(1)] : argv;
+  const child = Bun.spawn(command, {
     cwd: options.cwd,
     stdin: options.stdio === 'inherit' ? 'inherit' : 'ignore',
     stdout: options.stdio,

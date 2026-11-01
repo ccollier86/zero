@@ -59,7 +59,7 @@ export async function runCreateZeroCli(args: string[] = Bun.argv.slice(2)): Prom
 
 async function runInstall(targetDir: string): Promise<number> {
   console.log('Installing dependencies...');
-  const child = Bun.spawn(['bun', 'install'], {
+  const child = Bun.spawn([process.execPath, 'install'], {
     cwd: targetDir,
     stdin: 'inherit',
     stdout: 'inherit',

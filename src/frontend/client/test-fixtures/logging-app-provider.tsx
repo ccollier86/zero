@@ -12,10 +12,12 @@ import { useUserAvatar } from '../user-avatar-hooks';
 import { UserDetailHeader } from '../../../components/admin/users/user-detail-header';
 import { mapAuthUserToManagementUser } from '../../../components/admin/users/user-management-mappers';
 
+let signInFailure: { code: string; loadingAtClick: boolean } | null = null;
 Object.assign(window, { __loggingBrowserStatus: () => {
   const client = getClient() as InternalClient | null;
   return { authenticated: client?.auth?.isAuthenticated, authorizationStatus: client?.auth?.authorizationState.status,
-    isRestoring: client?.auth?.isRestoring, phase: client?.auth?.sessionTransition.phase, dataRevision: client?._authorizationDataBoundary.revision };
+    isRestoring: client?.auth?.isRestoring, phase: client?.auth?.sessionTransition.phase, dataRevision: client?._authorizationDataBoundary.revision,
+    signInFailure };
 } });
 Object.assign(window, {
   __loggingNativeHealth: () => getClient()!.logging.health(),
@@ -38,7 +40,17 @@ function Content() {
     {view === 'profile' && <UserProfileSettings security={false} contacts={false} presence={false} additionalProperties={false} />}
     {view === 'audit' && <LoggingWorkspace allowExport={false} />}
   </main></AvatarShell>
-    : <main><button type="button" onClick={() => { void auth.login('logging-browser-owner', 'Fixture-password-123!').catch(() => setFailed(true)); }}>Sign in fixture</button>
+    // Match native LoginForm: a retained callback must not dispatch while the
+    // initial authorization scope is still being established.
+    : <main><button type="button" disabled={auth.isLoading} onClick={() => {
+      const loadingAtClick = auth.isLoading;
+      void auth.login('logging-browser-owner', 'Fixture-password-123!').catch(error => {
+        // Fixed diagnostic classifications only; never retain arbitrary exception text or credentials.
+        const code = error?.message === 'The authorization scope changed before the account operation completed.' ? 'scope-not-current'
+          : typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : 'unclassified';
+        signInFailure = { code, loadingAtClick }; setFailed(true);
+      });
+    }}>Sign in fixture</button>
       {failed ? <p role="alert">Fixture sign in failed</p> : null}</main>;
 }
 /** An independent persistent hook owns the native footer, not the editor's local result or an onAccepted callback. */

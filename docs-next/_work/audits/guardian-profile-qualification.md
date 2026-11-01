@@ -877,3 +877,68 @@ experiments and standalone passes. They are working-source diagnostics, not
 qualified release archives. Resolve the native cancellation failure, repeat
 real-browser/native qualification and the normal clean release gates before
 publishing either avatar change through `zero-update`.
+
+### Native runtime root cause and guarded candidate (2026-11-01)
+
+The cancellation crash above is now independently reproduced with **no Zero,
+configuration, authentication, database, Storage or logging imports**. A bounded
+2,000-request/20-concurrent native async-stream probe terminates Bun 1.3.14
+with SIGTRAP in about 30ms. Its `RequestContext.onAbort` stack matches
+[Bun issue 32111](https://github.com/oven-sh/bun/issues/32111) and
+[repair 32120](https://github.com/oven-sh/bun/pull/32120), merged as
+`8dd1b617e49eab328d5f02e4a4edd880604c4bbd`. The repair fixes native uWS callback
+userdata ownership and sink/controller lifetime. It is present in Bun 1.4.0;
+the ineffective JavaScript cancellation-delay experiment remains removed.
+
+The isolated official macOS/arm64 Bun 1.4.0 archive was verified against
+SHA-256 `c669e97f6164e1c96e0701748db98dfa77492908cbd8394c7557134a735de381`.
+That binary completes the same 2,000 requests, with complete and canceled
+responses and zero pending requests. The official Linux/amd64 image
+`oven/bun@sha256:4c3ac64f41e0a47e28403789a63ecdca7987f322fa811bf5b3cb0f25f18443cc`
+also passes the same isolated probe (1,298 completed /702 aborted, zero pending).
+Neither a host-wide runtime upgrade nor an application deployment was performed.
+
+The candidate declares Bun >=1.4.0 and checks the actual executing binary at
+managed startup, build, scaffold/update and runtime Doctor admission before
+configuration resolution/import or app mutation. Generated manifests and pinned
+qualification recipes match. Bun child commands retain `process.execPath` so
+an older PATH entry cannot replace an explicitly selected validated runtime.
+Compiled servers must be rebuilt because they embed Bun. No migration history,
+authority validation, audit admission, persisted identity or private file is
+reset or relaxed.
+
+The actual old Bun binary independently proves four managed entrypoints reject
+with `ZERO_BUN_RUNTIME_UNSUPPORTED`, runtime Doctor rejects before importing a
+poisoned config, source-only Doctor remains available, and no synthetic app
+state/config marker is written. This is recorded in
+`runtime-admission-old-engine.log`, not only a mocked version unit test.
+
+A separate fixed-runtime repeat still failed before the audit panel, with no
+login HTTP request: the fixture rendered its test-only sign-in button while
+the initial authorization boundary was loading, then its guarded callback
+rejected before dispatch. Native `LoginForm` already honors `useAuth().isLoading`.
+The fixture now does too; safe fixed-code/readiness diagnostics remain. Existing
+browser assertions and deadlines are unchanged. The production auth hook and
+its stale-callback checks are not modified.
+
+Working-source evidence now includes:
+
+- `avatar-fixed-runtime-focused-1`: all 21 selected files pass, including native
+  upload/replace/remove, private photo consumers and strict admission.
+- `avatar-fixed-runtime-native-2`: one failed early fixture sign-in, followed
+  by five passing generated native session/audit scenarios. The optional
+  installed-Linux fixture is skipped without its external target and is **not**
+  counted as installed deployment qualification.
+- `avatar-fixed-runtime-native-reviewed-1`: all five files pass after the
+  fixture correction, including the avatar browser, five generated
+  login/recovery/activity scenarios, native abort and runtime boundary cases.
+- `avatar-fixed-runtime-tooling-1`: all seven scaffold/update/stable-tool and
+  runtime-check files pass. `avatar-fixed-runtime-types-2.log` passes TypeScript.
+- `http-abort-probe-bun-1.3.14`, `http-abort-probe-bun-1.4.0` and
+  `http-abort-probe-bun-1.4.0-linux-amd64` retain the isolated runtime comparison.
+
+These files remain under the external diagnostics root named above. The current
+2.10.0 source candidate is **not yet an update target**: normal exact committed
+archive, independent frozen install, complete source inventory, installed native
+deployment and retained-state updater gates still need qualification before
+main selection/publication. Main and the selected 2.9.0 archive remain unchanged.

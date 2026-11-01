@@ -7,6 +7,7 @@
  */
 
 import { resolve } from 'node:path';
+import { getUnsupportedBunRuntimeError } from '../runtime/bun-runtime';
 
 import type { AuthBehaviorConfig } from '../auth/types';
 import {
@@ -68,6 +69,10 @@ export function runPlatformDoctor(
   config: AppConfig,
   options: PlatformDoctorOptions = {},
 ): PlatformDoctorReport {
+  const runtimeFailure = getUnsupportedBunRuntimeError();
+  if (runtimeFailure) return { ok: false, findings: [{ severity: 'error', code: 'runtime.bun.unsupported',
+    path: 'runtime.bun', message: runtimeFailure.message,
+    hint: 'Upgrade the executing Bun binary, Docker/CI image and any embedded compiled-server runtime before running application checks.' }] };
   const findings: PlatformDoctorFinding[] = [];
   const sink = createPlatformDoctorFindingSink(findings);
   const env = options.env ?? process.env;

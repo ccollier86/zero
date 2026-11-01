@@ -35,10 +35,22 @@ explicit rather than inferred from a developer machine:
 
 - choose the project license, add the matching `LICENSE` file and
   `package.json.license`, and confirm the license is present in the tarball;
-- retain Bun 1.3.14 as the encoded minimum or qualify and deliberately change
-  it, then repeat the declared OS/architecture/filesystem matrix.
+- qualify the encoded Bun 1.4.0 minimum against the declared
+  OS/architecture/filesystem matrix; do not restore the affected 1.3.14 floor.
 
-Zero 2.0 encodes Bun 1.3.14 for the source/local release channel. The project
+The current source encodes Bun 1.4.0 for the source/local release channel.
+Earlier releases encoded 1.3.14. That runtime has a native asynchronous HTTP
+client-abort crash; see [Bun's repair](https://github.com/oven-sh/bun/pull/32120).
+The minimum is checked before managed startup/config resolution, build config
+imports, scaffold/update mutations and runtime Doctor config imports. The
+read-only source-only Doctor remains available without booting an application.
+Qualification must exercise real aborts and browser delivery, not only the
+version check. Use the new minimum for source, bundle, compiled executable,
+matching actor processes and pinned Linux/amd64 Docker proof. Rebuild compiled
+servers because upgrading the host does not replace their embedded Bun.
+Updating this runtime requirement is not a database conversion or a reason to
+edit migration checksums, recreate identities or clear retained evidence.
+The project
 license and broader public deployment matrix remain unresolved; do not publish
 to npm until maintainers choose them explicitly and the exact tagged package
 passes their qualification.
