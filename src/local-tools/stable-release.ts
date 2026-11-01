@@ -20,7 +20,8 @@ export interface StableRelease {
 }
 
 export async function command(argv: string[], cwd: string): Promise<string> {
-  const child = Bun.spawn(argv, { cwd, stdout: 'pipe', stderr: 'pipe' });
+  const invocation = argv[0] === 'bun' ? [process.execPath, ...argv.slice(1)] : argv;
+  const child = Bun.spawn(invocation, { cwd, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);

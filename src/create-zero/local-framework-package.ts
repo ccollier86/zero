@@ -23,7 +23,7 @@ export async function packLocalFramework(frameworkDir: string): Promise<LocalFra
 
   try {
     const child = Bun.spawn(
-      ['bun', 'pm', 'pack', '--destination', packDir, '--ignore-scripts', '--quiet'],
+      [process.execPath, 'pm', 'pack', '--destination', packDir, '--ignore-scripts', '--quiet'],
       {
         cwd: frameworkDir,
         stdout: 'pipe',
