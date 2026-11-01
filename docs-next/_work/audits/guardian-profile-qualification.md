@@ -828,3 +828,52 @@ The final inventory is 945 files, including the same ten private Chrome preview
 cases. These focused passes and source review do not replace the forthcoming
 complete exact clean-checkout qualification, publication or stopped-updater
 proof. The third incomplete run remains failed and its precise cause unknown.
+
+## Admin Selected Account Photos (2026-11-01)
+
+This separate source checkpoint is on `fix/avatar-consumer-reactivity`, based
+on `dd06d1b96efede5c97a728a1cbff59e5257fa165`. The historical release work above
+does not qualify this change. Main and the selected 2.9.0 archive are unchanged.
+
+The selected-account header now reads private photos through the existing
+Guardian directory/delivery SDK and keeps initials as the fallback. Accepted
+same-client avatar changes refresh the mounted header without reselecting a
+user or saving unrelated profile fields. Selected-account, current-authority
+and late-response fences, cancellation and object-URL retirement are covered
+by the focused hook tests. Auth-disabled controlled managers perform no
+private-avatar work. This is not a cross-device directory subscription.
+
+The real native browser fixture includes the actual selected-account header
+beside an independent persistent sidebar and AvatarEditor. Assertions cover
+upload, replacement, removal and unchanged document-request/details-container
+mount identity. The initial regression failed on the missing header
+image; subsequent working-source runs passed those assertions. Static role
+presentation and management tests also passed. No application data or production
+services were used.
+
+**Release qualification remains blocked.** Bun 1.3.14/macOS arm64 intermittently
+terminates the native browser test with SIGTRAP/segmentation fault. Its mapped
+stack includes `RequestContext.onAbort`; this does not establish the full root
+cause or prove the defect predates this feature. A concurrent combined attempt
+also failed at initial audit-admission UI, before reaching the photo assertions.
+Standalone photo-flow passes do not override either failure.
+
+A diagnostic experiment deferred upstream protected-response cancellation by
+one microtask. Its focused cancellation/admission tests and three standalone
+native runs passed, but a subsequent serial combined run still crashed. That
+experiment and its newly introduced test were removed; shared audit/HTTP
+production code is not changed by this checkpoint. Test deadlines, existing
+assertions, authorization and required delivery were not relaxed. Temporary
+stage-print instrumentation was also removed. Sanitized initial-admission
+failure diagnostics remain in the native fixture.
+
+Evidence is retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/`: the
+`admin-user-photo-before`, `admin-user-photo-after`, `admin-user-photo-reviewed`,
+`admin-user-photo-final-qualification`, `admin-user-photo-final-serial`,
+`admin-user-photo-native-check-1`, `admin-avatar-cancellation-*` and
+`admin-user-photo-native-abort-diagnostic*` reports distinguish failures,
+experiments and standalone passes. They are working-source diagnostics, not
+qualified release archives. Resolve the native cancellation failure, repeat
+real-browser/native qualification and the normal clean release gates before
+publishing either avatar change through `zero-update`.

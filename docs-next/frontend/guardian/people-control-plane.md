@@ -117,6 +117,37 @@ retained organization/invitation history needs the canonical lifecycle check,
 so suspension is the safe packaged operation. This does not mean custom code
 can bypass server history/owner guarantees.
 
+### Selected Account Photo
+
+The source fix on `fix/avatar-consumer-reactivity` (not the released 2.9.0
+archive) displays the selected user's saved photo beside their name, role,
+status and email. Initials remain the fallback when no image exists, the avatar
+feature is disabled, or the current actor cannot read that private image.
+Existing badge, size and layout defaults are unchanged.
+
+The header uses `client.userAvatar.directory(userId)` and `deliver(asset)`;
+neither account rows nor image elements receive public Storage URLs, upload
+capabilities or provider credentials. Server-side directory policy still
+controls cross-user/organization access. Merely viewing an admin account row
+does not grant wider access to private photos.
+
+Accepted avatar changes on the same SDK client update the mounted header
+without another profile Save, reselecting the user or navigating. A new selected
+user or changed account `updatedAt` also refreshes its authorized photo.
+Superseded reads are cancelled; late replies cannot replace the new selection's
+image, and retired temporary image URLs are revoked. The entry motion remains,
+but an exiting previous account's photo is not retained beside a new name.
+
+This uses the existing [accepted-change boundary](../../backend/guardian/avatars.md#accepted-changes-across-mounted-consumers),
+not a new cross-device directory subscription. A change made through another
+SDK instance requires an updated account projection/reload; no polling or
+private SYSTEM-table Sync exposure is added by this presentation fix.
+
+This source checkpoint is not release-qualified: native browser verification
+still encounters an unresolved HTTP-abort process crash. See the
+[qualification record](../../_work/audits/guardian-profile-qualification.md#admin-selected-account-photos-2026-11-01)
+before selecting an archive or claiming updater readiness.
+
 ## TenantMemberManagement And TenantScopedUserManagement
 
 `TenantMemberManagement` is the active-tenant membership surface, imported

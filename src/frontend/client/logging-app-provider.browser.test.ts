@@ -67,7 +67,10 @@ import type { AuthUserAvatarTransport } from './auth-user-avatar-transport';
       responses.push({ path: admittedPaths.has(path) ? path : '/other', status: response.status() }); if (responses.length > 30) responses.shift();
     });
     await page.goto(origin + '/logging-ui'); await page.getByRole('button', { name: 'Sign in fixture', exact: true }).click();
-    await page.getByRole('alert', { name: 'Audit delivery required', exact: true }).waitFor();
+    await page.getByRole('alert', { name: 'Audit delivery required', exact: true }).waitFor().catch(async error => {
+      const state = await page.evaluate(() => (window as unknown as { __loggingBrowserStatus(): unknown }).__loggingBrowserStatus());
+      throw new Error(JSON.stringify({ stage: 'initial-admission', state, responses, text: await page.locator('body').innerText(), errors }) + '\n' + error);
+    });
     expect(await page.getByTestId('logging-protected').count()).toBe(0); expect(acknowledgments).toBe(0);
     blocked = false; await page.getByRole('button', { name: 'Retry audit delivery', exact: true }).click();
     await page.getByTestId('logging-protected').waitFor().catch(async error => {
@@ -84,6 +87,9 @@ import type { AuthUserAvatarTransport } from './auth-user-avatar-transport';
     const shellInstance = await page.getByTestId('native-avatar-shell').getAttribute('data-instance');
     const beforeAvatarDocuments = documents;
     expect(await page.locator('[data-slot="sidebar-footer"] img').count()).toBe(0);
+    const details = page.getByTestId('native-user-details');
+    const mountedDetails = await details.elementHandle();
+    expect(await details.locator('img').count()).toBe(0);
     // Hold a real pre-change snapshot. Its eventual response must not replace
     // the newer acknowledged picture in the independent persistent footer.
     let holdAvatarRead = true, capturedAvatarRead!: () => void;
@@ -113,9 +119,12 @@ import type { AuthUserAvatarTransport } from './auth-user-avatar-transport';
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-slot="avatar-editor"] img')?.naturalWidth === 64);
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-slot="sidebar-footer"] img')?.naturalWidth === 64,
       undefined, { timeout: 2500 });
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-testid="native-user-details"] img')?.naturalWidth === 64,
+      undefined, { timeout: 2500 });
     expect(await page.getByTestId('native-avatar-shell').getAttribute('data-instance')).toBe(shellInstance);
     expect(documents).toBe(beforeAvatarDocuments);
     const originalPhoto = await page.locator('[data-slot="sidebar-footer"] img').getAttribute('src');
+    const originalDetailPhoto = await details.locator('img').getAttribute('src');
     releaseAvatarRead();
     await page.evaluate(() => (window as unknown as { __heldAvatarRead: Promise<void> }).__heldAvatarRead);
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
@@ -130,18 +139,27 @@ import type { AuthUserAvatarTransport } from './auth-user-avatar-transport';
       const image = document.querySelector<HTMLImageElement>('[data-slot="sidebar-footer"] img');
       return image?.naturalWidth === 64 && image.getAttribute('src') !== previous;
     }, originalPhoto, { timeout: 2500 });
+    await page.waitForFunction(previous => {
+      const image = document.querySelector<HTMLImageElement>('[data-testid="native-user-details"] img');
+      return image?.naturalWidth === 64 && image.getAttribute('src') !== previous;
+    }, originalDetailPhoto, { timeout: 2500 });
     await page.evaluate(async () => {
       const avatar = (window as unknown as { __loggingNativeAvatar(): AuthUserAvatarTransport }).__loggingNativeAvatar();
       await avatar.remove((await avatar.get()).revision);
     });
     await page.waitForFunction(() => !document.querySelector('[data-slot="sidebar-footer"] img'), undefined, { timeout: 2500 });
     await page.waitForFunction(() => !document.querySelector('[data-slot="avatar-editor"] img'), undefined, { timeout: 2500 });
+    await page.waitForFunction(() => !document.querySelector('[data-testid="native-user-details"] img'), undefined, { timeout: 2500 });
+    expect(await details.locator('[data-slot="avatar-fallback"]').textContent()).toBe('L');
     await page.evaluate(async bytes => {
       const avatar = (window as unknown as { __loggingNativeAvatar(): AuthUserAvatarTransport }).__loggingNativeAvatar();
       await avatar.replace(new Blob([Uint8Array.from(bytes)], { type: 'image/png' }), (await avatar.get()).revision);
     }, [...image]);
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-slot="sidebar-footer"] img')?.naturalWidth === 64,
       undefined, { timeout: 2500 });
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-testid="native-user-details"] img')?.naturalWidth === 64,
+      undefined, { timeout: 2500 });
+    expect(await mountedDetails!.evaluate(element => element.isConnected)).toBe(true);
     expect(await page.getByTestId('native-avatar-shell').getAttribute('data-instance')).toBe(shellInstance);
     expect(documents).toBe(beforeAvatarDocuments);
     await page.getByRole('button', { name: 'Show audit', exact: true }).click();

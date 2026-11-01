@@ -9,6 +9,8 @@ import { LoggingWorkspace } from '../../../components/logging/logging-workspace'
 import { TooltipProvider } from '../../../components/tooltip';
 import { AppShell } from '../../../components/app-shell';
 import { useUserAvatar } from '../user-avatar-hooks';
+import { UserDetailHeader } from '../../../components/admin/users/user-detail-header';
+import { mapAuthUserToManagementUser } from '../../../components/admin/users/user-management-mappers';
 
 Object.assign(window, { __loggingBrowserStatus: () => {
   const client = getClient() as InternalClient | null;
@@ -29,6 +31,9 @@ function Content() {
   const auth = useAuth(), [failed, setFailed] = useState(false);
   const [view, setView] = useState<'none' | 'profile' | 'audit'>('none');
   return auth.isAuthenticated ? <AvatarShell><main data-testid="logging-protected">Protected audit fixture
+    <aside aria-label="Selected account" data-testid="native-user-details">
+      <UserDetailHeader user={mapAuthUserToManagementUser(auth.user!)} roleLabel="Admin" />
+    </aside>
     <nav aria-label="Synthetic native account controls"><button type="button" onClick={() => setView('profile')}>Show profile</button><button type="button" onClick={() => setView('audit')}>Show audit</button></nav>
     {view === 'profile' && <UserProfileSettings security={false} contacts={false} presence={false} additionalProperties={false} />}
     {view === 'audit' && <LoggingWorkspace allowExport={false} />}
