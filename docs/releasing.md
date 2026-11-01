@@ -559,6 +559,13 @@ git diff --check
    explicit staged qualification budget, not a claim that their aggregate
    runtime is limited to the original single 20s test or that native indexing
    got faster. A crash or failed hook remains a failed file.
+   The managed blog integration file also owns a window: its repeated real
+   logging/content actor boots keep their 10s bind budgets and original 90s
+   cases. A contended sweep timed out one logging bind while archive/browser
+   work overlapped; the unchanged functional cases pass in isolation (11 cases,
+   about 54s for the complete file). Payload-free lifecycle timings retain
+   startup, restart and shutdown evidence. This is test I/O admission, not a
+   change to production worker concurrency or a throughput claim.
    The slot stays owned through process, descendant
    and output retirement. This changes admission overlap, not inventories,
    assertions, deadlines, cleanup requirements or failure handling. Review
@@ -580,7 +587,11 @@ git diff --check
    On macOS/Linux each admitted child owns a new POSIX session/process group.
    Root interruption/deadline sends signals only to those captured groups;
    `--no-orphans` is an additional parent-death fence, not the sole cleanup
-   mechanism. After leader exit, group retirement allows 250ms for an orderly
+   mechanism. The two deliberate negative fixtures remove both that flag and
+   Bun's inherited `BUN_FEATURE_FLAG_NO_ORPHANS` switch only in their synthetic
+   wrappers, so owned-group cleanup and escaped-pipe handling are independently
+   exercised. Ordinary test processes retain the native protection.
+   After leader exit, group retirement allows 250ms for an orderly
    close, then kills any leftover group members and verifies retirement for
    at most one second. A leftover group is recorded as a failure, never cleaned
    up into a pass. No unrelated or externally owned group is signaled. The runner

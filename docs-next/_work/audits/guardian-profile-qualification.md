@@ -1038,3 +1038,34 @@ needing a forced close. The fallback test now injects the strict-close failure
 explicitly, retaining the exact `[true, false]` attempt, error and sealed-handle
 assertions. All five capability cases then pass on 1.4.4. No database runtime
 implementation was changed or native cleanup assertion removed for this repair.
+
+The runner's two deliberate leak/output probes also fail in the full sweep:
+Bun 1.4.4 propagates `--no-orphans` as `BUN_FEATURE_FLAG_NO_ORPHANS=1`.
+Removing only argv no longer disables that backup in their synthetic wrapper,
+so the expected leak never exists. The environment propagation is reproduced
+locally and matches [Bun's documented switch](https://github.com/oven-sh/bun/blob/main/docs/runtime/bunfig.mdx).
+Only those two synthetic shells now unset the inherited switch as well. The
+canonical runner retains its flag, owned-group cleanup and bounded output;
+the original failure/leak/isolated-group assertions remain and must pass through
+the canonical runner, not just a standalone test without the inherited flag.
+
+The complete `0dfca2e` sweep finishes with **1,401 admitted, 1,397 passed, four
+failed, zero not run**. Its failures are not retried into that result. The
+separate working-source preflight then passes every one of the 11 managed blog
+cases in about 54s: first startup 5,338ms, first restart 1,145ms, and the complete
+first case 7,705ms. This preserves the original functional assertions, 10s actor
+bind budgets and 90s cases. Given the earlier overlap with a full archive
+install and browser builds, this exact native fixture now owns the same narrow
+exclusive test I/O window as other startup-sensitive gates. No production
+logging/DB timeout, durability, authority or concurrency is changed. Evidence:
+`candidate-0dfca2e/followup-blog-isolated.*`. The next exact committed candidate
+still must pass the complete inventory and installed deployment/updater gates.
+
+The follow-up also passes the real dual-provider archive consumer, native
+scaffold/SQLite files, TypeScript and 879-page documentation graph. A separate
+canonical-runner check passes both runner/resource files, including the actual
+owned descendant leak and deliberately escaped output-pipe assertions under
+the inherited native guard. Evidence: `followup-preflight.*`,
+`followup-scaffold-sqlite.*` and `runner-reviewed.*` in that candidate directory.
+These are working-source preflights, not a relabeling of the failed full sweep
+or permission to select its archive for an application upgrade.

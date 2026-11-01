@@ -166,8 +166,10 @@ test('a normal zero exit with leaked owned descendants is retired and reported a
   const root = await scratch();
   try {
     const wrapper = join(root, 'bun-without-orphan-flag');
-    // Remove the backup flag only in this synthetic probe, so real group retirement is independently exercised.
-    await Bun.write(wrapper, `#!/bin/sh\nshift 2\nexec ${JSON.stringify(process.execPath)} "$@"\n`); await chmod(wrapper, 0o700);
+    // Remove the backup only in this synthetic probe. Newer Bun also propagates
+    // the CLI flag through this environment variable; removing argv alone no
+    // longer creates the intentional leak which must exercise group retirement.
+    await Bun.write(wrapper, `#!/bin/sh\nshift 2\nunset BUN_FEATURE_FLAG_NO_ORPHANS\nexec ${JSON.stringify(process.execPath)} "$@"\n`); await chmod(wrapper, 0o700);
     const descendant = join(root, 'descendant.ts'); await Bun.write(descendant, 'setInterval(()=>{},1000);');
     await Bun.write(join(root, 'leak.test.ts'), `const child=Bun.spawn([process.execPath,${JSON.stringify(descendant)}],
       {stdin:'ignore',stdout:'ignore',stderr:'ignore'});child.unref();console.log('LEAK_PID',child.pid);process.exit(0);`);
@@ -213,7 +215,9 @@ test('post-exit output inherited by a separate group is bounded and reported, no
   const root = await scratch(); let pid = 0;
   try {
     const wrapper = join(root, 'without-backup');
-    await Bun.write(wrapper, `#!/bin/sh\nshift 2\nexec ${JSON.stringify(process.execPath)} "$@"\n`); await chmod(wrapper, 0o700);
+    // The escaped writer must actually survive its leader for this negative
+    // output-drain test; the real runner retains both native/group protections.
+    await Bun.write(wrapper, `#!/bin/sh\nshift 2\nunset BUN_FEATURE_FLAG_NO_ORPHANS\nexec ${JSON.stringify(process.execPath)} "$@"\n`); await chmod(wrapper, 0o700);
     const escaped = join(root, 'escaped.ts'); await Bun.write(escaped, 'setInterval(()=>{},1000);');
     await Bun.write(join(root, 'output.test.ts'), `const child=Bun.spawn([process.execPath,${JSON.stringify(escaped)}],
       {detached:true,stdin:'ignore',stdout:'inherit',stderr:'ignore'});child.unref();console.log('ESCAPED_PID',child.pid);process.exit(0);`);

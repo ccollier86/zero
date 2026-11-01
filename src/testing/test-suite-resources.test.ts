@@ -8,10 +8,12 @@ test('only the reviewed cold-I/O, durable-control and explicit hot-auth gates re
     'src/frontend/client/session-audit-recovery.browser.test.ts', 'packages/docs/package-installed.integration.test.ts',
     'src/components/json-editor/document-editor.package.test.ts', 'src/presence/presence-fabric.integration.test.ts',
     'src/resources/resource-array-overlap-fabric.integration.test.ts',
-    'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts']);
+    'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts',
+    'src/blog/content-managed.integration.test.ts']);
   expect(isExclusiveTestFile('packages/payments/src/package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/logging/logging-fabric.integration.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/components/signature-pad/signature-pad.package.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/blog/content-managed.integration.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/blog/blog-publishing.package.test.ts')).toBe(false);
 });
 

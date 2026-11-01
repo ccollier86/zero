@@ -48,5 +48,8 @@ export const EXCLUSIVE_TEST_FILES = ['packages/payments/src/package.test.ts', 's
   'src/resources/resource-array-overlap-fabric.integration.test.ts',
   // Repeated FULL commits and a complete cold package lifecycle must retain
   // their own original deadlines rather than measuring unrelated sibling I/O.
-  'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts'] as const;
+  'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts',
+  // Managed source boots repeatedly open real logging/content actors. Do not
+  // spend their 10s bind budgets on a neighboring archive install/browser build.
+  'src/blog/content-managed.integration.test.ts'] as const;
 export function isExclusiveTestFile(file: string): boolean { return (EXCLUSIVE_TEST_FILES as readonly string[]).includes(file); }
