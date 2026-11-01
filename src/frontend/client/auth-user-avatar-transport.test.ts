@@ -5,8 +5,10 @@ import { AuthUserAvatarTransport, type UserAvatarRequestScope } from './auth-use
 import { isUserAvatarAsset, isUserAvatarCapabilities, isUserAvatarSnapshot, isUserAvatarStage, isUserPublicAvatarAsset } from './auth-user-avatar-parser';
 import type { UserAvatarAsset, UserAvatarSnapshot, UserAvatarStage } from '../../auth/auth-user-avatar-types';
 import { normalizeAuthUserAvatar } from '../../auth/auth-config-user-avatar';
+import { configureFrontendObservability, type FrontendObservabilityEvent } from './observability';
 const originalFetch = globalThis.fetch, clients: AuthClient[] = [];
-afterEach(() => { for (const client of clients.splice(0)) client.dispose(); globalThis.fetch = originalFetch; });
+afterEach(() => { for (const client of clients.splice(0)) client.dispose(); globalThis.fetch = originalFetch;
+  configureFrontendObservability({ console: false, http: false }); });
 const uuid = '00000000-0000-0000-0000-000000000000';
 function snapshot(): UserAvatarSnapshot { return { userId: 'a', revision: 2, asset: null,
   capabilities: { ...normalizeAuthUserAvatar(true), state: 'ready' } }; }
@@ -28,6 +30,94 @@ function api(fetcher: AuthUserAvatarTransportOptions['authenticatedFetch'], time
     } });
   return { transport, retire() { epoch++; for (const controller of scopes) controller.abort(); } };
 }
+test('accepted avatar commands notify other same-client consumers once, never from a stage, upload or read', async () => {
+  const owner = api(async url => Response.json(url.endsWith('/stages') ? stage()
+    : url.includes('/upload-grants/') ? { uploaded: true } : snapshot()));
+  const first: UserAvatarSnapshot[] = [], second: UserAvatarSnapshot[] = [];
+  const unsubscribe = owner.transport.subscribe(value => { first.push(value); value.userId = 'changed-by-observer'; });
+  owner.transport.subscribe(value => second.push(value));
+  await owner.transport.get();
+  const allocated = await owner.transport.stage(1);
+  await owner.transport.upload(allocated, new Blob(['image'], { type: 'image/webp' }));
+  expect(second).toHaveLength(0);
+  expect((await owner.transport.finalize(allocated)).userId).toBe('a');
+  await Promise.resolve(); expect(second).toEqual([snapshot()]);
+  unsubscribe();
+  await owner.transport.replace(new Blob(['image'], { type: 'image/webp' }), 1);
+  await owner.transport.remove(2); await owner.transport.publish(2); await owner.transport.withdraw(2);
+  await Promise.resolve();
+  expect(first).toHaveLength(1); expect(second).toHaveLength(5);
+  expect(second.every(value => value.userId === 'a')).toBe(true);
+});
+test('avatar observers cannot turn an accepted write into a failure, and retiring the scope stops notifications', async () => {
+  const owner = api(async () => Response.json(snapshot())), received: UserAvatarSnapshot[] = [];
+  owner.transport.subscribe(() => { throw new Error('PRIVATE_AVATAR_SUBSCRIBER_FAILURE'); });
+  owner.transport.subscribe(async () => { throw new Error('PRIVATE_ASYNC_AVATAR_SUBSCRIBER_FAILURE'); });
+  owner.transport.subscribe(value => received.push(value));
+  expect((await owner.transport.remove(1)).revision).toBe(2);
+  await Promise.resolve(); expect(received).toEqual([snapshot()]);
+  let resolve!: (value: Response) => void, started!: () => void;
+  const fetching = new Promise<void>(yes => { started = yes; });
+  const late = api(() => new Promise<Response>(yes => { resolve = yes; started(); }));
+  late.transport.subscribe(value => received.push(value));
+  const pending = late.transport.remove(1).catch(cause => cause);
+  await fetching; late.retire(); resolve(Response.json(snapshot()));
+  expect(await pending).toMatchObject({ name: 'AbortError' });
+  expect(received).toHaveLength(1);
+});
+test('invalid, rejected or unknown avatar mutations never notify a saved picture', async () => {
+  for (const response of [Response.json({ ...snapshot(), userId: 'another-account' }),
+    Response.json({ code: 'AUTH_PROFILE_REVISION_CONFLICT' }, { status: 409 }),
+    Response.json({ code: 'DATABASE_OPERATION_TIMEOUT' }, { status: 503 })]) {
+    const owner = api(async () => response), received: UserAvatarSnapshot[] = [];
+    owner.transport.subscribe(value => received.push(value));
+    await expect(owner.transport.remove(1)).rejects.toBeInstanceOf(Error);
+    expect(received).toHaveLength(0);
+  }
+});
+test('observer diagnostics omit private callback text and retire delayed failures with their account', async () => {
+  const events: FrontendObservabilityEvent[] = [];
+  configureFrontendObservability({ console: false, http: false, sink: { emit(event) { events.push(event); } } });
+  const owner = api(async () => Response.json(snapshot()));
+  let reject!: (cause: unknown) => void;
+  owner.transport.subscribe(() => { throw { code: 'PRIVATE_CALLBACK_TEXT', message: 'PRIVATE_CALLBACK_TEXT' }; });
+  owner.transport.subscribe(() => new Promise<void>((_, no) => { reject = no; }));
+  expect((await owner.transport.remove(1)).revision).toBe(2);
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ code: 'frontend.auth.action_failed', metadata: { action: 'userAvatarSubscriber', code: null } });
+  expect(events[0]!.error).toBeUndefined();
+  expect(JSON.stringify(events)).not.toContain('PRIVATE_CALLBACK_TEXT');
+  owner.retire(); reject(new Error('PRIVATE_RETIRED_CALLBACK_TEXT'));
+  await Promise.resolve(); await Promise.resolve();
+  expect(events).toHaveLength(1);
+});
+test('avatar acceptance stays client-local and retirement/unsubscribe fences queued subscribers', async () => {
+  const first = api(async () => Response.json(snapshot())), second = api(async () => Response.json(snapshot()));
+  let otherClient = 0, removed = 0, retired = 0;
+  second.transport.subscribe(() => { otherClient++; });
+  const unsubscribe = first.transport.subscribe(() => { removed++; }); unsubscribe();
+  first.transport.subscribe(() => first.retire());
+  first.transport.subscribe(() => { retired++; });
+  expect((await first.transport.remove(1)).revision).toBe(2);
+  await Promise.resolve();
+  expect({ otherClient, removed, retired }).toEqual({ otherClient: 0, removed: 0, retired: 0 });
+});
+test('caller cleanup after acceptance does not hide the saved photo from another live consumer', async () => {
+  const user = { userId: 'a', username: 'a', email: 'a@example.test', firstName: null, lastName: null,
+    role: 'member', status: 'active', passwordChangeRequired: false, emailVerifiedAt: null, emailVerificationRequired: false,
+    mfaRequired: false, properties: {}, createdAt: 1, updatedAt: null };
+  globalThis.fetch = (async input => String(input).endsWith('/auth/login')
+    ? Response.json({ user, accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' })
+    : Response.json(snapshot())) as typeof fetch;
+  const auth = new AuthClient('http://avatar-consumer.test'); clients.push(auth);
+  await auth.login('a', 'synthetic-password');
+  const caller = new AbortController(), received: UserAvatarSnapshot[] = [];
+  auth.avatars.subscribe(() => caller.abort());
+  auth.avatars.subscribe(value => received.push(value));
+  expect((await auth.avatars.remove(1, caller.signal)).revision).toBe(2);
+  await Promise.resolve();
+  expect(received).toEqual([snapshot()]);
+});
 import type { AuthUserAvatarTransportOptions } from './auth-user-avatar-transport';
 test('strict avatar metadata accepts private exact paths and rejects malformed, external or public grants', () => {
   expect(isUserAvatarSnapshot(snapshot())).toBe(true); expect(isUserAvatarCapabilities(snapshot().capabilities)).toBe(true);

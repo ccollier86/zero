@@ -42,7 +42,7 @@ export function useUserAvatar(options: UseUserAvatarOptions = {}) {
       const snapshot = await client.userAvatar.get(controller.signal);
       if (controller.signal.aborted || ticket !== sequence.current || !current(key)) return;
       if (snapshot.userId !== (client as InternalClient).auth?.user?.userId) throw new Error('Avatar response belongs to another account.');
-      setState(old => ({ ...old, key, policyKey, snapshot, loading: false, error: null }));
+      setState(old => acceptSnapshot(old, key, policyKey, snapshot));
     } catch (cause) {
       if (controller.signal.aborted || ticket !== sequence.current || !current(key)) return;
       reportAuthClientActionFailure('userAvatar', cause, { codeOnly: true });
@@ -60,7 +60,7 @@ export function useUserAvatar(options: UseUserAvatarOptions = {}) {
       const snapshot = await operation(client.userAvatar, controller.signal);
       if (controller.signal.aborted || !current(key)) throw retiredAvatar();
       if (snapshot.userId !== (client as InternalClient).auth?.user?.userId) throw new Error('Avatar response belongs to another account.');
-      ++sequence.current; setState({ key, policyKey, snapshot, loading: false, saving: false, error: null }); return snapshot;
+      ++sequence.current; setState(old => acceptSnapshot(old, key, policyKey, snapshot, false)); return snapshot;
     } catch (cause) {
       if (controller.signal.aborted || !current(key)) throw retiredAvatar();
       reportAuthClientActionFailure('userAvatar', cause, { codeOnly: true });
@@ -73,6 +73,18 @@ export function useUserAvatar(options: UseUserAvatarOptions = {}) {
   useEffect(() => { mounted.current = true; return () => {
     mounted.current = false; for (const request of requests.current) request.abort(); requests.current.clear();
   }; }, []);
+  useEffect(() => {
+    if (!client || !enabled) return;
+    const key = boundary.key;
+    return client.userAvatar.subscribe(snapshot => {
+      if (!current(key) || snapshot.userId !== (client as InternalClient).auth?.user?.userId
+        || policyKey !== undefined && JSON.stringify(snapshot.capabilities) !== policyKey) return;
+      // Retire an older GET before adopting the already validated server receipt.
+      // This does not perform another mutation, refresh auth or remount the shell.
+      ++sequence.current;
+      setState(old => acceptSnapshot(old, key, policyKey, snapshot));
+    });
+  }, [boundary.key, client, current, enabled, policyKey]);
   useEffect(() => {
     if (enabled) void refresh(); else setState(EMPTY);
     return () => { ++sequence.current; write.current = null; for (const request of requests.current) request.abort(); requests.current.clear(); };
@@ -98,4 +110,12 @@ export function useUserAvatar(options: UseUserAvatarOptions = {}) {
     isSaving: visible.saving, error: visible.error, refresh, mutate };
 }
 export type UseUserAvatarResult = ReturnType<typeof useUserAvatar>;
+/** Late reads/acknowledgments cannot replace a newer accepted photo in the same scope and policy. */
+function acceptSnapshot(old: AvatarState, key: string, policyKey: string | undefined,
+  snapshot: UserAvatarSnapshot, saving = old.key === key && old.policyKey === policyKey && old.saving): AvatarState {
+  if (old.key === key && old.policyKey === policyKey && old.snapshot && old.snapshot.revision > snapshot.revision) {
+    return { ...old, loading: false, saving };
+  }
+  return { key, policyKey, snapshot, loading: false, saving, error: null };
+}
 function retiredAvatar() { return new DOMException('Avatar scope is no longer available.', 'AbortError'); }

@@ -118,6 +118,16 @@ responses and revokes temporary object URLs when retired. Avatar changes adopt
 the shared profile revision without discarding unsaved name/bio edits. The
 server decoder remains authoritative even when the browser sends cropped WebP.
 
+The `fix/avatar-consumer-reactivity` source fix (not the released 2.9.0 archive)
+also updates independent mounted `useUserAvatar()` consumers after an accepted
+upload, replacement, removal or publication change on the same SDK client.
+For example, bind the hook's `imageUrl` to `AppShell`'s `user.avatar`; the shell
+remains presentation-only and does not need to remount or refresh on navigation.
+No additional profile Save or application `onAccepted` refresh callback is
+required. Older in-flight responses cannot replace a newer accepted revision.
+This does not subscribe to changes from other tabs/devices/SDK instances; see
+[the propagation boundary](../../backend/guardian/avatars.md#accepted-changes-across-mounted-consumers).
+
 An independent `AvatarEditor` consumer's `onAccepted` notification does not
 control image persistence. Synchronous throws or rejected returned promises are
 observed with Zero's safe auth-action event while that account remains current;

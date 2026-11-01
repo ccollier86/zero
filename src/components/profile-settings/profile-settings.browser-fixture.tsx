@@ -90,6 +90,7 @@ const verified: string[] = [];
 interface AvatarReceipt { image?: Blob; revision: number; signal?: AbortSignal; previous: UserAvatarSnapshot;
   resolve(value: UserAvatarSnapshot): void; reject(cause: unknown): void }
 const avatarCalls: AvatarReceipt[] = [], avatarDeliveries: { signal?: AbortSignal; id: string }[] = [];
+const avatarListeners = new Set<(snapshot: UserAvatarSnapshot) => void>();
 let avatarBytes: Blob | null = null;
 const contactAction = (action: string, input: Record<string, unknown>, signal?: AbortSignal) => new Promise<UserContactSnapshot>((resolve, reject) => {
   contactCalls.push({ action, input: structuredClone(input), signal, previous: structuredClone(contactSnapshot), resolve, reject });
@@ -118,6 +119,7 @@ const client = { auth, _authorizationDataBoundary: data, presence: {
   cancelChallenge: (input: Record<string, unknown>, signal?: AbortSignal) => contactAction('cancel', input, signal),
   completeEmail: (token: string, signal?: AbortSignal) => new Promise<EmailContactVerificationResult>((resolve, reject) => completions.push({ token, signal, resolve, reject })),
 }, userAvatar: {
+  subscribe(listener: (snapshot: UserAvatarSnapshot) => void) { avatarListeners.add(listener); return () => { avatarListeners.delete(listener); }; },
   async get() { return structuredClone(avatarSnapshot); },
   replace(image: Blob, revision: number, signal?: AbortSignal) {
     return new Promise<UserAvatarSnapshot>((resolve, reject) => avatarCalls.push({ image, revision, signal, previous: structuredClone(avatarSnapshot), resolve, reject }));
@@ -159,6 +161,7 @@ const harness = {
       byteLength: call.image.size, mimeType: 'image/webp', deliveryPath: '/auth/profile/avatar/assets/ava_00000000-0000-0000-0000-000000000000' } : null;
     if (avatarSnapshot.userId === accepted.userId) { avatarSnapshot = structuredClone(accepted); snapshot = { ...snapshot, revision: accepted.revision }; }
     call.resolve(accepted);
+    for (const listener of avatarListeners) listener(structuredClone(accepted));
   },
   rejectAvatar(index: number, conflict = false) { avatarCalls[index]!.reject({ code: conflict ? 'AUTH_PROFILE_REVISION_CONFLICT' : 'AUTH_AVATAR_IMAGE_INVALID', status: conflict ? 409 : 422 }); },
   async setAvatarPolicy(editable: boolean) {

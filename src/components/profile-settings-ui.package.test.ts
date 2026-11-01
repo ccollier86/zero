@@ -206,7 +206,7 @@ const sdk = [
   [auth.profile, ['get', 'update']],
   [auth.contacts, ['get', 'setPhone', 'requestEmailVerification', 'requestEmailChange', 'requestPhoneVerification', 'completePhone', 'cancelChallenge', 'completeEmail']],
   [auth.profileCompletion, ['inspect', 'complete']],
-  [auth.avatars, ['get', 'stage', 'upload', 'finalize', 'replace', 'cancel', 'remove', 'deliver', 'directory']],
+  [auth.avatars, ['get', 'stage', 'upload', 'finalize', 'replace', 'cancel', 'remove', 'deliver', 'directory', 'subscribe']],
 ].every(([api, methods]) => methods.every(name => typeof api[name] === 'function'));
 auth.dispose();
 const base = './node_modules/@zero/framework/';
@@ -297,5 +297,8 @@ export function ownedApis(client: Client) {
   const completion: Client['userProfileCompletion'] = client.userProfileCompletion;
   const presence: Client['presence'] = client.presence;
   return { ownProfile, ownContacts, ownAvatar, completion, presence };
+}
+export function observeOwnAvatar(client: Client, listener: (snapshot: UserAvatarSnapshot) => void): () => void {
+  return client.userAvatar.subscribe(listener);
 }
 `;

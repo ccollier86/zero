@@ -3,6 +3,7 @@ import type { UserAvatarAsset, UserAvatarSnapshot, UserAvatarStage } from '../..
 import { AuthClientError, createAuthClientError } from './auth-errors';
 import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
 import { isUserAvatarAsset, isUserAvatarDirectoryEntry, isUserAvatarSnapshot, isUserAvatarStage } from './auth-user-avatar-parser';
+import { reportAuthClientActionFailure } from './auth-action-observability';
 
 export interface UserAvatarRequestScope { readonly userId: string; readonly signal: AbortSignal; assertCurrent(): void }
 export interface AuthUserAvatarTransportOptions {
@@ -15,13 +16,18 @@ export interface AuthUserAvatarTransportOptions {
 /** Exact public avatar routes. Stages are receipt-bearing capabilities bound to the browser scope that allocated them. */
 export class AuthUserAvatarTransport {
   private readonly stages = new WeakMap<UserAvatarStage, { assertCurrent(): void; deadline: number }>();
+  private readonly listeners = new Set<(snapshot: UserAvatarSnapshot) => void>();
   constructor(private readonly options: AuthUserAvatarTransportOptions) {}
+  /** Observe acknowledged own-avatar commands on this SDK client only; unsubscribe on retirement. No bytes or receipt proofs are broadcast. */
+  subscribe(listener: (snapshot: UserAvatarSnapshot) => void): () => void {
+    this.listeners.add(listener); return () => { this.listeners.delete(listener); };
+  }
   get(signal?: AbortSignal) { return this.options.runScoped(scope => this.snapshot('', { signal: scope.signal }, scope), signal); }
   publish(expectedRevision: number, signal?: AbortSignal) {
-    return this.options.runScoped(scope => this.snapshot('/publication', this.body('POST', { expectedRevision }, scope.signal), scope), signal);
+    return this.mutation(scope => this.snapshot('/publication', this.body('POST', { expectedRevision }, scope.signal), scope), signal);
   }
   withdraw(expectedRevision: number, signal?: AbortSignal) {
-    return this.options.runScoped(scope => this.snapshot('/publication', this.body('DELETE', { expectedRevision }, scope.signal), scope), signal);
+    return this.mutation(scope => this.snapshot('/publication', this.body('DELETE', { expectedRevision }, scope.signal), scope), signal);
   }
   directory(userId: string, signal?: AbortSignal) {
     return this.options.runScoped(async scope => {
@@ -38,7 +44,7 @@ export class AuthUserAvatarTransport {
     return this.options.runScoped(scope => this.uploadImage(stage, image, scope), signal);
   }
   finalize(stage: UserAvatarStage, signal?: AbortSignal) {
-    return this.options.runScoped(scope => this.commit(stage, scope), signal);
+    return this.mutation(scope => this.commit(stage, scope), signal);
   }
   cancel(stage: UserAvatarStage, signal?: AbortSignal): Promise<void> {
     return this.options.runScoped(async scope => {
@@ -48,11 +54,11 @@ export class AuthUserAvatarTransport {
     }, signal);
   }
   remove(expectedRevision: number, signal?: AbortSignal) {
-    return this.options.runScoped(scope => this.snapshot('', this.body('DELETE', { expectedRevision }, scope.signal), scope), signal);
+    return this.mutation(scope => this.snapshot('', this.body('DELETE', { expectedRevision }, scope.signal), scope), signal);
   }
   /** Allocate, upload and finalize under one unchanged identity. No optimistic receipt becomes a saved avatar. */
   replace(image: Blob, expectedRevision: number, signal?: AbortSignal): Promise<UserAvatarSnapshot> {
-    return this.options.runScoped(async scope => {
+    return this.mutation(async scope => {
       const stage = await this.allocate(expectedRevision, scope); scope.assertCurrent();
       await this.uploadImage(stage, image, scope); scope.assertCurrent();
       return this.commit(stage, scope);
@@ -109,6 +115,33 @@ export class AuthUserAvatarTransport {
   private async commit(stage: UserAvatarStage, scope: UserAvatarRequestScope) {
     this.assertStage(stage, scope);
     return this.snapshot(`/stages/${stage.id}/finalize`, this.body('POST', { receipt: stage.receipt }, scope.signal), scope);
+  }
+  /** Publish only after the complete scoped command is accepted, never while upload/finalize or identity validation is pending. */
+  private async mutation(operation: (scope: UserAvatarRequestScope) => Promise<UserAvatarSnapshot>, signal?: AbortSignal): Promise<UserAvatarSnapshot> {
+    let captured!: UserAvatarRequestScope;
+    const snapshot = await this.options.runScoped(scope => { captured = scope; return operation(scope); }, signal);
+    const assertCurrent = () => { captured.assertCurrent(); captured.signal.throwIfAborted(); };
+    assertCurrent();
+    // Notification failures cannot undo a committed picture or turn its receipt
+    // into an unknown/failed mutation. Each observer owns an independent copy.
+    queueMicrotask(() => this.notify(snapshot, assertCurrent));
+    return snapshot;
+  }
+  private notify(snapshot: UserAvatarSnapshot, assertCurrent: () => void): void {
+    const current = () => { try { assertCurrent(); return true; } catch { return false; } };
+    const failed = () => {
+      if (!current()) return;
+      // Application callbacks can put private values in their message or code.
+      // Report the stable platform action, not arbitrary callback-owned fields.
+      try { reportAuthClientActionFailure('userAvatarSubscriber', undefined, { codeOnly: true }); }
+      catch { /* A faulty diagnostics sink also cannot reject an already accepted command. */ }
+    };
+    for (const listener of [...this.listeners]) {
+      if (!current()) return;
+      if (!this.listeners.has(listener)) continue;
+      try { void Promise.resolve(listener(structuredClone(snapshot))).catch(failed); }
+      catch { failed(); }
+    }
   }
   private assertStage(stage: UserAvatarStage, scope: UserAvatarRequestScope, checkExpiry = true) {
     scope.assertCurrent(); scope.signal.throwIfAborted();

@@ -107,6 +107,45 @@ writer fence. This is separate from the profile CAS and session-revocation check
 configuration A→B→A does not reactivate the original A service. A policy-retirement
 error requires the current runtime, not a forced retry against the old instance.
 
+## Accepted Changes Across Mounted Consumers
+
+The additive fix on `fix/avatar-consumer-reactivity` is not included in the
+released 2.9.0 archive. It connects acknowledged avatar commands to independent
+mounted consumers of the same SDK client; it does not change the database
+schema or weaken private delivery.
+
+`useUserAvatar()` observes accepted `finalize`, `replace`, `remove`, `publish`
+and `withdraw` results automatically. An editor and a persistent sidebar can
+therefore have independent hooks without an `onAccepted` refresh bridge, a
+second profile Save, navigation or remounting. Late lower-revision reads or
+acknowledgments cannot restore an older photo in the same scope and policy.
+
+Non-React SDK consumers can subscribe explicitly:
+
+```ts
+const unsubscribe = client.userAvatar.subscribe(snapshot => {
+  // Validated own-account metadata; use deliver() for private image bytes.
+  updateAvatarSummary(snapshot);
+});
+// Dispose with the consumer; this is not an initial-value or replay API.
+unsubscribe();
+```
+
+`client.auth.avatars` is the same transport. Each listener receives its own
+snapshot copy, never image bytes, upload grants or receipt proofs. Reads,
+staging, upload progress, cancellation and failed/unknown commands do not emit
+a saved-photo notification. Subscriber exceptions are observed safely without
+turning an accepted write into a failed operation. Notifications are fenced to
+the originating current authorization scope; hooks also check the live account
+and any supplied capability key before adopting metadata and retrieving private
+bytes.
+
+This is same-client command propagation, not a new cross-tab, cross-device or
+server-push subscription. Changes made through another SDK instance still need
+an authenticated `refresh()`/`get()` in that consumer. No periodic polling or
+generic Sync access to private SYSTEM avatar tables is introduced. Each hook
+continues owning and revoking its own temporary image URL.
+
 ## Private Delivery And Directory
 
 Snapshots contain an authenticated `deliveryPath`, not a public blob URL.

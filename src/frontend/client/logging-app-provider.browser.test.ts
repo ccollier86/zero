@@ -11,11 +11,13 @@ import sharp from 'sharp';
 import { buildBrowserFixture } from '../../test-support/build-browser-fixture';
 import { buildPlatformStyles } from '../server/style-bundle';
 import type { LoggingHealth } from '../../logging/logging-api-contracts';
+import type { AuthUserAvatarTransport } from './auth-user-avatar-transport';
 
 (playwrightTestBrowserAvailable ? test : test.skip)('AppProvider masks protected UI when delivery is blocked, retries, and recovers cookie-only SSR without a reload loop', async () => {
   const root = await mkdtemp(join(tmpdir(), 'logging-provider-browser-'));
   let app: Awaited<ReturnType<typeof createApp>> | undefined, services: ServerRouteServices | undefined;
   let blocked = true, partialAcknowledgment = false, acknowledgments = 0, documents = 0;
+  let releaseAvatarRead = () => {};
   const lease = await acquirePlaywrightTestBrowser(), context = await lease.browser.newContext();
   try {
     await mkdir(join(root, 'app'));
@@ -79,6 +81,25 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
     // Qualify the current logging people's private photos through the native
     // profile UI, Storage stage/grant/upload/finalize and authorized delivery.
     // No directory/photo adapter or directly minted session is substituted.
+    const shellInstance = await page.getByTestId('native-avatar-shell').getAttribute('data-instance');
+    const beforeAvatarDocuments = documents;
+    expect(await page.locator('[data-slot="sidebar-footer"] img').count()).toBe(0);
+    // Hold a real pre-change snapshot. Its eventual response must not replace
+    // the newer acknowledged picture in the independent persistent footer.
+    let holdAvatarRead = true, capturedAvatarRead!: () => void;
+    const captured = new Promise<void>(resolve => { capturedAvatarRead = resolve; });
+    const retiredRead = new Promise<void>(resolve => { releaseAvatarRead = resolve; });
+    await page.route('**/auth/profile/avatar', async route => {
+      if (!holdAvatarRead || route.request().method() !== 'GET') { await route.continue(); return; }
+      holdAvatarRead = false;
+      const response = await route.fetch(); capturedAvatarRead(); await retiredRead;
+      await route.fulfill({ response });
+    });
+    await page.evaluate(() => {
+      const fixture = window as unknown as { __refreshNativeSidebarAvatar(): Promise<void>; __heldAvatarRead?: Promise<void> };
+      fixture.__heldAvatarRead = fixture.__refreshNativeSidebarAvatar();
+    });
+    await captured;
     await page.getByRole('button', { name: 'Show profile', exact: true }).click();
     await page.getByRole('button', { name: 'Upload photo', exact: true }).click().catch(async error => {
       const readiness = await page.evaluate(() => (window as unknown as { __loggingNativeReadiness(): Promise<unknown> }).__loggingNativeReadiness());
@@ -90,6 +111,39 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.reactEasyCrop_Image')?.naturalWidth === 160);
     await crop.getByRole('button', { name: 'Save picture', exact: true }).click(); await crop.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-slot="avatar-editor"] img')?.naturalWidth === 64);
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-slot="sidebar-footer"] img')?.naturalWidth === 64,
+      undefined, { timeout: 2500 });
+    expect(await page.getByTestId('native-avatar-shell').getAttribute('data-instance')).toBe(shellInstance);
+    expect(documents).toBe(beforeAvatarDocuments);
+    const originalPhoto = await page.locator('[data-slot="sidebar-footer"] img').getAttribute('src');
+    releaseAvatarRead();
+    await page.evaluate(() => (window as unknown as { __heldAvatarRead: Promise<void> }).__heldAvatarRead);
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    expect(await page.locator('[data-slot="sidebar-footer"] img').getAttribute('src')).toBe(originalPhoto);
+    // Direct facade callers get the same cross-consumer propagation as the
+    // editor. Replacing/removing never requires another profile Save action.
+    await page.evaluate(async bytes => {
+      const avatar = (window as unknown as { __loggingNativeAvatar(): AuthUserAvatarTransport }).__loggingNativeAvatar();
+      await avatar.replace(new Blob([Uint8Array.from(bytes)], { type: 'image/png' }), (await avatar.get()).revision);
+    }, [...image]);
+    await page.waitForFunction(previous => {
+      const image = document.querySelector<HTMLImageElement>('[data-slot="sidebar-footer"] img');
+      return image?.naturalWidth === 64 && image.getAttribute('src') !== previous;
+    }, originalPhoto, { timeout: 2500 });
+    await page.evaluate(async () => {
+      const avatar = (window as unknown as { __loggingNativeAvatar(): AuthUserAvatarTransport }).__loggingNativeAvatar();
+      await avatar.remove((await avatar.get()).revision);
+    });
+    await page.waitForFunction(() => !document.querySelector('[data-slot="sidebar-footer"] img'), undefined, { timeout: 2500 });
+    await page.waitForFunction(() => !document.querySelector('[data-slot="avatar-editor"] img'), undefined, { timeout: 2500 });
+    await page.evaluate(async bytes => {
+      const avatar = (window as unknown as { __loggingNativeAvatar(): AuthUserAvatarTransport }).__loggingNativeAvatar();
+      await avatar.replace(new Blob([Uint8Array.from(bytes)], { type: 'image/png' }), (await avatar.get()).revision);
+    }, [...image]);
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-slot="sidebar-footer"] img')?.naturalWidth === 64,
+      undefined, { timeout: 2500 });
+    expect(await page.getByTestId('native-avatar-shell').getAttribute('data-instance')).toBe(shellInstance);
+    expect(documents).toBe(beforeAvatarDocuments);
     await page.getByRole('button', { name: 'Show audit', exact: true }).click();
     await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-slot="logging-workspace"] img')].some(image => image.currentSrc.startsWith('blob:') && image.naturalWidth === 64));
     expect(await page.locator('[data-slot="logging-workspace"]').textContent()).toContain('logging-browser-owner');
@@ -107,5 +161,5 @@ import type { LoggingHealth } from '../../logging/logging-api-contracts';
     expect(errors).toEqual([]);
     const events = await services!.logging!.page('audit', { kind: 'platform' });
     expect(JSON.stringify(events)).not.toMatch(/Fixture-password|logging-browser-owner@example/);
-  } finally { await context.close(); lease.release(); await app?.stop(true); await rm(root, { recursive: true, force: true }); }
+  } finally { releaseAvatarRead(); await context.close(); lease.release(); await app?.stop(true); await rm(root, { recursive: true, force: true }); }
 }, 60000);
