@@ -62,6 +62,34 @@ durability or fixture cleanup. SignaturePad adds payload-free lifecycle phase
 timings. A new committed candidate must repeat the complete clean gates and
 all checks not reached by the stopped attempt before stable selection changes.
 
+### Active settings-surface acceptance
+
+Candidate `3bd80544f7106c2aea3d686972f5320502ac7115`, archive SHA-256
+`b6b7371a898a0e7d643ee6809ece8489124742d1691f75be0a5c1bfb648babd7`,
+passed its fresh types, documentation and complete package phase. Its first
+full execution session disappeared without a final summary; that partial
+output remains explicitly unqualified. The subsequent full attempt timed out
+clicking **Save conversation name** in the long native browser flow. It was
+stopped with 884 passed files, one failed file, four cancelled files and 507
+not run. These are not two successful full sweeps.
+
+The unchanged native flow passed alone and in two deliberate browser/package
+overlap diagnostics. Bounded, synthetic-only DOM flags and route/status
+observations were used for diagnosis, never credentials or response bodies.
+An inferred generic focus-restoration defect was not reproduced; the shared
+Popover implementation is unchanged. The acceptance flow now awaits actual
+retirement of its prior start portal and edits only the open settings surface,
+not a globally queried control in an animated departing tree. No timeout,
+rename operation, assertion or cleanup step is removed or relaxed. Separate
+browser regressions cover both overlapping and post-removal sibling-surface
+focus handoffs and passed against the unchanged component.
+
+Evidence is retained under the `qualified-3bd8054/` child of the release
+evidence root, including the stopped attempts and explicit overlap diagnostics.
+That directory name is historical, not a claim that 3bd8054 passed release
+qualification. A new committed candidate must repeat the entire clean gate;
+no consuming app, production data or saved stable selection was changed.
+
 ## Destination Origin And Open Retry Corrections (2026-10-31)
 
 A further native review of `3f465761221881f17de017529b2a1002c880ce05`

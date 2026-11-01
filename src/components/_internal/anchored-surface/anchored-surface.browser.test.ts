@@ -47,6 +47,36 @@ async function settle(page: Page, id: string) {
   });
 }
 
+browserTest('a departing popover cannot reclaim focus or close a newer sibling surface', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => (window as any).__anchoredSurface.overrides({ '--zero-popover-exit-duration': '500ms' }));
+    const before = await show(page); await settle(page, 'anchor-content');
+    await page.getByRole('textbox', { name: 'Anchored draft', exact: true }).fill('Original draft');
+    await page.evaluate(() => (window as any).__anchoredSurface.handoff());
+    const input = page.getByRole('textbox', { name: 'Owned draft', exact: true });
+    await input.fill('Newer draft');
+    await before.waitFor({ state: 'detached' });
+    expect(await input.isVisible()).toBe(true);
+    expect(await input.inputValue()).toBe('Newer draft');
+    expect(await input.evaluate(element => element.ownerDocument.activeElement === element)).toBe(true);
+  } finally { await page.close(); }
+}, 15000);
+
+browserTest('a removed popover cannot reclaim focus during its deferred close autofocus after a successor opens', async () => {
+  const page = await mount(true);
+  try {
+    const old = await show(page); await settle(page, 'anchor-content');
+    await page.getByRole('textbox', { name: 'Anchored draft', exact: true }).fill('Original draft');
+    await page.evaluate(() => (window as any).__anchoredSurface.handoffAfterExit());
+    await old.waitFor({ state: 'detached' });
+    const input = page.getByRole('textbox', { name: 'Owned draft', exact: true });
+    await input.fill('Successor draft');
+    expect(await input.isVisible()).toBe(true);
+    expect(await input.evaluate(element => element.ownerDocument.activeElement === element)).toBe(true);
+  } finally { await page.close(); }
+}, 15000);
+
 browserTest('Popover grows from the actual collision-resolved side, stays in bounds and uses restrained reference geometry', async () => {
   const page = await mount();
   try {

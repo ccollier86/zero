@@ -459,10 +459,14 @@ browserTest('default AppProvider workspace loads real identities, retains rows o
     await start.getByRole('button', { name: 'workspace-other', exact: true }).click();
     await start.getByRole('textbox', { name: 'Group name', exact: true }).fill('Native browser group');
     await start.getByRole('button', { name: 'Start group (2)', exact: true }).click();
+    // Acceptance of the group and retirement of the previous input surface are
+    // separate milestones. Never type into a departing animated portal.
+    await start.waitFor({ state: 'detached' });
     await page.locator('.zero-messaging-conversation-header').getByRole('heading', { name: 'Native browser group', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Conversation options', exact: true }).click();
-    await page.getByRole('textbox', { name: 'Conversation name', exact: true }).fill('Native renamed group');
-    await page.getByRole('button', { name: 'Save conversation name', exact: true }).click();
+    const settings = page.locator('[data-slot="popover-content"][data-state="open"][aria-label="Conversation settings"]');
+    await settings.getByRole('textbox', { name: 'Conversation name', exact: true }).fill('Native renamed group');
+    await settings.getByRole('button', { name: 'Save conversation name', exact: true }).click();
     await page.locator('.zero-messaging-conversation-header').getByRole('heading', { name: 'Native renamed group', exact: true }).waitFor();
     await page.screenshot({ path: join(evidence, 'native-group-settings.png'), fullPage: true });
     const otherMember = page.locator(`[data-participant-id="${f.other.user.userId}"]`);

@@ -1,6 +1,7 @@
 /** Synthetic anchored positioning, source-theme and owned-menu contracts; no application or service boot. */
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { Popover, PopoverTrigger, PopoverContent, PopoverClose } from '../../surfaces/popover/popover';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from '../../animate-ui/components/radix/dropdown-menu';
@@ -15,6 +16,7 @@ const refs = { trigger: null as HTMLButtonElement | null, content: null as HTMLD
   triggerMounts: 0, contentMounts: 0 };
 let configure!: (config: Partial<Configuration>) => void, setOpen!: (open: boolean) => void;
 let setOwnerActive!: (active: boolean) => void, setOverrides!: (style: React.CSSProperties) => void;
+let handoff!: () => void, handoffAfterExit!: () => void;
 
 function OwnedMenu({ context, kind }: { context: ModalContext; kind: 'parent' | 'child' }) {
   return <>
@@ -39,6 +41,18 @@ function Fixture() {
   const [draft, setDraft] = React.useState('unchanged');
   configure = next => setConfig(previous => ({ ...previous, ...next })); setOpen = changeOpen;
   setOwnerActive = changeActive; setOverrides = changeOverrides;
+  handoff = () => { changeOpen(false); changeOwnedOpen(true); };
+  handoffAfterExit = () => {
+    const old = refs.content;
+    if (!old) throw new Error('The synthetic departing surface must be mounted.');
+    const observer = new MutationObserver(() => {
+      if (old.isConnected) return;
+      observer.disconnect();
+      flushSync(() => changeOwnedOpen(true));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    changeOpen(false);
+  };
   const triggerRef = React.useCallback((element: HTMLButtonElement | null) => {
     refs.trigger = element; if (element) refs.triggerMounts += 1;
   }, []);
@@ -81,6 +95,8 @@ createRoot(document.getElementById('root')!).render(<Fixture />);
 Object.assign(window, { __anchoredSurface: {
   configure: (config: Partial<Configuration>) => configure(config), open: (open: boolean) => setOpen(open),
   active: (active: boolean) => setOwnerActive(active), overrides: (style: React.CSSProperties) => setOverrides(style),
+  handoff: () => handoff(),
+  handoffAfterExit: () => handoffAfterExit(),
   changes: () => [...changes], refs: () => ({ triggerMounts: refs.triggerMounts, contentMounts: refs.contentMounts,
     triggerMatches: refs.trigger === document.querySelector('[data-testid="anchor-trigger"]'),
     contentMatches: refs.content === document.querySelector('[data-testid="anchor-content"]') }),
