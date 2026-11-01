@@ -13,7 +13,7 @@ modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
   version: "2.10.0"
-  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
+  commit: "417af8dedfa1e3a219e4e6c2befca2cbd7b807c3"
   snapshot: clean
   date: "2026-11-01"
   evidence_level: implementation-verified
@@ -157,7 +157,10 @@ Old fields are masked while the authorization boundary is unready. A temporary
 config refresh failure blocks saves but retains the exact account's draft for
 an explicit successful Retry; it does not turn unknown policy into permission.
 
-An uncertain response blocks further writes. **Check saved settings** performs
+An uncertain response blocks further writes, including when a concurrent field
+policy refresh or temporary config outage has retired the remaining queued
+fields. Recovering that same account's configuration does not clear uncertainty.
+**Check saved settings** performs
 a guarded read only; it never retries the mutation or claims the original
 request was confirmed. The current state can be reviewed before another
 explicit Save. A changed value after a read is not an operation receipt.

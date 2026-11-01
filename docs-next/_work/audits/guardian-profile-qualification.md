@@ -1162,3 +1162,25 @@ The next exact clean archive must still pass its complete newly expanded
 inventory, installed Chromium account/avatar sequence, bundled Linux/amd64
 private actors, retained-state updater and normal selected-update gates. Main
 and the selected 2.9.0 archive remain unchanged until those gates complete.
+
+### Policy-refresh uncertainty follow-up
+
+Review of checkpoint `254f9c6` identified one further lifecycle distinction:
+retiring the remaining queued fields on a configuration/schema change must not
+forget the unknown result of a write that was already dispatched for the same
+account/client/authority. The new Chromium regression fails against that
+checkpoint because the explicit reconciliation action is missing after a
+committed-but-unknown response. Its private package qualification was interrupted
+and marked superseded, not qualified; neither main nor stable selection changed.
+
+Checkpoint `417af8dedfa1e3a219e4e6c2befca2cbd7b807c3` retains that uncertainty
+across a same-owner schema refresh or temporary configuration failure, while
+still ignoring late work after real account/client/authorization replacement
+or unmount. No queued fields continue and no success callback is invented.
+Both new actual-browser regressions pass, as do all previous cases: 18 browser
+cases, zero failures, 92 browser assertions, plus four draft-model cases through
+the canonical two-file runner in 5,732ms. Evidence:
+`own-account-preflight-20261101/policy-refresh-reproduction.json`.
+This remains focused implementation evidence. The replacement committed archive
+must pass installed native acceptance and the entire release sequence before it
+can become an update target.
