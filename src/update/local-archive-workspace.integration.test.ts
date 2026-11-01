@@ -1,6 +1,6 @@
 /** Real Bun regressions for saved archives, matching root overrides and unchanged workspace peers. */
 
-import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'bun:test';
 
@@ -141,6 +141,47 @@ for (const failureStage of ['staged-install', 'canonical-manifest', 'verificatio
     } finally {
       await rm(fixture.rootDir, { recursive: true, force: true });
     }
+  }, 120_000);
+}
+
+for (const tampering of ['extra-file', 'changed-file', 'missing-file', 'marker-directory', 'marker-symlink', 'marker-oversized', 'marker-prefix', 'nested-marker'] as const) {
+  test(`real archive verification still rejects ${tampering} and restores the prior package`, async () => {
+    const fixture = await createFixture(true);
+    try {
+      const root = join(fixture.appDir, 'node_modules/@zero/framework');
+      const marker = join(root, '.bun-tag'), outside = join(fixture.rootDir, 'outside-marker-target');
+      await Bun.write(outside, 'must-not-change');
+      const lockBefore = await Bun.file(join(fixture.appDir, 'bun.lock')).text();
+      const archiveBefore = await Bun.file(join(fixture.appDir, '.zero/framework/zero-framework.tgz')).bytes();
+      let commands = 0;
+      const failure = await updateZeroProject({ projectDir: fixture.appDir, mode: 'local', localFrameworkDir: fixture.sourceDir }, {
+        runCommand: async (argv, options) => {
+          const result = await fixture.bun.runCommand(argv, options);
+          if (++commands !== 2 || result.exitCode !== 0) return result;
+          if (tampering === 'extra-file') await Bun.write(join(root, 'unexpected.js'), 'unadmitted code');
+          else if (tampering === 'changed-file') await Bun.write(join(root, 'index.js'), 'tampered code');
+          else if (tampering === 'missing-file') await rm(join(root, 'index.js'));
+          else if (tampering === 'marker-prefix') await Bun.write(join(root, '.bun-tag-extra'), 'not an admitted marker');
+          else if (tampering === 'nested-marker') {
+            await mkdir(join(root, 'nested')); await Bun.write(join(root, 'nested/.bun-tag'), 'not root metadata');
+          } else if (tampering === 'marker-oversized') await Bun.write(marker, 'x'.repeat(4_097));
+          else {
+            await rm(marker, { force: true });
+            if (tampering === 'marker-directory') await mkdir(marker);
+            else await symlink(outside, marker);
+          }
+          return result;
+        },
+      }).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ZeroUpdateError);
+      expect((failure as ZeroUpdateError).rollbackSucceeded).toBe(true);
+      await assertAppPreserved(fixture);
+      expect(await installedVersion(fixture.appDir)).toBe(fixture.oldVersion);
+      expect(await readFixtureFrameworkFiles(fixture.appDir)).toEqual(fixture.installedFilesBefore);
+      expect(await Bun.file(join(fixture.appDir, 'bun.lock')).text()).toBe(lockBefore);
+      expect(await Bun.file(join(fixture.appDir, '.zero/framework/zero-framework.tgz')).bytes()).toEqual(archiveBefore);
+      expect(await Bun.file(outside).text()).toBe('must-not-change');
+    } finally { await rm(fixture.rootDir, { recursive: true, force: true }); }
   }, 120_000);
 }
 

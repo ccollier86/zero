@@ -975,3 +975,31 @@ migration contracts. TypeScript passes in
 `avatar-bun-1.4.4-types.log`. The current final complete inventory, exact archive,
 installed Linux browser and updater qualification must still be repeated with
 the new committed minimum. Neither earlier 1.4.0 candidate is an update target.
+
+### Bun 1.4 installed archive metadata compatibility
+
+Exact candidate `52423a2` passes its frozen install and clean TypeScript gate,
+but its package gate correctly fails native archive-updater fixtures: Bun 1.4.4
+adds a root `.bun-tag` cache marker, while the old verifier and independent
+fixture oracle treat it as an extra package-owned file. The failed package
+gate is retained under `release-2.10.0/candidate-52423a2/`; the complete source
+inventory and later deployment gates did **not** run. That archive must not be
+selected for updates.
+
+The repair distinguishes only that exact, bounded, regular root metadata file.
+It never trusts its contents for integrity. Reserved marker paths in an archive
+are rejected; all package-owned names and bytes still must match, and unexpected
+prefix/nested markers, links, directories, special/oversize entries remain
+invalid. Real native update/rollback checks reject eight tampering shapes and
+restore the previous package, exact app/peer manifests, lock and managed archive,
+without modifying the outside sentinel or app data. Metadata unit tests and both
+ordinary native archive/workspace suites pass in
+`bun-1.4.4-updater-metadata-reviewed.*`. These targeted passes qualify the repair,
+not the earlier failed candidate or the forthcoming complete release gates.
+
+The complete working-source `test:package` preflight then passes in
+`bun-1.4.4-metadata-package-reviewed.*`, including the real installed Fabric
+gateway/actors, Cascader, SignaturePad and grouped-menu consumers. Updated
+TypeScript passes in `bun-1.4.4-updater-metadata-types.log`. A new exact committed
+candidate must repeat the clean complete release sequence; the failed `52423a2`
+archive is not relabeled as qualified.

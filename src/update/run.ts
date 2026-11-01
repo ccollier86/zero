@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { assertSupportedBunRuntime } from '../runtime/bun-runtime';
+import { assertBunInstallTag, BUN_INSTALL_TAG_NAME } from './bun-install-metadata';
 
 import {
   LOCAL_FRAMEWORK_DEPENDENCY,
@@ -1028,7 +1029,7 @@ async function assertInstalledMatchesArchive(archivePath: string, projectDir: st
         `[zero update] Packed framework contains an unsafe archive path: ${archiveName}`
       );
     }
-    if (components[0] === 'node_modules') {
+    if (components[0] === 'node_modules' || components[0] === BUN_INSTALL_TAG_NAME) {
       throw new ZeroUpdateError(
         `[zero update] Packed framework contains a package-manager-owned path: ${archiveName}`
       );
@@ -1092,6 +1093,10 @@ async function listInstalledPackageFiles(
         throw new ZeroUpdateError(
           `[zero update] Refusing symlink inside installed framework package: ${path}`
         );
+      }
+      if (directory === installedRoot && entry.name === BUN_INSTALL_TAG_NAME) {
+        await assertBunInstallTag(path);
+        continue;
       }
       if (entry.isDirectory()) {
         await visit(path);

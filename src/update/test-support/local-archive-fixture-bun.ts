@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import { expect } from 'bun:test';
 import type { ZeroUpdateDependencies } from '../run';
+import { assertBunInstallTag, BUN_INSTALL_TAG_NAME } from '../bun-install-metadata';
 
 export interface LocalArchiveFixtureBun {
   run(cwd: string, args: string[]): Promise<void>;
@@ -38,7 +39,9 @@ export function createLocalArchiveFixtureBun(rootDir: string): LocalArchiveFixtu
 /** These generated framework packages contain only flat package.json/index.js files. */
 export async function readFixtureFrameworkFiles(appDir: string): Promise<Record<string, string>> {
   const packageDir = join(appDir, 'node_modules', '@zero', 'framework');
-  const names = (await readdir(packageDir)).filter((name) => name !== 'node_modules').sort();
+  const entries = await readdir(packageDir);
+  if (entries.includes(BUN_INSTALL_TAG_NAME)) await assertBunInstallTag(join(packageDir, BUN_INSTALL_TAG_NAME));
+  const names = entries.filter((name) => name !== 'node_modules' && name !== BUN_INSTALL_TAG_NAME).sort();
   return Object.fromEntries(await Promise.all(names.map(async (name) =>
     [name, new Bun.CryptoHasher('sha256').update(await Bun.file(join(packageDir, name)).bytes()).digest('hex')] as const)));
 }

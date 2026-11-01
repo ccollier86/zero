@@ -32,6 +32,10 @@ publication.
 - Keep update/new/check subprocesses on the executing validated Bun binary.
   Generated apps declare the matching engine requirement. Update host, CI and
   Docker Bun and rebuild compiled executables, whose runtime is embedded.
+- Admit only Bun's bounded, regular root `.bun-tag` installation marker as
+  package-manager metadata. Exact archive file/content verification remains;
+  archived reserved metadata, extra code, altered/missing files, marker links,
+  directories and oversize markers are rejected with tested prior-state rollback.
 - Align the test-only one-button sign-in fixture with native LoginForm's
   loading/authorization boundary. Its existing audit-failure/recovery and
   avatar assertions remain unchanged; production account guards are not relaxed.

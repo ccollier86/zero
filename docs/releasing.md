@@ -359,6 +359,15 @@ stage. This does not claim that Bun's general shared local-archive extraction
 cache behavior is fixed; parallel synthetic archive fixtures use independent,
 retained package caches so their baselines cannot select each other's payloads.
 
+Bun 1.4 writes a root `.bun-tag` installation marker. Only that exact bounded
+regular file is package-manager-owned metadata, alongside the existing nested
+dependency directory; it is not proof of package integrity. The verifier still
+compares the complete archive-owned file set and every byte. Framework archives
+cannot claim the reserved marker path. Marker links, directories, special or
+oversize files, similarly prefixed files and unexpected nested markers are not
+ignored. Qualify both successful native installation and rejected tampering with
+exact previous-package/manifest/lock/archive restoration.
+
 The updater must not delete or regenerate the whole app lockfile, broadly
 re-resolve unrelated dependencies, or require operators to remove
 `node_modules`, `bun.lock`, or the managed cache first. It must directly manage
