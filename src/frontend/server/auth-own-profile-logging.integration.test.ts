@@ -189,6 +189,6 @@ test('managed compliance: a persistent Sync reader survives ordinary own metadat
     f.services.auth.store!.setProperty(user.user.userId, 'plan', 'trusted-change');
     socket.send(JSON.stringify(subscribe));
     await until(() => closed !== null);
-    expect(closed).toEqual({ code: 4001, reason: 'Sync access changed' });
+    expect<{ code: number; reason: string } | null>(closed).toEqual({ code: 4001, reason: 'Sync access changed' });
   } finally { socket?.close(); await f.close(); }
 }, 30000);
