@@ -39,6 +39,29 @@ the version heading or this release branch does not establish publication.
 The source/local channel does not constitute npm publication, a wider platform
 matrix, a production migration or deployment of an existing app.
 
+### Retained qualification attempt and test admission
+
+The first clean 2.9.0 candidate was
+`42044d8262e79862ec4255a6a7d17ff7e983f6a4`, archive SHA-256
+`1cda301be00a6a56cee928ad9a83cf91c7c5c03ccce2bb4ffc0c596b65357374`.
+Its standalone package phase passed, but the complete run timed out the
+30s private-control case in `logging-fabric.integration.test.ts` and the
+120s complete SignaturePad consumer lifecycle. That attempt was stopped after
+the failures: its retained summary records 1,386 passed files, two failed
+files, one cancelled file and seven not run. It is not a passing full sweep.
+
+Both original files then passed without source changes when admitted alone.
+The logging file passed all 12 tests; its 256 separate FULL commits and restart
+case took 3,021ms. SignaturePad passed its assertions and awaited cleanup in
+57,689ms. These diagnostics support a sibling-load admission correction; they
+are not a replacement for full qualification or a production speed claim.
+The exact logs remain beside the failed attempt under the release evidence
+root. The two files now use the runner's existing exclusive-window catalog,
+without changing inventories, production concurrency, assertions, deadlines,
+durability or fixture cleanup. SignaturePad adds payload-free lifecycle phase
+timings. A new committed candidate must repeat the complete clean gates and
+all checks not reached by the stopped attempt before stable selection changes.
+
 ## Destination Origin And Open Retry Corrections (2026-10-31)
 
 A further native review of `3f465761221881f17de017529b2a1002c880ce05`

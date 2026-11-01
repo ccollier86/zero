@@ -6,12 +6,16 @@ import { expect, test } from 'bun:test';
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 
 test('packed SignaturePad primitives and prefabs browser-build and render safely without a DOM', async () => {
+  const started = performance.now();
+  const phase = (name: string) => console.log('[zero-signature-package]', JSON.stringify({ phase: name, elapsedMs: Math.round(performance.now() - started) }));
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'signature-package-'));
   const consumer = join(root, 'consumer'), archive = join(root, 'framework.tgz');
   try {
+    phase('prepare');
     await mkdir(consumer);
     await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
+    phase('packed');
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({
       name: 'zero-signature-public-consumer', private: true, type: 'module',
       dependencies: { '@zero/framework': `file:${archive}`, react: '19.2.4', 'react-dom': '19.2.4' },
@@ -19,7 +23,9 @@ test('packed SignaturePad primitives and prefabs browser-build and render safely
     await Bun.write(join(consumer, 'consumer.tsx'), CONSUMER);
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
     await checked(['install', '--ignore-scripts'], consumer);
+    phase('installed');
     const output = await checked(['verify.ts'], consumer);
+    phase('verified');
     const result = JSON.parse(output.trim()) as { exported: number; browserBytes: number; html: string };
     expect(result.exported).toBe(13);
     expect(result.browserBytes).toBeGreaterThan(0);
@@ -30,9 +36,12 @@ test('packed SignaturePad primitives and prefabs browser-build and render safely
     expect(result.html).toContain('Package agreement');
     expect(result.html).toContain('Package clause');
     expect(result.html).not.toContain('window is not defined');
+    phase('assertions-completed');
   } finally {
     // Only this test's freshly allocated consumer and archive are disposable.
+    phase('retirement-started');
     await rm(root, { recursive: true, force: true });
+    phase('retired');
   }
 }, 120_000);
 

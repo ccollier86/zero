@@ -512,6 +512,16 @@ git diff --check
    not an extension of its native-entry or application-start deadline. The
    document editor's dependency-tree retirement is an awaited bounded hook;
    unsuccessful cleanup still fails the file and retains its resource slot.
+   The real logging/Fabric control file and installed SignaturePad consumer
+   likewise reserve exclusive windows. The former includes 256 separate FULL
+   writer commits plus restart within its unchanged 30s case; the latter keeps
+   its original 120s complete lifecycle, 90s child bounds and awaited cleanup.
+   A contended qualification timed out both files; the unchanged logging case
+   completed in about 3s in isolation. Keep the failed attempt and qualify a
+   new frozen candidate. Admission does not change production concurrency,
+   durability, inventories, assertions, deadlines or failure handling, and is
+   not a production throughput claim. SignaturePad emits payload-free phase
+   timings through packing, installation, verification and fixture retirement.
    The phone, Resource-array and adaptive-profile installed consumers use the same explicit
    retirement boundary: their original 120s/180s/180s functional tests and 90s/120s/90s
    child-operation bounds remain, with an awaited 120s dependency-tree cleanup

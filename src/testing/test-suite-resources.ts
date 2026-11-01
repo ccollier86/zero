@@ -45,5 +45,8 @@ export const EXCLUSIVE_TEST_FILES = ['packages/payments/src/package.test.ts', 's
   'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts', 'src/build/build-app.test.ts',
   'src/frontend/client/session-audit-recovery.browser.test.ts', 'packages/docs/package-installed.integration.test.ts',
   'src/components/json-editor/document-editor.package.test.ts', 'src/presence/presence-fabric.integration.test.ts',
-  'src/resources/resource-array-overlap-fabric.integration.test.ts'] as const;
+  'src/resources/resource-array-overlap-fabric.integration.test.ts',
+  // Repeated FULL commits and a complete cold package lifecycle must retain
+  // their own original deadlines rather than measuring unrelated sibling I/O.
+  'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts'] as const;
 export function isExclusiveTestFile(file: string): boolean { return (EXCLUSIVE_TEST_FILES as readonly string[]).includes(file); }
