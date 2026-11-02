@@ -62,7 +62,12 @@ describe('documentation development snapshot lifecycle', () => {
 
   test('shutdown awaits in-flight compilation, is idempotent, and late results cannot reactivate the disposed mount', async () => {
     const fixture = await docsRuntimeFixture({ 'index.md': '# Home' }), context = fixture.context(), barrier = deferred<DocsSnapshot>(); let calls = 0;
-    const runtime = await createDocsSnapshotRuntime({ initial: fixture.snapshot, watchRoot: docsContentRoot(fixture.root, fixture.options), compile: async () => ++calls === 2 ? barrier.promise : fixture.snapshot });
+    // Exercise the real initial compiler/watch admission before holding the
+    // second build. An immediate in-memory first result skips startup's native
+    // filesystem work and can race the first macOS watch notification.
+    const runtime = await createDocsSnapshotRuntime({ initial: fixture.snapshot, watchRoot: docsContentRoot(fixture.root, fixture.options),
+      compile: async () => ++calls === 2 ? barrier.promise
+        : compileDocsSnapshot(fixture.root, fixture.options, 'development', context.emitCode) });
     try {
       await Bun.write(fixture.root + '/documentation/index.md', '# Later'); await eventually(() => calls === 2);
       let drained = false; const stop = runtime.dispose().then(() => { drained = true; }); const second = runtime.dispose(); await Bun.sleep(20); expect(drained).toBe(false);

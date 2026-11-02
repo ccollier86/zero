@@ -608,6 +608,36 @@ git diff --check
    timings distinguish installation/typecheck/build/Doctor failure from cleanup;
    its prior aggregate timeout did not reach a fresh qualification receipt and
    must not be described as a functional pass.
+   Native documentation-watch observation and the installed legacy-state
+   migration proof also own exclusive windows. The former now performs the
+   actual initial compiler admission before holding its second rebuild, rather
+   than returning an immediate synthetic snapshot before native watch setup.
+   The migration proof retains its 240s functional and 150s child bounds, with
+   a separate awaited 120s retirement hook. That hook retires admitted child
+   commands and drains their output before removing its fixture. The possible
+   aggregate lifecycle explicitly grows to 360s; a failure still fails the file.
+   Its earlier timed-out run remains failed, even though the exact installed
+   ten-case body later passes in isolation. The two tiny local-archive updater
+   files remain outside the full-framework catalog but own an exclusive
+   registry-install window, so their independent cold caches do not multiply
+   package-manager network fanout beside a full graph installation.
+
+   On a memory-constrained qualification host, use the runner's supported
+   `--concurrency 2` admission limit with the exact same inventory, original
+   assertions and deadlines. Record that limit in the release evidence; it is
+   not an application/Fabric/AI concurrency setting. A registry/network outage
+   is a failed run, not permission to skip package installs. Repeat the complete
+   frozen-commit gate only after connectivity is restored, retaining the
+   interrupted environment's failures.
+
+   Installed docs proof copies request `COPYFILE_FICLONE` for independent
+   copy-on-write data on capable filesystems; unsupported filesystems retain
+   ordinary copies. This does not change deployed bytes, dependency admission,
+   signing checks or the actual relocated executable launch. Completed synthetic
+   diagnostic executables may be archived losslessly with verified payload
+   hashes and explicit restore metadata. Retain source/package archives,
+   provenance, logs, screenshots and runtime evidence; never use generic cleanup
+   against application/database/Storage roots or an active qualification.
    The native FTS migration fixture independently bounds old dense-corpus
    preparation, migration verification, and awaited native/file retirement at
    20s each. Preparation retains the legacy dense-bridge checks; migration

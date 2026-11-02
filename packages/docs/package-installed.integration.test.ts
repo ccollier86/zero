@@ -1,6 +1,7 @@
 /** Actual package archives, public imports and the normal build CLI; no source aliases or live app data. */
 import { expect, test } from 'bun:test';
 import { cp, mkdir, mkdtemp, rename } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import sharp from 'sharp';
 
@@ -167,7 +168,11 @@ test('fresh framework/docs archives qualify public imports and normal/compiled s
   try { await verifyDeployment(installedTree.url); } finally { await installedTree.stop(); }
   expect(JSON.parse(await Bun.file(join(consumer, 'dist-normal/extension-drained.json')).text())).toEqual({ alive: 1, awaited: true });
   const normal = join(evidence, 'normal'), compiled = join(evidence, 'compiled');
-  const copy = { recursive: true, filter: (path: string) => !['ready-port.txt', 'entry-started.txt', 'extension-drained.json'].includes(basename(path)) };
+  // Keep independent output files without duplicating complete native images
+  // on clone-capable filesystems. COPYFILE_FICLONE falls back to ordinary copies
+  // elsewhere; deployment bytes and the actual relocated launch stay unchanged.
+  const copy = { recursive: true, mode: constants.COPYFILE_FICLONE,
+    filter: (path: string) => !['ready-port.txt', 'entry-started.txt', 'extension-drained.json'].includes(basename(path)) };
   await cp(join(consumer, 'dist-normal'), normal, copy); await cp(join(consumer, 'dist-compiled'), compiled, copy);
   await rename(consumer, join(work, 'source-not-available'));
   const provenance: Record<string, unknown> = { sourceHead: (await command(['git', 'rev-parse', 'HEAD'], repository)).trim(), branch: (await command(['git', 'branch', '--show-current'], repository)).trim(),

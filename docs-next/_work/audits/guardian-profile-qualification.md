@@ -1418,3 +1418,43 @@ LOGGING_WRITE_FAILED without a qualified underlying cause. The passing final
 diagnostic used payload-free error-code tracing, not a substitute archive. The
 new clean commit must pass the complete uninstrumented inventory, real browser,
 Linux bundled-worker and updater gates before main/stable selection changes.
+
+### Complete sweep and restored-network follow-up (November 2)
+
+Frozen candidate `e3e6d5a` passes all seven preliminary gates, including its own
+frozen installation, TypeScript, package verification, PDF readiness and the
+879-page documentation graph. Its uninterrupted 1,409-file inventory finishes
+with 1,403 passes, six failures and zero omitted/interrupted files. It remains
+unqualified and unselected. In that exact run, the complete uninstrumented
+hot-auth/audit case passes in 187.5s under its unchanged foreground, background
+and drain limits; the profile/form/authority/worker-death checks also pass.
+
+Four remaining files fail during dependency materialization with registry
+ConnectionRefused/DNS errors. The user subsequently confirms a network
+interruption. A fresh registry HTTP check succeeds after connectivity returns;
+that does not retroactively pass the failed installs. The other failures are a
+native documentation-watch notification observation and the installed legacy
+proof's aggregate deadline/child retirement. The latter spends 103.8s installing
+before its buffered installed tests begin. Its exact already-installed body
+then passes all ten cases /155 assertions in 110.4s in isolation, preserving
+identity, credential, Storage, workflow and duplicate/replay checks. It is not
+evidence that the complete timed-out package lifecycle passed.
+
+The follow-up changes test admission/lifecycle, not production authorization:
+real initial compiler work precedes the held native watcher rebuild; the
+watcher, installed legacy proof and two independent-cache updater files own
+reviewed cold-I/O/registry windows. Legacy functional/child bounds stay
+240s/150s, with a separate awaited 120s retirement hook that prevents child work
+from surviving fixture removal. This explicitly increases the possible aggregate
+lifecycle. The next whole inventory uses the supported two-process limit on
+this 18GiB host; files, assertions, deadlines and no-retry/no-exclusion accounting
+remain intact. These are test-host limits, not reduced Fabric or AI concurrency.
+
+The external volume falls below 1GiB during qualification. Only completed
+synthetic compiler/dependency outputs are retired; source, package archives,
+locks, private databases, logs, screenshots and application data remain intact.
+Completed synthetic executable duplicates are preserved in verified compressed
+payloads with original path/mode/hash recovery metadata. The old failed runs
+remain retained. Fresh exact-archive Linux/browser/updater qualification and
+stable/main promotion still have to complete; no PracticeIQ change or deployment
+has been performed.

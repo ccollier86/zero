@@ -60,5 +60,14 @@ export const EXCLUSIVE_TEST_FILES = ['packages/payments/src/package.test.ts', 's
   // Each compiles the complete installed root facade (including copied UI).
   // Admit that graph alone, rather than competing with browser/source builds.
   'src/modals/modal-scroll.package.test.ts', 'src/modals/modal-system.package.test.ts',
-  'src/frontend/server/style-foundation.package.test.ts'] as const;
+  'src/frontend/server/style-foundation.package.test.ts',
+  // Native watch notification deadlines and a full installed migration boot
+  // must observe their own filesystem work, not neighboring cold installs.
+  'packages/docs/src/server/watch.test.ts',
+  'src/migrations/legacy-state/legacy-state.package.test.ts',
+  // These use independent cold extraction caches. Keep registry installs from
+  // multiplying the package manager's network fanout beside a graph install.
+  // They remain outside the full-framework-consumer catalog above.
+  'src/update/local-archive-resolution.integration.test.ts',
+  'src/update/local-archive-workspace.integration.test.ts'] as const;
 export function isExclusiveTestFile(file: string): boolean { return (EXCLUSIVE_TEST_FILES as readonly string[]).includes(file); }

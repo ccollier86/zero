@@ -11,7 +11,9 @@ test('only the reviewed cold-I/O, durable-control and explicit hot-auth gates re
     'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts',
     'src/blog/content-managed.integration.test.ts', 'src/databases/database-actor-environment.test.ts',
     'src/logging/logging-fabric-capture.integration.test.ts', 'src/modals/modal-scroll.package.test.ts',
-    'src/modals/modal-system.package.test.ts', 'src/frontend/server/style-foundation.package.test.ts']);
+    'src/modals/modal-system.package.test.ts', 'src/frontend/server/style-foundation.package.test.ts',
+    'packages/docs/src/server/watch.test.ts', 'src/migrations/legacy-state/legacy-state.package.test.ts',
+    'src/update/local-archive-resolution.integration.test.ts', 'src/update/local-archive-workspace.integration.test.ts']);
   expect(isExclusiveTestFile('packages/payments/src/package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/logging/logging-fabric.integration.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/components/signature-pad/signature-pad.package.test.ts')).toBe(true);
@@ -21,6 +23,10 @@ test('only the reviewed cold-I/O, durable-control and explicit hot-auth gates re
   expect(isExclusiveTestFile('src/modals/modal-scroll.package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/modals/modal-system.package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/frontend/server/style-foundation.package.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('packages/docs/src/server/watch.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/migrations/legacy-state/legacy-state.package.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/update/local-archive-resolution.integration.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/update/local-archive-workspace.integration.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/blog/blog-publishing.package.test.ts')).toBe(false);
 });
 
@@ -70,7 +76,7 @@ test('the resource catalog contains only reviewed existing full-framework pack/i
   }
 });
 
-test('tiny updater archives, source builds, metadata and browser qualifications remain ordinary', () => {
+test('tiny updater archives, source builds, metadata and browser qualifications remain outside the full-framework catalog', () => {
   for (const file of [
     'src/update/local-archive-workspace.integration.test.ts',
     'src/update/local-archive-resolution.integration.test.ts',

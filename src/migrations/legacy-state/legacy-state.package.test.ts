@@ -1,13 +1,37 @@
 /** Verify real packed public exports, preservation/runtime behavior and packaged docs. */
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
+const roots = new Set<string>();
+const commands = new Map<Pick<Bun.Subprocess, 'kill' | 'exited'>, Promise<void>>();
+let retiring = false;
+
+// Fixture retirement has its own awaited budget. Keep the original 240s
+// functional and 150s child limits; never remove a graph while a child owns it.
+afterAll(async () => {
+  retiring = true;
+  const children = [...commands.keys()];
+  const settled = [...commands.values()];
+  const kill = setTimeout(() => { for (const child of children) child.kill('SIGKILL'); }, 5_000);
+  try {
+    for (const child of children) child.kill('SIGTERM');
+    await Promise.all(settled);
+  } finally {
+    clearTimeout(kill);
+  }
+  const started = performance.now();
+  await mark('retirement', 'started');
+  for (const root of roots) await rm(root, { recursive: true, force: true });
+  roots.clear();
+  await mark('retirement', 'completed', started);
+}, 120_000);
 
 test('installed legacy-state archive preserves the admitted profile using public migration and managed service imports', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'legacy-state-package-'));
+  roots.add(root);
   const consumer = join(root, 'consumer'), archive = join(root, 'framework.tgz'), repo = process.cwd();
   try {
     await mkdir(consumer);
@@ -37,10 +61,11 @@ test('installed legacy-state archive preserves the admitted profile using public
     expect(docs).toContain('application-runtime');
     const handoff = await Bun.file(join(consumer, 'node_modules/@zero/framework/docs-next/guides/practiceiq-upgrade/agent-handoff.md')).text();
     expect(handoff).toContain('verifyStagedLegacyStateMigration');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await mark('functional-phase', 'ended'); }
 }, 240_000);
 
 async function checked(args: string[], cwd: string): Promise<string> {
+  if (retiring) throw new Error('The synthetic package lifetime has retired.');
   const stage = args[0] === 'pm' ? 'pack' : args[0] === 'install' ? 'install' : 'installed-tests';
   const started = performance.now();
   await Bun.write(Bun.stdout, JSON.stringify({ qualification: 'legacy-state', stage, state: 'started' }) + '\n');
@@ -48,12 +73,20 @@ async function checked(args: string[], cwd: string): Promise<string> {
     cwd, stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env.PATH,
       TMPDIR: SCRATCH, PROJECT_SCRATCH_DIR: SCRATCH, BUN_INSTALL_CACHE_DIR: '/Volumes/code-bank/caches/bun/install-cache' },
   });
+  let settle!: () => void;
+  commands.set(child, new Promise<void>(resolve => { settle = resolve; }));
   let expired = false;
   const timer = setTimeout(() => { expired = true; child.kill(); }, 150_000);
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (retiring) throw new Error('The synthetic package lifetime retired before acknowledgment.');
     if (expired || code !== 0) throw new Error(`Synthetic public migration proof failed (${expired ? 'timeout' : code}):\n${stdout}\n${stderr}`);
     await Bun.write(Bun.stdout, JSON.stringify({ qualification: 'legacy-state', stage, state: 'completed', durationMs: Math.round(performance.now() - started) }) + '\n');
     return stdout + stderr;
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); commands.delete(child); settle(); }
+}
+
+async function mark(stage: string, state: string, started?: number): Promise<void> {
+  await Bun.write(Bun.stdout, JSON.stringify({ qualification: 'legacy-state', stage, state,
+    ...(started === undefined ? {} : { durationMs: Math.round(performance.now() - started) }) }) + '\n');
 }
