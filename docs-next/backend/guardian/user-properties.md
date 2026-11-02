@@ -112,7 +112,10 @@ acknowledgment and Sync admission use the same projection.
 Persistent Sync readers using built-in resource policies also retain that
 healthy authority across ordinary metadata edits; opening a connection only
 after the edit is not an adequate regression test. Resource mutation commit
-fences remain conservative. A registry with a custom `list` policy (including
+fences remain conservative. Guardian administrator, application, tenant and
+API-key control-plane commits also still fence every account property. The
+metadata projection governs read/admission lifetimes, not those privileged
+mutation inputs. A registry with a custom `list` policy (including
 a nested custom branch) still fences every property, because application
 callbacks can depend on arbitrary metadata. Custom policy callbacks continue
 to receive the complete property snapshot; this correction does not strip

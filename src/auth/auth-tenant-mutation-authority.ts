@@ -7,7 +7,6 @@ import type {
 } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { authContextAuthorityFingerprint } from './auth-context-authority';
-import { readAuthAuthorityProperties } from './auth-authority-properties';
 import type { TokenService } from './token-service';
 import { AuthError, type AuthContext, type PermissionKey } from './types';
 import type { UserStore } from './user-store';
@@ -42,7 +41,8 @@ export type AssertAuthTenantMutationAuthority = (
 /**
  * Capture no bearer credential. The returned assertion resolves the exact
  * session family again and rejects changes to account/session/scope/roles or
- * trusted properties which happened after request authentication.
+ * any account property which changed after request authentication. Unlike a
+ * persistent read/admission lifetime, a control-plane commit binds all inputs.
  */
 export function captureAuthTenantMutationAuthority(input: {
   auth: AuthContext;
@@ -55,14 +55,14 @@ export function captureAuthTenantMutationAuthority(input: {
   if (!reference) throw staleAuthority();
   const capturedFingerprint = authContextAuthorityFingerprint(
     input.auth,
-    readAuthAuthorityProperties(input.store, input.auth.userId),
+    input.store.getProperties(input.auth.userId),
   );
 
   return (requiredPermissions) => {
     const current = input.tokenService.resolveAuthContextAuthority(reference);
     if (!current || authContextAuthorityFingerprint(
       current,
-      readAuthAuthorityProperties(input.store, current.userId),
+      input.store.getProperties(current.userId),
     ) !== capturedFingerprint) throw staleAuthority();
 
     const access = createRequestAuthorizationAccess({

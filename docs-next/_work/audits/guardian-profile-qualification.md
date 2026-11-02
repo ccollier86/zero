@@ -1278,3 +1278,23 @@ app. Evidence: `native-account-sync-preflight-20261101-v4/` and
 `native-port-stability.json` in the external release diagnostics root. Its
 report deliberately remains `qualified: false`: it uses a working fixture and
 does not supersede the failed package gate or the final exact-archive sequence.
+
+### Final sweep: control-plane commit inputs remain conservative
+
+The `df2efa6` exact archive passed its native Linux/amd64 account/avatar sequence
+(56 assertions), headed browser checks and four Linux service gates. Its full
+source sweep then exposed two tenant administration/invitation regressions:
+the metadata projection had also reached their privileged commit guards.
+Those guards must still reject any account-property change between request
+authentication and the control-plane transaction, even when the property is
+not a declared policy input. The four administrator/application/tenant/API-key
+commit boundaries now retain their original full-property snapshots; the
+read/admission projection and the native own-property writer remain separate.
+Four focused managed-store regressions exercise that distinction in addition
+to the existing unchanged tenant race tests.
+
+That sweep also caught the stale Markdown-example count after the new native
+form example was added (62 examples, previously 61). All discovered examples
+remain subject to TypeScript compilation. The interrupted failed sweep is
+retained in `candidate-df2efa6-r2/`; it is not a whole-suite pass. A new exact
+commit/archive must pass qualification before the stable selection changes.

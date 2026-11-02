@@ -7,7 +7,6 @@ import type {
 } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { authContextAuthorityFingerprint } from './auth-context-authority';
-import { readAuthAuthorityProperties } from './auth-authority-properties';
 import type { TokenService } from './token-service';
 import { AuthError, type AuthContext, type PermissionKey } from './types';
 import type { UserStore } from './user-store';
@@ -30,7 +29,7 @@ export type AssertAuthApplicationMutationAuthority = (
 /**
  * Capture a non-secret reference to the request authority. The returned
  * assertion detects session revocation, account changes, assignment changes,
- * and trusted-property changes before the surrounding SQLite transaction
+ * and every account-property change before the surrounding SQLite transaction
  * performs its first domain mutation.
  */
 export function captureAuthApplicationMutationAuthority(input: {
@@ -44,14 +43,14 @@ export function captureAuthApplicationMutationAuthority(input: {
   if (!reference) throw staleApplicationAuthority();
   const capturedFingerprint = authContextAuthorityFingerprint(
     input.auth,
-    readAuthAuthorityProperties(input.store, input.auth.userId),
+    input.store.getProperties(input.auth.userId),
   );
 
   return (requiredPermissions) => {
     const current = input.tokenService.resolveAuthContextAuthority(reference);
     if (!current || authContextAuthorityFingerprint(
       current,
-      readAuthAuthorityProperties(input.store, current.userId),
+      input.store.getProperties(current.userId),
     ) !== capturedFingerprint) throw staleApplicationAuthority();
 
     const access = createRequestAuthorizationAccess({
