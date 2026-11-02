@@ -1380,3 +1380,41 @@ The unchanged hot-load case still fails its two-second bound after this fix
 (2,167ms on a refresh in the fifth cycle, without a commit-conflict response).
 It remains a release blocker, alongside native qualification disk headroom;
 the four passing package checks are not substituted for that acceptance case.
+
+### Request-bound SQL settlement follow-up (November 2)
+
+Tracing the remaining 2,167ms foreground delay identifies an unnecessarily long
+local shared authority lease: the worker had already finished its guarded SQL,
+but the coordinator held the lease through hot-image publication. Authentication
+waited behind that storage work; its synchronous turn itself took 9–25ms.
+
+Protocol v4 now reports a one-shot, identity/generation/request-bound SQL-settled
+phase. Only a live write may report it, after the native SQL transaction and final
+authority guard end. The parent may then release the local authority lease, but
+must retain the writer FIFO, pending result, operation deadline and configured
+durability requirement. A later snapshot failure, timeout or worker death remains
+unknown and non-retryable. Backends without this proof retain conservative
+generation-settlement fencing. Duplicate, foreign, extended, read and stale
+signals fail closed; mixed actor protocols are rejected. Rebuild server and actor
+bundles together; no database conversion is introduced.
+
+The focused seven-file security/coordination gate passes, including real
+cross-process revocation and rollback, SQL-phase-before-durability IPC, unchanged
+writer ordering, malformed proof rejection and late failure. TypeScript passes.
+These are working-source diagnostics, not exact-archive release qualification.
+
+The complete isolated synthetic hot case then passes all 172 assertions in
+191.2s: all 16 foreground login/refresh calls finish in 212–268ms, including the
+deliberate 200ms hold. All 51 background functions finish, all 20,270 audit
+events are acknowledged, and failed/pending work reaches zero without a worker
+restart. Its existing 2s foreground, 90s background and 240s audit-drain bounds
+remain unchanged. The fixture explicitly allows a 60s native socket-idle
+lifetime for its existing 20s actor operation; this is not a production-server
+timeout change or a throughput guarantee.
+
+Retain the earlier failed working runs: one overlapped compiler work and missed
+background completion, another saw a connection reset, and another returned
+LOGGING_WRITE_FAILED without a qualified underlying cause. The passing final
+diagnostic used payload-free error-code tracing, not a substitute archive. The
+new clean commit must pass the complete uninstrumented inventory, real browser,
+Linux bundled-worker and updater gates before main/stable selection changes.

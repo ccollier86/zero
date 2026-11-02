@@ -16,6 +16,8 @@ interface PendingRequest {
   readonly resolve: (value: DatabaseExecutorValue) => void;
   readonly reject: (error: DatabaseError) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  readonly onCommitSettled: (() => void) | undefined;
+  commitSettled: boolean;
 }
 
 interface DrainDeferred {
@@ -75,6 +77,7 @@ export class SubprocessDatabaseRequestRegistry {
   register(
     kind: DatabaseExecutorOperationKind,
     timeoutMs: number,
+    onCommitSettled?: () => void,
   ): SubprocessDatabaseRequestAllocation {
     this.assertCapacity();
 
@@ -88,6 +91,8 @@ export class SubprocessDatabaseRequestRegistry {
         resolve,
         reject,
         timer,
+        onCommitSettled,
+        commitSettled: false,
       });
     });
     return { requestId, result };
@@ -95,6 +100,15 @@ export class SubprocessDatabaseRequestRegistry {
 
   has(requestId: number): boolean {
     return this.pending.has(requestId);
+  }
+
+  /** A one-shot write-phase proof does not resolve the result or its deadline. */
+  commitSettled(requestId: number): boolean {
+    const pending = this.pending.get(requestId);
+    if (!pending || pending.kind !== 'write' || pending.commitSettled) return false;
+    pending.commitSettled = true;
+    pending.onCommitSettled?.();
+    return true;
   }
 
   resolve(requestId: number, value: DatabaseExecutorValue): boolean {

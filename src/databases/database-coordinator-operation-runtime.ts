@@ -594,13 +594,18 @@ export class DatabaseCoordinatorOperationRuntime {
       );
     }
 
-    return this.withWriterAuthority(entry, execution, commitAuthority, (writer, authorityRevision) => this.executeOnActor(
-      entry, writer, operation, execution, logicalReceiptFingerprint, authorityRevision));
+    return this.withWriterAuthority(entry, execution, commitAuthority,
+      (writer, authorityRevision, onCommitSettled) => this.executeOnActor(
+        entry, writer, operation, execution, logicalReceiptFingerprint, authorityRevision, onCommitSettled));
   }
 
   /** Share exactly one final-edge authority implementation for public and private writer operations. */
-  private async withWriterAuthority<T>(entry: DatabaseCoordinatorEntry, execution: DatabaseExecutionOptions,
-    commitAuthority: DatabaseCommitAuthority | null, run: (writer: DatabaseExecutor, authorityRevision?: number) => Promise<T>): Promise<T> {
+  private async withWriterAuthority<T>(
+    entry: DatabaseCoordinatorEntry,
+    execution: DatabaseExecutionOptions,
+    commitAuthority: DatabaseCommitAuthority | null,
+    run: (writer: DatabaseExecutor, authorityRevision?: number, onCommitSettled?: () => void) => Promise<T>,
+  ): Promise<T> {
     if (!commitAuthority) {
       if (this.options.requireCommitAuthority) throw authorityUnavailable();
       return run(this.options.requireWriter(entry));
@@ -629,10 +634,10 @@ export class DatabaseCoordinatorOperationRuntime {
         entry.databaseRef,
       );
       try {
-        return await run(writer, authorityRevision);
+        return await run(writer, authorityRevision, () => authorityLease.release());
       } catch (error) {
         const normalized = safeCoordinatorError(error);
-        if (normalized.outcome === 'unknown'
+        if (!authorityLease.released && normalized.outcome === 'unknown'
           && !isExpiredReceiptOutcome(normalized)
           && !writer.diagnostics().settled) {
           transferred = true;
@@ -652,6 +657,7 @@ export class DatabaseCoordinatorOperationRuntime {
     execution: DatabaseExecutionOptions,
     logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint,
     authorityRevision?: number,
+    onCommitSettled?: () => void,
   ): Promise<DatabaseReadResult | DatabaseCommitResult> {
     const kind = isWriteOperation(operation) ? 'write' : 'read';
     const loggingContext = kind === 'write' ? this.options.loggingContext?.() : undefined;
@@ -673,6 +679,7 @@ export class DatabaseCoordinatorOperationRuntime {
         } as unknown as DatabaseExecutorValue,
       }, {
         timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs),
+        ...(onCommitSettled ? { onCommitSettled } : {}),
       });
       if (logicalReceiptFingerprint === undefined) {
         const outcome = validateDatabaseActorExecuteOutcome(

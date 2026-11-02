@@ -30,6 +30,7 @@ import {
 
 export type ParsedSubprocessDatabaseExecutorEvent =
   | { readonly type: 'ready' }
+  | { readonly type: 'commit-settled'; readonly requestId: number }
   | {
       readonly type: 'success';
       readonly requestId: number;
@@ -56,6 +57,7 @@ const IDENTITY_KEYS = [
   'generation',
 ] as const;
 const READY_KEYS = new Set(IDENTITY_KEYS);
+const COMMIT_SETTLED_KEYS = new Set([...IDENTITY_KEYS, 'requestId']);
 const SHUTDOWN_ACK_KEYS = new Set(IDENTITY_KEYS);
 const TELEMETRY_KEYS = new Set([
   ...IDENTITY_KEYS,
@@ -120,6 +122,10 @@ export function parseSubprocessDatabaseExecutorEvent(
         : null;
     case 'response':
       return parseResponse(record);
+    case 'commit-settled':
+      return hasExactDatabaseExecutorKeys(record, COMMIT_SETTLED_KEYS)
+        && Number.isSafeInteger(record.requestId) && (record.requestId as number) > 0
+        ? { type: 'commit-settled', requestId: record.requestId as number } : null;
     case 'telemetry':
       return parseTelemetry(record);
     case 'shutdown-ack':

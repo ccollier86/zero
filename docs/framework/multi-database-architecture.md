@@ -926,7 +926,7 @@ envelope carries only internal routing and correlation data:
 ```ts
 interface DatabaseExecutorOperationMessage {
   protocol: 'zero.database-executor';
-  version: 3;
+  version: 4;
   nonce: string;
   role: string;
   slot: number;
@@ -955,7 +955,9 @@ Parent-to-actor commands are handshake, validated operation request, and
 transport shutdown. The closed database operation registry covers writer and
 reader bind, execute, replay, tenant snapshot begin/page/abort, receipt lookup,
 and unbind. Actor-to-parent messages are ready, success/failure response,
-payload-free hot-periodic durability telemetry, and shutdown acknowledgement.
+request-bound SQL-phase settlement, payload-free hot-periodic durability
+telemetry, and shutdown acknowledgement. SQL-phase settlement carries only the
+matched identity and request ID; it is neither a result nor a durability receipt.
 Durable-change wakeups are coordinator publications derived from validated
 operation results; they are not actor push messages. The same logical
 envelopes may travel over another explicitly qualified executor backend later.
@@ -1345,10 +1347,12 @@ it to discover an authority-table change through SQLite triggers without
 creating an inverted-lock deadlock. Code must never begin a SQLite transaction
 and then *await* a contended gate. The actor holds its sidecar lease through its
 SQLite commit or rollback and releases it once that local outcome is known.
-The parent retains the process-local lease until the actor confirms that
-outcome; after an unknown response it retains the lease until the failed actor
-has exited and SQLite has settled. A caller timeout does not release that
-protection while work may still be running. The commit fence is released
+The parent retains the process-local lease until the actor confirms that SQL
+phase through a nonce/generation/request-bound, one-shot protocol-v4 message.
+The final result and hot durability acknowledgment remain pending. Without that
+proof, an unknown response retains the lease until the failed actor has exited
+and SQLite has settled. A caller timeout alone does not release that protection
+while protected SQL may still be running. The commit fence is released
 before websocket fanout or response delivery. Those later actions do not
 change whether the already-committed write was authorized and must not
 unnecessarily block revocation.

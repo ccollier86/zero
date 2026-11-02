@@ -176,8 +176,11 @@ authentication.
 
 Read-only automation status/count requests do not occupy shared commit leases
 while awaiting their actor response. They retain current-authority checks
-before and after the read. Mutating source operations keep their commit leases,
-including indeterminate writes until the actor's settlement is known.
+before and after the read. Mutating source operations keep their commit leases
+until their SQL phase is proven settled; without that proof, indeterminate
+writes retain them until the actor's settlement is known. A request-bound
+SQL-finished message does not acknowledge its hot snapshot or resolve the write.
+See [the separate SQL/durability boundaries](../fabric/concurrency.md#guardian-authority-coordination).
 
 Admission is not a permission grant. Account eligibility, security generations,
 session/revocation state, tenant authority and configured completion gates are

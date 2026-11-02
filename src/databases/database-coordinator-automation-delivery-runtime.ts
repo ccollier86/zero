@@ -216,6 +216,7 @@ export class DatabaseCoordinatorAutomationDeliveryRuntime {
         payload: payload as unknown as DatabaseExecutorValue,
       }, {
         timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs),
+        ...(authorityLease ? { onCommitSettled: () => authorityLease.release() } : {}),
       });
       const result = validateDatabaseActorAutomationOutboxResult(payload, raw);
       if (!mutates && commitAuthority && authorityCoordinator) {
@@ -227,6 +228,7 @@ export class DatabaseCoordinatorAutomationDeliveryRuntime {
       if (!writer) throw error;
       this.emitFailure(entry, writer, error, startedAt, operation);
       if (authorityLease
+        && !authorityLease.released
         && error.outcome === 'unknown'
         && !writer.diagnostics().settled) {
         this.options.holdAuthorityUntilSettlement(authorityLease, writer);

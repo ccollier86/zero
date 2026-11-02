@@ -61,6 +61,12 @@ export interface DatabaseExecutorRequest<
 export interface DatabaseExecutorExecuteOptions {
   /** Override the executor's default operation deadline. */
   readonly timeoutMs?: number;
+  /**
+   * Framework coordination only: this request can no longer commit protected
+   * SQL. This is NOT a durability acknowledgment or an operation result.
+   * Backends without this proof omit it and keep conservative response fencing.
+   */
+  readonly onCommitSettled?: () => void;
 }
 
 export type DatabaseExecutorState =

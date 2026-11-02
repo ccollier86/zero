@@ -27,6 +27,13 @@ Fabric owns a child **generation**, not merely an IPC connection. A transport
 disconnect does not prove that a process can no longer commit. Generation
 retirement waits for exact exit/settlement evidence.
 
+Protocol-v4 SQL-phase proof is narrower than generation settlement. It can end
+only the matching operation's commit-authority lease after protected SQL has
+finished; it does not retire the process, release the writer FIFO, stop the
+operation deadline or establish image durability. A later failed/absent final
+write acknowledgment remains unknown. Without that proof, the existing
+unknown-write lease stays held until exact generation settlement.
+
 ## Failure And Replacement
 
 Startup has a bounded handshake timeout. Operation timeout or malformed IPC

@@ -61,6 +61,21 @@ is not interrupted, and password hashing/signing does not occupy the exclusive
 turn. Auth admission has an internal five-second waiting bound, not a new
 application configuration setting.
 
+The parent lease protects the actor's **SQL phase**, not the time needed to
+publish its hot recovery image. Matched protocol-v4 actors report a one-shot
+SQL-settled message bound to the exact nonce/generation/request. The coordinator
+may then release commit authority while the writer lane and operation deadline
+remain owned until the final response. A successful write/claim is still not
+acknowledged until its configured durability boundary succeeds. A later image
+failure, timeout or process death remains an unknown outcome, not success and
+not permission for automatic replay.
+
+Without that exact proof, including a custom executor which does not implement
+it, the lease stays held through the response or unknown-generation settlement.
+Duplicate, foreign, read-request and retired-request phase messages fail the
+channel. This does not interrupt SQL, let a second writer overtake the first,
+relax revision/revocation checks or turn an IPC disconnect into exit evidence.
+
 The queue reservation covers only the synchronous persistence callback and its
 synchronous completion work, not an exclusive lock over that whole callback.
 Each commit guard still acquires its own actual lease and releases it when
@@ -79,7 +94,8 @@ images when SQLite reports no changes. Actual private outbox writes, terminal
 compaction and successful claims retain their durability behavior; a real claim
 must be durably published before delivery even under periodic/final policies.
 This reduces avoidable lease occupancy without removing the lease from active
-writer work. See [outbox delivery](../database-automations/delivery.md).
+protected SQL. Read-only status counts revalidate authority before/after the
+response without occupying a commit lease. See [outbox delivery](../database-automations/delivery.md).
 
 Duplicate presence/identity publications also skip image I/O only when private
 SQL reports no changes. Empty-source polling uses bounded backoff and commit

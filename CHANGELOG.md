@@ -39,6 +39,12 @@ publication.
 - Keep read-only automation status polling off the shared commit lease, with
   live authority rechecked before and after the actor response. Mutations and
   unknown-write settlement retain their existing commit-bound protection.
+- Separate matched actors' SQL-phase proof from hot durability acknowledgment.
+  Protocol-v4 messages are scoped to the exact live write request and release
+  commit authority after its SQL ends, without releasing the writer FIFO or
+  returning success before durability. Preserve conservative unknown-generation
+  fencing without proof; reject duplicate, foreign, read and stale phase signals.
+  Rebuild application/actor bundles together from the updated package.
 
 - Show saved authorized private profile photos in the selected-account header
   of managed user controls, retaining the existing initials fallback, layout,

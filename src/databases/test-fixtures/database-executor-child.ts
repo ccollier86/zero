@@ -68,6 +68,36 @@ function handleRequest(
   active: Session,
 ): void {
   switch (request.operation) {
+    case 'commit-phase': {
+      send({ ...active, type: 'commit-settled', requestId: request.requestId });
+      // Remain synchronously busy like an image fsync after the SQL edge.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      send({ ...active, type: 'response', requestId: request.requestId, ok: true, value: 'durable' });
+      return;
+    }
+    case 'commit-phase-exit':
+      send({ ...active, type: 'commit-settled', requestId: request.requestId });
+      // Let the parent observe the phase, then die without a durability result.
+      setTimeout(() => process.exit(17), 25);
+      return;
+    case 'commit-phase-failure':
+      send({ ...active, type: 'commit-settled', requestId: request.requestId });
+      send({ ...active, type: 'response', requestId: request.requestId, ok: false,
+        error: serializeDatabaseError(new DatabaseError('DATABASE_OUTCOME_UNKNOWN', 'Synthetic durability failure.', {outcome:'unknown',retryable:false})) });
+      return;
+    case 'commit-duplicate':
+      send({ ...active, type: 'commit-settled', requestId: request.requestId });
+      send({ ...active, type: 'commit-settled', requestId: request.requestId });
+      return;
+    case 'commit-read':
+      send({ ...active, type: 'commit-settled', requestId: request.requestId });
+      return;
+    case 'commit-foreign':
+      send({ ...active, type: 'commit-settled', requestId: request.requestId + 1 });
+      return;
+    case 'commit-extended':
+      send({ ...active, type: 'commit-settled', requestId: request.requestId, unexpected: true });
+      return;
     case 'echo': {
       const payload = asRecord(request.payload);
       const delayMs = typeof payload?.delayMs === 'number' ? payload.delayMs : 0;

@@ -15,7 +15,7 @@ import type {
 export const DATABASE_EXECUTOR_PROTOCOL_KIND = 'zero.database-executor' as const;
 
 /** Current subprocess IPC protocol version. */
-export const DATABASE_EXECUTOR_PROTOCOL_VERSION = 3 as const;
+export const DATABASE_EXECUTOR_PROTOCOL_VERSION = 4 as const;
 
 export interface DatabaseExecutorProtocolIdentity {
   readonly protocol: typeof DATABASE_EXECUTOR_PROTOCOL_KIND;
@@ -74,6 +74,12 @@ export interface DatabaseExecutorFailureMessage
   readonly error: SerializedDatabaseError;
 }
 
+/** SQL phase finished for this exact request; durability/result remain pending. */
+export interface DatabaseExecutorCommitSettledMessage extends DatabaseExecutorProtocolIdentity {
+  readonly type: 'commit-settled';
+  readonly requestId: number;
+}
+
 export interface DatabaseExecutorShutdownAckMessage
   extends DatabaseExecutorProtocolIdentity {
   readonly type: 'shutdown-ack';
@@ -96,5 +102,6 @@ export type SubprocessDatabaseExecutorEvent =
   | DatabaseExecutorReadyMessage
   | DatabaseExecutorSuccessMessage
   | DatabaseExecutorFailureMessage
+  | DatabaseExecutorCommitSettledMessage
   | DatabaseExecutorTelemetryMessage
   | DatabaseExecutorShutdownAckMessage;

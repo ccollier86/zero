@@ -78,7 +78,14 @@ export interface DatabaseExecutorServerRequest<
 
 export type DatabaseExecutorServerHandler = (
   request: DatabaseExecutorServerRequest,
+  execution: DatabaseExecutorServerExecutionContext,
 ) => DatabaseExecutorValue | Promise<DatabaseExecutorValue>;
+
+/** Internal request-bound phase proof; it is not a response or durability receipt. */
+export interface DatabaseExecutorServerExecutionContext {
+  /** Call once, only when this write cannot perform any further protected SQL. */
+  readonly commitSettled: () => void;
+}
 
 /** Minimal IPC surface used by the server and injectable in focused tests. */
 export interface SubprocessDatabaseServerTransport {
@@ -432,13 +439,29 @@ export class SubprocessDatabaseServer implements AsyncDisposable {
     request: DatabaseExecutorServerRequest,
   ): Promise<void> {
     let value: DatabaseExecutorValue;
+    let active = true;
+    let reported = false;
+    const execution: DatabaseExecutorServerExecutionContext = Object.freeze({
+      commitSettled: () => {
+        if (!active || reported || request.kind !== 'write') throw this.protocolError();
+        reported = true;
+        const session = this.session;
+        if (!session || !this.canSendResponses()
+          || !this.send({ ...session, type: 'commit-settled', requestId })) {
+          throw new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Database commit phase could not be confirmed.',
+            { retryable: false, outcome: 'unknown' });
+        }
+      },
+    });
     try {
-      value = await this.handle(request);
+      value = await this.handle(request, execution);
     } catch (error) {
       if (this.canSendResponses() && !this.sendFailure(requestId, error)) {
         this.failClosed(this.transportError());
       }
       return;
+    } finally {
+      active = false;
     }
 
     if (!this.canSendResponses()) return;

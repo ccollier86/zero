@@ -129,7 +129,12 @@ that only compacts terminal metadata still counts as a write. If change detectio
 cannot establish a no-op, durability remains conservative. A successful claim
 always forces its durable image before dispatch; failed publication still fails
 closed. Active mutating actor/outbox operations retain their shared authority
-leases, including unknown writes until settlement. Read-only outbox status
+leases until the request's protected SQL is proven settled. A matched actor's
+one-shot phase proof can release that lease before expensive hot publication,
+but the delivery result and writer lane remain pending until durability is
+acknowledged. Without phase proof, unknown writes retain the lease until actor
+settlement. A proof is not a successful claim or permission to run its handler.
+Read-only outbox status
 counts do not hold a commit lease while waiting for the actor: current scoped
 authority is checked both at the FIFO head and after its response. Status
 polling must not postpone authentication or revocation, and a revoked caller

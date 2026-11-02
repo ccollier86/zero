@@ -17,11 +17,12 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   let logger: LoggingRuntime | null = null;
   const started = performance.now(), stages: unknown[] = [];
+  const foregroundAuthMs: number[] = [];
   const reportPath = Bun.env.ZERO_LOGGING_QUALIFICATION_REPORT;
   let reportTask = Promise.resolve();
   const mark = (stage: string) => {
     const diagnostics = logger?.diagnostics();
-    stages.push({ stage, elapsedMs: Math.round(performance.now() - started), sources: diagnostics?.fabricSources,
+    stages.push({ stage, elapsedMs: Math.round(performance.now() - started), foregroundAuthMs: [...foregroundAuthMs], sources: diagnostics?.fabricSources,
       pinnedSources: diagnostics?.sources, deliveryWorker: diagnostics?.deliveryWorker, streams: diagnostics?.streams });
     // Optional synthetic phase diagnostics survive a test deadline, including
     // when a shutdown join itself is the phase that needs investigation.
@@ -48,7 +49,10 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       serverExtensions: [defineZeroPlugin({ name: 'logging-qualification', setup({ zero }) { logger = zero.logging; } })],
     });
     mark('constructed');
-    app.listen({ hostname: '127.0.0.1', port: 0 });
+    // Match the synthetic transport lifetime to its 20s actor operation bound.
+    // Bun's socket-idle default may otherwise reset an admitted /proof/work
+    // while its hot image is publishing. Auth still has the exact 2s assertion.
+    app.listen({ hostname: '127.0.0.1', port: 0, idleTimeout: 60 });
     const origin = `http://127.0.0.1:${app.server!.port}`;
     async function request(path: string, body?: unknown, token?: string) {
       const response = await fetch(`${origin}${path}`, { method: body === undefined ? 'GET' : 'POST',
@@ -84,7 +88,9 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       try {
         const started = performance.now();
         const result = await operation();
-        expect(performance.now() - started, 'Auth must not wait for the historical audit backlog.').toBeLessThan(2000);
+        const elapsedMs = performance.now() - started;
+        foregroundAuthMs.push(Math.round(elapsedMs));
+        expect(elapsedMs, 'Auth must not wait for the historical audit backlog.').toBeLessThan(2000);
         return result;
       }
       finally { clearTimeout(release); await writeFile(releasePath, 'release'); await work; }

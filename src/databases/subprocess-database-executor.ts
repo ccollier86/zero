@@ -158,6 +158,11 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     if (lifecycleError) throw lifecycleError;
 
     const normalizedRequest = normalizeSubprocessDatabaseExecutorRequest(request);
+    const onCommitSettled = options.onCommitSettled;
+    if (onCommitSettled !== undefined
+      && (typeof onCommitSettled !== 'function' || normalizedRequest.kind !== 'write')) {
+      throw new TypeError('Commit settlement callbacks require a write operation and a function.');
+    }
     // Request inspection is intentionally side-effect free for ordinary data,
     // but re-check the lifecycle before allocating transport capacity in case
     // an adversarial Proxy triggered a re-entrant close while being rejected.
@@ -172,6 +177,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     const { requestId, result } = this.requests.register(
       normalizedRequest.kind,
       timeoutMs,
+      onCommitSettled,
     );
 
     const message: DatabaseExecutorOperationMessage<Payload> = {
@@ -476,6 +482,15 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
       case 'success':
       case 'failure':
         this.handleResponse(event);
+        return;
+      case 'commit-settled':
+        try {
+          if ((this.state !== 'ready' && this.state !== 'draining')
+            || !this.requests.commitSettled(event.requestId)) this.failProtocol();
+        } catch {
+          // Never let a host coordination callback escape the native IPC hook.
+          this.failTransport('commit-phase-callback');
+        }
         return;
       case 'telemetry':
         this.handleTelemetry(event.signal);

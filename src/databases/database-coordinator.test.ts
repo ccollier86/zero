@@ -374,6 +374,29 @@ describe('DatabaseCoordinator', () => {
     await authorityGate.close();
   });
 
+  test('SQL settlement releases auth without releasing the writer FIFO or acknowledging its durability', async () => {
+    const owner=new AuthorityCommitCoordinator();
+    const harness=createHarness(roots,{authorityCommitCoordinator:owner,requireCommitAuthority:true});
+    const phase=deferred<void>(), durable=deferred<void>();
+    let entered=0, complete=false;
+    harness.onOperation=async ({operation,execution})=>{
+      if(operation.type!=='mutate')return;
+      entered++;
+      if(entered===1){execution!.onCommitSettled!();phase.resolve();await durable.promise;}
+    };
+    const lease=await harness.coordinator.acquire('tenant-a',{commitAuthority:createDatabaseCommitAuthority(owner,'tenant-a',()=>undefined)});
+    const first=lease.execute(createTodo('first')).then(value=>{complete=true;return value;});
+    const second=lease.execute(createTodo('second'));
+    try {
+      await phase.promise;
+      expect(complete).toBe(false); expect(entered).toBe(1);
+      const login=owner.tryAcquireExclusive();expect(login).not.toBeNull();login!.release();
+      durable.resolve();
+      await Promise.all([first,second]);
+      expect(entered).toBe(2);expect(complete).toBe(true);
+    } finally {durable.resolve();await Promise.allSettled([first,second]);lease.release();await harness.coordinator.close();await owner.close();}
+  });
+
   test('keeps an actor generation after an exact expired-receipt outcome', async () => {
     const authorityGate = new AuthorityCommitCoordinator();
     const harness = createHarness(roots, {
@@ -3095,6 +3118,7 @@ interface OperationHookInput {
   role: 'writer' | 'reader';
   databaseRef: string;
   operation: any;
+  execution?: DatabaseExecutorExecuteOptions;
 }
 
 function createHarness(roots: string[], options: HarnessOptions = {}) {
@@ -3267,7 +3291,7 @@ class FakeExecutor implements DatabaseExecutor {
     Payload extends DatabaseExecutorValue = DatabaseExecutorValue,
   >(
     request: DatabaseExecutorRequest<Payload>,
-    _options?: DatabaseExecutorExecuteOptions,
+    options?: DatabaseExecutorExecuteOptions,
   ): Promise<Result> {
     if (this.state !== 'ready') {
       throw new DatabaseError('DATABASE_CLOSED', 'Fake executor is closed.');
@@ -3434,6 +3458,7 @@ class FakeExecutor implements DatabaseExecutor {
         role: this.context.role,
         databaseRef: this.boundRef,
         operation,
+        execution: options,
       });
       if (request.kind === 'write') {
         const sequence = (this.harness.sequences.get(this.boundRef) ?? 0) + 1;

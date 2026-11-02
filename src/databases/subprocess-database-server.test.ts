@@ -33,6 +33,36 @@ const E2E_FIXTURE_PATH = fileURLToPath(new URL(
 ));
 
 describe('SubprocessDatabaseServer', () => {
+  test('reports one request-bound SQL phase before the final response and retires its callback', async () => {
+    const transport = new FakeTransport();
+    const finish = deferred<void>();
+    let phase!: () => void;
+    const server = new SubprocessDatabaseServer({role:ROLE,slot:SLOT,transport,
+      async handle(_request, execution) { phase=execution.commitSettled; phase(); await finish.promise; return 'durable'; }});
+    await startServer(server,transport);
+    transport.emitMessage({...request(1,'write',null),operationKind:'write'});
+    await waitFor(()=>transport.sent.length===2);
+    expect(transport.sent[1]).toEqual({...SESSION,type:'commit-settled',requestId:1});
+    expect(server.diagnostics().inFlight).toBe(1);
+    expect(()=>phase()).toThrow();
+    finish.resolve();
+    await waitFor(()=>transport.sent.length===3);
+    expect(transport.sent[2]).toMatchObject({type:'response',requestId:1,ok:true,value:'durable'});
+    expect(()=>phase()).toThrow();
+    transport.emitMessage(shutdown()); await server.finished();
+  });
+
+  test('does not report commit phases for read requests', async () => {
+    const transport=new FakeTransport();
+    const server=new SubprocessDatabaseServer({role:ROLE,slot:SLOT,transport,handle(_request,execution){execution.commitSettled();return null;}});
+    await startServer(server,transport);
+    transport.emitMessage(request(1,'read',null));
+    await waitFor(()=>transport.sent.length===2);
+    expect(transport.sent[1]).toMatchObject({type:'response',ok:false});
+    expect(transport.sent.some(message=>message.type==='commit-settled')).toBe(false);
+    transport.emitMessage(shutdown()); await server.finished();
+  });
+
   test('handles requests and serializes errors without leaking thrown values', async () => {
     const transport = new FakeTransport();
     let closeCalls = 0;
@@ -165,11 +195,11 @@ describe('SubprocessDatabaseServer', () => {
     expect(transport.sent).toHaveLength(0);
   });
 
-  test('rejects a stale v2 actor at the handshake boundary', async () => {
+  test.each([2, 3])('rejects a stale v%s actor at the handshake boundary', async version => {
     const transport = new FakeTransport();
     const server = createServer(transport);
     const starting = server.start();
-    transport.emitMessage({ ...handshake(), version: 2 });
+    transport.emitMessage({ ...handshake(), version });
 
     await expectDatabaseError(starting, 'DATABASE_PROTOCOL_ERROR');
     await expectDatabaseError(server.finished(), 'DATABASE_PROTOCOL_ERROR');

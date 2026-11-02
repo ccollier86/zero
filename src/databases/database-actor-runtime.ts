@@ -98,6 +98,7 @@ import {
 import {
   SubprocessDatabaseServer,
   type DatabaseExecutorServerRequest,
+  type DatabaseExecutorServerExecutionContext,
   type SubprocessDatabaseServerOptions,
 } from './subprocess-database-server';
 
@@ -179,7 +180,7 @@ export class DatabaseActorRuntime implements Disposable {
   }
 
   /** Validate and execute one already-framed server request. */
-  handle(request: DatabaseExecutorServerRequest): DatabaseExecutorValue {
+  handle(request: DatabaseExecutorServerRequest, execution?: DatabaseExecutorServerExecutionContext): DatabaseExecutorValue {
     try {
       this.assertAccepting();
       switch (request.operation) {
@@ -188,7 +189,7 @@ export class DatabaseActorRuntime implements Disposable {
         case DATABASE_ACTOR_OPERATIONS.bindReader:
           return asExecutorValue(this.bind(request, 'reader'));
         case DATABASE_ACTOR_OPERATIONS.execute:
-          return this.execute(request);
+          return this.execute(request, execution);
         case LOGGING_ACTOR_SOURCE_OPERATION:
           return this.loggingSource(request);
         case LOGGING_ACTOR_PROBE_OPERATION:
@@ -208,7 +209,7 @@ export class DatabaseActorRuntime implements Disposable {
         case DATABASE_ACTOR_OPERATIONS.presenceProjection:
           return asExecutorValue(this.presenceProjection(request));
         case DATABASE_ACTOR_AUTOMATION_OUTBOX_OPERATION:
-          return asExecutorValue(this.automationOutbox(request));
+          return asExecutorValue(this.automationOutbox(request, execution));
         case DATABASE_ACTOR_OPERATIONS.unbind:
           return this.unbind(request);
         default:
@@ -383,6 +384,7 @@ export class DatabaseActorRuntime implements Disposable {
 
   private execute(
     request: DatabaseExecutorServerRequest,
+    execution?: DatabaseExecutorServerExecutionContext,
   ): DatabaseExecutorValue {
     const payload = validateDatabaseActorExecutePayload(
       request.payload,
@@ -425,6 +427,7 @@ export class DatabaseActorRuntime implements Disposable {
       );
       if (isWriteOperation(payload.operation)) {
         if (!('replayed' in result)) throw invalidActorResult();
+        reportCommitSettled(binding, execution);
         this.establishHotWriteDurability(binding, result.replayed);
       }
       return asExecutorValue(attachDatabaseActorReceiptCompaction(
@@ -446,6 +449,7 @@ export class DatabaseActorRuntime implements Disposable {
       payload.operation.idempotencyKey,
       this.catalog,
     );
+    reportCommitSettled(binding, execution);
     this.establishHotWriteDurability(binding, result.replayed);
     return asExecutorValue(attachDatabaseActorReceiptCompaction(
       result,
@@ -626,6 +630,7 @@ export class DatabaseActorRuntime implements Disposable {
 
   private automationOutbox(
     request: DatabaseExecutorServerRequest,
+    execution?: DatabaseExecutorServerExecutionContext,
   ): DatabaseActorAutomationOutboxResult {
     const payload = validateDatabaseActorAutomationOutboxPayload(request.payload);
     const binding = this.requireBinding(payload.databaseRef);
@@ -658,6 +663,7 @@ export class DatabaseActorRuntime implements Disposable {
       throw error;
     }
 
+    if (operationKind === 'write') reportCommitSettled(binding, execution);
     if (payload.action === 'claim' && result !== null) {
       this.establishHotAutomationClaimDurability(binding);
     } else if (operationKind === 'write'
@@ -792,6 +798,19 @@ function rejectUnexpectedAuthorityRevision(
   );
 }
 
+/** No further protected SQL follows this phase; hot image publication still must succeed. */
+function reportCommitSettled(
+  binding: DatabaseActorBinding,
+  execution: DatabaseExecutorServerExecutionContext | undefined,
+): void {
+  if (!execution) return;
+  if (binding.role !== 'writer' || binding.runtime.db.getRawDatabase().inTransaction) {
+    throw new DatabaseError('DATABASE_PROTOCOL_ERROR', 'Database SQL commit phase is not settled.',
+      { retryable: false, outcome: 'unknown' });
+  }
+  execution.commitSettled();
+}
+
 /** Compose the database handler and strict IPC server without starting either. */
 export function createDatabaseActorServer(
   options: DatabaseActorServerOptions,
@@ -833,7 +852,7 @@ export function createDatabaseActorServer(
     ...(options.transport === undefined
       ? {}
       : { transport: options.transport }),
-    handle: (request) => actor.handle(request),
+    handle: (request, execution) => actor.handle(request, execution),
     close: () => closeActorWithRetries(actor),
   });
   return Object.freeze({ actor, server });

@@ -66,6 +66,24 @@ const actorBindingByPath = new Map<string, Readonly<{
 }>>();
 
 describe('DatabaseActorRuntime', () => {
+  test('reports SQL settlement only after an accepted write, never for a rolled-back duplicate', () => {
+    const directory=createDirectory(), filePath=join(directory,'phase.sqlite');
+    const databaseRef=createDatabaseRef('actor-phase');
+    const actor=new DatabaseActorRuntime({role:'writer',realm});
+    let phases=0;
+    try {
+      call(actor,DATABASE_ACTOR_OPERATIONS.bindWriter,'write',{databaseRef,filePath,placement:FILE_PLACEMENT,
+        realmFingerprint:realm.fingerprint,sqlite:{}});
+      const operation={type:'mutate' as const,idempotencyKey:'phase:first',mutation:{type:'create' as const,table:'todos',row:{id:'phase',title:'Original'}}};
+      actor.handle({operation:DATABASE_ACTOR_OPERATIONS.execute,kind:'write',payload:{databaseRef,operation}},
+        {commitSettled(){phases++;}});
+      expect(phases).toBe(1);
+      expect(()=>actor.handle({operation:DATABASE_ACTOR_OPERATIONS.execute,kind:'write',
+        payload:{databaseRef,operation:{...operation,idempotencyKey:'phase:duplicate'}}}, {commitSettled(){phases++;}})).toThrow();
+      expect(phases).toBe(1);
+    } finally {actor.close();rmSync(directory,{recursive:true,force:true});}
+  });
+
   test('binds, executes, replays, unbinds, and reuses one writer slot', () => {
     const directory = createDirectory();
     const firstPath = join(directory, 'first.sqlite');
@@ -600,6 +618,7 @@ describe('DatabaseActorRuntime', () => {
     } as const;
     const actor = new DatabaseActorRuntime({ role: 'writer', realm });
     let restoredSnapshot: (() => unknown) | null = null;
+    let phases = 0;
     try {
       call(actor, DATABASE_ACTOR_OPERATIONS.bindWriter, 'write', {
         databaseRef,
@@ -611,18 +630,17 @@ describe('DatabaseActorRuntime', () => {
       const snapshot = hotSnapshot(actor);
       const originalSnapshotSync = snapshot.snapshotSyncDetailed.bind(snapshot);
       restoredSnapshot = () => { snapshot.snapshotSyncDetailed = originalSnapshotSync; };
-      snapshot.snapshotSyncDetailed = () => ({
+      snapshot.snapshotSyncDetailed = () => {
+        expect(phases).toBe(1);
+        return ({
         status: 'failed',
         durable: false,
         error: new Error(`injected private failure at ${filePath}`),
-      });
+        });
+      };
 
-      const error = captureError(() => call(
-        actor,
-        DATABASE_ACTOR_OPERATIONS.execute,
-        'write',
-        { databaseRef, operation },
-      ));
+      const error = captureError(() => actor.handle({operation:DATABASE_ACTOR_OPERATIONS.execute,kind:'write',
+        payload:{databaseRef,operation}}, {commitSettled(){phases++;}}));
       expect(error).toMatchObject({
         code: 'DATABASE_OUTCOME_UNKNOWN',
         retryable: false,

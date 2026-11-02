@@ -11,6 +11,67 @@ const FIXTURE_PATH = fileURLToPath(new URL(
 ));
 
 describe('SubprocessDatabaseExecutor', () => {
+  test('receives a request-bound SQL phase while the child is still busy, without resolving the write', async () => {
+    const executor = createExecutor();
+    let phase!: () => void;
+    const observed = new Promise<void>(resolve => { phase = resolve; });
+    let completed = false;
+    try {
+      const result = executor.execute({ operation:'commit-phase', kind:'write', payload:null }, { onCommitSettled:phase })
+        .then(value => { completed = true; return value; });
+      await observed;
+      expect(completed).toBe(false); expect(executor.diagnostics().inFlight).toBe(1);
+      expect(await result).toBe('durable');
+    } finally { await executor.close(); }
+  });
+
+  test('a reported SQL phase cannot convert subsequent durability failure to success', async () => {
+    const executor = createExecutor(); let phases=0;
+    try {
+      await expect(executor.execute({operation:'commit-phase-failure',kind:'write',payload:null},{onCommitSettled(){phases++;}}))
+        .rejects.toMatchObject({code:'DATABASE_OUTCOME_UNKNOWN',outcome:'unknown',retryable:false});
+      expect(phases).toBe(1);
+    } finally { await executor.close(); }
+  });
+
+  test('worker death after SQL settlement still leaves the write outcome unknown', async () => {
+    const executor = createExecutor();
+    let phases = 0;
+    try {
+      const error = await captureDatabaseError(executor.execute({
+        operation: 'commit-phase-exit', kind: 'write', payload: null,
+      }, { onCommitSettled() { phases++; } }));
+      expect(phases).toBe(1);
+      expect(error).toMatchObject({
+        code: 'DATABASE_EXECUTOR_FAILED', outcome: 'unknown', retryable: false,
+      });
+      await executor.settled();
+      expect(executor.diagnostics().exitObserved).toBe(true);
+    } finally {
+      await executor.close();
+    }
+  });
+
+  test.each(['commit-duplicate','commit-read','commit-foreign','commit-extended'] as const)(
+    'rejects invalid commit-phase proof: %s', async operation => {
+      const executor = createExecutor();
+      try {
+        await expect(executor.execute({operation,kind:operation==='commit-read'?'read':'write',payload:null}))
+          .rejects.toMatchObject({code:'DATABASE_PROTOCOL_ERROR',retryable:false});
+        expect(executor.diagnostics().state).toBe('failed');
+      } finally { await executor.close(); }
+    });
+
+  test('contains a throwing commit-phase observer without exposing its private error', async () => {
+    const executor = createExecutor();
+    try {
+      const error = await captureDatabaseError(executor.execute({operation:'commit-phase',kind:'write',payload:null},
+        {onCommitSettled(){throw new Error('private-phase-callback');}}));
+      expect(error).toMatchObject({code:'DATABASE_EXECUTOR_FAILED',outcome:'unknown',retryable:false});
+      expect(JSON.stringify(error)).not.toContain('private-phase-callback');
+    } finally { await executor.close(); }
+  });
+
   test('accepts the portable JavaScript timer ceiling for every executor deadline', async () => {
     const executor = createExecutor({
       startupTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,

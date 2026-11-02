@@ -377,6 +377,33 @@ describe('DatabaseCoordinator automation delivery source', () => {
     await authorityOwner.close();
   });
 
+  test('settled source SQL releases auth priority but neither acknowledges durability nor replays a later failure', async () => {
+    const owner=new AuthorityCommitCoordinator();
+    const harness=new RuntimeHarness({authorityCommitCoordinator:owner,requireCommitAuthority:true});
+    const entry=harness.createEntry('source-phase');
+    const phase=deferred<void>(), finish=deferred<void>();
+    let requests=0, completed=false;
+    harness.executor(entry).respond=async (_request, options)=>{
+      requests++;
+      expect(owner.diagnostics().activeShared).toBe(1);
+      options!.onCommitSettled!(); phase.resolve();
+      await finish.promise;
+      throw new DatabaseError('DATABASE_OUTCOME_UNKNOWN','Synthetic late durability failure.',{outcome:'unknown',retryable:false});
+    };
+    const source=createCoordinatorDatabaseAutomationDeliverySource(harness.createLease(entry,
+      createDatabaseCommitAuthority(owner,entry.id,()=>undefined)));
+    const pending=captureDatabaseError(()=>source.claim('worker:one',1_000,2_000)).then(error=>{completed=true;return error;});
+    try {
+      await phase.promise;
+      expect(completed).toBe(false);
+      const login=owner.tryAcquireExclusive(); expect(login).not.toBeNull(); login!.release();
+      finish.resolve();
+      expect(await pending).toMatchObject({code:'DATABASE_OUTCOME_UNKNOWN',outcome:'unknown',retryable:false});
+      expect(requests).toBe(1);
+      expect(owner.diagnostics().activeShared).toBe(0);
+    } finally {finish.resolve();await pending;await owner.close();}
+  });
+
   test('status reads do not block auth commits and reject authority retired during the read', async () => {
     const authorityOwner = new AuthorityCommitCoordinator();
     const harness = new RuntimeHarness({ authorityCommitCoordinator: authorityOwner, requireCommitAuthority: true });
@@ -608,6 +635,7 @@ class FakeExecutor implements DatabaseExecutor {
   }>> = [];
   respond: (
     request: DatabaseExecutorRequest,
+    options?: DatabaseExecutorExecuteOptions,
   ) => DatabaseExecutorValue | Promise<DatabaseExecutorValue> = (request) => (
     defaultActorResult(request.payload as Record<string, unknown>)
   );
@@ -623,7 +651,7 @@ class FakeExecutor implements DatabaseExecutor {
     options?: DatabaseExecutorExecuteOptions,
   ): Promise<Result> {
     this.requests.push(Object.freeze({ request, options }));
-    return await this.respond(request) as Result;
+    return await this.respond(request, options) as Result;
   }
 
   settled(): Promise<void> { return this.settlement; }
