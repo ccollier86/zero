@@ -547,11 +547,18 @@ git diff --check
    The real logging/Fabric control file and installed SignaturePad consumer
    likewise reserve exclusive windows. The former includes 256 separate FULL
    writer commits plus restart within its unchanged 30s case; the latter keeps
-   its original 120s complete lifecycle, 90s child bounds and awaited cleanup.
+   its original 120s functional case and 90s child bounds. SignaturePad, Cascader
+   and grouped-menu installed consumers now await dependency retirement in a
+   separately bounded 120s hook, including after failure. This explicitly allows
+   an aggregate lifecycle longer than the former single 120s case; it does not
+   relax install/build/assertion deadlines, skip cleanup or change production.
+   The grouped-menu qualification completed all 16 assertions and saved exact
+   archive provenance before dependency cleanup exhausted the old combined
+   deadline; that failed attempt remains evidence, not a passing package gate.
    A contended qualification timed out both files; the unchanged logging case
    completed in about 3s in isolation. Keep the failed attempt and qualify a
    new frozen candidate. Admission does not change production concurrency,
-   durability, inventories, assertions, deadlines or failure handling, and is
+   durability, inventories, assertions, functional deadlines or failure handling, and is
    not a production throughput claim. SignaturePad emits payload-free phase
    timings through packing, installation, verification and fixture retirement.
    The phone, Resource-array and adaptive-profile installed consumers use the same explicit

@@ -1,17 +1,31 @@
 /** Proves Cascader's public root/subpath exports in an actual freshly installed packed consumer. */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
+const consumers = new Map<string, (name: string) => void>();
+afterAll(async () => {
+  for (const [root, stage] of consumers) {
+    stage('retirement-started');
+    await rm(root, { recursive: true, force: true });
+    consumers.delete(root);
+    stage('retired');
+  }
+}, 120_000);
 
 test('packed Cascader exports browser-build and server-render with full-path selection metadata', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'cascader-package-'));
+  const started = performance.now();
+  const stage = (name: string) => console.info('[zero-cascader-stage]', { phase: name, elapsedMs: Math.round(performance.now() - started) });
+  consumers.set(root, stage);
   const consumer = join(root, 'consumer'), archive = join(root, 'framework.tgz');
   try {
+    stage('prepare');
     await mkdir(consumer);
     await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
+    stage('packed');
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({
       name: 'zero-cascader-public-consumer', private: true, type: 'module',
       dependencies: { '@zero/framework': `file:${archive}`, react: '19.2.4', 'react-dom': '19.2.4' },
@@ -19,6 +33,7 @@ test('packed Cascader exports browser-build and server-render with full-path sel
     await Bun.write(join(consumer, 'consumer.tsx'), CONSUMER);
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
     await checked(['install', '--ignore-scripts'], consumer);
+    stage('installed');
     const output = await checked(['verify.ts'], consumer);
     const result = JSON.parse(output.trim()) as { exported: number; browserBytes: number; html: string };
     expect(result.exported).toBe(14);
@@ -28,9 +43,10 @@ test('packed Cascader exports browser-build and server-render with full-path sel
     expect(result.html).toContain('data-paths="people|people.name;projects|projects.name"');
     expect(result.html).toContain('name="attributes" value="people.name"');
     expect(result.html).toContain('name="attributes" value="projects.name"');
+    stage('assertions-completed');
   } finally {
-    // Only this test's newly allocated consumer, dependencies and archive are disposable.
-    await rm(root, { recursive: true, force: true });
+    // Awaited bounded retirement is owned by the hook, even on failure.
+    stage('functional-phase-ended');
   }
 }, 120_000);
 

@@ -1,21 +1,37 @@
 /** Qualifies public grouped controls/menu exports in a freshly installed isolated package consumer. */
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const DIAGNOSTICS = '/Volumes/code-bank/artifacts/zero-platform/diagnostics';
+const consumers = new Map<string, (name: string) => void>();
+// Retirement is separately bounded and awaited, including after functional
+// failure. A failed hook still fails this file and retains its resource slot.
+afterAll(async () => {
+  for (const [directory, stage] of consumers) {
+    stage('retirement-started');
+    await rm(directory, { recursive: true, force: true });
+    consumers.delete(directory);
+    stage('retired');
+  }
+}, 120_000);
 
 test('packed groups and menus retain public identity, native SSR semantics, docs and browser bundling', async () => {
   await mkdir(SCRATCH, { recursive: true });
   await mkdir(DIAGNOSTICS, { recursive: true });
   const directory = await mkdtemp(join(SCRATCH, 'group-menu-package-'));
+  const started = performance.now();
+  const stage = (name: string) => console.info('[zero-group-menu-stage]', { phase: name, elapsedMs: Math.round(performance.now() - started) });
+  consumers.set(directory, stage);
   const artifact = await mkdtemp(join(DIAGNOSTICS, 'group-menu-package-'));
   const consumer = join(directory, 'consumer');
   const archive = join(artifact, 'framework.tgz');
   try {
+    stage('prepare');
     await mkdir(consumer);
     await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
+    stage('packed');
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({
       name: 'zero-group-menu-consumer', private: true, type: 'module',
       dependencies: { '@zero/framework': `file:${archive}`, react: '19.2.4', 'react-dom': '19.2.4' },
@@ -23,6 +39,7 @@ test('packed groups and menus retain public identity, native SSR semantics, docs
     await Bun.write(join(consumer, 'consumer.tsx'), CONSUMER);
     await Bun.write(join(consumer, 'verify.ts'), VERIFY);
     await checked(['install', '--ignore-scripts'], consumer);
+    stage('installed');
     // A fresh CLI compiler avoids test-process server/browser resolver warming.
     await checked(['build', 'consumer.tsx', '--target=browser', '--outdir=.', '--entry-naming=browser.[ext]'], consumer);
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim()) as {
@@ -53,9 +70,11 @@ test('packed groups and menus retain public identity, native SSR semantics, docs
       verifiedAt: new Date().toISOString(),
     }, null, 2));
     console.info('[zero-group-menu-package]', JSON.stringify({ artifact, version: result.version, sha256 }));
+    stage('assertions-completed');
   } finally {
-    // Only this test's newly allocated consumer is disposable; retained package evidence is external.
-    await rm(directory, { recursive: true, force: true });
+    // The hook awaits only this newly captured disposable consumer;
+    // archive/provenance diagnostics remain external.
+    stage('functional-phase-ended');
   }
 }, 120_000);
 

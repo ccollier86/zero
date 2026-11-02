@@ -1,15 +1,25 @@
 /** Proves the SignaturePad family through real public exports in a newly installed package consumer. */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
+const consumers = new Map<string, (name: string) => void>();
+afterAll(async () => {
+  for (const [root, phase] of consumers) {
+    phase('retirement-started');
+    await rm(root, { recursive: true, force: true });
+    consumers.delete(root);
+    phase('retired');
+  }
+}, 120_000);
 
 test('packed SignaturePad primitives and prefabs browser-build and render safely without a DOM', async () => {
   const started = performance.now();
   const phase = (name: string) => console.log('[zero-signature-package]', JSON.stringify({ phase: name, elapsedMs: Math.round(performance.now() - started) }));
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'signature-package-'));
+  consumers.set(root, phase);
   const consumer = join(root, 'consumer'), archive = join(root, 'framework.tgz');
   try {
     phase('prepare');
@@ -38,10 +48,8 @@ test('packed SignaturePad primitives and prefabs browser-build and render safely
     expect(result.html).not.toContain('window is not defined');
     phase('assertions-completed');
   } finally {
-    // Only this test's freshly allocated consumer and archive are disposable.
-    phase('retirement-started');
-    await rm(root, { recursive: true, force: true });
-    phase('retired');
+    // The hook awaits retirement of only this test's disposable fixture.
+    phase('functional-phase-ended');
   }
 }, 120_000);
 

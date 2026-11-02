@@ -1227,3 +1227,31 @@ A separate canonical five-file run passes all 55 browser/resource/revalidation
 cases, including all 18 actual Chromium form cases. TypeScript and the 879-page
 documentation graph pass. These are focused source checks, not proof that the
 installed avatar sequence or replacement release archive is qualified.
+
+Candidate `3f73df477a6cfc3975f58f4bde3ebc3d3655f397` passes clean TypeScript,
+distribution, updater tamper/rollback, Fabric metadata, Cascader and SignaturePad
+checks, but its grouped-menu package test reaches the original 120s combined
+deadline during dependency retirement. All 16 assertions and exact archive
+provenance were already saved (23 exports, three documentation assets, real
+browser bundle); the disposable consumer remains partly removed. This run is
+failed and retained in `release-2.10.0/candidate-3f73df4/`, not qualified.
+
+Those three installed UI consumers now use the existing phone/Resource package
+pattern: the original 120s functional case and 90s child deadlines remain, with
+an awaited, separately bounded 120s dependency-retirement hook. Cleanup failure
+still fails the file and retains its I/O slot; aggregate lifecycle may now
+exceed the former single deadline. Payload-free phase timings make the split
+visible. No application/runtime/auth deadline changes. Independent native
+diagnostics of the same immutable candidate do not override its failed gate.
+
+The independent Linux/amd64 source-preparation → official-bundle Chromium run
+then confirms the core repair against that immutable archive: ten completed
+client navigations retain exact audit IDs with zero document requests/failure
+flashes; unchanged professional submit makes zero writes; professional and
+personal saves preserve each other's drafts and reach canonical value-free
+audit history. Native avatar staging/finalize and private delivery return
+200/201, the photo action is visible, and the image survives refresh. This
+diagnostic stops before restart because its external container name does not
+match the existing test's ownership guard. That guard is not relaxed; the
+follow-up uses an admitted synthetic name. This is partial browser evidence,
+not a passing full case or a qualified release.
