@@ -1255,3 +1255,26 @@ diagnostic stops before restart because its external container name does not
 match the existing test's ownership guard. That guard is not relaxed; the
 follow-up uses an admitted synthetic name. This is partial browser evidence,
 not a passing full case or a qualified release.
+
+The complete independent native follow-up now passes all 54 Chromium
+assertions in 44,120ms, including retained private avatar bytes after restart,
+new-tab/modified-link admission, blocked-delivery recovery, both professional
+and personal saves, source/outbox/Fabric evidence and operational diagnostics.
+The Linux/amd64 image uses the immutable `3f73df4` archive; the working fixture
+boot driver prepares source state and the official bundle once, then verifies
+the archive/bundle hashes and restarts that bundle. It does not reinstall or
+compile inside the unchanged 60s restart readiness check.
+
+The preceding restart probe had actually reached its ready state, but Docker
+reassigned the automatically published host port. An independent no-database
+HTTP container reproduces `127.0.0.1:32782` → `127.0.0.1:32783` on restart.
+The harness now selects an explicit nonzero loopback port; the source browser
+test asserts that its origin remains identical after restart. No auth gate or
+timeout was relaxed. Route diagnostics also template private avatar user IDs.
+
+All 21 private worker entries in the passing diagnostic have filtered
+environments, and only two real main-app boots occur; workers never boot the
+app. Evidence: `native-account-sync-preflight-20261101-v4/` and
+`native-port-stability.json` in the external release diagnostics root. Its
+report deliberately remains `qualified: false`: it uses a working fixture and
+does not supersede the failed package gate or the final exact-archive sequence.

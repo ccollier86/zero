@@ -488,6 +488,14 @@ git diff --check
    Keep these gate phases sequential. Do not run the package-consumer gate or
    complete inventory alongside a separate saved-updater installation, Docker
    installation/build, manual installed consumer or real-window browser gate.
+
+   The installed account/avatar fixture must create its synthetic source state
+   and official bundle once, then restart the retained verified bundle. Do not
+   silently include a second install/compiler inside the runtime restart check.
+   Give Docker an explicit nonzero loopback host port for browser restart tests:
+   automatically published ports can be reassigned on restart, invalidating the
+   browser origin despite a healthy server. Assert origin preservation rather
+   than increasing readiness timeouts or weakening session/audit checks.
    The canonical runner coordinates its own children, not independent shells
    competing for the same external cache/disk. In particular, an archive test
    remains failed if its owned cleanup exceeds the original deadline even when

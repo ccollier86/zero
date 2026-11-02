@@ -20,6 +20,7 @@ function fixtureOrigin() {
 function safePath(url: string) {
   return new URL(url).pathname.replace(/\/storage\/upload-grants\/[^/]+/g, '/storage/upload-grants/:token')
     .replace(/\/auth\/me\/properties\/[^/]+/g, '/auth/me/properties/:key')
+    .replace(/\/auth\/profile\/avatar\/users\/[^/]+/g, '/auth/profile/avatar/users/:userId')
     .replace(/\/stages\/[^/]+/g, '/stages/:stageId').replace(/\/assets\/[^/]+/g, '/assets/:assetId');
 }
 async function until(check: () => boolean | Promise<boolean>, timeout = 15000) {
@@ -269,6 +270,11 @@ browserTest('installed Linux app: real navigation, audit retention, diagnostics 
         expect((await new Response(checked.stdout).text()).trim()).toBe('practiceiq-repair'); expect(await checked.exited).toBe(0);
         const restart = Bun.spawn(['docker', 'restart', '-t', '30', container], { stdout: 'pipe', stderr: 'pipe' });
         expect(await restart.exited).toBe(0);
+        const port = Bun.spawn(['docker', 'port', container, '4319/tcp'], { stdout: 'pipe', stderr: 'pipe' });
+        const [address, portCode] = await Promise.all([new Response(port.stdout).text(), port.exited]);
+        expect(portCode).toBe(0);
+        expect(address.trim()).toBe(new URL(base).host);
+        report.nativeRestartOriginPreserved = true;
         await until(async () => { try { return (await fetch(base + '/api/health')).status === 200; } catch { return false; } }, 60000);
         await page.reload(); await page.getByTestId('protected-account').waitFor();
         expect(await page.getByLabel('First name', { exact: true }).inputValue()).toBe(revisedName);
