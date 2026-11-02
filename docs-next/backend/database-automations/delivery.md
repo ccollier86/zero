@@ -128,7 +128,12 @@ outbox SQL and triggers, not only tracked application sequence numbers. Recovery
 that only compacts terminal metadata still counts as a write. If change detection
 cannot establish a no-op, durability remains conservative. A successful claim
 always forces its durable image before dispatch; failed publication still fails
-closed. Active actor/outbox operations retain their shared authority leases.
+closed. Active mutating actor/outbox operations retain their shared authority
+leases, including unknown writes until settlement. Read-only outbox status
+counts do not hold a commit lease while waiting for the actor: current scoped
+authority is checked both at the FIFO head and after its response. Status
+polling must not postpone authentication or revocation, and a revoked caller
+does not receive a previously admitted read result.
 See [Fabric concurrency](../fabric/concurrency.md#guardian-authority-coordination)
 for bounded Guardian commit admission under load.
 

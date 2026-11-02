@@ -15,7 +15,13 @@ visibility: internal
 
 ## Source And Release Boundary
 
-The current implementation checkpoint is
+The following October checkpoint and its counts are historical. The current
+2.10.0 repair is still in qualification; stable/main remain at the previously
+qualified 2.9.0 until an exact replacement archive passes every release gate.
+See the follow-up sections at the end of this ledger. Passing focused source
+checks or an earlier candidate's browser run does not qualify a later archive.
+
+The historical implementation checkpoint is
 `bfc763919aeffa43d84556d6076ea18097b2cff1`, package 2.6.0, October 7, 2026.
 It contains the committed adaptive Guardian upgrade and the preserved main CLI
 setup kit plus the focused closing corrections recorded below. Its historical
@@ -1298,3 +1304,79 @@ form example was added (62 examples, previously 61). All discovered examples
 remain subject to TypeScript compilation. The interrupted failed sweep is
 retained in `candidate-df2efa6-r2/`; it is not a whole-suite pass. A new exact
 commit/archive must pass qualification before the stable selection changes.
+
+The replacement full sweep also exposed a SignaturePad browser-test ordering
+race: the failure sink records its bounded event synchronously, before React
+commits the pending-button reset. An immediate `isEnabled()` after observing
+that event is not a UI-settlement barrier. The test now waits for the actual
+enabled native control, as its accepted/declined neighbors already do, then
+retains every existing failure/privacy/retry assertion. The component, callback
+ordering and existing timeouts are unchanged. The failed sweep remains
+recorded; this focused test correction is not a substitute whole-suite pass.
+
+The same sweep's installed automation/Torrent consumer completed all 13 public
+package, browser-boundary and native-run assertions, then exceeded its former
+180s combined deadline during dependency removal. Its awaited retirement now
+uses the existing package-fixture pattern: a separate 120s hook, with the
+original 180s functional and 120s child limits unchanged. Aggregate lifecycle
+can therefore exceed the former single deadline. Hook failure still fails the
+file and owns its admission slot; the earlier timeout is retained as a failure.
+
+### Cross-process admission follow-up (November 2)
+
+Candidate `8a15778` completed its entire 1,408-file source inventory: 1,398
+passed and ten failed, with no interrupted or omitted file. It remains failed
+and is not selected for updates. Sequential diagnostics reproduced a genuine
+refresh `AUTH_COMMIT_CONFLICT`: fair local admission did not acquire the
+cross-process file fence before the synchronous auth operation began.
+
+The correction includes that file acquisition in the existing total admission
+deadline, outside application/SYSTEM SQLite transactions. One synchronous
+capability lets final guards borrow the owned file fence in sequence, including
+the already-settled Guardian commit's in-process identity projection. The
+operation runs once. Final revocation/revision/file checks, foreign-process
+exclusion, cancellation and unknown-outcome rules remain enforced.
+
+Focused checks pass 38 cases across six auth/coordinator/file boundary files,
+plus eight cases for queue/deadline/resource
+admission. They cover no write before grant, exactly-once execution, timeout,
+cancellation, registration retirement, one total wait budget, revocation,
+replaced file identity, projection, foreign/escaped/nested lease rejection and
+process-death lock release. This includes rejection of application writes
+against uncommitted Guardian state and a final borrowed guard detecting a
+replaced sidecar. These are working-source diagnostics, not a release.
+
+The hot-load diagnostic still fails its unchanged two-second foreground bound.
+Payload-free tracing locates that delay in the local actor queue (1–2.1s), with
+synchronous auth turns taking 9–25ms and no measured file-fence wait in that
+trace. The external volume has only about 1.6GiB free. Neither a larger deadline
+nor an automatic retry substitutes for remaining contention/capacity diagnosis.
+The original failed runs and diagnostics remain retained; no application state
+or stable selection has changed.
+
+The final focused source run passes all 107 cases /630 assertions across 12
+files, including the actual Chromium
+professional-property form and SignaturePad cases. The three managed runtime
+files pass eight cases /112 assertions for single/multi identity projection,
+compliance personal/professional saves, rollback, trusted-property retirement,
+logging-disabled permission enforcement and persistent Sync. TypeScript and the
+879-page documentation graph pass independently.
+
+All four previously failing installed consumers then pass under their unchanged
+functional/child deadlines: automation/Torrent (60.8s), theme foundation (76.1s),
+modal scroll (70.7s) and modal system (77.2s). These fresh working-source package
+checks retain all 307 assertions. They do not qualify a new immutable release,
+and the earlier complete-sweep failures remain recorded.
+
+Review also finds read-only automation status/count queries taking a shared
+commit lease unnecessarily. They now revalidate live scoped authority before
+and after their actor response without reserving a write fence. Mutating
+operations and unknown-write settlement retain the lease. The exact private
+delivery-source gate passes eight cases /57 assertions, including a status read
+that cannot block auth and rejects a caller revoked during that read. The
+unknown-outcome hold test now exercises a real mutating claim, not a read.
+
+The unchanged hot-load case still fails its two-second bound after this fix
+(2,167ms on a refresh in the fifth cycle, without a commit-conflict response).
+It remains a release blocker, alongside native qualification disk headroom;
+the four passing package checks are not substituted for that acceptance case.

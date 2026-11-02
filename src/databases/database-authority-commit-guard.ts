@@ -5,8 +5,9 @@
  * Authority-table triggers advance one durable revision inside the same
  * SQLite transaction. The final commit guard acquires exclusive ownership
  * only when that revision changed. Async auth callers may reserve a fair turn
- * before entering SQLite; direct synchronous callers still fail closed on a
- * conflict. The final guard never waits with SQLite locks held.
+ * before entering SQLite, including the cross-process file fence; direct
+ * synchronous callers still fail closed on a conflict. The final guard never
+ * waits with SQLite locks held.
  */
 
 import { readAuthAuthorityRevision } from '../auth/auth-authority-revision';
@@ -86,9 +87,11 @@ export function registerDatabaseAuthorityCommitGuard(
   let removeAdmission: () => void;
   try {
     removeAdmission = registerReactiveDBCommitAdmission(db, async (operation, options) => {
+      const timeoutMs = options.timeoutMs ?? 5_000;
+      const deadline = performance.now() + timeoutMs;
       let lease: AuthorityCommitLease;
       try {
-        lease = await coordinator.acquireExclusive({ ...options, timeoutMs: options.timeoutMs ?? 5_000 });
+        lease = await coordinator.acquireExclusive({ ...options, timeoutMs });
       } catch (error) {
         if (error instanceof DatabaseError
           && (error.code === 'DATABASE_QUEUE_TIMEOUT' || error.code === 'DATABASE_BACKPRESSURE')) {
@@ -96,11 +99,28 @@ export function registerDatabaseAuthorityCommitGuard(
         }
         throw error;
       }
+      let fileLease: ReturnType<DatabaseAuthorityCommitFileFence['tryAcquireExclusive']> = null;
       try {
-        if (!active) throw new DatabaseError('DATABASE_CLOSED', 'Authority commit admission is closed.');
-        if (options.signal?.aborted) throw authorityConflict();
-        return coordinator.runSynchronousExclusiveTurn(lease, operation);
-      } finally { lease.release(); }
+        // Local FIFO admission alone cannot fence a source/delivery actor in
+        // another process. Wait here, before any application or SYSTEM SQLite
+        // transaction begins; never retry the actual operation or final guard.
+        let delayMs = 1;
+        while (true) {
+          if (!active) throw new DatabaseError('DATABASE_CLOSED', 'Authority commit admission is closed.');
+          if (options.signal?.aborted || performance.now() >= deadline) throw authorityConflict();
+          if (!fileFence) return coordinator.runSynchronousExclusiveTurn(lease, operation);
+          fileLease = fileFence.tryAcquireExclusive();
+          if (fileLease) {
+            return coordinator.runSynchronousExclusiveTurn(lease, () =>
+              fileFence.runSynchronousExclusiveTurn(fileLease!, operation));
+          }
+          await Bun.sleep(Math.min(delayMs, Math.max(1, deadline - performance.now())));
+          delayMs = Math.min(8, delayMs * 2);
+        }
+      } finally {
+        try { fileLease?.release(); }
+        finally { lease.release(); }
+      }
     });
   } catch (error) {
     removeGuard();

@@ -1,19 +1,33 @@
 /** Isolated installed-public-package proof; no live app or existing DB is opened. */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
+const consumers = new Map<string, (stage: string) => void>();
+afterAll(async () => {
+  for (const [root, stage] of consumers) {
+    stage('retirement-started');
+    await rm(root, { recursive: true, force: true });
+    consumers.delete(root);
+    stage('retired');
+  }
+}, 120_000);
 
 test('installed package enqueues retry-safe Torrent runs and boots dedicated logging actors', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'automation-torrent-package-'));
+  const started = performance.now();
+  const stage = (name: string) => console.log('[zero-automation-torrent-package]', { stage: name, elapsedMs: Math.round(performance.now() - started) });
+  consumers.set(root, stage);
   const consumer = join(root, 'consumer');
   try {
+    stage('prepare');
     await mkdir(join(consumer, 'app'), { recursive: true });
     await mkdir(join(consumer, 'routes'), { recursive: true });
     const archive = join(root, 'framework.tgz');
     await checked([process.execPath, '--no-env-file', 'pm', 'pack', '--filename', archive, '--ignore-scripts', '--quiet'], process.cwd());
+    stage('packed');
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({
       name: 'zero-trigger-torrent-public-proof', private: true, type: 'module',
       dependencies: { '@zero/framework': `file:${archive}`, react: '19.2.4', 'react-dom': '19.2.4' },
@@ -25,6 +39,7 @@ test('installed package enqueues retry-safe Torrent runs and boots dedicated log
       ['fabric-sync-metadata-page.fixture.tsx', 'app/page.tsx'],
     ]) await Bun.write(join(consumer, destination!), Bun.file(join(fixtures, source!)));
     await checked([process.execPath, '--no-env-file', 'install', '--ignore-scripts'], consumer);
+    stage('installed');
     const installed = join(consumer, 'node_modules/@zero/framework');
     expect(await Bun.file(join(installed, 'docs-next/backend/database-automations/app-functions.md')).exists()).toBe(true);
     expect(await Bun.file(join(installed, 'docs-next/backend/database-automations/torrent.md')).text()).toContain('torrent.start');
@@ -35,13 +50,15 @@ test('installed package enqueues retry-safe Torrent runs and boots dedicated log
     // The focused component entry owns components, while hooks remain at /react.
     await Bun.write(join(consumer, 'logging-browser.tsx'), `import { LoggingWorkspace } from '@zero/framework/components/logging';\nimport { LOGGING_API } from '@zero/framework/logging';\nexport { LoggingWorkspace, LOGGING_API };`);
     await checked([process.execPath, '--no-env-file', 'build', 'logging-browser.tsx', '--target=browser', '--outdir', join(root, 'browser')], consumer);
+    stage('browser-built');
     const browserCode = await Bun.file(join(root, 'browser', 'logging-browser.js')).text();
     expect(browserCode).not.toContain('bun:sqlite'); expect(browserCode).not.toContain('LoggingSourceOutbox');
     const output = await checked([process.execPath, '--no-env-file', 'gateway.ts'], consumer);
     expect(output).toContain('[zero-public-automation-torrent] complete');
+    stage('assertions-completed');
   } finally {
-    // The exact freshly created test directory is disposable, never runtime data.
-    await rm(root, { recursive: true, force: true });
+    // The awaited hook owns retirement even on failure, not the app-operation deadline.
+    stage('functional-phase-ended');
   }
 }, 180_000);
 

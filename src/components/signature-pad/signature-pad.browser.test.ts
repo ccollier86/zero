@@ -285,6 +285,9 @@ describe('SignaturePad public browser composition', () => {
       await draw(page); await page.getByRole('button', { name: 'Save signature', exact: true }).click(); const id = await currentSave(page);
       await page.evaluate((id) => window.__signatureHarness.rejectSave(id), id);
       await page.waitForFunction((code) => window.__signatureHarness.events().some((event) => event.code === code), OBS_CODES.FRONTEND_SIGNATURE_PAD_SAVE_FAILED.code);
+      // Observability is synchronous; React commits the finally-state afterward.
+      // As in the accepted/declined cases, wait for the actual unlocked control.
+      await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('[data-slot="signature-pad-save"]')?.disabled === false);
       expect(await page.getByRole('button', { name: 'Save signature', exact: true }).isEnabled()).toBe(true);
       expect(JSON.stringify(await page.evaluate(() => window.__signatureHarness.events()))).not.toContain('private signature');
       expect(JSON.stringify(await page.evaluate(() => window.__signatureHarness.events()))).not.toContain('<svg');

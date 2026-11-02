@@ -62,13 +62,16 @@ test('timeout and cancellation never execute a queued auth transaction or leak p
   } finally { shared.release(); await h.close(); }
 });
 
-test('admission retains the cross-process final fence and rolls back a real unresolved race', async () => {
+test('admission retains the cross-process fence and does not start an unresolved write before its deadline', async () => {
   const h = await fixture(), competing = new DatabaseAuthorityCommitFileFence(h.path);
   const shared = competing.tryAcquireShared()!;
+  let calls = 0;
   try {
     await expect(withReactiveDBCommitAdmission(h.db, () => {
+      calls++;
       h.db.transaction(() => h.db.prepare('UPDATE users SET role = ? WHERE user_id = ?').run('admin', 'u'));
-    })).rejects.toMatchObject({ code: 'DATABASE_CONFLICT', retryable: true, outcome: 'not-committed' });
+    }, { timeoutMs: 25 })).rejects.toMatchObject({ code: 'DATABASE_CONFLICT', retryable: true, outcome: 'not-committed' });
+    expect(calls).toBe(0);
     expect(h.db.prepare('SELECT role FROM users WHERE user_id = ?').get('u')).toEqual({ role: 'user' });
     expect(h.coordinator.diagnostics()).toMatchObject({ activeExclusive: false, activeShared: 0 });
   } finally { shared.release(); competing.close(); await h.close(); }

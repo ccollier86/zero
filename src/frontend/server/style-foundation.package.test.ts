@@ -1,5 +1,5 @@
 /** Qualify the backing facade, managed build and source-only Doctor in an isolated installed archive; never publish or start services. */
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -7,6 +7,15 @@ import { SOURCE_ONLY_UPGRADE_CATALOG_VERSION } from '../../doctor/source-only-up
 
 const SCRATCH = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const DIAGNOSTICS = '/Volumes/code-bank/artifacts/zero-platform/diagnostics/theme-foundation';
+const consumers = new Map<string, (stage: string) => void>();
+afterAll(async () => {
+  for (const [root, stage] of consumers) {
+    stage('retirement-started');
+    await rm(root, { recursive: true, force: true });
+    consumers.delete(root);
+    stage('retired');
+  }
+}, 120_000);
 const QUALIFIED_SOURCE = [
   'src/doctor/source-only-doctor.ts', 'src/doctor/source-only-types.ts', 'src/doctor/run.ts',
   'src/cli/run.ts', 'src/doctor/source-only-theme-foundation.ts',
@@ -46,10 +55,15 @@ const QUALIFIED_SOURCE = [
 test('packed theme backing defaults to next CSS and checks sources without importing application configuration', async () => {
   await mkdir(SCRATCH, { recursive: true });
   const root = await mkdtemp(join(SCRATCH, 'theme-foundation-package-'));
+  const started = performance.now();
+  const stage = (name: string) => console.log('[zero-theme-package]', { stage: name, elapsedMs: Math.round(performance.now() - started) });
+  consumers.set(root, stage);
   const consumer = join(root, 'consumer'), archive = join(root, 'framework.tgz');
   try {
+    stage('prepare');
     await mkdir(join(consumer, 'app'), { recursive: true });
     await checked(['pm', 'pack', '--ignore-scripts', '--filename', archive], process.cwd());
+    stage('packed');
     await Bun.write(join(consumer, 'package.json'), JSON.stringify({ name: 'zero-theme-backing-consumer', private: true, type: 'module',
       dependencies: { '@zero/framework': `file:${archive}`, react: '19.2.4', 'react-dom': '19.2.4',
         '@types/bun': 'latest', '@types/react': '^19.2.14', '@types/react-dom': '^19.2.3', typescript: '^5.7.0' } }));
@@ -62,8 +76,11 @@ test('packed theme backing defaults to next CSS and checks sources without impor
     await Bun.write(join(consumer, '.env'), 'THEME_CONFIG_TRIPWIRE=MUST_NOT_LOAD\n');
     await Bun.write(join(consumer, 'app/theme-usage.ts'), "import { createThemeAttributes } from '@zero/framework/design-system';\nexport const attributes = createThemeAttributes();\nexport const style = 'color:var(--zero-theme-text-primary)';\n");
     await checked(['install', '--ignore-scripts'], consumer);
+    stage('installed');
     await checked(['run', 'node_modules/typescript/bin/tsc', '--noEmit'], consumer);
+    stage('typechecked');
     const result = JSON.parse((await checked(['verify.ts'], consumer)).trim());
+    stage('verified');
     expect(result.foundation).toBe('next');
     expect(result.managedDefault).toBe('next');
     expect(result.explicitLegacy).toBe('legacy');
@@ -90,6 +107,7 @@ test('packed theme backing defaults to next CSS and checks sources without impor
     expect(result.environmentNotLoaded).toBe(true);
     const report = JSON.parse((await checked(['run', 'node_modules/@zero/framework/src/cli/run.ts', 'doctor', '--source-only',
       '--theme-foundation', '--upgrade', '--project-root', consumer, '--usage-include', 'app', '--json'], consumer)).trim());
+    stage('doctor-qualified');
     expect(report.mode).toBe('source-only');
     expect(report.themeFoundation.bundledStyles).toBe('verified');
     expect(report.themeFoundation.reviewCounts.unresolvedCanonicalReferences).toBe(0);
@@ -123,7 +141,11 @@ test('packed theme backing defaults to next CSS and checks sources without impor
       browserBytes: result.browserBytes, sourceOnlyDoctor: true, configTripwireNotExecuted: true,
       environmentNotLoaded: true, databaseFiles: result.databaseFiles, verifiedAt: new Date().toISOString(),
     }, null, 2));
-  } finally { await rm(root, { recursive: true, force: true }); }
+    stage('proof-recorded');
+  } finally {
+    // Report the functional result before awaited, separately bounded retirement.
+    stage('functional-phase-ended');
+  }
 }, 180_000);
 
 /** Every child disables .env loading, lifecycle scripts and inherited service credentials. */

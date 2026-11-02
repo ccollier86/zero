@@ -188,7 +188,11 @@ export class DatabaseCoordinatorAutomationDeliveryRuntime {
         'Database commit authority coordinator is unavailable.',
       );
     }
-    const authorityLease = authorityCoordinator
+    // Counts are read-only framework metadata, not an application commit. A
+    // slow status query must not reserve shared commit authority and delay a
+    // queued login/revocation. Recheck its caller before returning the result.
+    const mutates = payload.action !== 'counts';
+    const authorityLease = authorityCoordinator && mutates
       ? await authorityCoordinator.acquireShared({
           ...(execution.signal ? { signal: execution.signal } : {}),
           timeoutMs: queueTimeout(execution, this.options.queueTimeoutMs),
@@ -213,7 +217,11 @@ export class DatabaseCoordinatorAutomationDeliveryRuntime {
       }, {
         timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs),
       });
-      return validateDatabaseActorAutomationOutboxResult(payload, raw);
+      const result = validateDatabaseActorAutomationOutboxResult(payload, raw);
+      if (!mutates && commitAuthority && authorityCoordinator) {
+        assertDatabaseCommitAuthorityCurrent(commitAuthority, authorityCoordinator, entry.databaseRef);
+      }
+      return result;
     } catch (caught) {
       const error = safeCoordinatorError(caught);
       if (!writer) throw error;

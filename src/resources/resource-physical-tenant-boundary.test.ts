@@ -140,6 +140,9 @@ describe('physical tenant resource boundary', () => {
   test('invalidates the captured read authority when trusted user properties change', async () => {
     let department = 'clinical';
     const store = {
+      // Model the real legacy UserStore contract: it has a full property reader
+      // but no optional managed authority-property projection.
+      getProperties() { return { department }; },
       getUserById() {
         return {
           userId: 'user-1',

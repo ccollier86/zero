@@ -174,6 +174,11 @@ lock is held while waiting. Already admitted
 actor work can finish, but later shared work cannot continually overtake queued
 authentication.
 
+Read-only automation status/count requests do not occupy shared commit leases
+while awaiting their actor response. They retain current-authority checks
+before and after the read. Mutating source operations keep their commit leases,
+including indeterminate writes until the actor's settlement is known.
+
 Admission is not a permission grant. Account eligibility, security generations,
 session/revocation state, tenant authority and configured completion gates are
 still validated at persistence. Refresh consumption uses the current commit-time
@@ -187,8 +192,8 @@ exposed. Domain services keep their own synchronous transaction/rollback
 semantics. Custom server code must not hold an SQL transaction across an await,
 or wrap hashing/email work inside a commit permit.
 
-The admitted **queue turn** is distinct from an exclusive **commit lease**.
-Actual shared/exclusive leases remain scoped to each SQLite commit/rollback.
+The admitted **queue turn** is distinct from a local exclusive **commit lease**.
+Actual local shared/exclusive leases remain scoped to each SQLite commit/rollback.
 The synchronous turn also lets a committed Guardian mutation finish its pinned
 identity-projection callbacks before the next queued authority operation starts.
 It does not keep an exclusive commit lease across those application writes,
@@ -196,6 +201,20 @@ and asynchronous work cannot inherit the turn. This distinction prevents
 first-user/admin creation from conflicting with its own anchor delivery while
 preserving FIFO admission and all final revision/file fences. See the
 [regression report](../../../docs/auth/commit-admission-projection-regression.md).
+
+File-backed deployments also wait for the OS-backed cross-process fence before
+starting that synchronous operation, sharing the same five-second total budget
+with the local queue wait. A source actor in another process must not turn a
+healthy session rotation into an immediate conflict after local admission.
+The file fence stays exclusively owned for the narrow synchronous turn; final
+Guardian guards and settled in-process projection guards borrow that same
+runtime's ownership in sequence. They still check file identity, authority
+revision and the operation's current authorization. Foreign processes remain
+excluded. The borrowing privilege cannot be forged, nested, reused or carried
+across an await; unsettled guards produce an unknown, non-replayable outcome.
+This is admission-lock acquisition, not automatic retry of authentication or a
+committed write. It does not promise a latency bound independent of storage
+capacity, existing actor work or host load.
 
 An exhausted queue/deadline or a genuine unresolved final-fence conflict can
 still return HTTP 409 `AUTH_COMMIT_CONFLICT` with a not-committed outcome. This

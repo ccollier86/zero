@@ -356,7 +356,7 @@ describe('DatabaseCoordinator automation delivery source', () => {
       )),
     );
 
-    const error = await captureDatabaseError(() => source.counts());
+    const error = await captureDatabaseError(() => source.claim('worker:one', 1_000, 2_000));
     expect(error).toMatchObject({
       code: 'DATABASE_OPERATION_TIMEOUT',
       outcome: 'unknown',
@@ -375,6 +375,36 @@ describe('DatabaseCoordinator automation delivery source', () => {
     expect(authorityOwner.diagnostics().activeShared).toBe(0);
     exclusive.release();
     await authorityOwner.close();
+  });
+
+  test('status reads do not block auth commits and reject authority retired during the read', async () => {
+    const authorityOwner = new AuthorityCommitCoordinator();
+    const harness = new RuntimeHarness({ authorityCommitCoordinator: authorityOwner, requireCommitAuthority: true });
+    const entry = harness.createEntry('source-status');
+    let current = true, checks = 0;
+    const authority = createDatabaseCommitAuthority(authorityOwner, entry.id, () => {
+      checks++;
+      if (!current) throw new Error('private revoked scope detail');
+      return undefined;
+    });
+    const started = deferred<void>(), finish = deferred<void>();
+    harness.executor(entry).respond = async () => { started.resolve(); await finish.promise; return countsResult(); };
+    const source = createCoordinatorDatabaseAutomationDeliverySource(harness.createLease(entry, authority));
+    const pending = captureDatabaseError(() => source.counts());
+    try {
+      await started.promise;
+      expect(checks).toBe(1);
+      expect(authorityOwner.diagnostics()).toMatchObject({ activeShared: 0, pendingExclusive: 0 });
+      const login = authorityOwner.tryAcquireExclusive();
+      expect(login).not.toBeNull();
+      current = false;
+      login!.release();
+      finish.resolve();
+      const error = await pending;
+      expect(error).toMatchObject({ code: 'DATABASE_AUTHORITY_CHANGED', outcome: 'not-started' });
+      expect(error.message).not.toContain('private');
+      expect(checks).toBe(2);
+    } finally { finish.resolve(); await pending; await authorityOwner.close(); }
   });
 
   test('serializes one source while independent source writers operate concurrently', async () => {

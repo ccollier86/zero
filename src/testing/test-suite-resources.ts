@@ -51,5 +51,14 @@ export const EXCLUSIVE_TEST_FILES = ['packages/payments/src/package.test.ts', 's
   'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts',
   // Managed source boots repeatedly open real logging/content actors. Do not
   // spend their 10s bind budgets on a neighboring archive install/browser build.
-  'src/blog/content-managed.integration.test.ts'] as const;
+  'src/blog/content-managed.integration.test.ts',
+  // These unchanged cases pass alone but their cold executable build / reader
+  // bind exhausted the original 30s / 10s limits beside installed consumers.
+  // Admit their own workload, not larger deadlines or a second attempt.
+  'src/databases/database-actor-environment.test.ts',
+  'src/logging/logging-fabric-capture.integration.test.ts',
+  // Each compiles the complete installed root facade (including copied UI).
+  // Admit that graph alone, rather than competing with browser/source builds.
+  'src/modals/modal-scroll.package.test.ts', 'src/modals/modal-system.package.test.ts',
+  'src/frontend/server/style-foundation.package.test.ts'] as const;
 export function isExclusiveTestFile(file: string): boolean { return (EXCLUSIVE_TEST_FILES as readonly string[]).includes(file); }

@@ -9,11 +9,18 @@ test('only the reviewed cold-I/O, durable-control and explicit hot-auth gates re
     'src/components/json-editor/document-editor.package.test.ts', 'src/presence/presence-fabric.integration.test.ts',
     'src/resources/resource-array-overlap-fabric.integration.test.ts',
     'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts',
-    'src/blog/content-managed.integration.test.ts']);
+    'src/blog/content-managed.integration.test.ts', 'src/databases/database-actor-environment.test.ts',
+    'src/logging/logging-fabric-capture.integration.test.ts', 'src/modals/modal-scroll.package.test.ts',
+    'src/modals/modal-system.package.test.ts', 'src/frontend/server/style-foundation.package.test.ts']);
   expect(isExclusiveTestFile('packages/payments/src/package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/logging/logging-fabric.integration.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/components/signature-pad/signature-pad.package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/blog/content-managed.integration.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/databases/database-actor-environment.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/logging/logging-fabric-capture.integration.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/modals/modal-scroll.package.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/modals/modal-system.package.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/frontend/server/style-foundation.package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/blog/blog-publishing.package.test.ts')).toBe(false);
 });
 

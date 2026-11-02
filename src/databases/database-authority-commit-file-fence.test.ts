@@ -108,6 +108,64 @@ describe('cross-process authority commit file fence', () => {
     }
   });
 
+  test('one synchronous admitted turn borrows sequential guards without admitting a foreign handle', () => {
+    const systemPath = temporarySystemPath(roots);
+    const local = new DatabaseAuthorityCommitFileFence(systemPath);
+    const remote = new DatabaseAuthorityCommitFileFence(systemPath);
+    const lease = local.tryAcquireExclusive()!;
+    try {
+      expect(() => remote.runSynchronousExclusiveTurn(lease, () => {})).toThrow();
+      expect(local.runSynchronousExclusiveTurn(lease, () => {
+        const guardian = local.tryAcquireExclusive()!;
+        expect(guardian.mode).toBe('exclusive');
+        expect(local.tryAcquireShared()).toBeNull();
+        expect(remote.tryAcquireShared()).toBeNull();
+        expect(() => local.runSynchronousExclusiveTurn(guardian, () => {})).toThrow();
+        expect(() => lease.release()).toThrow();
+        expect(lease.released).toBe(false);
+        guardian.release();
+        const projection = local.tryAcquireShared()!;
+        expect(projection.mode).toBe('shared');
+        expect(local.tryAcquireExclusive()).toBeNull();
+        expect(remote.tryAcquireExclusive()).toBeNull();
+        projection.release();
+        return 'settled';
+      })).toBe('settled');
+      expect(() => local.runSynchronousExclusiveTurn(lease, () => {})).toThrow();
+      expect(() => local.tryAcquireShared()).toThrow();
+      lease.release();
+      const remoteLease = remote.tryAcquireExclusive()!;
+      expect(remoteLease).not.toBeNull();
+      remoteLease.release();
+    } finally { lease.release(); remote.close(); local.close(); }
+  });
+
+  test('failed, asynchronous and leaked turns retire their privilege without releasing a later lease', async () => {
+    const systemPath = temporarySystemPath(roots);
+    const local = new DatabaseAuthorityCommitFileFence(systemPath);
+    try {
+      let detached!: Promise<void>;
+      for (const operation of [() => { throw new Error('synthetic'); }, () => {
+        detached = Promise.resolve().then(() => { expect(() => local.tryAcquireShared()).toThrow(); });
+        return detached;
+      }]) {
+        const lease = local.tryAcquireExclusive()!;
+        expect(() => local.runSynchronousExclusiveTurn(lease, operation)).toThrow();
+        if (detached) await detached;
+        lease.release();
+      }
+      const lease = local.tryAcquireExclusive()!;
+      let escaped!: ReturnType<typeof local.tryAcquireShared>;
+      expect(() => local.runSynchronousExclusiveTurn(lease, () => { escaped = local.tryAcquireShared(); }))
+        .toThrow(expect.objectContaining({ code: 'DATABASE_OUTCOME_UNKNOWN', retryable: false }));
+      lease.release();
+      const replacement = local.tryAcquireExclusive()!;
+      escaped!.release();
+      expect(() => local.tryAcquireShared()).toThrow();
+      replacement.release();
+    } finally { local.close(); }
+  });
+
   test('rejects malformed initialized sidecar schema, journal, and singleton', () => {
     const setups: Array<(database: Database) => void> = [
       (database) => {

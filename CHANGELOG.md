@@ -4,7 +4,7 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
-## 2.10.0 - 2026-11-01
+## 2.10.0 - 2026-11-02
 
 Private avatar consumer updates and a deliberate native runtime prerequisite.
 This is a source/local release candidate until its exact committed archive is
@@ -30,6 +30,15 @@ publication.
 - Bound worker batches by Fabric's structural node budget as well as bytes and
   count, preventing dense audit bursts from repeatedly failing a valid source
   queue. Preserve validation, original event identities and commit-bound receipts.
+- Include the cross-process file fence in bounded auth commit admission, using
+  the existing total deadline before any SYSTEM/application transaction starts.
+  Run the mutation once; preserve final authority checks, synchronous identity
+  projection, cancellation, file-identity fences and not-committed/unknown
+  outcomes. This closes a refresh conflict exposed by the isolated hot-load
+  regression, not by relaxing validation or adding frontend request retries.
+- Keep read-only automation status polling off the shared commit lease, with
+  live authority rechecked before and after the actor response. Mutations and
+  unknown-write settlement retain their existing commit-bound protection.
 
 - Show saved authorized private profile photos in the selected-account header
   of managed user controls, retaining the existing initials fallback, layout,

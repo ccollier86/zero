@@ -56,12 +56,15 @@ test('compiled Bun actor launch retains its explicit environment boundary', asyn
         }
       });
     `);
+    const compileStarted = performance.now();
+    console.log('Synthetic actor environment phase', { stage: 'compile-started' });
     const compilation = Bun.spawn({
       cmd: [process.execPath, '--no-env-file', 'build', source, '--compile', '--outfile', executable],
       cwd: directory, env: {}, stdout: 'ignore', stderr: 'pipe',
     });
     await new Response(compilation.stderr).text();
     expect(await compilation.exited).toBe(0);
+    console.log('Synthetic actor environment phase', { stage: 'compile-completed', durationMs: Math.round(performance.now() - compileStarted) });
     const factorySource = new URL('./subprocess-database-executor-factory.ts', import.meta.url).pathname;
     await Bun.write(parentSource, `
       import { createSubprocessDatabaseExecutorFactory } from ${JSON.stringify(factorySource)};
@@ -79,15 +82,21 @@ test('compiled Bun actor launch retains its explicit environment boundary', asyn
           directoryReleased: !existsSync(result.cwd), settled: executor.diagnostics().settled }));
       } finally { await executor.close(); }
     `);
+    const launchStarted = performance.now();
+    console.log('Synthetic actor environment phase', { stage: 'parent-started' });
     const child = Bun.spawn({ cmd: [process.execPath, '--no-env-file', parentSource], cwd: directory, env: {}, stdout: 'pipe', stderr: 'pipe' });
     const [output, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
     expect(exitCode).toBe(0);
     expect(JSON.parse(output)).toEqual({ inheritedFromDotenv: false, allowed: true,
       isolated: true, directoryReleased: true, settled: true });
+    console.log('Synthetic actor environment phase', { stage: 'parent-completed', durationMs: Math.round(performance.now() - launchStarted) });
   } finally {
+    const cleanupStarted = performance.now();
+    console.log('Synthetic actor environment phase', { stage: 'cleanup-started' });
     await Promise.all([unlink(envFile), unlink(source)]);
     if (await Bun.file(parentSource).exists()) await unlink(parentSource);
     if (await Bun.file(executable).exists()) await unlink(executable);
     await Promise.all([rmdir(directory), rmdir(artifactDirectory)]);
+    console.log('Synthetic actor environment phase', { stage: 'cleanup-completed', durationMs: Math.round(performance.now() - cleanupStarted) });
   }
 }, 30_000);

@@ -93,10 +93,15 @@ An application write that needs a new user/membership FK must not run ahead of
 its anchor. Actor-backed Fabric targets use awaited asynchronous reconciliation;
 process-pinned targets reconcile synchronously after the canonical commit and
 before its admitted synchronous operation returns. Auth queue admission must
-not retain an exclusive commit lease during those application-plane writes, or
+not retain a local exclusive commit lease during those application-plane writes, or
 grant the next queued authority turn before completion. The narrow final
 revision/file fences still run for both planes; anchors do not gain permissions
 from the queue turn. See [commit admission](./sessions.md#fabric-commit-admission).
+An admitted file-backed turn retains its cross-process exclusion while the
+same-runtime final guards borrow it in sequence. This does not block its own
+synchronous projection, admit a foreign writer or grant asynchronous work an
+ambient authority permit. Actor-backed projection remains the separate awaited
+reconciliation described above.
 
 Target application is idempotent only for the same event, sequence and anchor
 fingerprint. Conflicting replay or installation/target mismatch is not silently

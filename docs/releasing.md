@@ -425,6 +425,27 @@ tests; retain that failed run and rerun the complete inventory after preparation
 Do not exclude the plugin files or copy a developer's dependency tree. The
 framework archive still does not bundle the separately installed payments plugin.
 
+The complete source gate also needs `node` and `openssl` available on its test
+PATH. SMTP's loopback TLS fixture uses an independent Node TLS peer because the
+test server's raw server-side `TLSSocket` wrapping is not supported by Bun. This
+is a qualification-tool prerequisite, not a production Node requirement:
+Zero's SMTP provider and application runtime remain Bun-based. A deliberately
+minimal test environment must retain those tool paths. Missing fixture tools
+are failed admission, not a reason to skip certificate/STARTTLS validation.
+
+The actor-environment compiled launch and Fabric capture/reader-bind files
+reserve the same exclusive cold-I/O window as the existing actor-heavy gates.
+The former complete sweep remains failed; unchanged sequential diagnostics
+finished in 16.3s and 6.0s respectively. Their original 30s compile case and
+10s reader-bind limits remain intact, with no skipped case or automatic retry.
+The installed modal-scroll, modal-system and theme-foundation graph checks also
+reserve that window. A fresh own-dependency modal consumer from the failed
+archive typechecks unchanged under Bun 1.4.4 in 16.8s and Node 26 in 15.6s;
+the earlier complete-sweep TypeScript timeout remains a failure, not an inferred
+type pass. Neither the 110s child bounds nor the 180s/240s functional bounds
+increase. The compiler and consumer types are unchanged; Node is not substituted
+for Bun to make these checks pass.
+
 The source/local qualification inventory includes any admitted preview tests and
 reports them explicitly. Do not silently discard them through Git-ignore rules,
 and do not claim those private `0.0.0` previews were shipped in the framework
@@ -576,6 +597,17 @@ git diff --check
    budgets fixture retirement; it does not claim the aggregate package lifecycle
    still fits the former single deadline or that application operations became
    faster. Hook failure remains a failed file, with no retry or excluded case.
+   The installed database-automation/Torrent proof now has the same awaited
+   120s retirement hook: its original 180s functional case and 120s child bounds
+   remain unchanged. A full sweep completed all 13 content/browser/native-run
+   assertions before its former combined case expired in dependency removal.
+   That failed attempt remains failed; the separated hook explicitly increases
+   the possible aggregate lifecycle and still fails the file on cleanup error.
+   The theme-foundation installed proof uses that same 120s retirement hook
+   while retaining its 180s functional and 110s child bounds. Payload-free stage
+   timings distinguish installation/typecheck/build/Doctor failure from cleanup;
+   its prior aggregate timeout did not reach a fresh qualification receipt and
+   must not be described as a functional pass.
    The native FTS migration fixture independently bounds old dense-corpus
    preparation, migration verification, and awaited native/file retirement at
    20s each. Preparation retains the legacy dense-bridge checks; migration

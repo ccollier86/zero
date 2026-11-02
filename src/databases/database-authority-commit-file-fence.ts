@@ -2,7 +2,8 @@
  * Process-safe final-commit fence shared by application and Guardian writers.
  *
  * The fence uses a dedicated rollback-journal SQLite file. A non-blocking
- * `BEGIN EXCLUSIVE` is held only across the final commit of another database.
+ * `BEGIN EXCLUSIVE` is held across a final commit, or an admitted synchronous
+ * authority turn (including its synchronous post-commit projection).
  * SQLite's operating-system lock is released automatically if the process
  * exits, so the file contains no durable owner or lease state to recover.
  */
@@ -44,6 +45,11 @@ export interface DatabaseAuthorityCommitFileLease {
   release(): void;
 }
 
+interface SynchronousFileTurn {
+  shared: number;
+  exclusive: boolean;
+}
+
 /** Derive the Zero-owned fence sidecar for one file-backed system database. */
 export function databaseAuthorityCommitFencePath(
   systemDatabasePath: string,
@@ -71,6 +77,9 @@ export class DatabaseAuthorityCommitFileFence {
   #systemIdentity: DatabaseFileIdentityGuard | null = null;
   #systemDatabasePath: string | null = null;
   #leaseMode: DatabaseAuthorityCommitFileLeaseMode | null = null;
+  #lease: DatabaseAuthorityCommitFileLease | null = null;
+  #turn: SynchronousFileTurn | null = null;
+  readonly #spentTurns = new WeakSet<DatabaseAuthorityCommitFileLease>();
 
   constructor(systemDatabasePath: string) {
     let canonicalSystemPath: string;
@@ -149,6 +158,44 @@ export class DatabaseAuthorityCommitFileFence {
     return this.#tryAcquire('exclusive');
   }
 
+  /**
+   * Spend an already acquired exclusive fence on exactly one synchronous turn.
+   * Final guards borrow this runtime's fence in sequence, never a foreign
+   * process's lease. This permits settled Guardian commits to project into the
+   * application DB without dropping cross-process exclusion between commits.
+   * No callback, promise continuation or lease may carry this privilege out.
+   * @internal Used only by authority commit admission.
+   */
+  runSynchronousExclusiveTurn<T>(lease: DatabaseAuthorityCommitFileLease, operation: () => T): T {
+    if (!this.#database) throw closedError();
+    if (this.#lease !== lease || lease.mode !== 'exclusive' || lease.released
+      || this.#turn !== null || this.#spentTurns.has(lease)) {
+      throw configInvalid();
+    }
+    this.#spentTurns.add(lease);
+    const turn: SynchronousFileTurn = { shared: 0, exclusive: false };
+    this.#turn = turn;
+    try {
+      this.#assertTurnIdentity();
+      const result = operation();
+      if (result !== null && (typeof result === 'object' || typeof result === 'function')
+        && typeof (result as { then?: unknown }).then === 'function') {
+        void Promise.resolve(result).catch(() => undefined);
+        throw new TypeError('Authority file admission turns must be synchronous');
+      }
+      return result;
+    } finally {
+      this.#turn = null;
+      if (turn.shared !== 0 || turn.exclusive) {
+        throw new DatabaseError(
+          'DATABASE_OUTCOME_UNKNOWN',
+          'Authority file admission completed with an unsettled commit guard.',
+          { retryable: false, outcome: 'unknown' },
+        );
+      }
+    }
+  }
+
   /** Assert that the system pathname still names the startup-bound inode. */
   assertSystemDatabaseCurrent(): void {
     const systemIdentity = this.#systemIdentity;
@@ -182,6 +229,10 @@ export class DatabaseAuthorityCommitFileFence {
     if (!database) throw closedError();
     const fileIdentity = this.#fileIdentity;
     if (!fileIdentity) throw closedError();
+    if (this.#turn !== null) {
+      this.#assertTurnIdentity();
+      return this.#borrowTurnLease(mode, this.#turn);
+    }
     if (this.#leaseMode !== null) {
       throw new DatabaseError(
         'DATABASE_CONFLICT',
@@ -242,21 +293,60 @@ export class DatabaseAuthorityCommitFileFence {
 
     this.#leaseMode = mode;
     let released = false;
-    return Object.freeze({
+    const lease: DatabaseAuthorityCommitFileLease = Object.freeze({
       mode,
       get released() {
         return released;
       },
       release: () => {
         if (released) return;
+        if (this.#turn !== null) throw configInvalid();
         released = true;
         this.#releaseLease();
+      },
+    });
+    this.#lease = lease;
+    return lease;
+  }
+
+  #assertTurnIdentity(): void {
+    try {
+      this.#fileIdentity!.assertCurrent();
+      this.assertSystemDatabaseCurrent();
+    } catch (error) {
+      if (error instanceof DatabaseError && error.outcome === 'unknown') throw error;
+      throw new DatabaseError(
+        'DATABASE_OPEN_FAILED',
+        'Authority commit fence file identity changed.',
+        { retryable: false, outcome: 'not-committed' },
+      );
+    }
+  }
+
+  #borrowTurnLease(
+    mode: DatabaseAuthorityCommitFileLeaseMode,
+    turn: SynchronousFileTurn,
+  ): DatabaseAuthorityCommitFileLease | null {
+    if (turn.exclusive || (mode === 'exclusive' && turn.shared !== 0)) return null;
+    if (mode === 'exclusive') turn.exclusive = true;
+    else turn.shared++;
+    let released = false;
+    return Object.freeze({
+      mode,
+      get released() { return released; },
+      release() {
+        if (released) return;
+        released = true;
+        // This closure owns only its old logical turn, never a later SQL lease.
+        if (mode === 'exclusive') turn.exclusive = false;
+        else turn.shared--;
       },
     });
   }
 
   /** Close the sidecar handle after request admission and commit guards stop. */
   close(): void {
+    if (this.#turn !== null) throw configInvalid();
     const database = this.#database;
     const fileIdentity = this.#fileIdentity;
     const systemIdentity = this.#systemIdentity;
@@ -269,6 +359,7 @@ export class DatabaseAuthorityCommitFileFence {
         failures.push(error);
       }
       this.#leaseMode = null;
+      this.#lease = null;
     }
     if (database) {
       try {
@@ -318,6 +409,7 @@ export class DatabaseAuthorityCommitFileFence {
     try {
       database.run('ROLLBACK');
       this.#leaseMode = null;
+      this.#lease = null;
     } catch (error) {
       // The protected data transaction has already either committed or rolled
       // back when this callback runs. Never invite a blind retry if releasing
