@@ -126,6 +126,7 @@ function isAccountEmails(value: unknown): boolean {
     && typeof emails!.adminCreatedUser === 'boolean'
     && typeof emails!.passwordReset === 'boolean'
     && typeof emails!.passwordChangedNotice === 'boolean'
+    && optionalNonNegativeInteger(emails!.passwordResetRequestCooldownMs)
     && optionalBoolean(emails!.emailVerification);
 }
 

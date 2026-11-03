@@ -82,7 +82,15 @@ Repeated requests inside the configured request window are privately
 deduplicated, including after an earlier link was consumed successfully. They
 retain the same public response as other accepted requests. This prevents email
 flooding without exposing account existence. The native request confirmation
-warns that repeated requests may be delayed. A missing subsequent email is not
+shows a live waiting-period message and a disabled **Request another link**
+action until that local countdown expires. `/auth/config` publishes the uniform
+`accountEmails.passwordResetRequestCooldownMs` policy for this guidance; no
+recipient-specific suppression/lookup state is exposed. The native form falls
+back to five minutes against older servers. It never resends automatically.
+The countdown starts after each public acknowledgment and is deliberately
+conservative: it is not the private backend window's exact remaining time,
+does not persist across full reloads, and does not promise provider delivery or
+exemption from other request limits. A missing subsequent email is not
 by itself evidence of provider failure: use the private
 `AUTH_PASSWORD_RESET_SUPPRESSED`, `AUTH_EMAIL_OUTBOX_SUPPRESSED`,
 `AUTH_PASSWORD_RESET_SENT`, `AUTH_PASSWORD_RESET_DELIVERY_FAILED` and outbox

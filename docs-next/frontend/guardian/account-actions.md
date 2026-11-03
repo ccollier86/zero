@@ -43,6 +43,16 @@ confirmation. Its wording deliberately says “If an account exists…”; it mu
 not expose account enumeration or claim confirmed delivery. A custom callback
 must preserve that privacy and handle its own approved transport.
 
+After acknowledgment, the form displays a live “For security, wait another
+5 minutes…” message (using the app's configured public cooldown) and disables
+**Request another link** until it expires. Expiry enables an explicit resend;
+it never sends automatically. Rapid submit is locked, retired client/link
+callbacks are ignored, and a failed request does not claim receipt. The
+public `accountEmails.passwordResetRequestCooldownMs` policy is identical for
+every address; older servers use five-minute guidance. The countdown is local
+to the mounted form, not an exact report of private backend suppression or a
+promise that a future send will bypass other security limits.
+
 ```tsx
 import { ForgotPasswordForm, PasswordActionForm } from '@zero/framework/components/auth';
 
@@ -112,7 +122,7 @@ and exclude its secret query string from analytics and infrastructure logs.
 
 The default five-minute resend cooldown and enumeration-resistant public
 responses are **unchanged**. A consumed link does not reset that request window.
-The request confirmation explains that repeated requests may be delayed; a
+The request confirmation explains the waiting period with a countdown; a
 200 response is not proof that another email was sent. Read
 [password recovery](../../backend/guardian/password-recovery.md).
 

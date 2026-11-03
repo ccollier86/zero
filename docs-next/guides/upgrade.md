@@ -65,6 +65,7 @@ password-write response remains unknown rather than inviting automatic replay.
 Native one-time proofs, the default five-minute resend window and all final
 server checks are unchanged. **Do not lower the cooldown to compensate for a
 confusing UI.** Verify a full native browser reset, reopening the used link,
+the policy-driven resend countdown and disabled resend action,
 repeated requests, blocked inspection/retry and a genuine fresh link. Existing
 app-copied forms need an explicit component adoption; updating the package does
 not rewrite application pages. See

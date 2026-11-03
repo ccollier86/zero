@@ -20,7 +20,9 @@ application deployment or npm publication.
   another email merely to display/retry a page.
 - Preserve the configured request cooldown, five-minute default, rate limiting,
   generic non-enumerating responses, expiry, consume-once and current-account
-  checks. Explain resend delays instead of silently changing those protections.
+  checks. Show a live policy-driven waiting-period message and disable resend
+  until it expires; never resend automatically. Public config exposes only the
+  installation-wide duration, not recipient-specific suppression state.
 - Prevent rapid duplicate submissions, stale callbacks and old-link drafts.
   Require an explicit matching-account password-updated response for success;
   keep ambiguous writes unconfirmed without automatic replay. A host success

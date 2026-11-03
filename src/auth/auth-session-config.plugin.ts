@@ -12,6 +12,7 @@ import {
   type AuthSessionPluginConfig,
 } from './auth-session-dependencies';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
+import { parseTokenTTL } from '../tokens/token-utils';
 
 export function createAuthSessionConfigPlugin(config: AuthSessionPluginConfig) {
   return new Elysia({ name: 'auth-session-config' }).get('/config', ({ set }) => {
@@ -85,6 +86,8 @@ export function createAuthSessionConfigPlugin(config: AuthSessionPluginConfig) {
       accountEmails: {
         adminCreatedUser: authConfig.accountEmails.adminCreatedUser && accountEmailReady,
         passwordReset: authConfig.accountEmails.passwordReset && accountEmailReady,
+        // Public installation policy, never recipient-specific suppression state.
+        passwordResetRequestCooldownMs: parseTokenTTL(authConfig.accountEmails.requestCooldown, 'auth email request cooldown'),
         passwordChangedNotice:
           authConfig.accountEmails.passwordChangedNotice && accountEmailReady,
         emailVerification:

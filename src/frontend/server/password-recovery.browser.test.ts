@@ -88,6 +88,8 @@ async function requestFromForm(page: Page, email: string) {
   expect((await requested).status()).toBe(200);
   await page.getByRole('heading', { name: 'Request received', exact: true }).waitFor();
   await page.getByText('Repeated requests may be delayed for security.', { exact: false }).waitFor();
+  await page.getByText('For security, wait another 5 minutes before requesting a new link.', { exact: true }).waitFor();
+  expect(await page.getByRole('button', { name: 'Request another link', exact: true }).isDisabled()).toBe(true);
 }
 function messages(email: string) {
   return provider.messages.filter(row => [row.message.to].flat().includes(email));

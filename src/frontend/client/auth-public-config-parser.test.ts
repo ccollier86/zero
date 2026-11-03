@@ -2,6 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { isAuthPublicConfig } from './auth-public-config-parser';
 
 describe('public auth config parser', () => {
+  test('admits only nonnegative safe public resend durations, while preserving older servers', () => {
+    const accountEmails = { adminCreatedUser: false, passwordReset: true, passwordChangedNotice: false };
+    for (const value of [undefined, 0, 120_000, 300_000]) expect(isAuthPublicConfig({ registration: registration(),
+      accountEmails: { ...accountEmails, passwordResetRequestCooldownMs: value } })).toBe(true);
+    for (const value of [-1, 0.5, '2m', null, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) expect(isAuthPublicConfig({ registration: registration(),
+      accountEmails: { ...accountEmails, passwordResetRequestCooldownMs: value } })).toBe(false);
+  });
+
   test('accepts minimal legacy-compatible and complete current config shapes', () => {
     expect(isAuthPublicConfig({ registration: registration() })).toBe(true);
     expect(isAuthPublicConfig({

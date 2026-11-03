@@ -17,21 +17,17 @@ import { Input } from '#zero/components/ui/input';
 import { Label } from '#zero/components/ui/label';
 import { AuthHeader } from '#zero/components/auth/auth-header';
 import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
-import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
-import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { Send } from '#zero/components/animate-ui/icons/send';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
-import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import { ForgotPasswordError, ForgotPasswordSuccessState } from './forgot-password-feedback';
+import { passwordResetRequestCooldown, usePasswordResetRequest } from './use-password-reset-request';
 import {
   isAuthConfigPending,
   isAuthConfigUnavailable,
   isPasswordResetUnavailable,
 } from './auth-config-ui-policy';
 import {
-  authFeedbackAnimate,
-  authFeedbackExit,
-  authFeedbackInitial,
   authPanelAnimate,
   authPanelExit,
   authPanelInitial,
@@ -52,32 +48,6 @@ interface ForgotPasswordFormProps {
   className?: string;
 }
 
-// ─── Success state ───────────────────────────────────────────────────────────
-
-function ForgotPasswordSuccessState() {
-  return (
-    <motion.div
-      initial={authPanelInitial}
-      animate={authPanelAnimate}
-      exit={authPanelExit}
-      transition={authPresenceTransition}
-      className="flex flex-col items-center gap-3 py-2"
-    >
-      <div className="flex items-center justify-center rounded-full bg-success/10 p-3 dark:bg-success/15">
-        <AnimateIcon animate>
-          <CircleCheck size={32} className="text-success" />
-        </AnimateIcon>
-      </div>
-      <p className="max-w-sm text-center text-xs text-muted-foreground" aria-live="polite">
-        If an account exists for that address, a reset link will arrive shortly.
-      </p>
-      <p className="max-w-sm text-center text-xs text-muted-foreground">
-        If you requested a link recently, allow a few minutes and check your most recent email. Repeated requests may be delayed for security.
-      </p>
-    </motion.div>
-  );
-}
-
 // ─── ForgotPasswordForm ──────────────────────────────────────────────────────
 
 /** Render a password-reset request form backed by the shared auth client. */
@@ -92,30 +62,21 @@ function ForgotPasswordForm({
   const { forgotPassword } = useAuth();
   const authConfig = useAuthConfig();
   const [email, setEmail] = React.useState('');
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [sent, setSent] = React.useState(false);
   const emailId = `${React.useId()}-email`;
   const configPending = isAuthConfigPending(respectEmailPolicy, authConfig);
   const configUnavailable = isAuthConfigUnavailable(respectEmailPolicy, authConfig);
   const resetUnavailable = isPasswordResetUnavailable(respectEmailPolicy, authConfig);
   const nativeContinuation = useNativeAuthContinuation();
   const continuedLoginHref = useNativeAuthRoute(loginHref);
+  const { loading, sent, error, remainingSeconds, request } = usePasswordResetRequest({
+    submit: onSubmit ?? forgotPassword, nativeContinuation,
+    enabled: !configPending && !configUnavailable && !resetUnavailable,
+    cooldownMs: passwordResetRequestCooldown(authConfig.config?.accountEmails?.passwordResetRequestCooldownMs),
+  });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    setLoading(true);
-    try {
-      if (onSubmit) await onSubmit(email, nativeContinuation ?? undefined);
-      else await forgotPassword(email, nativeContinuation ?? undefined);
-      setSent(true);
-    } catch (err) {
-      reportAuthUiError('forgotPassword', err);
-      setError(getAuthDisplayMessage(err, 'Failed to send reset email'));
-    } finally {
-      setLoading(false);
-    }
+    await request(email);
   }
 
   if (configPending) {
@@ -143,7 +104,7 @@ function ForgotPasswordForm({
 
       <AnimatePresence initial={false} mode="wait">
         {sent ? (
-          <ForgotPasswordSuccessState key="success" />
+          <ForgotPasswordSuccessState key="success" remainingSeconds={remainingSeconds} loading={loading} onRequestAgain={() => { void request(email); }} />
         ) : (
           <motion.form
             key="form"
@@ -154,44 +115,23 @@ function ForgotPasswordForm({
             exit={authPanelExit}
             transition={authPresenceTransition}
             aria-busy={loading}
+            method="post"
           >
             <div className="space-y-1.5">
               <Label htmlFor={emailId} className="text-sm font-medium">Email</Label>
               <Input
                 id={emailId}
                 type="email"
+                name="email"
                 placeholder="you@example.com"
                 autoComplete="email"
                 required
+                disabled={loading}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={cn('h-10 text-sm', error && 'ring-[1px] ring-destructive/30')}
               />
             </div>
-
-            <AnimatePresence>
-              {error && (
-                <motion.div
-                  initial={authFeedbackInitial}
-                  animate={authFeedbackAnimate}
-                  exit={authFeedbackExit}
-                  transition={authPresenceTransition}
-                  className="overflow-hidden"
-                >
-                  <div
-                    className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5"
-                    role="alert"
-                  >
-                    <AnimateIcon animate>
-                      <CircleX size={16} className="mt-px flex-shrink-0 text-destructive" />
-                    </AnimateIcon>
-                    <p className="text-xs font-medium leading-relaxed text-destructive">
-                      {error}
-                    </p>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
 
             <Button type="submit" className="h-10 w-full" disabled={loading || configPending}>
               {loading ? (
@@ -211,6 +151,8 @@ function ForgotPasswordForm({
           </motion.form>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>{error && <ForgotPasswordError error={error} />}</AnimatePresence>
 
       <p className="text-center text-xs text-muted-foreground">
         {onBack ? (

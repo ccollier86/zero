@@ -588,6 +588,8 @@ export interface AuthPublicConfig {
   accountEmails?: {
     adminCreatedUser: boolean;
     passwordReset: boolean;
+    /** Public installation-wide resend guidance; not a recipient's private rate-limit state. */
+    passwordResetRequestCooldownMs?: number;
     passwordChangedNotice: boolean;
     emailVerification?: boolean;
   };

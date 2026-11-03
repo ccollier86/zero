@@ -32,6 +32,8 @@ test('forgot-password returns generically without awaiting provider delivery', a
       username: 'outbox-user', email: 'outbox-user@test.com', password: 'password123',
     });
     expect(registered.status).toBe(200);
+    const publicConfig = await fetch(url + '/auth/config').then(response => response.json()) as any;
+    expect(publicConfig.accountEmails.passwordResetRequestCooldownMs).toBe(300_000);
 
     const reset = await Promise.race([
       post(url, '/auth/forgot-password', { email: 'outbox-user@test.com' }),
@@ -69,6 +71,22 @@ test('forgot-password returns generically without awaiting provider delivery', a
     await app.stop(); db.dispose(); resetEmailCompatibilityRuntimeForTesting();
   }
 });
+
+for (const [requestCooldown, expectedMs] of [['0s', 0], ['2m', 120_000]] as const) {
+  test('public password resend guidance uses the installation policy ' + requestCooldown + ', not recipient state', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    const app = new Elysia().use(createAuthPlugin({ db, bootstrap: 'public', accountEmails: { requestCooldown } }));
+    app.listen(0);
+    try {
+      const response = await fetch('http://localhost:' + app.server!.port + '/auth/config');
+      expect(response.status).toBe(200);
+      const config = await response.json() as any;
+      expect(config.accountEmails.passwordResetRequestCooldownMs).toBe(expectedMs);
+      expect(config.accountEmails).not.toHaveProperty('recipient');
+      expect(config.accountEmails).not.toHaveProperty('retryAt');
+    } finally { await app.stop(); db.dispose(); }
+  });
+}
 
 async function post(url: string, path: string, body: object) {
   const response = await fetch(`${url}${path}`, {
