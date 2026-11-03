@@ -1,17 +1,8 @@
 'use client';
 
-/**
- * password-action-form.tsx
- *
- * Renders the reusable reset/setup password flow for auth action tokens. This
- * file owns token inspection and form interaction only; token validation and
- * password mutation remain server-side.
- */
-
+/** Native reset/setup presentation. Proof inspection, lifecycle and credential dispatch live in usePasswordAction. */
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { AuthActionTokenInfo } from '../../frontend/client/auth-client';
-import { useAuth } from '../../frontend/client/auth-hooks';
 import { cn } from '#zero/lib/utils';
 import { Button } from '#zero/components/ui/button';
 import { Input } from '#zero/components/ui/input';
@@ -23,318 +14,87 @@ import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
 import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
-import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
-import {
-  isPasswordActionModeMismatch,
-  resolvePasswordAction,
-} from './password-action-policy';
-import {
-  authFeedbackAnimate,
-  authFeedbackExit,
-  authFeedbackInitial,
-  authPresenceTransition,
-} from './auth-motion';
-import {
-  type AuthFlowContinuationResult,
-  isAuthFlowContinuationResult,
-} from './auth-continuation';
+import { AUTH_REQUEST_LIMITS } from '../../auth/auth-request-limits';
+import { resolvePasswordAction } from './password-action-policy';
+import { usePasswordAction } from './use-password-action';
 import { useNativeAuthRoute } from './use-native-auth-route';
+import { authFeedbackAnimate, authFeedbackExit, authFeedbackInitial, authPresenceTransition } from './auth-motion';
 
 export interface PasswordActionFormProps {
+  /** The complete secret from the emailed link, read by the owning route. Never log or persist it in analytics. */
   token?: string;
   mode?: 'auto' | 'reset' | 'setup';
   loginHref?: string;
+  /** Recovery request page; navigating here never sends an email automatically. */
+  forgotPasswordHref?: string;
   onSuccess?: () => void;
   className?: string;
 }
 
-/** Render a token-backed password reset or account setup form. */
-export function PasswordActionForm({
-  token,
-  mode = 'auto',
-  loginHref = '#login',
-  onSuccess,
-  className,
-}: PasswordActionFormProps) {
-  const {
-    inspectActionToken,
-    resetPassword,
-    setupPassword,
-    authenticationContinuation,
-    clearAuthenticationContinuation,
-  } = useAuth();
-  const tokenInputId = React.useId();
-  const newPasswordId = React.useId();
-  const confirmPasswordId = React.useId();
-  const [tokenInfo, setTokenInfo] = React.useState<AuthActionTokenInfo | null>(null);
-  const [tokenInput, setTokenInput] = React.useState('');
-  const [manualToken, setManualToken] = React.useState('');
-  const [loadingToken, setLoadingToken] = React.useState(true);
-  const [submitting, setSubmitting] = React.useState(false);
-  const [password, setPassword] = React.useState('');
-  const [confirm, setConfirm] = React.useState('');
-  const [error, setError] = React.useState<string | null>(null);
-  const [complete, setComplete] = React.useState(false);
-  const [authContinuation, setAuthContinuation] = React.useState<
-    AuthFlowContinuationResult | null
-  >(null);
-  const activeAuthContinuation = authContinuation
-    ?? (isAuthFlowContinuationResult(authenticationContinuation)
-      ? authenticationContinuation
-      : null);
-  const activeToken = (token?.trim() || manualToken.trim()).trim();
+/** Render an emailed password link, clear recovery instructions or an explicit inspection-only retry. */
+export function PasswordActionForm({ token = '', mode = 'auto', loginHref = '#login',
+  forgotPasswordHref = '/forgot-password', onSuccess, className }: PasswordActionFormProps) {
+  const state = usePasswordAction(token.trim(), mode, onSuccess);
+  const passwordId = React.useId(), confirmId = React.useId(), usernameId = React.useId();
   const continuedLoginHref = useNativeAuthRoute(loginHref);
+  const continuedForgotHref = useNativeAuthRoute(forgotPasswordHref);
+  const action = resolvePasswordAction(mode, state.info);
+  const setup = action === 'setup' || mode === 'setup';
+  const title = setup ? 'Set password' : 'Reset password';
+  const login = <a href={continuedLoginHref} referrerPolicy="no-referrer" className="block text-center text-sm text-primary hover:underline">Back to sign in</a>;
 
-  React.useEffect(() => {
-    let active = true;
-    if (activeAuthContinuation) {
-      setLoadingToken(false);
-      return () => { active = false; };
-    }
-    if (!activeToken) {
-      setLoadingToken(false);
-      setError(null);
-      setTokenInfo(null);
-      return () => {
-        active = false;
-      };
-    }
+  if (state.phase === 'continuation' && state.continuation) return <AuthFlowContinuation
+    result={state.continuation} onSuccess={onSuccess} onBack={state.clearContinuation} className={className} />;
 
-    setLoadingToken(true);
-    setError(null);
-    inspectActionToken(activeToken)
-      .then((info) => {
-        if (!active) return;
-        setTokenInfo(info);
-      })
-      .catch((err) => {
-        if (!active) return;
-        reportAuthUiError('inspectActionToken', err);
-        setError(getAuthDisplayMessage(err, 'Invalid or expired link'));
-        setTokenInfo(null);
-      })
-      .finally(() => {
-        if (active) setLoadingToken(false);
-      });
+  if (state.phase === 'checking') return <div className={cn('flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground', className)}
+    role="status" aria-live="polite"><AnimateIcon animate loop><Loader size={20} /></AnimateIcon>Checking password link…</div>;
 
-    return () => {
-      active = false;
-    };
-  }, [activeAuthContinuation, activeToken, inspectActionToken]);
+  if (state.phase === 'complete') return <div className={cn('space-y-4', className)}>
+    <AuthHeader title="Password updated" description="Sign in with your new password to continue." />
+    <div role="status" className="flex items-center gap-2 rounded-md border border-success/35 bg-success/10 px-3 py-2 text-sm text-foreground dark:border-success/45 dark:bg-success/15">
+      <AnimateIcon animate><CircleCheck size={16} className="text-success" /></AnimateIcon>Password updated successfully.
+    </div>{login}
+  </div>;
 
-  const action = resolvePasswordAction(mode, tokenInfo);
-  const actionMismatch = isPasswordActionModeMismatch(mode, tokenInfo);
-  const titleAction = action ?? (mode === 'setup' ? 'setup' : 'reset');
-  const title = titleAction === 'setup' ? 'Set password' : 'Reset password';
-  const displayError = error ?? (actionMismatch ? 'This link does not match this password action.' : null);
-  const shouldShowTokenEntry = !activeToken || (!tokenInfo && Boolean(displayError));
+  if (state.phase === 'problem' && state.problem) return <div className={cn('space-y-4', className)} data-slot="password-action-recovery"
+    role={state.problem.kind === 'missing' ? 'status' : 'alert'} aria-live="polite">
+    <AuthHeader title={state.problem.title} description={state.problem.description} />
+    <p className="text-sm text-muted-foreground">
+      {setup ? 'If you need a new account setup link, ask your administrator to resend the setup email.'
+        : 'Check your most recent reset email. Repeated requests may be delayed for security.'}
+    </p>
+    {state.problem.retry && <Button type="button" className="h-10 w-full" onClick={state.retry}>Retry link check</Button>}
+    {!setup && state.problem.kind !== 'suspended' && <Button asChild className="h-10 w-full"><a href={continuedForgotHref} referrerPolicy="no-referrer">Request a new reset link</a></Button>}
+    {login}
+  </div>;
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!action || submitting || !activeToken) return;
-
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    if (password !== confirm) {
-      setError('Passwords do not match.');
-      return;
-    }
-
-    setSubmitting(true);
-    setError(null);
-    try {
-      const result = action === 'setup'
-        ? await setupPassword(activeToken, password)
-        : await resetPassword(activeToken, password);
-      if (isAuthFlowContinuationResult(result)) {
-        setAuthContinuation(result);
-        return;
-      }
-      setComplete(true);
-      onSuccess?.();
-    } catch (err) {
-      reportAuthUiError(action === 'setup' ? 'setupPassword' : 'resetPassword', err);
-      setError(getAuthDisplayMessage(err, 'Failed to update password'));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleTokenSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    const nextToken = tokenInput.trim();
-    if (!nextToken) {
-      setError('Enter the token from your email.');
-      return;
-    }
-    setError(null);
-    setManualToken(nextToken);
-  }
-
-  if (activeAuthContinuation) {
-    return (
-      <AuthFlowContinuation
-        result={activeAuthContinuation}
-        onSuccess={onSuccess}
-        onBack={() => {
-          clearAuthenticationContinuation();
-          setAuthContinuation(null);
-        }}
-        className={className}
-      />
-    );
-  }
-
-  if (loadingToken) {
-    return (
-      <div
-        className={cn('flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground', className)}
-        role="status"
-        aria-live="polite"
-      >
-        <AnimateIcon animate loop>
-          <Loader size={20} />
-        </AnimateIcon>
-        Checking password link…
+  const submitting = state.phase === 'submitting';
+  return <form method="post" onSubmit={state.submit} className={cn('space-y-4', className)} aria-busy={submitting} data-slot="password-action-form">
+    <AuthHeader title={title} description={state.info ? `For ${state.info.user.email}` : 'Enter a new password to continue'} />
+    <div className="sr-only">
+      <Label htmlFor={usernameId}>Account</Label>
+      <Input id={usernameId} name="username" autoComplete="username" value={state.info?.user.username ?? ''} readOnly tabIndex={-1} data-zero-sensitive="true" />
+    </div>
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor={passwordId} className="text-sm font-medium">New password</Label>
+        <PasswordInput id={passwordId} name="newPassword" value={state.password} onChange={event => state.setPassword(event.target.value)}
+          autoComplete="new-password" minLength={8} maxLength={AUTH_REQUEST_LIMITS.password} showStrength required disabled={submitting} className="h-10 text-sm" />
       </div>
-    );
-  }
-
-  if (complete) {
-    return (
-      <div className={cn('space-y-4', className)}>
-        <AuthHeader
-          title="Password updated"
-          description="Sign in with your new password to continue."
-        />
-        <div className="flex items-center gap-2 rounded-md border border-success/35 bg-success/10 px-3 py-2 text-sm text-foreground dark:border-success/45 dark:bg-success/15">
-          <AnimateIcon animate>
-            <CircleCheck size={16} className="text-success" />
-          </AnimateIcon>
-          Password updated successfully.
-        </div>
-        <a href={continuedLoginHref} className="block text-center text-sm text-primary hover:underline">
-          Back to sign in
-        </a>
+      <div className="space-y-1.5">
+        <Label htmlFor={confirmId} className="text-sm font-medium">Confirm password</Label>
+        <PasswordInput id={confirmId} name="confirmPassword" value={state.confirm} onChange={event => state.setConfirm(event.target.value)}
+          autoComplete="new-password" minLength={8} maxLength={AUTH_REQUEST_LIMITS.password} required disabled={submitting} className="h-10 text-sm" />
       </div>
-    );
-  }
-
-  if (shouldShowTokenEntry) {
-    return (
-      <form onSubmit={handleTokenSubmit} className={cn('space-y-4', className)}>
-        <AuthHeader
-          title={mode === 'setup' ? 'Set password' : 'Reset password'}
-          description="Paste the token from your email to continue."
-        />
-
-        <div className="space-y-1.5">
-          <Label htmlFor={tokenInputId} className="text-sm font-medium">Email token</Label>
-          <Input
-            id={tokenInputId}
-            value={tokenInput}
-            onChange={(event) => setTokenInput(event.target.value)}
-            autoComplete="one-time-code"
-            placeholder="Paste token"
-            className={cn('h-10 text-sm', error && 'ring-[1px] ring-destructive/30')}
-          />
-        </div>
-
-        <AnimatePresence>
-          {displayError && (
-            <motion.div
-              initial={authFeedbackInitial}
-              animate={authFeedbackAnimate}
-              exit={authFeedbackExit}
-              transition={authPresenceTransition}
-              className="overflow-hidden"
-            >
-              <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5" role="alert">
-                <AnimateIcon animate>
-                  <CircleX size={16} className="mt-px flex-shrink-0 text-destructive" />
-                </AnimateIcon>
-                <p className="text-xs font-medium leading-relaxed text-destructive">{displayError}</p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <Button type="submit" className="h-10 w-full">
-          Continue
-        </Button>
-        <a href={continuedLoginHref} className="block text-center text-sm text-primary hover:underline">
-          Back to sign in
-        </a>
-      </form>
-    );
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)} aria-busy={submitting}>
-      <AuthHeader
-        title={title}
-        description={tokenInfo ? `For ${tokenInfo.user.email}` : 'Enter a new password to continue'}
-      />
-
-      <div className="space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor={newPasswordId} className="text-sm font-medium">New password</Label>
-          <PasswordInput
-            id={newPasswordId}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="new-password"
-            showStrength
-            required
-            className="h-10 text-sm"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={confirmPasswordId} className="text-sm font-medium">Confirm password</Label>
-          <PasswordInput
-            id={confirmPasswordId}
-            value={confirm}
-            onChange={(event) => setConfirm(event.target.value)}
-            autoComplete="new-password"
-            required
-            className="h-10 text-sm"
-          />
-        </div>
+    </div>
+    <AnimatePresence>{state.error && <motion.div initial={authFeedbackInitial} animate={authFeedbackAnimate} exit={authFeedbackExit}
+      transition={authPresenceTransition} className="overflow-hidden">
+      <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5" role="alert">
+        <AnimateIcon animate><CircleX size={16} className="mt-px flex-shrink-0 text-destructive" /></AnimateIcon>
+        <p className="text-xs font-medium leading-relaxed text-destructive">{state.error}</p>
       </div>
-
-      <AnimatePresence>
-        {displayError && (
-          <motion.div
-            initial={authFeedbackInitial}
-            animate={authFeedbackAnimate}
-            exit={authFeedbackExit}
-            transition={authPresenceTransition}
-            className="overflow-hidden"
-          >
-            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5" role="alert">
-              <AnimateIcon animate>
-                <CircleX size={16} className="mt-px flex-shrink-0 text-destructive" />
-              </AnimateIcon>
-              <p className="text-xs font-medium leading-relaxed text-destructive">{displayError}</p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <Button type="submit" className="h-10 w-full" disabled={!action || submitting}>
-        {submitting ? (
-          <>
-            <AnimateIcon animate loop>
-              <Loader size={16} />
-            </AnimateIcon>
-            <span className="sr-only">Updating password</span>
-          </>
-        ) : (
-          title
-        )}
-      </Button>
-    </form>
-  );
+    </motion.div>}</AnimatePresence>
+    <Button type="submit" className="h-10 w-full" disabled={!action || submitting}>{submitting
+      ? <><AnimateIcon animate loop><Loader size={16} /></AnimateIcon><span className="sr-only">Updating password</span></> : title}</Button>
+  </form>;
 }

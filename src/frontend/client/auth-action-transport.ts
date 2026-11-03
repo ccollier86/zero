@@ -31,9 +31,11 @@ export class AuthActionTransport {
     );
   }
 
-  async inspectActionToken(token: string): Promise<AuthActionTokenInfo> {
+  async inspectActionToken(token: string, signal?: AbortSignal): Promise<AuthActionTokenInfo> {
+    signal?.throwIfAborted();
     const response = await fetch(
       `${this.options.baseUrl}/auth/action-token/${encodeURIComponent(token)}`,
+      { signal, cache: 'no-store', referrerPolicy: 'no-referrer' },
     );
     if (!response.ok) {
       const body = await response.json().catch(() => null);
@@ -74,6 +76,8 @@ export class AuthActionTransport {
       try {
         const response = await fetch(`${this.options.baseUrl}${path}`, {
           method: 'POST',
+          cache: 'no-store',
+          referrerPolicy: 'no-referrer',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
           signal: attempt.signal,

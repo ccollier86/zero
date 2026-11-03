@@ -11,6 +11,7 @@ describe('forgot-password success state', () => {
       'If an account exists for that address, a reset link will arrive shortly.',
     );
     expect(markup).not.toContain('We sent a reset link');
+    expect(markup).toContain('Repeated requests may be delayed for security.');
     expect(markup).not.toContain('@');
     expect(markup).toContain('bg-success/10');
     expect(markup).toContain('text-success');

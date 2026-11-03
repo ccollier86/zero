@@ -531,8 +531,8 @@ export interface Client extends AuthAdminSdkSurface {
   /** Verify an email address from an emailed verification token. */
   verifyEmail(token: string): Promise<AuthCompletionResult>;
 
-  /** Inspect a reset/setup token without consuming it. */
-  inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
+  /** Inspect a reset/setup token without consuming it; optional cancellation never revokes or consumes a proof. */
+  inspectActionToken(token: string, signal?: AbortSignal): Promise<AuthActionTokenInfo>;
 
   /** Complete a password reset from an emailed reset token. */
   resetPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
@@ -1452,7 +1452,7 @@ export function createClient(config: ClientConfig): Client {
     resendVerificationEmail: async (email: string, nativeContinuation?: string) =>
       requireAuthClient().resendVerificationEmail(email, nativeContinuation),
     verifyEmail: async (token: string) => requireAuthClient().verifyEmail(token),
-    inspectActionToken: async (token: string) => requireAuthClient().inspectActionToken(token),
+    inspectActionToken: async (token: string, signal?: AbortSignal) => requireAuthClient().inspectActionToken(token, signal),
     resetPassword: async (token: string, newPassword: string) => requireAuthClient().resetPassword(token, newPassword),
     setupPassword: async (token: string, newPassword: string) => requireAuthClient().setupPassword(token, newPassword),
     listMfaMethods: async () => requireAuthClient().listMfaMethods(),

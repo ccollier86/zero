@@ -8,15 +8,15 @@ visibility: internal
 system: guardian
 feature: password-email-and-property-forms
 maturity: supported
-applies_to: ["2.10.0 source/local candidate; verify the qualified release commit"]
+applies_to: ["2.10.0", "2.10.1"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.0"
-  commit: "417af8dedfa1e3a219e4e6c2befca2cbd7b807c3"
-  snapshot: clean
-  date: "2026-11-01"
-  evidence_level: implementation-verified
+  version: "2.10.1"
+  commit: "6b1d103c307c5a4eb334dfc79404a01f1705781f"
+  snapshot: dirty
+  date: "2026-11-02"
+  evidence_level: source-observed
 ---
 
 # Password, Email And Account-Property Forms
@@ -56,19 +56,65 @@ export function RecoveryPages({ token }: { token?: string }) {
 ## PasswordActionForm
 
 `PasswordActionFormProps`: `token?`, `mode?: 'auto' | 'reset' | 'setup'`
-(auto), `loginHref` (`'#login'`), `onSuccess?`, `className?`.
+(auto), `loginHref` (`'#login'`), `forgotPasswordHref` (`'/forgot-password'`),
+`onSuccess?`, `className?`.
 
-The active token comes from the explicit prop or manually entered token.
-Inspection drives loading/error and action-kind validation. Auto mode follows
-the inspected action; an explicit mismatched mode is rejected by the UI, with
-backend verification still mandatory. The form validates matching new passwords
-and the minimum length before dispatching the matching setup/reset method.
+The owning route reads the current `token` query parameter from the emailed
+link and passes it as `token`. **The native password form no longer asks users
+to find or paste an “Email token.”** Do not substitute a session cookie or
+invent a token from an account identifier. Missing, invalid, expired, already
+used and wrong-kind links have separate human-readable recovery states. Reset
+recovery links to `forgotPasswordHref`; setup recovery tells the user to ask
+their administrator for another setup email. Recovery navigation never sends
+an email automatically. Supply the real app route hrefs when not using the
+standard pages.
 
-Inspection effects retire on token/flow changes or unmount. Submission awaits
-the SDK; a continuation enters the common auth coordinator, while final
-completion shows success and invokes `onSuccess`. Never include action tokens
-in application logs or broad analytics; read
-[action token security](../../backend/guardian/password-recovery.md).
+Auto mode follows a successfully inspected action; an explicitly mismatched
+mode fails closed. A temporary service/network failure, a malformed response or
+a 15-second stalled inspection offers **Retry link check**. It repeats only
+the read, using the same proof; it does not consume the link or resend email.
+Inspection is cancelled on retirement. Native SDK
+`inspectActionToken(token, signal?)` also accepts optional caller cancellation.
+Backend expiry, consume-once, current-account and password validation remain
+authoritative at final submission.
+
+The form checks password length/matching before dispatch and uses an immediate
+duplicate-submit lock. It clears password inputs after completion or an
+unresolved result. Only an explicit password-updated response for the inspected
+account displays success. A lost/ambiguous write response gives sign-in/recovery
+instructions without automatic replay or a misleading “safe to retry” button.
+The exact native `AUTH_COMMIT_CONFLICT` 409 with `retryable: true` denotes a
+verified rollback; it permits a manual read-check and another user-entered
+save, not automatic resubmission. Generic retryable flags do not prove rollback.
+A host `onSuccess` exception cannot undo the accepted password update. Token,
+mode, client replacement and unmount retire old drafts and callbacks. An actual
+auth continuation still uses the shared continuation component.
+
+Resetting while already signed in still retires the old authorization scope.
+A bounded, memory-only display receipt carries the exact acknowledged
+client/link/action result across that required AppProvider remount, so the new
+form shows success rather than rechecking an already-consumed link. It contains
+no password, is not serialized into auth storage/logs, matches the SDK's exact
+current completion, and cannot confirm another link/account/client. A document
+reload still revalidates the email link normally. This is UI continuity, not
+new authentication authority, a durable audit receipt or permission to replay.
+The remounted confirmation does not rerun an old view's `onSuccess` callback.
+
+Named `username`, `newPassword` and `confirmPassword` fields carry standard
+`username`/`new-password` autocomplete semantics. The account field is read-only
+and visually hidden; passwords remain sensitive inputs. These semantics help
+password managers identify the account but cannot guarantee a particular
+extension's vault-update behavior. The form uses POST semantics, and native
+proof requests/recovery links suppress token-bearing referrers. Action requests
+are not cached. Form diagnostics contain action/error codes, not raw errors,
+passwords, tokens or full email links. Keep the owning auth page private/no-store
+and exclude its secret query string from analytics and infrastructure logs.
+
+The default five-minute resend cooldown and enumeration-resistant public
+responses are **unchanged**. A consumed link does not reset that request window.
+The request confirmation explains that repeated requests may be delayed; a
+200 response is not proof that another email was sent. Read
+[password recovery](../../backend/guardian/password-recovery.md).
 
 ## EmailVerificationForm
 

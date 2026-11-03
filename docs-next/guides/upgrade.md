@@ -8,14 +8,14 @@ visibility: internal
 system: cross-system
 feature: upgrade
 maturity: supported
-applies_to: ["2.6.0", "2.7.0", "2.8.0", "2.9.0", "2.10.0"]
+applies_to: ["2.6.0", "2.7.0", "2.8.0", "2.9.0", "2.10.0", "2.10.1"]
 modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.0"
-  commit: "ad39fa51f5647753649dc0c80a9dd77e28e9d3f2"
-  snapshot: clean
-  date: "2026-11-01"
+  version: "2.10.1"
+  commit: "6b1d103c307c5a4eb334dfc79404a01f1705781f"
+  snapshot: dirty
+  date: "2026-11-02"
   evidence_level: source-observed
 ---
 
@@ -44,6 +44,32 @@ Dry-run first. Optional check scripts can execute arbitrary app code; inspect
 them before enabling them.
 
 ## Changes That Need An App Plan
+
+### Password recovery UI 2.10.1 update
+
+Use the qualified committed-main archive through the normal updater, retaining
+its commit/checksum. Rebuild matching client/server assets. The Bun 1.4.4 floor
+from 2.10.0 still applies; this patch needs no new database conversion, identity
+reset, migration-ledger edit or logging-state reset.
+
+`PasswordActionForm` no longer asks end users to paste an “Email token.” Pass
+the current email link's query `token` to the native component. Missing,
+consumed, expired and wrong-kind links explain the next step. Set
+`forgotPasswordHref` if the app's recovery-request route differs from the
+default `/forgot-password`, and keep `loginHref` aligned with the app. Initial
+setup uses administrator-resend guidance rather than silently converting a
+setup token into a password-reset token.
+
+Network/service link-check failures offer explicit read-only Retry. A lost
+password-write response remains unknown rather than inviting automatic replay.
+Native one-time proofs, the default five-minute resend window and all final
+server checks are unchanged. **Do not lower the cooldown to compensate for a
+confusing UI.** Verify a full native browser reset, reopening the used link,
+repeated requests, blocked inspection/retry and a genuine fresh link. Existing
+app-copied forms need an explicit component adoption; updating the package does
+not rewrite application pages. See
+[password recovery](../backend/guardian/password-recovery.md) and the
+[form contract](../frontend/guardian/account-actions.md#passwordactionform).
 
 ### Native runtime, avatar and own-account save 2.10.0 update
 

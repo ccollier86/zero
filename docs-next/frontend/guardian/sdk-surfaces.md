@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: public-auth-service-facades
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0", "2.10.1"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "c5656b306051b04ec6adc641b7057a0672fd7a3e"
-  snapshot: clean
-  date: "2026-10-07"
+  version: "2.10.1"
+  commit: "6b1d103c307c5a4eb334dfc79404a01f1705781f"
+  snapshot: dirty
+  date: "2026-11-02"
   evidence_level: source-observed
 ---
 
@@ -66,7 +66,7 @@ typed API path for restoration, refresh, replay and scope guarantees.
 | `getAuthConfig()` | `Promise<AuthPublicConfig>`; public policy, never server secrets. |
 | `forgotPassword(email, nativeContinuation?)` | Private/non-enumerating request completion. |
 | `resendVerificationEmail(email, nativeContinuation?)` | Verification delivery request completion. |
-| `inspectActionToken(token)` | `AuthActionTokenInfo`; action-kind/readiness inspection, not consumption. |
+| `inspectActionToken(token, signal?)` | `AuthActionTokenInfo`; cancellable action-kind/readiness inspection, not consumption. |
 | `verifyEmail(token)` | `AuthCompletionResult`. |
 | `resetPassword(token, newPassword)` | `AuthCompletionResult`. |
 | `setupPassword(token, newPassword)` | `AuthCompletionResult`. |

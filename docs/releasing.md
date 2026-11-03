@@ -564,6 +564,9 @@ git diff --check
    The generated native session/audit recovery browser file likewise owns its
    strict 60s scenarios and real logging actors; its blocked-delivery, refresh,
    live-record, hard-reload, new-tab and revocation checks are never bypassed.
+   The managed password-recovery browser file uses the same admission window
+   for its real logging actors, native email outbox and unchanged 60s browser
+   cases. Its default five-minute resend policy is not shortened for the test.
    The installed documentation and document-editor consumers also own an
    exclusive window, as do the native presence and Resource-overlap files with
    their own deliberately tight actor startup/operation/shutdown deadlines.

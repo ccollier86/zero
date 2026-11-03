@@ -114,7 +114,7 @@ export interface AuthActions {
   forgotPassword: (email: string, nativeContinuation?: string) => Promise<void>;
   resendVerificationEmail: (email: string, nativeContinuation?: string) => Promise<void>;
   verifyEmail: (token: string) => Promise<AuthCompletionResult | null>;
-  inspectActionToken: (token: string) => Promise<AuthActionTokenInfo | null>;
+  inspectActionToken: (token: string, signal?: AbortSignal) => Promise<AuthActionTokenInfo | null>;
   resetPassword: (token: string, newPassword: string) => Promise<AuthCompletionResult | null>;
   setupPassword: (token: string, newPassword: string) => Promise<AuthCompletionResult | null>;
   listMfaMethods: () => Promise<{ methods: AuthMfaMethod[]; required: boolean } | null>;
@@ -329,8 +329,8 @@ export function useAuth(): AuthState & AuthActions {
   );
 
   const inspectActionToken = useCallback(
-    async (token: string) => {
-      if (authClient) return runAccountAction(() => authClient.inspectActionToken(token));
+    async (token: string, signal?: AbortSignal) => {
+      if (authClient) return runAccountAction(() => authClient.inspectActionToken(token, signal));
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },

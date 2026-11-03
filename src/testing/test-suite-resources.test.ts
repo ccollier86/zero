@@ -6,6 +6,7 @@ test('only the reviewed cold-I/O, durable-control and explicit hot-auth gates re
   expect(EXCLUSIVE_TEST_FILES).toEqual(['packages/payments/src/package.test.ts', 'src/frontend/server/auth-hot-admission.integration.test.ts', 'src/frontend/server/auth-hot-mutations.integration.test.ts',
     'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts', 'src/build/build-app.test.ts',
     'src/frontend/client/session-audit-recovery.browser.test.ts', 'packages/docs/package-installed.integration.test.ts',
+    'src/frontend/server/password-recovery.browser.test.ts',
     'src/components/json-editor/document-editor.package.test.ts', 'src/presence/presence-fabric.integration.test.ts',
     'src/resources/resource-array-overlap-fabric.integration.test.ts',
     'src/logging/logging-fabric.integration.test.ts', 'src/components/signature-pad/signature-pad.package.test.ts',
@@ -15,6 +16,7 @@ test('only the reviewed cold-I/O, durable-control and explicit hot-auth gates re
     'packages/docs/src/server/watch.test.ts', 'src/migrations/legacy-state/legacy-state.package.test.ts',
     'src/update/local-archive-resolution.integration.test.ts', 'src/update/local-archive-workspace.integration.test.ts']);
   expect(isExclusiveTestFile('packages/payments/src/package.test.ts')).toBe(true);
+  expect(isExclusiveTestFile('src/frontend/server/password-recovery.browser.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/logging/logging-fabric.integration.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/components/signature-pad/signature-pad.package.test.ts')).toBe(true);
   expect(isExclusiveTestFile('src/blog/content-managed.integration.test.ts')).toBe(true);

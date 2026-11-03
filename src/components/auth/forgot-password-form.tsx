@@ -71,6 +71,9 @@ function ForgotPasswordSuccessState() {
       <p className="max-w-sm text-center text-xs text-muted-foreground" aria-live="polite">
         If an account exists for that address, a reset link will arrive shortly.
       </p>
+      <p className="max-w-sm text-center text-xs text-muted-foreground">
+        If you requested a link recently, allow a few minutes and check your most recent email. Repeated requests may be delayed for security.
+      </p>
     </motion.div>
   );
 }

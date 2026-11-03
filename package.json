@@ -1,6 +1,6 @@
 {
   "name": "@zero/framework",
-  "version": "2.10.0",
+  "version": "2.10.1",
   "description": "Bun/Elysia full-stack app framework with Guardian auth, ReactiveDB Fabric, Torrent workflow orchestration, reactive data, and reusable React UI.",
   "type": "module",
   "engines": {

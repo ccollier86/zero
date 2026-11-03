@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: reset-setup-and-password-change
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0", "2.10.1"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "9aae9a686524ef1bffc1561ee9326eae83efc4e7"
+  version: "2.10.1"
+  commit: "6b1d103c307c5a4eb334dfc79404a01f1705781f"
   snapshot: dirty
-  date: "2026-10-21"
+  date: "2026-11-02"
   evidence_level: source-observed
 ---
 
@@ -77,6 +77,41 @@ Defaults: `auth.accountEmails.passwordReset: true`,
 `passwordResetTokenTTL` falls back to `actionTokenTTL: '1h'`, `requestCooldown: '5m'`,
 `resetPath: '/reset-password'`. Delivery requires the app's email service.
 Disabling reset email returns `PASSWORD_RESET_DISABLED` (403).
+
+Repeated requests inside the configured request window are privately
+deduplicated, including after an earlier link was consumed successfully. They
+retain the same public response as other accepted requests. This prevents email
+flooding without exposing account existence. The native request confirmation
+warns that repeated requests may be delayed. A missing subsequent email is not
+by itself evidence of provider failure: use the private
+`AUTH_PASSWORD_RESET_SUPPRESSED`, `AUTH_EMAIL_OUTBOX_SUPPRESSED`,
+`AUTH_PASSWORD_RESET_SENT`, `AUTH_PASSWORD_RESET_DELIVERY_FAILED` and outbox
+health signals to distinguish suppression, provider acceptance and failure.
+Never inspect or copy real bearer links into diagnostic logs.
+
+### Native Password-Link UI In 2.10.1
+
+The native `PasswordActionForm` replaces manual “Email token” entry with clear
+missing/used/expired/invalid/wrong-action recovery and a configurable
+`forgotPasswordHref`. The route still supplies the actual query token; a valid
+email link opens the password fields without a separate token prompt. Setup
+links keep their separate administrator-resend guidance.
+
+Temporary inspection failures offer an explicit read-only retry, not an email
+resend or password replay. Link inspection is cancellable and bounded at 15
+seconds in the form. A lost password-write response stays unconfirmed and
+directs the user to try signing in before another recovery. Success requires
+the native explicit password-updated result for the inspected account.
+An already-authenticated reset preserves that acknowledged display result
+across the required AppProvider sign-out/remount without preserving the old
+session or blessing another link. Full-page reload still checks the used link.
+
+This patch does not relax the request cooldown, rate limiting, proof expiry,
+single consumption, account-generation binding, suspension, MFA or final
+authorization checks. It changes no database schema, account identity or mail
+provider contract. Existing native pages gain the repair through the package
+update; app-copied reset screens must adopt the native component themselves.
+See the [account action form contract](../../frontend/guardian/account-actions.md#passwordactionform).
 
 Complete a delivered reset using:
 

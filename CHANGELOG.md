@@ -4,6 +4,42 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.10.1 - 2026-11-02
+
+Human-readable native password recovery without changing reset-email security.
+Use the exact qualified committed-main source/local archive; this is not an
+application deployment or npm publication.
+
+- Replace the password form's manual “Email token” fallback with distinct
+  missing, invalid, expired, already-used and wrong-action recovery states.
+  Add `forgotPasswordHref` for app-specific recovery routing. Setup retains
+  administrator-resend guidance and its separate server action.
+- Offer inspection-only Retry after transient or malformed link responses.
+  Bound native form inspection at 15 seconds and cancel retired reads through
+  optional `inspectActionToken(token, signal?)`; never consume a proof or send
+  another email merely to display/retry a page.
+- Preserve the configured request cooldown, five-minute default, rate limiting,
+  generic non-enumerating responses, expiry, consume-once and current-account
+  checks. Explain resend delays instead of silently changing those protections.
+- Prevent rapid duplicate submissions, stale callbacks and old-link drafts.
+  Require an explicit matching-account password-updated response for success;
+  keep ambiguous writes unconfirmed without automatic replay. A host success
+  notification failure cannot turn an accepted reset into a failed operation.
+- Preserve that exact acknowledged result across AppProvider's required
+  signed-in-session retirement. A memory-only client/link/action binding keeps
+  the remounted form from misreporting a successful reset as a used-link error;
+  it cannot grant authority or transfer success to another link/account/client.
+- Add named account/new-password autocomplete fields, POST form semantics,
+  no-store/referrer-free action requests and secret-free form diagnostics.
+  Password-manager markup does not guarantee any specific extension's vault
+  behavior. No passwords or raw links are added to audit metadata.
+- Exercise native email/request/reset/login/used-link/default-cooldown behavior
+  in real Chromium against managed compliance logging, plus transient read
+  interruption and response loss after an actual committed reset.
+
+No database migration, account recreation, mail-provider change or minimum-Bun
+change is introduced. Bun 1.4.4 remains required; rebuild matching assets.
+
 ## 2.10.0 - 2026-11-02
 
 Private avatar consumer updates and a deliberate native runtime prerequisite.

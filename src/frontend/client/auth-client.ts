@@ -743,9 +743,9 @@ export class AuthClient {
     return this.actions.verifyEmail(token);
   }
 
-  inspectActionToken(token: string): Promise<AuthActionTokenInfo> {
-    return this.runAuthorizationScopeOperation(() => (
-      this.actions.inspectActionToken(token)
+  inspectActionToken(token: string, signal?: AbortSignal): Promise<AuthActionTokenInfo> {
+    return this.runAuthorizationScopeOperation(attempt => (
+      this.actions.inspectActionToken(token, signal ? AbortSignal.any([signal, attempt.signal]) : attempt.signal)
     ));
   }
 
