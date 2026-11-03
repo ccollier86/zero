@@ -48,6 +48,7 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       logging: { preset: 'activity', rootDirectory: join(root, 'logging') },
       serverExtensions: [defineZeroPlugin({ name: 'logging-qualification', setup({ zero }) { logger = zero.logging; } })],
     });
+    expect(logger!.config.policy.queue.batchSize).toBe(64);
     mark('constructed');
     // Match the synthetic transport lifetime to its 20s actor operation bound.
     // Bun's socket-idle default may otherwise reset an admitted /proof/work

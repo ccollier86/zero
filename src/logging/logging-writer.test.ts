@@ -6,10 +6,41 @@ import type { LoggingEvent } from './logging-contracts';
 import { loggingEvent } from './test-support/logging-fixture';
 import { LoggingError } from './logging-error';
 import { cloneDatabaseSerializableValue } from '../databases/database-operation-payload';
+import { DatabaseWriterLane } from '../databases/database-writer-lane';
+import { createDatabaseRef } from '../databases/database-file';
 
 function receipt(events: readonly LoggingEvent[]): LoggingAppendResult {
   return { sequence: { seq: 1 }, receipts: events.map((event, i) => ({ id: event.id, sourceId: event.sourceId, ordinal: i + 1, duplicate: false })) };
 }
+test('default backlog chunks yield the real private writer FIFO to queued foreground work without dropping evidence', async () => {
+  const lane = new DatabaseWriterLane({ databaseRef: createDatabaseRef('logging:audit'), placement: 'file', maxQueued: 16,
+    now: () => performance.now(), onQueued: () => true, onDequeued() {}, observability: null });
+  let release!: () => void, entered!: () => void;
+  const firstBatch = new Promise<void>(resolve => { entered = resolve; });
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  const order: string[] = [];
+  const store: LoggingBatchWriter = { stream: 'audit', append(events) {
+    return lane.enqueue(async () => {
+      order.push('backlog:' + events.length);
+      if (order.length === 1) { entered(); await barrier; }
+      return receipt(events);
+    }, { timeoutMs: 5000, operationClass: 'mutation' });
+  } };
+  const writer = new LoggingWriter(store, resolveLoggingConfig(true).queue);
+  const events = Array.from({ length: 257 }, (_, i) => loggingEvent('fair-' + i));
+  let acknowledged = false;
+  const delivery = Promise.all(events.map(event => writer.write(event))).then(result => { acknowledged = true; return result; });
+  await firstBatch;
+  const foreground = lane.enqueue(async () => { order.push('foreground'); }, { timeoutMs: 5000, operationClass: 'mutation' });
+  expect(acknowledged).toBe(false);
+  expect(order).toEqual(['backlog:64']);
+  release(); await foreground;
+  const receipts = await delivery;
+  await writer.stop(); await lane.idle();
+  expect(order).toEqual(['backlog:64', 'foreground', 'backlog:64', 'backlog:64', 'backlog:64', 'backlog:1']);
+  expect(receipts.map(item => item.id)).toEqual(events.map(event => event.id));
+  expect(writer.diagnostics()).toMatchObject({ acknowledged: 257, pendingEvents: 0, failed: 0 });
+});
 test('dense record-change bursts split by Fabric structural limits without weakening validation or losing acknowledgments', async () => {
   const sizes: number[] = [];
   const store: LoggingBatchWriter = { stream: 'audit', async append(events) {

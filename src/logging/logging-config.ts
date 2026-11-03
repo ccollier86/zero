@@ -36,6 +36,10 @@ const BASE = new Set<LoggingFamily>(['operational', 'security']);
 const ACTIVITY = new Set<LoggingFamily>([...BASE, 'records', 'views', 'transfers', 'workflow', 'communications', 'ai', 'investigations', 'navigation']);
 /** A displayed revision emits an interval plus a change; allow native 250 ms batches and owned-view heartbeats. */
 export const LOGGING_BROWSER_DEFAULTS = Object.freeze({ observationsPerMinute: 2048, selectionsPerMinute: 512 });
+// Historical delivery shares the private audit writer with foreground result
+// receipts. Yield between bounded chunks rather than monopolizing its FIFO
+// with the largest wire-legal batch. This changes neither evidence nor limits.
+const DEFAULT_LOGGING_BATCH_SIZE = 64;
 
 /** Resolve and detach capture policy. Omission preserves the existing platform runtime without enabling new storage. */
 export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedLoggingConfig {
@@ -59,7 +63,7 @@ export function resolveLoggingConfig(value?: boolean | LoggingConfig): ResolvedL
     const observationsPerMinute = bound(browser.observationsPerMinute === undefined ? LOGGING_BROWSER_DEFAULTS.observationsPerMinute : browser.observationsPerMinute, 1, 10000), selectionsPerMinute = bound(browser.selectionsPerMinute === undefined ? LOGGING_BROWSER_DEFAULTS.selectionsPerMinute : browser.selectionsPerMinute, 1, 10000);
     const maxEvents = bound(queue.maxEvents === undefined ? 1024 : queue.maxEvents, 1, 100_000);
     const maxBytes = bound(queue.maxBytes === undefined ? 8 * 1024 * 1024 : queue.maxBytes, 16_384, 64 * 1024 * 1024);
-    const batchSize = bound(queue.batchSize === undefined ? Math.min(LOGGING_MAX_BATCH, maxEvents) : queue.batchSize, 1, Math.min(LOGGING_MAX_BATCH, maxEvents));
+    const batchSize = bound(queue.batchSize === undefined ? Math.min(DEFAULT_LOGGING_BATCH_SIZE, maxEvents) : queue.batchSize, 1, Math.min(LOGGING_MAX_BATCH, maxEvents));
     return Object.freeze({ enabled: value !== undefined && value !== false, preset,
       minimumLevel: input.minimumLevel === undefined ? 'info' : loggingChoice(input.minimumLevel, LOGGING_LEVELS),
       capture: Object.freeze(capture), diagnostics: Object.freeze({ http: diagnostics.http === true }), resources: normalizeLoggingResourcePolicies(input.resources), pages: Object.freeze(pages as Record<string, string>),

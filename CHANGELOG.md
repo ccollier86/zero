@@ -52,6 +52,10 @@ application deployment or npm publication.
   independent global authorization and the existing accepted-write boundary.
   An accepted write followed by a denied refetch is not replayed as a write.
   Apps using native DataTable/DataTableView need no reload or copied-table fix.
+- Reduce the default logging delivery batch from 256 to 64 events so a large
+  historical backlog yields the private audit writer more often to foreground
+  read-evidence receipts. Preserve every event, atomic receipt preparation,
+  bounded admission, original deadlines and explicit finite batch overrides.
 
 No database migration, account recreation, mail-provider change or minimum-Bun
 change is introduced. Bun 1.4.4 remains required; rebuild matching assets.

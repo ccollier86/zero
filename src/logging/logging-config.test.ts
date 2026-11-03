@@ -21,6 +21,13 @@ test('technical HTTP tracing is an explicit detached opt-in, not implied by comp
   expect(() => resolveLoggingConfig({ diagnostics: { http: 'yes' } } as any)).toThrow();
   expect(() => resolveLoggingConfig({ diagnostics: { other: true } } as any)).toThrow();
 });
+test('default delivery yields the audit writer in bounded chunks while explicit finite tuning remains supported', () => {
+  for (const preset of ['basic', 'activity', 'detailed', 'compliance'] as const) {
+    expect(resolveLoggingConfig({ preset }).queue).toEqual({ maxEvents: 1024, maxBytes: 8 * 1024 * 1024, batchSize: 64 });
+  }
+  expect(resolveLoggingConfig({ queue: { maxEvents: 8 } }).queue.batchSize).toBe(8);
+  expect(resolveLoggingConfig({ queue: { batchSize: 256 } }).queue.batchSize).toBe(256);
+});
 test('reactive observation and selection rates are separate configured finite policy limits', () => {
   const defaults = resolveLoggingConfig({ preset: 'activity' }).browser;
   expect(defaults).toEqual({ observationsPerMinute: 2048, selectionsPerMinute: 512 });

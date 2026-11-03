@@ -13,9 +13,9 @@ modes: [single, multi, simple-RBAC, advanced-RBAC, single-topology, Fabric]
 reviewed_against:
   package: "@zero/framework"
   version: "2.10.1"
-  commit: "6b1d103c307c5a4eb334dfc79404a01f1705781f"
+  commit: "18e68e49829552143614999e9423abb266e988a7"
   snapshot: dirty
-  date: "2026-11-02"
+  date: "2026-11-03"
   evidence_level: source-observed
 ---
 
@@ -91,15 +91,25 @@ not rewrite application pages. See
 [password recovery](../backend/guardian/password-recovery.md) and the
 [form contract](../frontend/guardian/account-actions.md#passwordactionform).
 
+### Audit backlog batching in 2.10.1
+
+The omitted logging delivery batch size is now 64 instead of 256. Historical
+delivery yields the private audit writer between these smaller commits so
+foreground read-evidence preparation can acquire its normal FIFO turn. All
+events and durable acknowledgments remain required; this is not evidence
+sampling or a change to admission, execution deadlines or retention. Existing
+explicit `logging.queue.batchSize` overrides remain effective. Review a larger
+override under the installation's foreground workload before keeping it. See
+[logging configuration](../backend/logging/configuration.md).
+
 ### Native runtime, avatar and own-account save 2.10.0 update
 
-The current source candidate raises the minimum to **Bun 1.4.4** because older
+Zero 2.10.0 raised the minimum to **Bun 1.4.4** because older
 Bun can crash when a client aborts an asynchronous HTTP response
 ([upstream repair](https://github.com/oven-sh/bun/pull/32120)). Qualification
 also rejected 1.4.0 for an isolated child-response/file-writer stall; 1.4.4
-completes both native probes. This candidate
-is not selected by `zero-update` until its exact archive passes normal release
-qualification. Do not substitute a feature branch for a qualified main archive.
+completes both native probes. Select the exact qualified main archive through
+`zero-update`; do not substitute an intermediate feature-branch package.
 
 Before adopting that release:
 
