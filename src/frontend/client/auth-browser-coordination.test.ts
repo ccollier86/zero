@@ -237,9 +237,40 @@ describe('browser auth coordination primitives', () => {
     expect(client.isLoading).toBe(false);
     expect(client.isAuthenticated).toBe(false);
     expect(client.authorizationScopeKey).toBeNull();
+    expect(client.hasAcknowledgedPageSessionCleanup).toBe(false);
     expect(lifecycle.events).toEqual(['begin', 'complete']);
 
     client.clearAuthenticationContinuation();
+    expect(client.authenticationContinuation).toBeNull();
+  });
+
+  test('native password completion binds page cleanup to its exact retired scope, not another continuation or new login', async () => {
+    const storage = new SharedStorage();
+    const environment = environmentFor(storage, { ids: idFactory(), channel: false, locks: false });
+    const lifecycle = createLifecycleRecorder();
+    const paths: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url).pathname;
+      paths.push(path);
+      return Response.json(path === '/auth/reset-password'
+        ? { user: authUser(), passwordUpdated: true, signInRequired: true }
+        : { user: authUser(), accessToken: 'current-access', refreshToken: 'current-refresh' });
+    }) as typeof fetch;
+    const client = track(new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api, browserAuthCoordination: environment,
+    }));
+    await waitFor(() => !client.isRestoring && !client.isLoading);
+    await client.login('ada', 'before-reset');
+    expect(client.hasAcknowledgedPageSessionCleanup).toBe(false);
+    const result = await client.resetPassword('synthetic-one-use-proof', 'new-password');
+    expect(client.isAuthenticated).toBe(false);
+    expect(client.hasRecoverableSession).toBe(false);
+    expect(client.authenticationContinuation).toBe(result);
+    expect(client.hasAcknowledgedPageSessionCleanup).toBe(true);
+    expect(paths).toEqual(['/auth/login', '/auth/reset-password']);
+    expect(lifecycle.events).toEqual(['begin', 'complete', 'begin', 'complete']);
+    await client.login('ada', 'new-password');
+    expect(client.hasAcknowledgedPageSessionCleanup).toBe(false);
     expect(client.authenticationContinuation).toBeNull();
   });
 

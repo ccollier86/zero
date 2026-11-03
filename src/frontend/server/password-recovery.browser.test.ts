@@ -105,13 +105,14 @@ async function emailLink(email: string, count = 1) {
   if (!link || new URL(link).origin !== origin) throw new Error('Synthetic reset mail did not contain its native link.');
   return link;
 }
-async function savePassword(page: Page, password = nextPassword) {
+async function savePassword(page: Page, password = nextPassword, replacesDocument = false) {
   await page.getByLabel('New password', { exact: true }).fill(password);
   await page.getByLabel('Confirm password', { exact: true }).fill(password);
   const saved = page.waitForResponse(response => response.url() === origin + '/auth/reset-password' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Reset password', exact: true }).click();
   expect((await saved).status()).toBe(200);
-  await page.getByRole('heading', { name: 'Password updated', exact: true }).waitFor();
+  if (replacesDocument) await page.waitForURL(origin + '/login');
+  else await page.getByRole('heading', { name: 'Password updated', exact: true }).waitFor();
 }
 async function noTokenPrompt(page: Page) {
   expect(await page.getByLabel('Email token', { exact: true }).count()).toBe(0);
@@ -167,6 +168,34 @@ browserTest('an already signed-in browser can complete an emailed reset through 
     await h.page.getByLabel('New password', { exact: true }).waitFor();
     await savePassword(h.page); await noTokenPrompt(h.page);
     expect((await post('/auth/login', { username: user.username, password: nextPassword })).status).toBe(200);
+  } finally { await h.close(); }
+}, 60000);
+
+browserTest('a hydrated signed-in reset fully replaces the document with fresh sign-in, not the consumed link', async () => {
+  const user = await register(), h = await browser();
+  try {
+    expect((await post('/auth/forgot-password', { email: user.email })).status).toBe(200);
+    const link = await emailLink(user.email);
+    await h.page.goto(link); await h.page.getByLabel('New password', { exact: true }).waitFor();
+    await h.page.evaluate(async input => { await window.__passwordForm.signIn(input.username, input.password); },
+      { username: user.username, password: oldPassword });
+    await h.page.getByLabel('New password', { exact: true }).waitFor();
+    // Freeze the actual SDK's current authority as a document-owned payload.
+    // The installed Linux gate separately exercises the official SSR bundle.
+    await h.page.evaluate(() => window.__passwordForm.freezeHydratedDocument());
+    const documents: string[] = [];
+    h.page.on('request', request => {
+      if (request.isNavigationRequest() && request.frame() === h.page.mainFrame()) {
+        documents.push(new URL(request.url()).pathname);
+      }
+    });
+    await savePassword(h.page, nextPassword, true);
+    expect(documents).toEqual(['/login']);
+    expect((await post('/auth/login', { username: user.username, password: oldPassword })).status).toBe(401);
+    expect((await post('/auth/login', { username: user.username, password: nextPassword })).status).toBe(200);
+    await h.page.goto(link);
+    await h.page.getByRole('heading', { name: 'This password link has already been used', exact: true }).waitFor();
+    await noTokenPrompt(h.page);
   } finally { await h.close(); }
 }, 60000);
 

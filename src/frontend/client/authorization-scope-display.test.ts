@@ -6,9 +6,30 @@ import {
   resolveAuthorizationScopeReloadAction,
   resolveHydrationScopeMatch,
   resolveHydratedAuthorizationWork,
+  shouldReplacePasswordActionDocument,
 } from './authorization-scope-display';
+import type { AuthPasswordUpdatedResult, AuthSessionResult } from './auth-types';
 
 describe('root authorization-scope display boundary', () => {
+  test('an acknowledged password update replaces a retired document with fresh sign-in', () => {
+    const continuation = { user: { userId: 'reset-user' }, passwordUpdated: true,
+      signInRequired: true } as AuthPasswordUpdatedResult;
+    const completed = { stable: true, ready: true, isRestoring: false, isLoading: false,
+      browserUserId: null, browserHasRecoverableSession: false,
+      acknowledgedPageCleanup: true, continuation };
+    expect(shouldReplacePasswordActionDocument(completed)).toBe(true);
+    // Choosing a destination cannot replace cleanup, an unsettled transition,
+    // or a new live/recoverable identity with an earlier success display.
+    for (const replacement of [
+      { stable: false }, { ready: false }, { isRestoring: true }, { isLoading: true },
+      { browserUserId: 'new-user' }, { browserHasRecoverableSession: true },
+      { acknowledgedPageCleanup: false }, { continuation: null },
+    ]) expect(shouldReplacePasswordActionDocument({ ...completed, ...replacement })).toBe(false);
+    expect(shouldReplacePasswordActionDocument({ ...completed,
+      continuation: { user: { userId: 'reset-user' }, accessToken: 'proof', refreshToken: 'proof' } as AuthSessionResult,
+    })).toBe(false);
+  });
+
   test('authorization revalidation is not a failed session restoration', () => {
     const input = { hasHydrationRoute: true, stable: true, ready: false,
       isRestoring: false, isLoading: false, requiresRouteReload: false,

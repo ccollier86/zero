@@ -112,7 +112,11 @@ directs the user to try signing in before another recovery. Success requires
 the native explicit password-updated result for the inspected account.
 An already-authenticated reset preserves that acknowledged display result
 across the required AppProvider sign-out/remount without preserving the old
-session or blessing another link. Full-page reload still checks the used link.
+session or blessing another link. When an old hydrated document must be
+replaced, the acknowledged reset navigates to AppProvider's configured
+`loginPath` instead of reloading the consumed proof URL. Old private data is
+still retired. An independent reopening or hard refresh still checks the link
+and reports that it has been used; no serialized success flag bypasses it.
 
 This patch does not relax the request cooldown, rate limiting, proof expiry,
 single consumption, account-generation binding, suspension, MFA or final

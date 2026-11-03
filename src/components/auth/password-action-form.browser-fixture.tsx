@@ -3,8 +3,9 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { ClientProvider } from '../../frontend/client/client-context';
-import { createClient, getClient } from '../../frontend/client/sdk';
+import { createClient, getClient, type InternalClient } from '../../frontend/client/sdk';
 import { AppProvider } from '../../frontend/client/app-provider';
+import { readBrowserRouteAuthorizationBoundary } from '../../frontend/router/authorization-route-boundary';
 import { configureFrontendObservability } from '../../frontend/client/observability';
 import { PasswordActionForm } from './password-action-form';
 import { ForgotPasswordForm } from './forgot-password-form';
@@ -18,6 +19,14 @@ const harness = { observations, get successes() { return successes; },
   replaceToken: (_token: string, _mode?: 'auto' | 'reset' | 'setup') => {},
   replaceClient: () => {}, hide: () => {}, throwOnSuccess() { failCallback = true; },
   async signIn(username: string, password: string) { await getClient()!.login(username, password); },
+  freezeHydratedDocument() {
+    const auth = (getClient()! as InternalClient).auth!;
+    Object.assign(window, { __ROUTE_DATA__: { authorizationBoundary: {
+      ...readBrowserRouteAuthorizationBoundary(auth),
+      scopeRevision: auth.authorizationState.snapshot?.scope?.revision ?? null,
+      authorizationReady: auth.authorizationState.status === 'ready',
+    } } });
+  },
 };
 declare global { interface Window { __passwordForm: typeof harness; __passwordNativeProvider?: boolean } }
 window.__passwordForm = harness;

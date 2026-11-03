@@ -105,8 +105,15 @@ A bounded, memory-only display receipt carries the exact acknowledged
 client/link/action result across that required AppProvider remount, so the new
 form shows success rather than rechecking an already-consumed link. It contains
 no password, is not serialized into auth storage/logs, matches the SDK's exact
-current completion, and cannot confirm another link/account/client. A document
-reload still revalidates the email link normally. This is UI continuity, not
+current completion, and cannot confirm another link/account/client. If a
+managed hydrated document must be replaced, AppProvider instead performs a
+full navigation to its configured `loginPath` after the core acknowledges
+both the password update and current anonymous page-session cleanup. It does
+not reload the consumed proof URL or retain the old private loader subtree.
+Configure `AppProvider.loginPath` for a nonstandard sign-in route; a form's
+`loginHref` controls its inline continuation, not this document security boundary.
+An independent hard refresh of the old link still revalidates it normally.
+This is UI continuity, not
 new authentication authority, a durable audit receipt or permission to replay.
 The remounted confirmation does not rerun an old view's `onSuccess` callback.
 

@@ -1,4 +1,4 @@
-import type { AuthSessionTransitionOperation } from './auth-types';
+import type { AuthCompletionResult, AuthSessionTransitionOperation } from './auth-types';
 import type { AuthAuthorizationStatus } from './auth-authorization-types';
 
 /**
@@ -21,6 +21,30 @@ export type AuthorizationScopeReloadAction =
   | 'show-recovery';
 
 export type HydratedAuthorizationWork = 'none' | 'wait' | 'retry-access' | 'reload-route' | 'recover-session';
+
+/**
+ * Choose the fresh sign-in destination when an already-required document
+ * replacement follows an acknowledged password update. This does not admit
+ * old loader data or infer completion from a URL, history state or UI receipt.
+ */
+export function shouldReplacePasswordActionDocument(input: {
+  stable: boolean;
+  ready: boolean;
+  isRestoring: boolean;
+  isLoading: boolean;
+  browserUserId: string | null;
+  browserHasRecoverableSession: boolean;
+  acknowledgedPageCleanup: boolean;
+  continuation: AuthCompletionResult | null;
+}): boolean {
+  return input.stable && input.ready && !input.isRestoring && !input.isLoading
+    && input.browserUserId === null && !input.browserHasRecoverableSession
+    && input.acknowledgedPageCleanup
+    && input.continuation !== null
+    && 'passwordUpdated' in input.continuation
+    && input.continuation.passwordUpdated === true
+    && input.continuation.signInRequired === true;
+}
 
 /**
  * Separate unsafe live-policy loading from a failed session restoration.

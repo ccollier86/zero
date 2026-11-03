@@ -29,6 +29,9 @@ import { FRONTEND_OBS_CODES, emitFrontendCode } from './observability';
 import { useRouteAuthRequirement } from './route-auth-context';
 import {
   readAuthorizationScopeBoundaryKey,
+  isAuthorizationDataReady,
+  isAuthorizationScopeReady,
+  isAuthorizationScopeStable,
   useAuthorizationScopeBoundary,
 } from './authorization-scope-hooks';
 import {
@@ -38,6 +41,7 @@ import {
   resolveAuthorizationScopeReloadAction,
   resolveHydrationScopeMatch,
   resolveHydratedAuthorizationWork,
+  shouldReplacePasswordActionDocument,
 } from './authorization-scope-display';
 import {
   AuthorizationScopeRecoveryController,
@@ -324,7 +328,7 @@ export function AppProvider({
   const modalTree = createElement(ModalManager, { children: guardedChildren });
   const loggingEnabled = Boolean(platformConfig.logging && authEnabled);
   const authorizationScopedTree = authEnabled
-    ? createElement(AuthorizationScopeGuard, { client, children: modalTree,
+    ? createElement(AuthorizationScopeGuard, { client, loginPath: resolvedLoginPath, children: modalTree,
         ...(loggingEnabled ? { renderBoundary: renderLoggingDeliveryBoundary } : {}) })
     : modalTree;
   // Both control-plane owners must stay mounted while either gate masks data.
@@ -371,10 +375,12 @@ function renderLoggingDeliveryBoundary(children: ReactNode): ReactNode {
  */
 function AuthorizationScopeGuard({
   client,
+  loginPath,
   children,
   renderBoundary = (content: ReactNode) => content,
 }: {
   client: Client;
+  loginPath: string;
   children?: ReactNode;
   renderBoundary?: (content: ReactNode) => ReactNode;
 }) {
@@ -463,6 +469,27 @@ function AuthorizationScopeGuard({
   const currentRecovery = scopeRecovery?.scopeKey === recoveryScopeKey
     || (scopeRecovery?.operation && recoveryPending) ? scopeRecovery : null;
 
+  const reloadAuthorizationDocument = useCallback(() => {
+    // Read the current core-owned state, including after asynchronous recovery.
+    // A successful reset retires its proof as well as the old page session:
+    // replace that spent URL with the configured sign-in page, not another
+    // render of the old private document or a reload of the one-use link.
+    const signInRequired = auth && shouldReplacePasswordActionDocument({
+      stable: isAuthorizationScopeStable(auth.sessionTransition),
+      ready: isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
+        && isAuthorizationDataReady(authorizationDataBoundary.revision,
+          auth.authorizationState.status, auth.isAuthenticated),
+      isRestoring: auth.isRestoring,
+      isLoading: auth.isLoading,
+      browserUserId: auth.user?.userId ?? null,
+      browserHasRecoverableSession: auth.hasRecoverableSession,
+      acknowledgedPageCleanup: auth.hasAcknowledgedPageSessionCleanup,
+      continuation: auth.authenticationContinuation,
+    });
+    if (signInRequired) window.location.replace(loginPath);
+    else window.location.reload();
+  }, [auth, authorizationDataBoundary, loginPath]);
+
   useEffect(() => {
     recoveryController.activate();
     setScopeRecovery(null);
@@ -485,14 +512,14 @@ function AuthorizationScopeGuard({
         // anonymous. Preserve the bound for that outcome too if cookie clearing
         // was unavailable; never pretend a local logout wiped a remote cookie.
         recordAuthorizationScopeReload(readReloadKey());
-        window.location.reload();
+        reloadAuthorizationDocument();
       },
       onRetryable: (error, cause) => {
         reportAuthClientActionFailure('hydratedSessionRecovery', cause, { codeOnly: true });
         setScopeRecovery({ scopeKey, operation: null, error });
       },
     });
-  }, [auth, readReloadKey, recoveryController]);
+  }, [auth, readReloadKey, recoveryController, reloadAuthorizationDocument]);
   useEffect(() => {
     if (!auth) return;
     let observedBoundaryKey = readAuthorizationScopeBoundaryKey(
@@ -559,7 +586,7 @@ function AuthorizationScopeGuard({
       // Reload stale loader authority, or the core's acknowledged sign-out
       // receipt. Neither requires another credential/cookie-clearing writer.
       recordAuthorizationScopeReload(reloadKey);
-      window.location.reload();
+      reloadAuthorizationDocument();
       return;
     }
     if (!auth) {
@@ -570,7 +597,7 @@ function AuthorizationScopeGuard({
     runScopeRecovery(action === 'clear-page-session-and-reload' ? 'sign-out' : 'recover');
   }, [auth, authorizationWork, browserRouteBoundary.userId, recoveryPending, needsRecovery,
     recoveryScopeKey, recoverySettled, reloadKey, requiresRouteReload,
-    routeData?.authorizationBoundary?.userId, runScopeRecovery]);
+    routeData?.authorizationBoundary?.userId, runScopeRecovery, reloadAuthorizationDocument]);
 
   if (hintRecoveryScopeRef.current === hintRecoveryKey && auth && !recoveryPending && !currentRecovery) {
     return renderBoundary(createElement(AuthorizationHintRecovery, {

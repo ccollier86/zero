@@ -74,6 +74,11 @@ default `/forgot-password`, and keep `loginHref` aligned with the app. Initial
 setup uses administrator-resend guidance rather than silently converting a
 setup token into a password-reset token.
 
+For nonstandard sign-in routes also configure `AppProvider.loginPath`. An
+acknowledged signed-in reset which must replace an SSR document goes there
+with a full session-cleanup navigation, not back to the spent email link.
+No old private loader data or durable proof/success flag is carried forward.
+
 Network/service link-check failures offer explicit read-only Retry. A lost
 password-write response remains unknown rather than inviting automatic replay.
 Native one-time proofs, the default five-minute resend window and all final

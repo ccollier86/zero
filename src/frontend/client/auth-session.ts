@@ -262,6 +262,16 @@ export class AuthSessionController {
         this.installSession(data, 'session', true);
       } else {
         this.commitLogout();
+        // Native reset/setup responses are emitted only after the password
+        // commit and HttpOnly page-cookie cleanup. Bind that acknowledgment to
+        // this exact anonymous revision; do not infer it for MFA/tenant/profile
+        // continuations or an unknown/rejected password response. This avoids
+        // a second logout erasing the accepted password continuation before
+        // the hydrated document can safely navigate to fresh sign-in.
+        if ('passwordUpdated' in data && data.passwordUpdated === true
+          && data.signInRequired === true) {
+          this.acknowledgedPageCleanupRevision = this.credentialRevision;
+        }
         // The authorization subtree remounts after the purge barrier. Keep
         // the one-time identity result in memory so the new form instance
         // can continue MFA/tenant binding without replaying credentials.

@@ -4,7 +4,7 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
-## 2.10.1 - 2026-11-02
+## 2.10.1 - 2026-11-03
 
 Human-readable native password recovery and fail-closed denied table views.
 Use the exact qualified committed-main source/local archive; this is not an
@@ -31,6 +31,10 @@ application deployment or npm publication.
   signed-in-session retirement. A memory-only client/link/action binding keeps
   the remounted form from misreporting a successful reset as a used-link error;
   it cannot grant authority or transfer success to another link/account/client.
+  If retiring an SSR document requires a full navigation, replace the spent
+  password-link URL with the configured fresh sign-in page. Keep the old
+  session/data purge and require the core's current cleanup acknowledgment;
+  never infer success from URL flags or persist password/link receipts.
 - Add named account/new-password autocomplete fields, POST form semantics,
   no-store/referrer-free action requests and secret-free form diagnostics.
   Password-manager markup does not guarantee any specific extension's vault
