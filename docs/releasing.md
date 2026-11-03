@@ -391,6 +391,45 @@ database or ledger files.
 Never use `create-zero --force` or `zero-new --force` for this smoke test. Those
 commands regenerate scaffold targets and are not updaters.
 
+## Approved Test/Documentation-Only Finalization
+
+The full frozen-tree sweep remains the default release gate. Do not use it as
+the inner loop for correcting a test fixture after executable code is frozen.
+An explicitly approved test/documentation-only finalization may reuse the
+completed baseline sweep under all of these conditions:
+
+1. Record the release owner's explicit approval, baseline and final commits,
+   both archive hashes, and the exact changed paths. The baseline inventory
+   must have completed every file with no interruption, cancellation, exclusion
+   or unrun file. Its original failed result remains unchanged and retained.
+2. Verify the final Git diff is limited to the approved tests/documentation.
+   Compare the complete archive entry sets and every other file's content hash.
+   Runtime source, dependencies/locks, exports, packaging, build/code-generation
+   inputs, fixture modules and admitted private SDK source must be identical.
+   A runtime change is not eligible for this exception.
+3. Preserve each test's behavioral contract. Correct invalid fixture
+   preconditions; do not replace a required assertion with an allowed failure.
+   Re-run every changed/previously failing file and the affected focused group
+   from the final clean checkout with independently installed frozen
+   dependencies. Every failure must have a concrete disposition and successful
+   required revalidation; passing once does not erase an unexplained failure.
+4. Recheck types, documentation and final inventory. Qualify the exact final
+   installed archive, native/browser/deployment boundary, and saved/normal
+   updater with the existing assertions, deadlines and private-data guards.
+   Reuse of unchanged source/package results must be explicit in the evidence.
+5. Describe the result as a completed baseline plus approved focused
+   requalification, **not** an all-green single-commit full sweep. Report the
+   unchanged passing files, changed/rechecked files, original failure and
+   final coverage separately. Main/tag/archive selection must still identify
+   the exact qualified final commit and bytes.
+
+For the 2.10.1 Doctor fixture correction, foreign-key classification uses an
+active WAL writer and asserts unchanged main/WAL bytes. A fully closed WAL
+image can legitimately be unavailable to native read-only SQLite; its separate
+unavailable/no-false-readiness regression must remain enabled. No read-write
+fallback, journal-mode rewrite, runtime retry or relaxed Guardian check is part
+of that test correction.
+
 ## Private Preview Source Fixtures
 
 The core repository tracks `sdk/README.md`, not the separately versioned private

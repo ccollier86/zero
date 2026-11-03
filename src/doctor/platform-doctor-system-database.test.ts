@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -181,32 +181,40 @@ describe('platform doctor system database', () => {
     const root = createRoot();
     const appPath = join(root, 'app.db');
     const application = createReactiveDB({ mode: 'file', path: appPath });
-    defineIdentityAnchorTables(application);
-    application.exec(`
+    try {
+      defineIdentityAnchorTables(application);
+      application.exec(`
       CREATE TABLE work_items (
         work_item_id TEXT PRIMARY KEY,
         owner_user_id TEXT NOT NULL
           REFERENCES users(user_id) ON DELETE CASCADE
       );
-    `);
-    application.dispose();
-    const userTable = defineTable('work_items', {
-      owner_user_id: field.guardianUser(),
-    }, { pk: 'work_item_id' });
+      `);
+      // Exercise foreign-key classification on an admitted active-WAL file.
+      // A closed WAL image without sidecars is not guaranteed readable by
+      // native SQLite; its truthful unavailable result has separate coverage.
+      const beforeMain = readFileSync(appPath), beforeWal = readFileSync(appPath + '-wal');
+      const userTable = defineTable('work_items', {
+        owner_user_id: field.guardianUser(),
+      }, { pk: 'work_item_id' });
 
-    const report = runPlatformDoctor({
-      db: { mode: 'file', path: './app.db' },
-      systemDb: { mode: 'file', path: './system.db' },
-      tables: { work_items: userTable },
-      auth: true,
-      email: false,
-    }, { projectRoot: root, usageAudit: false });
+      const report = runPlatformDoctor({
+        db: { mode: 'file', path: './app.db' },
+        systemDb: { mode: 'file', path: './system.db' },
+        tables: { work_items: userTable },
+        auth: true,
+        email: false,
+      }, { projectRoot: root, usageAudit: false });
 
-    expect(report.findings).toContainEqual(expect.objectContaining({
-      severity: 'error',
-      code: 'database.identity_projection.reference_storage_invalid',
-      path: 'tables.work_items.owner_user_id',
-    }));
+      expect(report.findings).toContainEqual(expect.objectContaining({
+        severity: 'error',
+        code: 'database.identity_projection.reference_storage_invalid',
+        path: 'tables.work_items.owner_user_id',
+      }));
+      expect(report.findings).not.toContainEqual(expect.objectContaining({ code: 'database.system.file_inspection_unavailable', path: 'db' }));
+      expect(readFileSync(appPath).equals(beforeMain)).toBe(true);
+      expect(readFileSync(appPath + '-wal').equals(beforeWal)).toBe(true);
+    } finally { application.dispose(); }
   });
 
   test('inspects an existing app database for legacy combined state read-only', () => {
