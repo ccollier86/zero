@@ -3,20 +3,20 @@ id: zero.frontend.components.primitives.list-detail
 type: reference
 audience: [developer, agent]
 owner: frontend-components
-status: verified
+status: in-review
 visibility: internal
 system: frontend-components
 feature: list-detail-layout
 maturity: supported
-applies_to: ["2.6.0 source/local archive"]
+applies_to: ["2.6.0 source/local archive", "2.10.1 hard content boundary"]
 modes: [browser, SSR]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "b003d5b8f738a17d4f0d84bf2643eed615b2c543"
-  snapshot: clean
-  date: "2026-10-07"
-  evidence_level: implementation-verified
+  version: "2.10.1"
+  commit: "73274545c880c587f1a97ba7eb9fe476329519a9"
+  snapshot: dirty
+  date: "2026-11-02"
+  evidence_level: source-observed
 ---
 
 # Compact List, Details And Bottom Actions
@@ -34,6 +34,16 @@ includes actual Data Studio/Storage action-bar callers, but does not claim a new
 public npm publication or changes inside consuming applications.
 
 ## ListDetailLayout
+
+`contentBoundaryKey?: string` is an opaque source/read-authority identity.
+Changing it immediately retires the old detail tree and any outgoing crossfade;
+ordinary `selectedKey` changes within one boundary still use the normal detail
+animation. Native MasterDetail supplies this fence automatically, including
+definitive denied server reads. Custom layouts should change it when previously
+displayed content loses its admitted source/authority, not on routine rerenders
+or every successful same-source refresh. This prop is a presentation fence,
+not permission to read or write. See
+[denied server reads](../../data-controls/data-table/server-sources.md#definitive-read-rejection-in-2101).
 
 | Prop | Contract/default |
 | --- | --- |

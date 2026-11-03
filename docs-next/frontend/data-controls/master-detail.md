@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: master-detail
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.6.0", "2.10.1 denied-read withdrawal"]
 modes: [browser, SSR, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
+  version: "2.10.1"
+  commit: "73274545c880c587f1a97ba7eb9fe476329519a9"
   snapshot: dirty
-  date: "2026-10-25"
+  date: "2026-11-02"
   evidence_level: source-observed
 ---
 
@@ -61,6 +61,17 @@ uncontrolled selection. autoSelectFirst defaults true for uncontrolled usage.
 onSelectedIdChange receives (id, item), and onSelect receives the selected row.
 Selection uses the accepted source membership and stable string/numeric identity;
 it resets across source/authorization partitions.
+
+In 2.10.1 a definitive server-source read denial also withdraws the accepted
+list, selection, detail/editor and old result-view provenance immediately.
+The normal record crossfade must not retain the rejected record on screen.
+MasterDetail supplies its native `ListDetailLayout.contentBoundaryKey` fence
+automatically; custom users of that layout can provide their own opaque
+source/read-authority identity to retire old detail trees without exit motion.
+Ordinary record changes inside one admitted boundary retain their crossfade.
+Retry still requires a fresh authorized source result, and a transient
+same-scope 503 retains previously accepted content. See the
+[read-rejection contract](./data-table/server-sources.md#definitive-read-rejection-in-2101).
 
 searchable defaults true, sortable true, paginated true for server sources and
 false otherwise. tableToolbarSlots/tableToolbarLabel compose the shared search-first

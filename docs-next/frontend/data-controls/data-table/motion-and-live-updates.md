@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-motion-and-live-updates
 maturity: preview
-applies_to: ["2.6.0 source; verify installed commit/archive"]
+applies_to: ["2.6.0 source; verify installed commit/archive", "2.10.1 denied-read withdrawal"]
 modes: [browser, SSR, array, collection, server query]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "3910810a11f81707344f098b2ace5bbb7cd32e9a"
+  version: "2.10.1"
+  commit: "73274545c880c587f1a97ba7eb9fe476329519a9"
   snapshot: dirty
-  date: "2026-10-19"
+  date: "2026-11-02"
   evidence_level: source-observed
 ---
 
@@ -161,11 +161,20 @@ invalidation or a manual refresh), existing native rows stay visible and mounted
 for the entire request, regardless of its duration. No skeleton, whole-table fade
 or initial stagger is admitted. The accepted delta uses ordinary row reflow:
 retained rows move from their current positions, newly visible identities enter,
-and removed identities leave. A failed refresh leaves the acknowledged view in
-place with its error/retry UI; it does not replay the table's first load. Existing
+and removed identities leave. A same-scope transient refresh failure leaves the
+acknowledged view in place with its error/retry UI; it does not replay the table's first load. Existing
 edit drafts and selection survive retained row identities. This behavior requires
 keeping the DataTable mounted and supplying stable row IDs; do not conditionally
 replace the table with a loader or key it by result count/revision in app code.
+
+Definitive foreground read rejection is a security exception, not exit motion.
+In 2.10.1, SDK 401/403 (and the native required-audit-admission rejection)
+withdraw the accepted server page immediately, including any retained/leaving
+rows, editor/action presentation, selection and its old display provenance.
+The table owns that hard presentation fence; apps do not key or reload it.
+Retry remains empty until a fresh authorized response is accepted. This does
+not change the mutation authority or turn an already accepted write into a
+failed/replayed write. See [read rejection](./server-sources.md#definitive-read-rejection-in-2101).
 
 For a replacement query or page, the existing presentation remains while the new
 request starts; a longer request can switch to skeletons after 300ms.

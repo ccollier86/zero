@@ -66,7 +66,7 @@ export function DataTableContent<T extends Row = Row>({
   getRowClassName,
   className,
 }: DataTableProps<T> & { controller: DataTableController<T> }) {
-  const { dt, current, resolved, partition, mutationRunner, server, live, queryKey } = controller;
+  const { dt, current, resolved, partition, presentationKey, mutationRunner, server, live, queryKey } = controller;
   const [navigationOrigin, setNavigationOrigin] = React.useState<'pointer' | 'keyboard'>('pointer');
   const viewport = useDataTableViewport(partition, live.setScrolledAway);
   const revealNew = () => {
@@ -145,7 +145,7 @@ export function DataTableContent<T extends Row = Row>({
       }
     }}>
       {showControls && <DataTableToolbar
-        key={`toolbar:${partition}`}
+        key={`toolbar:${presentationKey}`}
         table={dt.table}
         globalFilter={current.globalFilter}
         onGlobalFilterChange={dt.setGlobalFilter}
@@ -172,7 +172,7 @@ export function DataTableContent<T extends Row = Row>({
         : <DataTableErrorState error={resolved.error} onRetry={resolved.refresh} />)}
       {resolved.isLoading && resolved.data.length > 0 && <p role="status" className="text-xs text-muted-foreground">Updating records…</p>}
       <DataTableGrid
-        key={`grid:${partition}`}
+        key={`grid:${presentationKey}`}
         controls={dt} selectable={selectable} sortable={sortable} tableLayout={tableLayout}
         showHorizontalScrollbar={showHorizontalScrollbar}
         actions={actions} mutationRunner={mutationRunner} highlightedRowId={highlightedRowId}
@@ -186,7 +186,7 @@ export function DataTableContent<T extends Row = Row>({
         getRowClassName={getRowClassName} onRowClick={onRowClick} onRowDoubleClick={onRowDoubleClick}
         onCellSave={saveCell} onCellAccepted={acceptCell} getNextEditableCell={nextEditableCell}
       />
-      {paginated ? <DataTablePagination key={`pagination:${partition}`} table={dt.table} serverPage={server ? resolved.page : undefined} loading={resolved.isLoading}
+      {paginated ? <DataTablePagination key={`pagination:${presentationKey}`} table={dt.table} serverPage={server ? resolved.page : undefined} loading={resolved.isLoading}
         newCount={live.newCount} onRevealNew={live.canRevealNew ? revealNew : undefined} onPrefetchPage={resolved.prefetchPage}
         onPageNavigate={(_, origin) => setNavigationOrigin(origin)} keyboardNavigation motionEnabled={motion}
         unfilteredTotal={live.unfilteredTotal} totalCountOverride={live.totalCount}

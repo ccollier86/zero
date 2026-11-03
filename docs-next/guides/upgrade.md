@@ -45,6 +45,20 @@ them before enabling them.
 
 ## Changes That Need An App Plan
 
+### Denied server-table reads in 2.10.1
+
+Use the qualified 2.10.1 archive for the native DataTable/DataTableView server
+source correction. Definitive foreground 401/403 and native required audit
+admission rejection withdraw the accepted page/cache and row presentation
+immediately, even if the SDK's global authority remains ready. Ordinary
+same-scope 503 retention is preserved. Retry performs a new read, not a write
+replay or a cached-page restoration. No source/adapter replacement, app reload,
+custom grid or logging replacement is needed. Preserve typed `FetchError`
+status in custom adapters; an untyped message cannot establish read denial.
+Rebuild matching assets and verify both motion modes against the exact package.
+No database migration or PracticeIQ state change is part of this repair. See
+[the server-source contract](../frontend/data-controls/data-table/server-sources.md#definitive-read-rejection-in-2101).
+
 ### Password recovery UI 2.10.1 update
 
 Use the qualified committed-main archive through the normal updater, retaining

@@ -243,7 +243,7 @@ function MasterDetailPage<T extends Row = Row>({
   const getRowId = source?.type === 'server' ? source.getRowId : undefined;
   const state = useMasterDetailSelection<T>({
     resolvedSource: { ...tableController.resolved, data: tableController.live.data },
-    primaryKey, getRowId, boundaryKey: tableController.partition,
+    primaryKey, getRowId, boundaryKey: tableController.presentationKey,
     selectedId: selectedIdProp,
     defaultSelectedId,
     autoSelectFirst,
@@ -437,13 +437,14 @@ function MasterDetailPage<T extends Row = Row>({
         mobileDetailOpen={mobileDetailOpen}
         onMobileBack={() => setMobileDetailOpen(false)}
         selectedKey={selectedId ?? undefined}
+        contentBoundaryKey={tableController.presentationKey}
         listWidth={listWidth}
         detailWidth={detailWidth}
         detailVisible={detailVisible}
         resizable={resizable}
         list={listContent}
         detail={
-          <LoggingRowsView rows={selectedItem ? [selectedItem] : []} identity={`${tableController.partition}:detail:${selectedId ?? ''}`} kind="record">
+          <LoggingRowsView rows={selectedItem ? [selectedItem] : []} identity={`${tableController.presentationKey}:detail:${selectedId ?? ''}`} kind="record">
           <DetailPanel
             isEmpty={selectedItem == null}
             emptyState={
@@ -464,7 +465,7 @@ function MasterDetailPage<T extends Row = Row>({
                   renderDetail(selectedItem, renderContext)
                 ) : (
                   <AutoForm
-                    key={`${tableController.partition}:${selectedId}:${String(selectedItem.updatedAt ?? '')}`}
+                    key={`${tableController.presentationKey}:${selectedId}:${String(selectedItem.updatedAt ?? '')}`}
                     schema={schema}
                     mode="edit"
                     defaultValues={selectedItem as Record<string, unknown>}

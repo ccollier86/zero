@@ -83,6 +83,8 @@ export interface UseDataTableOptions<T extends Row> {
   rowCount?: number;
   pageCount?: number;
   boundaryKey?: string;
+  /** Local read-withdrawal presentation, distinct from the mutation/source authorization boundary. */
+  selectionBoundaryKey?: string;
   sortable?: boolean;
   searchableFields?: string[];
 }
@@ -130,6 +132,7 @@ export function useDataTable<T extends Row>(
     onStateChange: options.onStateChange,
     pageSize,
     boundaryKey: options.boundaryKey,
+    selectionBoundaryKey: options.selectionBoundaryKey,
     paginationMode: options.paginationMode,
   });
   const { sorting, columnFilters, columnVisibility, rowSelection, pagination, globalFilter } = controls.state;
@@ -140,16 +143,17 @@ export function useDataTable<T extends Row>(
   const setPagination = useCallback((update: React.SetStateAction<PaginationState>) => controls.update('pagination', update), [controls.update]);
   const setGlobalFilter = useCallback((update: React.SetStateAction<string>) => controls.update('globalFilter', update), [controls.update]);
   const [editingCell, setEditingCellState] = useState<{ rowId: string; columnId: string } | null>(null);
-  const [editingBoundary, setEditingBoundary] = useState(options.boundaryKey);
-  const visibleEditingCell = editingBoundary === options.boundaryKey ? editingCell : null;
-  useEffect(() => { setEditingCellState(null); }, [options.boundaryKey]);
+  const editBoundary = JSON.stringify([options.boundaryKey, options.selectionBoundaryKey]);
+  const [editingBoundary, setEditingBoundary] = useState(editBoundary);
+  const visibleEditingCell = editingBoundary === editBoundary ? editingCell : null;
+  useEffect(() => { setEditingCellState(null); }, [editBoundary]);
 
   const setEditingCell = useCallback(
     (cell: { rowId: string; columnId: string } | null) => {
-      setEditingBoundary(options.boundaryKey);
+      setEditingBoundary(editBoundary);
       setEditingCellState(cell);
     },
-    [options.boundaryKey],
+    [editBoundary],
   );
 
   // ─── Column Definitions ─────────────────────────────────────────────

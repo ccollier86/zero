@@ -31,6 +31,8 @@ export interface ListDetailLayoutProps {
   mobileBackLabel?: string;
   /** Key for the selected record — triggers crossfade animation on change */
   selectedKey?: string;
+  /** Opaque source/read-authority fence: immediately retire old detail content instead of retaining its exit animation. */
+  contentBoundaryKey?: string;
   /** Width ratio for list panel. Default: '3fr' */
   listWidth?: string;
   /** Width ratio for detail panel. Default: '2fr' */
@@ -69,6 +71,7 @@ function ListDetailLayout({
   onMobileBack,
   mobileBackLabel = 'Back to list',
   selectedKey,
+  contentBoundaryKey,
   listWidth = '3fr',
   detailWidth = '2fr',
   detailVisible = true,
@@ -183,7 +186,7 @@ function ListDetailLayout({
               </Button>
             </div>
           )}
-          <AnimatePresence mode="wait">
+          <AnimatePresence key={contentBoundaryKey} mode="wait">
             <motion.div
               key={selectedKey ?? '__empty'}
               variants={detailVariants}

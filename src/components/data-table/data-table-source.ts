@@ -90,6 +90,8 @@ export interface UseDataTableSourceOptions<T extends Row> {
 }
 
 export interface DataTableSourceState<T extends Row> {
+  /** Server-only local fence which permanently retires the rejected accepted-page presentation. */
+  readWithdrawalRevision?: number;
   auditReceipt?: import('../../logging/logging-result-contracts').LoggingResultReceipt;
   data: T[];
   sourceType: DataTableSource<T>['type'];
@@ -353,6 +355,7 @@ export function useDataTableSource<T extends Row = Row>(
 
   if (sourceType === 'server') {
     return {
+      readWithdrawalRevision: server.readWithdrawalRevision,
       data: server.data,
       auditReceipt: server.auditReceipt,
       sourceType,

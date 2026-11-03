@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ClientProvider } from '../../frontend/client/client-context';
-import type { Client } from '../../frontend/client/sdk';
+import { FetchError, type Client } from '../../frontend/client/sdk';
 import { AuthorizationDataBoundaryController } from '../../frontend/client/authorization-data-boundary';
 import { configureFrontendObservability, type FrontendObservabilityEvent } from '../../frontend/client/observability';
 import { useDataTableServerSource, type DataTableServerSourceState } from './use-data-table-server-source';
@@ -72,9 +72,14 @@ const harness = {
   resolveOffset(index: number, rows: Item[], offset: number) {
     calls[index]!.resolve({ rows, page: { mode: 'offset', offset, hasMore: false } });
   },
-  reject(index: number) { calls[index]!.reject(new Error('SYNTHETIC_PRIVATE_SOURCE_ERROR')); },
-  state() { const { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, liveLeadingRowId, error } = latest;
-    return { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, liveLeadingRowId, error: error?.message ?? null }; },
+  resolveAudited(index: number, name: string) { calls[index]!.resolve({ rows: [{ id: name, name }],
+    page: { mode: 'offset', offset: 0, total: 1, hasMore: false },
+    auditReceipt: { id: 'synthetic-list-release', digest: 'a'.repeat(64), kind: 'list', table: 'records', count: 1, expiresAt: Date.now() + 60_000 } }); },
+  reject(index: number, status?: number) { calls[index]!.reject(status
+    ? new FetchError('Synthetic read failed.', status, { code: status === 403 ? 'SYNTHETIC_ACCESS_DENIED' : 'SYNTHETIC_READ_FAILURE' })
+    : new Error('SYNTHETIC_PRIVATE_SOURCE_ERROR')); },
+  state() { const { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, liveLeadingRowId, readWithdrawalRevision, auditReceipt, error } = latest;
+    return { data, page, isLoading, isPreviousData, requestKey, resolvedRequestKey, resultRevision, changeReason, liveInsertedRowIds, confirmedLiveInsertedRowIds, liveLeadingRowId, readWithdrawalRevision, auditReceipt, error: error?.message ?? null }; },
   confirmations() { return confirmations.map(({ query, rowIds, signal }) => ({ query, rowIds, aborted: signal.aborted })); },
   confirm(index: number, ids: readonly string[]) { confirmations[index]!.resolve(ids); },
   rejectConfirmation(index: number) { confirmations[index]!.reject(new Error('PRIVATE_MEMBERSHIP_ERROR')); },

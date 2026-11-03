@@ -27,6 +27,8 @@ export interface DataTableController<T extends Row> {
   current: DataTableState;
   resolved: DataTableSourceState<T>;
   partition: string;
+  /** Hard row/selection/audit presentation identity, never used as mutation authority. */
+  presentationKey: string;
   primaryKey: string;
   mutationRunner: DataTableMutationRunner;
   server: boolean;
@@ -88,11 +90,12 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     if (mounted.current && owner.ready && owner.partition === partition) await owner.refresh();
   }, [partition]);
   const resolved = { ...sourceState, refresh };
+  const presentationKey = stableValueKey([partition, resolved.readWithdrawalRevision ?? 0]);
   useDataTableAcceptedCursors(cursors, current.pagination.pageIndex, resolved.page);
   const collectionInserts = useDataTableCollectionInserts(client as InternalClient | null,
     resolved.sourceType === 'collection' ? resolved.table : null, boundary.key, boundary.ready, queryShape);
   const live = useDataTableLiveWindow<T>({ props: options, data: resolved.data, sourceType: resolved.sourceType,
-    boundary: partition, criteria: queryShape, state: current, primaryKey, loading: resolved.isLoading,
+    boundary: presentationKey, criteria: queryShape, state: current, primaryKey, loading: resolved.isLoading,
     insertedRowIds: resolved.sourceType === 'collection' ? collectionInserts : resolved.liveInsertedRowIds,
     confirmedInsertedRowIds: resolved.confirmedLiveInsertedRowIds,
     liveLeadingRowId: resolved.liveLeadingRowId,
@@ -103,13 +106,14 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     columnOverrides: options.columnOverrides, state: current,
     onStateChange: interaction.replace, paginated: !!paginated,
     sortable: options.sortable, manualQuery: server, boundaryKey: partition,
+    selectionBoundaryKey: presentationKey,
     rowCount: server ? resolved.page?.total : undefined,
     pageCount: server && resolved.page?.total === undefined ? -1 : undefined,
     searchableFields: typeof searchable === 'object' ? searchable.fields : undefined,
     getRowId: server ? source.getRowId : undefined,
     paginationMode: mode,
   });
-  useDataTableAudit(partition, resolved.data, resolved.auditReceipt, dt.table.getRowModel().rows.map(row => row.original));
+  useDataTableAudit(presentationKey, resolved.data, resolved.auditReceipt, dt.table.getRowModel().rows.map(row => row.original));
   const mutationRunner = useDataTableMutationRunner({ refresh: resolved.refresh, boundaryKey: partition });
   const selectedIds = selectedDataTablePageRows(dt.table).map((row) => row.id);
   const selectionKey = stableValueKey(selectedIds);
@@ -120,5 +124,5 @@ export function useDataTableController<T extends Row>(options: DataTableProps<T>
     callback?.(ids);
   }, [selectionKey]);
 
-  return { dt, current, resolved, partition, primaryKey, mutationRunner, server, live, queryKey: queryShape };
+  return { dt, current, resolved, partition, presentationKey, primaryKey, mutationRunner, server, live, queryKey: queryShape };
 }

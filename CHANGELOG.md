@@ -6,7 +6,7 @@ All notable Zero Platform changes are tracked here.
 
 ## 2.10.1 - 2026-11-02
 
-Human-readable native password recovery without changing reset-email security.
+Human-readable native password recovery and fail-closed denied table views.
 Use the exact qualified committed-main source/local archive; this is not an
 application deployment or npm publication.
 
@@ -38,6 +38,16 @@ application deployment or npm publication.
 - Exercise native email/request/reset/login/used-link/default-cooldown behavior
   in real Chromium against managed compliance logging, plus transient read
   interruption and response loss after an actual committed reset.
+- Withdraw retained server-source rows immediately on a definitive foreground
+  SDK 401/403 or required-audit-admission denial, even while global auth is
+  still ready. Retire cached/speculative pages, live arrival evidence, selection,
+  editor presentation and old view provenance without an exit animation.
+  Apply the same hard fence to native MasterDetail's outgoing detail crossfade.
+  Retry must read again; a subsequent 503 cannot restore the rejected page.
+- Preserve same-scope transient-error retention, current query/page controls,
+  independent global authorization and the existing accepted-write boundary.
+  An accepted write followed by a denied refetch is not replayed as a write.
+  Apps using native DataTable/DataTableView need no reload or copied-table fix.
 
 No database migration, account recreation, mail-provider change or minimum-Bun
 change is introduced. Bun 1.4.4 remains required; rebuild matching assets.

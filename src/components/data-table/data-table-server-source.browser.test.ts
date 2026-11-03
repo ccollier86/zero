@@ -35,6 +35,83 @@ async function accept(page: Page, index: number, name: string, hasMore = false, 
   await page.getByText(name, { exact: true }).waitFor();
 }
 
+browserTest('a definitive foreground denial withdraws accepted rows/cache and fences late prefetch before any retry', async () => {
+  const page = await mount();
+  try {
+    await accept(page, 0, 'rejected-private-page', true);
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2);
+    await page.evaluate(() => { void window.__serverSource.refresh(); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3);
+    await page.evaluate(() => window.__serverSource.reject(2, 403));
+    await page.waitForFunction(() => !!window.__serverSource.state().error);
+    const state = await page.evaluate(() => window.__serverSource.state());
+    expect(state.data).toEqual([]); expect(state.page).toBeNull(); expect(state.resolvedRequestKey).toBeNull();
+    expect(state.auditReceipt).toBeUndefined(); expect(state.readWithdrawalRevision).toBe(1);
+    expect(state.resultRevision).toBe(0); expect(state.liveInsertedRowIds).toEqual([]); expect(state.confirmedLiveInsertedRowIds).toEqual([]);
+    expect(state.isLoading).toBe(false); expect(state.isPreviousData).toBe(false);
+    expect(await page.evaluate(() => window.__serverSource.aborted(1))).toBe(true);
+    await page.evaluate(() => window.__serverSource.resolve(1, [{ id: 'stale', name: 'late-rejected-prefetch' }]));
+    await page.evaluate(() => { void window.__serverSource.refresh(); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 4);
+    expect(await page.getByText('rejected-private-page', { exact: true }).count()).toBe(0);
+    await page.evaluate(() => window.__serverSource.reject(3, 503));
+    await page.waitForFunction(() => !!window.__serverSource.state().error);
+    expect(await page.evaluate(() => window.__serverSource.state().data)).toEqual([]);
+    await page.evaluate(() => { void window.__serverSource.refresh(); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 5);
+    await accept(page, 4, 'newly-authorized-page');
+    expect(await page.getByText('late-rejected-prefetch', { exact: true }).count()).toBe(0);
+  } finally { await page.close(); }
+}, 60_000);
+
+for (const change of ['query', 'page'] as const) browserTest(change + ' rejection withdraws previous presentation but preserves the requested query for explicit fresh Retry', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => window.__serverSource.prefetchEnabled(false)); await accept(page, 0, 'previous-private-page');
+    await page.evaluate(change => change === 'query' ? window.__serverSource.search('rejected-query') : window.__serverSource.page(1), change);
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2);
+    const requested = await page.evaluate(() => window.__serverSource.queries()[1]);
+    await page.evaluate(() => window.__serverSource.reject(1, 403));
+    await page.waitForFunction(() => !!window.__serverSource.state().error);
+    expect(await page.evaluate(() => window.__serverSource.state().data)).toEqual([]);
+    await page.evaluate(() => { void window.__serverSource.refresh(); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3);
+    expect(await page.evaluate(() => window.__serverSource.queries()[2])).toEqual(requested);
+    await accept(page, 2, 'fresh-authorized-query');
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('a retired denied query cannot withdraw a newer accepted page', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => window.__serverSource.prefetchEnabled(false)); await accept(page, 0, 'baseline');
+    await page.evaluate(() => window.__serverSource.search('older'));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2);
+    await page.evaluate(() => window.__serverSource.search('latest'));
+    await page.waitForFunction(() => window.__serverSource.queries().length === 3);
+    await accept(page, 2, 'newer-authorized-page'); await page.evaluate(() => window.__serverSource.reject(1, 403));
+    expect(await page.evaluate(() => window.__serverSource.state().data[0]?.name)).toBe('newer-authorized-page');
+    expect(await page.evaluate(() => window.__serverSource.state().readWithdrawalRevision)).toBe(0);
+  } finally { await page.close(); }
+}, 60_000);
+
+browserTest('rejected result provenance and accepted counts retire with the page rather than becoming an empty-view receipt', async () => {
+  const page = await mount();
+  try {
+    await page.evaluate(() => window.__serverSource.prefetchEnabled(false));
+    await page.evaluate(() => window.__serverSource.resolveAudited(0, 'audited-private-page'));
+    await page.getByText('audited-private-page', { exact: true }).waitFor();
+    expect(await page.evaluate(() => window.__serverSource.state().auditReceipt?.id)).toBe('synthetic-list-release');
+    await page.evaluate(() => { void window.__serverSource.refresh(); });
+    await page.waitForFunction(() => window.__serverSource.queries().length === 2);
+    await page.evaluate(() => window.__serverSource.reject(1, 403));
+    await page.waitForFunction(() => !!window.__serverSource.state().error);
+    expect(await page.evaluate(() => window.__serverSource.state().auditReceipt)).toBeUndefined();
+    expect(await page.evaluate(() => window.__serverSource.state().page)).toBeNull();
+    expect(await page.evaluate(() => window.__serverSource.state().data)).toEqual([]);
+  } finally { await page.close(); }
+}, 60_000);
+
 browserTest('default adjacent prefetch starts immediately, hover/focus join it, and navigation retains same-scope previous rows', async () => {
   const page = await mount();
   try {

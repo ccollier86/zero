@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-data-controls
 feature: data-table-server-sources
 maturity: supported
-applies_to: ["2.6.0 baseline with unreleased working-tree additions"]
+applies_to: ["2.6.0 baseline; verify installed commit", "2.10.1 denied-read withdrawal"]
 modes: [browser, server offset, custom cursor, single-database, Fabric]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "054941b23544c9320d7ff739ae3ae1a927c67996"
+  version: "2.10.1"
+  commit: "73274545c880c587f1a97ba7eb9fe476329519a9"
   snapshot: dirty
-  date: "2026-10-25"
+  date: "2026-11-02"
   evidence_level: source-observed
 ---
 
@@ -29,9 +29,9 @@ second time in the browser. While a new query loads, the preceding same-scope
 page can remain presentation-only; it is not the new query's accepted response. Use this mode for large
 tables, server policy/query budgets or strict query membership.
 
-The bounded cache/prefetch, exact filtered totals, previous-page metadata and live-INSERT evidence below
-describe current working-tree additions. Their presence in this draft is not a
-claim that the published 2.6.0 archive contains the new behavior.
+Identify behavior by the installed commit/archive, not by a historical 2.6.0
+version number alone. The 2.10.1 denied-read correction is described below;
+release qualification still belongs to its exact archive.
 
 ## Built-In Offset Source
 
@@ -242,6 +242,39 @@ their row/bulk mutation interactions are unavailable.
 Source/organization replacement clears old visible rows and relevant selection,
 pending edit/cursor state.
 
+### Definitive Read Rejection In 2.10.1
+
+An owned foreground `client.fetch()` read rejected with HTTP 401 or 403 is not
+a recoverable stale-page presentation. The same applies to HTTP 428 with
+`LOGGING_ADMISSION_REQUIRED`. The native server source immediately discards its
+accepted rows, result/total/receipt, cached neighboring pages, speculative
+requests and held insertion evidence. The composed DataTable/DataTableView
+retires the corresponding row/toolbar/footer presentation, selection, editor
+and view provenance in the same render boundary. Rejected content is removed,
+not merely faded, made inert or retained as an exit-animation copy.
+
+This is local read withdrawal, not a forged global authorization transition.
+Global Guardian state can remain ready; read and write permissions are distinct.
+The mutation runner keeps its real authority/accepted-outcome boundary. A write
+already accepted by the server is not retroactively rejected or automatically
+replayed because its refresh is denied. Real authorization replacement retains
+the existing scope/abort fences.
+
+Retry keeps the current query/page and performs a fresh authorized read. Neither
+an old cache entry, a late speculative result nor a subsequent transient error
+can restore the rejected page. A new accepted response can display its newly
+authorized rows. Selection does not silently reappear for matching old IDs.
+No app remount, reload, copied grid, duplicate audit event or new option is needed.
+Native MasterDetail applies the same fence to its selected detail/crossfade.
+
+A same-scope transient failure such as HTTP 503 still retains the previously
+accepted page and its surviving selection. Validation errors are not guessed to
+be permission changes from their text. Custom adapters using other transports
+must preserve a typed `FetchError` HTTP status (available through Zero's public
+React SDK) rather than replacing a real denial with an untyped generic error.
+Caller-owned complete arrays remain their owner's responsibility; this contract
+does not infer remote permissions from arbitrary row contents.
+
 Server records and their order remain separate from the shared collection.
 When a registered reactive collection changes and live is not false, the table
 refetches its own query; it does not blindly append every cached row to this page.
@@ -288,6 +321,7 @@ not replace a successful foreground page with an error.
 | `isPreviousData` | Rows belong to a preceding query in the same exact readable partition. |
 | `requestKey` / `resolvedRequestKey` | Opaque current target / currently presented accepted result identities; do not parse them as authority. |
 | `resultRevision` | Monotonic local accepted-result revision, not a database revision or proof of INSERT. |
+| `readWithdrawalRevision` | Local monotonic presentation fence after a definitive foreground rejection; not a server/authority revision. |
 | `changeReason` | `query`, `refresh` or `live`; live means invalidation, not a new-record count. |
 | `liveInsertedRowIds` | Genuine INSERT IDs confirmed by the exact accepted current response. |
 | `confirmedLiveInsertedRowIds` | Genuine INSERT IDs confirmed against the current criteria separately from page membership; lookup rows are not merged into the page. |

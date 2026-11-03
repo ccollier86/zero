@@ -18,6 +18,7 @@ import { DataTableServerLeadingRow } from './data-table-server-leading-row';
 import { dataTableServerSourceIdentity } from './data-table-server-source-identity';
 import { dataTableServerPartitionMatches, dataTableServerStateMatches, normalizeDataTableServerFailure, projectDataTableServerRows, resolveDataTableServerQuery } from './data-table-server-source-state';
 import { DataTableServerSourceError, type DataTableServerResult, type DataTableServerPage, type DataTableServerQuery, type DataTableServerSource } from './data-table-server-types';
+import { isDataTableReadAccessDenied } from './data-table-read-access';
 export { dataTableServerStateMatches, projectDataTableServerRows } from './data-table-server-source-state';
 
 const EMPTY_ROWS: never[] = [];
@@ -43,6 +44,8 @@ export interface UseDataTableServerSourceOptions<T extends Row> {
   confirmLiveInsertions?: boolean;
 }
 export interface DataTableServerSourceState<T extends Row> {
+  /** Local hard presentation fence after a definitive foreground read rejection; not new auth authority. */
+  readWithdrawalRevision: number;
   auditReceipt?: DataTableServerResult<T>['auditReceipt'];
   data: T[]; page: DataTableServerPage | null; isLoading: boolean; error: Error | null;
   refresh: () => Promise<void>;
@@ -103,6 +106,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   const [accepted, setAccepted] = useState<Accepted<T> | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [readWithdrawalRevision, setReadWithdrawalRevision] = useState(0);
   const readBoundary = () => {
     const internal = current.current.client as InternalClient | null, auth = internal?.auth ?? null;
     const dataRevision = internal?._authorizationDataBoundary?.revision ?? 0;
@@ -200,12 +204,23 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
     } catch (cause) {
       if (!isCurrent()) return;
       const error = normalizeDataTableServerFailure(cause);
+      if (isDataTableReadAccessDenied(error)) {
+        // A denied foreground read invalidates this source's retained page,
+        // neighboring cache and presentation evidence. It is not a transient
+        // refetch failure, nor a reason to change global auth/write authority.
+        acceptedRef.current = null; setAccepted(null);
+        cache.invalidate(); coordinator.cancel();
+        insertEvidence.clear(); membership.clear(); leading.clear();
+        leadingCandidates.current = { key: captured.membershipKey, ids: new Set() };
+        setLoadingKey(null);
+        setReadWithdrawalRevision(value => value + 1);
+      }
       setFailure({ boundaryKey: captured.boundaryKey, signature: captured.signature, error }); report(source, error);
     } finally {
       const active = isCurrent(); coordinator.finish(ticket);
       if (active) setLoadingKey(null);
     }
-  }, [cache, coordinator, prefetchPage, insertEvidence, leading]);
+  }, [cache, coordinator, prefetchPage, insertEvidence, membership, leading]);
   const refresh = useCallback(() => current.current.partition === partition
     ? load('refresh', true) : Promise.resolve(), [load, partition]);
   const refreshDependency = useRef<{ partition: string; value: string | number | undefined } | null>(null);
@@ -302,7 +317,7 @@ export function useDataTableServerSource<T extends Row>(options: UseDataTableSer
   const visible = dataTableServerPartitionMatches(accepted, partition, authorization.ready);
   const exact = visible && accepted.signature === signature;
   const visibleFailure = dataTableServerStateMatches(failure, authorization.key, signature, authorization.ready);
-  return { data: visible ? accepted.data : EMPTY_ROWS as T[], page: visible ? accepted.result.page : null,
+  return { readWithdrawalRevision, data: visible ? accepted.data : EMPTY_ROWS as T[], page: visible ? accepted.result.page : null,
     auditReceipt: visible ? accepted.result.auditReceipt : undefined,
     isLoading: !!options.source && authorization.ready && (loadingKey === signature || !exact && !visibleFailure),
     error: visibleFailure ? failure.error : null, refresh, prefetchPage, isPreviousData: !!visible && !exact,

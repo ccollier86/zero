@@ -33,6 +33,8 @@ export interface DataTableStateOptions {
   pageSize?: number;
   /** Opaque authorization/source partition; never an untrusted tenant selector. */
   boundaryKey?: string;
+  /** Retire selection without resetting current query/page or changing write authority. */
+  selectionBoundaryKey?: string;
   /** Opaque cursor batches cannot preserve an offset anchor when their size changes. */
   paginationMode?: 'offset' | 'cursor';
 }
@@ -70,6 +72,7 @@ export function applyDataTableStateChange<Key extends keyof DataTableState>(
 export function useDataTableState(options: DataTableStateOptions = {}) {
   const [local, setLocal] = useState<DataTableState>(() => createInitialState(options));
   const scope = useRef(options.boundaryKey);
+  const selectionScope = useRef(options.selectionBoundaryKey);
   const blockedSelection = useRef<string | undefined>(undefined);
   const blockedPagination = useRef<string | undefined>(undefined);
   const controlledSelectionKey = options.state?.rowSelection === undefined
@@ -86,8 +89,10 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
   const changedCriteria = previousCriteria.current !== criteria;
   previousCriteria.current = criteria;
   const changedScope = scope.current !== options.boundaryKey;
+  const changedSelectionScope = selectionScope.current !== options.selectionBoundaryKey;
+  selectionScope.current = options.selectionBoundaryKey;
   let base = local;
-  if (changedScope || changedCriteria || changedPagination) {
+  if (changedScope || changedCriteria || changedPagination || changedSelectionScope) {
     scope.current = options.boundaryKey;
     blockedSelection.current = controlledSelectionKey;
     if (changedScope || changedCriteria) blockedPagination.current = controlledPaginationKey;
@@ -99,7 +104,7 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
     setLocal(base);
   }
   const state = mergeProvidedFacets(base, options.state);
-  if (changedScope || changedCriteria || changedPagination || (blockedSelection.current !== undefined
+  if (changedScope || changedCriteria || changedPagination || changedSelectionScope || (blockedSelection.current !== undefined
     && blockedSelection.current === controlledSelectionKey)) {
     state.rowSelection = {};
   } else if (blockedSelection.current !== controlledSelectionKey) {
@@ -116,17 +121,20 @@ export function useDataTableState(options: DataTableStateOptions = {}) {
   const onChange = useRef(options.onStateChange);
   onChange.current = options.onStateChange;
   const notifiedScope = useRef(options.boundaryKey);
+  const notifiedSelectionScope = useRef(options.selectionBoundaryKey);
   const notifiedCriteria = useRef(criteria);
   const notifiedPagination = useRef(paginationKey);
   useEffect(() => {
     if (notifiedScope.current === options.boundaryKey
+      && notifiedSelectionScope.current === options.selectionBoundaryKey
       && notifiedCriteria.current === criteria
       && notifiedPagination.current === paginationKey) return;
     notifiedScope.current = options.boundaryKey;
+    notifiedSelectionScope.current = options.selectionBoundaryKey;
     notifiedCriteria.current = criteria;
     notifiedPagination.current = paginationKey;
     onChange.current?.(latest.current);
-  }, [options.boundaryKey, criteria, paginationKey]);
+  }, [options.boundaryKey, options.selectionBoundaryKey, criteria, paginationKey]);
   const mode = useRef(options.paginationMode ?? 'offset');
   mode.current = options.paginationMode ?? 'offset';
   const update = useCallback(<Key extends keyof DataTableState>(
