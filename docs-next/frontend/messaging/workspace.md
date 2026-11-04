@@ -67,6 +67,11 @@ pass a tenant ID from a URL, selector, participant record or search field.
 
 ## Default Behavior
 
+This is the participation workspace, not a messaging configuration editor.
+The proposed [single AppShell management view](../../_work/messaging-administration-experience.md)
+is separate planned work; rendering the current workspace does not provide
+administrative group policies or grant transcript access to administrators.
+
 - Conversations are live, authorized keyset pages of 25. Previous/Next replace
   the page rather than accumulate stale list snapshots. Archived conversations
   have a separate selector. The search input filters the **current page**; it
