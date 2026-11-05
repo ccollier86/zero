@@ -17,7 +17,9 @@ export function cartesianAxisPresentation(model: CartesianModel, width: number, 
   const topCaption = horizontal ? !!model.xLabel || model.axes.some(axis => axis.side === 'right' && axis.label) : model.axes.some(axis => axis.label);
   const bottomCaption = horizontal ? model.axes.some(axis => axis.side === 'left' && axis.label) : !!model.xLabel;
   const top = topCaption ? 2 * fontSize + 18 : horizontal && hasRight ? fontSize + 12 : Math.max(12, fontSize + 2);
-  const bottom = bottomCaption ? 2 * fontSize + 24 : Math.max(32, fontSize + 12);
+  // A bottom tick's baseline already includes the font size and an 8px gap.
+  // Keep its descenders inside the SVG when a scoped density increases type.
+  const bottom = bottomCaption ? 2 * fontSize + 24 : Math.max(32, fontSize * 1.35 + 12);
   // Large supported font roles can leave a tiny plot; never move captions back
   // into ticks to manufacture chart area. Tick sampling handles that case.
   const verticalBudget = Math.max(0, height - 1), scale = Math.min(1, verticalBudget / (top + bottom));

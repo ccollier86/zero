@@ -19,6 +19,15 @@ test('captions own reserved lanes and both numeric sides use real gutters', () =
     }
   }
 });
+test('bottom tick descenders retain a font-relative lane without an independent caption', () => {
+  for (const fontSize of [11.5, 18, 26, 48]) for (const width of [340, 640]) {
+    const model = buildCartesianModel(data, [{ id: 'net', label: 'Net cash' }], { yAxes: [{ id: 'primary', label: 'USD' }] });
+    const geometry = computeCartesianLayout(model, width, 300, { fontSize });
+    expect(geometry.independentCaption).toBeNull();
+    for (const tick of geometry.independentTicks) expect(geometry.top + tick.textLayout.y + fontSize * .35).toBeLessThanOrEqual(geometry.height);
+    expect(model.data.map(row => row.cells.net!.value)).toEqual([-50, 0, 50]);
+  }
+});
 test('shortening preserves graphemes, full formats and deterministic fallback measurements', () => {
   expect(fitChartText('👩‍💻👩‍💻👩‍💻', 2, { fontSize: 1, measureText: text => Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)).length })).toBe('👩‍💻…');
   expect(fitChartText('123456789', 20, { fontSize: 10, measureText: () => NaN })).toBe('12…');

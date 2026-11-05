@@ -20,6 +20,7 @@ application.
   existing three-argument calls remain supported.
   Reuse Zero's shared presentation subscription for marker-only theme, mode,
   density, surface/page and native-preference changes without a data update.
+  Reserve font-relative bottom-tick descenders after those density changes.
 - Bound dense/long statistical, matrix, Realtime and Arc Line/Bar labels to
   their available cells. Preserve full labels, units and exact values in native
   titles and accessible companions without rewriting measurement domains.
