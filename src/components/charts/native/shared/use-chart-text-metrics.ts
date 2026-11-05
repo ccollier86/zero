@@ -1,6 +1,7 @@
 'use client';
 /** Observe the owning chart's actual axis font, including token/theme and webfont changes. No module-time DOM or data transport. */
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { observePresentationTheme } from '../../../../lib/observe-presentation-theme';
 import type { ChartTextMetrics } from './chart-text-layout';
 export function useChartTextMetrics(ref: RefObject<Element | null>, selector = 'text'): ChartTextMetrics {
   const [metrics, setMetrics] = useState<ChartTextMetrics>({ fontSize: 11.5 });
@@ -20,10 +21,9 @@ export function useChartTextMetrics(ref: RefObject<Element | null>, selector = '
     };
     refresh.current = measure; measure();
     const resize = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => measure()); resize?.observe(node);
-    const mutation = typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(() => measure());
-    for (let ancestor: Element | null = node; ancestor; ancestor = ancestor.parentElement) mutation?.observe(ancestor, { attributes: true, attributeFilter: ['class', 'style'] });
+    const releaseTheme = observePresentationTheme(node, () => measure());
     const loaded = () => measure(true); document.fonts?.addEventListener('loadingdone', loaded); void document.fonts?.ready.then(() => { if (alive) measure(true); });
-    return () => { alive = false; refresh.current = () => {}; resize?.disconnect(); mutation?.disconnect(); document.fonts?.removeEventListener('loadingdone', loaded); };
+    return () => { alive = false; refresh.current = () => {}; resize?.disconnect(); releaseTheme(); document.fonts?.removeEventListener('loadingdone', loaded); };
   }, [ref, selector]);
   // A chart may mount without any SVG text, then receive data without resizing.
   // Recheck after commits; the font key prevents an unchanged metrics update.

@@ -591,6 +591,13 @@ Formatter output and actual font metrics determine text budgets. Headless math
 has an additive fourth presentation-options argument and a deterministic SSR
 fallback; it remains React/DOM/transport-free. Browser measurement follows token,
 container and webfont changes and initially empty charts receiving new data.
+Release review also routes font invalidation through Zero's existing
+`observePresentationTheme` boundary rather than a separate class/style-only
+watcher. Marker-only theme/mode/density/surface/page changes, native preferences
+and scoped ancestor changes therefore use the same subscription as cached flow
+chart paint. The added regression changes only `data-zero-density`, checks the
+remeasured geometry, and restores the original metrics without changing data,
+resizing or asking the application to rerender.
 Long display strings fit by grapheme, dense ticks are sampled, and full labels,
 units and raw values remain in native titles/exact data companions. No data
 domain is expanded merely to make a label fit.
@@ -638,6 +645,8 @@ TypeScript checking passes, and the documentation structural gate reports 879
 unique, reachable pages with no problems. `git diff --check` is clean. No full
 unrelated framework sweep or Linux deployment/release-archive qualification is
 claimed for this presentation-only repair.
+These are the initial working-source results at `0b31818`, not a claim that the
+subsequent marker-only correction or a selected 2.10.2 archive passed that run.
 
 The in-app browser transport failed before navigation (`sandboxPolicy` metadata
 error), so browser qualification uses the repository's real Chromium harness,

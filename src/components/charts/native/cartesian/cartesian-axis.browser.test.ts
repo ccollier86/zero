@@ -86,3 +86,22 @@ browserTest('late observations and typography changes remeasure labels without r
     expect(await dynamic.locator('svg text').first().evaluate(text=>getComputedStyle(text).fontSize)).toBe('22px');
   } finally {await page.close();}
 },45000);
+browserTest('marker-only scoped density changes remeasure axes without a data or React update', async () => {
+  const page=await lease!.browser.newPage({viewport:{width:390,height:900},reducedMotion:'reduce'});
+  try {
+    await page.setContent('<!doctype html><html><body><div id="root"></div></body></html>');
+    await page.addStyleTag({content:css+'body{margin:0}.axis-card{margin:12px;padding:12px;min-width:0}.axis-gallery{display:none}[data-dynamic-axis][data-zero-density="touch"]{--zero-chart-metadata-size:26px!important;--zero-chart-font-family:Georgia,serif!important}'});
+    await page.addScriptTag({content:bundle}); await page.getByRole('button',{name:'Load synthetic measurements'}).click();
+    await page.evaluate(async()=>{await document.fonts.ready;await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));});
+    const plot=page.locator('[data-dynamic-axis] .zero-native-cartesian__plot svg > g').first(),before=await plot.getAttribute('transform');
+    await page.locator('[data-dynamic-axis]').evaluate(element=>element.setAttribute('data-zero-density','touch'));
+    await page.waitForFunction(previous=>document.querySelector('[data-dynamic-axis] .zero-native-cartesian__plot svg > g')?.getAttribute('transform')!==previous,before);
+    expect(await plot.getAttribute('transform')).not.toBe(before);
+    const overflow=await page.locator('[data-dynamic-axis] svg').first().evaluate(svg=>{const frame=svg.getBoundingClientRect();return Array.from(svg.querySelectorAll('text')).filter(text=>{const box=text.getBoundingClientRect();return box.width&&(box.left<frame.left-.5||box.right>frame.right+.5||box.top<frame.top-.5||box.bottom>frame.bottom+.5);}).map(text=>text.textContent);});
+    expect(overflow).toEqual([]);
+    expect(await page.locator('[data-dynamic-axis] table').first().textContent()).toContain('-50');
+    await page.locator('[data-dynamic-axis]').evaluate(element=>element.removeAttribute('data-zero-density'));
+    await page.waitForFunction(previous=>document.querySelector('[data-dynamic-axis] .zero-native-cartesian__plot svg > g')?.getAttribute('transform')===previous,before);
+    expect(await plot.getAttribute('transform')).toBe(before);
+  } finally {await page.close();}
+},45000);

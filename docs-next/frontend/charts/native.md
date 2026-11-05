@@ -167,6 +167,10 @@ webfont and container changes remeasure the chart; new measurements arriving in
 an initially empty chart do not require remounting it. Use
 `--zero-chart-metadata-size` and `--zero-chart-font-family`, not a transform that
 makes text larger without changing its layout budget.
+Marker-only changes (`data-zero-theme`, mode, density, surface/page and legacy
+`data-theme`) follow Zero's shared presentation subscription, including native
+theme/preferences and scoped ancestor changes. They do not need a data update
+or a React rerender from the application to invalidate measured axis text.
 
 Long captions and tick labels are shortened within reserved cells, and dense
 ticks are sampled. The complete caption/label remains in its native title or
