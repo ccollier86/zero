@@ -576,9 +576,10 @@ provider qualification claim.
 
 ## Axis Caption and Family Review: November 2026
 
-This is a chart-only repair on `fix/chart-component-polish`, based on Zero 2.10.1
-commit `7b151069835f841aca1542b2c8f02e7c3a66a6da`. It is not a selected release
-archive. Stupify's database-free public `ComposedChart` reproduction confirmed
+This section records the chart-only repair developed on `fix/chart-component-polish`,
+based on Zero 2.10.1 commit `7b151069835f841aca1542b2c8f02e7c3a66a6da`, before
+2.10.2 package qualification. Its source checks below do not replace the exact
+release archive's qualification. Stupify's database-free public `ComposedChart` reproduction confirmed
 that the vertical numeric caption and highest tick occupied the same baseline
 band. Fixed gutters also assumed a left axis and compact/default formatting.
 This is framework presentation ownership, not an error in application cash-flow

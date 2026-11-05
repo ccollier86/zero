@@ -4,6 +4,36 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.10.2 - 2026-11-04
+
+Native chart-axis layout and consistent analytical inspection. This patch
+includes the previously released auth, avatar, logging, DataTable, blog and
+messaging foundations; it does not require a database migration or deploy an
+application.
+
+- Give Cartesian numeric-unit and independent-axis captions separate reserved
+  lanes instead of colliding with the highest tick. Handle left, right and dual
+  axes in vertical and horizontal layouts, including a single right-hand axis.
+- Measure displayed tick formats with the actual chart typography and remeasure
+  after token, webfont and container changes or initially empty data receiving
+  observations. Add optional pure presentation inputs to the headless layout;
+  existing three-argument calls remain supported.
+- Bound dense/long statistical, matrix, Realtime and Arc Line/Bar labels to
+  their available cells. Preserve full labels, units and exact values in native
+  titles and accessible companions without rewriting measurement domains.
+- Hide analytical inspector portals offscreen or in a hidden document without
+  treating tooltip scroll dismissal as a new chart selection. Keep existing
+  explicit selection clearing, keyboard/touch behavior, motion and palette.
+- Include the end-to-end native messaging administration workspace design and
+  acceptance plan in the documentation. `MessagingManagement` remains planned,
+  not an implemented export; the existing messaging backend/workspace is
+  unchanged by these design documents.
+- Add actual Chromium text-box, responsive typography and offscreen-inspector
+  regressions alongside source-copy, public-entry and reactive-facade checks.
+
+Bun 1.4.4 remains required. No dependency, authentication policy, migration,
+application data, legacy theme or underlying chart-engine change is introduced.
+
 ## 2.10.1 - 2026-11-03
 
 Human-readable native password recovery and fail-closed denied table views.
